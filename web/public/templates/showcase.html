@@ -1,0 +1,312 @@
+{% extends "base.html" %}
+{% from "_macros.html" import brand_mark %}
+
+{% block title %}{{ board.title }} — {{ site.brand_name }}{% endblock %}
+
+{% block og %}
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="{{ site.brand_name }}">
+<meta property="og:title" content="{{ board.title }}">
+<meta property="og:description" content="{{ board.description or site.brand_name }}">
+{% if og_image %}<meta property="og:image" content="{{ og_image }}">{% endif %}
+<meta property="og:url" content="{{ page_url }}">
+<meta name="twitter:card" content="summary_large_image">
+{% endblock %}
+
+{% block style %}
+<style>
+  .container { max-width: 1440px; margin: 0 auto; padding: 0 24px; }
+  @media (min-width: 720px) { .container { padding: 0 48px; } }
+
+  header.board { padding-top: 28px; }
+  header.board .brand-mark { animation: fadein 400ms ease-out both; }
+  header.board h1 {
+    margin-top: 64px;
+    font-size: clamp(32px, 5vw, 56px);
+    line-height: 1.1;
+    letter-spacing: 0.005em;
+    animation: rise 300ms ease-out both;
+  }
+  header.board p.desc {
+    color: var(--muted); font-size: 16px; max-width: 560px; margin-top: 16px;
+    animation: rise 300ms ease-out 80ms both;
+  }
+  header.board .meta { color: var(--faint); font-size: 13px; margin-top: 14px; animation: rise 300ms ease-out 140ms both; }
+
+  /* masonry: серверная раскладка на три брейкпоинта */
+  .grid { display: flex; gap: 20px; align-items: flex-start; margin-top: 72px; }
+  .grid .col { display: flex; flex-direction: column; gap: 20px; flex: 1; min-width: 0; }
+  @media (max-width: 719px) { .grid { gap: 16px; margin-top: 48px; } .grid .col { gap: 16px; } }
+  .layout-1, .layout-2 { display: none; }
+  @media (max-width: 919px) { .layout-3 { display: none; } .layout-2 { display: flex; } }
+  @media (max-width: 559px) { .layout-2 { display: none; } .layout-1 { display: flex; } }
+
+  .work { cursor: pointer; animation: rise 350ms ease-out both; }
+  .work .frame { position: relative; overflow: hidden; border-radius: 12px; background: var(--surface); }
+  .work .box { position: relative; transition: transform 300ms ease-out; }
+  .work:hover .box { transform: scale(1.02); }
+  .work canvas.bh { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .work img { position: relative; display: block; width: 100%; height: 100%; object-fit: cover; opacity: 0; transition: opacity 250ms ease-out; }
+  .work img.loaded { opacity: 1; }
+  .work .play {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none;
+  }
+  .work .play > div {
+    width: 52px; height: 52px; border-radius: 50%; background: rgba(14,13,12,0.6);
+    backdrop-filter: blur(4px); display: flex; align-items: center; justify-content: center;
+  }
+  .work .duration {
+    position: absolute; bottom: 10px; right: 10px; height: 22px; display: flex; align-items: center;
+    padding: 0 8px; border-radius: 6px; background: rgba(14,13,12,0.7);
+    color: var(--text); font-size: 11px; font-weight: 500; pointer-events: none;
+  }
+  .work .caption {
+    position: absolute; left: 0; right: 0; bottom: 0; padding: 36px 16px 14px;
+    background: linear-gradient(to top, rgba(14,13,12,0.75), rgba(14,13,12,0));
+    pointer-events: none; transition: opacity 300ms; opacity: 0;
+  }
+  .work:hover .caption { opacity: 1; }
+  @media (max-width: 719px) { .work .caption { opacity: 1; } }
+  .caption .t { color: var(--text); font-size: 14px; font-weight: 500; }
+  .caption .s { color: rgba(245,244,239,0.7); font-size: 12.5px; margin-top: 2px; }
+  .empty { padding: 96px 0; color: var(--muted); text-align: center; }
+
+  footer { margin-top: 96px; padding: 56px 0 48px; border-top: 1px solid var(--border-soft); }
+  footer .studio { font-size: 26px; margin-bottom: 6px; }
+  footer .tagline { color: var(--faint); font-size: 14px; margin-bottom: 28px; }
+  footer .contacts { display: flex; gap: 28px; flex-wrap: wrap; margin-bottom: 40px; }
+  footer .contacts a { color: var(--muted); font-size: 14px; text-decoration: none; }
+  footer .contacts a:hover { color: var(--text); }
+  footer .curated { display: flex; align-items: center; gap: 7px; color: var(--faint); font-size: 12.5px; }
+  footer .curated .sq {
+    width: 16px; height: 16px; border-radius: 4px; background: var(--accent);
+    display: flex; align-items: center; justify-content: center;
+    color: var(--bg); font-size: 8px; font-weight: 700; overflow: hidden;
+  }
+  footer .curated .sq img { width: 100%; height: 100%; object-fit: cover; }
+
+  /* лайтбокс */
+  #lightbox {
+    position: fixed; inset: 0; z-index: 50; background: rgba(14,13,12,0.96);
+    backdrop-filter: blur(10px); display: none; flex-direction: column;
+  }
+  #lightbox.open { display: flex; animation: fadein 250ms ease-out both; }
+  #lb-top { display: flex; align-items: center; justify-content: space-between; padding: 18px 22px; flex-shrink: 0; }
+  #lb-counter { color: var(--muted); font-size: 13px; }
+  .lb-round {
+    width: 42px; height: 42px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+    cursor: pointer; color: var(--muted); background: none; border: none; flex-shrink: 0;
+  }
+  .lb-round:hover { background: rgba(255,255,255,0.08); color: var(--text); }
+  #lb-close { width: 36px; height: 36px; }
+  #lb-body { flex: 1; display: flex; align-items: center; justify-content: center; gap: 14px; min-height: 0; padding: 0 14px 24px; }
+  #lb-stage { flex: 1; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; min-width: 0; gap: 16px; }
+  #lb-stage img, #lb-stage video { max-width: min(100%, 1080px); max-height: calc(100% - 64px); border-radius: 8px; }
+  #lb-caption { text-align: center; }
+  #lb-caption .t { color: var(--text); font-size: 15px; font-weight: 500; }
+  #lb-caption .s { color: var(--muted); font-size: 13px; margin-top: 3px; }
+  @media (max-width: 719px) { .lb-round.nav { display: none; } }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container">
+  <header class="board">
+    {{ brand_mark(site) }}
+    <h1 class="serif">{{ board.title }}</h1>
+    {% if board.description %}<p class="desc">{{ board.description }}</p>{% endif %}
+    <div class="meta">{{ works|length }} {{ t.works if works|length != 1 else t.work }} · {{ t.updated }} {{ board.updated_at.strftime('%d.%m.%Y') }}</div>
+  </header>
+
+  {% if works %}
+  {% macro work_card(i) %}
+  {% set w = works[i] %}
+  <figure class="work" data-index="{{ i }}" style="animation-delay: {{ [120 + i * 50, 800]|min }}ms">
+    <div class="frame">
+      <div class="box" {% if w.width and w.height %}style="aspect-ratio: {{ w.width }} / {{ w.height }}"{% elif w.kind == 'video' %}style="aspect-ratio: 16 / 10"{% else %}style="aspect-ratio: 1 / 1"{% endif %}>
+        {% if w.blurhash %}<canvas class="bh" width="32" height="32" data-blurhash="{{ w.blurhash }}"></canvas>{% endif %}
+        {% if w.kind == 'image' %}
+        <img src="{{ w.media.card }}" alt="{{ w.title }}" loading="lazy" onload="this.classList.add('loaded')">
+        {% elif w.media.card %}
+        <img src="{{ w.media.card }}" alt="{{ w.title }}" loading="lazy" onload="this.classList.add('loaded')">
+        {% endif %}
+      </div>
+      {% if w.kind == 'video' %}
+      <div class="play"><div><svg width="18" height="18" viewBox="0 0 24 24" fill="#F5F4EF" style="margin-left:2px"><polygon points="6 3 20 12 6 21 6 3"></polygon></svg></div></div>
+      {% if w.duration_sec %}<div class="duration">{{ (w.duration_sec // 60)|int }}:{{ '%02d' % (w.duration_sec % 60) }}</div>{% endif %}
+      {% endif %}
+      {% if w.title %}
+      <figcaption class="caption">
+        <div class="t">{{ w.title }}</div>
+        {% if w.description %}<div class="s">{{ w.description }}</div>{% endif %}
+      </figcaption>
+      {% endif %}
+    </div>
+  </figure>
+  {% endmacro %}
+
+  {% for ncols, layout in layouts %}
+  <div class="grid layout-{{ ncols }}">
+    {% for column in layout %}
+    <div class="col">
+      {% for i in column %}{{ work_card(i) }}{% endfor %}
+    </div>
+    {% endfor %}
+  </div>
+  {% endfor %}
+  {% else %}
+  <p class="empty">{{ t.empty_board }}</p>
+  {% endif %}
+
+  <footer>
+    <div class="studio serif">{{ site.brand_name }}</div>
+    {% if site.brand_tagline %}<div class="tagline">{{ site.brand_tagline }}</div>{% endif %}
+    <div class="contacts">
+      {% if site.contact_email %}<a href="mailto:{{ site.contact_email }}">{{ site.contact_email }}</a>{% endif %}
+      {% if site.contact_phone %}<a href="tel:{{ site.contact_phone }}">{{ site.contact_phone }}</a>{% endif %}
+      {% if site.social_telegram %}<a href="{{ site.social_telegram }}" rel="noopener">Telegram</a>{% endif %}
+      {% if site.social_instagram %}<a href="{{ site.social_instagram }}" rel="noopener">Instagram</a>{% endif %}
+      {% if site.social_website %}<a href="{{ site.social_website }}" rel="noopener">{{ site.social_website.replace('https://','').replace('http://','') }}</a>{% endif %}
+    </div>
+    <div class="curated">
+      <div class="sq">{% if site.brand_logo_path %}<img src="{{ site.brand_logo_path }}" alt="">{% else %}{{ (site.brand_name or 'S')[0]|upper }}{% endif %}</div>
+      {{ t.made_by }} {{ site.brand_name }}
+    </div>
+  </footer>
+</div>
+
+<div id="lightbox" role="dialog" aria-modal="true">
+  <div id="lb-top">
+    <span id="lb-counter"></span>
+    <button class="lb-round" id="lb-close" aria-label="Close">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>
+    </button>
+  </div>
+  <div id="lb-body">
+    <button class="lb-round nav" id="lb-prev" aria-label="Previous">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"></path></svg>
+    </button>
+    <div id="lb-stage"></div>
+    <button class="lb-round nav" id="lb-next" aria-label="Next">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"></path></svg>
+    </button>
+  </div>
+</div>
+{% endblock %}
+
+{% block script %}
+<script>
+  const WORKS = {{ works|tojson }};
+
+  // --- blurhash: компактный декодер (base83 → canvas 32×32) ---
+  (function () {
+    const B83 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz#$%*+,-.:;=?@[]^_{|}~";
+    const d83 = (s) => { let v = 0; for (const ch of s) v = v * 83 + B83.indexOf(ch); return v; };
+    const srgb = (v) => { v /= 255; return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+    const lin = (v) => { v = Math.max(0, Math.min(1, v)); return Math.round((v <= 0.0031308 ? v * 12.92 : 1.055 * Math.pow(v, 1 / 2.4) - 0.055) * 255); };
+    const sign = (v) => (v < 0 ? -1 : 1);
+    function decode(hash, w, h) {
+      const sizeFlag = d83(hash[0]);
+      const ny = Math.floor(sizeFlag / 9) + 1, nx = (sizeFlag % 9) + 1;
+      const maxAc = (d83(hash[1]) + 1) / 166;
+      const colors = [];
+      const avg = d83(hash.substring(2, 6));
+      colors.push([srgb(avg >> 16), srgb((avg >> 8) & 255), srgb(avg & 255)]);
+      for (let i = 1; i < nx * ny; i++) {
+        const v = d83(hash.substring(4 + i * 2, 6 + i * 2));
+        colors.push([
+          sign((Math.floor(v / (19 * 19)) - 9) / 9) * Math.pow(Math.abs((Math.floor(v / (19 * 19)) - 9) / 9), 2) * maxAc,
+          sign((Math.floor(v / 19) % 19 - 9) / 9) * Math.pow(Math.abs((Math.floor(v / 19) % 19 - 9) / 9), 2) * maxAc,
+          sign((v % 19 - 9) / 9) * Math.pow(Math.abs((v % 19 - 9) / 9), 2) * maxAc,
+        ]);
+      }
+      const pixels = new Uint8ClampedArray(w * h * 4);
+      for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+        let r = 0, g = 0, b = 0;
+        for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+          const basis = Math.cos((Math.PI * x * i) / w) * Math.cos((Math.PI * y * j) / h);
+          const c = colors[i + j * nx];
+          r += c[0] * basis; g += c[1] * basis; b += c[2] * basis;
+        }
+        const p = (y * w + x) * 4;
+        pixels[p] = lin(r); pixels[p + 1] = lin(g); pixels[p + 2] = lin(b); pixels[p + 3] = 255;
+      }
+      return pixels;
+    }
+    document.querySelectorAll("canvas.bh").forEach((canvas) => {
+      try {
+        const ctx = canvas.getContext("2d");
+        ctx.putImageData(new ImageData(decode(canvas.dataset.blurhash, 32, 32), 32, 32), 0, 0);
+      } catch (e) { /* плейсхолдер остаётся фоном */ }
+    });
+    // изображения из кэша могли загрузиться до навешивания onload
+    document.querySelectorAll(".work img").forEach((img) => { if (img.complete && img.naturalWidth) img.classList.add("loaded"); });
+  })();
+
+  // --- лайтбокс ---
+  const lb = document.getElementById("lightbox");
+  const stage = document.getElementById("lb-stage");
+  const counter = document.getElementById("lb-counter");
+  let current = -1;
+
+  function show(i) {
+    if (i < 0) i = WORKS.length - 1;
+    if (i >= WORKS.length) i = 0;
+    current = i;
+    const w = WORKS[i];
+    stage.innerHTML = "";
+    let el;
+    if (w.kind === "video") {
+      el = document.createElement("video");
+      el.src = w.media.video;
+      if (w.media.poster) el.poster = w.media.poster;
+      el.controls = true; el.autoplay = true;
+    } else {
+      el = document.createElement("img");
+      el.src = w.media.large; el.alt = w.title || "";
+    }
+    stage.appendChild(el);
+    if (w.title || w.description) {
+      const cap = document.createElement("div");
+      cap.id = "lb-caption";
+      cap.innerHTML = (w.title ? '<div class="t"></div>' : "") + (w.description ? '<div class="s"></div>' : "");
+      if (w.title) cap.querySelector(".t").textContent = w.title;
+      if (w.description) cap.querySelector(".s").textContent = w.description;
+      stage.appendChild(cap);
+    }
+    counter.textContent = (i + 1) + " / " + WORKS.length;
+    lb.classList.add("open");
+    document.body.style.overflow = "hidden";
+    [i - 1, i + 1].forEach((j) => {
+      const n = WORKS[(j + WORKS.length) % WORKS.length];
+      if (n && n.kind === "image") { const im = new Image(); im.src = n.media.large; }
+    });
+  }
+  function close() {
+    lb.classList.remove("open");
+    stage.innerHTML = "";
+    document.body.style.overflow = "";
+    current = -1;
+  }
+  document.querySelectorAll(".work").forEach((card) =>
+    card.addEventListener("click", () => show(+card.dataset.index)));
+  document.getElementById("lb-close").addEventListener("click", close);
+  document.getElementById("lb-prev").addEventListener("click", (e) => { e.stopPropagation(); show(current - 1); });
+  document.getElementById("lb-next").addEventListener("click", (e) => { e.stopPropagation(); show(current + 1); });
+  lb.addEventListener("click", (e) => { if (e.target === lb || e.target.id === "lb-body" || e.target === stage) close(); });
+  document.addEventListener("keydown", (e) => {
+    if (!lb.classList.contains("open")) return;
+    if (e.key === "Escape") close();
+    if (e.key === "ArrowLeft") show(current - 1);
+    if (e.key === "ArrowRight") show(current + 1);
+  });
+  let touchX = null;
+  stage.addEventListener("touchstart", (e) => { touchX = e.touches[0].clientX; }, { passive: true });
+  stage.addEventListener("touchend", (e) => {
+    if (touchX === null) return;
+    const dx = e.changedTouches[0].clientX - touchX;
+    if (Math.abs(dx) > 60) show(current + (dx < 0 ? 1 : -1));
+    touchX = null;
+  }, { passive: true });
+</script>
+{% endblock %}

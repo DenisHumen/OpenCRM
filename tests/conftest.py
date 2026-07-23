@@ -1,0 +1,105 @@
+"""Интеграционные тесты гоняются против настоящего приложения:
+временная SQLite-БД и временный storage на каждый прогон."""
+
+import io
+import os
+import tempfile
+from pathlib import Path
+
+import pytest
+
+# Окружение — до импорта приложения (настройки кэшируются)
+_TMP = Path(tempfile.mkdtemp(prefix="opencrm-test-"))
+os.environ.update(
+    {
+        "OPENCRM_ENV": "test",
+        "OPENCRM_SECRET_KEY": "test-secret-key",
+        "OPENCRM_DB_URL": f"sqlite:///{(_TMP / 'test.db').as_posix()}",
+        "OPENCRM_STORAGE_DIR": str(_TMP / "storage"),
+        "OPENCRM_BASE_URL": "http://testserver",
+        "OPENCRM_ROOT_EMAIL": "root@test.local",
+        "OPENCRM_ROOT_PASSWORD": "root-initial-pw",
+        "OPENCRM_IP_HASH_SALT": "test-salt",
+    }
+)
+
+from core.security import passwords  # noqa: E402
+
+passwords.BCRYPT_ROUNDS = 4  # быстрые хэши в тестах
+
+from fastapi.testclient import TestClient  # noqa: E402
+
+from web.main import app  # noqa: E402
+
+ROOT_EMAIL = "root@test.local"
+ROOT_PASSWORD = "root-secure-password-1"  # после обязательной смены
+
+API = "/api/v1"
+
+
+def login(client: TestClient, email: str, password: str):
+    response = client.post(f"{API}/auth/login", json={"email": email, "password": password})
+    if response.status_code == 200:
+        client.headers["X-CSRF-Token"] = client.cookies.get("opencrm_csrf", "")
+    return response
+
+
+def register(client: TestClient, name: str, email: str, password: str = "manager-pass-123"):
+    return client.post(
+        f"{API}/auth/register", json={"name": name, "email": email, "password": password}
+    )
+
+
+def make_manager(root_client: TestClient, email: str, password: str = "manager-pass-123") -> TestClient:
+    """Регистрирует менеджера, одобряет root'ом и возвращает залогиненный клиент."""
+    anon = TestClient(app)
+    response = register(anon, email.split("@")[0], email, password)
+    assert response.status_code == 201, response.text
+    user_id = response.json()["user"]["id"]
+    approve = root_client.post(f"{API}/staff/{user_id}/approve")
+    assert approve.status_code == 200, approve.text
+    manager = TestClient(app)
+    assert login(manager, email, password).status_code == 200
+    return manager
+
+
+def png_bytes(color=(217, 119, 87), size=(640, 480)) -> bytes:
+    from PIL import Image
+
+    buffer = io.BytesIO()
+    Image.new("RGB", size, color).save(buffer, "PNG")
+    return buffer.getvalue()
+
+
+@pytest.fixture(scope="session")
+def base_client():
+    """Первый клиент: прогоняет lifespan (создание схемы, bootstrap root)."""
+    with TestClient(app) as client:
+        yield client
+
+
+@pytest.fixture(scope="session")
+def root_client(base_client) -> TestClient:
+    """Root, прошедший обязательную смену пароля."""
+    client = TestClient(app)
+    response = login(client, ROOT_EMAIL, "root-initial-pw")
+    assert response.status_code == 200, response.text
+    assert response.json()["must_change_password"] is True
+
+    # до смены пароля рабочие эндпоинты закрыты
+    blocked = client.get(f"{API}/clients")
+    assert blocked.status_code == 403
+    assert blocked.json()["error"]["code"] == "password_change_required"
+
+    changed = client.post(
+        f"{API}/auth/me/password",
+        json={"old_password": "root-initial-pw", "new_password": ROOT_PASSWORD},
+    )
+    assert changed.status_code == 200, changed.text
+    assert client.get(f"{API}/clients").status_code == 200
+    return client
+
+
+@pytest.fixture(scope="session")
+def manager_client(root_client) -> TestClient:
+    return make_manager(root_client, "manager@test.local")

@@ -1,0 +1,26 @@
+[project]
+name = "opencrm"
+version = "0.1.0"
+description = "CRM for a design studio with a public client-facing showcase"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "sqlalchemy>=2.0",
+    "alembic",
+    "pydantic-settings",
+    "bcrypt",
+    "itsdangerous",
+    "jinja2",
+    "python-multipart",
+    "pillow",
+    "blurhash",
+]
+
+[dependency-groups]
+dev = ["pytest", "httpx"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+filterwarnings = ["ignore::DeprecationWarning"]

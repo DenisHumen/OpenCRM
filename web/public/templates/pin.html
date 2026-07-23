@@ -1,0 +1,138 @@
+{% extends "base.html" %}
+{% from "_macros.html" import brand_mark %}
+
+{% block title %}{{ site.brand_name }}{% endblock %}
+
+{% block og %}
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="{{ site.brand_name }}">
+<meta property="og:title" content="{{ site.brand_name }}">
+{% if og_default %}<meta property="og:image" content="{{ og_default }}">{% endif %}
+{% endblock %}
+
+{% block style %}
+<style>
+  @keyframes shake { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-7px); } 75% { transform: translateX(7px); } }
+  @keyframes pop { from { transform: scale(0.6); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+  .pin-screen {
+    min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    padding: 32px; text-align: center;
+  }
+  .pin-screen .brand-mark { margin-bottom: 48px; animation: rise 300ms ease-out both; }
+  .pin-screen h1 { font-size: clamp(26px, 4vw, 34px); margin-bottom: 10px; animation: rise 300ms ease-out 60ms both; }
+  .pin-screen .hint { color: var(--muted); font-size: 14.5px; margin-bottom: 36px; animation: rise 300ms ease-out 120ms both; }
+  form.pin-form { position: relative; z-index: 1; }
+  .cells { display: flex; gap: 12px; justify-content: center; animation: rise 300ms ease-out 150ms both; }
+  .cells.error { animation: shake 200ms ease-in-out; }
+  .cell {
+    width: 56px; height: 64px; border-radius: 12px; background: var(--surface);
+    border: 1px solid var(--border); display: flex; align-items: center; justify-content: center;
+    color: var(--text); font-size: 26px; font-weight: 500; transition: border-color 150ms;
+  }
+  .cell.active { border-color: var(--faint); }
+  .cells.error .cell { border-color: var(--danger); }
+  .cell span { animation: pop 150ms ease-out both; }
+  #pin-input { position: absolute; opacity: 0.01; inset: 0; width: 100%; height: 100%; border: none; background: none; color: transparent; outline: none; cursor: pointer; caret-color: transparent; }
+  .msg { font-size: 13px; margin-top: 20px; min-height: 18px; color: var(--danger); }
+  .msg.empty { color: transparent; }
+  .bottom-hint { color: var(--faint); font-size: 13px; margin-top: 44px; animation: rise 300ms ease-out 180ms both; }
+  noscript .fallback { margin-top: 20px; }
+  noscript input { height: 44px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface); color: var(--text); font-size: 20px; text-align: center; letter-spacing: 0.3em; padding: 0 12px; }
+  noscript button { height: 44px; padding: 0 18px; border-radius: 10px; border: none; background: var(--text); color: var(--bg); font-size: 14px; font-weight: 600; cursor: pointer; margin-left: 8px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="pin-screen">
+  {{ brand_mark(site) }}
+  <h1 class="serif">{{ t.pin_title }}</h1>
+  <div class="hint">{{ t.pin_hint }}</div>
+  <form class="pin-form" method="post" action="/b/{{ token }}/pin" id="pin-form">
+    <div class="cells{% if error %} error{% endif %}" id="cells">
+      <div class="cell active"></div>
+      <div class="cell"></div>
+      <div class="cell"></div>
+      <div class="cell"></div>
+      <input id="pin-input" name="pin" inputmode="numeric" autocomplete="one-time-code" maxlength="8" autofocus aria-label="PIN code">
+    </div>
+    <div class="msg{% if not error %} empty{% endif %}">{{ error or ' ' }}</div>
+    <noscript>
+      <div class="fallback">
+        <input name="pin" inputmode="numeric" maxlength="8" aria-label="PIN code">
+        <button type="submit">{{ t.pin_submit }}</button>
+      </div>
+    </noscript>
+  </form>
+  <div class="bottom-hint">{{ t.pin_bottom_hint }}</div>
+</div>
+{% endblock %}
+
+{% block script %}
+<script>
+  const MIN_LEN = 4;
+  const MAX_LEN = 8;
+  const AUTOSUBMIT_DELAY = 450;
+
+  const input = document.getElementById("pin-input");
+  const form = document.getElementById("pin-form");
+  const cellsWrap = document.getElementById("cells");
+  const cells = () => Array.from(cellsWrap.querySelectorAll(".cell"));
+
+  let autoSubmitTimer = null;
+  let submitted = false;
+
+  function syncCells(value) {
+    // ячеек ровно столько, сколько введено, но не меньше минимальной длины кода:
+    // пустая «запасная» ячейка выглядела бы как незаполненное обязательное поле
+    const needed = Math.max(MIN_LEN, value.length);
+    while (cells().length > needed) cellsWrap.removeChild(cells()[cells().length - 1]);
+    while (cells().length < needed) {
+      const cell = document.createElement("div");
+      cell.className = "cell";
+      cellsWrap.insertBefore(cell, input);
+    }
+    cells().forEach((cell, i) => {
+      cell.innerHTML = value[i] ? "<span>" + value[i] + "</span>" : "";
+      cell.classList.toggle("active", i === value.length);
+    });
+  }
+
+  function submitOnce() {
+    if (submitted || input.value.length < MIN_LEN) return;
+    submitted = true;
+    form.submit();
+  }
+
+  function onInput() {
+    const value = input.value.replace(/\D/g, "").slice(0, MAX_LEN);
+    if (value !== input.value) input.value = value;
+    syncCells(value);
+
+    // код может быть от 4 до 8 цифр, а его длину клиенту не сообщают,
+    // поэтому отправляем не на 4-й цифре, а когда ввод остановился
+    clearTimeout(autoSubmitTimer);
+    if (value.length >= MIN_LEN) {
+      autoSubmitTimer = setTimeout(submitOnce, AUTOSUBMIT_DELAY);
+    }
+  }
+
+  input.addEventListener("input", onInput);
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      clearTimeout(autoSubmitTimer);
+      submitOnce();
+    }
+  });
+  document.addEventListener("click", () => input.focus());
+
+  if (cellsWrap.classList.contains("error")) {
+    // после неверной попытки поле чистое — иначе восстановленное браузером
+    // значение ушло бы на повторную автоотправку того же кода
+    input.value = "";
+    setTimeout(() => cellsWrap.classList.remove("error"), 400);
+  }
+  syncCells(input.value.replace(/\D/g, "").slice(0, MAX_LEN));
+  input.focus();
+</script>
+{% endblock %}

@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% from "_macros.html" import brand_mark %}
+
+{% block title %}{{ site.brand_name }}{% endblock %}
+
+{% block style %}
+<style>
+  .closed-screen {
+    min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    padding: 32px; text-align: center;
+  }
+  .closed-screen .brand-mark { margin-bottom: 48px; animation: rise 300ms ease-out both; }
+  .lock-circle {
+    width: 52px; height: 52px; border-radius: 50%; background: var(--surface);
+    border: 1px solid var(--border); display: flex; align-items: center; justify-content: center;
+    margin-bottom: 24px; animation: rise 300ms ease-out 40ms both; color: var(--muted);
+  }
+  .closed-screen h1 { font-size: clamp(26px, 4vw, 34px); margin-bottom: 12px; animation: rise 300ms ease-out 80ms both; }
+  .closed-screen .text { color: var(--muted); font-size: 14.5px; line-height: 1.6; max-width: 420px; margin-bottom: 36px; animation: rise 300ms ease-out 140ms both; }
+  .actions { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; animation: rise 300ms ease-out 200ms both; }
+  .actions a {
+    display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 18px;
+    border-radius: 10px; font-size: 13.5px; text-decoration: none;
+  }
+  .actions a.primary { background: var(--text); color: var(--bg); font-weight: 600; }
+  .actions a.primary:hover { background: #ffffff; }
+  .actions a.secondary { border: 1px solid var(--border); color: var(--text); font-weight: 500; }
+  .actions a.secondary:hover { background: var(--surface); }
+  .footer-line { color: var(--faint); font-size: 12.5px; margin-top: 56px; animation: rise 300ms ease-out 260ms both; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="closed-screen">
+  {{ brand_mark(site) }}
+  <div class="lock-circle">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+  </div>
+  <h1 class="serif">{{ t.closed_title }}</h1>
+  <div class="text">{{ t.closed_text }}</div>
+  <div class="actions">
+    {% if site.contact_email %}
+    <a class="primary" href="mailto:{{ site.contact_email }}">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="16" x="2" y="4" rx="2"></rect><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"></path></svg>
+      {{ site.contact_email }}
+    </a>
+    {% endif %}
+    {% if site.social_telegram %}<a class="secondary" href="{{ site.social_telegram }}" rel="noopener">Telegram</a>{% endif %}
+    {% if site.contact_phone %}<a class="secondary" href="tel:{{ site.contact_phone }}">{{ site.contact_phone }}</a>{% endif %}
+  </div>
+  {% if site.brand_tagline or site.social_website %}
+  <div class="footer-line">
+    {{ site.brand_tagline }}{% if site.brand_tagline and site.social_website %} · {% endif %}{% if site.social_website %}{{ site.social_website.replace('https://','').replace('http://','') }}{% endif %}
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

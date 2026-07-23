@@ -1,0 +1,8 @@
+{% macro brand_mark(site) %}
+<div class="brand-mark">
+  <div class="square">
+    {% if site.brand_logo_path %}<img src="{{ site.brand_logo_path }}" alt="">{% else %}{{ (site.brand_name or 'S')[0]|upper }}{% endif %}
+  </div>
+  <span class="name">{{ site.brand_name }}</span>
+</div>
+{% endmacro %}

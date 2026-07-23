@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <title>Protected — Formwork Studio</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Source+Serif+4:opsz,wght@8..60,400;8..60,500&display=swap" rel="stylesheet">
+  <style>
+    body { margin:0; background:#161514; -webkit-font-smoothing:antialiased; }
+    a { color:#D97757; } a:hover { color:#E39075; }
+    @keyframes rise { from { opacity:0; transform:translateY(12px); } to { opacity:1; transform:translateY(0); } }
+    @keyframes shake { 0%,100% { transform:translateX(0); } 25% { transform:translateX(-7px); } 75% { transform:translateX(7px); } }
+    @keyframes pop { from { transform:scale(0.6); opacity:0; } to { transform:scale(1); opacity:1; } }
+    @media (prefers-reduced-motion: reduce) { * { animation-duration:0.01ms !important; transition-duration:0.01ms !important; } }
+  </style>
+</helmet>
+<div style="min-height:100vh;background:#161514;font-family:Inter,sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:32px;box-sizing:border-box;text-align:center">
+  <div style="display:flex;align-items:center;gap:8px;margin-bottom:48px;animation:rise 300ms ease-out both">
+    <div style="width:22px;height:22px;border-radius:6px;background:#D97757;display:flex;align-items:center;justify-content:center;color:#161514;font-size:11px;font-weight:700">F</div>
+    <span style="color:#9C998F;font-size:13px;font-weight:500">Formwork Studio</span>
+  </div>
+  <h1 style="font-family:'Source Serif 4',serif;font-size:clamp(26px,4vw,34px);font-weight:400;color:#F5F4EF;margin:0 0 10px;animation:rise 300ms ease-out 60ms both">This collection is protected</h1>
+  <div style="color:#9C998F;font-size:14.5px;margin-bottom:36px;animation:rise 300ms ease-out 120ms both">Enter the 4-digit code to view it</div>
+  <div style="{{ rowStyle }}">
+    <sc-for list="{{ digits }}" as="d" hint-placeholder-count="4">
+      <div style="{{ d.style }}">
+        <sc-if value="{{ d.value }}" hint-placeholder-val="{{ false }}">
+          <span style="animation:pop 150ms ease-out both">{{ d.value }}</span>
+        </sc-if>
+      </div>
+    </sc-for>
+  </div>
+  <input value="{{ raw }}" onChange="{{ onInput }}" autoFocus inputMode="numeric" style="position:absolute;opacity:0;pointer-events:none" aria-label="PIN code">
+  <div onClick="{{ focusInput }}" style="position:fixed;inset:0;cursor:text"></div>
+  <div style="{{ msgStyle }}">{{ message }}</div>
+  <div style="color:#706D64;font-size:13px;margin-top:44px;animation:rise 300ms ease-out 180ms both;position:relative;z-index:1">Your manager sent you the code · try <span style="color:#9C998F;letter-spacing:0.08em">4821</span></div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;: {&quot;width&quot;: 1280, &quot;height&quot;: 760}}">
+class Component extends DCLogic {
+  state = { raw: "", error: false, ok: false };
+  onInput(e) {
+    const v = e.target.value.replace(/\D/g, "").slice(0, 4);
+    this.setState({ raw: v, error: false });
+    if (v.length === 4) {
+      if (v === "4821") {
+        this.setState({ ok: true });
+        setTimeout(() => { window.location.href = "Showcase.dc.html"; }, 500);
+      } else {
+        this.setState({ error: true });
+        setTimeout(() => this.setState({ raw: "", error: false }), 700);
+      }
+    }
+  }
+  renderVals() {
+    const { raw, error, ok } = this.state;
+    const border = error ? "#E5695E" : ok ? "#4CAF6E" : "#3B3A36";
+    return {
+      raw,
+      onInput: (e) => this.onInput(e),
+      focusInput: (e) => { const inp = e.currentTarget.parentElement.querySelector("input"); if (inp) inp.focus(); },
+      rowStyle: "display:flex;gap:12px;justify-content:center;position:relative;z-index:1;animation:" + (error ? "shake 200ms ease-in-out" : "rise 300ms ease-out 150ms both"),
+      digits: [0, 1, 2, 3].map(i => ({
+        value: raw[i] || null,
+        style: "width:56px;height:64px;border-radius:12px;background:#201F1D;border:1px solid " + (i === raw.length && !ok && !error ? "#706D64" : border) + ";display:flex;align-items:center;justify-content:center;color:#F5F4EF;font-size:26px;font-weight:500;transition:border-color 150ms"
+      })),
+      message: error ? "That code didn't match — check it and try again" : ok ? "Opening…" : " ",
+      msgStyle: "font-size:13px;margin-top:20px;min-height:18px;position:relative;z-index:1;transition:color 150ms;color:" + (error ? "#E5695E" : ok ? "#4CAF6E" : "transparent")
+    };
+  }
+}
+</script>
+</body>
+</html>

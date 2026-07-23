@@ -1,0 +1,44 @@
+name: opencrm
+
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    env_file: ../config/.env
+    environment:
+      OPENCRM_DB_URL: sqlite:////app/data/opencrm.db
+      OPENCRM_STORAGE_DIR: /app/storage
+      # За приложением стоит один nginx: реальный IP клиента — последний элемент
+      # X-Forwarded-For, добавленный им. Без этого лимит подбора PIN обходится
+      # подменой заголовка (см. docs/07-security.md).
+      OPENCRM_TRUSTED_PROXY_HOPS: "1"
+    volumes:
+      - opencrm_data:/app/data
+      - opencrm_storage:/app/storage
+    expose: ["8000"]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+      # - "443:443"   # включить после выпуска сертификата (см. docs/08-deployment.md)
+    volumes:
+      - ./nginx/opencrm.conf:/etc/nginx/conf.d/default.conf:ro
+      - opencrm_storage:/srv/storage:ro
+      # - certbot_certs:/etc/letsencrypt:ro
+    depends_on:
+      app:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  opencrm_data:
+  opencrm_storage:
+  # certbot_certs:

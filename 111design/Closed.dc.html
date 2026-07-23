@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <title>Access closed — Formwork Studio</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Source+Serif+4:opsz,wght@8..60,400;8..60,500&display=swap" rel="stylesheet">
+  <style>
+    body { margin:0; background:#161514; -webkit-font-smoothing:antialiased; }
+    a { color:#D97757; } a:hover { color:#E39075; }
+    @keyframes rise { from { opacity:0; transform:translateY(12px); } to { opacity:1; transform:translateY(0); } }
+    @media (prefers-reduced-motion: reduce) { * { animation-duration:0.01ms !important; } }
+  </style>
+</helmet>
+<div style="min-height:100vh;background:#161514;font-family:Inter,sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:32px;box-sizing:border-box;text-align:center">
+  <div style="display:flex;align-items:center;gap:8px;margin-bottom:48px;animation:rise 300ms ease-out both">
+    <div style="width:22px;height:22px;border-radius:6px;background:#D97757;display:flex;align-items:center;justify-content:center;color:#161514;font-size:11px;font-weight:700">F</div>
+    <span style="color:#9C998F;font-size:13px;font-weight:500">Formwork Studio</span>
+  </div>
+  <div style="width:52px;height:52px;border-radius:50%;background:#201F1D;border:1px solid #2C2B28;display:flex;align-items:center;justify-content:center;margin-bottom:24px;animation:rise 300ms ease-out 40ms both">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#9C998F" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+  </div>
+  <h1 style="font-family:'Source Serif 4',serif;font-size:clamp(26px,4vw,34px);font-weight:400;color:#F5F4EF;margin:0 0 12px;animation:rise 300ms ease-out 80ms both">Access to this collection is closed</h1>
+  <div style="color:#9C998F;font-size:14.5px;line-height:1.6;max-width:420px;margin-bottom:36px;animation:rise 300ms ease-out 140ms both">Contact us — we'll send you a fresh link with the latest works.</div>
+  <div style="display:flex;gap:12px;flex-wrap:wrap;justify-content:center;animation:rise 300ms ease-out 200ms both">
+    <a href="#" style="display:flex;align-items:center;gap:8px;height:40px;padding:0 18px;background:#F5F4EF;border-radius:10px;color:#161514;font-size:13.5px;font-weight:600;text-decoration:none;box-sizing:border-box" style-hover="background:#FFFFFF;color:#161514">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="16" x="2" y="4" rx="2"></rect><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"></path></svg>
+      hello@formwork.studio
+    </a>
+    <a href="#" style="display:flex;align-items:center;gap:8px;height:40px;padding:0 18px;border:1px solid #2C2B28;border-radius:10px;color:#F5F4EF;font-size:13.5px;font-weight:500;text-decoration:none;box-sizing:border-box" style-hover="background:#201F1D;color:#F5F4EF">Telegram</a>
+    <a href="#" style="display:flex;align-items:center;gap:8px;height:40px;padding:0 18px;border:1px solid #2C2B28;border-radius:10px;color:#F5F4EF;font-size:13.5px;font-weight:500;text-decoration:none;box-sizing:border-box" style-hover="background:#201F1D;color:#F5F4EF">+7 921 555-70-01</a>
+  </div>
+  <div style="color:#706D64;font-size:12.5px;margin-top:56px;animation:rise 300ms ease-out 260ms both">Branding &amp; packaging for small brands · formwork.studio</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;: {&quot;width&quot;: 1280, &quot;height&quot;: 760}}"></script>
+</body>
+</html>

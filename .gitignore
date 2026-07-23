@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+data/
+storage/
+config/.env
+node_modules/
+dist/
+.claude

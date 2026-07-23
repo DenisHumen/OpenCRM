@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <title>OpenCRM — Sign in</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,500&display=swap" rel="stylesheet">
+  <style>
+    body { margin:0; background:#262624; -webkit-font-smoothing:antialiased; }
+    a { color:#6C8EEF; } a:hover { color:#8FA8F3; }
+    ::placeholder { color:#706D64; }
+  </style>
+</helmet>
+<div style="min-height:100vh;background:#262624;font-family:Inter,sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:32px;box-sizing:border-box">
+  <div style="display:flex;align-items:center;gap:9px;margin-bottom:28px">
+    <div style="width:26px;height:26px;border-radius:7px;background:#D97757;display:flex;align-items:center;justify-content:center;color:#1F1E1C;font-size:13px;font-weight:700">O</div>
+    <span style="color:#F5F4EF;font-size:16px;font-weight:600">OpenCRM</span>
+  </div>
+  <sc-if value="{{ isLogin }}" hint-placeholder-val="{{ true }}">
+    <div style="width:380px;background:#2B2A27;border:1px solid #3B3A36;border-radius:12px;padding:28px 28px 26px;box-sizing:border-box">
+      <h1 style="font-family:'Source Serif 4',serif;font-size:24px;font-weight:400;color:#F5F4EF;margin:0 0 4px">Welcome back</h1>
+      <div style="color:#706D64;font-size:13px;margin-bottom:22px">Sign in to your studio workspace</div>
+      <label style="display:block;color:#9C998F;font-size:12.5px;margin-bottom:5px">Email</label>
+      <input placeholder="you@studio.site" style="width:100%;height:36px;background:#262624;border:1px solid #3B3A36;border-radius:8px;color:#F5F4EF;font-size:13.5px;padding:0 12px;box-sizing:border-box;outline:none;font-family:Inter,sans-serif;margin-bottom:14px" style-focus="border-color:#6C8EEF">
+      <label style="display:block;color:#9C998F;font-size:12.5px;margin-bottom:5px">Password</label>
+      <input type="password" placeholder="••••••••" style="width:100%;height:36px;background:#262624;border:1px solid #3B3A36;border-radius:8px;color:#F5F4EF;font-size:13.5px;padding:0 12px;box-sizing:border-box;outline:none;font-family:Inter,sans-serif;margin-bottom:20px" style-focus="border-color:#6C8EEF">
+      <a href="Dashboard.dc.html" style="display:flex;align-items:center;justify-content:center;height:38px;background:#FAF9F5;border-radius:8px;color:#1F1E1C;font-size:13.5px;font-weight:600;text-decoration:none;box-sizing:border-box;margin-bottom:16px" style-hover="background:#FFFFFF;color:#1F1E1C">Sign in</a>
+      <div style="text-align:center;color:#706D64;font-size:13px">No account? <span onClick="{{ goRegister }}" style="color:#6C8EEF;cursor:pointer;text-decoration:underline;text-underline-offset:2px">Request one</span></div>
+    </div>
+  </sc-if>
+  <sc-if value="{{ isRegister }}" hint-placeholder-val="{{ false }}">
+    <div style="width:380px;background:#2B2A27;border:1px solid #3B3A36;border-radius:12px;padding:28px 28px 26px;box-sizing:border-box">
+      <h1 style="font-family:'Source Serif 4',serif;font-size:24px;font-weight:400;color:#F5F4EF;margin:0 0 4px">Join the studio</h1>
+      <div style="color:#706D64;font-size:13px;margin-bottom:22px">The administrator approves every account</div>
+      <label style="display:block;color:#9C998F;font-size:12.5px;margin-bottom:5px">Full name</label>
+      <input placeholder="Katya Titova" style="width:100%;height:36px;background:#262624;border:1px solid #3B3A36;border-radius:8px;color:#F5F4EF;font-size:13.5px;padding:0 12px;box-sizing:border-box;outline:none;font-family:Inter,sans-serif;margin-bottom:14px" style-focus="border-color:#6C8EEF">
+      <label style="display:block;color:#9C998F;font-size:12.5px;margin-bottom:5px">Email</label>
+      <input placeholder="you@studio.site" style="width:100%;height:36px;background:#262624;border:1px solid #3B3A36;border-radius:8px;color:#F5F4EF;font-size:13.5px;padding:0 12px;box-sizing:border-box;outline:none;font-family:Inter,sans-serif;margin-bottom:14px" style-focus="border-color:#6C8EEF">
+      <label style="display:block;color:#9C998F;font-size:12.5px;margin-bottom:5px">Password</label>
+      <input type="password" placeholder="Min 10 characters" style="width:100%;height:36px;background:#262624;border:1px solid #3B3A36;border-radius:8px;color:#F5F4EF;font-size:13.5px;padding:0 12px;box-sizing:border-box;outline:none;font-family:Inter,sans-serif;margin-bottom:20px" style-focus="border-color:#6C8EEF">
+      <div onClick="{{ goPending }}" style="display:flex;align-items:center;justify-content:center;height:38px;background:#FAF9F5;border-radius:8px;color:#1F1E1C;font-size:13.5px;font-weight:600;cursor:pointer;box-sizing:border-box;margin-bottom:16px" style-hover="background:#FFFFFF">Request account</div>
+      <div style="text-align:center;color:#706D64;font-size:13px">Already approved? <span onClick="{{ goLogin }}" style="color:#6C8EEF;cursor:pointer;text-decoration:underline;text-underline-offset:2px">Sign in</span></div>
+    </div>
+  </sc-if>
+  <sc-if value="{{ isPending }}" hint-placeholder-val="{{ false }}">
+    <div style="width:380px;background:#2B2A27;border:1px solid #3B3A36;border-radius:12px;padding:36px 28px 30px;box-sizing:border-box;text-align:center">
+      <div style="width:44px;height:44px;border-radius:50%;background:rgba(232,162,61,0.15);display:flex;align-items:center;justify-content:center;margin:0 auto 18px">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#E8A23D" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+      </div>
+      <h1 style="font-family:'Source Serif 4',serif;font-size:24px;font-weight:400;color:#F5F4EF;margin:0 0 8px">Request sent</h1>
+      <div style="color:#9C998F;font-size:13.5px;line-height:1.6;margin-bottom:22px">Your account is awaiting approval by the administrator. You'll be able to sign in as soon as it's confirmed.</div>
+      <div onClick="{{ goLogin }}" style="display:inline-flex;align-items:center;justify-content:center;height:34px;padding:0 16px;border:1px solid #3B3A36;border-radius:8px;color:#F5F4EF;font-size:13px;font-weight:500;cursor:pointer;box-sizing:border-box" style-hover="background:#34322E">Back to sign in</div>
+    </div>
+  </sc-if>
+  <div style="color:#706D64;font-size:12px;margin-top:24px">Formwork Studio · internal tool</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;: {&quot;width&quot;: 1280, &quot;height&quot;: 800}}">
+class Component extends DCLogic {
+  state = { view: "login" };
+  renderVals() {
+    const v = this.state.view;
+    return {
+      isLogin: v === "login", isRegister: v === "register", isPending: v === "pending",
+      goLogin: () => this.setState({ view: "login" }),
+      goRegister: () => this.setState({ view: "register" }),
+      goPending: () => this.setState({ view: "pending" })
+    };
+  }
+}
+</script>
+</body>
+</html>

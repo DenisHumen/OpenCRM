@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="{{ site.get('showcase_locale', 'en') }}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>{% block title %}{{ site.brand_name }}{% endblock %}</title>
+{% block og %}{% endblock %}
+<style>
+  :root {
+    --bg: #161514;
+    --surface: #201F1D;
+    --surface-2: #2B2A27;
+    --border: #2C2B28;
+    --border-soft: #262523;
+    --text: #F5F4EF;
+    --muted: #9C998F;
+    --faint: #706D64;
+    --accent: {{ site.accent_color or '#D97757' }};
+    --danger: #E5695E;
+    --success: #4CAF6E;
+    --lightbox: #0E0D0C;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font: 16px/1.6 "Inter", "Segoe UI", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    min-height: 100vh;
+  }
+  .serif { font-family: "Source Serif 4", Georgia, "Times New Roman", serif; font-weight: 400; }
+  a { color: var(--accent); }
+  .brand-mark { display: flex; align-items: center; gap: 8px; }
+  .brand-mark .square {
+    width: 22px; height: 22px; border-radius: 6px; background: var(--accent);
+    display: flex; align-items: center; justify-content: center;
+    color: var(--bg); font-size: 11px; font-weight: 700; overflow: hidden;
+  }
+  .brand-mark .square img { width: 100%; height: 100%; object-fit: cover; }
+  .brand-mark .name { color: var(--muted); font-size: 13px; font-weight: 500; letter-spacing: 0.02em; }
+  @keyframes rise { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+  @keyframes fadein { from { opacity: 0; } to { opacity: 1; } }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+  }
+</style>
+{% block style %}{% endblock %}
+</head>
+<body>
+{% block content %}{% endblock %}
+{% block script %}{% endblock %}
+</body>
+</html>

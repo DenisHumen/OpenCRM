@@ -34,4 +34,26 @@ CRM-система для студии дизайна с публичной ви
 
 ## Статус
 
-Проект на этапе проектирования. Код ещё не написан — сначала документация и план (этот этап), затем дизайн-макеты через [Claude Design](https://claude.ai/design), затем реализация по плану из [09-roadmap.md](docs/09-roadmap.md).
+Этапы 0–5 плана работ завершены (см. [09-roadmap.md](docs/09-roadmap.md)): бэкенд с интеграционными тестами, React SPA CRM по макетам из [design/](design/README.md), публичная витрина 1:1 с макетами (masonry, blurhash, PIN-ячейки, лайтбокс). Production-артефакты готовы (Docker, nginx, бэкапы, скрипты обслуживания) — остался деплой на VPS с HTTPS и внешним мониторингом.
+
+## Быстрый старт (dev)
+
+```bash
+python -m venv .venv
+.venv/Scripts/pip install -e . --group dev
+.venv/Scripts/python -m alembic upgrade head
+cd web/frontend/crm && npm install && npm run build && cd ../../..
+.venv/Scripts/python -m uvicorn web.main:app --port 8000
+```
+
+- CRM открывается на `http://localhost:8000/` (FastAPI отдаёт собранную SPA), витрины — на `/b/{token}`.
+- Перед запуском скопируйте `config/.env.example` в `config/.env` и заполните. В `production` приложение не стартует с пустым `OPENCRM_SECRET_KEY` или `OPENCRM_IP_HASH_SALT` — это защита от подделки cookie, а не придирка.
+- Root-аккаунт создаётся **один раз** на пустой базе из `OPENCRM_ROOT_EMAIL`/`OPENCRM_ROOT_PASSWORD`; при первом входе обязательна смена пароля. Дальше правка этих переменных ни на что не влияет — логин и пароль меняются командой:
+
+```bash
+python scripts/reset_root.py --email me@studio.site --password "новый-пароль"
+```
+- Разработка фронтенда с hot-reload: `npm run dev` в `web/frontend/crm` (Vite на 5173, API проксируется на 8000).
+- API-документация (dev): `http://localhost:8000/api/docs`.
+- Тесты: `.venv/Scripts/python -m pytest`.
+- Демо-данные и пример витрины: `.venv/Scripts/python scripts/seed_demo.py` (сервер должен быть запущен).
