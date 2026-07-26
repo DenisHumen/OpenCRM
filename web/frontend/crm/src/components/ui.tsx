@@ -26,8 +26,26 @@ export function Toggle({ on, onToggle }: { on: boolean; onToggle: () => void }) 
   );
 }
 
-export function Avatar({ text, large }: { text: string; large?: boolean }) {
-  return <div className={"avatar" + (large ? " avatar-lg" : "")}>{text}</div>;
+export function Avatar({
+  text,
+  large,
+  src,
+  online,
+}: {
+  text: string;
+  large?: boolean;
+  src?: string | null;
+  /** undefined — не показывать индикатор; true/false — точка «в сети»/«не в сети». */
+  online?: boolean;
+}) {
+  return (
+    <div className={"avatar-wrap" + (large ? " avatar-wrap-lg" : "")}>
+      <div className={"avatar" + (large ? " avatar-lg" : "")}>
+        {src ? <img className="avatar-img" src={src} alt="" /> : text}
+      </div>
+      {online !== undefined && <span className={"avatar-dot" + (online ? " on" : "")} />}
+    </div>
+  );
 }
 
 export function Spinner() {

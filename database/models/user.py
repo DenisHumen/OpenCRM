@@ -27,6 +27,9 @@ class User(Base):
     status: Mapped[str] = mapped_column(String(16), default=STATUS_PENDING)
     locale: Mapped[str] = mapped_column(String(8), default="en")
     must_change_password: Mapped[bool] = mapped_column(Boolean, default=False)
+    avatar_path: Mapped[str] = mapped_column(String(255), default="")
+    # присутствие: обновляется на активность (throttle в auth_service), переживает logout
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     approved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 

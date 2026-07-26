@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from database.models import User, UserSession
@@ -8,6 +8,10 @@ from database.models import User, UserSession
 
 def get_by_id(db: Session, user_id: int) -> User | None:
     return db.get(User, user_id)
+
+
+def count_by_role(db: Session, role: str) -> int:
+    return db.scalar(select(func.count()).select_from(User).where(User.role == role)) or 0
 
 
 def get_by_email(db: Session, email: str) -> User | None:

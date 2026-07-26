@@ -234,6 +234,25 @@ const en = {
   interfaceLanguage: "Interface language",
   langSaved: "Saved to your account — applies on every device.",
   joined: "joined",
+  // фото + присутствие
+  photo: "Photo",
+  changePhoto: "Change photo",
+  uploadPhoto: "Upload photo",
+  photoHint: "JPG, PNG or WebP · up to 5 MB",
+  online: "Online",
+  offline: "Offline",
+  lastSeenAt: "last seen {t}",
+  neverOnline: "never signed in",
+  // роли + удаление аккаунта
+  makeRoot: "Make root",
+  makeManager: "Make manager",
+  makeRootConfirm:
+    "Give {name} root access? They will be able to manage staff and site settings, and delete accounts.",
+  makeManagerConfirm: "Remove root access from {name}? The account stays as a manager.",
+  deletePermanently: "Delete permanently",
+  deleteUserConfirm:
+    "Permanently delete {name}? The account is gone for good. Their clients, boards and notes stay but lose their author. This cannot be undone.",
+  you: "you",
 };
 
 const ru: typeof en = {
@@ -459,6 +478,25 @@ const ru: typeof en = {
   interfaceLanguage: "Язык интерфейса",
   langSaved: "Сохраняется в аккаунте — действует на любом устройстве.",
   joined: "в студии с",
+  // фото + присутствие
+  photo: "Фото",
+  changePhoto: "Изменить фото",
+  uploadPhoto: "Загрузить фото",
+  photoHint: "JPG, PNG или WebP · до 5 МБ",
+  online: "В сети",
+  offline: "Не в сети",
+  lastSeenAt: "заходил(а) {t}",
+  neverOnline: "ни разу не заходил(а)",
+  // роли + удаление аккаунта
+  makeRoot: "Назначить root",
+  makeManager: "Сделать менеджером",
+  makeRootConfirm:
+    "Выдать {name} доступ root? Сможет управлять сотрудниками и настройками сайта, удалять аккаунты.",
+  makeManagerConfirm: "Снять доступ root у {name}? Аккаунт останется как менеджер.",
+  deletePermanently: "Удалить навсегда",
+  deleteUserConfirm:
+    "Удалить {name} навсегда? Аккаунт исчезнет безвозвратно. Его клиенты, доски и заметки останутся, но потеряют автора. Отменить нельзя.",
+  you: "вы",
 };
 
 const dicts: Record<Locale, typeof en> = { en, ru };

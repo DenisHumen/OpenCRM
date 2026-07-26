@@ -1,10 +1,10 @@
 import secrets
 
-from fastapi import APIRouter, Depends, Request, Response
+from fastapi import APIRouter, Depends, Request, Response, UploadFile
 from sqlalchemy.orm import Session
 
 from config.settings import get_settings
-from core.services import auth_service
+from core.services import auth_service, avatar_service
 from database.models import User
 from web.api import schemas
 from web.api.deps import (
@@ -61,6 +61,29 @@ def logout(request: Request, response: Response, db: Session = Depends(get_db)):
 
 @router.get("/me")
 def me(user: User = Depends(get_current_user)):
+    return schemas.user_out(user)
+
+
+@router.get("/heartbeat")
+def heartbeat(user: User = Depends(get_current_user)):
+    """Лёгкий пинг присутствия: сам факт запроса обновляет last_seen (в deps)."""
+    return {"is_online": True}
+
+
+@router.post("/me/avatar", status_code=201)
+async def upload_avatar(
+    file: UploadFile,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    content = await file.read()
+    avatar_service.save_avatar(db, user, content)
+    return schemas.user_out(user)
+
+
+@router.delete("/me/avatar")
+def delete_avatar(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    avatar_service.clear_avatar(db, user)
     return schemas.user_out(user)
 
 

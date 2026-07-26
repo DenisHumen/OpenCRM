@@ -29,9 +29,16 @@
 | POST | `/auth/register` | 🔓 | Заявка на аккаунт менеджера: `name, email, password`. Ответ — «ожидайте одобрения» |
 | POST | `/auth/login` | 🔓 | Вход. `403 account_pending` — не одобрен, `403 account_disabled` — деактивирован |
 | POST | `/auth/logout` | 👤 | Выход |
-| GET | `/auth/me` | 👤 | Текущий пользователь: имя, роль, `locale`, `must_change_password` |
+| GET | `/auth/me` | 👤 | Текущий пользователь: имя, роль, `locale`, `must_change_password`, `avatar_url`, `is_online`, `last_seen_at` |
 | PATCH | `/auth/me` | 👤 | Смена имени, `locale` (en/ru — сохраняется в БД) |
 | POST | `/auth/me/password` | 👤 | Смена пароля (старый + новый); сбрасывает `must_change_password` |
+| GET | `/auth/heartbeat` | 👤 | Пинг присутствия: обновляет `last_seen` (фронт шлёт раз в ~45 c, пока вкладка активна) |
+| POST | `/auth/me/avatar` | 👤 | Загрузить свой аватар (растр по сигнатуре, не SVG; обрезается в квадрат 256, webp) |
+| DELETE | `/auth/me/avatar` | 👤 | Убрать аватар (файл стирается с диска) |
+
+Присутствие: `last_seen_at` на пользователе обновляется на активность не чаще раза в минуту и
+переживает logout (остаётся «последний раз в сети»); `is_online` = активность за последние 150 c.
+Аватары отдаёт `GET /avatars/{uuid}.webp` (публичный путь, как `/branding`).
 
 ## Сотрудники (root)
 
@@ -42,6 +49,8 @@
 | POST | `/staff/{id}/reject` | 👑 | Отклонить заявку (запись удаляется) |
 | POST | `/staff/{id}/disable` | 👑 | Деактивировать; `/enable` — вернуть |
 | POST | `/staff/{id}/reset-password` | 👑 | Выдать временный пароль с принудительной сменой |
+| POST | `/staff/{id}/role` | 👑 | Сменить роль (`{"role": "root"\|"manager"}`). Только активным; свою роль нельзя (`403 cannot_change_own_role`), последнего root не снять (`403 last_root`), `409 not_active` |
+| DELETE | `/staff/{id}` | 👑 | Удалить аккаунт безвозвратно. Себя нельзя (`403 cannot_delete_self`), последнего root нельзя (`403 last_root`). Авторство сохраняется, но обнуляется |
 
 ## Поиск и дашборд
 

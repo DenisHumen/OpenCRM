@@ -107,7 +107,7 @@ export function ClientCard() {
           <Avatar text={initials(client.name)} large />
           <div>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <h1 className="page-title" style={{ fontSize: 28 }}>
+              <h1 className="page-title" style={{ fontSize: 22 }}>
                 {client.name}
               </h1>
               {client.tags.map((tag: string) => (

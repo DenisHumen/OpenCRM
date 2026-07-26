@@ -4,13 +4,15 @@ import { Icon } from "../components/Icon";
 import { Avatar, Chip, ConfirmModal, EmptyState, Modal, ScreenLoading } from "../components/ui";
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
-import { formatDate, formatDateTime, initials } from "../lib/format";
+import { formatDateTime, initials } from "../lib/format";
 
 export function Staff() {
   const { t, locale, user, toastError } = useApp();
   const [items, setItems] = useState<any[] | null>(null);
   const [tempPassword, setTempPassword] = useState<{ name: string; password: string } | null>(null);
   const [confirmDisable, setConfirmDisable] = useState<number | null>(null);
+  const [confirmRole, setConfirmRole] = useState<{ id: number; name: string; role: "root" | "manager" } | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<{ id: number; name: string } | null>(null);
 
   const load = useCallback(() => {
     api.get("/staff").then((d) => setItems(d.items)).catch(toastError);
@@ -18,13 +20,24 @@ export function Staff() {
 
   useEffect(() => {
     load();
+    // присутствие меняется со временем — периодически освежаем список
+    const timer = window.setInterval(load, 60_000);
+    return () => window.clearInterval(timer);
   }, [load]);
 
   if (!items) return <ScreenLoading />;
 
+  const presence = (person: any) =>
+    person.is_online
+      ? t("online")
+      : person.last_seen_at
+        ? t("lastSeenAt", { t: formatDateTime(person.last_seen_at, locale) })
+        : t("neverOnline");
+
   const pending = items.filter((u) => u.status === "pending");
   const active = items.filter((u) => u.status === "active");
   const disabled = items.filter((u) => u.status === "disabled");
+  const rootCount = active.filter((u) => u.role === "root").length;
 
   const action = async (path: string) => {
     try {
@@ -35,9 +48,27 @@ export function Staff() {
     }
   };
 
+  const changeRole = async (id: number, role: "root" | "manager") => {
+    try {
+      await api.post(`/staff/${id}/role`, { role });
+      load();
+    } catch (e) {
+      toastError(e);
+    }
+  };
+
+  const removeUser = async (id: number) => {
+    try {
+      await api.del(`/staff/${id}`);
+      load();
+    } catch (e) {
+      toastError(e);
+    }
+  };
+
   return (
     <div className="page">
-      <div style={{ marginBottom: 32 }}>
+      <div style={{ marginBottom: 26 }}>
         <h1 className="page-title">{t("staff")}</h1>
         <div className="page-sub">{t("staffSub")}</div>
       </div>
@@ -48,10 +79,10 @@ export function Staff() {
             <h2 className="section-title">{t("signupRequests")}</h2>
             <Chip variant="warning">{pending.length}</Chip>
           </div>
-          <div className="list-card" style={{ marginBottom: 40 }}>
+          <div className="list-card" style={{ marginBottom: 32 }}>
             {pending.map((person) => (
-              <div key={person.id} className="list-row" style={{ height: 60 }}>
-                <Avatar text={initials(person.name)} />
+              <div key={person.id} className="list-row" style={{ height: 56 }}>
+                <Avatar text={initials(person.name)} src={person.avatar_url} />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ color: "var(--text)", fontSize: 13.5, fontWeight: 500 }}>{person.name}</div>
                   <div style={{ color: "var(--faint)", fontSize: 12 }}>
@@ -78,39 +109,84 @@ export function Staff() {
       <h2 className="section-title" style={{ marginBottom: 14 }}>
         {t("active")}
       </h2>
-      <div className="list-card" style={{ marginBottom: 40 }}>
-        {active.map((person) => (
-          <div key={person.id} className="list-row hoverable">
-            <Avatar text={initials(person.name)} />
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ color: "var(--text)", fontSize: 13.5, fontWeight: 500 }}>{person.name}</div>
-              <div style={{ color: "var(--faint)", fontSize: 12 }}>{person.email}</div>
-            </div>
-            <Chip variant={person.role === "root" ? "brand" : undefined}>
-              {person.role === "root" ? t("root") : t("managerRole")}
-            </Chip>
-            {person.role !== "root" && (
-              <div style={{ display: "flex", gap: 12, marginLeft: 8 }}>
-                <button
-                  className="text-link"
-                  onClick={async () => {
-                    try {
-                      const result = await api.post(`/staff/${person.id}/reset-password`);
-                      setTempPassword({ name: person.name, password: result.temp_password });
-                    } catch (e) {
-                      toastError(e);
-                    }
-                  }}
-                >
-                  {t("resetPassword")}
-                </button>
-                <button className="text-link danger" onClick={() => setConfirmDisable(person.id)}>
-                  {t("deactivate")}
-                </button>
+      <div className="list-card" style={{ marginBottom: 32 }}>
+        {active.map((person) => {
+          const isSelf = person.id === user?.id;
+          const isRoot = person.role === "root";
+          // последнего root снять/удалить нельзя — иначе некому управлять студией
+          const isLastRoot = isRoot && rootCount <= 1;
+          return (
+            <div key={person.id} className="list-row hoverable">
+              <Avatar text={initials(person.name)} src={person.avatar_url} online={person.is_online} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ color: "var(--text)", fontSize: 13.5, fontWeight: 500 }}>{person.name}</div>
+                <div style={{ color: "var(--faint)", fontSize: 12 }}>{person.email}</div>
               </div>
-            )}
-          </div>
-        ))}
+              <div
+                style={{
+                  fontSize: 12,
+                  whiteSpace: "nowrap",
+                  marginRight: 4,
+                  color: person.is_online ? "var(--success)" : "var(--faint)",
+                }}
+              >
+                {presence(person)}
+              </div>
+              <Chip variant={isRoot ? "brand" : undefined}>{isRoot ? t("root") : t("managerRole")}</Chip>
+              {isSelf ? (
+                <span style={{ fontSize: 12, color: "var(--faint)", marginLeft: 8 }}>{t("you")}</span>
+              ) : (
+                <div style={{ display: "flex", gap: 12, marginLeft: 8 }}>
+                  {isRoot
+                    ? !isLastRoot && (
+                        <button
+                          className="text-link"
+                          onClick={() => setConfirmRole({ id: person.id, name: person.name, role: "manager" })}
+                        >
+                          {t("makeManager")}
+                        </button>
+                      )
+                    : (
+                        <button
+                          className="text-link"
+                          onClick={() => setConfirmRole({ id: person.id, name: person.name, role: "root" })}
+                        >
+                          {t("makeRoot")}
+                        </button>
+                      )}
+                  {!isRoot && (
+                    <>
+                      <button
+                        className="text-link"
+                        onClick={async () => {
+                          try {
+                            const result = await api.post(`/staff/${person.id}/reset-password`);
+                            setTempPassword({ name: person.name, password: result.temp_password });
+                          } catch (e) {
+                            toastError(e);
+                          }
+                        }}
+                      >
+                        {t("resetPassword")}
+                      </button>
+                      <button className="text-link danger" onClick={() => setConfirmDisable(person.id)}>
+                        {t("deactivate")}
+                      </button>
+                    </>
+                  )}
+                  {!isLastRoot && (
+                    <button
+                      className="text-link danger"
+                      onClick={() => setConfirmDelete({ id: person.id, name: person.name })}
+                    >
+                      {t("deletePermanently")}
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
 
       {disabled.length > 0 && (
@@ -121,14 +197,22 @@ export function Staff() {
           <div className="list-card" style={{ opacity: 0.7 }}>
             {disabled.map((person) => (
               <div key={person.id} className="list-row">
-                <Avatar text={initials(person.name)} />
+                <Avatar text={initials(person.name)} src={person.avatar_url} />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ color: "var(--muted)", fontSize: 13.5, fontWeight: 500 }}>{person.name}</div>
                   <div style={{ color: "var(--faint)", fontSize: 12 }}>{person.email}</div>
                 </div>
-                <button className="text-link" onClick={() => void action(`/staff/${person.id}/enable`)}>
-                  {t("restore")}
-                </button>
+                <div style={{ display: "flex", gap: 12 }}>
+                  <button className="text-link" onClick={() => void action(`/staff/${person.id}/enable`)}>
+                    {t("restore")}
+                  </button>
+                  <button
+                    className="text-link danger"
+                    onClick={() => setConfirmDelete({ id: person.id, name: person.name })}
+                  >
+                    {t("deletePermanently")}
+                  </button>
+                </div>
               </div>
             ))}
           </div>
@@ -156,6 +240,28 @@ export function Staff() {
           danger
           onConfirm={() => void action(`/staff/${confirmDisable}/disable`)}
           onClose={() => setConfirmDisable(null)}
+        />
+      )}
+      {confirmRole && (
+        <ConfirmModal
+          text={
+            confirmRole.role === "root"
+              ? t("makeRootConfirm", { name: confirmRole.name })
+              : t("makeManagerConfirm", { name: confirmRole.name })
+          }
+          confirmLabel={confirmRole.role === "root" ? t("makeRoot") : t("makeManager")}
+          danger={confirmRole.role === "root"}
+          onConfirm={() => void changeRole(confirmRole.id, confirmRole.role)}
+          onClose={() => setConfirmRole(null)}
+        />
+      )}
+      {confirmDelete && (
+        <ConfirmModal
+          text={t("deleteUserConfirm", { name: confirmDelete.name })}
+          confirmLabel={t("deletePermanently")}
+          danger
+          onConfirm={() => void removeUser(confirmDelete.id)}
+          onClose={() => setConfirmDelete(null)}
         />
       )}
     </div>

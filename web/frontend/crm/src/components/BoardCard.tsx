@@ -17,14 +17,19 @@ export function BoardCard({ board, compact }: { board: any; compact?: boolean })
         ) : (
           <Icon name="image" size={22} />
         )}
-        {revoked && <div style={{ position: "absolute", inset: 0, background: "rgba(38,38,36,0.55)" }} />}
+        {revoked && <div style={{ position: "absolute", inset: 0, background: "rgba(20,20,19,0.6)" }} />}
       </div>
       <div style={{ padding: compact ? "12px 14px 14px" : "14px 16px 16px" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8, flexWrap: "wrap" }}>
           <span style={{ color: "var(--text)", fontSize: compact ? 13.5 : 14, fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
             {board.title}
           </span>
-          {!board.is_published && <Chip variant="warning">{t("draft")}</Chip>}
+          {!board.is_published && (
+            <Chip>
+              <span className="dot" />
+              {t("draft")}
+            </Chip>
+          )}
           {board.is_published && revoked && <Chip>{t("linkRevoked")}</Chip>}
           {board.has_pin && <Chip variant="accent">PIN</Chip>}
         </div>

@@ -88,7 +88,12 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
         subtitle: board.client_name ?? undefined,
         meta: (
           <span className="cp-meta">
-            {!board.is_published && <Chip variant="warning">{t("draft")}</Chip>}
+            {!board.is_published && (
+              <Chip>
+                <span className="dot" />
+                {t("draft")}
+              </Chip>
+            )}
             {board.has_pin && <Chip variant="accent">PIN</Chip>}
             <span>
               {board.works_count} {t("works")}

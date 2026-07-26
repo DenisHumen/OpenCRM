@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 
 import { Avatar } from "../components/ui";
 import { api, ApiError, type User } from "../lib/api";
@@ -13,8 +13,28 @@ export function Profile() {
   const [newPassword, setNewPassword] = useState("");
   const [repeat, setRepeat] = useState("");
   const [passwordError, setPasswordError] = useState<string | null>(null);
+  const avatarInput = useRef<HTMLInputElement>(null);
 
   if (!user) return null;
+
+  const uploadAvatar = async (file: File | undefined) => {
+    if (!file) return;
+    try {
+      setUser(await api.upload<User>("/auth/me/avatar", file));
+      toast(t("saved"));
+    } catch (e) {
+      toastError(e);
+    }
+  };
+
+  const removeAvatar = async () => {
+    try {
+      setUser(await api.del<User>("/auth/me/avatar"));
+      if (avatarInput.current) avatarInput.current.value = "";
+    } catch (e) {
+      toastError(e);
+    }
+  };
 
   const saveProfile = async () => {
     try {
@@ -55,10 +75,19 @@ export function Profile() {
 
   return (
     <div className="page page-tight">
-      <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 32 }}>
-        <Avatar text={initials(user.name)} large />
+      <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 26 }}>
+        <div onClick={() => avatarInput.current?.click()} title={t("changePhoto")} style={{ cursor: "pointer" }}>
+          <Avatar text={initials(user.name)} large src={user.avatar_url} online />
+        </div>
+        <input
+          ref={avatarInput}
+          type="file"
+          accept="image/png,image/jpeg,image/webp,image/gif"
+          hidden
+          onChange={(e) => void uploadAvatar(e.target.files?.[0])}
+        />
         <div>
-          <h1 className="page-title" style={{ fontSize: 28 }}>
+          <h1 className="page-title" style={{ fontSize: 22 }}>
             {t("profile")}
           </h1>
           <div className="page-sub" style={{ marginTop: 4 }}>
@@ -68,10 +97,21 @@ export function Profile() {
             </span>{" "}
             · {t("joined")} {formatDate(user.created_at, locale)}
           </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 8 }}>
+            <button className="text-link" onClick={() => avatarInput.current?.click()}>
+              {user.avatar_url ? t("changePhoto") : t("uploadPhoto")}
+            </button>
+            {user.avatar_url && (
+              <button className="text-link danger" onClick={() => void removeAvatar()}>
+                {t("removeImage")}
+              </button>
+            )}
+            <span style={{ color: "var(--faint)", fontSize: 11.5 }}>{t("photoHint")}</span>
+          </div>
         </div>
       </div>
 
-      <div className="card" style={{ padding: "22px 24px", marginBottom: 16 }}>
+      <div className="card" style={{ padding: "20px 22px", marginBottom: 16 }}>
         <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 16 }}>{t("account")}</div>
         <div className="field">
           <label className="label">{t("displayName")}</label>
@@ -88,7 +128,7 @@ export function Profile() {
         </button>
       </div>
 
-      <div className="card" style={{ padding: "22px 24px", marginBottom: 16 }}>
+      <div className="card" style={{ padding: "20px 22px", marginBottom: 16 }}>
         <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 16 }}>{t("interfaceLanguage")}</div>
         <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
           {[
@@ -107,7 +147,7 @@ export function Profile() {
         <div style={{ color: "var(--faint)", fontSize: 11.5 }}>{t("langSaved")}</div>
       </div>
 
-      <form className="card" style={{ padding: "22px 24px" }} onSubmit={changePassword}>
+      <form className="card" style={{ padding: "20px 22px" }} onSubmit={changePassword}>
         <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 16 }}>{t("changePassword")}</div>
         <div className="field">
           <label className="label">{t("currentPassword")}</label>

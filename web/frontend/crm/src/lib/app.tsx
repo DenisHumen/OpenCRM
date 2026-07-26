@@ -14,6 +14,8 @@ import { makeT, type Locale, type TFunc } from "./i18n";
 
 // проверка места дешёвая, но не бесплатная: обновляем раз в пару минут
 const STORAGE_POLL_MS = 120_000;
+// пинг присутствия: держит last_seen свежим, пока вкладка открыта
+const HEARTBEAT_MS = 45_000;
 
 interface Toast {
   id: number;
@@ -95,6 +97,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const timer = window.setInterval(() => void refreshStorage(), STORAGE_POLL_MS);
     return () => window.clearInterval(timer);
   }, [user, refreshStorage]);
+
+  // heartbeat присутствия: пока вкладка на переднем плане, отмечаемся «в сети»
+  useEffect(() => {
+    if (!user || user.must_change_password) return;
+    const ping = () => {
+      if (document.visibilityState === "visible") void api.get("/auth/heartbeat").catch(() => {});
+    };
+    ping();
+    const timer = window.setInterval(ping, HEARTBEAT_MS);
+    document.addEventListener("visibilitychange", ping);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", ping);
+    };
+  }, [user]);
 
   const toast = useCallback((text: string, error = false) => {
     const id = toastSeq++;

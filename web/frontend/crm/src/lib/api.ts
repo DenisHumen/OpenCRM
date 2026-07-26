@@ -60,6 +60,9 @@ export interface User {
   status: string;
   locale: "en" | "ru";
   must_change_password: boolean;
+  avatar_url: string | null;
+  last_seen_at: string | null;
+  is_online: boolean;
   created_at: string | null;
   approved_at: string | null;
 }

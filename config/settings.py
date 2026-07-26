@@ -64,6 +64,10 @@ class Settings(BaseSettings):
         return self.storage_dir / "branding"
 
     @property
+    def avatars_dir(self) -> Path:
+        return self.storage_dir / "avatars"
+
+    @property
     def max_upload_bytes(self) -> int:
         return self.max_upload_mb * 1024 * 1024
 

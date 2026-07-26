@@ -41,3 +41,23 @@ def enable(user_id: int, db: Session = Depends(get_db)):
 def reset_password(user_id: int, db: Session = Depends(get_db)):
     user, temp_password = auth_service.reset_password(db, user_id)
     return {"user": schemas.user_out(user), "temp_password": temp_password}
+
+
+@router.post("/{user_id}/role")
+def set_role(
+    user_id: int,
+    payload: schemas.RoleUpdateIn,
+    actor: User = Depends(require_root),
+    db: Session = Depends(get_db),
+):
+    return schemas.user_out(auth_service.set_role(db, actor, user_id, payload.role))
+
+
+@router.delete("/{user_id}")
+def delete_user(
+    user_id: int,
+    actor: User = Depends(require_root),
+    db: Session = Depends(get_db),
+):
+    auth_service.delete_user(db, actor, user_id)
+    return {"message": "User deleted"}

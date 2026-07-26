@@ -5,6 +5,7 @@ from datetime import datetime
 from pydantic import BaseModel, Field
 
 from core.services import media_service
+from core.utils import is_online
 from database.models import (
     Board,
     Client,
@@ -104,6 +105,10 @@ class SettingsPatchIn(BaseModel):
     values: dict[str, str]
 
 
+class RoleUpdateIn(BaseModel):
+    role: str
+
+
 # --- сериализация ---
 
 def user_out(user: User) -> dict:
@@ -115,6 +120,9 @@ def user_out(user: User) -> dict:
         "status": user.status,
         "locale": user.locale,
         "must_change_password": user.must_change_password,
+        "avatar_url": user.avatar_path or None,
+        "last_seen_at": _iso(user.last_seen_at),
+        "is_online": is_online(user.last_seen_at),
         "created_at": _iso(user.created_at),
         "approved_at": _iso(user.approved_at),
     }

@@ -91,7 +91,7 @@ export function Settings() {
 
   return (
     <div className="page page-narrow">
-      <div className="page-head" style={{ alignItems: "flex-start", marginBottom: 32 }}>
+      <div className="page-head" style={{ alignItems: "flex-start", marginBottom: 26 }}>
         <div>
           <h1 className="page-title">{t("siteSettings")}</h1>
           <div className="page-sub">{t("settingsSub")}</div>
@@ -101,7 +101,7 @@ export function Settings() {
         </button>
       </div>
 
-      <div className="card" style={{ padding: "22px 24px", marginBottom: 16 }}>
+      <div className="card" style={{ padding: "20px 22px", marginBottom: 16 }}>
         <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>{t("brand")}</div>
         <div style={{ color: "var(--faint)", fontSize: 12.5, marginBottom: 18 }}>{t("brandSub")}</div>
         <div style={{ display: "flex", gap: 20, alignItems: "flex-start" }}>
@@ -149,7 +149,7 @@ export function Settings() {
         </div>
       </div>
 
-      <div className="card" style={{ padding: "22px 24px", marginBottom: 16 }}>
+      <div className="card" style={{ padding: "20px 22px", marginBottom: 16 }}>
         <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>{t("contacts")}</div>
         <div style={{ color: "var(--faint)", fontSize: 12.5, marginBottom: 18 }}>{t("contactsSub")}</div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "14px 16px" }}>
@@ -161,7 +161,7 @@ export function Settings() {
         </div>
       </div>
 
-      <div className="card" style={{ padding: "22px 24px" }}>
+      <div className="card" style={{ padding: "20px 22px" }}>
         <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>{t("showcase")}</div>
         <div style={{ color: "var(--faint)", fontSize: 12.5, marginBottom: 18 }}>{t("showcaseSub")}</div>
         <div style={{ display: "flex", gap: 20, alignItems: "flex-start" }}>
@@ -210,7 +210,7 @@ export function Settings() {
         </div>
       </div>
 
-      <div className="card" style={{ padding: "22px 24px", marginTop: 16 }}>
+      <div className="card" style={{ padding: "20px 22px", marginTop: 16 }}>
         <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>{t("maintenance")}</div>
         <div style={{ color: "var(--faint)", fontSize: 12.5, marginBottom: 18 }}>{t("maintenanceSub")}</div>
         {storage ? (

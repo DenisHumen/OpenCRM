@@ -63,7 +63,12 @@ async def lifespan(app: FastAPI):
     for message in settings.config_warnings():
         print(f"[opencrm] ВНИМАНИЕ: {message}")
 
-    for directory in (settings.media_dir, settings.client_files_dir, settings.branding_dir):
+    for directory in (
+        settings.media_dir,
+        settings.client_files_dir,
+        settings.branding_dir,
+        settings.avatars_dir,
+    ):
         directory.mkdir(parents=True, exist_ok=True)
     Base.metadata.create_all(engine)
     db = SessionLocal()
@@ -129,7 +134,7 @@ def create_app() -> FastAPI:
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
         path = request.url.path
-        if path.startswith(("/media/", "/branding/")):
+        if path.startswith(("/media/", "/branding/", "/avatars/")):
             response.headers.setdefault("Content-Security-Policy", CSP_MEDIA)
         elif path.startswith("/b/"):
             response.headers.setdefault("Content-Security-Policy", CSP_SHOWCASE)
@@ -169,7 +174,7 @@ def create_app() -> FastAPI:
         @app.api_route("/{full_path:path}", methods=["GET", "HEAD"], include_in_schema=False)
         def spa(full_path: str):
             # не перехватываем API и публичные пути — для них честный 404
-            if full_path.startswith(("api/", "b/", "media/", "branding/", "assets/")):
+            if full_path.startswith(("api/", "b/", "media/", "branding/", "avatars/", "assets/")):
                 return JSONResponse(
                     {"error": {"code": "not_found", "message": "Not found"}}, status_code=404
                 )

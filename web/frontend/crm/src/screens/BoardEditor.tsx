@@ -178,12 +178,17 @@ export function BoardEditor() {
       <div className="page-head" style={{ marginBottom: 28 }}>
         <div>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <h1 className="page-title" style={{ fontSize: 28 }}>
+            <h1 className="page-title" style={{ fontSize: 22 }}>
               {board.title}
             </h1>
-            <Chip variant={board.is_published ? "success" : "warning"}>
-              {board.is_published ? t("published") : t("draft")}
-            </Chip>
+            {board.is_published ? (
+              <Chip variant="success">{t("published")}</Chip>
+            ) : (
+              <Chip>
+                <span className="dot" />
+                {t("draft")}
+              </Chip>
+            )}
           </div>
           <div className="page-sub">
             {board.client_id && clients.length > 0 && (

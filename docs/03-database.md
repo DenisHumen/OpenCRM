@@ -31,6 +31,8 @@ erDiagram
         string status "pending | active | disabled"
         string locale "en | ru"
         bool must_change_password
+        string avatar_path "'' | /avatars/<uuid>.webp"
+        datetime last_seen_at "присутствие, переживает logout"
         datetime created_at
         datetime approved_at
     }
@@ -133,8 +135,8 @@ erDiagram
 ## Пояснения к решениям
 
 ### users
-- `role` — только `root` и `manager`. Root один, создаётся скриптом bootstrap при первом запуске (email/пароль из env, `must_change_password = true`).
-- `status = pending` после регистрации: вход запрещён до одобрения. Root меняет на `active` (одобрить) или аккаунт удаляется (отклонить). `disabled` — уволенный сотрудник: вход запрещён, данные и авторство сохраняются.
+- `role` — только `root` и `manager`. Первый root создаётся скриптом bootstrap при первом запуске (email/пароль из env, `must_change_password = true`). Дальше root может менять роль активных сотрудников (`manager ↔ root`), поэтому администраторов может быть несколько; система следит, чтобы хотя бы один root всегда оставался (см. [07-security.md](07-security.md)).
+- `status = pending` после регистрации: вход запрещён до одобрения. Root меняет на `active` (одобрить) или аккаунт удаляется (отклонить). `disabled` — уволенный сотрудник: вход запрещён, данные и авторство сохраняются. Аккаунт можно и удалить окончательно (`DELETE /staff/{id}`): запись и сессии стираются, но авторство в клиентах/досках/заметках/файлах обнуляется (`ON DELETE SET NULL`), а не удаляется.
 - `locale` — выбранный язык интерфейса; по умолчанию `en`. Применяется при каждом входе с любого устройства.
 
 ### clients

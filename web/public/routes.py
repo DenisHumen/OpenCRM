@@ -237,3 +237,19 @@ def branding_file(filename: str):
     if not path.is_file():
         return JSONResponse({"error": {"code": "not_found", "message": "Not found"}}, status_code=404)
     return FileResponse(path, headers={"Cache-Control": "public, max-age=3600"})
+
+
+@router.get("/avatars/{filename}")
+def avatar_file(filename: str):
+    # имя формирует сервер: <uuid>.webp; меняется при каждой смене аватара, поэтому
+    # можно кэшировать надолго. Пускаем только .webp и без разделителей пути.
+    if not filename.endswith(".webp") or "/" in filename or "\\" in filename:
+        return JSONResponse({"error": {"code": "not_found", "message": "Not found"}}, status_code=404)
+    path = get_settings().avatars_dir / filename
+    if not path.is_file():
+        return JSONResponse({"error": {"code": "not_found", "message": "Not found"}}, status_code=404)
+    return FileResponse(
+        path,
+        media_type="image/webp",
+        headers={"Cache-Control": "public, max-age=86400", "X-Content-Type-Options": "nosniff"},
+    )

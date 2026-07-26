@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from config.settings import get_settings
 from core import exceptions as errors
 from core.security import passwords, tokens
-from core.utils import is_valid_email, normalize_email, now_utc
+from core.utils import PRESENCE_TOUCH_SECONDS, is_valid_email, normalize_email, now_utc
 from database.models import User
 from database.models.user import (
     ROLE_MANAGER,
@@ -77,9 +77,13 @@ def get_user_by_session(db: Session, token: str) -> User | None:
     user = users_repo.get_by_id(db, session.user_id)
     if user is None or user.status != STATUS_ACTIVE:
         return None
-    # обновляем last_seen не чаще раза в час, чтобы не писать на каждый запрос
-    if session.last_seen_at is None or (now_utc() - session.last_seen_at).total_seconds() > 3600:
-        session.last_seen_at = now_utc()
+    # присутствие: обновляем last_seen не чаще раза в минуту, чтобы не писать на каждый
+    # запрос, но достаточно часто для индикатора «в сети». last_seen на пользователе
+    # переживает logout — так остаётся «последний раз в сети».
+    now = now_utc()
+    if user.last_seen_at is None or (now - user.last_seen_at).total_seconds() > PRESENCE_TOUCH_SECONDS:
+        user.last_seen_at = now
+        session.last_seen_at = now
     return user
 
 
@@ -164,6 +168,49 @@ def reset_password(db: Session, user_id: int) -> tuple[User, str]:
     user.must_change_password = True
     users_repo.delete_sessions_for_user(db, user.id)
     return user, temp_password
+
+
+def set_role(db: Session, actor: User, user_id: int, new_role: str) -> User:
+    """Меняет роль сотрудника (root ↔ manager). Только для активных.
+
+    Root'ов может быть несколько (несколько администраторов). Инварианты:
+    свою роль менять нельзя (иначе можно случайно снять с себя доступ), и в
+    системе всегда остаётся хотя бы один root.
+    """
+    if new_role not in (ROLE_ROOT, ROLE_MANAGER):
+        raise errors.ValidationError("Unknown role", code="bad_role")
+    user = users_repo.get_by_id(db, user_id)
+    if user is None:
+        raise errors.NotFoundError("User not found", code="user_not_found")
+    if user.id == actor.id:
+        raise errors.ForbiddenError("Cannot change your own role", code="cannot_change_own_role")
+    if user.status != STATUS_ACTIVE:
+        raise errors.ConflictError("Only active staff can change role", code="not_active")
+    if user.role == new_role:
+        return user
+    if user.role == ROLE_ROOT and users_repo.count_by_role(db, ROLE_ROOT) <= 1:
+        raise errors.ForbiddenError("At least one root must remain", code="last_root")
+    user.role = new_role
+    return user
+
+
+def delete_user(db: Session, actor: User, user_id: int) -> None:
+    """Удаляет аккаунт безвозвратно. Авторство (клиенты, доски, заметки, файлы)
+    сохраняется, но обнуляется (FK ``ON DELETE SET NULL``); сессии сносятся каскадом
+    (``ON DELETE CASCADE``), поэтому доступ по ним прекращается сразу.
+    Нельзя удалить себя и последнего root'а.
+    """
+    from core.services import avatar_service
+
+    user = users_repo.get_by_id(db, user_id)
+    if user is None:
+        raise errors.NotFoundError("User not found", code="user_not_found")
+    if user.id == actor.id:
+        raise errors.ForbiddenError("Cannot delete your own account", code="cannot_delete_self")
+    if user.role == ROLE_ROOT and users_repo.count_by_role(db, ROLE_ROOT) <= 1:
+        raise errors.ForbiddenError("At least one root must remain", code="last_root")
+    avatar_service.clear_avatar(db, user)  # стираем файл аватара с диска
+    db.delete(user)
 
 
 # --- bootstrap ---

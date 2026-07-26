@@ -33,7 +33,7 @@ export function Dashboard() {
 
   return (
     <div className="page">
-      <div className="page-head" style={{ marginBottom: 32 }}>
+      <div className="page-head" style={{ marginBottom: 26 }}>
         <h1 className="page-title">
           {greeting}, {user?.name}
         </h1>
@@ -71,7 +71,8 @@ export function Dashboard() {
           <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 14 }}>
             <div className="metric-title">{t("metricBoards")}</div>
             {data.boards_total - data.boards_published > 0 && (
-              <Chip variant="warning">
+              <Chip>
+                <span className="dot" />
                 {data.boards_total - data.boards_published} {t("drafts")}
               </Chip>
             )}
@@ -96,7 +97,7 @@ export function Dashboard() {
         </div>
       </div>
 
-      <div className="card" style={{ padding: "20px 24px", display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 32, marginBottom: 44 }}>
+      <div className="card" style={{ padding: "18px 20px", display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 28, marginBottom: 28 }}>
         <div>
           <div className="metric-title" style={{ marginBottom: 14 }}>
             {t("showcaseViews")}
@@ -131,7 +132,7 @@ export function Dashboard() {
       </div>
 
       {storage && (
-        <div style={{ marginBottom: 44 }}>
+        <div style={{ marginBottom: 28 }}>
           <StorageCard storage={storage} onPurged={() => void refreshStorage()} />
         </div>
       )}
@@ -143,11 +144,11 @@ export function Dashboard() {
         </Link>
       </div>
       {data.recent_boards.length === 0 ? (
-        <div className="card" style={{ marginBottom: 44 }}>
+        <div className="card" style={{ marginBottom: 28 }}>
           <EmptyState title={t("noBoardsYet")} />
         </div>
       ) : (
-        <div className="board-grid board-grid-4" style={{ marginBottom: 44 }}>
+        <div className="board-grid board-grid-4" style={{ marginBottom: 28 }}>
           {data.recent_boards.map((board: any) => (
             <BoardCard key={board.id} board={board} compact />
           ))}

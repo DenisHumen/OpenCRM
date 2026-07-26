@@ -178,7 +178,7 @@ export function Sidebar({ onOpenSearch }: { onOpenSearch: () => void }) {
             </div>
           )}
           <div className="side-user" onClick={() => setMenuOpen((open) => !open)}>
-            <Avatar text={initials(user?.name ?? "?")} />
+            <Avatar text={initials(user?.name ?? "?")} src={user?.avatar_url} online />
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ color: "var(--text)", fontSize: 13, fontWeight: 500 }}>{user?.name}</div>
               <div style={{ color: "var(--faint)", fontSize: 11 }}>
