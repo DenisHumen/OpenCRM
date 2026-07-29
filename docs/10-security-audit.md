@@ -57,7 +57,7 @@
 
 ### SEC-03 — stored XSS через SVG при выдаче nginx
 
-**Где:** `core/services/media_service.py:77-86`, `docker/nginx/opencrm.conf:15-24`, `web/main.py:32-33`.
+**Где:** `core/services/media_service.py:77-86`, `docker/nginx/templates/locations.inc`, `web/main.py:32-33`.
 
 SVG допускается к загрузке. Его очистка регулярными выражениями неполна: например, не удаляется некавычечный обработчик события `onload=...`; это подтверждено вызовом `sanitize_svg`. В development защитный CSP для `/media/` добавляет FastAPI, но production nginx отдаёт `/media/` прямо из volume и не устанавливает этот CSP. В результате SVG можно открыть как документ того же origin и выполнить JavaScript.
 
@@ -72,7 +72,7 @@ SVG допускается к загрузке. Его очистка регул
 
 ### SEC-04 — отзыв публичной ссылки не закрывает уже известные URL медиа
 
-**Где:** `web/public/routes.py:215-229`, `core/services/media_service.py:169-194`, `docker/nginx/opencrm.conf:15-24`.
+**Где:** `web/public/routes.py:215-229`, `core/services/media_service.py:169-194`, `docker/nginx/templates/locations.inc`.
 
 Страница публичной доски выдаёт постоянные URL вида `/media/{work_uid}/...`. Маршрут медиа и nginx не проверяют ни share token, ни PIN-cookie, ни статус доски. Поэтому посетитель, однажды получивший URL файла, может открыть или переслать его после отзыва ссылки, истечения её срока, снятия публикации доски или смены PIN. Случайный `work_uid` снижает риск угадывания, но не отменяет доступ по уже сохранённому URL.
 

@@ -92,6 +92,7 @@ erDiagram
         string kind "image | video"
         string title
         text description
+        string project_url "'' | http(s)-ссылка на кейс клиента"
         int sort_order
         string status "processing | ready | failed"
         string original_name
@@ -148,6 +149,7 @@ erDiagram
 - `cover_work_id` — обложка доски: показывается в списках CRM и в OG-превью ссылки. По умолчанию — первая работа.
 - `is_published` — черновик/опубликована. Неопубликованная доска по ссылке показывает «доступ закрыт» даже при активном токене — менеджер может спокойно готовить контент.
 - `works.status = processing` — файл загружен, превью ещё генерируются; витрина такие работы не показывает, CRM показывает с индикатором.
+- `works.project_url` — ссылка на кейс клиента: каждая работа на витрине может быть отдельным проектом. Пустая строка = кнопки перехода нет. Пускаются только `http(s)` (ссылка уходит в `href` на публичной странице), см. [10-showcase-cases.md](10-showcase-cases.md).
 
 ### share_links
 - Токен — `secrets.token_urlsafe(16)` → 22 url-safe символа, неугадываемый. Уникален глобально.
@@ -163,6 +165,7 @@ erDiagram
 
 ### site_settings
 - Ключ-значение: `brand_name`, `brand_logo_path`, `contact_email`, `contact_phone`, `social_telegram`, `showcase_locale`, `og_default_image` и т.п.
+- Тумблеры витрины хранятся строкой `"1"`/`"0"` (таблица строковая): `showcase_show_meta` — строка «7 works · updated …» под названием доски, `showcase_show_footer` — футер с контактами. Оба по умолчанию `"0"`.
 - Редактирует только root. Кэшируется в памяти процесса с инвалидацией при записи.
 
 ## Жизненный цикл файлов и освобождение места

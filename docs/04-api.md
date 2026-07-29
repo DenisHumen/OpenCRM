@@ -91,7 +91,7 @@
 | DELETE | `/boards/{id}` | 👤 | Мягкое удаление; все ссылки доски перестают открываться |
 | POST | `/boards/{id}/works` | 👤 | Загрузка файла работы (multipart). Ответ `202` + `work` со `status=processing` |
 | GET | `/boards/{id}/works/{work_id}` | 👤 | Одна работа (поллинг статуса обработки) |
-| PATCH | `/boards/{id}/works/{work_id}` | 👤 | `title`, `description` |
+| PATCH | `/boards/{id}/works/{work_id}` | 👤 | `title`, `description`, `project_url` (только `http(s)`, иначе `422 bad_project_url`) |
 | PUT | `/boards/{id}/works/order` | 👤 | Новый порядок: `{"work_ids": [5, 2, 9, ...]}` (drag-and-drop) |
 | DELETE | `/boards/{id}/works/{work_id}` | 👤 | Удалить работу и её файлы |
 
@@ -111,8 +111,9 @@
 | Метод | Путь | Права | Описание |
 |---|---|---|---|
 | GET | `/settings` | 👑 | Все настройки: бренд, контакты, соцсети, язык витрины |
-| PATCH | `/settings` | 👑 | Обновить значения |
-| POST | `/settings/logo` | 👑 | Загрузить логотип (multipart) |
+| PATCH | `/settings` | 👑 | Обновить значения. `studio_site_url` — только `http(s)`, иначе `422 bad_site_url` |
+| POST | `/settings/logo` | 👑 | Загрузить логотип (multipart). Путь возвращается с меткой версии `?v=` |
+| POST | `/settings/site-logo` | 👑 | Логотип сайта для кнопки «Return to the site»; `DELETE` — убрать |
 
 ## Публичные маршруты (витрина, вне /api)
 

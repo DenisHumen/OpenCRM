@@ -1,3 +1,4 @@
+import mimetypes
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -134,7 +135,15 @@ def create_app() -> FastAPI:
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
         path = request.url.path
-        if path.startswith(("/media/", "/branding/", "/avatars/")):
+        if path.startswith("/static/"):
+            # Шрифты витрины лежат под постоянными именами и не меняются: без
+            # max-age браузер переспрашивал бы их на каждой загрузке страницы
+            # (в логе — вереница 304 Not Modified вместо попадания в кэш).
+            response.headers.setdefault(
+                "Cache-Control", "public, max-age=31536000, immutable"
+            )
+            response.headers.setdefault("Content-Security-Policy", CSP_MEDIA)
+        elif path.startswith(("/media/", "/branding/", "/avatars/")):
             response.headers.setdefault("Content-Security-Policy", CSP_MEDIA)
         elif path.startswith("/b/"):
             response.headers.setdefault("Content-Security-Policy", CSP_SHOWCASE)
@@ -155,6 +164,17 @@ def create_app() -> FastAPI:
     app.include_router(system.router, prefix=api_prefix)
     app.include_router(public_routes.router)
 
+    # шрифты витрины (Montserrat, SIL OFL) — раздаём со своего домена, а не с CDN:
+    # внешний запрос светил бы IP посетителя стороннему сервису и требовал бы правки CSP
+    #
+    # .woff2 зарегистрирован в mimetypes не на каждой системе (на Windows — нет),
+    # и без этой строки шрифт уезжает как application/octet-stream.
+    mimetypes.add_type("font/woff2", ".woff2")
+    mimetypes.add_type("font/woff", ".woff")
+    static_dir = Path(__file__).parent / "public" / "static"
+    if static_dir.is_dir():
+        app.mount("/static", StaticFiles(directory=static_dir), name="showcase-static")
+
     # HEAD — мониторинг и прокси часто проверяют доступность именно им
     @app.api_route("/healthz", methods=["GET", "HEAD"])
     def healthz():
@@ -174,7 +194,9 @@ def create_app() -> FastAPI:
         @app.api_route("/{full_path:path}", methods=["GET", "HEAD"], include_in_schema=False)
         def spa(full_path: str):
             # не перехватываем API и публичные пути — для них честный 404
-            if full_path.startswith(("api/", "b/", "media/", "branding/", "avatars/", "assets/")):
+            if full_path.startswith(
+                ("api/", "b/", "media/", "branding/", "avatars/", "assets/", "static/")
+            ):
                 return JSONResponse(
                     {"error": {"code": "not_found", "message": "Not found"}}, status_code=404
                 )

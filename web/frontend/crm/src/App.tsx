@@ -13,7 +13,14 @@ import { Clients } from "./screens/Clients";
 import { Dashboard } from "./screens/Dashboard";
 import { Files } from "./screens/Files";
 import { Profile } from "./screens/Profile";
-import { Settings } from "./screens/Settings";
+import {
+  SettingsBrand,
+  SettingsContacts,
+  SettingsLayout,
+  SettingsMaintenance,
+  SettingsReturnButton,
+  SettingsShowcase,
+} from "./screens/Settings";
 import { Staff } from "./screens/Staff";
 
 function Protected() {
@@ -67,7 +74,16 @@ export default function App() {
           <Route element={<RootOnly />}>
             <Route path="/staff" element={<Staff />} />
             <Route path="/files" element={<Files />} />
-            <Route path="/settings" element={<Settings />} />
+            {/* разделов настроек будет больше — каждый своим маршрутом,
+                чтобы на них можно было сослаться и открыть из сайдбара */}
+            <Route path="/settings" element={<SettingsLayout />}>
+              <Route index element={<Navigate to="brand" replace />} />
+              <Route path="brand" element={<SettingsBrand />} />
+              <Route path="contacts" element={<SettingsContacts />} />
+              <Route path="showcase" element={<SettingsShowcase />} />
+              <Route path="return-button" element={<SettingsReturnButton />} />
+              <Route path="maintenance" element={<SettingsMaintenance />} />
+            </Route>
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>

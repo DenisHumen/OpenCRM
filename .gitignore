@@ -8,3 +8,5 @@ config/.env
 node_modules/
 dist/
 .claude
+tmp/
+docker/.env

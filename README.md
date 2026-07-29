@@ -43,10 +43,11 @@ python -m venv .venv
 .venv/Scripts/pip install -e . --group dev
 .venv/Scripts/python -m alembic upgrade head
 cd web/frontend/crm && npm install && npm run build && cd ../../..
-.venv/Scripts/python -m uvicorn web.main:app --port 8000
+.venv/Scripts/python -m uvicorn web.main:app --host 0.0.0.0 --port 8000
 ```
 
 - CRM открывается на `http://localhost:8000/` (FastAPI отдаёт собранную SPA), витрины — на `/b/{token}`.
+- **`--host 0.0.0.0` обязателен, если открывать не с этой же машины.** По умолчанию uvicorn слушает только `127.0.0.1`, и с телефона или соседнего компьютера по `http://192.168.x.x:8000` соединения не будет вовсе. Для показа витрины по локальной сети задайте ещё `OPENCRM_BASE_URL=http://192.168.x.x:8000` — иначе скопированная в CRM ссылка на доску будет вести на `localhost` и у коллеги не откроется. На Windows первый запуск с `0.0.0.0` попросит разрешение брандмауэра — доступ нужен для сети «Частная».
 - Перед запуском скопируйте `config/.env.example` в `config/.env` и заполните. В `production` приложение не стартует с пустым `OPENCRM_SECRET_KEY` или `OPENCRM_IP_HASH_SALT` — это защита от подделки cookie, а не придирка.
 - Root-аккаунт создаётся **один раз** на пустой базе из `OPENCRM_ROOT_EMAIL`/`OPENCRM_ROOT_PASSWORD`; при первом входе обязательна смена пароля. Дальше правка этих переменных ни на что не влияет — логин и пароль меняются командой:
 

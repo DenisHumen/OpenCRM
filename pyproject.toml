@@ -15,10 +15,26 @@ dependencies = [
     "python-multipart",
     "pillow",
     "blurhash",
+    # автоподбор логотипа сайта студии ходит наружу (core/services/site_logo_service.py).
+    # Раньше httpx стоял только в dev-группе — в собранном образе его не было,
+    # и приложение падало на импорте ещё до старта.
+    "httpx",
 ]
 
 [dependency-groups]
-dev = ["pytest", "httpx"]
+dev = ["pytest"]
+
+# Пакеты перечислены явно: раскладка плоская (config/, core/, database/, web/ лежат
+# в корне), и setuptools отказывается угадывать, что из этого пакет, а что — данные.
+# Без этого `pip install .` падает на «Multiple top-level packages discovered»,
+# то есть образ Docker не собирался вовсе.
+[tool.setuptools.packages.find]
+include = ["config*", "core*", "database*", "web*"]
+exclude = ["tests*", "scripts*", "design*", "docs*", "docker*"]
+
+# Шаблоны витрины и собранная SPA — не .py, но без них приложение не поднимется
+[tool.setuptools.package-data]
+"web.public" = ["templates/*.html", "static/**/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

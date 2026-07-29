@@ -8,9 +8,14 @@
 docker/
 ├── Dockerfile            # multi-stage: node собирает фронтенд → python:3.12-slim + ffmpeg
 ├── entrypoint.sh         # страховочная копия SQLite → alembic upgrade head → uvicorn
-├── docker-compose.yml    # app (healthcheck на /healthz) + nginx, тома data/storage
+├── docker-compose.yml    # app (healthcheck на /healthz) + nginx + certbot
+├── .env.example          # переменные компоуза: домен, каталог данных, UID/GID
 └── nginx/
-    └── opencrm.conf      # /media и /branding напрямую с тома, блок оригиналов, лимит тела 220m
+    ├── entrypoint.sh     # выбирает конфиг по наличию сертификата, перечитывает его раз в 6 ч
+    └── templates/
+        ├── http.conf.template   # пока сертификата нет (и для запуска по IP в локальной сети)
+        ├── https.conf.template  # 443 + редирект с 80 + HSTS
+        └── locations.inc        # общая часть: раздача файлов и proxy_pass в uvicorn
 scripts/
 ├── backup.sh             # ежедневный бэкап: SQLite .backup + tar storage, ротация 7д/4нед
 ├── restore.sh            # восстановление (текущая БД откладывается в сторону, не затирается)
@@ -50,18 +55,54 @@ scripts/
 
 Без этой связки ротацией `X-Forwarded-For` можно было бы обойти лимит и перебрать PIN доски.
 
+## Где лежит состояние
+
+Всё, что переживает пересоздание контейнеров, лежит **в домашнем каталоге того, кто запускает compose** — не в именованных томах Docker:
+
+```
+~/opencrm/
+├── data/         SQLite-база (+ копия *.pre-migrate перед каждой миграцией)
+├── storage/      медиа досок, файлы клиентов, брендинг, аватары
+├── letsencrypt/  сертификаты и приватные ключи
+└── acme/         webroot для http-01-проверки
+```
+
+Именованные тома лежат в `/var/lib/docker`, их не видно обычными средствами и легко снести вместе с `docker system prune`. Обычные каталоги видно, их забирает `scripts/backup.sh` и просто переносить на другую машину. Путь меняется переменной `OPENCRM_HOME`.
+
+> **UID.** Контейнер приложения работает под `OPENCRM_UID:OPENCRM_GID` (по умолчанию 1000). Это должен быть владелец каталогов выше, иначе первая же миграция упрётся в «permission denied». Свои значения: `id -u`, `id -g`.
+>
+> **Ключи.** `letsencrypt/` certbot пишет от root, и приватный ключ остаётся с правами `600 root:root` — внутри домашней папки это выглядит непривычно, но так и должно быть: читать его нужно только nginx.
+
 ## Развёртывание с нуля
 
 ```bash
 git clone <repo> && cd OpenCRM
-cp config/.env.example config/.env   # заполнить: секреты, домен, root-креды
+cp config/.env.example config/.env   # секреты, домен, root-креды
+cp docker/.env.example docker/.env   # домен, OPENCRM_UID/GID (id -u, id -g)
+mkdir -p ~/opencrm/data ~/opencrm/storage ~/opencrm/letsencrypt ~/opencrm/acme
 docker compose -f docker/docker-compose.yml up -d --build
 # entrypoint сам прогоняет alembic upgrade head; root создаётся на первом старте
 ```
 
 Обновление: `git pull && docker compose -f docker/docker-compose.yml up -d --build` — миграции применяются на старте автоматически (перед ними entrypoint снимает копию файла SQLite `*.pre-migrate`).
 
-HTTPS: выпустить сертификат certbot'ом, добавить в `nginx/opencrm.conf` server-блок на 443 с теми же location + редирект 80 → 443 + HSTS, раскомментировать порт 443 и том сертификатов в compose.
+## HTTPS: выпуск и продление
+
+Курица и яйцо: server-блок на 443 не поднимется без файлов сертификата, а получить их можно только когда nginx уже отвечает на 80. Поэтому конфиг nginx не статичный — его выбирает `nginx/entrypoint.sh`: нет сертификата, поднимаемся на одном 80 и отдаём каталог проверки; появился — включаем 443 и редирект.
+
+```bash
+# 1. домен уже указывает A-записью на сервер, стек поднят и отвечает на 80
+# 2. выпускаем сертификат (один раз)
+docker compose -f docker/docker-compose.yml run --rm certbot certonly \
+    --webroot -w /var/www/certbot -d studio.example \
+    --email you@studio.example --agree-tos --no-eff-email
+# 3. перечитываем конфиг — nginx увидит сертификат и включит HTTPS
+docker compose -f docker/docker-compose.yml restart nginx
+```
+
+Дальше вмешательство не нужно: контейнер `certbot` дважды в сутки вызывает `certbot renew` (Let's Encrypt обновляет сертификат за 30 дней до истечения), а nginx каждые 6 часов перечитывает конфиг и подхватывает новый файл. Проверка продления ходит на **80**, поэтому `/.well-known/acme-challenge/` в HTTPS-конфиге намеренно оставлен без редиректа.
+
+Локальная сеть без домена: оставьте `OPENCRM_DOMAIN` пустым — стек поднимется по HTTP и будет доступен по IP. Не забудьте `OPENCRM_BASE_URL`, иначе ссылки на доски будут вести на `localhost`.
 
 ## Бэкапы и обслуживание
 

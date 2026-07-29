@@ -19,6 +19,15 @@ SETTING_DEFAULTS: dict[str, str] = {
     "social_website": "",
     "showcase_locale": "en",  # en | ru
     "og_default_image": "",
+    # строка «7 works · updated 28.07.2026» под заголовком доски: "1" — показывать.
+    # По умолчанию выключено — клиенту важны работы, а не счётчик
+    "showcase_show_meta": "0",
+    # футер витрины с контактами студии и «Curated by»: "1" — показывать
+    "showcase_show_footer": "0",
+    # сайт студии: пусто — кнопки «Return to the site» в шапке витрины нет
+    "studio_site_url": "",
+    # лого сайта, на который ведёт кнопка; пусто — кнопка остаётся только с текстом
+    "studio_site_logo": "",
 }
 
 

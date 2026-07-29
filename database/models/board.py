@@ -46,6 +46,8 @@ class Work(Base):
     kind: Mapped[str] = mapped_column(String(16))  # image | video
     title: Mapped[str] = mapped_column(String(200), default="")
     description: Mapped[str] = mapped_column(Text, default="")
+    # ссылка на проект клиента: работа на витрине = отдельный кейс. Пусто — кнопки нет
+    project_url: Mapped[str] = mapped_column(String(500), default="")
     sort_order: Mapped[int] = mapped_column(Integer, default=0, index=True)
     status: Mapped[str] = mapped_column(String(16), default=WORK_PROCESSING)
     original_name: Mapped[str] = mapped_column(String(255))

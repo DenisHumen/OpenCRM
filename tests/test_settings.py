@@ -1,3 +1,5 @@
+import re
+
 from fastapi.testclient import TestClient
 
 from tests.conftest import API, png_bytes
@@ -45,7 +47,7 @@ def test_logo_upload(root_client):
     )
     assert response.status_code == 201
     path = response.json()["brand_logo_path"]
-    assert path == "/branding/logo.png"
+    assert path.startswith("/branding/logo.png?v=")
     assert TestClient(app).get(path).status_code == 200
 
 
@@ -71,7 +73,7 @@ def test_og_default_image_upload_and_pin_page(root_client, manager_client):
     )
     assert response.status_code == 201
     path = response.json()["og_default_image"]
-    assert path == "/branding/og-default.png"
+    assert path.startswith("/branding/og-default.png?v=")
     assert TestClient(app).get(path).status_code == 200
 
     # PIN-доска использует дефолтную OG-картинку, а не обложку
@@ -108,6 +110,75 @@ def test_og_default_image_delete_resets_to_default(root_client, manager_client):
     page = TestClient(app).get(f"/b/{share['token']}")
     assert page.status_code == 200
     assert "og-default.png" not in page.text
+
+
+def _published_board(manager_client, title: str) -> str:
+    board = manager_client.post(f"{API}/boards", json={"title": title}).json()
+    manager_client.patch(f"{API}/boards/{board['id']}", json={"is_published": True})
+    return manager_client.post(f"{API}/boards/{board['id']}/shares", json={}).json()["token"]
+
+
+def test_showcase_meta_and_footer_are_off_until_switched_on(root_client, manager_client):
+    """Счётчик работ и футер с контактами по умолчанию скрыты."""
+    assert root_client.get(f"{API}/settings").json()["showcase_show_meta"] == "0"
+    assert root_client.get(f"{API}/settings").json()["showcase_show_footer"] == "0"
+    root_client.patch(
+        f"{API}/settings",
+        json={"values": {"brand_name": "Студия", "contact_email": "hello@example.com"}},
+    )
+    token = _published_board(manager_client, "Тумблеры")
+
+    off = TestClient(app).get(f"/b/{token}").text
+    assert 'class="meta"' not in off
+    assert "<footer>" not in off
+    assert "hello@example.com" not in off
+
+    root_client.patch(
+        f"{API}/settings",
+        json={"values": {"showcase_show_meta": "1", "showcase_show_footer": "1"}},
+    )
+    on = TestClient(app).get(f"/b/{token}").text
+    assert 'class="meta"' in on
+    assert "<footer>" in on
+    assert "hello@example.com" in on
+
+    root_client.patch(
+        f"{API}/settings",
+        json={"values": {"showcase_show_meta": "0", "showcase_show_footer": "0"}},
+    )
+
+
+def test_empty_brand_leaves_no_placeholder_letter(root_client, manager_client):
+    """Пустой «Бренд» — пустое место, а не буква-заглушка в квадрате."""
+    root_client.delete(f"{API}/settings/logo")
+    root_client.patch(
+        f"{API}/settings", json={"values": {"brand_name": "", "showcase_show_footer": "1"}}
+    )
+    token = _published_board(manager_client, "Без бренда")
+
+    page = TestClient(app).get(f"/b/{token}").text
+    assert 'class="brand-mark"' not in page
+    assert 'class="curated"' not in page
+    assert 'class="square"' not in page
+
+    root_client.patch(
+        f"{API}/settings", json={"values": {"brand_name": "Студия", "showcase_show_footer": "0"}}
+    )
+    back = TestClient(app).get(f"/b/{token}").text
+    assert 'class="brand-mark"' in back
+    # знак студии — первая буква названия, а не постоянная заглушка
+    assert re.search(r'class="square">\s*С\s*</div>', back)
+
+
+def test_showcase_font_is_cached_forever():
+    """Шрифт лежит под постоянным именем и не меняется: без max-age браузер
+    переспрашивал бы его на каждой загрузке страницы (вереница 304 в логе)."""
+    response = TestClient(app).get("/static/fonts/montserrat-latin-wght-normal.woff2")
+    assert response.status_code == 200
+    assert "immutable" in response.headers["cache-control"]
+    assert "max-age=31536000" in response.headers["cache-control"]
+    # .woff2 есть в mimetypes не на всякой системе — иначе шрифт уезжает как octet-stream
+    assert response.headers["content-type"] == "font/woff2"
 
 
 def test_healthz():

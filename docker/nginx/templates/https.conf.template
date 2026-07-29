@@ -1,0 +1,38 @@
+# OpenCRM — nginx с TLS. Подставляется, когда сертификат для домена уже выпущен.
+
+server {
+    listen 80;
+    server_name ${OPENCRM_DOMAIN};
+
+    # каталог проверки остаётся на 80 и БЕЗ редиректа: продление ходит именно сюда
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+        default_type "text/plain";
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name ${OPENCRM_DOMAIN};
+
+    ssl_certificate     /etc/letsencrypt/live/${OPENCRM_DOMAIN}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${OPENCRM_DOMAIN}/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers off;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 1d;
+
+    client_max_body_size 220m;
+
+    add_header X-Content-Type-Options nosniff always;
+    add_header Referrer-Policy strict-origin-when-cross-origin always;
+    # полгода: домен уже отдаёт HTTPS, и откат на http ломает cookie сессии
+    add_header Strict-Transport-Security "max-age=15768000" always;
+
+    include /opencrm/templates/locations.inc;
+}

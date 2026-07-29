@@ -12,6 +12,7 @@ from core.services import board_service, media_service, settings_service, share_
 from database.repositories import boards as boards_repo
 from web.api import schemas
 from web.api.deps import client_ip, get_db, pin_limiter
+from web.public import layout
 
 router = APIRouter(tags=["public"])
 
@@ -35,6 +36,12 @@ STRINGS = {
         "empty_board": "Works are coming soon",
         "made_by": "Curated by",
         "video": "video",
+        # надписи кнопок оставляем английскими в обеих локалях — так на референсе,
+        # и это часть визуального языка витрины, а не интерфейсный текст
+        "view_case": "View case",
+        "return_to_site": "Return to the site",
+        # подсказка на обрезанной длинной работе: кликом открывается целиком
+        "view_full": "View full",
     },
     "ru": {
         "works": "работ",
@@ -52,6 +59,9 @@ STRINGS = {
         "empty_board": "Работы скоро появятся",
         "made_by": "Собрано в",
         "video": "видео",
+        "view_case": "View case",
+        "return_to_site": "Return to the site",
+        "view_full": "View full",
     },
 }
 
@@ -78,20 +88,6 @@ def _closed_page(request: Request, db: Session):
     return templates.TemplateResponse(
         request, "closed.html", {"site": site, "t": strings}, status_code=404
     )
-
-
-def _distribute(works: list[dict], ncols: int) -> list[list[int]]:
-    """Раскладка masonry: индекс работы → колонка с наименьшей высотой
-    (как в макете Showcase.dc.html). Высота — соотношение сторон работы."""
-    columns: list[list[int]] = [[] for _ in range(ncols)]
-    heights = [0.0] * ncols
-    for index, work in enumerate(works):
-        width = work.get("width") or 1
-        height = work.get("height") or (0.625 * width if work["kind"] == "video" else width)
-        shortest = heights.index(min(heights))
-        columns[shortest].append(index)
-        heights[shortest] += height / width + 0.1
-    return columns
 
 
 @router.get("/b/{token}")
@@ -123,7 +119,6 @@ def showcase(token: str, request: Request, db: Session = Depends(get_db)):
         og_image = _og_default_url(site)
 
     works_payload = [schemas.work_out(w) for w in works]
-    layouts = [(n, _distribute(works_payload, n)) for n in (3, 2, 1)]
     return templates.TemplateResponse(
         request, "showcase.html",
         {
@@ -131,7 +126,9 @@ def showcase(token: str, request: Request, db: Session = Depends(get_db)):
             "t": strings,
             "board": board,
             "works": works_payload,
-            "layouts": layouts,
+            "modules": layout.build_modules(
+                len(works_payload), layout.long_indexes(works_payload)
+            ),
             "og_image": og_image,
             "page_url": f"{base_url}/b/{token}",
         },
@@ -231,7 +228,8 @@ def media_file(work_uid: str, filename: str):
 
 @router.get("/branding/{filename}")
 def branding_file(filename: str):
-    if not filename.startswith(("logo.", "og-default.")) or "/" in filename or "\\" in filename:
+    allowed = ("logo.", "site-logo.", "og-default.")
+    if not filename.startswith(allowed) or "/" in filename or "\\" in filename:
         return JSONResponse({"error": {"code": "not_found", "message": "Not found"}}, status_code=404)
     path = get_settings().branding_dir / filename
     if not path.is_file():

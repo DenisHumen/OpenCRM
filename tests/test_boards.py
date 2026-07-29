@@ -45,6 +45,41 @@ def test_upload_work_processing_pipeline(manager_client):
     assert manager_client.get(f"/media/{work_dir.name}/original.png").status_code == 404
 
 
+def test_upload_names_the_work_after_the_file(manager_client):
+    """Свежая работа не должна быть безымянной: подпись на витрине рисуется
+    только при заполненном title, а имя файла почти всегда осмысленно."""
+    board = _board(manager_client, "Имена работ")
+    work = _upload_png(manager_client, board["id"], name="sigma_science.packaging.png")
+    assert work["title"] == "sigma science packaging"  # без расширения и разделителей
+
+
+def test_title_from_filename_rules():
+    from core.services.board_service import title_from_filename
+
+    assert title_from_filename("logo.png") == "logo"
+    assert title_from_filename("Айдентика кофейни.jpg") == "Айдентика кофейни"
+    assert title_from_filename("brand_guide_v2.final.pdf") == "brand guide v2 final"
+    assert title_from_filename("  spaced  .webp") == "spaced"
+    # имя без расширения не портим
+    assert title_from_filename("README") == "README"
+    assert len(title_from_filename("и" * 500 + ".png")) == 200
+
+
+def test_freshly_uploaded_work_is_captioned_on_the_showcase(manager_client):
+    board = _board(manager_client, "Подписи")
+    _upload_png(manager_client, board["id"], name="Логотип кофейни.png")
+    manager_client.patch(f"{API}/boards/{board['id']}", json={"is_published": True})
+    share = manager_client.post(f"{API}/boards/{board['id']}/shares", json={}).json()
+
+    from fastapi.testclient import TestClient
+
+    from web.main import app
+
+    page = TestClient(app).get(f"/b/{share['token']}").text
+    assert "Логотип кофейни" in page
+    assert "Логотип кофейни.png" not in page  # расширение в подписи не нужно
+
+
 def test_upload_rejects_unknown_type(manager_client):
     board = _board(manager_client, "Мусор")
     response = manager_client.post(

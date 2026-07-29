@@ -1,11 +1,13 @@
+import re
 import uuid
+from pathlib import Path
 
 from sqlalchemy.orm import Session
 
 from config.settings import get_settings
 from core import exceptions as errors
 from core.services import media_service, storage_service
-from core.utils import now_utc
+from core.utils import normalize_external_url, now_utc
 from database.models import Board, User, Work
 from database.models.board import WORK_FAILED, WORK_PROCESSING, WORK_READY
 from database.repositories import boards as boards_repo
@@ -86,6 +88,21 @@ def cover_work(db: Session, board: Board) -> Work | None:
 
 # --- работы ---
 
+def title_from_filename(original_name: str) -> str:
+    """Название работы из имени файла: без расширения и без служебных знаков.
+
+    Раньше название оставалось пустым, а на витрине подпись рисуется только при
+    заполненном `title` — то есть свежезагруженная работа была безымянной, пока
+    менеджер не переименует её руками. Имя файла почти всегда осмысленно, так
+    что берём его: расширение убираем (`.jpg` в подписи под работой не нужен),
+    подчёркивания и точки-разделители заменяем пробелами.
+    """
+    stem = Path(original_name).stem.strip()
+    cleaned = re.sub(r"[_.]+", " ", stem)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned[:200]
+
+
 def upload_work(db: Session, board_id: int, original_name: str, content: bytes) -> Work:
     board = get_board(db, board_id)
     if not content:
@@ -104,6 +121,7 @@ def upload_work(db: Session, board_id: int, original_name: str, content: bytes) 
         board_id=board.id,
         work_uid=uuid.uuid4().hex,
         kind=kind,
+        title=title_from_filename(original_name),
         status=WORK_PROCESSING,
         original_name=original_name[:255],
         mime=mime,
@@ -155,6 +173,11 @@ def update_work(db: Session, board_id: int, work_id: int, data: dict) -> Work:
         work.title = data["title"].strip()[:200]
     if "description" in data and data["description"] is not None:
         work.description = data["description"].strip()
+    if "project_url" in data and data["project_url"] is not None:
+        try:
+            work.project_url = normalize_external_url(data["project_url"])
+        except ValueError as exc:
+            raise errors.ValidationError(str(exc), code="bad_project_url") from exc
     return work
 
 

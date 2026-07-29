@@ -79,16 +79,21 @@ def test_staff_endpoints_root_only(manager_client):
 
 
 def test_locale_saved_in_profile(root_client, manager_client):
+    """Язык интерфейса — свойство аккаунта: свой у каждого, живёт в БД."""
     me = manager_client.get(f"{API}/auth/me").json()
-    assert me["locale"] == "en"  # английский по умолчанию
+    assert me["locale"] == "en"  # английский по умолчанию — и при первой установке тоже
     updated = manager_client.patch(f"{API}/auth/me", json={"locale": "ru"})
     assert updated.status_code == 200
     assert updated.json()["locale"] == "ru"
     # выбор сохранён в БД: новый вход с другого клиента видит ru
     fresh = TestClient(app)
     assert login(fresh, "manager@test.local", "manager-pass-123").json()["locale"] == "ru"
+    # у соседа язык свой — переключение одного не задевает остальных
+    assert root_client.get(f"{API}/auth/me").json()["locale"] == "en"
     bad = manager_client.patch(f"{API}/auth/me", json={"locale": "de"})
     assert bad.status_code == 422
+
+    manager_client.patch(f"{API}/auth/me", json={"locale": "en"})
 
 
 def test_password_reset_flow(root_client):

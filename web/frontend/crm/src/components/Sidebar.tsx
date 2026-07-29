@@ -1,11 +1,75 @@
 import { useEffect, useState } from "react";
-import { NavLink, useNavigate } from "react-router-dom";
+import { NavLink, useLocation, useNavigate } from "react-router-dom";
 
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
 import { formatBytes, initials } from "../lib/format";
 import { Icon } from "./Icon";
 import { Avatar } from "./ui";
+
+/**
+ * Пункт навигации с вложенным списком.
+ *
+ * Заголовок только раскрывает группу и никуда не ведёт: разделов внутри уже
+ * пять и будет больше, и «главного» среди них нет. Открытое состояние живёт в
+ * localStorage — иначе список схлопывался бы на каждом переходе; при заходе на
+ * любой вложенный маршрут группа раскрывается сама.
+ */
+function NavGroup({
+  icon,
+  label,
+  base,
+  items,
+}: {
+  icon: string;
+  label: string;
+  base: string;
+  items: { to: string; label: string }[];
+}) {
+  const { pathname } = useLocation();
+  const inside = pathname === base || pathname.startsWith(base + "/");
+  const [open, setOpen] = useState(
+    () => inside || localStorage.getItem(`nav:${base}`) === "1",
+  );
+
+  useEffect(() => {
+    if (inside) setOpen(true);
+  }, [inside]);
+
+  const toggle = () => {
+    const next = !open;
+    setOpen(next);
+    localStorage.setItem(`nav:${base}`, next ? "1" : "0");
+  };
+
+  return (
+    <div className={"nav-group" + (open ? " open" : "")}>
+      <button
+        type="button"
+        className={"nav-item nav-group-head" + (inside ? " active" : "")}
+        aria-expanded={open}
+        onClick={toggle}
+      >
+        <Icon name={icon} size={16} />
+        <span style={{ flex: 1, textAlign: "left" }}>{label}</span>
+        <Icon name="chevronDown" size={13} className="nav-chevron" />
+      </button>
+      {open && (
+        <div className="nav-sub">
+          {items.map((item) => (
+            <NavLink
+              key={item.to}
+              to={item.to}
+              className={({ isActive }) => "nav-item" + (isActive ? " active" : "")}
+            >
+              {item.label}
+            </NavLink>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function Sidebar({ onOpenSearch }: { onOpenSearch: () => void }) {
   const { user, t, settings, storage, setUser, logout, toastError } = useApp();
@@ -23,12 +87,12 @@ export function Sidebar({ onOpenSearch }: { onOpenSearch: () => void }) {
       .catch(() => undefined);
   }, [isRoot]);
 
-  const switchLocale = async () => {
-    if (!user) return;
-    const next = user.locale === "en" ? "ru" : "en";
+  // язык интерфейса у каждого свой и хранится в аккаунте (users.locale),
+  // поэтому переключение — обычный PATCH профиля, а не настройка браузера
+  const setLocale = async (next: string) => {
+    if (!user || user.locale === next) return;
     try {
-      const updated = await api.patch("/auth/me", { locale: next });
-      setUser(updated);
+      setUser(await api.patch("/auth/me", { locale: next }));
     } catch (e) {
       toastError(e);
     }
@@ -103,17 +167,25 @@ export function Sidebar({ onOpenSearch }: { onOpenSearch: () => void }) {
               <Icon name="folder" size={16} />
               <span style={{ flex: 1 }}>{t("files")}</span>
             </NavLink>
-            <NavLink to="/settings" className={({ isActive }) => "nav-item" + (isActive ? " active" : "")}>
-              <Icon name="settings" size={16} />
-              <span style={{ flex: 1 }}>{t("siteSettings")}</span>
-            </NavLink>
+            <NavGroup
+              icon="settings"
+              label={t("siteSettings")}
+              base="/settings"
+              items={[
+                { to: "/settings/brand", label: t("brand") },
+                { to: "/settings/contacts", label: t("contacts") },
+                { to: "/settings/showcase", label: t("showcase") },
+                { to: "/settings/return-button", label: t("returnButtonShort") },
+                { to: "/settings/maintenance", label: t("maintenance") },
+              ]}
+            />
           </>
         )}
       </nav>
       <div className="side-bottom">
         {storage && storage.level !== "ok" && (
           <NavLink
-            to={isRoot ? "/settings" : "/"}
+            to={isRoot ? "/settings/maintenance" : "/"}
             className={"side-banner" + (storage.level === "critical" ? " critical" : "")}
           >
             <span style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 2 }}>
@@ -157,13 +229,24 @@ export function Sidebar({ onOpenSearch }: { onOpenSearch: () => void }) {
                 <Icon name="user" size={15} className="" />
                 {t("profile")}
               </NavLink>
-              <button className="user-menu-item" onClick={switchLocale}>
+              <div className="user-menu-item" style={{ cursor: "default" }}>
                 <Icon name="globe" size={15} />
                 <span style={{ flex: 1 }}>{t("language")}</span>
-                <span style={{ color: "var(--faint)", fontSize: 12 }}>
-                  {user?.locale === "ru" ? "Русский" : "English"}
+                <span className="lang-pick">
+                  {[
+                    { id: "en", label: "EN" },
+                    { id: "ru", label: "RU" },
+                  ].map((lang) => (
+                    <button
+                      key={lang.id}
+                      className={user?.locale === lang.id ? "active" : ""}
+                      onClick={() => void setLocale(lang.id)}
+                    >
+                      {lang.label}
+                    </button>
+                  ))}
                 </span>
-              </button>
+              </div>
               <div className="user-menu-sep" />
               <button
                 className="user-menu-item"

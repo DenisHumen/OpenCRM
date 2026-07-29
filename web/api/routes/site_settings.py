@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, UploadFile
 from sqlalchemy.orm import Session
 
-from core.services import settings_service
+from core.services import settings_service, site_logo_service
 from database.models import User
 from web.api import schemas
 from web.api.deps import get_db, require_root
@@ -30,6 +30,31 @@ async def upload_logo(file: UploadFile, db: Session = Depends(get_db)):
 def delete_logo(db: Session = Depends(get_db)):
     settings_service.clear_logo(db)
     return {"brand_logo_path": ""}
+
+
+@router.post("/site-logo", status_code=201)
+async def upload_site_logo(file: UploadFile, db: Session = Depends(get_db)):
+    content = await file.read()
+    path = settings_service.save_site_logo(db, file.filename or "site-logo.png", content)
+    return {"studio_site_logo": path}
+
+
+@router.post("/site-logo/fetch", status_code=201)
+def fetch_site_logo(db: Session = Depends(get_db)):
+    """Пробует достать логотип с сайта, указанного в настройках.
+
+    Не получилось — `422 logo_fetch_failed`, и логотип загружается вручную.
+    """
+    site_url = settings_service.get_all(db).get("studio_site_url", "")
+    content, filename = site_logo_service.fetch_logo(site_url)
+    path = settings_service.save_site_logo(db, filename, content)
+    return {"studio_site_logo": path}
+
+
+@router.delete("/site-logo")
+def delete_site_logo(db: Session = Depends(get_db)):
+    settings_service.clear_site_logo(db)
+    return {"studio_site_logo": ""}
 
 
 @router.post("/og-image", status_code=201)

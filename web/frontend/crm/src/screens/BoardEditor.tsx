@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { Icon } from "../components/Icon";
-import { Chip, ConfirmModal, EmptyState, ScreenLoading, Toggle } from "../components/ui";
+import { Chip, ConfirmModal, EmptyState, Modal, ScreenLoading, Toggle } from "../components/ui";
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
 import { formatDateTime, formatDuration } from "../lib/format";
@@ -19,6 +19,7 @@ export function BoardEditor() {
   const [pinOpen, setPinOpen] = useState(false);
   const [pinDraft, setPinDraft] = useState("");
   const [dragId, setDragId] = useState<number | null>(null);
+  const [linkWork, setLinkWork] = useState<any>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const pollTimer = useRef<number>();
 
@@ -270,6 +271,14 @@ export function BoardEditor() {
                   <WorkTitle work={work} boardId={board.id} onSaved={(updated) =>
                     setBoard((prev: any) => ({ ...prev, works: prev.works.map((w: any) => (w.id === updated.id ? updated : w)) }))
                   } />
+                  <button
+                    className="text-link"
+                    style={{ display: "flex", color: work.project_url ? "var(--accent)" : "var(--faint)" }}
+                    title={work.project_url || t("projectLink")}
+                    onClick={() => setLinkWork(work)}
+                  >
+                    <Icon name="link" size={13} />
+                  </button>
                   <button className="text-link" style={{ display: "flex", color: "var(--faint)" }} onClick={() => setConfirm(work.id)}>
                     <Icon name="trash" size={13} />
                   </button>
@@ -525,7 +534,82 @@ export function BoardEditor() {
           onClose={() => setConfirm(null)}
         />
       )}
+      {linkWork && (
+        <WorkLinkModal
+          work={linkWork}
+          boardId={board.id}
+          onClose={() => setLinkWork(null)}
+          onSaved={(updated) => {
+            setBoard((prev: any) => ({
+              ...prev,
+              works: prev.works.map((w: any) => (w.id === updated.id ? updated : w)),
+            }));
+            setLinkWork(null);
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+function WorkLinkModal({
+  work,
+  boardId,
+  onSaved,
+  onClose,
+}: {
+  work: any;
+  boardId: number;
+  onSaved: (w: any) => void;
+  onClose: () => void;
+}) {
+  const { t, toastError } = useApp();
+  const [draft, setDraft] = useState(work.project_url || "");
+  const [saving, setSaving] = useState(false);
+
+  const save = async (value: string) => {
+    setSaving(true);
+    try {
+      onSaved(await api.patch(`/boards/${boardId}/works/${work.id}`, { project_url: value }));
+    } catch (e) {
+      toastError(e);
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Modal title={t("projectLink")} onClose={onClose}>
+      <div style={{ color: "var(--faint)", fontSize: 12.5, marginBottom: 12, lineHeight: 1.5 }}>
+        {t("projectLinkHint")}
+      </div>
+      <input
+        className="input"
+        value={draft}
+        autoFocus
+        placeholder="https://client.example/case"
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => e.key === "Enter" && void save(draft.trim())}
+        style={{ marginBottom: 16 }}
+      />
+      <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+        {work.project_url && (
+          <button
+            className="btn btn-secondary btn-sm"
+            style={{ marginRight: "auto", color: "var(--danger)" }}
+            disabled={saving}
+            onClick={() => void save("")}
+          >
+            {t("removeImage")}
+          </button>
+        )}
+        <button className="btn btn-secondary btn-sm" onClick={onClose}>
+          {t("cancel")}
+        </button>
+        <button className="btn btn-primary btn-sm" disabled={saving} onClick={() => void save(draft.trim())}>
+          {t("save")}
+        </button>
+      </div>
+    </Modal>
   );
 }
 

@@ -19,6 +19,17 @@ SIZE_LARGE = 1920
 SIZE_CARD = 800
 SIZE_THUMB = 320
 
+# С какой вытянутости изображение считается «длинным» (лонгрид, инфографика,
+# скриншот всей страницы). Обычный вертикальный кадр 2:3 или сторис 9:16 сюда
+# не попадают — порог выше их.
+LONG_RATIO = 2.5
+# Предел стороны в WebP: длинную картинку иначе не удалось бы сохранить
+WEBP_MAX_SIDE = 16383
+
+
+def is_long_image(width: int | None, height: int | None) -> bool:
+    return bool(width and height and height >= width * LONG_RATIO)
+
 # имена файлов, которые разрешено отдавать наружу
 PUBLIC_FILENAMES = {
     "large.webp", "card.webp", "thumb.webp", "poster.webp",
@@ -88,6 +99,27 @@ def sanitize_svg(content: bytes) -> bytes:
 
 # --- обработка (фоновая задача после загрузки) ---
 
+def derive(im: Image.Image, box: int) -> Image.Image:
+    """Производная размером `box` по длинной стороне; у длинных — по ширине.
+
+    Обычный ``thumbnail`` вписывает картинку в квадрат `box`×`box`, то есть
+    ужимает **длинную** сторону. Для лонгрида 1:10 это означало бы `card`
+    шириной 80px — на витрине сплошное мыло. Поэтому у длинных изображений
+    ограничиваем ширину, а высоте позволяем расти (до предела формата).
+    """
+    variant = im.copy()
+    if not is_long_image(im.width, im.height):
+        variant.thumbnail((box, box), Image.LANCZOS)
+        return variant
+    width = min(im.width, box)
+    height = round(width * im.height / im.width)
+    if height > WEBP_MAX_SIDE:
+        height = WEBP_MAX_SIDE
+        width = max(1, round(height * im.width / im.height))
+    variant.thumbnail((width, height), Image.LANCZOS)
+    return variant
+
+
 def process_image(work_uid: str, original: Path) -> dict:
     with Image.open(original) as im:
         im.load()
@@ -96,9 +128,7 @@ def process_image(work_uid: str, original: Path) -> dict:
             im = im.convert("RGBA" if "transparency" in im.info or im.mode in ("P", "LA") else "RGB")
         directory = original.parent
         for name, size in (("large", SIZE_LARGE), ("card", SIZE_CARD), ("thumb", SIZE_THUMB)):
-            variant = im.copy()
-            variant.thumbnail((size, size), Image.LANCZOS)
-            variant.save(directory / f"{name}.webp", "WEBP", quality=85)
+            derive(im, size).save(directory / f"{name}.webp", "WEBP", quality=85)
         bh = compute_blurhash(im)
     return {"width": width, "height": height, "blurhash": bh}
 
@@ -166,8 +196,49 @@ def process_video(work_uid: str, video_path: Path) -> dict:
     return meta
 
 
+def derived_size(width: int | None, height: int | None, box: int) -> tuple[int, int] | None:
+    """Размер производной по правилам :func:`derive`, но без открытия файла.
+
+    Нужен для `srcset`: браузеру необходимо знать ширину каждого кандидата,
+    а лезть на диск ради этого на каждый рендер витрины не стоит.
+    """
+    if not width or not height:
+        return None
+    if is_long_image(width, height):
+        target_w = min(width, box)
+        target_h = round(target_w * height / width)
+        if target_h > WEBP_MAX_SIDE:
+            target_h = WEBP_MAX_SIDE
+            target_w = max(1, round(target_h * width / height))
+        return target_w, target_h
+    scale = min(box / width, box / height, 1)
+    return max(1, round(width * scale)), max(1, round(height * scale))
+
+
 def media_url(work_uid: str, filename: str) -> str:
     return f"/media/{work_uid}/{filename}"
+
+
+def work_srcset(work) -> str:
+    """Кандидаты для `srcset` плитки витрины: `card` (800px) и `large` (1920px).
+
+    Место в композиции бывает 500–700 CSS-пикселей, а на экране с двойной
+    плотностью это 1000–1400 реальных — `card` там растягивался бы и мылил,
+    хотя `large` лежит рядом. Пусть браузер выбирает сам: маленькой плитке
+    незачем тянуть полуторамегабайтный файл.
+    """
+    if work.kind != "image" or work.mime == "image/svg+xml":
+        return ""
+    candidates: list[str] = []
+    widths: set[int] = set()
+    for name, box in (("card", SIZE_CARD), ("large", SIZE_LARGE)):
+        size = derived_size(work.width, work.height, box)
+        # у мелкого оригинала обе производные одного размера — второй кандидат лишний
+        if size is None or size[0] in widths:
+            continue
+        widths.add(size[0])
+        candidates.append(f"{media_url(work.work_uid, name + '.webp')} {size[0]}w")
+    return ", ".join(candidates)
 
 
 def work_media_urls(work) -> dict:

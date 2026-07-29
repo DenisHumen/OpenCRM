@@ -1,11 +1,31 @@
 name: opencrm
 
+# Всё состояние живёт в домашнем каталоге того, кто запускает контейнеры
+# (переопределяется переменной OPENCRM_HOME):
+#
+#   ~/opencrm/data/         SQLite-база
+#   ~/opencrm/storage/      медиа досок, файлы клиентов, брендинг, аватары
+#   ~/opencrm/letsencrypt/  сертификаты и приватные ключи
+#   ~/opencrm/acme/         webroot для http-01-проверки Let's Encrypt
+#
+# Именованные тома Docker для этого не годятся: они лежат в /var/lib/docker,
+# их не видно обычными средствами и легко снести вместе с `docker system prune`.
+# Обычные каталоги видно, их просто забэкапить (scripts/backup.sh) и перенести.
+#
+# Переменные компоуза (домен, UID) — в docker/.env, см. docker/.env.example.
+# Настройки приложения — по-прежнему в config/.env.
+
 services:
   app:
     build:
       context: ..
       dockerfile: docker/Dockerfile
-    env_file: ../config/.env
+    # required: false — стек поднимается и без файла, чтобы можно было просто
+    # попробовать сборку. Боевые значения всё равно обязательны: без секретов
+    # приложение с OPENCRM_ENV=production не стартует и скажет, чего не хватает.
+    env_file:
+      - path: ../config/.env
+        required: false
     environment:
       OPENCRM_DB_URL: sqlite:////app/data/opencrm.db
       OPENCRM_STORAGE_DIR: /app/storage
@@ -13,9 +33,13 @@ services:
       # X-Forwarded-For, добавленный им. Без этого лимит подбора PIN обходится
       # подменой заголовка (см. docs/07-security.md).
       OPENCRM_TRUSTED_PROXY_HOPS: "1"
+    # Каталоги в домашней папке принадлежат хозяину машины, а не root'у, поэтому
+    # процесс в контейнере должен работать под его же UID — иначе миграции
+    # упрутся в «permission denied» на первом же запуске.
+    user: "${OPENCRM_UID:-1000}:${OPENCRM_GID:-1000}"
     volumes:
-      - opencrm_data:/app/data
-      - opencrm_storage:/app/storage
+      - ${OPENCRM_HOME:-${HOME}/opencrm}/data:/app/data
+      - ${OPENCRM_HOME:-${HOME}/opencrm}/storage:/app/storage
     expose: ["8000"]
     restart: unless-stopped
     healthcheck:
@@ -26,19 +50,40 @@ services:
 
   nginx:
     image: nginx:alpine
+    environment:
+      OPENCRM_DOMAIN: ${OPENCRM_DOMAIN:-_}
     ports:
       - "80:80"
-      # - "443:443"   # включить после выпуска сертификата (см. docs/08-deployment.md)
+      - "443:443"
     volumes:
-      - ./nginx/opencrm.conf:/etc/nginx/conf.d/default.conf:ro
-      - opencrm_storage:/srv/storage:ro
-      # - certbot_certs:/etc/letsencrypt:ro
+      - ./nginx/templates:/opencrm/templates:ro
+      - ./nginx/entrypoint.sh:/opencrm/entrypoint.sh:ro
+      - ${OPENCRM_HOME:-${HOME}/opencrm}/storage:/srv/storage:ro
+      # ключи нужны только на чтение: писать в них — дело certbot
+      - ${OPENCRM_HOME:-${HOME}/opencrm}/letsencrypt:/etc/letsencrypt:ro
+      - ${OPENCRM_HOME:-${HOME}/opencrm}/acme:/var/www/certbot
+    entrypoint: ["/bin/sh", "/opencrm/entrypoint.sh"]
     depends_on:
       app:
         condition: service_healthy
     restart: unless-stopped
 
-volumes:
-  opencrm_data:
-  opencrm_storage:
-  # certbot_certs:
+  # Продление сертификата. Первый выпуск — руками, один раз:
+  #   docker compose run --rm certbot certonly --webroot -w /var/www/certbot \
+  #       -d example.com --email you@example.com --agree-tos --no-eff-email
+  # Дальше этот контейнер сам проверяет срок дважды в сутки; Let's Encrypt
+  # обновляет сертификат за 30 дней до истечения, а nginx перечитывает конфиг
+  # каждые 6 часов (см. nginx/entrypoint.sh) и подхватывает новый файл.
+  certbot:
+    image: certbot/certbot
+    volumes:
+      - ${OPENCRM_HOME:-${HOME}/opencrm}/letsencrypt:/etc/letsencrypt
+      - ${OPENCRM_HOME:-${HOME}/opencrm}/acme:/var/www/certbot
+    entrypoint: >
+      /bin/sh -c 'trap exit TERM;
+      while :; do
+        certbot renew --webroot -w /var/www/certbot --quiet;
+        sleep 12h & wait $${!};
+      done'
+    depends_on: [nginx]
+    restart: unless-stopped

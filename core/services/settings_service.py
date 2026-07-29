@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from config.settings import get_settings
 from core import exceptions as errors
-from core.utils import now_utc
+from core.utils import normalize_external_url, now_utc
 from database.models import SiteSetting
 from database.models.settings import SETTING_DEFAULTS
 
@@ -26,6 +26,11 @@ def update(db: Session, changes: dict[str, str]) -> dict[str, str]:
         raise errors.ValidationError(f"Unknown settings: {sorted(unknown)}", code="unknown_setting")
     if "showcase_locale" in changes and changes["showcase_locale"] not in ("en", "ru"):
         raise errors.ValidationError("showcase_locale must be en or ru", code="bad_locale")
+    if "studio_site_url" in changes:
+        try:
+            changes = {**changes, "studio_site_url": normalize_external_url(changes["studio_site_url"])}
+        except ValueError as exc:
+            raise errors.ValidationError(str(exc), code="bad_site_url") from exc
     existing = {row.key: row for row in db.scalars(select(SiteSetting))}
     for key, value in changes.items():
         value = (value or "").strip()
@@ -53,8 +58,11 @@ def _save_branding_image(
         old.unlink(missing_ok=True)
     filename = f"{base_name}.{ext}"
     (directory / filename).write_bytes(content)
-    update(db, {setting_key: f"/branding/{filename}"})
-    return f"/branding/{filename}"
+    # имя файла постоянное, а отдаётся он с длинным кэшем — без метки версии
+    # заменённый логотип ещё час показывался бы старым и клиенту, и менеджеру
+    path = f"/branding/{filename}?v={int(now_utc().timestamp())}"
+    update(db, {setting_key: path})
+    return path
 
 
 def _clear_branding_image(db: Session, base_name: str, setting_key: str) -> None:
@@ -72,6 +80,15 @@ def save_logo(db: Session, original_name: str, content: bytes) -> str:
 
 def clear_logo(db: Session) -> None:
     _clear_branding_image(db, "logo", "brand_logo_path")
+
+
+def save_site_logo(db: Session, original_name: str, content: bytes) -> str:
+    """Лого сайта студии для кнопки «Return to the site» на витрине."""
+    return _save_branding_image(db, original_name, content, "site-logo", "studio_site_logo")
+
+
+def clear_site_logo(db: Session) -> None:
+    _clear_branding_image(db, "site-logo", "studio_site_logo")
 
 
 def save_og_default(db: Session, original_name: str, content: bytes) -> str:

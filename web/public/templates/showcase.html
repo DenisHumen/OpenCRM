@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% from "_macros.html" import brand_mark %}
 
-{% block title %}{{ board.title }} — {{ site.brand_name }}{% endblock %}
+{% block title %}{{ board.title }}{% if site.brand_name %} — {{ site.brand_name }}{% endif %}{% endblock %}
 
 {% block og %}
 <meta property="og:type" content="website">
@@ -15,15 +15,58 @@
 
 {% block style %}
 <style>
-  .container { max-width: 1440px; margin: 0 auto; padding: 0 24px; }
-  @media (min-width: 720px) { .container { padding: 0 48px; } }
+  /* колонка тянется за экраном: прежний потолок 1440px оставлял на широком
+     мониторе больше трети ширины пустой */
+  .container { max-width: min(2100px, 96vw); margin: 0 auto; padding: 0 24px; }
+  @media (min-width: 720px) { .container { padding: 0 40px; } }
+  /* футер выключен — страница иначе обрывалась бы сразу за последней работой */
+  .container.no-footer { padding-bottom: 96px; }
 
   header.board { padding-top: 28px; }
+  /* марка студии слева, кнопка возврата — по центру страницы */
+  header.board .top { position: relative; display: flex; align-items: center; min-height: 60px; }
+  header.board .top .btn-site {
+    position: absolute; left: 50%; transform: translateX(-50%);
+  }
+  @media (max-width: 719px) {
+    header.board .top { flex-direction: column; align-items: flex-start; gap: 14px; }
+    header.board .top .btn-site { position: static; transform: none; }
+  }
   header.board .brand-mark { animation: fadein 400ms ease-out both; }
+  /* кнопка возврата — главный элемент шапки: увеличена примерно втрое по площади
+     (высота и кегль ×1.7), заголовок доски при этом ужат — см. header.board h1 */
+  .btn-site {
+    display: inline-flex; align-items: center; height: 60px; padding: 0 30px;
+    border: 1px solid var(--border); border-radius: 999px;
+    color: var(--text); font-size: 19px; font-weight: 500; text-decoration: none;
+    white-space: nowrap; transition: background-color 250ms, border-color 250ms;
+    animation: fadein 400ms ease-out 80ms both;
+  }
+  .btn-site:hover { background: var(--surface); border-color: var(--surface-2); }
+
+  /* с лого кнопка становится двухсегментной: слева плашка с лого, справа надпись.
+     overflow:hidden скругляет плашку по форме пилюли, поэтому лого и кнопка
+     читаются как один элемент, а не картинка рядом с кнопкой */
+  .btn-site.has-logo { padding: 0; overflow: hidden; }
+  .btn-site .site-logo {
+    display: flex; align-items: center; justify-content: center;
+    height: 100%; padding: 0 20px;
+    background: var(--surface); border-right: 1px solid var(--border);
+    transition: background-color 250ms;
+  }
+  /* высоту задаём, ширину считает браузер: и квадратная иконка, и широкий
+     леттеринг встанут сами, max-width страхует от очень длинного лого */
+  .btn-site .site-logo img {
+    display: block; height: 28px; width: auto; max-width: 155px; object-fit: contain;
+  }
+  .btn-site .site-text { padding: 0 30px; }
+  .btn-site.has-logo:hover .site-logo { background: var(--surface-2); }
+  /* заголовок ужат на ~35%, отступы сверху и до первого модуля срезаны —
+     освободившееся место отдано композиции: работы начинаются заметно выше */
   header.board h1 {
-    margin-top: 64px;
-    font-size: clamp(32px, 5vw, 56px);
-    line-height: 1.1;
+    margin-top: 40px;
+    font-size: clamp(21px, 3.2vw, 36px);
+    line-height: 1.15;
     letter-spacing: 0.005em;
     animation: rise 300ms ease-out both;
   }
@@ -33,40 +76,210 @@
   }
   header.board .meta { color: var(--faint); font-size: 13px; margin-top: 14px; animation: rise 300ms ease-out 140ms both; }
 
-  /* masonry: серверная раскладка на три брейкпоинта */
-  .grid { display: flex; gap: 20px; align-items: flex-start; margin-top: 72px; }
-  .grid .col { display: flex; flex-direction: column; gap: 20px; flex: 1; min-width: 0; }
-  @media (max-width: 719px) { .grid { gap: 16px; margin-top: 48px; } .grid .col { gap: 16px; } }
-  .layout-1, .layout-2 { display: none; }
-  @media (max-width: 919px) { .layout-3 { display: none; } .layout-2 { display: flex; } }
-  @media (max-width: 559px) { .layout-2 { display: none; } .layout-1 { display: flex; } }
+  /* модульная сетка: композиция на 1–7 работ, плитки слегка перекрываются.
+     Ширина модуля подбирается так, чтобы композиция целиком помещалась в экран
+     по высоте — её нужно видеть одним взглядом. Горизонтальные модули (1–3
+     работы) при этом занимают всю колонку, вертикальные центрируются;
+     нижняя граница не даёт композиции сжаться на низком окне. */
+  .module {
+    position: relative;
+    /* Золотая середина. Горизонтальные композиции (1–4 работы) занимают колонку
+       целиком — именно они чаще всего и встречаются. Вертикальные (5–7 работ)
+       упёрлись бы в две высоты экрана, поэтому им оставлен потолок: 150vh — это
+       примерно полтора экрана прокрутки, дальше композиция перестаёт читаться
+       как одна. Проценты колонки в формуле не участвуют: на широком мониторе они
+       наоборот раздували модуль вверх. */
+    width: min(100%, calc(var(--ar) * 150vh));
+    aspect-ratio: var(--ar);
+    margin: 44px auto 0;
+  }
+  .module + .module { margin-top: 96px; }
 
-  .work { cursor: pointer; animation: rise 350ms ease-out both; }
-  .work .frame { position: relative; overflow: hidden; border-radius: 12px; background: var(--surface); }
-  .work .box { position: relative; transition: transform 300ms ease-out; }
-  .work:hover .box { transform: scale(1.02); }
-  .work canvas.bh { position: absolute; inset: 0; width: 100%; height: 100%; }
-  .work img { position: relative; display: block; width: 100%; height: 100%; object-fit: cover; opacity: 0; transition: opacity 250ms ease-out; }
-  .work img.loaded { opacity: 1; }
-  .work .play {
+  .tile {
+    position: absolute;
+    left: var(--x); top: var(--y); width: var(--w); height: var(--h);
+    z-index: var(--z);
+    cursor: pointer;
+    animation: rise 420ms ease-out both;
+    /* z-index не анимируется, поэтому возвращаем его отложенно — плитка
+       успевает опуститься на место, прежде чем уйти под соседние */
+    transition: transform 420ms cubic-bezier(0.22, 0.61, 0.36, 1), z-index 0s linear 420ms;
+  }
+  .tile:hover, .tile:focus-visible {
+    transform: translateY(-10px) scale(1.035);
+    /* выше любой плитки модуля (максимум 6), но заведомо ниже лайтбокса:
+       иначе плитка под курсором рисуется поверх полноэкранного просмотра */
+    z-index: 20;
+    transition: transform 420ms cubic-bezier(0.22, 0.61, 0.36, 1), z-index 0s;
+  }
+  .tile:focus { outline: none; }
+
+  .tile .frame {
+    position: absolute; inset: 0; overflow: hidden; border-radius: 10px;
+    /* плитки очень разной ширины — кнопка кейса подстраивается под свою (см. @container) */
+    container-type: inline-size;
+    background: var(--surface);
+    /* кольцо цветом фона — «воздух» на стыке перекрывающихся плиток */
+    box-shadow: 0 0 0 6px var(--bg);
+    transition: box-shadow 420ms ease;
+  }
+  .tile:hover .frame, .tile:focus-visible .frame {
+    box-shadow: 0 0 0 6px var(--bg), 0 34px 70px -22px rgba(0, 0, 0, 0.85);
+  }
+  .tile:focus-visible .frame { outline: 2px solid var(--accent); outline-offset: 3px; }
+
+  .tile canvas.bh { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .tile img {
+    position: relative; display: block; width: 100%; height: 100%; object-fit: cover;
+    opacity: 0; transition: opacity 250ms ease-out;
+  }
+  .tile img.loaded { opacity: 1; }
+
+  /* --- длинная работа (лонгрид, инфографика) ---
+     Её место в композиции — ровно 1:3.4 (см. LONG_MODULES в layout.py), картинка
+     прижата к верху и показана во всю ширину: обрезка по центру, как в обычной
+     плитке, оставила бы от лонгрида случайную полосу. Всё, что ниже 3.4 ширины,
+     уходит под «жидкое стекло» — полосу растущего размытия с затемнением к цвету
+     фона: край обрезки не читается как обрыв, и видно, что работа длиннее. */
+  .tile.is-long img { object-position: top; }
+  .tile .glass {
+    position: absolute; left: 0; right: 0; bottom: 0; height: 20%;
+    pointer-events: none; z-index: 3;
+    backdrop-filter: blur(16px) saturate(120%);
+    -webkit-backdrop-filter: blur(16px) saturate(120%);
+    /* маска включает размытие постепенно: сверху полосы его нет совсем */
+    -webkit-mask-image: linear-gradient(to bottom, transparent, #000 65%);
+    mask-image: linear-gradient(to bottom, transparent, #000 65%);
+    background: linear-gradient(to bottom, rgba(22, 21, 20, 0), rgba(22, 21, 20, 0.55) 70%, rgba(22, 21, 20, 0.78));
+  }
+  /* без backdrop-filter (старые браузеры) остаётся один градиент — обрыв всё
+     равно не голый */
+  @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    .tile .glass { background: linear-gradient(to bottom, rgba(22, 21, 20, 0), rgba(22, 21, 20, 0.9)); }
+  }
+
+  /* подсказка на размытии: «под обрезкой есть продолжение, откроется по клику».
+     Видна всегда, а не по наведению — иначе обрезанную работу можно принять за
+     целую и никогда её не открыть */
+  .tile .more {
+    position: absolute; left: 50%; bottom: 16px; z-index: 5; pointer-events: none;
+    display: flex; align-items: center; gap: 7px;
+    height: 34px; padding: 0 16px; border-radius: 999px;
+    background: rgba(245, 244, 239, 0.92); color: #161514;
+    font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+    white-space: nowrap;
+    transform: translateX(-50%);
+    transition: background-color 250ms ease, transform 250ms cubic-bezier(0.22, 0.61, 0.36, 1), opacity 200ms ease;
+  }
+  .tile.is-long:hover .more, .tile.is-long:focus-visible .more {
+    background: #F5F4EF; transform: translateX(-50%) translateY(-4px);
+  }
+  /* у работы со ссылкой на проект наведение отдано кнопке кейса — две плашки
+     разом спорили бы друг с другом */
+  .tile.has-case.is-on .more { opacity: 0; }
+  @container (max-width: 220px) {
+    .tile .more { height: 28px; padding: 0 11px; gap: 5px; font-size: 9.5px; letter-spacing: 0.05em; }
+  }
+  .tile-video {
+    position: relative; display: block; width: 100%; height: 100%;
+    object-fit: cover; background: var(--surface);
+  }
+  /* иконка ▶ нужна, пока ролик не пошёл: дальше она только мешает картинке */
+  .tile.playing .play { opacity: 0; }
+  .tile .play { transition: opacity 400ms ease; }
+  .tile .play {
     position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none;
   }
-  .work .play > div {
+  .tile .play > div {
     width: 52px; height: 52px; border-radius: 50%; background: rgba(14,13,12,0.6);
     backdrop-filter: blur(4px); display: flex; align-items: center; justify-content: center;
   }
-  .work .duration {
+  .tile .duration {
     position: absolute; bottom: 10px; right: 10px; height: 22px; display: flex; align-items: center;
     padding: 0 8px; border-radius: 6px; background: rgba(14,13,12,0.7);
     color: var(--text); font-size: 11px; font-weight: 500; pointer-events: none;
   }
-  .work .caption {
+  .tile .caption {
     position: absolute; left: 0; right: 0; bottom: 0; padding: 36px 16px 14px;
     background: linear-gradient(to top, rgba(14,13,12,0.75), rgba(14,13,12,0));
     pointer-events: none; transition: opacity 300ms; opacity: 0;
   }
-  .work:hover .caption { opacity: 1; }
-  @media (max-width: 719px) { .work .caption { opacity: 1; } }
+  .tile:hover .caption, .tile:focus-visible .caption { opacity: 1; }
+  /* у кейса своя кнопка — подпись-градиент с ней спорила бы за низ плитки */
+  .tile.has-case .caption { display: none; }
+
+  /* --- кнопка кейса: затемнение + двухсоставная «таблетка» --- */
+
+  .tile .shade {
+    position: absolute; inset: 0; pointer-events: none;
+    background: #0E0D0C; opacity: 0;
+    transition: opacity 320ms ease;
+  }
+  .tile.is-on .shade { opacity: 0.45; }
+
+  /* Название кейса и «view case» разведены: раньше они ехали одной лентой
+     снизу и спорили за внимание. Теперь название — служебная подпись в левом
+     нижнем углу кадра, а действие — крупная кнопка по центру фотографии.
+     Порядок появления прежний: сначала подпись, следом кнопка (см. скрипт). */
+  .tile .case { position: absolute; inset: 0; z-index: 4; pointer-events: none; }
+
+  .case__name {
+    position: absolute; left: 16px; bottom: 16px;
+    height: 32px; line-height: 32px; padding: 0 17px;
+    /* длинное название обрезаем: во всю ширину кадра оно спорило бы с кнопкой */
+    max-width: calc(100% - 32px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    border-radius: 999px; background: #F5F4EF; color: #161514;
+    font-size: 10px; font-weight: 700; letter-spacing: -0.01em;
+    opacity: 0; transform: translateY(14px);
+    transition: opacity 300ms ease, transform 300ms cubic-bezier(0.22, 0.61, 0.36, 1);
+  }
+  .tile.is-on .case__name { opacity: 1; transform: none; }
+
+  .case__cta {
+    position: absolute; left: 50%; top: 50%; pointer-events: auto;
+    display: flex; align-items: center; gap: 13px; height: 60px;
+    padding: 0 31px; border-radius: 999px;
+    background: #161514; color: #F5F4EF;
+    font-size: 16px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase;
+    text-decoration: none; white-space: nowrap;
+    opacity: 0; transform: translate(-50%, -50%) scale(0.92);
+    transition: opacity 260ms ease, transform 260ms cubic-bezier(0.22, 0.61, 0.36, 1);
+  }
+  .tile.is-cta .case__cta { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  .case__cta svg { flex-shrink: 0; }
+
+  /* узкая плитка: подпись обрезалась бы по краю фотографии, а кнопка вылезала
+     бы за кадр — оставляем только кнопку и ужимаем её */
+  @container (max-width: 360px) {
+    .case__name { display: none; }
+    .case__cta { height: 48px; padding: 0 22px; gap: 10px; font-size: 13px; }
+  }
+  @container (max-width: 220px) {
+    .case__cta {
+      height: 40px; padding: 0 16px; gap: 7px;
+      font-size: 11px; letter-spacing: 0.08em;
+    }
+  }
+
+  /* телефон: композиция с перекрытием нечитаема на узком экране —
+     раскладываем в одну колонку, каждая работа в своих пропорциях */
+  @media (max-width: 719px) {
+    .module, .module + .module {
+      width: 100%; aspect-ratio: auto; margin-top: 48px;
+      display: flex; flex-direction: column; gap: 16px;
+    }
+    .tile { position: static; width: 100%; height: auto; transform: none; }
+    .tile .frame { position: relative; inset: auto; aspect-ratio: var(--nat); box-shadow: none; }
+    /* длинная работа и на телефоне обрезается по 3.4 ширины: в своих пропорциях
+       лонгрид занял бы десяток экранов прокрутки */
+    .tile.is-long .frame { aspect-ratio: 1 / 3.4; }
+    .tile .caption { opacity: 1; }
+    /* ховера на телефоне нет — иначе ссылка на проект была бы недостижима,
+       поэтому кнопка кейса просто видна всегда */
+    .tile.has-case .case__name { opacity: 1; transform: none; }
+    .tile.has-case .case__cta { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+    .tile.has-case .shade { opacity: 0.35; }
+  }
   .caption .t { color: var(--text); font-size: 14px; font-weight: 500; }
   .caption .s { color: rgba(245,244,239,0.7); font-size: 12.5px; margin-top: 2px; }
   .empty { padding: 96px 0; color: var(--muted); text-align: center; }
@@ -87,7 +300,7 @@
 
   /* лайтбокс */
   #lightbox {
-    position: fixed; inset: 0; z-index: 50; background: rgba(14,13,12,0.96);
+    position: fixed; inset: 0; z-index: 100; background: rgba(14,13,12,0.96);
     backdrop-filter: blur(10px); display: none; flex-direction: column;
   }
   #lightbox.open { display: flex; animation: fadein 250ms ease-out both; }
@@ -106,51 +319,106 @@
   #lb-caption .t { color: var(--text); font-size: 15px; font-weight: 500; }
   #lb-caption .s { color: var(--muted); font-size: 13px; margin-top: 3px; }
   @media (max-width: 719px) { .lb-round.nav { display: none; } }
+
+  /* длинная работа открывается как просмотрщик PDF: картинка во всю ширину
+     сцены целиком, сцена прокручивается вниз. Вписывать лонгрид в высоту экрана
+     бессмысленно — от него осталась бы нечитаемая полоска */
+  #lightbox.long #lb-body { align-items: stretch; }
+  #lightbox.long #lb-stage {
+    display: block; overflow-y: auto; overscroll-behavior: contain;
+    padding-bottom: 24px; scrollbar-width: thin;
+  }
+  #lightbox.long #lb-stage:focus { outline: none; }
+  /* display:block обязателен: сцена в этом режиме не flex, а у инлайновой
+     картинки margin:auto не центрирует */
+  #lightbox.long #lb-stage img {
+    display: block; width: min(100%, 900px); max-width: none; max-height: none; height: auto;
+    margin: 0 auto; border-radius: 8px;
+  }
+  #lightbox.long #lb-caption { margin: 16px auto 0; }
 </style>
 {% endblock %}
 
 {% block content %}
-<div class="container">
+<div class="container{% if site.showcase_show_footer != '1' %} no-footer{% endif %}">
   <header class="board">
-    {{ brand_mark(site) }}
+    <div class="top">
+      {{ brand_mark(site) }}
+      {% if site.studio_site_url %}
+      <a class="btn-site{% if site.studio_site_logo %} has-logo{% endif %}"
+         href="{{ site.studio_site_url }}" target="_blank" rel="noopener noreferrer">
+        {% if site.studio_site_logo %}
+        <span class="site-logo"><img src="{{ site.studio_site_logo }}" alt=""></span>
+        <span class="site-text">{{ t.return_to_site }}</span>
+        {% else %}{{ t.return_to_site }}{% endif %}
+      </a>
+      {% endif %}
+    </div>
     <h1 class="serif">{{ board.title }}</h1>
     {% if board.description %}<p class="desc">{{ board.description }}</p>{% endif %}
+    {% if site.showcase_show_meta == '1' %}
     <div class="meta">{{ works|length }} {{ t.works if works|length != 1 else t.work }} · {{ t.updated }} {{ board.updated_at.strftime('%d.%m.%Y') }}</div>
+    {% endif %}
   </header>
 
   {% if works %}
-  {% macro work_card(i) %}
-  {% set w = works[i] %}
-  <figure class="work" data-index="{{ i }}" style="animation-delay: {{ [120 + i * 50, 800]|min }}ms">
-    <div class="frame">
-      <div class="box" {% if w.width and w.height %}style="aspect-ratio: {{ w.width }} / {{ w.height }}"{% elif w.kind == 'video' %}style="aspect-ratio: 16 / 10"{% else %}style="aspect-ratio: 1 / 1"{% endif %}>
+  {% for module in modules %}
+  <div class="module" style="--ar: {{ module.ratio }}">
+    {% for tile in module.tiles %}
+    {% set w = works[tile.index] %}
+    {# место длинной работы — ровно 1:3.4, картинка прижата к верху и обрезается
+       именно на этой высоте; ниже идёт размытие и подсказка «открыть целиком» #}
+    <figure class="tile{% if w.project_url %} has-case{% endif %}{% if module.long %} is-long{% endif %}"
+            data-index="{{ tile.index }}" tabindex="0" role="button"
+            aria-label="{{ w.title or t.work }}"
+            style="--x: {{ tile.x }}%; --y: {{ tile.y }}%; --w: {{ tile.w }}%; --h: {{ tile.h }}%; --z: {{ tile.z }};
+                   --nat: {% if w.width and w.height %}{{ w.width }} / {{ w.height }}{% elif w.kind == 'video' %}16 / 10{% else %}1 / 1{% endif %};
+                   animation-delay: {{ [120 + tile.index * 60, 900]|min }}ms">
+      <div class="frame">
         {% if w.blurhash %}<canvas class="bh" width="32" height="32" data-blurhash="{{ w.blurhash }}"></canvas>{% endif %}
-        {% if w.kind == 'image' %}
-        <img src="{{ w.media.card }}" alt="{{ w.title }}" loading="lazy" onload="this.classList.add('loaded')">
-        {% elif w.media.card %}
-        <img src="{{ w.media.card }}" alt="{{ w.title }}" loading="lazy" onload="this.classList.add('loaded')">
+        {% if w.kind == 'video' and w.media and w.media.video %}
+        {# беззвучное превью прямо в сетке; звук и контролы — в лайтбоксе #}
+        <video class="tile-video" muted loop playsinline preload="none"
+               {% if w.media.poster %}poster="{{ w.media.poster }}"{% endif %}
+               data-src="{{ w.media.video }}"></video>
+        <div class="play"><div><svg width="18" height="18" viewBox="0 0 24 24" fill="#F5F4EF" style="margin-left:2px"><polygon points="6 3 20 12 6 21 6 3"></polygon></svg></div></div>
+        {% if w.duration_sec %}<div class="duration">{{ (w.duration_sec // 60)|int }}:{{ '%02d' % (w.duration_sec % 60) }}</div>{% endif %}
+        {% elif w.media and w.media.card %}
+        {# sizes повторяет CSS плитки: ширина места = доля модуля, а модуль — это
+           min(колонка, ratio × 150vh). Без этой подсказки браузер считает картинку
+           во всю ширину экрана и всегда тянет самый крупный файл #}
+        <img src="{{ w.media.card }}" alt="{{ w.title }}" loading="lazy"
+             {% if w.srcset %}srcset="{{ w.srcset }}"
+             sizes="(max-width: 719px) 100vw, calc({{ (tile.w / 100)|round(4) }} * min(min(2100px, 96vw) - 80px, {{ module.ratio }} * 150vh))"{% endif %}
+             onload="this.classList.add('loaded')">
+        {% endif %}
+        {% if module.long %}
+        <div class="glass"></div>
+        {# обрезанную работу легко принять за целую — подсказка говорит, что под
+           размытием есть продолжение и его открывает клик #}
+        <div class="more">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m7 6 5 5 5-5"></path><path d="m7 13 5 5 5-5"></path></svg>
+          {{ t.view_full }}
+        </div>
+        {% endif %}
+        {% if w.title %}
+        <figcaption class="caption">
+          <div class="t">{{ w.title }}</div>
+          {% if w.description %}<div class="s">{{ w.description }}</div>{% endif %}
+        </figcaption>
+        {% endif %}
+        {% if w.project_url %}
+        <div class="shade"></div>
+        <div class="case">
+          {% if w.title %}<span class="case__name">{{ w.title }}</span>{% endif %}
+          <a class="case__cta" href="{{ w.project_url }}" target="_blank" rel="noopener noreferrer">
+            {{ t.view_case }}
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"></path><path d="m12 5 7 7-7 7"></path></svg>
+          </a>
+        </div>
         {% endif %}
       </div>
-      {% if w.kind == 'video' %}
-      <div class="play"><div><svg width="18" height="18" viewBox="0 0 24 24" fill="#F5F4EF" style="margin-left:2px"><polygon points="6 3 20 12 6 21 6 3"></polygon></svg></div></div>
-      {% if w.duration_sec %}<div class="duration">{{ (w.duration_sec // 60)|int }}:{{ '%02d' % (w.duration_sec % 60) }}</div>{% endif %}
-      {% endif %}
-      {% if w.title %}
-      <figcaption class="caption">
-        <div class="t">{{ w.title }}</div>
-        {% if w.description %}<div class="s">{{ w.description }}</div>{% endif %}
-      </figcaption>
-      {% endif %}
-    </div>
-  </figure>
-  {% endmacro %}
-
-  {% for ncols, layout in layouts %}
-  <div class="grid layout-{{ ncols }}">
-    {% for column in layout %}
-    <div class="col">
-      {% for i in column %}{{ work_card(i) }}{% endfor %}
-    </div>
+    </figure>
     {% endfor %}
   </div>
   {% endfor %}
@@ -158,8 +426,9 @@
   <p class="empty">{{ t.empty_board }}</p>
   {% endif %}
 
+  {% if site.showcase_show_footer == '1' %}
   <footer>
-    <div class="studio serif">{{ site.brand_name }}</div>
+    {% if site.brand_name %}<div class="studio serif">{{ site.brand_name }}</div>{% endif %}
     {% if site.brand_tagline %}<div class="tagline">{{ site.brand_tagline }}</div>{% endif %}
     <div class="contacts">
       {% if site.contact_email %}<a href="mailto:{{ site.contact_email }}">{{ site.contact_email }}</a>{% endif %}
@@ -168,11 +437,15 @@
       {% if site.social_instagram %}<a href="{{ site.social_instagram }}" rel="noopener">Instagram</a>{% endif %}
       {% if site.social_website %}<a href="{{ site.social_website }}" rel="noopener">{{ site.social_website.replace('https://','').replace('http://','') }}</a>{% endif %}
     </div>
+    {# «Curated by» без названия студии — строка ни о чём, поэтому вместе с брендом #}
+    {% if site.brand_name %}
     <div class="curated">
-      <div class="sq">{% if site.brand_logo_path %}<img src="{{ site.brand_logo_path }}" alt="">{% else %}{{ (site.brand_name or 'S')[0]|upper }}{% endif %}</div>
+      <div class="sq">{% if site.brand_logo_path %}<img src="{{ site.brand_logo_path }}" alt="">{% else %}{{ site.brand_name[0]|upper }}{% endif %}</div>
       {{ t.made_by }} {{ site.brand_name }}
     </div>
+    {% endif %}
   </footer>
+  {% endif %}
 </div>
 
 <div id="lightbox" role="dialog" aria-modal="true">
@@ -186,7 +459,7 @@
     <button class="lb-round nav" id="lb-prev" aria-label="Previous">
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"></path></svg>
     </button>
-    <div id="lb-stage"></div>
+    <div id="lb-stage" tabindex="-1"></div>
     <button class="lb-round nav" id="lb-next" aria-label="Next">
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"></path></svg>
     </button>
@@ -240,7 +513,7 @@
       } catch (e) { /* плейсхолдер остаётся фоном */ }
     });
     // изображения из кэша могли загрузиться до навешивания onload
-    document.querySelectorAll(".work img").forEach((img) => { if (img.complete && img.naturalWidth) img.classList.add("loaded"); });
+    document.querySelectorAll(".tile img").forEach((img) => { if (img.complete && img.naturalWidth) img.classList.add("loaded"); });
   })();
 
   // --- лайтбокс ---
@@ -249,12 +522,20 @@
   const counter = document.getElementById("lb-counter");
   let current = -1;
 
+  // та же граница, что на сервере (media_service.LONG_RATIO): такая работа
+  // открывается прокруткой, а не вписывается в высоту экрана
+  const LONG_RATIO = 2.5;
+  const isLong = (w) => w.kind === "image" && w.width && w.height && w.height >= w.width * LONG_RATIO;
+
   function show(i) {
     if (i < 0) i = WORKS.length - 1;
     if (i >= WORKS.length) i = 0;
     current = i;
     const w = WORKS[i];
     stage.innerHTML = "";
+    stage.scrollTop = 0;
+    const long = isLong(w);
+    lb.classList.toggle("long", long);
     let el;
     if (w.kind === "video") {
       el = document.createElement("video");
@@ -277,19 +558,129 @@
     counter.textContent = (i + 1) + " / " + WORKS.length;
     lb.classList.add("open");
     document.body.style.overflow = "hidden";
+    // прокрутка стрелками ↑/↓ работает только у элемента в фокусе
+    if (long) stage.focus({ preventScroll: true });
+    // превью в сетке не должны играть за спиной у полноэкранного просмотра
+    document.querySelectorAll("video.tile-video").forEach((v) => v.pause());
     [i - 1, i + 1].forEach((j) => {
       const n = WORKS[(j + WORKS.length) % WORKS.length];
       if (n && n.kind === "image") { const im = new Image(); im.src = n.media.large; }
     });
   }
   function close() {
-    lb.classList.remove("open");
+    lb.classList.remove("open", "long");
     stage.innerHTML = "";
     document.body.style.overflow = "";
     current = -1;
+    // возвращаем превью к жизни — наблюдатель сам по себе больше не сработает
+    if (window.showcaseSyncVideos) window.showcaseSyncVideos();
   }
-  document.querySelectorAll(".work").forEach((card) =>
-    card.addEventListener("click", () => show(+card.dataset.index)));
+  document.querySelectorAll(".tile").forEach((card) => {
+    card.addEventListener("click", () => show(+card.dataset.index));
+    card.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); show(+card.dataset.index); }
+    });
+  });
+
+  // --- беззвучное автовоспроизведение видео в сетке ---
+  (function () {
+    const videos = [...document.querySelectorAll("video.tile-video")];
+    if (videos.length === 0) return;
+    // при отключённой анимации движущаяся картинка неуместна — остаётся постер
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+
+    const start = (video) => {
+      // src подставляем только когда ролик реально понадобился: иначе доска на
+      // несколько видео тянула бы их все сразу
+      if (!video.src) video.src = video.dataset.src;
+      const played = video.play();
+      if (played && played.catch) {
+        // автозапуск могут запретить (экономия трафика, политика браузера) —
+        // это не ошибка, просто остаётся постер и иконка ▶
+        played.then(() => video.closest(".tile").classList.add("playing")).catch(() => {});
+      }
+    };
+    const stop = (video) => {
+      video.pause();
+      video.closest(".tile").classList.remove("playing");
+    };
+
+    const inView = (video) => {
+      const box = video.getBoundingClientRect();
+      return box.bottom > 0 && box.top < window.innerHeight;
+    };
+    // Пересчёт по факту, а не по переходу. Наблюдатель молчит, пока видимость
+    // элемента не менялась, поэтому после любой паузы не по его вине (вкладка
+    // ушла в фон, открывали лайтбокс) ролик сам бы уже не поехал.
+    const sync = () => videos.forEach((v) => (inView(v) ? start(v) : stop(v)));
+    window.showcaseSyncVideos = sync;
+
+    if ("IntersectionObserver" in window) {
+      const watcher = new IntersectionObserver(
+        (entries) => entries.forEach((e) => (e.isIntersecting ? start(e.target) : stop(e.target))),
+        { rootMargin: "150px 0px" }
+      );
+      videos.forEach((v) => watcher.observe(v));
+    } else {
+      sync();
+    }
+
+    // вкладка в фоне — незачем крутить видео; вернулись — продолжаем
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) videos.forEach(stop);
+      else sync();
+    });
+  })();
+
+  // --- кнопка кейса: две ступени вперёд и те же две назад ---
+  (function () {
+    const cases = [...document.querySelectorAll(".tile.has-case")];
+    if (cases.length === 0) return;
+
+    const STEP = 140;    // задержка перед появлением «view case»
+    const REWIND = 200;  // сколько кнопка уходит обратно
+
+    let shown = null;     // плитка, на которой сейчас показана кнопка
+    let queued = null;    // плитка, ждущая, пока предыдущая доиграет назад
+    let rewinding = false;
+    let timer = null;
+
+    function play(tile) {
+      shown = tile;
+      tile.classList.add("is-on");
+      timer = setTimeout(() => tile.classList.add("is-cta"), STEP);
+    }
+
+    function rewind() {
+      if (rewinding || !shown) return;
+      rewinding = true;
+      clearTimeout(timer);
+      const tile = shown;
+      tile.classList.remove("is-cta");
+      timer = setTimeout(() => {
+        tile.classList.remove("is-on");
+        shown = null;
+        rewinding = false;
+        if (queued) { const next = queued; queued = null; play(next); }
+      }, REWIND);
+    }
+
+    cases.forEach((tile) => {
+      tile.addEventListener("mouseenter", () => {
+        if (shown === tile && !rewinding) { queued = null; return; }
+        if (shown) { queued = tile; rewind(); }
+        else if (rewinding) { queued = tile; }
+        else play(tile);
+      });
+      tile.addEventListener("mouseleave", () => {
+        if (queued === tile) queued = null;
+        if (shown === tile) rewind();
+      });
+      // клик по кнопке ведёт на проект, а не открывает лайтбокс
+      const cta = tile.querySelector(".case__cta");
+      if (cta) cta.addEventListener("click", (e) => e.stopPropagation());
+    });
+  })();
   document.getElementById("lb-close").addEventListener("click", close);
   document.getElementById("lb-prev").addEventListener("click", (e) => { e.stopPropagation(); show(current - 1); });
   document.getElementById("lb-next").addEventListener("click", (e) => { e.stopPropagation(); show(current + 1); });

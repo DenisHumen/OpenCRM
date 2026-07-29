@@ -84,6 +84,7 @@ class BoardPatchIn(BaseModel):
 class WorkPatchIn(BaseModel):
     title: str | None = None
     description: str | None = None
+    project_url: str | None = None
 
 
 class WorkOrderIn(BaseModel):
@@ -193,6 +194,7 @@ def work_out(work: Work) -> dict:
         "kind": work.kind,
         "title": work.title,
         "description": work.description,
+        "project_url": work.project_url or "",
         "sort_order": work.sort_order,
         "status": work.status,
         "original_name": work.original_name,
@@ -204,6 +206,8 @@ def work_out(work: Work) -> dict:
         "blurhash": work.blurhash,
         "created_at": _iso(work.created_at),
         "media": media_service.work_media_urls(work) if work.status == "ready" else None,
+        # кандидаты по ширине для плитки витрины (см. media_service.work_srcset)
+        "srcset": media_service.work_srcset(work) if work.status == "ready" else "",
     }
 
 

@@ -1,8 +1,12 @@
+{# Марка студии. Бренд не заполнен и логотипа нет — блока нет совсем:
+   буква-заглушка в квадрате читалась бы как чужой знак на витрине. #}
 {% macro brand_mark(site) %}
+{% if site.brand_logo_path or site.brand_name %}
 <div class="brand-mark">
   <div class="square">
-    {% if site.brand_logo_path %}<img src="{{ site.brand_logo_path }}" alt="">{% else %}{{ (site.brand_name or 'S')[0]|upper }}{% endif %}
+    {% if site.brand_logo_path %}<img src="{{ site.brand_logo_path }}" alt="">{% else %}{{ site.brand_name[0]|upper }}{% endif %}
   </div>
-  <span class="name">{{ site.brand_name }}</span>
+  {% if site.brand_name %}<span class="name">{{ site.brand_name }}</span>{% endif %}
 </div>
+{% endif %}
 {% endmacro %}

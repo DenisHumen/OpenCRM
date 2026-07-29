@@ -25,5 +25,39 @@ def is_valid_email(email: str) -> bool:
     return bool(EMAIL_RE.match(email.strip()))
 
 
+MAX_URL_LENGTH = 500
+
+
+def normalize_external_url(value: str | None) -> str:
+    """Приводит внешнюю ссылку к безопасному виду или возвращает '' для пустой.
+
+    Пускаем только ``http``/``https``: такие ссылки уходят в атрибут ``href`` на
+    публичной витрине, а ``javascript:``/``data:`` там означали бы XSS — экранирование
+    Jinja2 от этого не спасает, схему нужно проверять явно. Возвращает нормализованную
+    строку; на непригодном значении бросает ValueError.
+    """
+    url = (value or "").strip()
+    if not url:
+        return ""
+    if len(url) > MAX_URL_LENGTH:
+        raise ValueError(f"URL is too long (max {MAX_URL_LENGTH})")
+    # управляющие символы в href ломают разметку и обходят проверку схемы
+    if any(ord(ch) < 32 for ch in url):
+        raise ValueError("URL contains control characters")
+    # "//evil.com" браузер читает как protocol-relative и уводит на чужой домен
+    if url.startswith("//"):
+        raise ValueError("URL must start with http:// or https://")
+
+    lowered = url.lower()
+    if not (lowered.startswith("http://") or lowered.startswith("https://")):
+        # чужая схема (javascript:, data:, ftp:) — отказ: ссылка идёт в href на витрине
+        if ":" in url.split("/", 1)[0]:
+            raise ValueError("URL must start with http:// or https://")
+        # адрес без схемы («studio.site») — обычный способ набора, дописываем сами,
+        # иначе сохранение молча падало бы и оставался прежний адрес
+        url = "https://" + url
+    return url
+
+
 def normalize_email(email: str) -> str:
     return email.strip().lower()
