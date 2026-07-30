@@ -85,6 +85,8 @@ class WorkPatchIn(BaseModel):
     title: str | None = None
     description: str | None = None
     project_url: str | None = None
+    # какой фрагмент длинной работы видно на витрине; null — от верха
+    preview_focus: float | None = None
 
 
 class WorkOrderIn(BaseModel):
@@ -204,6 +206,8 @@ def work_out(work: Work) -> dict:
         "height": work.height,
         "duration_sec": work.duration_sec,
         "blurhash": work.blurhash,
+        # видимый фрагмент длинной работы: null — от верха
+        "preview_focus": work.preview_focus,
         "created_at": _iso(work.created_at),
         "media": media_service.work_media_urls(work) if work.status == "ready" else None,
         # кандидаты по ширине для плитки витрины (см. media_service.work_srcset)

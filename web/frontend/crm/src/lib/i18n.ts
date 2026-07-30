@@ -255,6 +255,15 @@ const en = {
   projectLink: "Project link",
   projectLinkHint:
     "Where this work leads on the showcase: hovering it shows a “View case” button. Leave empty — the work just opens in the viewer.",
+  // обрезка превью длинной работы
+  cropPreview: "Crop preview",
+  cropPreviewHint:
+    "A long work does not fit the showcase whole, so only a fragment is shown — the client opens the rest with a click. Choose which fragment that is.",
+  cropWindow: "Fragment",
+  cropWindowHint:
+    "Drag the frame along the work. Its shape is the shape of the place this work takes on the showcase — you choose which part lands there.",
+  cropResult: "What the client sees",
+  cropReset: "Back to the top",
   // profile
   account: "Account",
   displayName: "Display name",
@@ -528,6 +537,15 @@ const ru: typeof en = {
   projectLink: "Ссылка на проект",
   projectLinkHint:
     "Куда ведёт работа на витрине: при наведении появляется кнопка «View case». Оставьте пустым — работа просто откроется в просмотрщике.",
+  // обрезка превью длинной работы
+  cropPreview: "Обрезать превью",
+  cropPreviewHint:
+    "Длинная работа не помещается на витрине целиком, поэтому показывается только фрагмент — остальное клиент откроет кликом. Выберите, какой именно.",
+  cropWindow: "Фрагмент",
+  cropWindowHint:
+    "Перетащите рамку вдоль работы. Её форма — это форма места, которое работа занимает на витрине; вы выбираете, какой кусок туда попадёт.",
+  cropResult: "Что увидит клиент",
+  cropReset: "Вернуть к верху",
   account: "Аккаунт",
   displayName: "Отображаемое имя",
   emailHint: "(для входа, изменить нельзя)",

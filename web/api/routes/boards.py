@@ -10,6 +10,7 @@ from database.repositories import shares as shares_repo
 from database.repositories import stats as stats_repo
 from web.api import schemas
 from web.api.deps import get_db, require_staff
+from web.public import layout
 
 router = APIRouter(prefix="/boards", tags=["boards"])
 
@@ -63,6 +64,12 @@ def get_board(
     links = shares_repo.list_for_board(db, board_id)
     data = schemas.board_out(board, works_count=len(works))
     data["works"] = [schemas.work_out(w) for w in works]
+    # форма места каждой работы на витрине — редактору обрезки, чтобы рамка
+    # фрагмента совпадала с тем, что увидит клиент. Композицию собирают только
+    # готовые работы, поэтому необработанные места пока не занимают.
+    ready = [w for w in data["works"] if w["status"] == "ready"]
+    for work, ratio in zip(ready, layout.place_ratios(len(ready))):
+        work["place_ratio"] = ratio
     data["shares"] = [
         schemas.share_out(link, share_service.share_stats(db, link)) for link in links
     ]

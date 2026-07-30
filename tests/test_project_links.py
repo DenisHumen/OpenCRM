@@ -201,15 +201,16 @@ def test_showcase_return_button_with_and_without_logo(manager_client, root_clien
     root_client.delete(f"{API}/settings/site-logo")
     plain = TestClient(app).get(f"/b/{share['token']}").text
     assert "Return to the site" in plain
-    # без лого кнопка остаётся прежней: класс на самой ссылке не появляется
-    # (искать просто "has-logo" нельзя — он есть и в инлайновом CSS)
-    assert 'class="btn-site has-logo"' not in plain
+    # без лого остаётся только надпись, плашки нет
+    assert '<span class="site-logo">' not in plain
     assert "site-logo.png" not in plain
+    # надпись всё равно в своём span: она лежит над волной заливки (z-index)
+    assert '<span class="site-text">' in plain
 
     root_client.post(
         f"{API}/settings/site-logo",
         files={"file": ("site-logo.png", png_bytes(), "image/png")},
     )
     withlogo = TestClient(app).get(f"/b/{share['token']}").text
-    assert 'class="btn-site has-logo"' in withlogo
+    assert '<span class="site-logo">' in withlogo
     assert '<img src="/branding/site-logo.png?v=' in withlogo

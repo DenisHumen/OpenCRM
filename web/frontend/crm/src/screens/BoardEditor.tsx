@@ -20,6 +20,7 @@ export function BoardEditor() {
   const [pinDraft, setPinDraft] = useState("");
   const [dragId, setDragId] = useState<number | null>(null);
   const [linkWork, setLinkWork] = useState<any>(null);
+  const [cropWork, setCropWork] = useState<any>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const pollTimer = useRef<number>();
 
@@ -42,23 +43,22 @@ export function BoardEditor() {
     const processing = board?.works?.filter((w: any) => w.status === "processing") ?? [];
     if (processing.length === 0) return;
     pollTimer.current = window.setTimeout(async () => {
+      let settled = false;
       for (const work of processing) {
         try {
           const fresh = await api.get(`/boards/${id}/works/${work.id}`);
-          if (fresh.status !== "processing") {
-            setBoard((prev: any) => ({
-              ...prev,
-              works: prev.works.map((w: any) => (w.id === fresh.id ? fresh : w)),
-            }));
-          }
+          if (fresh.status !== "processing") settled = true;
         } catch {
           /* повторим на следующем тике */
         }
       }
-      setBoard((prev: any) => ({ ...prev })); // перезапуск эффекта
+      // готовая работа занимает место в композиции, а значит форма мест у всех
+      // соседей меняется — их считает выдача доски, поэтому перезапрашиваем её
+      if (settled) await load();
+      else setBoard((prev: any) => ({ ...prev })); // перезапуск эффекта
     }, 1500);
     return () => window.clearTimeout(pollTimer.current);
-  }, [board, id]);
+  }, [board, id, load]);
 
   if (!board) return <ScreenLoading />;
 
@@ -133,11 +133,8 @@ export function BoardEditor() {
   const deleteWork = async (workId: number) => {
     try {
       await api.del(`/boards/${id}/works/${workId}`);
-      setBoard((prev: any) => ({
-        ...prev,
-        works: prev.works.filter((w: any) => w.id !== workId),
-        cover_work_id: prev.cover_work_id === workId ? null : prev.cover_work_id,
-      }));
+      // мест в композиции стало меньше — их форму пересчитывает сервер
+      await load();
     } catch (e) {
       toastError(e);
     }
@@ -154,6 +151,8 @@ export function BoardEditor() {
     setBoard((prev: any) => ({ ...prev, works: reordered }));
     try {
       await api.put(`/boards/${id}/works/order`, { work_ids: ids });
+      // порядок решает, какое место занимает работа, — форма мест поменялась
+      await load();
     } catch (e) {
       toastError(e);
       void load();
@@ -236,7 +235,21 @@ export function BoardEditor() {
               >
                 <div className="work-media">
                   {work.media?.card || work.media?.poster ? (
-                    <img src={work.media.card ?? work.media.poster} alt="" />
+                    // длинная работа показана уже обрезанной — карточка в CRM
+                    // должна выглядеть так же, как плитка на витрине
+                    <img
+                      src={work.media.card ?? work.media.poster}
+                      alt=""
+                      className={isLongWork(work) ? "is-cropped" : ""}
+                      style={
+                        isLongWork(work)
+                          ? {
+                              aspectRatio: String(placeRatio(work)),
+                              objectPosition: `50% ${(work.preview_focus ?? 0) * 100}%`,
+                            }
+                          : undefined
+                      }
+                    />
                   ) : (
                     <div style={{ aspectRatio: "16/10", display: "grid", placeItems: "center", color: "var(--faint)" }}>
                       <Icon name={work.kind === "video" ? "play" : "image"} size={22} />
@@ -259,6 +272,14 @@ export function BoardEditor() {
                       <Icon name="star" size={13} />
                     </button>
                   )}
+                  {/* обрезать имеет смысл только длинную работу: короткая
+                      помещается в своё место композиции целиком */}
+                  {work.status === "ready" && isLongWork(work) && (
+                    <button className="crop-btn" onClick={() => setCropWork(work)}>
+                      <Icon name="crop" size={13} />
+                      {t("cropPreview")}
+                    </button>
+                  )}
                   {work.duration_sec && (
                     <div className="badge-floating" style={{ top: "auto", left: "auto", bottom: 8, right: 8, color: "var(--text)", fontWeight: 500, fontSize: 10.5 }}>
                       <Icon name="play" size={9} fill="currentColor" />
@@ -269,7 +290,7 @@ export function BoardEditor() {
                 <div className="work-foot">
                   <Icon name="grip" size={13} />
                   <WorkTitle work={work} boardId={board.id} onSaved={(updated) =>
-                    setBoard((prev: any) => ({ ...prev, works: prev.works.map((w: any) => (w.id === updated.id ? updated : w)) }))
+                    setBoard((prev: any) => ({ ...prev, works: prev.works.map((w: any) => (w.id === updated.id ? { ...w, ...updated } : w)) }))
                   } />
                   <button
                     className="text-link"
@@ -542,13 +563,159 @@ export function BoardEditor() {
           onSaved={(updated) => {
             setBoard((prev: any) => ({
               ...prev,
-              works: prev.works.map((w: any) => (w.id === updated.id ? updated : w)),
+              works: prev.works.map((w: any) => (w.id === updated.id ? { ...w, ...updated } : w)),
             }));
             setLinkWork(null);
           }}
         />
       )}
+      {cropWork && (
+        <WorkCropModal
+          work={cropWork}
+          boardId={board.id}
+          onClose={() => setCropWork(null)}
+          onSaved={(updated) => {
+            setBoard((prev: any) => ({
+              ...prev,
+              works: prev.works.map((w: any) => (w.id === updated.id ? { ...w, ...updated } : w)),
+            }));
+            setCropWork(null);
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+// Тот же порог, что у media_service.LONG_RATIO: с этой вытянутости работа в
+// своё место композиции целиком не помещается, и появляется что выбирать.
+const LONG_RATIO = 2.5;
+const FALLBACK_PLACE = 1.34; // форма самого заметного места — пока работа не встала в композицию
+const STAGE = 400; // высота обеих колонок редактора, px
+
+export function isLongWork(work: any): boolean {
+  return work.kind === "image" && work.width && work.height && work.height >= work.width * LONG_RATIO;
+}
+
+/** Форма места работы на витрине (ширина / высота) — её присылает сервер. */
+export function placeRatio(work: any): number {
+  return work.place_ratio || FALLBACK_PLACE;
+}
+
+/** Редактор превью: какой фрагмент длинной работы попадёт на витрину. */
+function WorkCropModal({
+  work,
+  boardId,
+  onSaved,
+  onClose,
+}: {
+  work: any;
+  boardId: number;
+  onSaved: (w: any) => void;
+  onClose: () => void;
+}) {
+  const { t, toastError } = useApp();
+  const natural = work.height / work.width; // во сколько ширин вытянута работа
+  const place = placeRatio(work);
+  const [focus, setFocus] = useState<number>(work.preview_focus ?? 0);
+  const [saving, setSaving] = useState(false);
+
+  const source = work.media?.large ?? work.media?.card;
+  // карта всей работы: высота фиксирована, ширина — сколько остаётся от пропорций
+  const mapWidth = Math.max(26, Math.round(STAGE / natural));
+  // окно обрезки той же формы, что место на витрине: во всю ширину карты
+  const windowHeight = Math.min(STAGE, mapWidth / place);
+  const travel = STAGE - windowHeight; // сколько окну есть куда ехать
+
+  // Считаем от точки, где нажали, поэтому окно не прыгает под курсор.
+  const startDrag = (event: React.PointerEvent) => {
+    event.preventDefault();
+    const originY = event.clientY;
+    const startTop = focus * travel;
+
+    const onMove = (e: PointerEvent) => {
+      if (travel <= 0) return;
+      setFocus(Math.max(0, Math.min(1, (startTop + e.clientY - originY) / travel)));
+    };
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  };
+
+  const save = async (focusValue: number | null) => {
+    setSaving(true);
+    try {
+      onSaved(
+        await api.patch(`/boards/${boardId}/works/${work.id}`, { preview_focus: focusValue })
+      );
+    } catch (e) {
+      toastError(e);
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Modal title={t("cropPreview")} onClose={onClose} wide>
+      <div style={{ color: "var(--faint)", fontSize: 12.5, marginBottom: 18, lineHeight: 1.5 }}>
+        {t("cropPreviewHint")}
+      </div>
+
+      <div className="crop-stage">
+        <div>
+          <div className="crop-label">{t("cropWindow")}</div>
+          <div className="crop-map" style={{ width: mapWidth, height: STAGE }}>
+            <img src={source} alt="" draggable={false} />
+            <div className="crop-map-veil" style={{ height: focus * travel }} />
+            <div
+              className="crop-map-veil"
+              style={{ top: focus * travel + windowHeight, bottom: 0, height: "auto" }}
+            />
+            <div
+              className="crop-window"
+              style={{ top: focus * travel, height: windowHeight }}
+              onPointerDown={startDrag}
+            />
+          </div>
+        </div>
+
+        <div className="crop-side">
+          <div className="crop-label">{t("cropResult")}</div>
+          {/* ровно то же, что делает витрина: место своей формы, картинка во
+              всю ширину, сдвинутая по вертикали на focus */}
+          <div className="crop-preview" style={{ width: STAGE * place, height: STAGE }}>
+            <img src={source} alt="" style={{ objectPosition: `50% ${focus * 100}%` }} />
+          </div>
+        </div>
+
+        <div className="crop-controls">
+          <div style={{ color: "var(--faint)", fontSize: 11.5, lineHeight: 1.5 }}>
+            {t("cropWindowHint")}
+          </div>
+        </div>
+      </div>
+
+      <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 20 }}>
+        {work.preview_focus ? (
+          <button
+            className="btn btn-secondary btn-sm"
+            style={{ marginRight: "auto" }}
+            disabled={saving}
+            onClick={() => void save(null)}
+          >
+            {t("cropReset")}
+          </button>
+        ) : null}
+        <button className="btn btn-secondary btn-sm" onClick={onClose}>
+          {t("cancel")}
+        </button>
+        <button className="btn btn-primary btn-sm" disabled={saving} onClick={() => void save(focus)}>
+          {t("save")}
+        </button>
+      </div>
+    </Modal>
   );
 }
 

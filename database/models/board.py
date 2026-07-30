@@ -57,4 +57,8 @@ class Work(Base):
     height: Mapped[int | None] = mapped_column(Integer, nullable=True)
     duration_sec: Mapped[float | None] = mapped_column(Float, nullable=True)
     blurhash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Какой фрагмент длинной работы попадает на витрину: 0 — верх картинки,
+    # 1 — низ. Форму места задаёт композиция (web/public/layout.py), менеджер
+    # выбирает только участок. NULL — от верха, как было до редактора обрезки.
+    preview_focus: Mapped[float | None] = mapped_column(Float, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

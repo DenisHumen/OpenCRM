@@ -73,10 +73,13 @@ export function Modal({
   title,
   children,
   onClose,
+  wide,
 }: {
   title?: string;
   children: ReactNode;
   onClose: () => void;
+  /** редактору обрезки нужна ширина: рядом стоят карта работы и превью */
+  wide?: boolean;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -93,7 +96,7 @@ export function Modal({
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="modal" ref={ref}>
+      <div className={"modal" + (wide ? " modal-wide" : "")} ref={ref}>
         {title && (
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
             <div style={{ fontSize: 15, fontWeight: 600 }}>{title}</div>

@@ -178,7 +178,24 @@ def update_work(db: Session, board_id: int, work_id: int, data: dict) -> Work:
             work.project_url = normalize_external_url(data["project_url"])
         except ValueError as exc:
             raise errors.ValidationError(str(exc), code="bad_project_url") from exc
+    _apply_preview_crop(work, data)
     return work
+
+
+def _apply_preview_crop(work: Work, data: dict) -> None:
+    """Выбранный менеджером фрагмент работы: 0 — верх картинки, 1 — низ.
+
+    Двигать окно есть смысл только у длинной картинки — короткая помещается в
+    своё место композиции целиком. `null` возвращает работу к показу от верха.
+    """
+    if "preview_focus" not in data:
+        return
+    if not media_service.is_long_image(work.width, work.height):
+        raise errors.ValidationError(
+            "Preview crop applies to long images only", code="not_a_long_work"
+        )
+    focus = data["preview_focus"]
+    work.preview_focus = None if focus is None else round(max(0.0, min(1.0, float(focus))), 4)
 
 
 def delete_work(db: Session, board_id: int, work_id: int) -> None:

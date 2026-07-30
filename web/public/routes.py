@@ -126,9 +126,10 @@ def showcase(token: str, request: Request, db: Session = Depends(get_db)):
             "t": strings,
             "board": board,
             "works": works_payload,
-            "modules": layout.build_modules(
-                len(works_payload), layout.long_indexes(works_payload)
-            ),
+            "modules": layout.build_modules(len(works_payload)),
+            # работы, которые в своё место не помещаются: им нужна подсказка
+            # «открыть целиком» и размытие на срезе
+            "cropped": layout.cropped_indexes(works_payload),
             "og_image": og_image,
             "page_url": f"{base_url}/b/{token}",
         },

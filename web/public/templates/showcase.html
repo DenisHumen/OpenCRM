@@ -15,16 +15,65 @@
 
 {% block style %}
 <style>
+  /* Волна на кнопке возврата. Замедление почти до остановки (expo-out) — от него
+     движение читается как инерция тяжёлой шторки, а не как равномерный проезд;
+     появление длиннее отклика, потому что его никто не ждёт и торопить нечего. */
+  :root {
+    --wipe: 620ms; --wipe-in: 900ms; --wipe-ease: cubic-bezier(0.19, 1, 0.22, 1);
+    /* Свободная высота под первый ряд композиции: окно минус всё, что стоит над
+       модулем. Ставит скрипт внизу страницы — заголовок может перенестись на две
+       строки, описание и счётчик работ включаются настройками, и угадать эту
+       высоту из CSS нельзя. Значение по умолчанию делает потолок заведомо
+       недостижимым: без скрипта работает прежнее правило 150vh. */
+    --fit: 100vh;
+  }
+
   /* колонка тянется за экраном: прежний потолок 1440px оставлял на широком
      мониторе больше трети ширины пустой */
-  .container { max-width: min(2100px, 96vw); margin: 0 auto; padding: 0 24px; }
+  .container {
+    max-width: min(2100px, 96vw); margin: 0 auto; padding: 0 24px;
+    /* Высота первого ряда композиции в долях ширины колонки. Значение приходит
+       из разметки (`layout.MODULE_ROWS × MODULE_SPANS` первого модуля): у доски
+       на три и больше работ это 0.5408, у одной-двух ряд ниже, и жать под него
+       шапку незачем. Здесь — запасное значение на случай пустой доски. */
+    --rowk: 0.5408;
+    /* Сколько пикселей шапка обязана отдать, чтобы первый ряд влез в экран.
+       Считается из самой нехватки, а не из высоты окна: на 1440×900 ряду не
+       хватает 17px, а на 1920×1080 — 86px, и привязка к одной высоте ужимала бы
+       шапку там, где всё и так помещалось.
+         min(2100px, 96vw) - 80px — сама колонка вместе с её потолком: без min()
+       формула на 2560px считала колонку шире, чем она есть, и жала шапку на
+       1440p, где запас был больше двухсот пикселей;
+         213px — шапка в полный рост, 101px — сколько из неё вообще можно снять.
+       Заголовок в две строки или включённое описание в эту оценку не входят —
+       остаток добирает потолок ширины модуля (--fit выше). */
+    --squeeze: clamp(0px, calc(var(--rowk) * (min(2100px, 96vw) - 80px) + 213px - 100vh), 101px);
+    /* Отступы отдают первые 84px нехватки, кегль заголовка — только остаток
+       сверх них. Одной общей рампой заголовок на 1920×1080 мельчал с 36px до
+       23px, хотя там не хватало 86px и одних отступов почти достаточно. */
+    --squeeze-type: max(0px, calc(var(--squeeze) - 84px));
+    /* высота кнопки возврата — она же задаёт высоту верхней строки шапки */
+    --btn-h: max(48px, calc(60px - var(--squeeze) * 0.143));
+  }
   @media (min-width: 720px) { .container { padding: 0 40px; } }
   /* футер выключен — страница иначе обрывалась бы сразу за последней работой */
   .container.no-footer { padding-bottom: 96px; }
 
-  header.board { padding-top: 28px; }
+  /* Размеры шапки ужимаются ровно на ту нехватку, что посчитал --squeeze.
+     Первый ряд композиции обязан попасть на экран целиком, а взять место больше
+     неоткуда: сами работы уменьшать нельзя. Где нехватки нет — шапка остаётся
+     ровно такой, какой была; где есть — доходит до 112px вместо 213px.
+     Структура при этом прежняя: кнопка по центру, заголовок под ней.
+     101px нехватки разложены по размерам шапки: 84px берут четыре отступа
+     (16 + 12 + 28 + 28), остальные 17px — кегль заголовка. Отступы ужимаются
+     все сразу и пропорционально: иначе сначала схлопнулся бы один из них, и
+     шапка на полпути выглядела бы кривой. */
+  header.board { padding-top: max(12px, calc(28px - var(--squeeze) * 0.19)); }
   /* марка студии слева, кнопка возврата — по центру страницы */
-  header.board .top { position: relative; display: flex; align-items: center; min-height: 60px; }
+  header.board .top {
+    position: relative; display: flex; align-items: center;
+    min-height: var(--btn-h);
+  }
   header.board .top .btn-site {
     position: absolute; left: 50%; transform: translateX(-50%);
   }
@@ -34,38 +83,86 @@
   }
   header.board .brand-mark { animation: fadein 400ms ease-out both; }
   /* кнопка возврата — главный элемент шапки: увеличена примерно втрое по площади
-     (высота и кегль ×1.7), заголовок доски при этом ужат — см. header.board h1 */
+     (высота и кегль ×1.7), заголовок доски при этом ужат — см. header.board h1.
+     Покой у неё белый, а не серый: это единственная ссылка наружу со страницы,
+     и на тёмной витрине она должна быть самым заметным пятном в шапке. */
   .btn-site {
-    display: inline-flex; align-items: center; height: 60px; padding: 0 30px;
-    border: 1px solid var(--border); border-radius: 999px;
-    color: var(--text); font-size: 19px; font-weight: 500; text-decoration: none;
-    white-space: nowrap; transition: background-color 250ms, border-color 250ms;
-    animation: fadein 400ms ease-out 80ms both;
+    position: relative; overflow: hidden;
+    display: inline-flex; align-items: center; height: var(--btn-h); padding: 0;
+    border: 1px solid var(--text); border-radius: 999px;
+    color: var(--bg); font-size: max(16px, calc(19px - var(--squeeze) * 0.036));
+    font-weight: 500; text-decoration: none;
+    white-space: nowrap;
+    transition: color var(--wipe) var(--wipe-ease);
+    animation: fadein 400ms ease-out 80ms both,
+               btn-ink var(--wipe-in) var(--wipe-ease) 220ms backwards;
   }
-  .btn-site:hover { background: var(--surface); border-color: var(--surface-2); }
+  /* стартовый кадр — ровно прежняя кнопка: серая рамка, светлая надпись. Из него
+     волна и «переливает» её в белую, поэтому переход видно как превращение
+     знакомого состояния, а не как проявление пустой пилюли */
+  @keyframes btn-ink { from { color: var(--text); border-color: var(--border); } }
+  /* Заливка, которой кнопка «переливается» из серого в белый. Растёт от левого
+     края — тот же приём, что у кнопки-образца: не подсветка на месте, а волна,
+     проходящая через кнопку. Наведение отправляет волну обратно, уход — снова
+     вперёд, поэтому у покоя и у наведения одна и та же анимация в двух
+     направлениях, а не две разные.
+     Отдельный слой, а не background самой кнопки: цвет фона так не сдвинуть, а
+     transform считает композитор — на 60px пилюле это разница между рывком и
+     скольжением. */
+  .btn-site::before {
+    content: ""; position: absolute; inset: 0;
+    background: var(--text);
+    transform: scaleX(1); transform-origin: left;
+    transition: transform var(--wipe) var(--wipe-ease);
+    /* backwards, а не both: залипший на кнопке forwards-кадр перебил бы по
+       каскаду scaleX(0) наведения, и кнопка перестала бы отзываться */
+    animation: wipe-in var(--wipe-in) var(--wipe-ease) 220ms backwards;
+  }
+  .btn-site:hover, .btn-site:focus-visible { color: var(--text); }
+  .btn-site:hover::before, .btn-site:focus-visible::before { transform: scaleX(0); }
+  .btn-site:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  @keyframes wipe-in { from { transform: scaleX(0); } }
 
   /* с лого кнопка становится двухсегментной: слева плашка с лого, справа надпись.
      overflow:hidden скругляет плашку по форме пилюли, поэтому лого и кнопка
      читаются как один элемент, а не картинка рядом с кнопкой */
-  .btn-site.has-logo { padding: 0; overflow: hidden; }
+  .btn-site .site-logo, .btn-site .site-text { position: relative; z-index: 1; }
   .btn-site .site-logo {
     display: flex; align-items: center; justify-content: center;
     height: 100%; padding: 0 20px;
-    background: var(--surface); border-right: 1px solid var(--border);
-    transition: background-color 250ms;
+    /* Своя белая подложка, которую волна не уносит. Логотипы сайтов рисуют для
+       светлого фона — на прежней тёмной плашке иконка вроде тёмного квадрата с
+       белым знаком сливалась с кнопкой и читалась серым пятном. */
+    background: var(--text);
+    border-right: 1px solid rgba(22, 21, 20, 0.18);
+    animation: chip-white var(--wipe-in) var(--wipe-ease) 220ms backwards;
   }
+  /* в покое плашка и надпись оба белые, поэтому их делит волосок; при наведении
+     правая половина темнеет и границу проводит уже сам контраст */
+  @keyframes chip-white { from { background-color: var(--surface); } }
   /* высоту задаём, ширину считает браузер: и квадратная иконка, и широкий
      леттеринг встанут сами, max-width страхует от очень длинного лого */
   .btn-site .site-logo img {
     display: block; height: 28px; width: auto; max-width: 155px; object-fit: contain;
   }
   .btn-site .site-text { padding: 0 30px; }
-  .btn-site.has-logo:hover .site-logo { background: var(--surface-2); }
+  /* Ниже правил кнопки, а не в общем мобильном блоке выше: медиазапрос не
+     добавляет веса, и оттуда его переопределяли бы правила, идущие по порядку
+     позже. На 390px кнопка в прежних размерах шире колонки, и правый край
+     уезжал за экран — на тёмной пилюле это было незаметно, у белой сразу видно. */
+  @media (max-width: 719px) {
+    .btn-site { height: 52px; font-size: 16px; max-width: 100%; }
+    .btn-site .site-logo { padding: 0 16px; }
+    .btn-site .site-logo img { height: 24px; }
+    .btn-site .site-text { padding: 0 20px; }
+  }
   /* заголовок ужат на ~35%, отступы сверху и до первого модуля срезаны —
      освободившееся место отдано композиции: работы начинаются заметно выше */
   header.board h1 {
-    margin-top: 40px;
-    font-size: clamp(21px, 3.2vw, 36px);
+    margin-top: max(12px, calc(40px - var(--squeeze) * 0.333));
+    /* 3.2vw остаётся: на узком окне заголовок по-прежнему ужимается по ширине,
+       а --squeeze-type снимает с него ещё до 15px, когда отступы уже отдали всё */
+    font-size: min(3.2vw, calc(36px - var(--squeeze-type) * 0.88));
     line-height: 1.15;
     letter-spacing: 0.005em;
     animation: rise 300ms ease-out both;
@@ -83,15 +180,26 @@
      нижняя граница не даёт композиции сжаться на низком окне. */
   .module {
     position: relative;
-    /* Золотая середина. Горизонтальные композиции (1–4 работы) занимают колонку
-       целиком — именно они чаще всего и встречаются. Вертикальные (5–7 работ)
-       упёрлись бы в две высоты экрана, поэтому им оставлен потолок: 150vh — это
-       примерно полтора экрана прокрутки, дальше композиция перестаёт читаться
-       как одна. Проценты колонки в формуле не участвуют: на широком мониторе они
-       наоборот раздували модуль вверх. */
-    width: min(100%, calc(var(--ar) * 150vh));
+    /* Ширину задают три границы. Первая — доля колонки (--span): композиция на
+       все семь мест занимает её целиком, на меньшее число — ровно столько,
+       сколько занимали бы те же места внутри семёрки. Благодаря этому плитка
+       не меняет размер от того, сколько работ на доске: композиция просто
+       становится у́же и встаёт по центру (margin: auto). Вторая — потолок
+       высоты: 150vh это примерно полтора экрана прокрутки, дальше вертикальная
+       композиция перестаёт читаться как одна.
+       Третья — первый ряд обязан влезть в экран. --row это высота верхних трёх
+       мест в долях ширины композиции, поэтому свободная высота, делённая на
+       неё, и есть предельная ширина. Граница общая для всех модулей страницы, а
+       не только для первого: места обязаны остаться одного размера, иначе
+       второй модуль поедет шире первого. Обычно эта граница не срабатывает —
+       шапка отдаёт своё раньше (см. header.board выше). */
+    width: min(
+      calc(var(--span, 1) * 100%),
+      calc(var(--ar) * 150vh),
+      calc(var(--fit) / var(--row))
+    );
     aspect-ratio: var(--ar);
-    margin: 44px auto 0;
+    margin: max(16px, calc(44px - var(--squeeze) * 0.333)) auto 0;
   }
   .module + .module { margin-top: 96px; }
 
@@ -119,14 +227,31 @@
     /* плитки очень разной ширины — кнопка кейса подстраивается под свою (см. @container) */
     container-type: inline-size;
     background: var(--surface);
-    /* кольцо цветом фона — «воздух» на стыке перекрывающихся плиток */
-    box-shadow: 0 0 0 6px var(--bg);
+    /* Кольцо цветом фона — «воздух» на стыке перекрывающихся плиток, а тень
+       под ним показывает, что плитка лежит поверх соседней. Одного кольца мало:
+       тёмная работа на тёмном фоне сливается с таким же тёмным зазором, и
+       композиция читается сплошным полотном. */
+    box-shadow: 0 0 0 6px var(--bg), 0 16px 34px -16px rgba(0, 0, 0, 0.75);
     transition: box-shadow 420ms ease;
   }
   .tile:hover .frame, .tile:focus-visible .frame {
     box-shadow: 0 0 0 6px var(--bg), 0 34px 70px -22px rgba(0, 0, 0, 0.85);
   }
   .tile:focus-visible .frame { outline: 2px solid var(--accent); outline-offset: 3px; }
+
+  /* Контур по краю кадра. Он и проводит границу работы: на светлой фотографии
+     её очерчивает зазор, а на тёмной — только эта линия. При наведении та же
+     линия разгорается до полной яркости, поэтому видно, на что наведён курсор.
+     Отдельным слоем поверх картинки: inset-тень самой рамки ушла бы под неё */
+  .tile .frame::after {
+    content: ""; position: absolute; inset: 0; z-index: 6;
+    pointer-events: none; border-radius: inherit;
+    box-shadow: inset 0 0 0 1px rgba(245, 244, 239, 0.22);
+    transition: box-shadow 300ms ease;
+  }
+  .tile:hover .frame::after, .tile:focus-visible .frame::after {
+    box-shadow: inset 0 0 0 2px rgba(245, 244, 239, 0.9);
+  }
 
   .tile canvas.bh { position: absolute; inset: 0; width: 100%; height: 100%; }
   .tile img {
@@ -136,12 +261,14 @@
   .tile img.loaded { opacity: 1; }
 
   /* --- длинная работа (лонгрид, инфографика) ---
-     Её место в композиции — ровно 1:3.4 (см. LONG_MODULES в layout.py), картинка
-     прижата к верху и показана во всю ширину: обрезка по центру, как в обычной
-     плитке, оставила бы от лонгрида случайную полосу. Всё, что ниже 3.4 ширины,
-     уходит под «жидкое стекло» — полосу растущего размытия с затемнением к цвету
-     фона: край обрезки не читается как обрыв, и видно, что работа длиннее. */
-  .tile.is-long img { object-position: top; }
+     Форму места задаёт обрезка, выбранная менеджером в редакторе (--crop), а
+     --focus говорит, какой участок работы в это место попал: 0% — от самого
+     верха, 100% — до самого низа. Картинка показана во всю ширину — обрезка по
+     центру, как в обычной плитке, оставила бы от лонгрида случайную полосу.
+     Нижний край уходит под «жидкое стекло» — полосу растущего размытия с
+     затемнением к цвету фона: край обрезки не читается как обрыв, и видно, что
+     работа длиннее. */
+  .tile.is-long img { object-position: 50% var(--focus, 0%); }
   .tile .glass {
     position: absolute; left: 0; right: 0; bottom: 0; height: 20%;
     pointer-events: none; z-index: 3;
@@ -158,27 +285,43 @@
     .tile .glass { background: linear-gradient(to bottom, rgba(22, 21, 20, 0), rgba(22, 21, 20, 0.9)); }
   }
 
-  /* подсказка на размытии: «под обрезкой есть продолжение, откроется по клику».
-     Видна всегда, а не по наведению — иначе обрезанную работу можно принять за
-     целую и никогда её не открыть */
+  /* «под обрезкой есть продолжение, откроется по клику».
+     По центру кадра, а не у нижнего края: у высокой колонки низ часто оказывается
+     за пределами экрана, и кнопку приходилось искать прокруткой. Видна всегда, а
+     не по наведению — иначе обрезанную работу можно принять за целую и никогда
+     её не открыть; наведение лишь доводит её до полной яркости. */
   .tile .more {
-    position: absolute; left: 50%; bottom: 16px; z-index: 5; pointer-events: none;
-    display: flex; align-items: center; gap: 7px;
-    height: 34px; padding: 0 16px; border-radius: 999px;
-    background: rgba(245, 244, 239, 0.92); color: #161514;
-    font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+    position: absolute; left: 50%; top: 50%; z-index: 5; pointer-events: none;
+    display: flex; align-items: center; gap: 8px;
+    height: 44px; padding: 0 22px; border-radius: 999px;
+    background: rgba(245, 244, 239, 0.82); color: #161514;
+    font-size: 12px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
     white-space: nowrap;
-    transform: translateX(-50%);
-    transition: background-color 250ms ease, transform 250ms cubic-bezier(0.22, 0.61, 0.36, 1), opacity 200ms ease;
+    /* Тёмный контур и тень под плашкой. Кнопка видна всегда, в том числе без
+       наведения — а без наведения нет и затемнения кадра, поэтому на светлой
+       работе (упаковка, макет на белом) светлая плашка сливалась с фотографией.
+       На тёмной работе контур не нужен, там границу проводит сама плашка, но и
+       не мешает: тёмное по тёмному. */
+    box-shadow: 0 0 0 1px rgba(22, 21, 20, 0.45), 0 10px 24px -12px rgba(22, 21, 20, 0.7);
+    transform: translate(-50%, -50%) scale(0.94);
+    transition: background-color 250ms ease, box-shadow 250ms ease,
+                transform 260ms cubic-bezier(0.22, 0.61, 0.36, 1), opacity 200ms ease;
   }
   .tile.is-long:hover .more, .tile.is-long:focus-visible .more {
-    background: #F5F4EF; transform: translateX(-50%) translateY(-4px);
+    background: #F5F4EF; transform: translate(-50%, -50%) scale(1);
+    box-shadow: 0 0 0 1px rgba(22, 21, 20, 0.7), 0 14px 30px -12px rgba(22, 21, 20, 0.8);
   }
+  /* затемнение под кнопкой — то же, что у кнопки кейса: на пёстрой работе
+     светлая плашка иначе теряется */
+  .tile.is-long:hover .shade, .tile.is-long:focus-visible .shade { opacity: 0.42; }
   /* у работы со ссылкой на проект наведение отдано кнопке кейса — две плашки
      разом спорили бы друг с другом */
   .tile.has-case.is-on .more { opacity: 0; }
+  @container (max-width: 360px) {
+    .tile .more { height: 36px; padding: 0 16px; gap: 6px; font-size: 10.5px; }
+  }
   @container (max-width: 220px) {
-    .tile .more { height: 28px; padding: 0 11px; gap: 5px; font-size: 9.5px; letter-spacing: 0.05em; }
+    .tile .more { height: 30px; padding: 0 11px; gap: 5px; font-size: 9.5px; letter-spacing: 0.05em; }
   }
   .tile-video {
     position: relative; display: block; width: 100%; height: 100%;
@@ -270,9 +413,14 @@
     }
     .tile { position: static; width: 100%; height: auto; transform: none; }
     .tile .frame { position: relative; inset: auto; aspect-ratio: var(--nat); box-shadow: none; }
-    /* длинная работа и на телефоне обрезается по 3.4 ширины: в своих пропорциях
-       лонгрид занял бы десяток экранов прокрутки */
-    .tile.is-long .frame { aspect-ratio: 1 / 3.4; }
+    /* лонгрид и на телефоне обрезается: в собственных пропорциях он занял бы
+       десяток экранов прокрутки. 1:1.6 — самое высокое место композиции, так
+       что фрагмент виден примерно тот же, что и на большом экране */
+    .tile.is-long .frame { aspect-ratio: 1 / 1.6; }
+    /* ховера на телефоне нет — затемнение и кнопка «открыть целиком» просто
+       видны всегда, иначе обрезанную работу нечем отличить от целой */
+    .tile.is-long .shade { opacity: 0.32; }
+    .tile.is-long .more { transform: translate(-50%, -50%) scale(1); background: #F5F4EF; }
     .tile .caption { opacity: 1; }
     /* ховера на телефоне нет — иначе ссылка на проект была бы недостижима,
        поэтому кнопка кейса просто видна всегда */
@@ -340,17 +488,19 @@
 {% endblock %}
 
 {% block content %}
-<div class="container{% if site.showcase_show_footer != '1' %} no-footer{% endif %}">
+{# --rowk: высота первого ряда первой композиции в долях ширины колонки. Из неё
+   считается, сколько шапке придётся отдать (см. --squeeze в стилях выше). #}
+<div class="container{% if site.showcase_show_footer != '1' %} no-footer{% endif %}"
+     {% if modules %}style="--rowk: {{ (modules[0].row * modules[0].span)|round(4) }}"{% endif %}>
   <header class="board">
     <div class="top">
       {{ brand_mark(site) }}
       {% if site.studio_site_url %}
-      <a class="btn-site{% if site.studio_site_logo %} has-logo{% endif %}"
-         href="{{ site.studio_site_url }}" target="_blank" rel="noopener noreferrer">
+      <a class="btn-site" href="{{ site.studio_site_url }}" target="_blank" rel="noopener noreferrer">
         {% if site.studio_site_logo %}
         <span class="site-logo"><img src="{{ site.studio_site_logo }}" alt=""></span>
+        {% endif %}
         <span class="site-text">{{ t.return_to_site }}</span>
-        {% else %}{{ t.return_to_site }}{% endif %}
       </a>
       {% endif %}
     </div>
@@ -363,16 +513,19 @@
 
   {% if works %}
   {% for module in modules %}
-  <div class="module" style="--ar: {{ module.ratio }}">
+  <div class="module" style="--ar: {{ module.ratio }}; --span: {{ module.span }}; --row: {{ module.row }}">
     {% for tile in module.tiles %}
     {% set w = works[tile.index] %}
-    {# место длинной работы — ровно 1:3.4, картинка прижата к верху и обрезается
-       именно на этой высоте; ниже идёт размытие и подсказка «открыть целиком» #}
-    <figure class="tile{% if w.project_url %} has-case{% endif %}{% if module.long %} is-long{% endif %}"
+    {% set is_long = tile.index in cropped %}
+    {# форму места задаёт композиция, а --focus говорит, какой участок работы в
+       неё попал (0% — от верха, 100% — до низа). Работа, которая в место не
+       влезла, получает размытие на срезе и кнопку «открыть целиком» #}
+    <figure class="tile{% if w.project_url %} has-case{% endif %}{% if is_long %} is-long{% endif %}"
             data-index="{{ tile.index }}" tabindex="0" role="button"
             aria-label="{{ w.title or t.work }}"
             style="--x: {{ tile.x }}%; --y: {{ tile.y }}%; --w: {{ tile.w }}%; --h: {{ tile.h }}%; --z: {{ tile.z }};
                    --nat: {% if w.width and w.height %}{{ w.width }} / {{ w.height }}{% elif w.kind == 'video' %}16 / 10{% else %}1 / 1{% endif %};
+                   {% if is_long %}--focus: {{ ((w.preview_focus or 0) * 100)|round(2) }}%;{% endif %}
                    animation-delay: {{ [120 + tile.index * 60, 900]|min }}ms">
       <div class="frame">
         {% if w.blurhash %}<canvas class="bh" width="32" height="32" data-blurhash="{{ w.blurhash }}"></canvas>{% endif %}
@@ -389,13 +542,16 @@
            во всю ширину экрана и всегда тянет самый крупный файл #}
         <img src="{{ w.media.card }}" alt="{{ w.title }}" loading="lazy"
              {% if w.srcset %}srcset="{{ w.srcset }}"
-             sizes="(max-width: 719px) 100vw, calc({{ (tile.w / 100)|round(4) }} * min(min(2100px, 96vw) - 80px, {{ module.ratio }} * 150vh))"{% endif %}
+             sizes="(max-width: 719px) 100vw, calc({{ (tile.w / 100)|round(4) }} * min({{ module.span }} * (min(2100px, 96vw) - 80px), {{ module.ratio }} * 150vh))"{% endif %}
              onload="this.classList.add('loaded')">
         {% endif %}
-        {% if module.long %}
+        {# затемнение общее для кнопки кейса и кнопки «открыть целиком»:
+           два слоя поверх одной картинки только гасили бы друг друга #}
+        {% if is_long or w.project_url %}<div class="shade"></div>{% endif %}
+        {% if is_long %}
         <div class="glass"></div>
-        {# обрезанную работу легко принять за целую — подсказка говорит, что под
-           размытием есть продолжение и его открывает клик #}
+        {# обрезанную работу легко принять за целую — кнопка говорит, что под
+           обрезкой есть продолжение и его открывает клик #}
         <div class="more">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m7 6 5 5 5-5"></path><path d="m7 13 5 5 5-5"></path></svg>
           {{ t.view_full }}
@@ -408,7 +564,6 @@
         </figcaption>
         {% endif %}
         {% if w.project_url %}
-        <div class="shade"></div>
         <div class="case">
           {% if w.title %}<span class="case__name">{{ w.title }}</span>{% endif %}
           <a class="case__cta" href="{{ w.project_url }}" target="_blank" rel="noopener noreferrer">
@@ -470,6 +625,37 @@
 {% block script %}
 <script>
   const WORKS = {{ works|tojson }};
+
+  // --- свободная высота под первый ряд композиции ---
+  // Первый ряд обязан попасть на экран целиком, а уменьшать работы нельзя,
+  // поэтому место сначала отдаёт шапка (её размеры завязаны на vh в CSS). Здесь
+  // остаётся замерить, сколько она в итоге заняла, и положить остаток в --fit:
+  // высоту шапки из CSS не вычислить — заголовок переносится на две строки,
+  // описание и счётчик работ включаются настройками витрины.
+  (function () {
+    const module = document.querySelector(".module");
+    if (!module) return;
+
+    let frame = null;
+    function measure() {
+      frame = null;
+      // top модуля уже включает и шапку, и его собственный верхний отступ
+      const top = module.getBoundingClientRect().top + window.scrollY;
+      const free = Math.max(0, window.innerHeight - top);
+      document.documentElement.style.setProperty("--fit", free + "px");
+    }
+    function schedule() {
+      if (!frame) frame = requestAnimationFrame(measure);
+    }
+
+    measure();
+    addEventListener("resize", schedule, { passive: true });
+    // ширина модуля меняет только его собственную высоту, шапку — нет, поэтому
+    // наблюдение за шапкой не зацикливается на самом себе
+    if (window.ResizeObserver) new ResizeObserver(schedule).observe(document.querySelector("header.board"));
+    // веб-шрифт меняет высоту заголовка уже после первого замера
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(schedule);
+  })();
 
   // --- blurhash: компактный декодер (base83 → canvas 32×32) ---
   (function () {

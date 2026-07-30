@@ -368,24 +368,26 @@ export function SettingsReturnButton() {
           <label className="label" style={{ marginBottom: 8 }}>
             {t("preview")}
           </label>
+          {/* покой кнопки на витрине — белая пилюля с тёмной надписью; наведение
+              её гасит (см. .btn-site в web/public/templates/showcase.html) */}
           <div
             style={{
-              display: "inline-flex", alignItems: "center", height: 36, padding: values.studio_site_logo ? 0 : "0 18px",
-              border: "1px solid var(--border)", borderRadius: 999, overflow: "hidden",
-              fontSize: 12.5, fontWeight: 500, color: "var(--text)", whiteSpace: "nowrap",
+              display: "inline-flex", alignItems: "center", height: 36, padding: 0,
+              background: "var(--text)", border: "1px solid var(--text)", borderRadius: 999, overflow: "hidden",
+              fontSize: 12.5, fontWeight: 500, color: "var(--bg)", whiteSpace: "nowrap",
             }}
           >
             {values.studio_site_logo && (
               <span
                 style={{
                   display: "flex", alignItems: "center", height: "100%", padding: "0 12px",
-                  background: "var(--surface)", borderRight: "1px solid var(--border)",
+                  borderRight: "1px solid rgba(26, 26, 25, 0.18)",
                 }}
               >
                 <img src={values.studio_site_logo} alt="" style={{ height: 17, width: "auto", maxWidth: 92, objectFit: "contain", display: "block" }} />
               </span>
             )}
-            <span style={{ padding: values.studio_site_logo ? "0 18px" : 0 }}>Return to the site</span>
+            <span style={{ padding: "0 18px" }}>Return to the site</span>
           </div>
         </div>
       )}

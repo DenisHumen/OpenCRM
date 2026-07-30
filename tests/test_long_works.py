@@ -1,8 +1,9 @@
 """Длинные работы: лонгриды и инфографика на витрине.
 
-У них свои композиции с местами 1:3.4 — на этой высоте работа и обрезается.
-Производные при этом ограничиваются по ширине (иначе от лонгрида 1:10 в
-`card.webp` осталось бы ~80px ширины).
+Отдельной сетки у них больше нет — лонгрид занимает такое же место композиции,
+как любая другая работа, и показывает выбранный менеджером фрагмент. Производные
+при этом ограничиваются по ширине (иначе от лонгрида 1:10 в `card.webp` осталось
+бы ~80px ширины).
 """
 
 import pytest
@@ -12,14 +13,7 @@ from PIL import Image
 from core.services import media_service
 from tests.conftest import API, png_bytes
 from web.main import app
-from web.public.layout import (
-    LONG_MODULES,
-    MAX_LONG_MODULE,
-    TALL_RATIO,
-    build_modules,
-    long_indexes,
-    split_long_counts,
-)
+from web.public.layout import cropped_indexes
 
 
 # --- производные: ужимаем ширину, а не длину ---
@@ -57,6 +51,16 @@ def test_long_image_threshold(size, long):
     assert media_service.is_long_image(*size) is long
 
 
+def test_cropped_indexes_ignores_video_and_unknown_sizes():
+    works = [
+        {"kind": "image", "width": 400, "height": 4000},
+        {"kind": "video", "width": 400, "height": 4000},
+        {"kind": "image", "width": None, "height": None},
+        {"kind": "image", "width": 900, "height": 1600},  # 9:16 — в место влезает
+    ]
+    assert cropped_indexes(works) == {0}
+
+
 # --- srcset: плитка не должна тянуть `card`, когда мала́ ---
 
 class _Work:
@@ -91,102 +95,11 @@ def test_derived_size_matches_what_derive_actually_produces(size):
         assert media_service.derived_size(*size, box) == media_service.derive(image, box).size
 
 
-# --- длинные композиции: тот же почерк, но места 1:3.4 ---
-
-@pytest.mark.parametrize("size", range(1, MAX_LONG_MODULE + 1))
-def test_long_preset_has_a_tile_per_work(size):
-    _ratio, tiles = LONG_MODULES[size]
-    assert len(tiles) == size
-
-
-@pytest.mark.parametrize("size", range(1, MAX_LONG_MODULE + 1))
-def test_every_long_place_is_exactly_three_point_four_widths(size):
-    """Смысл длинной композиции: место ровно 1:3.4, там и проходит обрезка.
-
-    h% рамки / (w% рамки · ratio) = отношение сторон места.
-    """
-    ratio, tiles = LONG_MODULES[size]
-    for tile in tiles:
-        assert tile.h / (tile.w * ratio) == pytest.approx(TALL_RATIO, abs=0.01)
-
-
-@pytest.mark.parametrize("size", range(1, MAX_LONG_MODULE + 1))
-def test_long_preset_fills_its_frame(size):
-    _ratio, tiles = LONG_MODULES[size]
-    assert min(t.x for t in tiles) == 0
-    assert min(t.y for t in tiles) == 0
-    assert max(t.x + t.w for t in tiles) == pytest.approx(100, abs=0.05)
-    assert max(t.y + t.h for t in tiles) == pytest.approx(100, abs=0.05)
-
-
-@pytest.mark.parametrize("size", range(2, MAX_LONG_MODULE + 1))
-def test_long_preset_tiles_overlap_a_neighbour_with_distinct_depth(size):
-    """Перекрытие — тот же почерк, что у обычных композиций."""
-    _ratio, tiles = LONG_MODULES[size]
-
-    def overlap(a, b) -> bool:
-        return a.x < b.x + b.w and b.x < a.x + a.w and a.y < b.y + b.h and b.y < a.y + a.h
-
-    for i, tile in enumerate(tiles):
-        assert any(overlap(tile, other) for j, other in enumerate(tiles) if i != j)
-    for i, a in enumerate(tiles):
-        for b in tiles[i + 1:]:
-            if overlap(a, b):
-                assert a.z != b.z
-
-
-@pytest.mark.parametrize("total", range(1, 20))
-def test_split_long_covers_every_work(total):
-    chunks = split_long_counts(total)
-    assert sum(chunks) == total
-    assert all(1 <= c <= MAX_LONG_MODULE for c in chunks)
-
-
-def test_split_long_avoids_a_stray_single_tail():
-    assert split_long_counts(4) == [4]
-    assert split_long_counts(5) == [3, 2]
-    assert split_long_counts(6) == [4, 2]
-    assert split_long_counts(8) == [4, 4]
-    assert split_long_counts(9) == [4, 3, 2]
-
-
-# --- порядок работ и смешанные доски ---
-
-def test_long_works_group_into_their_own_composition():
-    """Три длинные работы — одна композиция из трёх колонок, а не три модуля."""
-    modules = build_modules(3, {0, 1, 2})
-    assert len(modules) == 1
-    assert modules[0]["long"] is True
-    assert [tile["index"] for tile in modules[0]["tiles"]] == [0, 1, 2]
-
-
-def test_mixed_board_keeps_the_order_of_works():
-    modules = build_modules(6, {2, 3})
-    assert [module["long"] for module in modules] == [False, True, False]
-    assert [[t["index"] for t in m["tiles"]] for m in modules] == [[0, 1], [2, 3], [4, 5]]
-
-
-@pytest.mark.parametrize("total", range(1, 24))
-def test_every_work_is_placed_once_in_order(total):
-    longs = {index for index in range(total) if index % 3 == 0}
-    modules = build_modules(total, longs)
-    assert [t["index"] for m in modules for t in m["tiles"]] == list(range(total))
-
-
-def test_long_indexes_ignores_video_and_unknown_sizes():
-    works = [
-        {"kind": "image", "width": 400, "height": 4000},
-        {"kind": "video", "width": 400, "height": 4000},
-        {"kind": "image", "width": None, "height": None},
-        {"kind": "image", "width": 600, "height": 1500},  # 1:2.5 — в обычное место влезает
-    ]
-    assert long_indexes(works) == {0}
-
-
 # --- витрина целиком ---
 
-def test_showcase_renders_a_long_work_with_glass_and_a_hint(manager_client):
-    board = manager_client.post(f"{API}/boards", json={"title": "Лонгрид"}).json()
+def test_long_and_short_works_share_one_composition(manager_client):
+    """Раньше лонгриды уезжали в свою сетку, и доска рвалась на два модуля."""
+    board = manager_client.post(f"{API}/boards", json={"title": "Смешанная"}).json()
     for name, size in (("long.png", (400, 2400)), ("wide.png", (640, 480))):
         upload = manager_client.post(
             f"{API}/boards/{board['id']}/works",
@@ -197,11 +110,107 @@ def test_showcase_renders_a_long_work_with_glass_and_a_hint(manager_client):
     share = manager_client.post(f"{API}/boards/{board['id']}/shares", json={}).json()
 
     page = TestClient(app).get(f"/b/{share['token']}").text
-    # длинная работа — своя композиция, обычная — своя, порядок сохранён
-    assert page.count('class="module"') == 2
+    assert page.count('class="module"') == 1
     assert page.count('class="tile is-long"') == 1
     assert page.count('class="tile"') == 1
     # обрезка прикрыта размытием, и видно, что работу можно открыть целиком
     assert page.count('<div class="glass">') == 1
     assert page.count('class="more"') == 1
     assert "View full" in page
+
+
+@pytest.mark.parametrize("count", range(1, 8))
+def test_a_board_of_long_works_is_one_composition(manager_client, count):
+    """Пять лонгридов — одна композиция, а не лента из двух модулей."""
+    board = manager_client.post(f"{API}/boards", json={"title": f"Лонгриды {count}"}).json()
+    for index in range(count):
+        upload = manager_client.post(
+            f"{API}/boards/{board['id']}/works",
+            files={"file": (f"{index}.png", png_bytes(size=(400, 2400)), "image/png")},
+        )
+        assert upload.status_code == 202, upload.text
+    manager_client.patch(f"{API}/boards/{board['id']}", json={"is_published": True})
+    share = manager_client.post(f"{API}/boards/{board['id']}/shares", json={}).json()
+
+    page = TestClient(app).get(f"/b/{share['token']}").text
+    assert page.count('class="module"') == 1
+    assert page.count('class="tile is-long"') == count
+
+
+# --- выбор фрагмента ---
+
+def _long_work(manager_client, size=(400, 4000)) -> tuple[dict, dict]:
+    board = manager_client.post(f"{API}/boards", json={"title": "Обрезка"}).json()
+    work = manager_client.post(
+        f"{API}/boards/{board['id']}/works",
+        files={"file": ("long.png", png_bytes(size=size), "image/png")},
+    ).json()
+    return board, work
+
+
+def test_fragment_defaults_to_the_top(manager_client):
+    _board, work = _long_work(manager_client)
+    assert work["preview_focus"] is None
+
+
+def test_manager_chooses_the_visible_fragment(manager_client):
+    board, work = _long_work(manager_client)
+    updated = manager_client.patch(
+        f"{API}/boards/{board['id']}/works/{work['id']}", json={"preview_focus": 0.5}
+    )
+    assert updated.status_code == 200
+    assert updated.json()["preview_focus"] == 0.5
+
+
+def test_fragment_is_clamped_to_the_work(manager_client):
+    board, work = _long_work(manager_client)
+    path = f"{API}/boards/{board['id']}/works/{work['id']}"
+    assert manager_client.patch(path, json={"preview_focus": 4}).json()["preview_focus"] == 1.0
+    assert manager_client.patch(path, json={"preview_focus": -1}).json()["preview_focus"] == 0.0
+
+
+def test_fragment_resets_to_the_top(manager_client):
+    board, work = _long_work(manager_client)
+    path = f"{API}/boards/{board['id']}/works/{work['id']}"
+    manager_client.patch(path, json={"preview_focus": 0.5})
+    assert manager_client.patch(path, json={"preview_focus": None}).json()["preview_focus"] is None
+
+
+def test_short_work_has_nothing_to_choose(manager_client):
+    """Обычная картинка помещается в своё место целиком — окно двигать негде."""
+    board = manager_client.post(f"{API}/boards", json={"title": "Короткая"}).json()
+    work = manager_client.post(
+        f"{API}/boards/{board['id']}/works",
+        files={"file": ("wide.png", png_bytes(size=(640, 480)), "image/png")},
+    ).json()
+    rejected = manager_client.patch(
+        f"{API}/boards/{board['id']}/works/{work['id']}", json={"preview_focus": 0.5}
+    )
+    assert rejected.status_code == 422
+    assert rejected.json()["error"]["code"] == "not_a_long_work"
+
+
+def test_showcase_shows_the_chosen_fragment(manager_client):
+    board, work = _long_work(manager_client)
+    manager_client.patch(
+        f"{API}/boards/{board['id']}/works/{work['id']}", json={"preview_focus": 0.5}
+    )
+    manager_client.patch(f"{API}/boards/{board['id']}", json={"is_published": True})
+    share = manager_client.post(f"{API}/boards/{board['id']}/shares", json={}).json()
+
+    page = TestClient(app).get(f"/b/{share['token']}").text
+    assert "--focus: 50.0%;" in page
+
+
+def test_editor_knows_the_shape_of_every_place(manager_client):
+    """Рамка фрагмента в CRM обязана совпасть с местом на витрине."""
+    board, _work = _long_work(manager_client)
+    for index in range(3):
+        manager_client.post(
+            f"{API}/boards/{board['id']}/works",
+            files={"file": (f"more{index}.png", png_bytes(size=(400, 4000)), "image/png")},
+        )
+    detail = manager_client.get(f"{API}/boards/{board['id']}").json()
+    ratios = [w["place_ratio"] for w in detail["works"]]
+    assert len(ratios) == 4
+    assert all(ratio > 0 for ratio in ratios)

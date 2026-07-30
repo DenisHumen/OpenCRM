@@ -281,6 +281,31 @@ button { font-family: var(--sans); }
 .cover-btn { position: absolute; top: 8px; right: 8px; width: 26px; height: 26px; border-radius: 6px; background: rgba(22, 21, 20, 0.85); border: none; color: var(--muted); cursor: pointer; display: none; align-items: center; justify-content: center; }
 .work-card:hover .cover-btn { display: flex; }
 .cover-btn:hover { color: var(--warning); }
+/* превью длинной работы обрезано так же, как будет на витрине */
+.work-media img.is-cropped { height: auto; min-height: 0; object-fit: cover; }
+/* по центру карточки: обрезка — действие над всей картинкой, а не над её углом */
+.crop-btn { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); display: none; align-items: center; gap: 6px; height: 30px; padding: 0 13px; border-radius: 999px; background: rgba(22, 21, 20, 0.88); border: 1px solid var(--border-hover); color: var(--text); font-family: var(--sans); font-size: 12px; font-weight: 500; cursor: pointer; white-space: nowrap; }
+.work-card:hover .crop-btn { display: flex; }
+.crop-btn:hover { background: rgba(22, 21, 20, 0.96); border-color: var(--accent); }
+
+/* Редактор обрезки превью.
+   `.modal.modal-wide`, а не просто `.modal-wide`: у обоих правил одинаковая
+   специфичность, и при обычном классе побеждало бы то, что ниже по файлу. */
+.modal.modal-wide { max-width: 760px; }
+.crop-stage { display: flex; gap: 22px; align-items: flex-start; }
+.crop-side { min-width: 0; }
+.crop-label { color: var(--faint); font-size: 11.5px; margin-bottom: 8px; }
+.crop-map { position: relative; flex-shrink: 0; overflow: hidden; border-radius: 6px; background: var(--surface-2); cursor: grab; }
+.crop-map img { display: block; width: 100%; height: 100%; object-fit: fill; user-select: none; }
+/* всё, что не попало в окно, гасим — так видно границы будущего превью */
+.crop-map-veil { position: absolute; left: 0; right: 0; top: 0; background: rgba(12, 12, 11, 0.66); pointer-events: none; }
+/* форму окна задаёт место работы на витрине, менять её нельзя — только возить
+   рамку вдоль работы, поэтому ручек по краям нет */
+.crop-window { position: absolute; left: 0; right: 0; box-shadow: inset 0 0 0 2px var(--accent); cursor: grab; }
+.crop-window:active { cursor: grabbing; }
+.crop-preview { position: relative; overflow: hidden; border-radius: 8px; background: var(--surface-2); }
+.crop-preview img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.crop-controls { flex: 1; min-width: 150px; padding-top: 24px; }
 .editor-rail { width: 320px; flex-shrink: 0; display: flex; flex-direction: column; gap: 12px; }
 .rail-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px 18px; }
 .rail-title { color: var(--text); font-size: 14px; font-weight: 600; margin-bottom: 14px; }

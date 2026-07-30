@@ -5,7 +5,20 @@ from fastapi.testclient import TestClient
 
 from tests.conftest import API, png_bytes
 from web.main import app
-from web.public.layout import MAX_MODULE, MODULES, build_modules, split_counts
+from web.public.layout import (
+    FIRST_ROW,
+    MASTER,
+    MASTER_FRAME,
+    MAX_MODULE,
+    MODULE_ROWS,
+    MODULE_SPANS,
+    MODULES,
+    SINGLE_INDEX,
+    SINGLE_ZOOM,
+    build_modules,
+    place_ratios,
+    split_counts,
+)
 
 
 @pytest.mark.parametrize("size", range(1, MAX_MODULE + 1))
@@ -115,6 +128,142 @@ def test_single_work_fills_the_whole_frame():
     """Одна работа — крупный кадр без пустого пространства вокруг."""
     (tile,) = build_modules(1)[0]["tiles"]
     assert (tile["x"], tile["y"], tile["w"], tile["h"]) == (0, 0, 100, 100)
+
+
+# --- одна композиция на все размеры доски ---
+
+def _place(size: int, index: int) -> tuple[float, float]:
+    """Размер места в долях колонки: так его видно на экране при любом size."""
+    ratio, tiles = MODULES[size]
+    span = MODULE_SPANS[size]
+    tile = tiles[index]
+    return tile.w / 100 * span, tile.h / 100 * span / ratio
+
+
+@pytest.mark.parametrize("index", range(MAX_MODULE))
+def test_a_place_keeps_its_size_whatever_the_board_size(index):
+    """Смысл мастер-композиции: убрали работу — соседние не поехали и не выросли.
+
+    Раньше под каждое число работ была своя раскладка, и одно и то же место
+    у доски на 6 и на 7 работ отличалось по размеру.
+    """
+    sizes = [size for size in range(2, MAX_MODULE + 1) if size > index]
+    reference = _place(sizes[0], index)
+    for size in sizes[1:]:
+        width, height = _place(size, index)
+        assert width == pytest.approx(reference[0], abs=0.002)
+        assert height == pytest.approx(reference[1], abs=0.002)
+
+
+@pytest.mark.parametrize("size", range(2, MAX_MODULE + 1))
+def test_smaller_board_keeps_the_places_of_the_bigger_one(size):
+    """Композиция на N работ — первые N мест мастера, без пересчёта."""
+    _ratio, tiles = MODULES[size]
+    _bigger_ratio, bigger = MODULES[MAX_MODULE]
+    assert [t.z for t in tiles] == [t.z for t in bigger[:size]]
+
+
+def test_a_board_of_seven_fills_the_column():
+    """Полная композиция занимает колонку целиком, меньшие — соответственно у́же."""
+    assert MODULE_SPANS[MAX_MODULE] == 1.0
+    assert MODULE_SPANS[2] < 1.0
+
+
+def test_single_work_takes_the_showiest_place_enlarged():
+    """Одинокая работа не должна попасть в узкое вертикальное место мастера."""
+    place = MASTER[SINGLE_INDEX]
+    single_ratio, _tiles = MODULES[1]
+    # то же место: отношение сторон совпадает с его формой в мастере
+    assert single_ratio == pytest.approx(place.w / place.h, abs=0.01)
+    # и оно на 20% крупнее, чем было бы внутри композиции
+    assert MODULE_SPANS[1] == pytest.approx(
+        place.w / MASTER_FRAME[0] * SINGLE_ZOOM, abs=0.002
+    )
+
+
+# --- совпадение с макетами (tmp/image/template) ---
+
+@pytest.mark.parametrize(
+    "size, ratio",
+    [(1, 1.3405), (2, 1.5282), (4, 1.1011), (5, 0.9515), (6, 0.9515), (7, 0.7597)],
+)
+def test_frame_matches_the_mockup(size, ratio):
+    """Рамка композиции — ровно та, что на макетах, снятых по пикселям."""
+    assert MODULES[size][0] == pytest.approx(ratio, abs=0.005)
+
+
+def test_places_have_the_shapes_the_editor_shows():
+    """Редактор обрезки берёт форму рамки отсюда — они обязаны совпадать."""
+    ratios = place_ratios(MAX_MODULE)
+    _frame, tiles = MODULES[MAX_MODULE]
+    frame_ratio = MODULES[MAX_MODULE][0]
+    assert len(ratios) == MAX_MODULE
+    for tile, ratio in zip(tiles, ratios):
+        assert ratio == pytest.approx(tile.w / tile.h * frame_ratio, abs=0.001)
+
+
+def test_place_ratios_cover_boards_longer_than_one_module():
+    assert len(place_ratios(19)) == 19
+
+
+# --- первый ряд обязан влезать в экран ---
+
+@pytest.mark.parametrize("size", range(1, MAX_MODULE + 1))
+def test_first_row_height_is_measured_from_the_top_places(size):
+    """`--row` — низ верхних мест в долях ширины композиции.
+
+    Из неё CSS получает предельную ширину модуля: свободная высота, делённая на
+    `--row`. Считаем то же самое по плиткам — числа обязаны сойтись.
+    """
+    ratio, tiles = MODULES[size]
+    bottom = max(t.y + t.h for t in tiles[:FIRST_ROW]) / 100
+    assert MODULE_ROWS[size] == pytest.approx(bottom / ratio, abs=0.001)
+
+
+@pytest.mark.parametrize("size", range(FIRST_ROW, MAX_MODULE + 1))
+def test_first_row_takes_the_same_height_on_any_board(size):
+    """Тройка сверху занимает одну и ту же высоту хоть на трёх работах, хоть на семи.
+
+    Места не пересчитываются от числа работ, поэтому и высота первого ряда на
+    экране одна. Иначе потолок `--fit / --row` пришлось бы считать для каждого
+    размера доски отдельно, а он общий для всех модулей страницы.
+    """
+    assert MODULE_ROWS[size] * MODULE_SPANS[size] == pytest.approx(0.5408, abs=0.001)
+
+
+@pytest.mark.parametrize("size", range(1, MAX_MODULE + 1))
+def test_first_row_never_exceeds_the_whole_module(size):
+    ratio, _tiles = MODULES[size]
+    assert 0 < MODULE_ROWS[size] <= 1 / ratio + 0.001
+
+
+def test_every_module_carries_its_row():
+    """Без `--row` в разметке потолок высоты молча выключился бы."""
+    for module in build_modules(19):
+        assert module["row"] > 0
+
+
+@pytest.mark.parametrize("works_count", [1, 2, 3, 7])
+def test_showcase_tells_css_how_tall_the_first_row_is(manager_client, works_count):
+    """`--rowk` на колонке — из него шапка считает, сколько ей ужиматься.
+
+    У доски на одну-две работы ряд ниже, чем у тройки, и шапку под него жать
+    незачем: без этого числа страница ужимала бы её всегда.
+    """
+    board = manager_client.post(
+        f"{API}/boards", json={"title": f"Ряд {works_count}"}
+    ).json()
+    for _ in range(works_count):
+        manager_client.post(
+            f"{API}/boards/{board['id']}/works",
+            files={"file": ("work.png", png_bytes(), "image/png")},
+        )
+    manager_client.patch(f"{API}/boards/{board['id']}", json={"is_published": True})
+    share = manager_client.post(f"{API}/boards/{board['id']}/shares", json={}).json()
+
+    page = TestClient(app).get(f"/b/{share['token']}")
+    expected = round(MODULE_ROWS[works_count] * MODULE_SPANS[works_count], 4)
+    assert f"--rowk: {expected}" in page.text
 
 
 # --- витрина целиком: связка «роут → шаблон» ---
