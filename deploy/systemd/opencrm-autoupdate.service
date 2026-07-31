@@ -1,0 +1,27 @@
+[Unit]
+Description=OpenCRM: автообновление сайта из ветки на GitHub
+Documentation=https://github.com/DenisHumen/OpenCRM/blob/main/docs/08-deployment.md
+# Демон пересобирает контейнеры, значит должен подниматься после самого docker
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Тот же пользователь, что запускает docker compose: ему принадлежат ~/opencrm и
+# /opt/OpenCRM, и он состоит в группе docker. Под root запускать не нужно.
+# Владелец репозитория обязан совпадать, иначе git откажется его трогать
+# («detected dubious ownership»).
+User=studio
+WorkingDirectory=/opt/OpenCRM
+EnvironmentFile=/home/studio/opencrm/autoupdate.env
+# Ubuntu 24.04: системный python3 — это 3.12, а пакету deploy/ хватает
+# стандартной библиотеки, поэтому ни venv, ни pip здесь не нужны.
+ExecStart=/usr/bin/python3 scripts/autoupdate.py watch
+# Сеть моргнула, GitHub прилёг — демон не должен уходить насовсем.
+Restart=always
+RestartSec=60
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

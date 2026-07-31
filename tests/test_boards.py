@@ -1,5 +1,3 @@
-from pathlib import Path
-
 from config.settings import get_settings
 from tests.conftest import API, png_bytes
 

@@ -75,6 +75,21 @@ class Settings(BaseSettings):
     def is_production(self) -> bool:
         return self.env == "production"
 
+    @property
+    def cookies_secure(self) -> bool:
+        """Ставить ли cookie флаг Secure — по схеме `base_url`, а не по имени окружения.
+
+        Браузер молча выбрасывает Secure-cookie, пришедшую по обычному HTTP.
+        Пока флаг зависел от `env == production`, документированный сценарий
+        «локальная сеть без домена» (см. docs/08) ломался вчистую: вход возвращал
+        200, cookie не приживалась, и человека сразу выкидывало обратно на форму.
+
+        Схема в `base_url` — это и есть заявление владельца о том, как сайт
+        отдаётся наружу, поэтому решение принимается по ней. За домен с
+        сертификатом ничего не меняется: там `https://` и Secure на месте.
+        """
+        return self.base_url.startswith("https://")
+
     def config_errors(self) -> list[str]:
         """Небезопасные значения, с которыми нельзя стартовать в production.
 
@@ -109,8 +124,9 @@ class Settings(BaseSettings):
         if self.is_production and self.base_url.startswith("http://"):
             warnings.append(
                 "OPENCRM_BASE_URL использует http:// при OPENCRM_ENV=production. "
-                "Cookie сессии выдаются с флагом Secure и браузер отбросит их на "
-                "любом origin кроме localhost — вход будет молча слетать."
+                "Вход работать будет (cookie выдаются без флага Secure — см. "
+                "cookies_secure), но пароли и cookie сессий идут по сети открытым "
+                "текстом. Годится для локальной сети, для публичного сайта — нет."
             )
         if not self.is_production and self.secret_key == DEV_SECRET_KEY:
             warnings.append("OPENCRM_SECRET_KEY — dev-значение. Для боевого запуска задайте свой.")

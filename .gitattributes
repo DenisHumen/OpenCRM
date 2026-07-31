@@ -1,0 +1,38 @@
+# Боевой сервер — Ubuntu, а разработка идёт с Windows (core.autocrlf=true).
+# Файлы, которые на Linux исполняются или читаются построчно, обязаны приезжать
+# туда с LF: перевод CRLF в shell-скрипте превращает shebang в `/bin/sh^M` и
+# даёт «bad interpreter», а в systemd-юните — хвост \r в ExecStart.
+*.sh            text eol=lf
+*.service       text eol=lf
+*.timer         text eol=lf
+Dockerfile      text eol=lf
+*.yml           text eol=lf
+*.yaml          text eol=lf
+*.conf          text eol=lf
+*.template      text eol=lf
+*.inc           text eol=lf
+.env.example    text eol=lf
+*.env.example   text eol=lf
+
+# Тексты и код — обычная нормализация: в репозитории LF, в рабочей копии как
+# принято в системе.
+*.py            text
+*.md            text
+*.toml          text
+*.ini           text
+*.html          text
+*.css           text
+*.ts            text
+*.tsx           text
+*.json          text
+
+# Двоичное не трогать (иначе Pillow получит побитый JPEG).
+*.png           binary
+*.jpg           binary
+*.jpeg          binary
+*.webp          binary
+*.mp4           binary
+*.woff          binary
+*.woff2         binary
+*.ico           binary
+*.db            binary

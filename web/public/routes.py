@@ -174,7 +174,7 @@ def check_pin(
         _pin_cookie_name(link.id),
         tokens.make_pin_access_cookie(link.id),
         httponly=True,
-        secure=get_settings().env == "production",
+        secure=get_settings().cookies_secure,
         samesite="lax",
         # cookie сессии браузера: без max_age
     )

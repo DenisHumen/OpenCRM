@@ -30,7 +30,9 @@ dev = ["pytest"]
 # то есть образ Docker не собирался вовсе.
 [tool.setuptools.packages.find]
 include = ["config*", "core*", "database*", "web*"]
-exclude = ["tests*", "scripts*", "design*", "docs*", "docker*"]
+# deploy/ — автообновление: работает на хосте, вне контейнера, и намеренно
+# не является частью приложения (см. deploy/__init__.py).
+exclude = ["tests*", "scripts*", "design*", "docs*", "docker*", "deploy*"]
 
 # Шаблоны витрины и собранная SPA — не .py, но без них приложение не поднимется
 [tool.setuptools.package-data]

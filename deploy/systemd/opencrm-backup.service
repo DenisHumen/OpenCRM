@@ -1,0 +1,17 @@
+[Unit]
+Description=OpenCRM: резервная копия базы и файлов
+Documentation=https://github.com/DenisHumen/OpenCRM/blob/main/docs/08-deployment.md
+# Копия снимается изнутри работающего контейнера (sqlite .backup на горячую),
+# поэтому без docker смысла запускаться нет.
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+# Тот же пользователь, что запускает docker compose: он состоит в группе docker
+# и ему принадлежит каталог состояния, куда лягут копии.
+User=studio
+WorkingDirectory=/opt/OpenCRM
+ExecStart=/opt/OpenCRM/opencrm.sh backup
+StandardOutput=journal
+StandardError=journal

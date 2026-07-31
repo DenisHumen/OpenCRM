@@ -46,10 +46,6 @@ def get_work(db: Session, board_id: int, work_id: int) -> Work | None:
     return work
 
 
-def get_work_by_id(db: Session, work_id: int) -> Work | None:
-    return db.get(Work, work_id)
-
-
 def next_sort_order(db: Session, board_id: int) -> int:
     current = db.scalar(
         select(func.max(Work.sort_order)).where(Work.board_id == board_id)

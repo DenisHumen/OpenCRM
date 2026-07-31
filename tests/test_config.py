@@ -52,6 +52,27 @@ def test_placeholder_base_url_warns():
     assert any("BASE_URL" in message for message in warnings)
 
 
-def test_http_base_url_in_production_warns_about_secure_cookie():
+def test_http_base_url_in_production_warns_about_plain_traffic():
     warnings = _settings(base_url="http://192.168.1.10:8000").config_warnings()
-    assert any("Secure" in message for message in warnings)
+    assert any("открытым" in message for message in warnings)
+
+
+# --- флаг Secure у cookie ---
+
+
+def test_https_site_marks_cookies_secure():
+    assert _settings(base_url="https://studio.site").cookies_secure is True
+
+
+def test_plain_http_site_does_not_mark_cookies_secure():
+    """Иначе браузер молча выбрасывает cookie и вход по локальной сети невозможен.
+
+    Сценарий «сервер в локальной сети без домена» документирован в docs/08 и
+    ставится скриптом установки — он обязан работать, а не выглядеть работающим.
+    """
+    assert _settings(base_url="http://192.168.1.10").cookies_secure is False
+
+
+def test_the_flag_follows_the_address_not_the_environment_name():
+    assert _settings(env="dev", base_url="https://studio.site").cookies_secure is True
+    assert _settings(env="production", base_url="http://studio.site").cookies_secure is False

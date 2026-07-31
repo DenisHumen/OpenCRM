@@ -2,7 +2,6 @@ from fastapi import APIRouter, Depends, UploadFile
 from sqlalchemy.orm import Session
 
 from core.services import settings_service, site_logo_service
-from database.models import User
 from web.api import schemas
 from web.api.deps import get_db, require_root
 

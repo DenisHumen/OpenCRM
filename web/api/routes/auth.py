@@ -20,7 +20,7 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 def _set_auth_cookies(response: Response, session_token: str) -> None:
     settings = get_settings()
-    secure = settings.env == "production"
+    secure = settings.cookies_secure
     max_age = settings.session_ttl_days * 24 * 3600
     response.set_cookie(
         SESSION_COOKIE, session_token,

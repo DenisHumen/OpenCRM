@@ -15,11 +15,24 @@ name: opencrm
 # Переменные компоуза (домен, UID) — в docker/.env, см. docker/.env.example.
 # Настройки приложения — по-прежнему в config/.env.
 
+# Логи контейнеров по умолчанию не ротируются вовсе: json-файл растёт, пока не
+# кончится диск. Сайт работает месяцами без присмотра, а забитый диск ломает не
+# только логи — останавливаются загрузка файлов и обновления. 10 МБ × 3 файла на
+# сервис — это заметно больше, чем нужно для разбора вчерашнего инцидента.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   app:
     build:
       context: ..
       dockerfile: docker/Dockerfile
+      # Этап указан явно: последний этап в Dockerfile — `tests`, и без этой
+      # строки compose собирал бы его, таща pytest и тесты в боевой образ.
+      target: app
     # required: false — стек поднимается и без файла, чтобы можно было просто
     # попробовать сборку. Боевые значения всё равно обязательны: без секретов
     # приложение с OPENCRM_ENV=production не стартует и скажет, чего не хватает.
@@ -32,7 +45,13 @@ services:
       # За приложением стоит один nginx: реальный IP клиента — последний элемент
       # X-Forwarded-For, добавленный им. Без этого лимит подбора PIN обходится
       # подменой заголовка (см. docs/07-security.md).
-      OPENCRM_TRUSTED_PROXY_HOPS: "1"
+      #
+      # Значение берётся из docker/.env, потому что «сколько прокси впереди» —
+      # свойство обвязки, как и домен. Задавать его в config/.env бесполезно:
+      # `environment` в compose перекрывает `env_file`, и та строка молча ничего
+      # не делала бы. Меняют его, когда впереди появляется ещё один прокси
+      # (Cloudflare, балансировщик) — иначе все посетители сольются в один адрес.
+      OPENCRM_TRUSTED_PROXY_HOPS: "${OPENCRM_TRUSTED_PROXY_HOPS:-1}"
     # Каталоги в домашней папке принадлежат хозяину машины, а не root'у, поэтому
     # процесс в контейнере должен работать под его же UID — иначе миграции
     # упрутся в «permission denied» на первом же запуске.
@@ -42,6 +61,7 @@ services:
       - ${OPENCRM_HOME:-${HOME}/opencrm}/storage:/app/storage
     expose: ["8000"]
     restart: unless-stopped
+    logging: *logging
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz')"]
       interval: 30s
@@ -58,6 +78,8 @@ services:
     volumes:
       - ./nginx/templates:/opencrm/templates:ro
       - ./nginx/entrypoint.sh:/opencrm/entrypoint.sh:ro
+      # страница на время, пока приложения нет (обновление, миграции, перезапуск)
+      - ./nginx/maintenance:/opencrm/maintenance:ro
       - ${OPENCRM_HOME:-${HOME}/opencrm}/storage:/srv/storage:ro
       # ключи нужны только на чтение: писать в них — дело certbot
       - ${OPENCRM_HOME:-${HOME}/opencrm}/letsencrypt:/etc/letsencrypt:ro
@@ -67,6 +89,7 @@ services:
       app:
         condition: service_healthy
     restart: unless-stopped
+    logging: *logging
 
   # Продление сертификата. Первый выпуск — руками, один раз:
   #   docker compose run --rm certbot certonly --webroot -w /var/www/certbot \
@@ -87,3 +110,4 @@ services:
       done'
     depends_on: [nginx]
     restart: unless-stopped
+    logging: *logging

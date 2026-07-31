@@ -16,6 +16,11 @@ STORAGE_DIR="${OPENCRM_STORAGE_DIR:-/app/storage}"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 [ -f "$DB_FILE" ] && mv "$DB_FILE" "$DB_FILE.before-restore-$STAMP"
 
+# База работает в journal_mode=WAL (database/session.py), и рядом остаются
+# -wal/-shm от прежнего файла. Копию `.backup` они не описывают, но SQLite
+# при открытии попробует доиграть их поверх — журнал прежней базы надо убрать.
+rm -f "$DB_FILE-wal" "$DB_FILE-shm"
+
 cp "$DB_BACKUP" "$DB_FILE"
 
 mkdir -p "$STORAGE_DIR"

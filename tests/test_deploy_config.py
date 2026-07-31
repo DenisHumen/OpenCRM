@@ -1,0 +1,143 @@
+"""Обвязка развёртывания: nginx, compose, .dockerignore.
+
+Самые дорогие поломки этого проекта случились не в коде, а в конфигурации, и ни
+один тест их не видел. Здесь — сторожа ровно на те места, где уже обжигались:
+каждая проверка описывает, что именно ломалось на живом сервере.
+
+Проверки читают файлы как текст, а не разбирают YAML: словарь зависимостей
+приложения не должен расти ради тестов, а формат этих файлов меняется редко.
+"""
+
+import re
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+COMPOSE = ROOT / "docker" / "docker-compose.yml"
+LOCATIONS = ROOT / "docker" / "nginx" / "templates" / "locations.inc"
+MAINTENANCE = ROOT / "docker" / "nginx" / "maintenance" / "maintenance.html"
+DOCKERIGNORE = ROOT / ".dockerignore"
+
+
+def _read(path: Path) -> str:
+    return path.read_text(encoding="utf-8")
+
+
+# --- nginx: адрес приложения ---
+
+
+def test_nginx_resolves_the_app_on_every_request():
+    """Обновление пересоздаёт контейнер, и адрес в сети compose меняется.
+
+    Имя, записанное в proxy_pass литералом, nginx резолвит один раз при разборе
+    конфига. Проверено на стенде: приложение здорово, а сайт отдаёт 502, потому
+    что nginx стучится по адресу, которого больше нет. Само не чинится — nginx
+    не падает, и `restart: unless-stopped` его не трогает.
+
+    Лечится парой: встроенный DNS Docker плюс ПЕРЕМЕННАЯ в proxy_pass. Одного
+    резолвера мало — без переменной до него дело не доходит, поэтому проверяем
+    оба условия вместе.
+    """
+    config = _read(LOCATIONS)
+    assert "resolver 127.0.0.11" in config, "нет встроенного DNS Docker"
+
+    upstream = re.search(r"proxy_pass\s+(\S+);", config)
+    assert upstream, "в конфиге вообще нет proxy_pass"
+    assert "$" in upstream.group(1), (
+        "proxy_pass без переменной: nginx запомнит адрес контейнера навсегда"
+    )
+
+
+# --- nginx: страница на время обновления ---
+
+
+def test_a_missing_app_shows_the_maintenance_page():
+    config = _read(LOCATIONS)
+    assert re.search(r"error_page\s+502\s+503\s+504\s+=503", config), (
+        "ошибки шлюза должны становиться 503 со страницей обслуживания"
+    )
+    assert MAINTENANCE.exists(), "страницы обслуживания нет на диске"
+    assert "/opencrm/maintenance/maintenance.html" in config
+
+
+def test_the_maintenance_page_is_mounted_into_nginx():
+    assert "./nginx/maintenance:/opencrm/maintenance:ro" in _read(COMPOSE), (
+        "без монтирования nginx отдаст свою страницу «502 Bad Gateway»"
+    )
+
+
+def test_the_maintenance_page_asks_for_nothing_from_outside():
+    """Страница показывается ровно тогда, когда приложения нет.
+
+    Любая внешняя ссылка — шрифт, картинка, скрипт — ведёт на тот же лежащий
+    сайт: в лучшем случае страница едет дольше, в худшем разъезжается.
+    """
+    page = _read(MAINTENANCE)
+    assert not re.search(r'(?:src|href)\s*=\s*["\'](?:https?:)?//', page), (
+        "на странице обслуживания есть внешняя ссылка"
+    )
+    assert "<script" not in page.lower()
+
+
+def test_the_maintenance_page_never_hides_a_real_error():
+    """`proxy_intercept_errors` подменял бы страницей и 404, и 500 приложения."""
+    assert "proxy_intercept_errors on" not in _read(LOCATIONS)
+
+
+def test_the_certificate_check_survives_the_maintenance_window():
+    """Продление сертификата ходит по HTTP в тот же nginx.
+
+    Отдай мы на этот адрес страницу обслуживания — продление провалилось бы
+    молча, и через 90 дней сайт остался бы без сертификата.
+    """
+    for template in ("http.conf.template", "https.conf.template"):
+        config = _read(ROOT / "docker" / "nginx" / "templates" / template)
+        assert "/.well-known/acme-challenge/" in config
+        assert "root /var/www/certbot" in config
+
+
+# --- compose ---
+
+
+def test_the_production_image_carries_no_tests():
+    assert re.search(r"target:\s*app", _read(COMPOSE)), (
+        "без явного этапа compose соберёт последний — а это `tests` с pytest внутри"
+    )
+
+
+def test_container_logs_cannot_eat_the_disk():
+    """По умолчанию json-лог растёт без предела.
+
+    Сайт живёт месяцами без присмотра, а кончившееся место ломает не логи —
+    останавливаются загрузка файлов и сами обновления.
+    """
+    compose = _read(COMPOSE)
+    assert "max-size" in compose
+    # Якорь у каждого сервиса, а не один на файл: забыть его у нового сервиса
+    # так же легко, как у старого.
+    assert compose.count("logging: *logging") >= 3
+
+
+def test_the_number_of_proxies_in_front_stays_configurable():
+    """`environment` перекрывает `env_file`, поэтому значение в config/.env
+    молча не работало бы. Настройка должна приходить снаружи, иначе сайт за
+    Cloudflare увидит вместо посетителей пару адресов самого Cloudflare."""
+    assert "OPENCRM_TRUSTED_PROXY_HOPS: \"${OPENCRM_TRUSTED_PROXY_HOPS:-1}\"" in _read(COMPOSE)
+
+
+# --- контекст сборки ---
+
+
+def test_secrets_never_reach_an_image_layer():
+    """Слои образа читает любой, у кого есть образ."""
+    ignore = _read(DOCKERIGNORE)
+    for secret in ("config/.env", "docker/.env"):
+        assert secret in ignore
+
+
+def test_the_deploy_gate_keeps_the_files_it_needs():
+    """Строки `tests/` или `deploy/` здесь сломали бы этап `tests` — то есть
+    единственную проверку между сломанным коммитом и живым сайтом."""
+    lines = [line.strip() for line in _read(DOCKERIGNORE).splitlines()]
+    meaningful = [line for line in lines if line and not line.startswith("#")]
+    for needed in ("tests/", "deploy/", "tests", "deploy"):
+        assert needed not in meaningful

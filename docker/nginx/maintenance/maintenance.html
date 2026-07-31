@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<!-- Страница живёт вне приложения и показывается ровно тогда, когда его нет:
+     обновление, миграции, перезапуск. Поэтому здесь ни одной внешней ссылки —
+     ни шрифта, ни картинки, ни скрипта: всё, что пришлось бы грузить с сайта,
+     сейчас недоступно по определению.
+
+     Перезагрузка раз в 15 секунд возвращает посетителя на сайт сама, как только
+     приложение поднялось: обновление занимает пару минут, и просить человека
+     жать F5 незачем. meta, а не скрипт, — работает и с отключённым JS. -->
+<meta http-equiv="refresh" content="15">
+<title>We'll be right back</title>
+<style>
+  :root {
+    --bg: #161514;
+    --text: #F5F4EF;
+    --muted: #9C998F;
+    --faint: #706D64;
+    --accent: #D97757;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font: 16px/1.6 "Segoe UI", system-ui, -apple-system, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 32px;
+    text-align: center;
+  }
+  .wrap { max-width: 420px; animation: rise 400ms ease-out both; }
+  .dot {
+    width: 12px; height: 12px; border-radius: 50%;
+    background: var(--accent);
+    margin: 0 auto 32px;
+    animation: pulse 1.8s ease-in-out infinite;
+  }
+  h1 {
+    font-size: clamp(24px, 5vw, 30px);
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    margin-bottom: 12px;
+  }
+  p { color: var(--muted); font-size: 14.5px; }
+  .foot { color: var(--faint); font-size: 12.5px; margin-top: 40px; }
+  @keyframes rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.35; transform: scale(0.8); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; }
+  }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="dot"></div>
+    <h1>We&rsquo;ll be right back</h1>
+    <p>The site is being updated. This page refreshes itself &mdash; no need to do anything.</p>
+    <div class="foot">Идёт обновление. Страница обновится сама.</div>
+  </div>
+</body>
+</html>

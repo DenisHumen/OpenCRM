@@ -1,0 +1,25 @@
+name: tests
+
+# Те же тесты, что автообновление гоняет на сервере перед деплоем
+# (docker/Dockerfile, этап `tests`). Здесь они — чтобы красный коммит было видно
+# сразу в PR, а не через пять минут в уведомлении об откате.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      # ffmpeg — постеры и длительность видео (core/services/media_service.py).
+      # Без него часть тестов деградирует на другую ветку кода, и проверка
+      # получилась бы не той, что на боевом сервере.
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+      - run: pip install . pytest
+      - run: python -m pytest
