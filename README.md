@@ -67,7 +67,7 @@ python scripts/reset_root.py --email me@studio.site --password "новый-па�
 sudo apt install -y git
 sudo git clone https://github.com/DenisHumen/OpenCRM.git /opt/OpenCRM
 sudo chown -R $USER:$USER /opt/OpenCRM
-cd /opt/OpenCRM && chmod +x &&./opencrm.sh
+cd /opt/OpenCRM && chmod +x opencrm.sh &&./opencrm.sh
 ```
 
 Первый запуск — мастер установки. Он сам:
