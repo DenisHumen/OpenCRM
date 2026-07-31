@@ -11,11 +11,14 @@
 import re
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parent.parent
 COMPOSE = ROOT / "docker" / "docker-compose.yml"
 LOCATIONS = ROOT / "docker" / "nginx" / "templates" / "locations.inc"
 MAINTENANCE = ROOT / "docker" / "nginx" / "maintenance" / "maintenance.html"
 DOCKERIGNORE = ROOT / ".dockerignore"
+WORKFLOW = ROOT / ".github" / "workflows" / "tests.yml"
 
 
 def _read(path: Path) -> str:
@@ -141,3 +144,28 @@ def test_the_deploy_gate_keeps_the_files_it_needs():
     meaningful = [line for line in lines if line and not line.startswith("#")]
     for needed in ("tests/", "deploy/", "tests", "deploy"):
         assert needed not in meaningful
+
+
+# --- CI ---
+
+
+def test_ci_builds_the_frontend_before_running_tests():
+    """CI обещает гонять «те же тесты, что автообновление перед деплоем».
+
+    В образе фронтенд собирает отдельный этап node, а web/frontend/crm/dist в
+    git не хранится. Без сборки в CI web/main.py не регистрирует маршруты SPA,
+    и проверки витрины CRM падают на ровном месте — что и случилось на первом же
+    прогоне. Заодно без этого шага ошибка TypeScript проезжает через зелёный CI
+    и всплывает уже сборкой на сервере.
+    """
+    if not WORKFLOW.exists():
+        # .github/ намеренно исключён из контекста сборки (.dockerignore), так
+        # что внутри образа проверять нечего. На самом GitHub файл на месте.
+        pytest.skip("вне репозитория: .github не входит в контекст сборки образа")
+
+    workflow = _read(WORKFLOW)
+    assert "npm ci" in workflow, "фронтенд в CI не устанавливается"
+    assert "npm run build" in workflow, "фронтенд в CI не собирается"
+    assert workflow.index("npm run build") < workflow.index("python -m pytest"), (
+        "сборка фронтенда должна идти до тестов, иначе dist ещё нет"
+    )

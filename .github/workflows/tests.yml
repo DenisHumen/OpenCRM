@@ -21,5 +21,20 @@ jobs:
       # Без него часть тестов деградирует на другую ветку кода, и проверка
       # получилась бы не той, что на боевом сервере.
       - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+      # Фронтенд собирается и здесь — по той же причине, что и ffmpeg выше.
+      # web/frontend/crm/dist в git не хранится, а web/main.py регистрирует
+      # маршруты SPA, только когда каталог сборки на месте. Без этого шага
+      # проверки SPA молча превращались бы в 404, и заодно ошибка TypeScript
+      # проезжала бы через зелёный CI прямо в сборку на сервере.
+      # Node 22 — как в docker/Dockerfile, этап `frontend`.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/frontend/crm/package-lock.json
+      - run: npm ci
+        working-directory: web/frontend/crm
+      - run: npm run build
+        working-directory: web/frontend/crm
       - run: pip install . pytest
       - run: python -m pytest

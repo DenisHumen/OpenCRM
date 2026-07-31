@@ -5,6 +5,9 @@ from web.main import app
 
 
 def test_dashboard_aggregates(root_client, manager_client):
+    # свой клиент, а не расчёт на созданных в других файлах: база одна на весь
+    # прогон, и без него тест зеленел только когда его запускали вместе со всеми
+    manager_client.post(f"{API}/clients", json={"name": "Дашборд-клиент"})
     board = manager_client.post(f"{API}/boards", json={"title": "Дашборд-доска"}).json()
     manager_client.post(
         f"{API}/boards/{board['id']}/works",
