@@ -175,21 +175,82 @@ def test_single_work_takes_the_showiest_place_enlarged():
     single_ratio, _tiles = MODULES[1]
     # то же место: отношение сторон совпадает с его формой в мастере
     assert single_ratio == pytest.approx(place.w / place.h, abs=0.01)
-    # и оно на 20% крупнее, чем было бы внутри композиции
+    # и оно крупнее, чем было бы внутри композиции
     assert MODULE_SPANS[1] == pytest.approx(
         place.w / MASTER_FRAME[0] * SINGLE_ZOOM, abs=0.002
     )
+    # ровно настолько, насколько крупнее на макете: 992px при колонке 1568px
+    assert MODULE_SPANS[1] == pytest.approx(992 / 1568, abs=0.002)
 
 
 # --- совпадение с макетами (tmp/image/template) ---
 
-@pytest.mark.parametrize(
-    "size, ratio",
-    [(1, 1.3405), (2, 1.5282), (4, 1.1011), (5, 0.9515), (6, 0.9515), (7, 0.7597)],
-)
-def test_frame_matches_the_mockup(size, ratio):
+# Рамки макетов `tmp/image/template/Image_N.jpg` в пикселях, снятые по цветам.
+# Колонка на всех макетах одна — 1568px, отсюда и доля ширины у каждой рамки.
+# Тройку когда-то занесли как 1568×820: `Image_3.jpg` — снимок экрана, а не
+# страницы целиком, и нижнее место оказалось срезано краем окна.
+MOCKUP_FRAMES = {
+    1: (992, 740),
+    2: (1192, 780),
+    3: (1568, 848),
+    4: (1568, 1424),
+    5: (1568, 1648),
+    6: (1568, 1648),
+    7: (1568, 2064),
+}
+
+
+@pytest.mark.parametrize("size", range(1, MAX_MODULE + 1))
+def test_frame_matches_the_mockup(size):
     """Рамка композиции — ровно та, что на макетах, снятых по пикселям."""
-    assert MODULES[size][0] == pytest.approx(ratio, abs=0.005)
+    width, height = MOCKUP_FRAMES[size]
+    assert MODULES[size][0] == pytest.approx(width / height, abs=0.005)
+
+
+# Места мастера, снятые с `Image_7.jpg` в полном разрешении: (x, y, w, h) в
+# координатах рамки 1568×2064. Числа сходятся на `Image_5/6/7`, а места 1–4 —
+# ещё и на `Image_3/4`. Допуск 8px — на растекание края в JPEG.
+MOCKUP_PLACES = [
+    (0, 103, 455, 677),
+    (385, 0, 808, 605),
+    (980, 400, 590, 451),
+    (470, 616, 605, 808),
+    (0, 1070, 632, 580),
+    (980, 1045, 589, 605),
+    (470, 1435, 495, 629),
+]
+
+
+@pytest.mark.parametrize("index", range(MAX_MODULE))
+def test_every_place_matches_the_mockup(index):
+    """Сверяем каждое место, а не только рамку композиции.
+
+    Пятое место когда-то стояло как `Place(0, 616, 628, 1032)` — высокий портрет
+    во всю левую сторону вместо низкого почти квадрата. Рамку это не меняло: низ
+    в обоих случаях приходился на 1648, потому что там же кончается шестое место.
+    Проверка рамки такое пропускает, поэтому нужна проверка по местам.
+    """
+    place = MASTER[index]
+    x, y, w, h = MOCKUP_PLACES[index]
+    assert (place.x, place.y, place.w, place.h) == pytest.approx((x, y, w, h), abs=8)
+
+
+def test_fifth_place_sits_flush_with_the_sixth():
+    """Нижние края пятого и шестого мест совпадают — так на макете."""
+    fifth, sixth = MASTER[4], MASTER[5]
+    assert fifth.y + fifth.h == sixth.y + sixth.h
+
+
+@pytest.mark.parametrize("size", range(1, MAX_MODULE + 1))
+def test_composition_takes_the_same_share_of_the_column_as_on_the_mockup(size):
+    """Доля колонки — тоже с макета.
+
+    Композиция на три и больше работ занимает колонку целиком; у́же — только
+    одна и две работы. Без этого доска висела бы узкой полосой посреди пустых
+    полей, чего на макетах нет ни на одном.
+    """
+    width, _height = MOCKUP_FRAMES[size]
+    assert MODULE_SPANS[size] == pytest.approx(width / MASTER_FRAME[0], abs=0.002)
 
 
 def test_places_have_the_shapes_the_editor_shows():
