@@ -121,6 +121,19 @@ has() { command -v "$1" >/dev/null 2>&1; }
 has_systemd() { [ -d /run/systemd/system ]; }
 docker_ready() { docker info >/dev/null 2>&1; }
 
+# Git в каталоге проекта — всегда через это, а не голым `git -C`.
+#
+#   safe.directory   — каталог клонировал человек, а скрипт зовут и от него, и
+#                      от root через sudo; без исключения git отвечает `detected
+#                      dubious ownership` и не делает вообще ничего.
+#   core.fileMode    — бит исполнения не содержит изменений и не считается
+#                      правкой: иначе `chmod +x opencrm.sh` из инструкции по
+#                      установке навсегда делает дерево «грязным», а обновления
+#                      останавливаются с `M opencrm.sh`.
+git_repo() {
+    git -c "safe.directory=$REPO_DIR" -c core.fileMode=false -C "$REPO_DIR" "$@"
+}
+
 # Наличия файла `docker` в PATH мало: Docker Desktop оставляет в дистрибутивах
 # WSL заглушку, которая только советует включить интеграцию. Спрашиваем версию и
 # смотрим, что ответ вообще похож на версию.
@@ -1181,7 +1194,12 @@ cmd_doctor() {
     fi
 
     if [ -d "$REPO_DIR/.git" ] && has git; then
-        if [ -z "$(git -C "$REPO_DIR" status --porcelain 2>/dev/null)" ]; then
+        # Те же два флага, что у обновлятора (deploy/updater.py), иначе
+        # диагностика врала бы в обе стороны: `2>/dev/null` глотал отказ git
+        # работать с чужим каталогом и показывал «чисто» там, где обновление
+        # падало, а бит исполнения показывал «грязно» на нетронутом дереве.
+        _dirty=$(git_repo status --porcelain 2>/dev/null) || _dirty=""
+        if [ -z "$_dirty" ]; then
             probe "репозиторий" 1 "чистый"
         else
             probe "репозиторий" 0 "есть несохранённые правки — автообновление остановится"
