@@ -8,14 +8,24 @@
 """
 
 import json
+import shutil
+import subprocess
 
 import pytest
 
 from deploy import notify
 from deploy.config import UpdateConfig
-from deploy.github import GitHub, GitHubError, Head
+from deploy.github import (
+    CHECKS_FAILURE,
+    CHECKS_PENDING,
+    CHECKS_SUCCESS,
+    Checks,
+    GitHub,
+    GitHubError,
+    Head,
+)
 from deploy.journal import Journal
-from deploy.runner import Response, Result
+from deploy.runner import Response, Result, Shell
 from deploy.updater import (
     STATUS_ABORTED,
     STATUS_BROKEN,
@@ -23,6 +33,7 @@ from deploy.updater import (
     STATUS_DISABLED,
     STATUS_ROLLED_BACK,
     STATUS_UP_TO_DATE,
+    STATUS_WAITING,
     Updater,
 )
 
@@ -94,10 +105,21 @@ class FakeProbe:
 
 
 class FakeGitHub:
-    def __init__(self, sha=NEW, changed=True, etag='W/"new"', summary="feat: новая витрина"):
+    def __init__(
+        self,
+        sha=NEW,
+        changed=True,
+        etag='W/"new"',
+        summary="feat: новая витрина",
+        checks=Checks(CHECKS_SUCCESS, "зелёных проверок: 1"),
+    ):
         self._head = Head(sha=sha if changed else "", etag=etag, changed=changed)
         self._summary = summary
+        # По умолчанию зелёные: гейт — предохранитель, и в тестах про откат,
+        # health-check и снимок базы он должен молчать, а не быть фоном.
+        self._checks = checks
         self.etags_seen: list[str] = []
+        self.checks_asked: list[str] = []
 
     def head(self, branch, etag=""):
         self.etags_seen.append(etag)
@@ -105,6 +127,12 @@ class FakeGitHub:
 
     def summary(self, sha):
         return self._summary
+
+    def checks(self, sha):
+        self.checks_asked.append(sha)
+        if isinstance(self._checks, Exception):
+            raise self._checks
+        return self._checks
 
 
 class FakeNotifier:
@@ -199,6 +227,12 @@ def test_environment_overrides_everything(tmp_path):
     assert config.smoke_urls == ("http://a/", "http://b/")
 
 
+def test_the_ci_gate_is_on_unless_switched_off():
+    """Предохранители по умолчанию взведены: забыть включить проще, чем выключить."""
+    assert UpdateConfig.from_env({}).require_ci is True
+    assert UpdateConfig.from_env({"OPENCRM_UPDATE_REQUIRE_CI": "0"}).require_ci is False
+
+
 # --- журнал ---
 
 
@@ -243,6 +277,249 @@ def test_state_is_written_atomically(tmp_path):
     journal.write(deployed_sha=OLD)
     assert json.loads((tmp_path / "state.json").read_text("utf-8"))["deployed_sha"] == OLD
     assert not list(tmp_path.glob("*.tmp"))
+
+
+# --- preflight против настоящего git ---
+#
+# Здесь двойников нет намеренно. Обновление на боевом сервере встало намертво не
+# на логике, а на двух особенностях самого git — на них подделка команд слепа:
+# `git status` отвечал `detected dubious ownership`, а `chmod +x opencrm.sh` из
+# инструкции по установке навсегда делал дерево «грязным». Обе беды видны только
+# настоящему git, поэтому проверяем настоящим.
+
+needs_git = pytest.mark.skipif(shutil.which("git") is None, reason="нужен настоящий git")
+
+
+def real_repo(path, executable_file="opencrm.sh"):
+    """Клон-двойник боевого чекаута: один коммит, один скрипт без бита исполнения."""
+    path.mkdir(parents=True, exist_ok=True)
+    script = path / executable_file
+    script.write_text("#!/bin/sh\necho hi\n", encoding="utf-8")
+
+    def git(*args, env=None):
+        return subprocess.run(
+            ["git", "-C", str(path), *args], capture_output=True, text=True, env=env, check=False
+        )
+
+    git("init", "-q", "-b", "main")
+    git("config", "user.email", "t@example.com")
+    git("config", "user.name", "t")
+    # Как в репозитории на GitHub: файл записан режимом 100644 (см. `git
+    # update-index --chmod=+x` — бит хранится в дереве, а не в файловой системе).
+    git("config", "core.fileMode", "true")
+    git("add", "-A")
+    git("update-index", "--chmod=-x", executable_file)
+    git("commit", "-qm", "init")
+    return git
+
+
+def real_updater(tmp_path, repo, **extra):
+    config = make_config(tmp_path, OPENCRM_UPDATE_PROJECT_DIR=str(repo), **extra)
+    return Updater(
+        config,
+        journal=Journal(config.state_file, config.history_file),
+        github=FakeGitHub(),
+        shell=Shell(),  # настоящий: проверяем ровно то, как git отвечает на наши флаги
+        probe=FakeProbe(),
+        notifier=FakeNotifier(),
+        sleep=lambda _seconds: None,
+        clock=lambda: 0.0,
+    )
+
+
+def test_every_git_command_carries_the_ownership_exception(tmp_path):
+    """Не только `status`: `fetch` и `checkout` спотыкались бы о то же самое.
+
+    Откат идёт через `checkout` — то есть без флага чужой владелец ронял бы не
+    обновление, а возврат назад, ровно тогда, когда всё уже плохо.
+    """
+    updater = make_updater(tmp_path)
+    updater.run_once()
+
+    git_calls = [call for call in updater.shell.calls if call.startswith("git ")]
+    assert git_calls, "git вообще не звали — тест ничего не проверяет"
+    for call in git_calls:
+        assert f"-c safe.directory={updater.config.project_dir}" in call
+
+
+def test_only_the_cleanliness_check_ignores_the_executable_bit(tmp_path):
+    """`core.fileMode=false` — точечно, а не на все команды подряд.
+
+    Смысл он имеет ровно в одном месте, и раздавать его `checkout`/`fetch`
+    значило бы глушить бит исполнения там, где о нём никто не просил.
+    """
+    updater = make_updater(tmp_path)
+    updater.run_once()
+
+    for call in updater.shell.calls:
+        if not call.startswith("git "):
+            continue
+        assert ("core.fileMode=false" in call) == ("status --porcelain" in call), call
+
+
+@needs_git
+def test_chmod_from_the_install_instructions_does_not_jam_updates(tmp_path):
+    """`chmod +x opencrm.sh` — не правка, а бит; дерево остаётся чистым.
+
+    Именно это и заклинило боевой сервер: инструкция по установке взводила бит,
+    git показывал `M opencrm.sh`, preflight отказывался обновляться — и так
+    каждые пять минут, без единого способа догадаться, что «правку» никто не
+    делал. `checkout` расставит бит из дерева сам, содержимого в нём нет.
+    """
+    repo = tmp_path / "checkout"
+    real_repo(repo)
+    (repo / "opencrm.sh").chmod(0o755)
+
+    updater = real_updater(tmp_path, repo)
+    steps = []
+    updater._preflight(steps)  # не поднимает _Stop — это и есть проверка
+
+    assert [(step.name, step.ok) for step in steps] == [("preflight", True)]
+
+
+@needs_git
+def test_a_real_edit_still_stops_the_update(tmp_path):
+    """Обратная сторона: содержательную правку по-прежнему не затираем молча."""
+    from deploy.updater import _Stop
+
+    repo = tmp_path / "checkout"
+    real_repo(repo)
+    (repo / "opencrm.sh").write_text("#!/bin/sh\necho правка руками\n", encoding="utf-8")
+
+    updater = real_updater(tmp_path, repo)
+    with pytest.raises(_Stop, match="несохранённые правки"):
+        updater._preflight([])
+
+
+@needs_git
+def test_a_repository_owned_by_someone_else_is_still_ours(tmp_path):
+    """`sudo ./opencrm.sh` в каталоге, склонированном под другим пользователем.
+
+    git отвечает на это `fatal: detected dubious ownership` и не выполняет
+    ничего — ни `status`, ни `checkout`. На сервере из-за этого автообновление
+    падало ещё до первой осмысленной проверки. Владельца в тестах не подделать,
+    поэтому просим сам git считать, что владелец чужой (флаг из его тестового
+    набора), — путь кода при этом ровно тот же.
+    """
+    repo = tmp_path / "checkout"
+    real_repo(repo)
+    updater = real_updater(tmp_path, repo)
+
+    argv = ["git", "-C", str(repo), "status", "--porcelain"]
+    hostile = {"GIT_TEST_ASSUME_DIFFERENT_OWNER": "1", "HOME": str(tmp_path), "PATH": "/usr/bin:/bin"}
+    if subprocess.run(argv, capture_output=True, text=True, env=hostile).returncode == 0:
+        pytest.skip("этот git не умеет притворяться чужим владельцем")
+
+    monkey = subprocess.run(
+        updater._git("status", "--porcelain").argv, capture_output=True, text=True, env=hostile
+    )
+    assert monkey.returncode == 0, monkey.stderr
+    assert "dubious ownership" not in monkey.stderr
+
+
+# --- гейт по проверкам GitHub ---
+
+
+def test_a_green_commit_goes_out(tmp_path):
+    updater = make_updater(tmp_path)
+    outcome = updater.run_once()
+
+    assert outcome.status == STATUS_DEPLOYED
+    assert updater.github.checks_asked == [NEW]
+
+
+def test_a_red_commit_never_reaches_the_server(tmp_path):
+    """Красный CI — отказ до `fetch`: живой сайт не трогали, сборку не начинали."""
+    github = FakeGitHub(checks=Checks(CHECKS_FAILURE, "pytest — failure"))
+    updater = make_updater(tmp_path, github=github)
+    shell = updater.shell
+
+    outcome = updater.run_once()
+
+    assert outcome.status == STATUS_ABORTED
+    assert "красные" in outcome.reason
+    assert not shell.ran("fetch") and not shell.ran("checkout") and not shell.ran("up -d")
+    # Коммит виноват — это событие: в историю, в Telegram и в failed_sha, чтобы
+    # новость не повторялась каждые пять минут.
+    assert updater.journal.read()["failed_sha"] == NEW
+    assert updater.journal.last()["status"] == STATUS_ABORTED
+    assert updater.notifier.messages
+
+
+def test_a_commit_whose_checks_are_still_running_is_waited_for_not_rejected(tmp_path):
+    """Ключевое отличие от красного: коммит не виноват, и клеймить его нельзя.
+
+    Попади он в `failed_sha` — не поехал бы уже никогда, даже позеленев: повтор
+    бывает только на следующем коммите или по `force-update`.
+    """
+    github = FakeGitHub(checks=Checks(CHECKS_PENDING, "pytest"))
+    updater = make_updater(tmp_path, github=github)
+
+    outcome = updater.run_once()
+
+    assert outcome.status == STATUS_WAITING
+    assert not updater.shell.ran("fetch")
+    assert not updater.journal.read().get("failed_sha")
+    # Ожидание — не новость: ни в историю, ни в Telegram.
+    assert updater.journal.last() is None
+    assert updater.notifier.messages == []
+
+
+def test_waiting_forgets_the_etag_so_the_next_poll_asks_again(tmp_path):
+    """Иначе гейт запирал бы коммит навсегда — самой же экономией запросов.
+
+    ETag висит на голове ветки и не меняется, пока не появится новый коммит. Не
+    сбросив его, следующий опрос получил бы 304 «ничего не изменилось», вышел
+    через `up-to-date` и до проверок не дошёл: CI позеленел бы, а обновление
+    осталось бы стоять до следующего коммита.
+    """
+    updater = make_updater(tmp_path, github=FakeGitHub(checks=Checks(CHECKS_PENDING, "pytest")))
+    updater.run_once()
+    assert updater.journal.etag == ""
+
+    # CI позеленел — тот же самый коммит едет, повторного опроса ничто не глушит.
+    updater.github._checks = Checks(CHECKS_SUCCESS, "зелёных проверок: 1")
+    assert updater.run_once().status == STATUS_DEPLOYED
+
+
+def test_github_being_unreachable_is_not_the_same_as_a_red_build(tmp_path):
+    """Не спросили — не значит «плохо»: ждём, но коммит не клеймим."""
+    github = FakeGitHub(checks=GitHubError("GitHub недоступен"))
+    updater = make_updater(tmp_path, github=github)
+
+    outcome = updater.run_once()
+
+    assert outcome.status == STATUS_WAITING
+    assert "недоступн" in outcome.reason
+    assert not updater.journal.read().get("failed_sha")
+    assert not updater.shell.ran("up -d")
+
+
+def test_force_update_is_the_human_override(tmp_path):
+    """Чинить упавший CI, не имея права выкатить фикс, было бы тупиком."""
+    github = FakeGitHub(checks=Checks(CHECKS_FAILURE, "pytest — failure"))
+    updater = make_updater(tmp_path, github=github)
+
+    assert updater.run_once(force=True).status == STATUS_DEPLOYED
+    assert github.checks_asked == []
+
+
+def test_the_gate_can_be_switched_off_where_there_is_no_ci(tmp_path):
+    github = FakeGitHub(checks=Checks(CHECKS_FAILURE, "pytest — failure"))
+    updater = make_updater(tmp_path, github=github, OPENCRM_UPDATE_REQUIRE_CI="0")
+
+    assert updater.run_once().status == STATUS_DEPLOYED
+    assert github.checks_asked == []
+
+
+def test_status_explains_why_nothing_is_deploying(tmp_path):
+    """«Обновление есть, а сайт прежний» без этой строки выглядит поломкой."""
+    github = FakeGitHub(checks=Checks(CHECKS_PENDING, "pytest"))
+    state = make_updater(tmp_path, github=github).status()
+
+    assert state["update_available"] is True
+    assert state["checks"] == CHECKS_PENDING
+    assert state["checks_detail"] == "pytest"
 
 
 # --- GitHub ---
@@ -311,6 +588,87 @@ def test_a_missing_summary_never_blocks_a_deploy():
         raise OSError("сеть отвалилась")
 
     assert GitHub("owner/repo", opener=opener).summary(NEW) == ""
+
+
+def checking(runs=(), statuses=None):
+    """GitHub, отвечающий заданными check-run'ами и commit statuses."""
+    payloads = {
+        "check-runs": {"total_count": len(runs), "check_runs": list(runs)},
+        "/status": statuses if statuses is not None else {"state": "", "total_count": 0},
+    }
+
+    def opener(request, timeout=None):
+        for needle, payload in payloads.items():
+            if needle in request.full_url:
+                return _FakeResponse(json.dumps(payload).encode())
+        raise AssertionError(request.full_url)
+
+    return GitHub("owner/repo", opener=opener)
+
+
+def test_all_checks_completed_and_good_is_green():
+    checks = checking(
+        runs=[
+            {"name": "pytest", "status": "completed", "conclusion": "success"},
+            # neutral и skipped — сознательно не выполнявшиеся шаги (условный job,
+            # пропущенная матрица). Требовать от них зелёного значило бы требовать
+            # результата там, где проверки и не было.
+            {"name": "lint", "status": "completed", "conclusion": "skipped"},
+        ]
+    ).checks(NEW)
+    assert checks.state == CHECKS_SUCCESS and checks.green
+
+
+@pytest.mark.parametrize("conclusion", ["failure", "timed_out", "cancelled", "action_required"])
+def test_a_bad_conclusion_is_red(conclusion):
+    checks = checking(runs=[{"name": "pytest", "status": "completed", "conclusion": conclusion}])
+    assert checks.checks(NEW).state == CHECKS_FAILURE
+    assert conclusion in checks.checks(NEW).detail
+
+
+def test_a_running_check_outweighs_the_ones_already_green():
+    """Половина зелёного — это не зелёное: ждём, пока досчитает вторая половина."""
+    checks = checking(
+        runs=[
+            {"name": "pytest", "status": "completed", "conclusion": "success"},
+            {"name": "build", "status": "in_progress", "conclusion": None},
+        ]
+    ).checks(NEW)
+    assert checks.state == CHECKS_PENDING and "build" in checks.detail
+
+
+def test_a_red_check_outweighs_a_running_one():
+    """Ждать нечего: результат уже известен и он плохой."""
+    checks = checking(
+        runs=[
+            {"name": "build", "status": "in_progress", "conclusion": None},
+            {"name": "pytest", "status": "completed", "conclusion": "failure"},
+        ]
+    ).checks(NEW)
+    assert checks.state == CHECKS_FAILURE
+
+
+def test_external_commit_statuses_count_too():
+    """Actions отчитывается check-run'ами, внешние сервисы — commit statuses."""
+    checks = checking(statuses={"state": "failure", "total_count": 1}).checks(NEW)
+    assert checks.state == CHECKS_FAILURE and "commit status" in checks.detail
+
+
+def test_no_checks_at_all_means_wait_not_go():
+    """Workflow заводится не мгновенно.
+
+    Приняв пустоту за зелёный свет, гейт пропускал бы ровно тот случай, ради
+    которого поставлен: коммит, для которого проверки ещё не начинались.
+    """
+    assert checking().checks(NEW).state == CHECKS_PENDING
+
+
+def test_checks_on_a_broken_reply_are_an_error_not_a_verdict():
+    github = GitHub(
+        "owner/repo", opener=lambda request, timeout=None: _FakeResponse(b"<html>rate limited</html>")
+    )
+    with pytest.raises(GitHubError):
+        github.checks(NEW)
 
 
 # --- уведомления ---

@@ -1,4 +1,4 @@
-"""Какой коммит сейчас в отслеживаемой ветке.
+"""Какой коммит сейчас в отслеживаемой ветке и что о нём думает CI.
 
 Опрос, а не webhook: чтобы задеплоить, снаружи ничего дёргать не нужно, поэтому
 нет ни публичного эндпоинта, ни секрета подписи, ни риска, что деплой запустит
@@ -21,6 +21,18 @@ from dataclasses import dataclass
 API = "https://api.github.com"
 USER_AGENT = "opencrm-autoupdate"
 
+CHECKS_SUCCESS = "success"
+CHECKS_PENDING = "pending"
+CHECKS_FAILURE = "failure"
+
+# Заключения, при которых деплоить нельзя. `neutral`, `skipped` и `success` —
+# можно: так помечают шаги, сознательно не выполнявшиеся на этом коммите
+# (условный job, пропущенная матрица), и запрещать из-за них значило бы
+# требовать зелёного там, где проверки и не было.
+BAD_CONCLUSIONS = frozenset(
+    {"failure", "timed_out", "action_required", "cancelled", "startup_failure", "stale"}
+)
+
 
 class GitHubError(RuntimeError):
     pass
@@ -33,6 +45,18 @@ class Head:
     sha: str
     etag: str
     changed: bool
+
+
+@dataclass(frozen=True)
+class Checks:
+    """Итог проверок коммита. `state` — одна из CHECKS_*, `detail` — для человека."""
+
+    state: str
+    detail: str
+
+    @property
+    def green(self) -> bool:
+        return self.state == CHECKS_SUCCESS
 
 
 class GitHub:
@@ -66,6 +90,64 @@ class GitHub:
         if len(sha) != 40 or not all(c in "0123456789abcdef" for c in sha):
             raise GitHubError(f"вместо SHA пришло {sha[:80]!r}")
         return Head(sha=sha, etag=fresh, changed=True)
+
+    def checks(self, sha: str) -> Checks:
+        """Что Actions и внешние проверки говорят о коммите.
+
+        Спрашиваем два разных механизма, потому что они и правда разные: Actions
+        отчитывается check-run'ами, а внешние сервисы (линтеры, сканеры, старые
+        интеграции) — commit statuses. Пустой ответ одного из них — норма, пустые
+        оба — «проверок ещё нет», и это `pending`, а не разрешение: workflow
+        заводится не мгновенно, и приняв пустоту за зелёный свет, гейт пропускал
+        бы ровно тот случай, ради которого поставлен.
+
+        Ошибка сети — исключение, а не «красный»: не спросили и не узнали, это
+        разные вещи, и решать, что с этим делать, — не здесь.
+        """
+        pending: list[str] = []
+        failed: list[str] = []
+        green = 0
+
+        runs = self._json(f"{API}/repos/{self.repo}/commits/{sha}/check-runs")
+        for run in runs.get("check_runs") or []:
+            name = str(run.get("name") or "проверка")
+            conclusion = str(run.get("conclusion") or "")
+            if run.get("status") != "completed":
+                pending.append(name)
+            elif conclusion in BAD_CONCLUSIONS:
+                failed.append(f"{name} — {conclusion}")
+            else:
+                green += 1
+
+        statuses = self._json(f"{API}/repos/{self.repo}/commits/{sha}/status")
+        if int(statuses.get("total_count") or 0):
+            state = str(statuses.get("state") or "")
+            if state in {"failure", "error"}:
+                failed.append(f"commit status — {state}")
+            elif state == "pending":
+                pending.append("commit status")
+            else:
+                green += 1
+
+        if failed:
+            return Checks(CHECKS_FAILURE, ", ".join(failed))
+        if pending:
+            return Checks(CHECKS_PENDING, ", ".join(pending))
+        if green:
+            return Checks(CHECKS_SUCCESS, f"зелёных проверок: {green}")
+        return Checks(CHECKS_PENDING, "проверок у коммита ещё нет")
+
+    def _json(self, url: str) -> dict:
+        try:
+            with self._open(self._request(url), timeout=self.timeout) as response:
+                payload = json.loads(response.read().decode("utf-8", "replace"))
+        except urllib.error.HTTPError as error:
+            raise GitHubError(f"GitHub ответил {error.code} на {url}") from error
+        except OSError as error:
+            raise GitHubError(f"GitHub недоступен: {error}") from error
+        except ValueError as error:
+            raise GitHubError(f"GitHub ответил не JSON на {url}") from error
+        return payload if isinstance(payload, dict) else {}
 
     def summary(self, sha: str) -> str:
         """Первая строка сообщения коммита — для человека в уведомлении.

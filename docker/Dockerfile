@@ -51,4 +51,12 @@ COPY tests/ tests/
 # молча пропускались бы ровно там, где они нужнее всего, — на воротах деплоя.
 COPY docker/ docker/
 COPY .dockerignore ./
+# git — ради тестов preflight'а: обновление однажды встало намертво на настоящих
+# особенностях git (чужой владелец каталога, бит исполнения как «правка»), и
+# подделкой команд такое не ловится. Без git здесь эти проверки пропускались бы
+# ровно на воротах деплоя, то есть там, где однажды и прорвало. В образ `app`
+# слой не едет — этап отдельный.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/*
 RUN pip install pytest && python -m pytest

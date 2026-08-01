@@ -67,8 +67,13 @@ python scripts/reset_root.py --email me@studio.site --password "новый-па�
 sudo apt install -y git
 sudo git clone https://github.com/DenisHumen/OpenCRM.git /opt/OpenCRM
 sudo chown -R $USER:$USER /opt/OpenCRM
-cd /opt/OpenCRM && chmod +x opencrm.sh &&./opencrm.sh
+cd /opt/OpenCRM && ./opencrm.sh
 ```
+
+`chown` — не косметика: клонирует `sudo`, то есть каталог достаётся root, а
+дальше скрипт и автообновление работают от вас. Без этой строки git отвечает
+`detected dubious ownership` и отказывается делать что-либо в чужом каталоге.
+`chmod +x` не нужен — бит исполнения хранится в самом репозитории.
 
 Первый запуск — мастер установки. Он сам:
 

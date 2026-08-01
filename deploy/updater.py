@@ -5,17 +5,19 @@
 
 1. **Preflight.** Грязное рабочее дерево — стоп: правка, сделанная руками прямо
    на сервере, дороже автообновления, и затирать её молча нельзя.
-2. **Тесты.** Гоняются на *новом* коде до того, как живой сайт вообще тронут:
+2. **Проверки GitHub.** Тот же коммит уже прогнан в Actions; красный туда и
+   приехал красным, и тратить на него полчаса сборки на боевом VPS незачем.
+3. **Тесты.** Гоняются на *новом* коде до того, как живой сайт вообще тронут:
    собирается образ `--target tests`, pytest внутри него. Красные тесты — деплой
    не начинался, посетители ничего не заметили.
-3. **Снимок базы.** Только после зелёных тестов и обязательно до `alembic
+4. **Снимок базы.** Только после зелёных тестов и обязательно до `alembic
    upgrade head`, который entrypoint запускает при старте контейнера. Миграции
    вперёд необратимы — без снимка откат кода вернул бы старое приложение к новой
    схеме.
-4. **Деплой.** `docker compose up -d --build`.
-5. **Health-check.** Не «контейнер поднялся», а живые ответы: `/healthz` с
+5. **Деплой.** `docker compose up -d --build`.
+6. **Health-check.** Не «контейнер поднялся», а живые ответы: `/healthz` с
    `status: ok` (он же ходит в базу) плюс smoke-запросы к настоящим страницам.
-6. **Откат** при провале пятого шага: прошлый коммит, база из снимка, снова
+7. **Откат** при провале шестого шага: прошлый коммит, база из снимка, снова
    `up -d --build` и снова health-check. Если и он красный — статус `broken`,
    дальше нужен человек, и об этом приходит отдельное уведомление.
 
@@ -29,6 +31,13 @@
 пробуется: иначе демон каждые пять минут пересобирал бы заведомо сломанную
 версию и слал бы об этом сообщения. Повтор — только `force-update` или
 следующий коммит в ветке.
+
+Все git-команды идут с `-c safe.directory=<чекаут>`. Каталог на боевом сервере
+принадлежит человеку, который его клонировал, а обновлятор запускают то от него,
+то от root через `sudo` — и тогда git отвечает `detected dubious ownership` и
+отказывается работать вовсе. Это защита от чужого репозитория в общем каталоге;
+здесь каталог свой и назван явно, поэтому исключение точечное, а не `git config
+--global` на всю машину.
 """
 
 from __future__ import annotations
@@ -41,7 +50,7 @@ from pathlib import Path
 
 from deploy import notify
 from deploy.config import UpdateConfig
-from deploy.github import GitHub, GitHubError
+from deploy.github import CHECKS_FAILURE, CHECKS_PENDING, GitHub, GitHubError
 from deploy.journal import Journal
 from deploy.runner import HttpProbe, Result, Shell
 
@@ -49,6 +58,7 @@ STATUS_DISABLED = "disabled"
 STATUS_UP_TO_DATE = "up-to-date"
 STATUS_DEPLOYED = "deployed"
 STATUS_ABORTED = "aborted"  # остановились до подмены — живой сайт не трогали
+STATUS_WAITING = "waiting-checks"  # коммит хороший, но CI ещё не досчитал
 STATUS_ROLLED_BACK = "rolled-back"
 STATUS_BROKEN = "broken"  # откат тоже не поднялся
 
@@ -115,9 +125,15 @@ class Updater:
         state = self.journal.read()
         current = self.head_sha()
         available, error = "", ""
+        checks = None
         try:
             # Без ETag: `status` спрашивают, чтобы узнать правду, а не сэкономить запрос.
             available = self.github.head(self.config.branch).sha
+            # Почему сайт не обновляется — вопрос, который задают этой команде.
+            # Без строки о проверках «обновление: есть» и тишина выглядят
+            # поломкой, хотя это гейт штатно ждёт зелёного CI.
+            if available and available != current and self.config.require_ci:
+                checks = self.github.checks(available)
         except GitHubError as failure:
             error = str(failure)
         return {
@@ -128,6 +144,8 @@ class Updater:
             "update_available": bool(available and available != current),
             "autoupdate": self.journal.autoupdate_enabled,
             "failed_sha": state.get("failed_sha", ""),
+            "checks": checks.state if checks else "",
+            "checks_detail": checks.detail if checks else "",
             "github_error": error,
             "last": self.journal.last(),
         }
@@ -161,7 +179,67 @@ class Updater:
                 reason="этот коммит уже не встал — ждём следующий или force-update",
             )
 
+        gate = self._ci_gate(current, head.sha, force)
+        if gate is not None:
+            return gate
+
         return self._deploy(current, head.sha)
+
+    def _ci_gate(self, current: str, target: str, force: bool) -> Outcome | None:
+        """Проверки GitHub на входящем коммите. `None` — путь свободен.
+
+        `force-update` гейт не проходит вовсе: это сознательное решение человека,
+        и запирать его здесь значило бы отнять возможность выкатить фикс ровно
+        тогда, когда CI и сломан.
+
+        Ожидание и отказ разведены нарочно, и разница между ними — не косметика:
+
+        * **pending** — коммит не виноват, он просто ещё считается. В `failed_sha`
+          его писать нельзя (он больше не попробуется никогда), в историю и в
+          Telegram — тоже: при опросе раз в пять минут получилось бы несколько
+          одинаковых сообщений на каждый коммит. Заодно сбрасываем ETag: иначе
+          следующий опрос получит от GitHub 304 «ничего не изменилось», выйдет
+          через `up-to-date` и не дойдёт до этой проверки — CI позеленел бы, а
+          обновление осталось бы стоять до самого следующего коммита.
+        * **failure** — коммит виноват. Это событие, о нём пишем в историю и
+          уведомляем, и `failed_sha` не даёт повторять новость каждые пять минут.
+        """
+        if force or not self.config.require_ci:
+            return None
+
+        try:
+            checks = self.github.checks(target)
+        except GitHubError as failure:
+            # «Не смогли спросить» — не то же самое, что «тесты красные».
+            # Деплоить вслепую нельзя, но и клеймить коммит не за что.
+            self.log(f"проверки GitHub недоступны: {failure}")
+            self.journal.write(etag="")
+            return Outcome(
+                STATUS_WAITING, current, target, reason=f"проверки GitHub недоступны: {failure}"
+            )
+
+        if checks.state == CHECKS_PENDING:
+            self.log(f"жду проверки GitHub: {checks.detail}")
+            self.journal.write(etag="")
+            return Outcome(
+                STATUS_WAITING, current, target, reason=f"проверки GitHub ещё идут: {checks.detail}"
+            )
+
+        if checks.state == CHECKS_FAILURE:
+            outcome = Outcome(
+                STATUS_ABORTED,
+                current,
+                target,
+                self.github.summary(target),
+                f"проверки GitHub красные: {checks.detail}",
+                [Step("github-checks", False, checks.detail)],
+            )
+            self.journal.write(failed_sha=target)
+            self.journal.append(outcome.as_record())
+            self._notify(outcome)
+            return outcome
+
+        return None
 
     def watch(self, rounds: int | None = None) -> None:
         """Демон: опрашивать ветку, пока не остановят (`rounds` — предел для тестов)."""
@@ -244,7 +322,14 @@ class Updater:
             steps.append(Step("preflight", False, "нет .git"))
             raise _Stop(f"{self.config.project_dir} — не git-репозиторий")
 
-        dirty = self._git("status", "--porcelain")
+        # `core.fileMode=false` — только здесь, и только для этой проверки.
+        # Бит исполнения — не правка: содержимого в нём нет, и `checkout` всё
+        # равно расставит его из дерева. А считать его правкой — значит намертво
+        # заклинить обновления, потому что взводит его сама установка
+        # (`chmod +x opencrm.sh`) и любой распаковщик архива. На боевом сервере
+        # это выглядело как вечное «в рабочем дереве есть несохранённые правки —
+        # M opencrm.sh», которое нечем было объяснить и не за что откатить.
+        dirty = self._git("status", "--porcelain", config=("core.fileMode=false",))
         if not dirty.ok:
             steps.append(Step("preflight", False, dirty.tail(4)))
             raise _Stop(f"git status не отвечает: {dirty.tail(4)}")
@@ -398,8 +483,13 @@ class Updater:
 
     # --- мелочь ---
 
-    def _git(self, *args: str) -> Result:
-        return self.shell.run(["git", "-C", str(self.config.project_dir), *args], timeout=300)
+    def _git(self, *args: str, config: tuple[str, ...] = ()) -> Result:
+        options: list[str] = []
+        for item in (f"safe.directory={self.config.project_dir}", *config):
+            options += ["-c", item]
+        return self.shell.run(
+            ["git", *options, "-C", str(self.config.project_dir), *args], timeout=300
+        )
 
     def _compose(self, *args: str, timeout: float | None = None) -> Result:
         return self.shell.run(
@@ -415,6 +505,9 @@ class Updater:
         return result
 
     def _notify(self, outcome: Outcome) -> None:
+        # STATUS_WAITING в списке нет намеренно: ожидание зелёного CI — не
+        # новость, а нормальный ход дела, и уведомлять о нём каждые пять минут
+        # значило бы приучить не читать эти сообщения.
         titles = {
             STATUS_DEPLOYED: "OpenCRM обновлён",
             STATUS_ROLLED_BACK: "OpenCRM: обновление откачено",

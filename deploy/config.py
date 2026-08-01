@@ -42,6 +42,7 @@ class UpdateConfig:
     build_timeout: int
     checks_timeout: int
     run_checks: bool
+    require_ci: bool
     allow_dirty: bool
     github_token: str
     telegram_token: str
@@ -94,6 +95,11 @@ class UpdateConfig:
             build_timeout=int(get("BUILD_TIMEOUT", "1800")),
             checks_timeout=int(get("CHECKS_TIMEOUT", "1800")),
             run_checks=flag("RUN_CHECKS", True),
+            # Деплоим только то, что уже позеленело в GitHub Actions. Выключать
+            # осмысленно там, где Actions не настроены вовсе (форк, свой
+            # gitea-зеркало): иначе гейт будет вечно ждать проверок, которых
+            # никто не запустит.
+            require_ci=flag("REQUIRE_CI", True),
             # Правки прямо на боевом сервере деплой затёр бы молча, поэтому по
             # умолчанию он на грязном дереве просто останавливается.
             allow_dirty=flag("ALLOW_DIRTY", False),

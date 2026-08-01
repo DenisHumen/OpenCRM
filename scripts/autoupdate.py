@@ -43,6 +43,9 @@ def cmd_status(updater: Updater) -> int:
     print(f"развёрнуто:     {_short(state['deployed'])}")
     print(f"в ветке:        {_short(state['available'])}" + (f"  ({state['github_error']})" if state["github_error"] else ""))
     print(f"обновление:     {'есть' if state['update_available'] else 'нет'}")
+    if state.get("checks"):
+        names = {"success": "зелёные", "pending": "идут", "failure": "красные"}
+        print(f"проверки:       {names.get(state['checks'], state['checks'])} — {state['checks_detail']}")
     print(f"автообновление: {'включено' if state['autoupdate'] else 'выключено'}")
     if state["failed_sha"]:
         print(f"не встал:       {_short(state['failed_sha'])} (повтор — force-update)")
