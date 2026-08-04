@@ -35,6 +35,24 @@ def views_in_range(db: Session, start: datetime, end: datetime) -> int:
     )
 
 
+def unique_viewers_in_range(db: Session, start: datetime, end: datetime) -> int:
+    """Сколько разных людей открывали витрины за период.
+
+    Считаем по `ip_hash` — тому же признаку, по которому уникальных показывает
+    карточка доски, иначе два числа рядом означали бы разное. Это оценка сверху
+    по домохозяйству и снизу по мобильной сети: точнее без слежки за человеком
+    не выйдет, а её мы себе не позволяем.
+    """
+    return (
+        db.scalar(
+            select(func.count(func.distinct(ShareView.ip_hash))).where(
+                ShareView.viewed_at >= start, ShareView.viewed_at < end
+            )
+        )
+        or 0
+    )
+
+
 def views_by_day(db: Session, days: int = 7) -> list[dict]:
     """Просмотры по дням за последние `days` дней (включая сегодня)."""
     now = now_utc()

@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 260 64" width="260" height="64" role="img" aria-label="OpenCRM">
+  <title>OpenCRM</title>
+  <!-- Вариант для тёмного фона; светлый близнец — logo.svg. Отличается только
+       цветом надписи: знак на акценте читается на любом фоне. -->
+  <rect width="64" height="64" rx="16" fill="#D97757"/>
+  <g fill="#F5F4EF">
+    <rect x="14" y="14" width="20" height="20" rx="3"/>
+    <rect x="38" y="14" width="12" height="20" rx="3" opacity="0.72"/>
+    <rect x="14" y="38" width="36" height="12" rx="3" opacity="0.86"/>
+  </g>
+  <text x="80" y="41"
+        font-family="Inter, 'Segoe UI', system-ui, -apple-system, Helvetica, Arial, sans-serif"
+        font-size="27" letter-spacing="-0.6" fill="#F5F4EF">Open<tspan font-weight="700">CRM</tspan></text>
+</svg>

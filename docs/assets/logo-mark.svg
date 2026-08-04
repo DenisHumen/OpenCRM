@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="OpenCRM">
+  <title>OpenCRM</title>
+  <!-- Знак — не буква, а модульная сетка витрины: крупная работа, узкая рядом и
+       широкая внизу. Именно эта раскладка отличает продукт от типовой админки,
+       и она же читается на 16 пикселях, когда буква уже превращается в пятно.
+       Цвет — акцент по умолчанию из settings (accent_color, #D97757). -->
+  <rect width="64" height="64" rx="16" fill="#D97757"/>
+  <g fill="#F5F4EF">
+    <rect x="14" y="14" width="20" height="20" rx="3"/>
+    <rect x="38" y="14" width="12" height="20" rx="3" opacity="0.72"/>
+    <rect x="14" y="38" width="36" height="12" rx="3" opacity="0.86"/>
+  </g>
+</svg>

@@ -98,23 +98,35 @@ export function Dashboard() {
       </div>
 
       <div className="card" style={{ padding: "18px 20px", display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 28, marginBottom: 28 }}>
-        <div>
-          <div className="metric-title" style={{ marginBottom: 14 }}>
-            {t("showcaseViews")}
+        {/* Два числа рядом: сколько раз открывали и сколько людей открывало.
+            Подпись у второго объясняет разницу — иначе «просмотров 108, а
+            посетителей 3» читается как ошибка. */}
+        <div style={{ display: "flex", gap: 40, flexWrap: "wrap" }}>
+          <div>
+            <div className="metric-title" style={{ marginBottom: 14 }}>
+              {t("showcaseViews")}
+            </div>
+            <div className="metric-value">{data.views_7d}</div>
+            <div className="metric-sub">
+              {t("last7days")}
+              {growth !== null && (
+                <>
+                  {" · "}
+                  <span style={{ color: growth >= 0 ? "var(--success)" : "var(--warning)" }}>
+                    {growth >= 0 ? "+" : ""}
+                    {growth}%
+                  </span>{" "}
+                  {t("vsPrevWeek")}
+                </>
+              )}
+            </div>
           </div>
-          <div className="metric-value">{data.views_7d}</div>
-          <div className="metric-sub">
-            {t("last7days")}
-            {growth !== null && (
-              <>
-                {" · "}
-                <span style={{ color: growth >= 0 ? "var(--success)" : "var(--warning)" }}>
-                  {growth >= 0 ? "+" : ""}
-                  {growth}%
-                </span>{" "}
-                {t("vsPrevWeek")}
-              </>
-            )}
+          <div>
+            <div className="metric-title" style={{ marginBottom: 14 }}>
+              {t("uniqueViewersTitle")}
+            </div>
+            <div className="metric-value">{data.unique_viewers_7d ?? 0}</div>
+            <div className="metric-sub">{t("uniqueViewersHint")}</div>
           </div>
         </div>
         <div className="bars">

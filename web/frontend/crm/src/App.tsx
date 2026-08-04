@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Navigate, Outlet, Route, Routes, useLocation } from "react-router-dom";
+import { Link, Navigate, Outlet, Route, Routes, useLocation } from "react-router-dom";
 
 import { CommandPalette } from "./components/CommandPalette";
 import { Sidebar } from "./components/Sidebar";
@@ -43,13 +43,35 @@ function Protected() {
   if (!user) return <Navigate to="/login" state={{ from: location }} replace />;
   if (user.must_change_password) return <ForcePasswordChange />;
   return (
-    <div className="app-shell">
-      <Sidebar onOpenSearch={() => setSearchOpen(true)} />
-      <main className="app-main">
-        <Outlet />
-      </main>
-      {searchOpen && <CommandPalette onClose={() => setSearchOpen(false)} />}
-    </div>
+    // Полоса — над всей оболочкой, а не внутри: .app-shell это flex-строка
+    // (сайдбар и содержимое), и любой её ребёнок становится ещё одной колонкой.
+    <>
+      <MaintenanceBar />
+      <div className="app-shell">
+        <Sidebar onOpenSearch={() => setSearchOpen(true)} />
+        <main className="app-main">
+          <Outlet />
+        </main>
+        {searchOpen && <CommandPalette onClose={() => setSearchOpen(false)} />}
+      </div>
+    </>
+  );
+}
+
+/** Полоса «сайт закрыт» поверх интерфейса.
+ *
+ * Режим видит только root, и снаружи он выглядит как обычная работа: CRM
+ * открывается, доски редактируются. Забыть его включённым — значит молча
+ * держать закрытыми и витрины клиентов, и вход остальным сотрудникам. Поэтому
+ * напоминание висит на каждом экране, а не только в настройках. */
+function MaintenanceBar() {
+  const { maintenance, t } = useApp();
+  if (!maintenance?.enabled) return null;
+  return (
+    <Link className="maintenance-bar" to="/settings/maintenance">
+      <span className="dot" />
+      {t("closedBanner")}
+    </Link>
   );
 }
 

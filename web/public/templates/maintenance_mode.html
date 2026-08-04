@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="{{ 'ru' if locale == 'ru' else 'en' }}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+{# Страницу отдаёт САМО приложение, когда root закрыл его на работы. Заглушка
+   nginx (docker/nginx/maintenance/maintenance.html) — про другое: там
+   приложения нет вовсе. Здесь оно работает, поэтому и обновлять страницу само
+   незачем: работы длятся столько, сколько нужно root'у, и опрос ничего не
+   ускорит. Возврат — обычной перезагрузкой, когда режим снимут. #}
+<title>{{ t.title }}</title>
+<style>
+  :root { --bg:#161514; --text:#F5F4EF; --muted:#9C998F; --faint:#706D64; --accent:#D97757; --line:#2A2724; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body {
+    background:var(--bg); color:var(--text);
+    font:16px/1.6 "Segoe UI", system-ui, -apple-system, sans-serif;
+    -webkit-font-smoothing:antialiased;
+    min-height:100vh; display:flex; align-items:center; justify-content:center;
+    padding:32px; text-align:center;
+  }
+  .wrap { max-width:440px; animation:rise 400ms ease-out both; }
+  .dot { width:12px; height:12px; border-radius:50%; background:var(--accent); margin:0 auto 32px; animation:pulse 1.8s ease-in-out infinite; }
+  h1 { font-size:clamp(24px,5vw,30px); font-weight:600; letter-spacing:-0.01em; margin-bottom:12px; }
+  p { color:var(--muted); font-size:14.5px; }
+  .note {
+    margin-top:24px; padding:14px 16px; text-align:left;
+    background:#1D1B1A; border:1px solid var(--line); border-left:2px solid var(--accent);
+    border-radius:10px; color:var(--text); font-size:14px; white-space:pre-wrap; word-break:break-word;
+  }
+  .foot { color:var(--faint); font-size:12.5px; margin-top:32px; }
+  @keyframes rise { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:none; } }
+  @keyframes pulse { 0%,100% { opacity:1; transform:scale(1); } 50% { opacity:0.35; transform:scale(0.8); } }
+  @media (prefers-reduced-motion: reduce) { *,*::before,*::after { animation-duration:0.01ms !important; animation-iteration-count:1 !important; } }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="dot"></div>
+    <h1>{{ t.title }}</h1>
+    <p>{{ t.text }}</p>
+    {# Пояснение пишет человек, и Jinja его экранирует: в публичной странице
+       чужой разметке делать нечего. #}
+    {% if note %}<div class="note">{{ note }}</div>{% endif %}
+    <div class="foot">{{ t.foot }}</div>
+  </div>
+</body>
+</html>

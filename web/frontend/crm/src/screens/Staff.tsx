@@ -84,8 +84,8 @@ export function Staff() {
               <div key={person.id} className="list-row" style={{ height: 56 }}>
                 <Avatar text={initials(person.name)} src={person.avatar_url} />
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ color: "var(--text)", fontSize: 13.5, fontWeight: 500 }}>{person.name}</div>
-                  <div style={{ color: "var(--faint)", fontSize: 12 }}>
+                  <div className="truncate" style={{ color: "var(--text)", fontSize: 13.5, fontWeight: 500 }}>{person.name}</div>
+                  <div className="truncate" style={{ color: "var(--faint)", fontSize: 12 }}>
                     {person.email} · {t("requested")} {formatDateTime(person.created_at, locale)}
                   </div>
                 </div>
@@ -118,14 +118,15 @@ export function Staff() {
           return (
             <div key={person.id} className="list-row hoverable">
               <Avatar text={initials(person.name)} src={person.avatar_url} online={person.is_online} />
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ color: "var(--text)", fontSize: 13.5, fontWeight: 500 }}>{person.name}</div>
-                <div style={{ color: "var(--faint)", fontSize: 12 }}>{person.email}</div>
+              <div className="list-row-text">
+                <div className="truncate" style={{ color: "var(--text)", fontSize: 13.5, fontWeight: 500 }}>{person.name}</div>
+                <div className="truncate" style={{ color: "var(--faint)", fontSize: 12 }}>{person.email}</div>
               </div>
               <div
                 style={{
                   fontSize: 12,
                   whiteSpace: "nowrap",
+                  flexShrink: 0,
                   marginRight: 4,
                   color: person.is_online ? "var(--success)" : "var(--faint)",
                 }}
@@ -199,8 +200,8 @@ export function Staff() {
               <div key={person.id} className="list-row">
                 <Avatar text={initials(person.name)} src={person.avatar_url} />
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ color: "var(--muted)", fontSize: 13.5, fontWeight: 500 }}>{person.name}</div>
-                  <div style={{ color: "var(--faint)", fontSize: 12 }}>{person.email}</div>
+                  <div className="truncate" style={{ color: "var(--muted)", fontSize: 13.5, fontWeight: 500 }}>{person.name}</div>
+                  <div className="truncate" style={{ color: "var(--faint)", fontSize: 12 }}>{person.email}</div>
                 </div>
                 <div style={{ display: "flex", gap: 12 }}>
                   <button className="text-link" onClick={() => void action(`/staff/${person.id}/enable`)}>

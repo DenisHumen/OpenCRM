@@ -18,6 +18,21 @@ router = APIRouter(tags=["public"])
 
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 
+# Тексты страницы ручного обслуживания (её отдаёт middleware в web/main.py).
+# Держим здесь, рядом с остальными строками публичной части и её шаблонами.
+MAINTENANCE_STRINGS = {
+    "en": {
+        "title": "Closed for maintenance",
+        "text": "The site is temporarily unavailable. Please come back a little later.",
+        "foot": "Идут технические работы.",
+    },
+    "ru": {
+        "title": "Технические работы",
+        "text": "Сайт временно недоступен. Загляните чуть позже.",
+        "foot": "The site is closed for maintenance.",
+    },
+}
+
 # словари витрины: язык задаётся настройкой сайта showcase_locale
 STRINGS = {
     "en": {

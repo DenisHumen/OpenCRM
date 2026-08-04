@@ -2,20 +2,22 @@ import mimetypes
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi import FastAPI, Request, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 
 from config.settings import generate_secret_hint, get_settings
 from core.exceptions import DomainError
-from core.services import auth_service, settings_service
+from core.services import auth_service, maintenance_mode, settings_service
 from core.utils import normalize_email
 from database import models  # noqa: F401 — регистрирует модели в metadata
+from database.models.user import ROLE_ROOT
 from database.repositories import users as users_repo
 from database.session import Base, SessionLocal, engine
 from web.api.deps import CSRF_COOKIE, CSRF_HEADER, SESSION_COOKIE
 from web.api.routes import (
+    arcade,
     auth,
     boards,
     clients,
@@ -115,6 +117,61 @@ def create_app() -> FastAPI:
             content={"error": {"code": exc.code, "message": exc.message}},
         )
 
+    # Пути, которые работают даже при закрытом на обслуживание сайте.
+    # /healthz — иначе docker сочтёт контейнер больным и начнёт его дёргать.
+    # /login и /assets — чтобы root мог войти: без них он упирается в ту же
+    # заглушку, что и все, и снять режим уже неоткуда.
+    # /api/v1/auth — сам вход и проверка сессии.
+    MAINTENANCE_OPEN_PREFIXES = ("/healthz", "/assets/", "/api/v1/auth/")
+    MAINTENANCE_OPEN_PATHS = {"/login"}
+
+    def _maintenance_page(note: str, locale: str) -> Response:
+        strings = public_routes.MAINTENANCE_STRINGS.get(
+            locale, public_routes.MAINTENANCE_STRINGS["en"]
+        )
+        html = public_routes.templates.get_template("maintenance_mode.html").render(
+            note=note, locale=locale, t=strings
+        )
+        # 503, а не 200: для поисковика это «зайдите позже», а не «страница
+        # стала такой». Retry-After — по той же причине, что у заглушки nginx.
+        return HTMLResponse(
+            html, status_code=503, headers={"Retry-After": "600", "Cache-Control": "no-store"}
+        )
+
+    @app.middleware("http")
+    async def maintenance_middleware(request: Request, call_next):
+        path = request.url.path
+        if path in MAINTENANCE_OPEN_PATHS or path.startswith(MAINTENANCE_OPEN_PREFIXES):
+            return await call_next(request)
+
+        db = SessionLocal()
+        try:
+            mode = maintenance_mode.state(db)
+            if not mode["enabled"]:
+                return await call_next(request)
+            # Режим включён: root проходит как обычно, остальные — на заглушку.
+            token = request.cookies.get(SESSION_COOKIE)
+            user = auth_service.get_user_by_session(db, token) if token else None
+            if user is not None and user.role == ROLE_ROOT:
+                return await call_next(request)
+            note, locale = mode["note"], settings_service.get_all(db).get("showcase_locale", "en")
+        finally:
+            db.close()
+
+        if path.startswith("/api/"):
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "error": {
+                        "code": "maintenance_mode",
+                        "message": "The site is closed for maintenance",
+                        "note": note,
+                    }
+                },
+                headers={"Retry-After": "600"},
+            )
+        return _maintenance_page(note, locale)
+
     @app.middleware("http")
     async def security_middleware(request: Request, call_next):
         # CSRF (double-submit cookie): только для cookie-аутентифицированных
@@ -162,6 +219,7 @@ def create_app() -> FastAPI:
     app.include_router(shares.router, prefix=api_prefix)
     app.include_router(site_settings.router, prefix=api_prefix)
     app.include_router(system.router, prefix=api_prefix)
+    app.include_router(arcade.router, prefix=api_prefix)
     app.include_router(public_routes.router)
 
     # шрифты витрины (Montserrat, SIL OFL) — раздаём со своего домена, а не с CDN:

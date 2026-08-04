@@ -25,6 +25,7 @@ def dashboard(_: User = Depends(require_staff), db: Session = Depends(get_db)):
     boards_total, boards_published = stats_repo.boards_totals(db)
     views_7d = stats_repo.views_in_range(db, week_ago, now)
     views_prev_7d = stats_repo.views_in_range(db, two_weeks_ago, week_ago)
+    unique_7d = stats_repo.unique_viewers_in_range(db, week_ago, now)
     last_view = stats_repo.last_view_at(db)
 
     recent_boards, _total = boards_repo.search(db, page=1, per_page=4)
@@ -46,6 +47,7 @@ def dashboard(_: User = Depends(require_staff), db: Session = Depends(get_db)):
         "boards_published": boards_published,
         "views_7d": views_7d,
         "views_prev_7d": views_prev_7d,
+        "unique_viewers_7d": unique_7d,
         "views_by_day": stats_repo.views_by_day(db, 7),
         "last_view_at": last_view.isoformat() if last_view else None,
         "recent_boards": boards_payload,

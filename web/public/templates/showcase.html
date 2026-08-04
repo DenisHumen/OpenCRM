@@ -506,7 +506,7 @@
         {% if site.studio_site_logo %}
         <span class="site-logo"><img src="{{ site.studio_site_logo }}" alt=""></span>
         {% endif %}
-        <span class="site-text">{{ t.return_to_site }}</span>
+        <span class="site-text">{{ site.studio_site_label or t.return_to_site }}</span>
       </a>
       {% endif %}
     </div>

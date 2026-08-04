@@ -72,13 +72,39 @@ def test_the_maintenance_page_asks_for_nothing_from_outside():
     """Страница показывается ровно тогда, когда приложения нет.
 
     Любая внешняя ссылка — шрифт, картинка, скрипт — ведёт на тот же лежащий
-    сайт: в лучшем случае страница едет дольше, в худшем разъезжается.
+    сайт: в лучшем случае страница едет дольше, в худшем разъезжается. Поэтому
+    запрещены не скрипты как таковые (змейка и опрос /healthz без них не
+    работают), а всё, что пришлось бы откуда-то загружать: страница обязана
+    открыться одним файлом.
     """
     page = _read(MAINTENANCE)
     assert not re.search(r'(?:src|href)\s*=\s*["\'](?:https?:)?//', page), (
         "на странице обслуживания есть внешняя ссылка"
     )
-    assert "<script" not in page.lower()
+    assert not re.search(r"<script[^>]*\ssrc\s*=", page, re.I), (
+        "скрипт подключается файлом — его неоткуда взять, пока сайт лежит"
+    )
+    assert not re.search(r"<link[^>]*stylesheet", page, re.I), (
+        "стили подключаются файлом — их неоткуда взять, пока сайт лежит"
+    )
+
+
+def test_the_maintenance_page_keeps_working_without_javascript():
+    """meta-обновление — единственный возврат на сайт с отключённым JS.
+
+    Оно обязано лежать внутри <noscript>. Убрать meta скриптом нельзя: браузер
+    планирует перезагрузку при разборе документа, и удаление тега её уже не
+    отменяет — страница перезагружалась прямо во время партии в змейку. Внутри
+    <noscript> тег просто не применяется, когда скрипты работают.
+    """
+    page = _read(MAINTENANCE)
+    refresh = re.search(r'<meta[^>]+http-equiv=["\']refresh["\'][^>]*>', page, re.I)
+    assert refresh, "без meta-обновления страница без JS никогда не вернётся на сайт"
+
+    inside = re.search(
+        r"<noscript>\s*<meta[^>]+http-equiv=[\"']refresh[\"'][^>]*>\s*</noscript>", page, re.I
+    )
+    assert inside, "meta-обновление вне <noscript> перезагрузит страницу посреди игры"
 
 
 def test_the_maintenance_page_never_hides_a_real_error():

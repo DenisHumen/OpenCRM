@@ -84,9 +84,17 @@ export function AuthScreen() {
           <div className="auth-sub">{t("signInSub")}</div>
           <div className="field">
             <label className="label">{t("email")}</label>
+            {/* inputMode — клавиатура с @ и точкой сразу; autoCapitalize/autoCorrect —
+                иначе iOS пишет адрес с заглавной и «исправляет» домен. autoComplete —
+                чтобы менеджер паролей подставлял пару, а не только логин. */}
             <input
               className="input"
               type="email"
+              inputMode="email"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+              autoComplete="email"
               placeholder="you@studio.site"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
@@ -99,6 +107,7 @@ export function AuthScreen() {
             <input
               className="input"
               type="password"
+              autoComplete="current-password"
               placeholder="••••••••"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
@@ -129,17 +138,30 @@ export function AuthScreen() {
           <div className="auth-sub">{t("joinSub")}</div>
           <div className="field">
             <label className="label">{t("fullName")}</label>
-            <input className="input" value={name} onChange={(e) => setName(e.target.value)} autoFocus required />
+            <input className="input" autoComplete="name" value={name} onChange={(e) => setName(e.target.value)} autoFocus required />
           </div>
           <div className="field">
             <label className="label">{t("email")}</label>
-            <input className="input" type="email" placeholder="you@studio.site" value={email} onChange={(e) => setEmail(e.target.value)} required />
+            <input
+              className="input"
+              type="email"
+              inputMode="email"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+              autoComplete="email"
+              placeholder="you@studio.site"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+            />
           </div>
           <div className="field" style={{ marginBottom: 20 }}>
             <label className="label">{t("password")}</label>
             <input
               className="input"
               type="password"
+              autoComplete="new-password"
               placeholder={t("minChars")}
               value={password}
               onChange={(e) => setPassword(e.target.value)}

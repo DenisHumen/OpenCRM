@@ -26,6 +26,14 @@ def update(db: Session, changes: dict[str, str]) -> dict[str, str]:
         raise errors.ValidationError(f"Unknown settings: {sorted(unknown)}", code="unknown_setting")
     if "showcase_locale" in changes and changes["showcase_locale"] not in ("en", "ru"):
         raise errors.ValidationError("showcase_locale must be en or ru", code="bad_locale")
+    # Подпись уходит в шапку публичной витрины и растягивает кнопку по себе:
+    # без потолка одна длинная строка разносит вёрстку у всех клиентов сразу.
+    # 40 символов — вдвое длиннее значения по умолчанию, с запасом на «Вернуться
+    # на сайт студии» и подобное.
+    if len((changes.get("studio_site_label") or "").strip()) > 40:
+        raise errors.ValidationError(
+            "Button text is too long (max 40 characters)", code="site_label_too_long"
+        )
     if "studio_site_url" in changes:
         try:
             changes = {**changes, "studio_site_url": normalize_external_url(changes["studio_site_url"])}

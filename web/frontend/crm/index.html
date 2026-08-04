@@ -5,11 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="robots" content="noindex" />
     <title>OpenCRM</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,500&display=swap"
-      rel="stylesheet"
-    />
+    <!-- Шрифты подключает src/main.tsx локальными файлами. Ссылки на
+         fonts.googleapis.com здесь быть не должно: CSP её блокирует, а сайт
+         вдобавок не обязан ходить на чужой домен на каждой загрузке. -->
   </head>
   <body>
     <div id="root"></div>

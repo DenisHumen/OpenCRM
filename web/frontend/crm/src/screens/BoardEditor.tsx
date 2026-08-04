@@ -5,6 +5,7 @@ import { Icon } from "../components/Icon";
 import { Chip, ConfirmModal, EmptyState, Modal, ScreenLoading, Toggle } from "../components/ui";
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
+import { copyText } from "../lib/clipboard";
 import { formatDateTime, formatDuration } from "../lib/format";
 
 export function BoardEditor() {
@@ -100,8 +101,9 @@ export function BoardEditor() {
     try {
       const link = await api.post(`/shares/${share.id}/regenerate`);
       await load();
-      void navigator.clipboard.writeText(link.url).catch(() => undefined);
-      toast(t("copied"));
+      // не получилось скопировать — показываем адрес, иначе новая ссылка
+      // потерялась бы: старая уже недействительна
+      toast((await copyText(link.url)) ? t("copied") : link.url);
     } catch (e) {
       toastError(e);
     }
@@ -109,11 +111,10 @@ export function BoardEditor() {
 
   const copyLink = async () => {
     if (!share) return;
-    try {
-      await navigator.clipboard.writeText(share.url);
+    if (await copyText(share.url)) {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
-    } catch {
+    } else {
       toast(share.url);
     }
   };
@@ -463,17 +464,20 @@ export function BoardEditor() {
                       <span style={{ color: "var(--faint)", fontSize: 11.5, lineHeight: 1.4 }}>{t("pinHint")}</span>
                     </div>
                   )}
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 2px 0", borderTop: "1px solid var(--surface-2)" }}>
+                  {/* gap и flexShrink — без них подсказка вплотную упирается в кнопку,
+                      переносится на вторую строку и заезжает под неё: у «Перегенерировать»
+                      пара строк длиннее, чем у «Удалить ссылку», и ломалась только она */}
+                  <div className="share-action-row" style={{ paddingTop: 12, borderTop: "1px solid var(--surface-2)" }}>
                     <button className="btn-danger-link" onClick={() => setConfirm("regenerate")}>
                       {t("regenerate")}
                     </button>
-                    <span style={{ color: "var(--faint)", fontSize: 11.5 }}>{t("regenerateHint")}</span>
+                    <span className="share-action-hint">{t("regenerateHint")}</span>
                   </div>
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 2px 0" }}>
+                  <div className="share-action-row" style={{ paddingTop: 10 }}>
                     <button className="btn-danger-link" onClick={() => setConfirm("deleteShare")}>
                       {t("deleteLink")}
                     </button>
-                    <span style={{ color: "var(--faint)", fontSize: 11.5 }}>{t("deleteLinkHint")}</span>
+                    <span className="share-action-hint">{t("deleteLinkHint")}</span>
                   </div>
                 </div>
               </>

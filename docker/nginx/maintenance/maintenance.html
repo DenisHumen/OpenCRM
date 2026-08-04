@@ -5,22 +5,32 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
 <!-- Страница живёт вне приложения и показывается ровно тогда, когда его нет:
-     обновление, миграции, перезапуск. Поэтому здесь ни одной внешней ссылки —
-     ни шрифта, ни картинки, ни скрипта: всё, что пришлось бы грузить с сайта,
-     сейчас недоступно по определению.
+     обновление, миграции, перезапуск. Поэтому здесь ни одной ВНЕШНЕЙ ссылки —
+     ни шрифта, ни картинки, ни подключаемого скрипта: всё, что пришлось бы
+     грузить с сайта, сейчас недоступно по определению. Стили и скрипт — только
+     встроенные, страница обязана открыться одним файлом.
 
      Перезагрузка раз в 15 секунд возвращает посетителя на сайт сама, как только
-     приложение поднялось: обновление занимает пару минут, и просить человека
-     жать F5 незачем. meta, а не скрипт, — работает и с отключённым JS. -->
-<meta http-equiv="refresh" content="15">
+     приложение поднялось.
+
+     Именно в <noscript>, а не просто в <head>: с включённым JS за возвратом
+     следит скрипт (опрашивает /healthz), и лишняя перезагрузка обрывала бы
+     партию в змейку на полуслове. Убрать meta из DOM скриптом нельзя — браузер
+     планирует перезагрузку при разборе документа, и удаление тега её уже не
+     отменяет; проверено, страница перезагружалась прямо во время игры.
+     Внутри <noscript> тег просто не применяется, когда скрипты работают. -->
+<noscript><meta http-equiv="refresh" content="15"></noscript>
 <title>We'll be right back</title>
 <style>
   :root {
     --bg: #161514;
+    --surface: #1D1B1A;
+    --line: #2A2724;
     --text: #F5F4EF;
     --muted: #9C998F;
     --faint: #706D64;
     --accent: #D97757;
+    --good: #6FAE7C;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html { -webkit-text-size-adjust: 100%; }
@@ -51,6 +61,66 @@
   }
   p { color: var(--muted); font-size: 14.5px; }
   .foot { color: var(--faint); font-size: 12.5px; margin-top: 40px; }
+  /* Кнопка игры намеренно незаметная: она развлечение на минуту ожидания, а не
+     то, ради чего человек пришёл. Проявляется при наведении и по табу. */
+  .play {
+    margin-top: 14px; background: none; border: none; padding: 4px 8px;
+    color: var(--faint); font: inherit; font-size: 12px; cursor: pointer;
+    opacity: 0.45; transition: opacity 200ms ease, color 200ms ease;
+  }
+  .play:hover, .play:focus-visible { opacity: 1; color: var(--muted); }
+  .play:focus-visible { outline: 1px solid var(--accent); outline-offset: 3px; border-radius: 6px; }
+
+  .game[hidden] { display: none; }
+  .game { margin-top: 28px; animation: rise 300ms ease-out both; }
+  .board {
+    display: block; margin: 0 auto; width: 100%; max-width: 320px; height: auto;
+    background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
+    touch-action: none;
+  }
+  .hud {
+    display: flex; justify-content: space-between; align-items: baseline;
+    max-width: 320px; margin: 0 auto 10px; font-size: 12.5px; color: var(--muted);
+  }
+  .hud b { color: var(--text); font-weight: 600; }
+  .hint { color: var(--faint); font-size: 11.5px; margin-top: 10px; }
+  /* Имя спрашиваем полем на странице, а не window.prompt: модальное окно
+     браузера выглядит чужеродно, на телефоне неудобно и кое-где просто
+     блокируется. Значение запоминается — второй раз спрашивать незачем. */
+  .who-row {
+    display: flex; align-items: center; gap: 8px; justify-content: center;
+    max-width: 320px; margin: 12px auto 0;
+  }
+  .who-row label { color: var(--faint); font-size: 11.5px; flex: none; }
+  .who-row input {
+    flex: 1; min-width: 0; height: 30px; padding: 0 10px;
+    background: var(--surface); border: 1px solid var(--line); border-radius: 8px;
+    color: var(--text); font: inherit; font-size: 12.5px;
+  }
+  .who-row input:focus { outline: none; border-color: var(--faint); }
+  .lb { max-width: 320px; margin: 22px auto 0; text-align: left; }
+  .lb h2 {
+    font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase;
+    color: var(--faint); margin-bottom: 8px;
+  }
+  .lb ol { list-style: none; counter-reset: rank; }
+  .lb li {
+    counter-increment: rank; display: flex; gap: 10px; align-items: baseline;
+    padding: 4px 0; border-bottom: 1px solid var(--line); font-size: 12.5px;
+  }
+  .lb li:last-child { border-bottom: none; }
+  .lb li::before { content: counter(rank); color: var(--faint); width: 16px; flex: none; }
+  .lb .who { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+  .lb .pts { color: var(--text); font-variant-numeric: tabular-nums; }
+  .lb .note { color: var(--faint); font-size: 11.5px; }
+  .back {
+    display: none; margin: 18px auto 0; padding: 9px 18px;
+    background: var(--text); color: var(--bg); border: none; border-radius: 999px;
+    font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
+  }
+  .back.show { display: block; }
+  .queued { color: var(--good); font-size: 11.5px; margin-top: 8px; }
+
   @keyframes rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
   @keyframes pulse {
     0%, 100% { opacity: 1; transform: scale(1); }
@@ -67,6 +137,302 @@
     <h1>We&rsquo;ll be right back</h1>
     <p>The site is being updated. This page refreshes itself &mdash; no need to do anything.</p>
     <div class="foot">Идёт обновление. Страница обновится сама.</div>
+    <button class="play" id="play" type="button" hidden>Скучно ждать? Сыграйте в змейку</button>
+
+    <button class="back" id="back" type="button">Сайт снова работает — вернуться</button>
+
+    <div class="game" id="game" hidden>
+      <div class="hud">
+        <span>Счёт: <b id="score">0</b></span>
+        <span>Рекорд: <b id="best">0</b></span>
+      </div>
+      <canvas class="board" id="board" width="400" height="400" aria-label="Змейка"></canvas>
+      <div class="hint" id="hint">Стрелки или WASD. На телефоне — свайп.</div>
+      <div class="who-row">
+        <label for="who">Имя в таблице</label>
+        <input id="who" type="text" maxlength="24" placeholder="Аноним" autocomplete="off" spellcheck="false">
+      </div>
+      <div class="queued" id="queued" hidden></div>
+
+      <div class="lb" id="lb" hidden>
+        <h2>Таблица лидеров</h2>
+        <ol id="lbList"></ol>
+        <div class="note" id="lbNote"></div>
+      </div>
+    </div>
   </div>
+
+<script>
+(function () {
+  "use strict";
+
+  // Поле и стартовая длина обязаны совпадать с core/services/arcade_service.py:
+  // из них сервер выводит предельный счёт, и разойдись они — честные результаты
+  // начали бы отклоняться.
+  var GRID = 20, START_LENGTH = 3, CELL = 20;
+  var TICK_START = 130, TICK_MIN = 60, TICK_STEP = 3;
+
+  var QUEUE_KEY = "opencrm.snake.queue";
+  var BEST_KEY = "opencrm.snake.best";
+  var LB_KEY = "opencrm.snake.leaderboard";
+
+  var $ = function (id) { return document.getElementById(id); };
+  var playBtn = $("play"), backBtn = $("back"), game = $("game");
+  var canvas = $("board"), scoreEl = $("score"), bestEl = $("best");
+  var hintEl = $("hint"), queuedEl = $("queued"), whoInput = $("who");
+  var lb = $("lb"), lbList = $("lbList"), lbNote = $("lbNote");
+  var ctx = canvas.getContext("2d");
+
+  // localStorage может быть недоступен (приватный режим, запрет третьих сторон).
+  // Игра от этого не должна падать — просто не помнит рекорд между заходами.
+  function store(key, value) {
+    try {
+      if (value === undefined) return localStorage.getItem(key);
+      localStorage.setItem(key, value);
+    } catch (e) { /* обходимся без памяти */ }
+    return null;
+  }
+
+  function readJSON(key, fallback) {
+    try { return JSON.parse(store(key) || "") || fallback; } catch (e) { return fallback; }
+  }
+
+  // --- очередь результатов -------------------------------------------------
+  // Пока сайт лежит, отправить счёт некуда. Складываем его здесь и отдаём, как
+  // только приложение ответит: ради таблицы лидеров не нужен отдельный сервис,
+  // который работал бы во время обновления.
+  function queueScore(entry) {
+    var q = readJSON(QUEUE_KEY, []);
+    q.push(entry);
+    if (q.length > 20) q = q.slice(-20);
+    store(QUEUE_KEY, JSON.stringify(q));
+  }
+
+  function flushQueue() {
+    var q = readJSON(QUEUE_KEY, []);
+    if (!q.length) return Promise.resolve();
+    return q.reduce(function (chain, entry) {
+      return chain.then(function () {
+        return fetch("/api/v1/arcade/scores", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(entry)
+        }).catch(function () { /* не ушло — попробуем в следующий раз */ });
+      });
+    }, Promise.resolve()).then(function () {
+      store(QUEUE_KEY, JSON.stringify([]));
+    });
+  }
+
+  function loadLeaderboard() {
+    return fetch("/api/v1/arcade/leaderboard")
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (data) {
+        if (data && data.items) store(LB_KEY, JSON.stringify(data.items));
+        return data && data.items;
+      })
+      .catch(function () { return null; });
+  }
+
+  function renderLeaderboard() {
+    var items = readJSON(LB_KEY, []);
+    lb.hidden = false;
+    lbList.innerHTML = "";
+    items.slice(0, 10).forEach(function (row) {
+      var li = document.createElement("li");
+      var who = document.createElement("span");
+      who.className = "who";
+      who.textContent = row.name || "Аноним";   // textContent, а не innerHTML: имя чужое
+      var pts = document.createElement("span");
+      pts.className = "pts";
+      pts.textContent = row.score;
+      li.appendChild(who); li.appendChild(pts);
+      lbList.appendChild(li);
+    });
+    lbNote.textContent = items.length
+      ? "Обновляется, когда сайт возвращается."
+      : "Появится, когда сайт вернётся и результаты уйдут на сервер.";
+  }
+
+  // --- игра ----------------------------------------------------------------
+  var snake, dir, nextDir, apple, score, best, tick, timer, playing, startedAt;
+
+  best = parseInt(store(BEST_KEY) || "0", 10) || 0;
+
+  function reset() {
+    snake = [];
+    for (var i = START_LENGTH - 1; i >= 0; i--) snake.push({ x: 5 + i, y: 10 });
+    dir = { x: 1, y: 0 };
+    nextDir = dir;
+    score = 0;
+    tick = TICK_START;
+    startedAt = Date.now();
+    placeApple();
+    scoreEl.textContent = "0";
+    bestEl.textContent = best;
+  }
+
+  function placeApple() {
+    var free = [];
+    for (var x = 0; x < GRID; x++) {
+      for (var y = 0; y < GRID; y++) {
+        if (!snake.some(function (s) { return s.x === x && s.y === y; })) free.push({ x: x, y: y });
+      }
+    }
+    apple = free.length ? free[Math.floor(Math.random() * free.length)] : null;
+  }
+
+  function draw() {
+    ctx.fillStyle = "#1D1B1A";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    if (apple) {
+      ctx.fillStyle = "#D97757";
+      ctx.beginPath();
+      ctx.arc(apple.x * CELL + CELL / 2, apple.y * CELL + CELL / 2, CELL / 2 - 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    snake.forEach(function (part, i) {
+      ctx.fillStyle = i === 0 ? "#F5F4EF" : "#9C998F";
+      ctx.fillRect(part.x * CELL + 1.5, part.y * CELL + 1.5, CELL - 3, CELL - 3);
+    });
+  }
+
+  function step() {
+    dir = nextDir;
+    var head = { x: snake[0].x + dir.x, y: snake[0].y + dir.y };
+    var hitWall = head.x < 0 || head.y < 0 || head.x >= GRID || head.y >= GRID;
+    var hitSelf = snake.some(function (s) { return s.x === head.x && s.y === head.y; });
+    if (hitWall || hitSelf) return gameOver();
+
+    snake.unshift(head);
+    if (apple && head.x === apple.x && head.y === apple.y) {
+      score++;
+      scoreEl.textContent = score;
+      if (tick > TICK_MIN) tick = Math.max(TICK_MIN, tick - TICK_STEP);
+      placeApple();
+      if (!apple) return gameOver();      // поле заполнено целиком — победа
+    } else {
+      snake.pop();
+    }
+    draw();
+    timer = setTimeout(step, tick);
+  }
+
+  function gameOver() {
+    playing = false;
+    clearTimeout(timer);
+    draw();
+    if (score > best) {
+      best = score;
+      bestEl.textContent = best;
+      store(BEST_KEY, String(best));
+    }
+    if (score > 0) {
+      var name = (whoInput.value || "").trim();
+      queueScore({ name: name || "Аноним", score: score, played_ms: Date.now() - startedAt });
+      queuedEl.hidden = false;
+      queuedEl.textContent = "Счёт " + score + " записан — уйдёт в таблицу, когда сайт вернётся.";
+      trySend();
+    }
+    hintEl.textContent = "Игра окончена. Пробел или тап — заново.";
+  }
+
+  function start() {
+    if (playing) return;
+    reset();
+    playing = true;
+    queuedEl.hidden = true;
+    hintEl.textContent = "Стрелки или WASD. На телефоне — свайп.";
+    draw();
+    timer = setTimeout(step, tick);
+  }
+
+  function turn(x, y) {
+    // разворот на 180° — мгновенная смерть о собственную шею, поэтому запрещаем
+    if (snake.length > 1 && dir.x === -x && dir.y === -y) return;
+    nextDir = { x: x, y: y };
+  }
+
+  whoInput.value = store("opencrm.snake.name") || "";
+  whoInput.addEventListener("change", function () {
+    store("opencrm.snake.name", whoInput.value.trim());
+  });
+
+  document.addEventListener("keydown", function (e) {
+    if (game.hidden) return;
+    // пока человек набирает имя, стрелки и пробел принадлежат полю, а не змейке
+    if (e.target === whoInput) return;
+    var k = e.key;
+    if (k === "ArrowUp" || k === "w" || k === "W" || k === "ц" || k === "Ц") turn(0, -1);
+    else if (k === "ArrowDown" || k === "s" || k === "S" || k === "ы" || k === "Ы") turn(0, 1);
+    else if (k === "ArrowLeft" || k === "a" || k === "A" || k === "ф" || k === "Ф") turn(-1, 0);
+    else if (k === "ArrowRight" || k === "d" || k === "D" || k === "в" || k === "В") turn(1, 0);
+    else if (k === " " || k === "Enter") { if (!playing) start(); }
+    else return;
+    e.preventDefault();   // страница не должна прокручиваться под стрелками
+  });
+
+  var touchStart = null;
+  canvas.addEventListener("touchstart", function (e) {
+    touchStart = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+  }, { passive: true });
+  canvas.addEventListener("touchend", function (e) {
+    if (!touchStart) return;
+    var t = e.changedTouches[0];
+    var dx = t.clientX - touchStart.x, dy = t.clientY - touchStart.y;
+    touchStart = null;
+    if (Math.abs(dx) < 24 && Math.abs(dy) < 24) { if (!playing) start(); return; }
+    if (Math.abs(dx) > Math.abs(dy)) turn(dx > 0 ? 1 : -1, 0);
+    else turn(0, dy > 0 ? 1 : -1);
+  }, { passive: true });
+
+  // --- возврат на сайт -----------------------------------------------------
+  var backAvailable = false;
+
+  function trySend() {
+    return flushQueue().then(loadLeaderboard).then(function (items) {
+      if (items) renderLeaderboard();
+    });
+  }
+
+  function siteIsBack() {
+    if (backAvailable) return;
+    backAvailable = true;
+    backBtn.classList.add("show");
+    // Уходим только ПОСЛЕ отправки: переход обрывает запросы на полуслове, и
+    // счёт, ради которого всё затевалось, терялся бы ровно в момент, когда его
+    // наконец есть куда отдать.
+    trySend().then(function () {
+      // Не выдёргиваем человека из партии: играет — пусть жмёт кнопку сам,
+      // не играет — уводим, ради этого страница и держалась.
+      if (!playing) window.location.replace("/");
+    });
+  }
+
+  function poll() {
+    fetch("/healthz", { cache: "no-store" })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (data) { if (data && data.status === "ok") siteIsBack(); })
+      .catch(function () { /* ещё не поднялось */ })
+      .then(function () { if (!backAvailable) setTimeout(poll, 3000); });
+  }
+
+  backBtn.addEventListener("click", function () { window.location.replace("/"); });
+  playBtn.addEventListener("click", function () {
+    game.hidden = false;
+    playBtn.hidden = true;
+    renderLeaderboard();
+    start();
+    canvas.scrollIntoView({ block: "center", behavior: "smooth" });
+  });
+
+  // Раз этот код выполнился, meta-обновление из <noscript> не применилось —
+  // за возвратом на сайт дальше следим сами.
+  playBtn.hidden = false;
+  // Счёт мог остаться с прошлого раза (страницу закрыли, не дождавшись) —
+  // отправим при первой же возможности.
+  poll();
+})();
+</script>
 </body>
 </html>

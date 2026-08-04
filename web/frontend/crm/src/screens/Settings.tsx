@@ -5,6 +5,7 @@ import { StorageCard } from "../components/StorageCard";
 import { ScreenLoading, Toggle } from "../components/ui";
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
+import { formatDateTime } from "../lib/format";
 
 const SWATCHES = ["#D97757", "#6C8EEF", "#4CAF6E", "#E8A23D"];
 
@@ -332,7 +333,10 @@ export function SettingsReturnButton() {
       <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>{t("returnButton")}</div>
       <div style={{ color: "var(--faint)", fontSize: 12.5, marginBottom: 18 }}>{t("returnButtonSub")}</div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 220px", gap: "14px 20px", alignItems: "start" }}>
-        {input("studio_site_url", t("studioSite"), t("studioSiteDesc"), "https://studio.site")}
+        <div>
+          {input("studio_site_url", t("studioSite"), t("studioSiteDesc"), "https://studio.site")}
+          {input("studio_site_label", t("siteLabel"), t("siteLabelDesc"), "Return to the site")}
+        </div>
         <div>
           <label className="label" style={{ marginBottom: 6 }}>
             {t("siteLogo")}
@@ -368,26 +372,16 @@ export function SettingsReturnButton() {
           <label className="label" style={{ marginBottom: 8 }}>
             {t("preview")}
           </label>
-          {/* покой кнопки на витрине — белая пилюля с тёмной надписью; наведение
-              её гасит (см. .btn-site в web/public/templates/showcase.html) */}
-          <div
-            style={{
-              display: "inline-flex", alignItems: "center", height: 36, padding: 0,
-              background: "var(--text)", border: "1px solid var(--text)", borderRadius: 999, overflow: "hidden",
-              fontSize: 12.5, fontWeight: 500, color: "var(--bg)", whiteSpace: "nowrap",
-            }}
-          >
+          {/* Наведите — превью проигрывает ту же волну, что кнопка на витрине
+              (см. .btn-site в web/public/templates/showcase.html). Ширина не
+              задана: пилюля подгоняется под длину надписи, как и там. */}
+          <div className="site-btn-preview">
             {values.studio_site_logo && (
-              <span
-                style={{
-                  display: "flex", alignItems: "center", height: "100%", padding: "0 12px",
-                  borderRight: "1px solid rgba(26, 26, 25, 0.18)",
-                }}
-              >
+              <span className="seg">
                 <img src={values.studio_site_logo} alt="" style={{ height: 17, width: "auto", maxWidth: 92, objectFit: "contain", display: "block" }} />
               </span>
             )}
-            <span style={{ padding: "0 18px" }}>Return to the site</span>
+            <span style={{ padding: "0 18px" }}>{values.studio_site_label || "Return to the site"}</span>
           </div>
         </div>
       )}
@@ -396,18 +390,60 @@ export function SettingsReturnButton() {
 }
 
 export function SettingsMaintenance() {
-  const { t, storage, refreshStorage } = useApp();
+  const { t, locale, storage, refreshStorage, maintenance, setMaintenance } = useApp();
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    setNote(maintenance?.note || "");
+  }, [maintenance?.note]);
+
+  const toggle = async (enabled: boolean) => {
+    setBusy(true);
+    try {
+      await setMaintenance(enabled, note);
+    } finally {
+      setBusy(false);
+    }
+  };
 
   return (
-    <div className="card" style={{ padding: "20px 22px" }}>
-      <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>{t("maintenance")}</div>
-      <div style={{ color: "var(--faint)", fontSize: 12.5, marginBottom: 6 }}>{t("maintenanceSub")}</div>
-      <div style={{ color: "var(--faint)", fontSize: 12.5, marginBottom: 18, lineHeight: 1.5 }}>{t("maintenanceWhere")}</div>
-      {storage ? (
-        <StorageCard storage={storage} onPurged={() => void refreshStorage()} />
-      ) : (
-        <div style={{ color: "var(--faint)", fontSize: 12.5 }}>{t("loading")}</div>
-      )}
-    </div>
+    <>
+      <div className="card" style={{ padding: "20px 22px", marginBottom: 20 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, marginBottom: 4 }}>
+          <div style={{ fontSize: 14, fontWeight: 600 }}>{t("closedMode")}</div>
+          <Toggle on={!!maintenance?.enabled} onToggle={() => { if (!busy) void toggle(!maintenance?.enabled); }} />
+        </div>
+        <div style={{ color: "var(--faint)", fontSize: 12.5, marginBottom: 14, lineHeight: 1.5 }}>
+          {t("closedModeSub")}
+        </div>
+        <label className="label" style={{ marginBottom: 6 }}>{t("closedNote")}</label>
+        <input
+          className="input"
+          maxLength={200}
+          placeholder={t("closedNotePlaceholder")}
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          onBlur={() => { if (maintenance?.enabled) void setMaintenance(true, note); }}
+        />
+        <div className="field-desc">{t("closedNoteDesc")}</div>
+        {maintenance?.enabled && maintenance.since && (
+          <div style={{ color: "var(--warning)", fontSize: 12.5, marginTop: 12 }}>
+            {t("closedSince", { who: maintenance.by || "—", t: formatDateTime(maintenance.since, locale) })}
+          </div>
+        )}
+      </div>
+
+      <div className="card" style={{ padding: "20px 22px" }}>
+        <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>{t("maintenance")}</div>
+        <div style={{ color: "var(--faint)", fontSize: 12.5, marginBottom: 6 }}>{t("maintenanceSub")}</div>
+        <div style={{ color: "var(--faint)", fontSize: 12.5, marginBottom: 18, lineHeight: 1.5 }}>{t("maintenanceWhere")}</div>
+        {storage ? (
+          <StorageCard storage={storage} onPurged={() => void refreshStorage()} />
+        ) : (
+          <div style={{ color: "var(--faint)", fontSize: 12.5 }}>{t("loading")}</div>
+        )}
+      </div>
+    </>
   );
 }

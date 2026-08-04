@@ -1,16 +1,40 @@
 from fastapi import APIRouter, Depends, UploadFile
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from core.services import settings_service, site_logo_service
+from core.services import maintenance_mode, settings_service, site_logo_service
+from database.models import User
 from web.api import schemas
-from web.api.deps import get_db, require_root
+from web.api.deps import get_current_user, get_db, require_root
 
 router = APIRouter(prefix="/settings", tags=["settings"], dependencies=[Depends(require_root)])
+
+
+class MaintenanceIn(BaseModel):
+    enabled: bool
+    note: str = ""
 
 
 @router.get("")
 def get_settings_(db: Session = Depends(get_db)):
     return settings_service.get_all(db)
+
+
+@router.get("/maintenance")
+def maintenance_status(db: Session = Depends(get_db)):
+    return maintenance_mode.state(db)
+
+
+@router.post("/maintenance")
+def set_maintenance(
+    payload: MaintenanceIn,
+    # get_current_user, а не require_root: root'ом уже сделала зависимость
+    # роутера, а здесь нужно только имя — кто закрыл сайт.
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Закрыть сайт на работы или открыть обратно. Доступно только root."""
+    return maintenance_mode.set_mode(db, payload.enabled, payload.note, user.name or user.email)
 
 
 @router.patch("")

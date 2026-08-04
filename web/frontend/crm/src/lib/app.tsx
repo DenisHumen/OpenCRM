@@ -23,6 +23,13 @@ interface Toast {
   error?: boolean;
 }
 
+export interface MaintenanceState {
+  enabled: boolean;
+  note: string;
+  since: string;
+  by: string;
+}
+
 interface AppContextValue {
   user: User | null;
   ready: boolean;
@@ -30,7 +37,9 @@ interface AppContextValue {
   t: TFunc;
   settings: Record<string, string>;
   storage: StorageStatus | null;
+  maintenance: MaintenanceState | null;
   setUser: (user: User | null) => void;
+  setMaintenance: (enabled: boolean, note: string) => Promise<void>;
   refreshSettings: () => Promise<void>;
   refreshStorage: () => Promise<void>;
   logout: () => Promise<void>;
@@ -52,6 +61,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [ready, setReady] = useState(false);
   const [settings, setSettings] = useState<Record<string, string>>({});
   const [storage, setStorage] = useState<StorageStatus | null>(null);
+  const [maintenance, setMaintenanceState] = useState<MaintenanceState | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
 
   const locale: Locale = user?.locale === "ru" ? "ru" : "en";
@@ -64,6 +74,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
     } catch {
       /* нет прав — оставляем пусто */
     }
+    // Режим обслуживания — тоже только для root. Нужен ему постоянно, а не
+    // только на странице настроек: забытый включённым режим держит сайт
+    // закрытым молча, поэтому о нём напоминает полоса в шапке.
+    try {
+      setMaintenanceState(await api.get<MaintenanceState>("/settings/maintenance"));
+    } catch {
+      setMaintenanceState(null);
+    }
+  }, []);
+
+  const setMaintenance = useCallback(async (enabled: boolean, note: string) => {
+    setMaintenanceState(await api.post<MaintenanceState>("/settings/maintenance", { enabled, note }));
   }, []);
 
   useEffect(() => {
@@ -136,10 +158,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo(
     () => ({
-      user, ready, locale, t, settings, storage,
-      setUser, refreshSettings, refreshStorage, logout, toast, toastError, toasts,
+      user, ready, locale, t, settings, storage, maintenance,
+      setUser, setMaintenance, refreshSettings, refreshStorage, logout, toast, toastError, toasts,
     }),
-    [user, ready, locale, t, settings, storage, refreshSettings, refreshStorage, logout, toast, toastError, toasts],
+    [user, ready, locale, t, settings, storage, maintenance, setMaintenance,
+     refreshSettings, refreshStorage, logout, toast, toastError, toasts],
   );
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

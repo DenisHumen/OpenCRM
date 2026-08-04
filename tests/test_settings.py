@@ -40,6 +40,42 @@ def test_update_settings_and_showcase_branding(root_client, manager_client):
     assert bad.status_code == 422
 
 
+def test_return_button_label_is_optional_and_bounded(root_client, manager_client):
+    """Подпись кнопки возврата: своя, по умолчанию английская, с потолком длины.
+
+    Потолок не придирка: строка растягивает кнопку в шапке публичной витрины,
+    и одна длинная надпись развалила бы вёрстку сразу у всех клиентов студии.
+    """
+    board = manager_client.post(f"{API}/boards", json={"title": "С кнопкой"}).json()
+    manager_client.patch(f"{API}/boards/{board['id']}", json={"is_published": True})
+    share = manager_client.post(f"{API}/boards/{board['id']}/shares", json={}).json()
+
+    # адрес задан, подписи нет — значение по умолчанию
+    root_client.patch(f"{API}/settings", json={"values": {"studio_site_url": "studio.example"}})
+    assert "Return to the site" in TestClient(app).get(f"/b/{share['token']}").text
+
+    # своя подпись вытесняет значение по умолчанию
+    own = root_client.patch(
+        f"{API}/settings", json={"values": {"studio_site_label": "Вернуться на сайт"}}
+    )
+    assert own.status_code == 200
+    page = TestClient(app).get(f"/b/{share['token']}").text
+    assert "Вернуться на сайт" in page
+    assert "Return to the site" not in page
+
+    # слишком длинную не принимаем
+    too_long = root_client.patch(
+        f"{API}/settings", json={"values": {"studio_site_label": "я" * 41}}
+    )
+    assert too_long.status_code == 422
+    assert too_long.json()["error"]["code"] == "site_label_too_long"
+
+    # ровно по границе — можно
+    assert root_client.patch(
+        f"{API}/settings", json={"values": {"studio_site_label": "я" * 40}}
+    ).status_code == 200
+
+
 def test_logo_upload(root_client):
     response = root_client.post(
         f"{API}/settings/logo",
