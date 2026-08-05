@@ -8,6 +8,7 @@ from database.models.deal import Deal, DealStageChange
 from database.models.pipeline import PipelineStage
 from database.models.document import Document, DocumentEvent
 from database.models.module import ModuleState
+from database.models.task import Task
 
 __all__ = [
     "User",
@@ -27,4 +28,5 @@ __all__ = [
     "Document",
     "DocumentEvent",
     "ModuleState",
+    "Task",
 ]

@@ -10,6 +10,7 @@ import { formatDate, formatDateTime, formatMoney } from "../lib/format";
 import { moduleOn } from "../lib/modules";
 import { term } from "../lib/terms";
 import { NewDocumentModal } from "./Documents";
+import { QuickTask } from "./Tasks";
 
 type Stage = { key: string; name: string; kind: "open" | "won" | "lost" };
 
@@ -39,6 +40,7 @@ export function DealCard() {
   const [people, setPeople] = useState<any[]>([]);
   const [clients, setClients] = useState<any[]>([]);
   const [docs, setDocs] = useState<any[]>([]);
+  const [tasks, setTasks] = useState<any[]>([]);
   const [issuing, setIssuing] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [askReason, setAskReason] = useState<string | null>(null);
@@ -62,13 +64,21 @@ export function DealCard() {
     api.get(`/documents?deal_id=${id}`).then((d) => setDocs(d.items)).catch(() => undefined);
   }, [id, hasDocuments]);
 
+  const hasTasks = moduleOn(modules, "tasks");
+
+  const loadTasks = useCallback(() => {
+    if (!hasTasks) return;
+    api.get(`/tasks?deal_id=${id}`).then((d) => setTasks(d.items)).catch(() => undefined);
+  }, [id, hasTasks]);
+
   useEffect(() => {
     void load();
     loadDocs();
+    loadTasks();
     api.get("/pipeline/stages").then((d) => setStages(d.items)).catch(() => undefined);
     api.get("/people").then((d) => setPeople(d.items)).catch(() => undefined);
     api.get("/clients?per_page=200").then((d) => setClients(d.items)).catch(() => undefined);
-  }, [load, loadDocs]);
+  }, [load, loadDocs, loadTasks]);
 
   if (!deal) return <ScreenLoading />;
 
@@ -285,6 +295,25 @@ export function DealCard() {
           />
         </div>
       </div>
+
+      {/* Напоминание прямо отсюда: «перезвонить в четверг» придумывается во
+          время разговора о заявке, а не потом на отдельном экране. */}
+      {moduleOn(modules, "tasks") && (
+        <div className="card card-pad" style={{ marginBottom: 20 }}>
+          <div className="metric-title" style={{ marginBottom: 12 }}>{t("tasks")}</div>
+          {tasks.map((task: any) => (
+            <div key={task.id} className="doc-mini">
+              <span className="truncate" style={{ flex: 1, minWidth: 0 }}>{task.title}</span>
+              {task.due_at && (
+                <span style={{ color: "var(--faint)", fontSize: 12 }}>
+                  {formatDateTime(task.due_at, locale)}
+                </span>
+              )}
+            </div>
+          ))}
+          <QuickTask dealId={deal.id} clientId={deal.client_id} onCreated={loadTasks} />
+        </div>
+      )}
 
       {/* Доски, сделанные по этой заявке. Раньше доска знала только клиента,
           и у клиента с пятью заказами за год все они лежали одной кучей. */}

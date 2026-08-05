@@ -17,6 +17,7 @@ from database.models import (
     PipelineStage,
     ShareLink,
     ShareView,
+    Task,
     User,
     Work,
 )
@@ -206,6 +207,23 @@ def document_out(document: Document) -> dict:
         "payload": payload,
         "created_at": _iso(document.created_at),
         "updated_at": _iso(document.updated_at),
+    }
+
+
+def task_out(task: Task, assignee_name: str | None = None) -> dict:
+    return {
+        "id": task.id,
+        "title": task.title,
+        # Время уходит в ISO с явным Z: без него браузер разберёт его как
+        # местное, и срок уедет на величину смещения.
+        "due_at": _iso(task.due_at),
+        "assignee_id": task.assignee_id,
+        "assignee_name": assignee_name,
+        "client_id": task.client_id,
+        "deal_id": task.deal_id,
+        "is_done": task.done_at is not None,
+        "done_at": _iso(task.done_at),
+        "created_at": _iso(task.created_at),
     }
 
 

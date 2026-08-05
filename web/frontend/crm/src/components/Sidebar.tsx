@@ -74,10 +74,14 @@ function NavGroup({
 }
 
 export function Sidebar({ onOpenSearch }: { onOpenSearch: () => void }) {
-  const { user, t, locale, settings, storage, modules, workspace, setUser, logout, toastError } = useApp();
+  const {
+    user, t, locale, settings, storage, modules, workspace, overdueTasks,
+    setUser, logout, toastError,
+  } = useApp();
   const navigate = useNavigate();
   const [menuOpen, setMenuOpen] = useState(false);
   const [pendingCount, setPendingCount] = useState(0);
+
 
   const isRoot = user?.role === "root";
 
@@ -163,6 +167,13 @@ export function Sidebar({ onOpenSearch }: { onOpenSearch: () => void }) {
         </NavLink>
         {/* Выключенный блок пропадает из меню целиком: обещать раздел, который
             ответит отказом, хуже, чем не показывать его вовсе. */}
+        {moduleOn(modules, "tasks") && (
+          <NavLink to="/tasks" className={({ isActive }) => "nav-item" + (isActive ? " active" : "")}>
+            <Icon name="clock" size={16} />
+            <span style={{ flex: 1 }}>{t("tasks")}</span>
+            {overdueTasks > 0 && <span className="nav-badge">{overdueTasks}</span>}
+          </NavLink>
+        )}
         {moduleOn(modules, "documents") && (
           <NavLink to="/documents" className={({ isActive }) => "nav-item" + (isActive ? " active" : "")}>
             <Icon name="receipt" size={16} />

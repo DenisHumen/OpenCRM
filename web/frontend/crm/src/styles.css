@@ -685,3 +685,41 @@ button { font-family: var(--sans); }
 .cp-footer .kbd { margin-right: 3px; }
 
 .money-value { font-variant-numeric: tabular-nums; }
+
+/* Напоминания.
+   Ввод сверху и всегда на виду: задачу заводят на ходу, между разговором и
+   следующим клиентом. Спрячь это за кнопкой «создать» — и не заведут вовсе. */
+.task-new { display: flex; gap: 8px; margin-bottom: 16px; }
+.task-new .input:first-child { flex: 1; }
+.task-new .input[type="datetime-local"] { width: 190px; flex: none; }
+
+.task-row {
+  display: flex; align-items: flex-start; gap: 11px; padding: 11px 16px;
+  border-bottom: 1px solid var(--line);
+}
+.task-row:last-child { border-bottom: none; }
+/* Отметка одним нажатием: если закрытие требует зайти в карточку, задачи не
+   закрывают, и список перестаёт отражать действительность. */
+.task-check {
+  width: 18px; height: 18px; flex: none; margin-top: 1px; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  background: none; border: 1.5px solid var(--border-hover); border-radius: 5px;
+  color: var(--bg); transition: background 140ms, border-color 140ms;
+}
+.task-check:hover { border-color: var(--muted); }
+.task-check.done { background: var(--success); border-color: var(--success); }
+.task-text { flex: 1; min-width: 0; }
+.task-title { color: var(--text); font-size: 13.5px; line-height: 1.4; }
+.task-title.done { color: var(--faint); text-decoration: line-through; }
+.task-meta { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 3px; color: var(--faint); font-size: 11.5px; }
+.task-late { color: var(--danger); font-weight: 500; }
+
+/* Число просроченных рядом с пунктом меню. Красное, потому что это долг, а не
+   статистика: серое число рядом с названием читается как «всего». */
+.nav-badge {
+  min-width: 18px; padding: 0 5px; border-radius: 999px;
+  background: var(--danger); color: #fff;
+  font-size: 10.5px; font-weight: 700; line-height: 18px; text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.count.danger { background: rgba(229, 105, 94, 0.16); color: var(--danger); }

@@ -28,6 +28,7 @@ import {
 } from "./screens/Settings";
 import { SettingsModules } from "./screens/SettingsModules";
 import { Staff } from "./screens/Staff";
+import { Tasks } from "./screens/Tasks";
 
 function Protected() {
   const { user, ready } = useApp();
@@ -109,6 +110,9 @@ export default function App() {
           <Route path="/clients/:id" element={<ClientCard />} />
           <Route path="/deals" element={<Deals />} />
           <Route path="/deals/:id" element={<DealCard />} />
+          <Route element={<ModuleRoute module="tasks" />}>
+            <Route path="/tasks" element={<Tasks />} />
+          </Route>
           <Route element={<ModuleRoute module="documents" />}>
             <Route path="/documents" element={<Documents />} />
             <Route path="/documents/:id" element={<DocumentCard />} />

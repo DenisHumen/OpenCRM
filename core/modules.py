@@ -48,6 +48,9 @@ MODULES: tuple[Module, ...] = (
     Module(key="deals", core=True, requires=("clients",)),
     # --- необязательные, уже работают ---
     Module(key="documents", requires=("clients",)),
+    # Напоминания ни от чего не зависят: «отвезти документы в банк» — тоже
+    # задача, и клиент с заявкой ей не нужны.
+    Module(key="tasks"),
     Module(key="boards", default=True),
     # --- в разработке ---
     Module(key="warehouse", ready=False, default=False, requires=("deals",)),

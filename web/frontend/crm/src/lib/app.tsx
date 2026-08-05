@@ -62,6 +62,11 @@ interface AppContextValue {
   /** Валюта и названия — нужны всем, а полные настройки читает только root. */
   workspace: Workspace;
   refreshWorkspace: () => Promise<void>;
+  /** Просроченные напоминания. Живут в общем состоянии, а не в сайдбаре:
+   *  закрыл задачу — число обязано измениться сразу, иначе счётчику
+   *  перестают верить, и он становится хуже, чем его отсутствие. */
+  overdueTasks: number;
+  refreshTasks: () => Promise<void>;
   setUser: (user: User | null) => void;
   setMaintenance: (enabled: boolean, note: string) => Promise<void>;
   refreshSettings: () => Promise<void>;
@@ -92,6 +97,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     currency: "USD",
     deal_term: "deal",
   });
+  const [overdueTasks, setOverdueTasks] = useState(0);
   const [toasts, setToasts] = useState<Toast[]>([]);
 
   const locale: Locale = user?.locale === "ru" ? "ru" : "en";
@@ -155,6 +161,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const refreshTasks = useCallback(async () => {
+    try {
+      const data = await api.get<{ overdue: number }>("/tasks/summary");
+      setOverdueTasks(data.overdue ?? 0);
+    } catch {
+      // Блок напоминаний выключен или недоступен — счётчика просто нет.
+      setOverdueTasks(0);
+    }
+  }, []);
+
   const refreshStorage = useCallback(async () => {
     try {
       setStorage(await api.get<StorageStatus>("/system/storage"));
@@ -171,7 +187,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (!user || user.must_change_password) return;
     void refreshModules();
     void refreshWorkspace();
-  }, [user, refreshModules, refreshWorkspace]);
+    void refreshTasks();
+  }, [user, refreshModules, refreshWorkspace, refreshTasks]);
 
   useEffect(() => {
     if (!user || user.must_change_password) return;
@@ -219,11 +236,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const value = useMemo(
     () => ({
       user, ready, locale, t, settings, storage, maintenance, modules, refreshModules,
-      workspace, refreshWorkspace,
+      workspace, refreshWorkspace, overdueTasks, refreshTasks,
       setUser, setMaintenance, refreshSettings, refreshStorage, logout, toast, toastError, toasts,
     }),
     [user, ready, locale, t, settings, storage, maintenance, modules, refreshModules,
-     workspace, refreshWorkspace,
+     workspace, refreshWorkspace, overdueTasks, refreshTasks,
      setMaintenance, refreshSettings, refreshStorage, logout, toast, toastError, toasts],
   );
 
