@@ -92,8 +92,14 @@ services:
     logging: *logging
 
   # Продление сертификата. Первый выпуск — руками, один раз:
-  #   docker compose run --rm certbot certonly --webroot -w /var/www/certbot \
+  #   docker compose run --rm --entrypoint certbot certbot certonly \
+  #       --webroot -w /var/www/certbot \
   #       -d example.com --email you@example.com --agree-tos --no-eff-email
+  #
+  # --entrypoint здесь обязателен: `run` подменяет команду, а не entrypoint, а
+  # entrypoint ниже — бесконечный цикл продления. Без флага аргументы `certonly`
+  # уедут в позиционные параметры `sh -c` и не выполнятся: контейнер запустит
+  # продление навечно, а выпуск повиснет.
   # Дальше этот контейнер сам проверяет срок дважды в сутки; Let's Encrypt
   # обновляет сертификат за 30 дней до истечения, а nginx перечитывает конфиг
   # каждые 6 часов (см. nginx/entrypoint.sh) и подхватывает новый файл.

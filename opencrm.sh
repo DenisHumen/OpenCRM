@@ -936,7 +936,15 @@ issue_certificate() {
     [ -n "$_email" ] || { warn "$(tr_ "без email сертификат не выпустить" "no certificate without an email")"; return 0; }
 
     info "$(tr_ "запрашиваю сертификат" "requesting the certificate")"
-    if compose run --rm certbot certonly --webroot -w /var/www/certbot \
+    # --entrypoint обязателен. Сервис certbot объявляет своим entrypoint цикл
+    # продления (`sh -c 'while :; do certbot renew; sleep 12h; done'`), а
+    # `compose run` подменяет команду, а не entrypoint. Без этого флага аргументы
+    # `certonly ...` уезжают в позиционные параметры `sh -c` и не выполняются
+    # вовсе: контейнер запускает бесконечное продление, `run` ждёт его вечно, и
+    # выпуск висит на «Created» до Ctrl+C. Сертификат при этом не выпускается
+    # никогда, а nginx без файла сертификата не поднимает 443 — сайт остаётся
+    # доступен только по HTTP, и снаружи это выглядит как отказ соединения.
+    if compose run --rm --entrypoint certbot certbot certonly --webroot -w /var/www/certbot \
         -d "$_domain" --email "$_email" --agree-tos --no-eff-email --non-interactive; then
         # Теперь сайт правда за TLS — можно и нужно переводить BASE_URL на https,
         # чтобы cookie получили флаг Secure. Настройки читаются при старте
