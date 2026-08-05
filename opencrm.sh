@@ -616,6 +616,90 @@ verify_docker_network() {
 
 installed() { [ -f "$APP_ENV" ] && [ -f "$DOCKER_ENV" ]; }
 
+# --------------------------------------------------------------------------
+# Запуск от root
+# --------------------------------------------------------------------------
+# Ломает не сразу, а потом, и потому особенно неприятно. Скрипт записывает в
+# docker/.env владельца каталогов с данными:
+#
+#     OPENCRM_UID=$(id -u)   OPENCRM_GID=$(id -g)   OPENCRM_HOME=$HOME/opencrm
+#
+# Под `sudo` это 0, 0 и /root/opencrm. Контейнер начинает работать от root и в
+# другом каталоге: прежние данные остаются в домашней папке хозяина машины и
+# выглядят пропавшими, а всё новое рождается root-овским. Следующий запуск уже
+# без sudo упирается в эти файлы — «attempt to write a readonly database».
+#
+# Сам по себе root не зло: на многих VPS другого пользователя просто нет, и
+# установка целиком под root непротиворечива. Беда от смешивания. Поэтому:
+# честный root-логин пропускаем, `sudo` от обычного пользователя — нет.
+#
+# OPENCRM_ALLOW_ROOT=1 снимает запрет, если вы понимаете, что делаете.
+guard_root() {
+    # Явные if, а не цепочки `[ ] && return`: под `set -e` такие цепочки уже
+    # однажды роняли этот скрипт на ровном месте.
+    if [ "$(id -u)" -ne 0 ]; then return 0; fi
+    if [ "${OPENCRM_ALLOW_ROOT:-0}" = "1" ]; then return 0; fi
+    if [ -z "${SUDO_USER:-}" ]; then return 0; fi
+    if [ "${SUDO_USER:-}" = "root" ]; then return 0; fi
+
+    printf '\n%s[!] %s%s\n' "$RED" "$(tr_ \
+        "Не запускайте скрипт через sudo." \
+        "Do not run this script with sudo.")" "$R"
+    say ""
+    say "$(tr_ \
+        "    Скрипт сам просит пароль там, где он нужен (Docker, ufw, сертификат)." \
+        "    The script asks for a password itself where it is needed (Docker, ufw, certificates).")"
+    say "$(tr_ \
+        "    Под sudo он записал бы владельцем данных root (UID 0) и перенёс бы" \
+        "    Under sudo it would record root (UID 0) as the owner of your data and move")"
+    say "$(tr_ \
+        "    состояние в /root/opencrm. Прежние данные остались бы в вашей домашней" \
+        "    the state to /root/opencrm. Your existing data would stay in your home")"
+    say "$(tr_ \
+        "    папке и выглядели бы пропавшими, а сайт при следующем запуске без sudo" \
+        "    directory and look lost, and the next run without sudo would fail with")"
+    say "$(tr_ \
+        "    упал бы с «readonly database»." \
+        "    \"readonly database\".")"
+    say ""
+    say "$(tr_ "    Запустите так:" "    Run it like this:")"
+    say "        ${B}./opencrm.sh${R}"
+    say ""
+    say "$(tr_ \
+        "    Уже запускали под sudo и сайт сломался — это чинится:" \
+        "    Already ran it under sudo and the site broke — this is repairable:")"
+    say "        ${B}./opencrm.sh repair${R}"
+    say ""
+    exit 1
+}
+
+# Владелец установки: от чьего имени должен работать контейнер.
+#
+# Под sudo это тот, кто вызвал sudo, а не root. При честном root-логине берём
+# владельца каталога с репозиторием: установка делалась им, ему и владеть.
+install_owner() {
+    if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != "root" ]; then
+        printf '%s' "$SUDO_USER"
+    elif [ "$(id -u)" -ne 0 ]; then
+        id -un
+    else
+        stat -c '%U' "$REPO_DIR" 2>/dev/null || printf 'root'
+    fi
+}
+
+# Расхождение между тем, кто владеет данными, и тем, от кого работает контейнер.
+# Молчать о нём нельзя: сайт при этом выглядит живым ровно до первой записи.
+warn_owner_mismatch() {
+    installed || return 0
+    _env_uid=$(env_get "$DOCKER_ENV" OPENCRM_UID 2>/dev/null || true)
+    [ -n "$_env_uid" ] || return 0
+    [ "$_env_uid" = "$(id -u)" ] && return 0
+    warn "$(tr_ \
+        "docker/.env говорит UID $_env_uid, а вы $(id -u) — будут ошибки доступа" \
+        "docker/.env says UID $_env_uid, you are $(id -u) — expect permission errors")"
+    info "$(tr_ "починить: ./opencrm.sh repair" "fix it: ./opencrm.sh repair")"
+}
+
 home_dir() {
     _home=$(env_get "$DOCKER_ENV" OPENCRM_HOME 2>/dev/null || true)
     [ -n "$_home" ] || _home="$HOME/opencrm"
@@ -1197,6 +1281,123 @@ probe() {
     fi
 }
 
+# Починка после запуска под sudo: вернуть владельца данных и адрес состояния.
+#
+# Работает и от обычного пользователя (сама попросит пароль), и из-под sudo —
+# во втором случае владельцем считается тот, кто вызвал sudo, а не root.
+#
+# Ничего не удаляет. Данные только переносит, и только когда переносить есть
+# куда: если непустые каталоги нашлись с обеих сторон, выбор остаётся за
+# человеком — молча слить две базы хуже, чем не сделать ничего.
+cmd_repair() {
+    step "$(tr_ "Починка прав и владельца" "Repairing ownership and paths")"
+    detect_sudo
+    installed || die "$(tr_ "сайт ещё не установлен — чинить нечего" "the site is not installed yet — nothing to repair")"
+
+    _owner=$(install_owner)
+    if ! _want_uid=$(id -u "$_owner" 2>/dev/null); then
+        die "$(tr_ "не удалось определить владельца установки" "could not determine the installation owner")"
+    fi
+    _want_gid=$(id -g "$_owner")
+    _owner_home=$(getent passwd "$_owner" | cut -d: -f6)
+    [ -n "$_owner_home" ] || _owner_home="/home/$_owner"
+
+    _env_uid=$(env_get "$DOCKER_ENV" OPENCRM_UID 2>/dev/null || true)
+    _env_gid=$(env_get "$DOCKER_ENV" OPENCRM_GID 2>/dev/null || true)
+    _env_home=$(env_get "$DOCKER_ENV" OPENCRM_HOME 2>/dev/null || true)
+    [ -n "$_env_home" ] || _env_home="$_owner_home/opencrm"
+    _want_home="$_owner_home/opencrm"
+
+    say ""
+    probe "$(tr_ "владелец" "owner")" 1 "$_owner ($_want_uid:$_want_gid)"
+    if [ "$_env_uid" = "$_want_uid" ] && [ "$_env_gid" = "$_want_gid" ]; then
+        probe "docker/.env" 1 "UID $_env_uid:$_env_gid — $(tr_ "верно" "correct")"
+    else
+        probe "docker/.env" 0 "UID $_env_uid:$_env_gid → $_want_uid:$_want_gid"
+    fi
+
+    # Состояние в /root — след запуска под sudo: данные хозяина машины остались
+    # в его домашней папке, а сайт с тех пор писал в другое место.
+    _move_state=0
+    if [ "$_env_home" = "$_want_home" ]; then
+        probe "$(tr_ "состояние" "state")" 1 "$_env_home"
+    elif [ -d "$_env_home/data" ] && [ -n "$($SUDO ls -A "$_env_home/data" 2>/dev/null || true)" ] \
+        && [ -n "$($SUDO ls -A "$_want_home/data" 2>/dev/null || true)" ]; then
+        probe "$(tr_ "состояние" "state")" 0 "$(tr_ "данные и там, и там" "data in both places")"
+        warn "$(tr_ "$_env_home/data и $_want_home/data — оба непустые" "$_env_home/data and $_want_home/data are both non-empty")"
+        say "$(tr_ \
+            "    Какая из баз рабочая, знаете только вы. Перенесите нужную вручную" \
+            "    Only you know which database is the live one. Move the right one by hand")"
+        say "$(tr_ \
+            "    и запустите починку снова." \
+            "    and run the repair again.")"
+        die "$(tr_ "останавливаюсь, чтобы не потерять данные" "stopping so that no data is lost")"
+    elif [ -d "$_env_home/data" ]; then
+        probe "$(tr_ "состояние" "state")" 0 "$_env_home → $_want_home"
+        _move_state=1
+    else
+        probe "$(tr_ "состояние" "state")" 0 "$(tr_ "путь исправим на" "path will become") $_want_home"
+    fi
+
+    say ""
+    say "$(tr_ "    Что будет сделано:" "    What will be done:")"
+    say "$(tr_ "      1. остановка сайта" "      1. stop the site")"
+    if [ "$_move_state" = "1" ]; then
+        say "$(tr_ "      2. перенос $_env_home → $_want_home" "      2. move $_env_home → $_want_home")"
+    fi
+    say "$(tr_ "      3. владелец данных и репозитория → $_owner" "      3. owner of data and repository → $_owner")"
+    say "$(tr_ "      4. правка docker/.env (UID, GID, путь)" "      4. update docker/.env (UID, GID, path)")"
+    say "$(tr_ "      5. запуск сайта" "      5. start the site")"
+    say "$(tr_ \
+        "    ${D}Ключи Let's Encrypt не трогаем: их читает nginx от root.${R}" \
+        "    ${D}Let's Encrypt keys are left alone: nginx reads them as root.${R}")"
+    say ""
+    confirm "$(tr_ "    Чиним?" "    Repair?")" y || { info "$(tr_ "отменено" "cancelled")"; return 0; }
+
+    step "$(tr_ "Остановка" "Stopping")"
+    compose down >/dev/null 2>&1 || warn "$(tr_ "стек не остановился штатно — продолжаю" "the stack did not stop cleanly — continuing")"
+
+    if [ "$_move_state" = "1" ]; then
+        step "$(tr_ "Перенос состояния" "Moving the state")"
+        $SUDO mkdir -p "$_want_home"
+        # Переносим содержимое, а не каталог: цель может уже существовать
+        # (пустая), и `mv` вложил бы источник внутрь неё.
+        for _item in data storage letsencrypt acme autoupdate.env; do
+            if [ -e "$_env_home/$_item" ] && [ ! -e "$_want_home/$_item" ]; then
+                $SUDO mv "$_env_home/$_item" "$_want_home/$_item"
+                ok "$_item"
+            fi
+        done
+    fi
+
+    step "$(tr_ "Права" "Ownership")"
+    $SUDO mkdir -p "$_want_home/data" "$_want_home/storage"
+    $SUDO chown "$_want_uid:$_want_gid" "$_want_home"
+    $SUDO chown -R "$_want_uid:$_want_gid" "$_want_home/data" "$_want_home/storage"
+    ok "$(tr_ "данные: $_want_home" "data: $_want_home")"
+    # Репозиторий: под sudo git и правки конфигов оставляли root-овские файлы,
+    # после чего обновление вставало на «dubious ownership».
+    $SUDO chown -R "$_want_uid:$_want_gid" "$REPO_DIR"
+    ok "$(tr_ "репозиторий: $REPO_DIR" "repository: $REPO_DIR")"
+
+    step "$(tr_ "Настройки" "Settings")"
+    env_set "$DOCKER_ENV" OPENCRM_UID "$_want_uid"
+    env_set "$DOCKER_ENV" OPENCRM_GID "$_want_gid"
+    env_set "$DOCKER_ENV" OPENCRM_HOME "$_want_home"
+    # env_set пишет от текущего пользователя: под sudo файл снова стал бы
+    # root-овским ровно после того, как мы его починили.
+    $SUDO chown "$_want_uid:$_want_gid" "$DOCKER_ENV"
+    ok "UID $_want_uid:$_want_gid, $_want_home"
+
+    step "$(tr_ "Запуск" "Starting")"
+    compose up -d
+    if wait_health 90; then
+        ok "$(tr_ "сайт отвечает" "the site is answering")"
+    else
+        warn "$(tr_ "сайт не ответил за 3 минуты — смотрите ./opencrm.sh logs app" "no answer in 3 minutes — see ./opencrm.sh logs app")"
+    fi
+}
+
 cmd_doctor() {
     step "$(tr_ "Диагностика" "Diagnostics")"
     detect_os
@@ -1355,6 +1556,7 @@ menu() {
         menu_item 12 "$(tr_ "Фаервол" "Firewall")"
         menu_item 13 "$(tr_ "Сбросить пароль администратора" "Reset admin password")"
         menu_item 14 "$(tr_ "Диагностика" "Diagnostics")"
+        menu_item 15 "$(tr_ "Починка прав (после запуска под sudo)" "Repair ownership (after running under sudo)")"
         say ""
         menu_item 0  "$(tr_ "Выход" "Exit")"
         say ""
@@ -1374,6 +1576,7 @@ menu() {
             12) cmd_firewall ;;
             13) cmd_password ;;
             14) cmd_doctor ;;
+            15) cmd_repair ;;
             0|q|Q|"") say ""; exit 0 ;;
             *)  warn "$(tr_ "нет такого пункта" "no such item")" ;;
         esac
@@ -1403,6 +1606,7 @@ OpenCRM v$VERSION — установка и управление
   ./opencrm.sh firewall           открыть только SSH и сайт (ufw)
   ./opencrm.sh password           сбросить пароль администратора
   ./opencrm.sh doctor             диагностика
+  ./opencrm.sh repair             починка прав после запуска под sudo
 
 Флаги установки (для неинтерактивного запуска):
   --domain example.com   домен сайта; --domain "" — работать по IP без HTTPS
@@ -1433,6 +1637,14 @@ main() {
         esac
     done
 
+    # Заслон от sudo — после разбора аргументов: `repair` и `help` обязаны
+    # работать и из-под sudo, иначе чинить последствия было бы нечем.
+    case "$_command" in
+        repair|help) : ;;
+        *) guard_root ;;
+    esac
+    warn_owner_mismatch
+
     case "$_command" in
         install)    cmd_install ;;
         start)      cmd_start ;;
@@ -1450,6 +1662,7 @@ main() {
         firewall)   cmd_firewall ;;
         password)   cmd_password ;;
         doctor)     cmd_doctor ;;
+        repair)     cmd_repair ;;
         "")
             if installed; then menu; else cmd_install; fi
             ;;
