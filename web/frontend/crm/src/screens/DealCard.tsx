@@ -285,6 +285,24 @@ export function DealCard() {
         </div>
       </div>
 
+      {/* Доски, сделанные по этой заявке. Раньше доска знала только клиента,
+          и у клиента с пятью заказами за год все они лежали одной кучей. */}
+      {(deal.boards ?? []).length > 0 && (
+        <div className="card card-pad" style={{ marginBottom: 20 }}>
+          <div className="metric-title" style={{ marginBottom: 12 }}>{t("boards")}</div>
+          <div className="doc-mini-list">
+            {(deal.boards ?? []).map((board: any) => (
+              <Link key={board.id} to={`/boards/${board.id}`} className="doc-mini">
+                <span className="truncate" style={{ flex: 1, minWidth: 0 }}>{board.title}</span>
+                <Chip variant={board.is_published ? "success" : undefined}>
+                  {board.is_published ? t("published") : t("draft")}
+                </Chip>
+              </Link>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Бланки этой сделки. Приняли вещь — выдали бумагу; искать её потом в
           общем списке значит потерять связь с работой, ради которой её выдали. */}
       {hasDocuments && (

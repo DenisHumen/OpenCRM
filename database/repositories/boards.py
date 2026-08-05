@@ -53,5 +53,16 @@ def next_sort_order(db: Session, board_id: int) -> int:
     return (current or 0) + 10
 
 
+def for_deal(db: Session, deal_id: int) -> list[Board]:
+    """Доски, сделанные по этой заявке. Свежие выше."""
+    return list(
+        db.scalars(
+            select(Board)
+            .where(Board.deal_id == deal_id, Board.deleted_at.is_(None))
+            .order_by(Board.created_at.desc())
+        )
+    )
+
+
 def count_works(db: Session, board_id: int) -> int:
     return db.scalar(select(func.count()).where(Work.board_id == board_id).select_from(Work)) or 0

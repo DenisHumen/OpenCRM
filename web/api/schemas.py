@@ -108,12 +108,16 @@ class BoardIn(BaseModel):
     title: str
     description: str | None = None
     client_id: int | None = None
+    # Заявка, ради которой доска сделана. Необязательная: доски существовали
+    # до заявок и обязаны работать без них.
+    deal_id: int | None = None
 
 
 class BoardPatchIn(BaseModel):
     title: str | None = None
     description: str | None = None
     client_id: int | None = None
+    deal_id: int | None = None
     cover_work_id: int | None = None
     is_published: bool | None = None
 
@@ -283,6 +287,7 @@ def board_out(board: Board, works_count: int | None = None) -> dict:
         "title": board.title,
         "description": board.description,
         "client_id": board.client_id,
+        "deal_id": board.deal_id,
         "cover_work_id": board.cover_work_id,
         "created_by": board.created_by,
         "is_published": board.is_published,

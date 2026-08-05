@@ -1,8 +1,9 @@
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
-from core.services import deal_service, pipeline_service, settings_service
+from core.services import deal_service, modules_service, pipeline_service, settings_service
 from database.models import User
+from database.repositories import boards as boards_repo
 from database.repositories import clients as clients_repo
 from database.repositories import deals as deals_repo
 from database.repositories import users as users_repo
@@ -43,6 +44,15 @@ def _card(db: Session, deal) -> dict:
     # Карточку открывают и менеджеры, а настройки читает только root — валюту
     # кладём в ответ, иначе сумма показывалась бы голым числом.
     data["currency"] = settings_service.get_all(db).get("currency", "USD")
+    # Доски этой заявки. Модуль досок может быть выключен — тогда и списка нет:
+    # спрашивать за него незачем, а показывать пустой раздел тем более.
+    if modules_service.is_enabled(db, "boards"):
+        data["boards"] = [
+            {"id": b.id, "title": b.title, "is_published": b.is_published}
+            for b in boards_repo.for_deal(db, deal.id)
+        ]
+    else:
+        data["boards"] = []
     # Названия этапов в истории берём из воронки: голые ключи вроде
     # `in_progress` человеку ничего не говорят, а у каждого бизнеса они свои.
     data["stage_history"] = [

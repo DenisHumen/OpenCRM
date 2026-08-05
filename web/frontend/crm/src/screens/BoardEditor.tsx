@@ -14,6 +14,9 @@ export function BoardEditor() {
   const navigate = useNavigate();
   const [board, setBoard] = useState<any>(null);
   const [clients, setClients] = useState<any[]>([]);
+  // Заявки выбранного клиента. Показывать чужие в этом окне незачем:
+  // доска делается по конкретному заказу конкретного человека.
+  const [clientDeals, setClientDeals] = useState<any[]>([]);
   const [confirm, setConfirm] = useState<null | "regenerate" | "deleteBoard" | "deleteShare" | number>(null);
   const [copied, setCopied] = useState(false);
   const [expiryOpen, setExpiryOpen] = useState(false);
@@ -38,6 +41,19 @@ export function BoardEditor() {
     void load();
     api.get("/clients?per_page=200").then((d) => setClients(d.items)).catch(() => undefined);
   }, [load]);
+
+  // Заявки перезапрашиваем при смене клиента: список в селекторе обязан
+  // относиться к тому, кто сейчас выбран, иначе доску привяжут к чужому заказу.
+  useEffect(() => {
+    if (!board?.client_id) {
+      setClientDeals([]);
+      return;
+    }
+    api
+      .get(`/deals?client_id=${board.client_id}&per_page=100`)
+      .then((d) => setClientDeals(d.items))
+      .catch(() => undefined);
+  }, [board?.client_id]);
 
   // поллинг обрабатывающихся работ
   useEffect(() => {
@@ -357,6 +373,22 @@ export function BoardEditor() {
               {clients.map((client) => (
                 <option key={client.id} value={client.id}>
                   {client.name}
+                </option>
+              ))}
+            </select>
+            {/* Заявка, ради которой доска сделана. Список — только заявки
+                выбранного клиента: чужие в этом окне лишь мешают. */}
+            <label className="label" style={{ marginTop: 12 }}>{t("deal")}</label>
+            <select
+              className="select"
+              style={{ height: 32 }}
+              value={board.deal_id ?? ""}
+              onChange={(e) => void patchBoard({ deal_id: e.target.value ? Number(e.target.value) : null })}
+            >
+              <option value="">{t("noDealLink")}</option>
+              {clientDeals.map((deal) => (
+                <option key={deal.id} value={deal.id}>
+                  {deal.title}
                 </option>
               ))}
             </select>

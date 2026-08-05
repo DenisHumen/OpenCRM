@@ -3,9 +3,10 @@ from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from core import exceptions as errors
-from core.services import client_service
+from core.services import client_service, settings_service
 from database.models import User
 from database.repositories import clients as clients_repo
+from database.repositories import deals as deals_repo
 from web.api import schemas
 from web.api.deps import get_db, require_root, require_staff
 
@@ -50,6 +51,10 @@ def get_client(
     data = schemas.client_out(client)
     data["recent_notes"] = [schemas.note_out(n) for n in notes]
     data["files"] = [schemas.file_out(f) for f in files]
+    # Заявки клиента прямо в карточке: без них «что мы для него делали» —
+    # вопрос к памяти, а не к системе.
+    data["deals"] = [schemas.deal_out(d) for d in deals_repo.for_client(db, client_id)]
+    data["currency"] = settings_service.get_all(db).get("currency", "USD")
     return data
 
 

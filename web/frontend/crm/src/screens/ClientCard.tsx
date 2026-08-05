@@ -6,7 +6,15 @@ import { Icon } from "../components/Icon";
 import { Avatar, Chip, ConfirmModal, EmptyState, ScreenLoading } from "../components/ui";
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
-import { fileExt, fileSize, formatDate, formatDateTime, initials } from "../lib/format";
+import {
+  fileExt,
+  fileSize,
+  formatDate,
+  formatDateTime,
+  formatMoney,
+  initials,
+  relativeDay,
+} from "../lib/format";
 
 const NOTE_ICONS: Record<string, string> = { note: "note", call: "call", meeting: "meeting", email: "email" };
 
@@ -18,7 +26,8 @@ export function ClientCard() {
   const [notes, setNotes] = useState<any[]>([]);
   const [files, setFiles] = useState<any[]>([]);
   const [boards, setBoards] = useState<any[]>([]);
-  const [tab, setTab] = useState<"history" | "files" | "boards">("history");
+  const [deals, setDeals] = useState<any[]>([]);
+  const [tab, setTab] = useState<"history" | "files" | "boards" | "deals">("history");
   const [draft, setDraft] = useState("");
   const [draftKind, setDraftKind] = useState("note");
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -34,6 +43,8 @@ export function ClientCard() {
       setNotes(notesData.items);
       const boardsData = await api.get(`/boards?client_id=${id}`);
       setBoards(boardsData.items);
+      // Заявки приходят вместе с карточкой — отдельный запрос не нужен.
+      setDeals(data.deals ?? []);
     } catch (e) {
       toastError(e);
       navigate("/clients");
@@ -174,6 +185,12 @@ export function ClientCard() {
           {t("boards")}
           {boards.length > 0 && <span className="count">{boards.length}</span>}
         </button>
+        {/* Заявки клиента: за год их бывает пять, и «что мы для него делали»
+            должно быть вопросом к системе, а не к памяти. */}
+        <button className={"tab" + (tab === "deals" ? " active" : "")} onClick={() => setTab("deals")}>
+          {t("deals")}
+          {deals.length > 0 && <span className="count">{deals.length}</span>}
+        </button>
       </div>
 
       {tab === "history" && (
@@ -298,6 +315,32 @@ export function ClientCard() {
               <EmptyState title={t("noBoardsYet")} />
             </div>
           )}
+        </div>
+      )}
+
+      {tab === "deals" && (
+        <div className="list-card">
+          {deals.map((deal) => (
+            <Link to={`/deals/${deal.id}`} key={deal.id} className="list-row hoverable">
+              <div className="list-row-text">
+                <div className="truncate" style={{ color: "var(--text)", fontSize: 13.5, fontWeight: 500 }}>
+                  {deal.title}
+                </div>
+                <div className="truncate" style={{ color: "var(--faint)", fontSize: 12 }}>
+                  {deal.manager_name || t("nobody")}
+                </div>
+              </div>
+              {deal.amount !== null && (
+                <span style={{ color: "var(--muted)", fontSize: 12.5, flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>
+                  {formatMoney(deal.amount, client.currency || "USD", locale)}
+                </span>
+              )}
+              <span style={{ width: 90, textAlign: "right", color: "var(--faint)", fontSize: 12, flexShrink: 0 }}>
+                {relativeDay(deal.created_at, locale)}
+              </span>
+            </Link>
+          ))}
+          {deals.length === 0 && <EmptyState title={t("noDeals")} />}
         </div>
       )}
 

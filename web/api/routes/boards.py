@@ -50,7 +50,7 @@ def create_board(
     db: Session = Depends(get_db),
 ):
     board = board_service.create_board(
-        db, user, payload.title, payload.description or "", payload.client_id
+        db, user, payload.title, payload.description or "", payload.client_id, payload.deal_id
     )
     return schemas.board_out(board, works_count=0)
 

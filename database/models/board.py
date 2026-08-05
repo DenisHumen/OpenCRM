@@ -24,6 +24,17 @@ class Board(Base):
     client_id: Mapped[int | None] = mapped_column(
         ForeignKey("clients.id", ondelete="SET NULL"), nullable=True, index=True
     )
+    # Заявка, ради которой доска сделана. Необязательная и останется такой:
+    # у клиента за год бывает пять заказов, и без этой связи все его доски
+    # лежат одной кучей — непонятно, какая к чему относится.
+    #
+    # Привязка к клиенту при этом сохраняется отдельным полем, а не заменяется
+    # на «клиента возьмём из заявки». Доски существовали до заявок, у них
+    # заявки нет и не появится, а выдумывать её задним числом значит засорить
+    # воронку записями, которых в жизни не было.
+    deal_id: Mapped[int | None] = mapped_column(
+        ForeignKey("deals.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     created_by: Mapped[int | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )

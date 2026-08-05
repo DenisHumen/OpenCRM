@@ -21,13 +21,21 @@ def get_board(db: Session, board_id: int) -> Board:
     return board
 
 
-def create_board(db: Session, author: User, title: str, description: str = "", client_id: int | None = None) -> Board:
+def create_board(
+    db: Session,
+    author: User,
+    title: str,
+    description: str = "",
+    client_id: int | None = None,
+    deal_id: int | None = None,
+) -> Board:
     if not title.strip():
         raise errors.ValidationError("Title is required", code="title_required")
     board = Board(
         title=title.strip(),
         description=(description or "").strip(),
         client_id=client_id,
+        deal_id=deal_id,
         created_by=author.id,
         is_published=False,
     )
@@ -46,6 +54,9 @@ def update_board(db: Session, board_id: int, data: dict) -> Board:
         board.description = data["description"].strip()
     if "client_id" in data:
         board.client_id = data["client_id"]
+    # Привязку к заявке можно и снять: доска переехала или создавалась не под неё.
+    if "deal_id" in data:
+        board.deal_id = data["deal_id"]
     if "is_published" in data and data["is_published"] is not None:
         board.is_published = bool(data["is_published"])
     if "cover_work_id" in data:
