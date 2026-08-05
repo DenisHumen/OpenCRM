@@ -190,6 +190,26 @@ def test_repair_detects_stranded_media_not_only_the_database():
     assert '_dir_has_data "$1/storage"' in repair, "медиа не учитывается при поиске"
 
 
+def test_repair_fixes_autoupdate_paths_and_service_user():
+    """Автообновление помнит пути отдельно от docker/.env.
+
+    Внутри autoupdate.env лежит OPENCRM_HOME, записанный при установке под
+    sudo. Обновлятор берёт каталог состояния оттуда и падает с «Permission
+    denied: /root/opencrm/updates», когда всё остальное уже починено.
+
+    А в systemd-юните прописан User. Остался root — демон продолжит работать от
+    root и заново создаст root-овские файлы, отменив починку на первом же тике.
+    Это то место, где не поправить значит не починить вовсе.
+    """
+    text = source()
+    repair = text[text.index("cmd_repair()") : text.index("cmd_doctor()")]
+    assert 'env_set "$_auto_env" OPENCRM_HOME' in repair, "путь в autoupdate.env не правится"
+    assert 'env_set "$_auto_env" OPENCRM_UPDATE_PROJECT_DIR' in repair
+    assert "opencrm-autoupdate.service" in repair, "юнит остаётся с прежним User"
+    assert "s#^User=.*#User=$_owner#" in repair, "User в юните не переписывается"
+    assert "daemon-reload" in repair, "systemd не перечитает изменённый юнит"
+
+
 def test_repair_never_deletes_anything():
     """Аварийный инструмент на боевом сервере. Переносить — можно, удалять — нет."""
     text = source()

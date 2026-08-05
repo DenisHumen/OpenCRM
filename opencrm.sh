@@ -1456,6 +1456,36 @@ cmd_repair() {
     $SUDO chown "$_want_uid:$_want_gid" "$DOCKER_ENV"
     ok "UID $_want_uid:$_want_gid, $_want_home"
 
+    # Автообновление помнит пути отдельно от docker/.env, и там остался /root.
+    #
+    # Мало переставить владельца файла: внутри лежит OPENCRM_HOME, записанный
+    # при установке под sudo. Обновлятор берёт каталог состояния именно оттуда и
+    # упирается в «Permission denied: /root/opencrm/updates» — при том, что всё
+    # остальное уже починено.
+    _auto_env="$_want_home/autoupdate.env"
+    if $SUDO test -f "$_auto_env"; then
+        env_set "$_auto_env" OPENCRM_HOME "$_want_home"
+        env_set "$_auto_env" OPENCRM_UPDATE_PROJECT_DIR "$REPO_DIR"
+        chmod 600 "$_auto_env"
+        ok "$(tr_ "автообновление: пути исправлены" "auto-update: paths fixed")"
+    fi
+
+    # И сам юнит. Под sudo в нём прописался User=root — демон продолжил бы
+    # работать от root и заново создавать root-овские файлы, отменяя починку на
+    # первом же тике. Это единственное место, где не поправить значит не
+    # починить вовсе.
+    _unit=/etc/systemd/system/opencrm-autoupdate.service
+    if has_systemd && $SUDO test -f "$_unit"; then
+        $SUDO sed -i \
+            -e "s#^User=.*#User=$_owner#" \
+            -e "s#^WorkingDirectory=.*#WorkingDirectory=$REPO_DIR#" \
+            -e "s#^EnvironmentFile=.*#EnvironmentFile=$_auto_env#" \
+            "$_unit"
+        $SUDO systemctl daemon-reload
+        $SUDO systemctl restart opencrm-autoupdate >/dev/null 2>&1 || true
+        ok "$(tr_ "служба автообновления: работает от $_owner" "auto-update service: runs as $_owner")"
+    fi
+
     step "$(tr_ "Запуск" "Starting")"
     compose up -d
     if wait_health 90; then
