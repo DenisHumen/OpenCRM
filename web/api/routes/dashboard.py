@@ -3,7 +3,13 @@ from datetime import timedelta
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from core.services import board_service, settings_service
+from core.services import (
+    board_service,
+    modules_service,
+    pipeline_service,
+    settings_service,
+    task_service,
+)
 from core.utils import now_utc
 from database.models import User
 from database.repositories import boards as boards_repo
@@ -17,7 +23,7 @@ router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
 
 @router.get("")
-def dashboard(_: User = Depends(require_staff), db: Session = Depends(get_db)):
+def dashboard(user: User = Depends(require_staff), db: Session = Depends(get_db)):
     now = now_utc()
     week_ago = now - timedelta(days=7)
     two_weeks_ago = now - timedelta(days=14)
@@ -47,10 +53,39 @@ def dashboard(_: User = Depends(require_staff), db: Session = Depends(get_db)):
     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     money = deals_repo.money_summary(db, month_start)
 
+    # Воронка целиком, включая пустые этапы: «в согласовании ноль» — это тоже
+    # ответ, и чаще всего именно он и нужен. Показывай только непустые — и
+    # провал в середине воронки станет невидимым.
+    counts = deals_repo.stage_counts(db)
+    stages = [
+        {
+            "key": stage.key,
+            "name": stage.name,
+            "kind": stage.kind,
+            "count": counts.get(stage.key, 0),
+        }
+        for stage in pipeline_service.list_stages(db)
+    ]
+
+    # Задачи — того, кто смотрит: «мои на сегодня» отвечают на вопрос «с чего
+    # начать», а общий список по всей фирме на него не отвечает.
+    my_tasks: list[dict] = []
+    if modules_service.is_enabled(db, "tasks"):
+        my_tasks = [
+            schemas.task_out(task)
+            for task in task_service.search(
+                db, scope="today", assignee_id=user.id, limit=6
+            )
+        ]
+
     return {
         "currency": settings_service.get_all(db).get("currency", "USD"),
         "money_in_work": money["in_work"],
         "money_won_this_month": money["won_since"],
+        "avg_check": money["avg_check"],
+        "won_count_this_month": money["won_count_priced"],
+        "deals_by_stage": stages,
+        "my_tasks": my_tasks,
         "clients_total": clients_total,
         "clients_this_month": clients_this_month,
         "boards_total": boards_total,

@@ -572,7 +572,28 @@ button { font-family: var(--sans); }
 .disk-blocked { display: flex; align-items: center; gap: 7px; margin-top: 12px; padding: 8px 12px; border-radius: 8px; background: rgba(229, 105, 94, 0.13); color: var(--danger); font-size: 12.5px; }
 
 /* Метрики дашборда */
-.metric-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin-bottom: 12px; } /* было 16/16 */
+/* Карточек стало четыре (деньги в работе, закрыто, средний чек, клиенты).
+   auto-fit вместо жёстких колонок: на узком экране они перестраиваются сами,
+   а не сжимаются до нечитаемых сумм. */
+.metric-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; margin-bottom: 12px; }
+
+/* Воронка: этап, число сделок и полоса длиной в долю от самого населённого */
+.funnel { display: flex; flex-direction: column; gap: 2px; }
+.funnel-step { position: relative; display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 7px; text-decoration: none; overflow: hidden; }
+.funnel-step:hover { background: var(--surface); }
+.funnel-count { position: relative; min-width: 34px; font-size: 14px; font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; }
+.funnel-name { position: relative; flex: 1; min-width: 0; font-size: 13px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* полоса под текстом, а не рядом: так длина читается, не отнимая места у названия */
+.funnel-bar { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 7px; background: rgba(217, 119, 87, 0.14); }
+.funnel-step.kind-won .funnel-bar { background: rgba(88, 180, 124, 0.16); }
+.funnel-step.kind-lost .funnel-bar { background: rgba(229, 105, 94, 0.13); }
+
+/* Мои задачи на сегодня */
+.dash-tasks { display: flex; flex-direction: column; gap: 1px; }
+.dash-task { display: flex; align-items: center; gap: 9px; padding: 7px 10px; border-radius: 7px; font-size: 13px; color: var(--text); text-decoration: none; }
+.dash-task:hover { background: var(--surface); }
+.dash-task > span:first-of-type { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dash-task-due { font-size: 12px; color: var(--faint); flex-shrink: 0; }
 .metric-title { display: flex; align-items: center; gap: 5px; color: var(--muted); font-size: 13px; }  /* было 14 */
 .metric-value { color: var(--num); font-size: 27px; font-weight: 600; letter-spacing: -0.02em; line-height: 1; } /* было 30 */
 .metric-sub { color: var(--sub); font-size: 12px; margin-top: 7px; }

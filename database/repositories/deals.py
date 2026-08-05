@@ -77,7 +77,7 @@ def amount_by_stage(db: Session) -> dict[str, int]:
     return {stage: int(total or 0) for stage, total in rows}
 
 
-def money_summary(db: Session, since) -> dict[str, int]:
+def money_summary(db: Session, since) -> dict[str, int | None]:
     """Деньги для сводки: сколько в работе и сколько выиграно с даты.
 
     Считаем по ВИДУ этапа, а не по названию: у каждого бизнеса воронка своя, и
@@ -93,9 +93,32 @@ def money_summary(db: Session, since) -> dict[str, int]:
             query = query.where(Deal.closed_at >= closed_since)
         return int(db.scalar(query) or 0)
 
+    # Знаменатель среднего чека — сделки с НАЗВАННОЙ суммой. `count(amount)`
+    # не считает NULL, и это здесь главное: «сумму ещё не назвали» — не то же
+    # самое, что «работа бесплатная». Возьми в знаменатель все выигранные — и
+    # каждая сделка без цены будет тихо занижать средний чек.
+    priced_won = int(
+        db.scalar(
+            select(func.count(Deal.amount))
+            .join(PipelineStage, PipelineStage.key == Deal.stage)
+            .where(
+                Deal.deleted_at.is_(None),
+                PipelineStage.kind == KIND_WON,
+                Deal.closed_at >= since,
+            )
+        )
+        or 0
+    )
+    won_since = total(KIND_WON, since)
+
     return {
         "in_work": total(KIND_OPEN),
-        "won_since": total(KIND_WON, since),
+        "won_since": won_since,
+        "won_count_priced": priced_won,
+        # Без единой сделки с ценой среднего чека нет — и это НЕ ноль. Ноль
+        # прочитают как «работаем даром», а верный ответ — «пока не о чем
+        # говорить».
+        "avg_check": round(won_since / priced_won) if priced_won else None,
     }
 
 
