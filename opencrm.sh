@@ -909,9 +909,20 @@ issue_certificate() {
 
     step "$(tr_ "HTTPS для $_domain" "HTTPS for $_domain")"
     _home=$(home_dir)
-    if [ -d "$_home/letsencrypt/live/$_domain" ]; then
+    # Проверяем сам файл, а не каталог, и ровно тот же, что смотрит nginx
+    # (docker/nginx/entrypoint.sh). Каталог live/<домен>/ остаётся после
+    # оборванного выпуска и от переезда со старого сервера, а сертификата в нём
+    # нет. По каталогу выходил тупик: скрипт отвечал «уже выпущен» и не делал
+    # ничего, nginx не находил файл и не поднимал 443, а человек оставался без
+    # HTTPS и без объяснения.
+    if $SUDO test -f "$_home/letsencrypt/live/$_domain/fullchain.pem"; then
         ok "$(tr_ "сертификат уже выпущен" "certificate already issued")"
         return 0
+    fi
+    if $SUDO test -d "$_home/letsencrypt/live/$_domain"; then
+        warn "$(tr_ \
+            "каталог сертификата есть, а самого сертификата нет — выпускаю заново" \
+            "the certificate directory exists but the certificate does not — issuing again")"
     fi
 
     # Let's Encrypt проверяет домен по HTTP, и если A-запись смотрит не сюда,
