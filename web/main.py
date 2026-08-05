@@ -28,6 +28,7 @@ from web.api.routes import (
     pipeline,
     clients,
     dashboard,
+    reports,
     search,
     shares,
     site_settings,
@@ -255,6 +256,7 @@ def create_app() -> FastAPI:
     app.include_router(pipeline.router, prefix=api_prefix)
     app.include_router(people.router, prefix=api_prefix)
     app.include_router(documents.router, prefix=api_prefix)
+    app.include_router(reports.router, prefix=api_prefix)
     app.include_router(shares.router, prefix=api_prefix)
     app.include_router(modules.router, prefix=api_prefix)
     app.include_router(site_settings.router, prefix=api_prefix)

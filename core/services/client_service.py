@@ -8,7 +8,7 @@ from core.security import tokens
 from core.services import storage_service
 from core.utils import now_utc
 from database.models import Client, ClientFile, ClientNote, User
-from database.models.client import NOTE_KINDS
+from database.models.client import MAX_SOURCE, NOTE_KINDS
 from database.models.user import ROLE_ROOT
 from database.repositories import clients as clients_repo
 
@@ -37,6 +37,7 @@ def create_client(db: Session, data: dict, author: User) -> Client:
         email=(data.get("email") or "").strip(),
         messenger=(data.get("messenger") or "").strip(),
         tags=_normalize_tags(data.get("tags")),
+        source=_normalize_source(data.get("source")),
         manager_id=data.get("manager_id") or author.id,
     )
     db.add(client)
@@ -54,6 +55,10 @@ def update_client(db: Session, client_id: int, data: dict) -> Client:
             setattr(client, field, value)
     if "tags" in data and data["tags"] is not None:
         client.tags = _normalize_tags(data["tags"])
+    # Источник снимается присланным null или пустой строкой — «выяснили, что
+    # спрашивать было не у кого» бывает не реже, чем «выяснили откуда».
+    if "source" in data:
+        client.source = _normalize_source(data["source"])
     if "manager_id" in data:
         client.manager_id = data["manager_id"]
     client.updated_at = now_utc()
@@ -80,6 +85,24 @@ def _normalize_tags(tags) -> str:
         parts = list(tags)
     cleaned = [p.strip() for p in parts if p and p.strip()]
     return ",".join(dict.fromkeys(cleaned))  # без дубликатов, порядок сохранён
+
+
+def _normalize_source(value) -> str | None:
+    """Источник клиента в стабильный ключ или None.
+
+    Пустая строка превращается в None намеренно: форма присылает "" при выборе
+    «не указан», а хранить пустую строку рядом с NULL значило бы завести два
+    разных «не знаю», по которым отчёт дал бы две строки вместо одной.
+
+    Своё значение не приводим к латинице, в отличие от ключей этапов: оно
+    никуда не уходит из базы, кроме отчёта и выгрузки, — а вот пропущенное
+    через транслитерацию «Радио» превратилось бы в нечитаемое. Плата за это
+    честная и указана в модели: пока справочника нет, ключ своего источника и
+    есть его название.
+    """
+    if value is None:
+        return None
+    return (str(value).strip()[:MAX_SOURCE]) or None
 
 
 # --- заметки / история взаимодействий ---

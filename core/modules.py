@@ -56,9 +56,10 @@ MODULES: tuple[Module, ...] = (
     # задача, и клиент с заявкой ей не нужны.
     Module(key="tasks"),
     Module(key="boards", default=True),
+    # Отчёты считаются по заявкам и их этапам — без заявок считать нечего.
+    Module(key="reports", requires=("deals",)),
     # --- в разработке ---
     Module(key="warehouse", ready=False, default=False, requires=("deals",)),
-    Module(key="reports", ready=False, default=True, requires=("deals",)),
     Module(key="mail", ready=False, default=False, requires=("clients",)),
     Module(key="telephony", ready=False, default=False, requires=("clients",)),
 )

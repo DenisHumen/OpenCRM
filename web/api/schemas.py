@@ -54,6 +54,9 @@ class ClientIn(BaseModel):
     email: str | None = None
     messenger: str | None = None
     tags: str | list[str] | None = None
+    # Откуда пришёл: ключ из справочника или своё слово. Пусто и null означают
+    # одно — «не спросили»; это НЕ то же самое, что источник «другое».
+    source: str | None = None
     manager_id: int | None = None
 
 
@@ -130,6 +133,7 @@ class ClientPatchIn(BaseModel):
     email: str | None = None
     messenger: str | None = None
     tags: str | list[str] | None = None
+    source: str | None = None
     manager_id: int | None = None
 
 
@@ -219,6 +223,9 @@ def client_out(client: Client) -> dict:
         "email": client.email,
         "messenger": client.messenger,
         "tags": [t for t in client.tags.split(",") if t],
+        # null, а не пустая строка: интерфейс обязан отличать «не спросили» от
+        # выбранного источника, а пустая строка выглядит как выбор.
+        "source": client.source,
         "manager_id": client.manager_id,
         "created_at": _iso(client.created_at),
         "updated_at": _iso(client.updated_at),

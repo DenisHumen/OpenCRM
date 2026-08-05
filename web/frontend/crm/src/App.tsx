@@ -20,6 +20,7 @@ import { DocumentCard } from "./screens/DocumentCard";
 import { Documents } from "./screens/Documents";
 import { Files } from "./screens/Files";
 import { Profile } from "./screens/Profile";
+import { Reports } from "./screens/Reports";
 import {
   SettingsBrand,
   SettingsContacts,
@@ -129,6 +130,9 @@ export default function App() {
           <Route element={<ModuleRoute module="boards" />}>
             <Route path="/boards" element={<Boards />} />
             <Route path="/boards/:id" element={<BoardEditor />} />
+          </Route>
+          <Route element={<ModuleRoute module="reports" />}>
+            <Route path="/reports" element={<Reports />} />
           </Route>
           <Route path="/profile" element={<Profile />} />
           <Route element={<RootOnly />}>

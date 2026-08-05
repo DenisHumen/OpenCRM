@@ -227,6 +227,11 @@ export function Sidebar({ onOpenSearch }: { onOpenSearch: () => void }) {
   if (moduleOn(modules, "boards")) {
     work.push({ to: "/boards", label: t("boards"), icon: "boards" });
   }
+  // Отчёты последними в «Работе»: за ними приходят не каждый день, а когда
+  // сводят месяц, — и они читают то, что накопили разделы выше.
+  if (moduleOn(modules, "reports")) {
+    work.push({ to: "/reports", label: t("reports"), icon: "analytics" });
+  }
 
   const admin: NavItem[] = [];
   if (isRoot) {
