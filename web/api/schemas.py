@@ -15,6 +15,8 @@ from database.models import (
     Deal,
     DealStageChange,
     Document,
+    MailAccount,
+    MailMessage,
     PipelineStage,
     ShareLink,
     ShareView,
@@ -446,6 +448,58 @@ def view_out(view: ShareView) -> dict:
         "visitor": view.ip_hash[:12],  # анонимный идентификатор посетителя
         "user_agent": view.user_agent,
     }
+
+
+def mail_account_out(account: MailAccount) -> dict:
+    """Ящик наружу. Пароля здесь нет и быть не может — только признак «задан».
+
+    Единственная сериализация MailAccount в проекте: поле, не перечисленное
+    здесь, наружу не уедет ни списком, ни карточкой. Поэтому словарь собирается
+    руками, а не отдаётся модель через `from_attributes`, где новая колонка
+    попала бы в ответ сама — а следующей такой колонкой может оказаться секрет.
+    """
+    return {
+        "id": account.id,
+        "title": account.title,
+        "address": account.address,
+        "imap_host": account.imap_host,
+        "imap_port": account.imap_port,
+        "imap_ssl": account.imap_ssl,
+        "smtp_host": account.smtp_host,
+        "smtp_port": account.smtp_port,
+        "smtp_ssl": account.smtp_ssl,
+        "login": account.login,
+        "has_password": account.password_encrypted is not None,
+        "is_active": account.is_active,
+        "last_sync_at": _iso(account.last_sync_at),
+        "last_error": account.last_error,
+        "last_error_at": _iso(account.last_error_at),
+        "created_at": _iso(account.created_at),
+        "updated_at": _iso(account.updated_at),
+    }
+
+
+def mail_message_out(message: MailMessage, with_body: bool = False) -> dict:
+    """Письмо. Тела отдаются только в карточке: в списке они не нужны и весят."""
+    data = {
+        "id": message.id,
+        "account_id": message.account_id,
+        "message_id": message.message_id,
+        "direction": message.direction,
+        "subject": message.subject,
+        "from_addr": message.from_addr,
+        "to_addrs": [a for a in (x.strip() for x in message.to_addrs.split(",")) if a],
+        "sent_at": _iso(message.sent_at),
+        "has_attachments": message.has_attachments,
+        "client_id": message.client_id,
+        "deal_id": message.deal_id,
+        "is_read": message.is_read,
+        "created_at": _iso(message.created_at),
+    }
+    if with_body:
+        data["body_text"] = message.body_text
+        data["body_html"] = message.body_html
+    return data
 
 
 def media_file_out(item: dict) -> dict:

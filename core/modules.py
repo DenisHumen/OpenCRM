@@ -58,9 +58,12 @@ MODULES: tuple[Module, ...] = (
     Module(key="boards", default=True),
     # Отчёты считаются по заявкам и их этапам — без заявок считать нечего.
     Module(key="reports", requires=("deals",)),
+    # Почта. Выключена у нового пользователя: ящик фирмы есть не у всех, а
+    # включённый блок без настроенного ящика — пустой раздел в меню. Стоит на
+    # клиентах: письмо привязывается к клиенту по адресу и ложится в его ленту.
+    Module(key="mail", default=False, requires=("clients",)),
     # --- в разработке ---
     Module(key="warehouse", ready=False, default=False, requires=("deals",)),
-    Module(key="mail", ready=False, default=False, requires=("clients",)),
     Module(key="telephony", ready=False, default=False, requires=("clients",)),
 )
 

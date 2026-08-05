@@ -19,6 +19,8 @@ import { Deals } from "./screens/Deals";
 import { DocumentCard } from "./screens/DocumentCard";
 import { Documents } from "./screens/Documents";
 import { Files } from "./screens/Files";
+import { Mail } from "./screens/Mail";
+import { Mailboxes } from "./screens/Mailboxes";
 import { Profile } from "./screens/Profile";
 import { Reports } from "./screens/Reports";
 import {
@@ -134,6 +136,9 @@ export default function App() {
           <Route element={<ModuleRoute module="reports" />}>
             <Route path="/reports" element={<Reports />} />
           </Route>
+          <Route element={<ModuleRoute module="mail" />}>
+            <Route path="/mail" element={<Mail />} />
+          </Route>
           <Route path="/profile" element={<Profile />} />
           <Route element={<RootOnly />}>
             <Route path="/staff" element={<Staff />} />
@@ -144,6 +149,10 @@ export default function App() {
                 там одна кнопка «Сохранить» на всю группу, а переключатель блока
                 применяется сразу — общая кнопка вводила бы в заблуждение. */}
             <Route path="/settings/modules" element={<SettingsModules />} />
+            {/* Ящики — настройка блока, а не сам блок: доступны и при
+                выключенной почте, иначе включать было бы нечего настраивать.
+                ModuleRoute тут намеренно нет. */}
+            <Route path="/settings/mailboxes" element={<Mailboxes />} />
             {/* разделов настроек будет больше — каждый своим маршрутом,
                 чтобы на них можно было сослаться и открыть из сайдбара */}
             <Route path="/settings" element={<SettingsLayout />}>

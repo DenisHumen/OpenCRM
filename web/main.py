@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request, Response
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
@@ -23,6 +24,7 @@ from web.api.routes import (
     companies,
     deals,
     documents,
+    mail,
     modules,
     people,
     pipeline,
@@ -128,6 +130,43 @@ def create_app() -> FastAPI:
         return JSONResponse(
             status_code=exc.http_status,
             content={"error": {"code": exc.code, "message": exc.message}},
+        )
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_error_handler(_request: Request, exc: RequestValidationError):
+        """Ответ о неверном запросе не должен содержать сам запрос.
+
+        FastAPI по умолчанию кладёт в ошибку поле `input` — присланное тело
+        целиком. На форме «укажите телефон» это безобидно, а на входе в систему
+        означает вот что: послали `{"password": "..."}` без адреса — и пароль
+        вернулся клиенту в теле ответа 422. Оттуда он попадает в журнал
+        обратного прокси, в отчёт об ошибке на фронтенде и в консоль браузера,
+        то есть переживает и сам запрос, и того, кто его послал. То же с
+        паролём от почтового ящика.
+
+        Клиенту нужно знать, ЧТО не так и ГДЕ, а не что именно он прислал —
+        это он и так знает. Поэтому оставляем место ошибки и её вид, а `input`
+        и `ctx` (туда Pydantic тоже кладёт значения) отбрасываем целиком.
+        Отбрасываем списком «что оставить», а не «что убрать»: при обновлении
+        Pydantic новое поле с данными не просочится само.
+        """
+        details = [
+            {
+                "loc": [str(part) for part in error.get("loc", ())],
+                "type": error.get("type", ""),
+                "msg": error.get("msg", ""),
+            }
+            for error in exc.errors()
+        ]
+        return JSONResponse(
+            status_code=422,
+            content={
+                "error": {
+                    "code": "validation_error",
+                    "message": "Request body is invalid",
+                    "details": details,
+                }
+            },
         )
 
     # Пути, которые работают даже при закрытом на обслуживание сайте.
@@ -257,6 +296,7 @@ def create_app() -> FastAPI:
     app.include_router(people.router, prefix=api_prefix)
     app.include_router(documents.router, prefix=api_prefix)
     app.include_router(reports.router, prefix=api_prefix)
+    app.include_router(mail.router, prefix=api_prefix)
     app.include_router(shares.router, prefix=api_prefix)
     app.include_router(modules.router, prefix=api_prefix)
     app.include_router(site_settings.router, prefix=api_prefix)

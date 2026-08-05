@@ -16,13 +16,15 @@ import {
   initials,
   relativeDay,
 } from "../lib/format";
+import { moduleOn } from "../lib/modules";
 import { term } from "../lib/terms";
+import { MailCompose, type MailAccount } from "./Mail";
 
 const NOTE_ICONS: Record<string, string> = { note: "note", call: "call", meeting: "meeting", email: "email" };
 
 export function ClientCard() {
   const { id } = useParams();
-  const { t, locale, user, workspace, toast, toastError } = useApp();
+  const { t, locale, user, workspace, modules, toast, toastError } = useApp();
   const navigate = useNavigate();
   const [client, setClient] = useState<any>(null);
   const [notes, setNotes] = useState<any[]>([]);
@@ -34,7 +36,10 @@ export function ClientCard() {
   const [draftKind, setDraftKind] = useState("note");
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [composing, setComposing] = useState(false);
+  const [mailAccounts, setMailAccounts] = useState<MailAccount[]>([]);
   const fileInput = useRef<HTMLInputElement>(null);
+  const hasMail = moduleOn(modules, "mail");
 
   const load = useCallback(async () => {
     try {
@@ -56,6 +61,16 @@ export function ClientCard() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  // Список ящиков нужен только выбору отправителя и доступен только root.
+  // Не ответило — форма всё равно работает: сервер возьмёт первый активный ящик.
+  useEffect(() => {
+    if (!hasMail) return;
+    api
+      .get("/mail/accounts")
+      .then((data) => setMailAccounts(data.items))
+      .catch(() => setMailAccounts([]));
+  }, [hasMail]);
 
   if (!client) return <ScreenLoading />;
 
@@ -134,6 +149,14 @@ export function ClientCard() {
           </div>
         </div>
         <div style={{ display: "flex", gap: 10, position: "relative" }}>
+          {/* Письмо пишем прямо отсюда: отправленное ляжет в эту же ленту
+              строкой «письмо · исходящее», а не в отдельную переписку. */}
+          {hasMail && client.email && (
+            <button className="btn btn-secondary" onClick={() => setComposing(true)}>
+              <Icon name="send" size={14} />
+              {t("compose")}
+            </button>
+          )}
           <button
             className="btn btn-primary"
             onClick={async () => {
@@ -354,6 +377,16 @@ export function ClientCard() {
           ))}
           {deals.length === 0 && <EmptyState title={term(workspace.deal_term, locale, "none")} />}
         </div>
+      )}
+
+      {composing && (
+        <MailCompose
+          accounts={mailAccounts}
+          to={client.email}
+          clientId={client.id}
+          onClose={() => setComposing(false)}
+          onSent={() => void load()}
+        />
       )}
 
       {confirmDelete && (
