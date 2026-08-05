@@ -76,6 +76,25 @@ def test_repair_writes_back_all_three_broken_values():
         assert f'env_set "$DOCKER_ENV" {key}' in repair, f"{key} не восстанавливается"
 
 
+def test_repair_looks_into_root_home_with_sudo():
+    """Каталог /root закрыт (0700), и обычный `[ -d /root/opencrm/data ]` от
+    имени пользователя отвечает «нет» не потому, что каталога нет, а потому что
+    туда не заглянуть.
+
+    На этом починка уже обожглась на боевом сервере: не увидела базу в
+    /root/opencrm, отрапортовала «путь исправим» и оставила сайт с пустым
+    каталогом. Данные были целы, но выглядело это как их потеря.
+    """
+    text = source()
+    repair = text[text.index("cmd_repair()") : text.index("cmd_doctor()")]
+    assert "_dir_has_data()" in repair, "проверка наличия данных снова инлайновая"
+    assert '$SUDO test -d "$1"' in repair, "существование каталога проверяется без sudo"
+    assert '$SUDO test -e "$_source/$_item"' in repair, "перенос проверяет источник без sudo"
+    # Путь в .env мог быть уже исправлен прошлым запуском починки, а данные
+    # остаться в /root — поэтому известное плохое место проверяется отдельно.
+    assert "_root_home" in repair, "починка ищет данные только по записи в .env"
+
+
 def test_repair_never_deletes_anything():
     """Аварийный инструмент на боевом сервере. Переносить — можно, удалять — нет."""
     text = source()
