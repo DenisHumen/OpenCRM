@@ -76,6 +76,40 @@ def test_repair_writes_back_all_three_broken_values():
         assert f'env_set "$DOCKER_ENV" {key}' in repair, f"{key} не восстанавливается"
 
 
+def test_certbot_is_run_with_its_entrypoint_overridden():
+    """Сервис certbot объявляет entrypoint — бесконечный цикл продления, а
+    `docker compose run` подменяет команду, а не entrypoint.
+
+    Без `--entrypoint certbot` аргументы `certonly ...` уезжают в позиционные
+    параметры `sh -c` и не выполняются вовсе: контейнер запускает продление
+    навечно, выпуск висит на «Created», сертификат не появляется никогда.
+    А без файла сертификата nginx не поднимает 443 — снаружи сайт выглядит
+    недоступным по HTTPS. Именно так и случилось на боевом сервере.
+
+    Проверяем и код, и напечатанные подсказки: команду из подсказки человек
+    скопирует и получит тот же вечный цикл.
+    """
+    root = SCRIPT.parent
+    places = [
+        SCRIPT,
+        root / "docker" / "docker-compose.yml",
+        root / "docker" / "nginx" / "entrypoint.sh",
+    ]
+    for path in places:
+        if not path.exists():
+            continue
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if "certonly" not in line:
+                continue
+            # интересует только строка, которая действительно запускает контейнер
+            if "compose run" not in line and "run --rm" not in line:
+                continue
+            assert "--entrypoint" in line, (
+                f"{path.name}: `compose run` для certbot без --entrypoint — "
+                f"выпуск сертификата повиснет:\n{line.strip()}"
+            )
+
+
 def test_repair_looks_into_root_home_with_sudo():
     """Каталог /root закрыт (0700), и обычный `[ -d /root/opencrm/data ]` от
     имени пользователя отвечает «нет» не потому, что каталога нет, а потому что

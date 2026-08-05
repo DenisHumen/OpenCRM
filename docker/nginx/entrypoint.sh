@@ -22,7 +22,9 @@ else
         echo "[opencrm-nginx] OPENCRM_DOMAIN не задан — работаю по HTTP (годится для сети и по IP)"
     else
         echo "[opencrm-nginx] сертификата для ${DOMAIN} ещё нет — работаю по HTTP."
-        echo "[opencrm-nginx] выпустить: docker compose run --rm certbot certonly \\"
+        # --entrypoint обязателен: entrypoint сервиса certbot — цикл продления,
+        # а `run` подменяет команду, а не его. Без флага выпуск просто виснет.
+        echo "[opencrm-nginx] выпустить: docker compose run --rm --entrypoint certbot certbot certonly \\"
         echo "[opencrm-nginx]     --webroot -w /var/www/certbot -d ${DOMAIN} --agree-tos --no-eff-email --email ВАША@ПОЧТА"
         echo "[opencrm-nginx] после выпуска: docker compose restart nginx"
     fi
