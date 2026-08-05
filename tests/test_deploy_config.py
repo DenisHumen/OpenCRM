@@ -16,6 +16,7 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 COMPOSE = ROOT / "docker" / "docker-compose.yml"
 LOCATIONS = ROOT / "docker" / "nginx" / "templates" / "locations.inc"
+HTTPS_TEMPLATE = ROOT / "docker" / "nginx" / "templates" / "https.conf.template"
 MAINTENANCE = ROOT / "docker" / "nginx" / "maintenance" / "maintenance.html"
 DOCKERIGNORE = ROOT / ".dockerignore"
 WORKFLOW = ROOT / ".github" / "workflows" / "tests.yml"
@@ -23,6 +24,60 @@ WORKFLOW = ROOT / ".github" / "workflows" / "tests.yml"
 
 def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
+
+
+# --- проверка здоровья ---
+
+
+def test_healthz_is_not_behind_the_https_redirect():
+    """Свои проверки ходят по http://127.0.0.1/healthz — с этой же машины.
+
+    Когда домен переехал на HTTPS, блок на 80 порту стал редиректить всё
+    подряд, и проверки начали получать 301 вместо ответа. Сайт объявлялся
+    мёртвым, будучи живым; на этом же падал health-check деплоя — обновление
+    откатывалось само, откат тоже «не поднимался», приходило «нужен человек».
+
+    Гнать проверки через HTTPS нельзя: сертификат выписан на домен, а не на
+    127.0.0.1, и обращение по имени домена с самого сервера упирается в hairpin
+    NAT. Проверка здоровья не должна зависеть ни от TLS, ни от DNS.
+    """
+    text = _read(HTTPS_TEMPLATE)
+    port80 = text[: text.index("listen 443")]
+    assert "location = /healthz" in port80, "/healthz снова уедет в редирект на HTTPS"
+    # Резолвер нужен и в этом блоке: адрес приложения берётся по имени, а блок
+    # на 443 со своим resolver'ом сюда не распространяется.
+    assert "resolver" in port80, "без резолвера proxy_pass по имени не заработает"
+    assert re.search(r"proxy_pass\s+http://\$", port80), (
+        "имя приложения записано литералом — nginx запомнит адрес навсегда"
+    )
+
+
+def test_app_healthcheck_has_a_start_period():
+    """Без окна запуска отсчёт неудач идёт с первой секунды.
+
+    Сразу после `up -d --build` машина занята сборкой, диск холодный, а
+    приложению надо снять копию базы и прогнать миграции. На боевом VPS в
+    бюджет interval × retries не уложились: контейнер объявили нездоровым,
+    деплой откатился, откат тоже не поднялся.
+    """
+    healthcheck = _read(COMPOSE)
+    healthcheck = healthcheck[healthcheck.index("healthcheck:") :]
+    assert "start_period" in healthcheck, "нет окна запуска — медленный старт снова уронит деплой"
+
+
+def test_nginx_does_not_wait_for_the_app_to_be_healthy():
+    """Иначе медленное приложение уносит сайт целиком.
+
+    nginx не обращается к приложению при старте — имя резолвится на каждый
+    запрос, — поэтому ждать здоровья ему незачем. А пока он ждал, 80 и 443 не
+    слушал никто: посетитель получал отказ соединения вместо страницы
+    обслуживания, которая для этого промежутка и сделана.
+    """
+    text = _read(COMPOSE)
+    nginx = text[text.index("  nginx:") : text.index("  certbot:")]
+    assert "condition: service_started" in nginx, (
+        "nginx снова ждёт healthy — медленный старт приложения уронит весь сайт"
+    )
 
 
 # --- nginx: адрес приложения ---
