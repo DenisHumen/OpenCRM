@@ -5,6 +5,16 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
 <title>{% block title %}{{ site.brand_name }}{% endblock %}</title>
+{# Иконка вкладки. Витрину открывает клиент студии, а не мы, поэтому свой
+   загруженный логотип имеет приоритет: в его вкладке должен стоять его знак.
+   Не загружен — остаётся знак продукта. #}
+{% if site.brand_logo_path %}
+<link rel="icon" href="{{ site.brand_logo_path }}">
+{% else %}
+<link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+<link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32.png">
+{% endif %}
+<link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
 {% block og %}{% endblock %}
 <style>
   /* Montserrat — шрифт витрины (SIL OFL), вариативный: один файл на все веса 100–900.
