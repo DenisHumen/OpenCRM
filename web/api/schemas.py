@@ -11,6 +11,10 @@ from database.models import (
     Client,
     ClientFile,
     ClientNote,
+    Deal,
+    DealStageChange,
+    Document,
+    PipelineStage,
     ShareLink,
     ShareView,
     User,
@@ -49,6 +53,32 @@ class ClientIn(BaseModel):
     messenger: str | None = None
     tags: str | list[str] | None = None
     manager_id: int | None = None
+
+
+class DealIn(BaseModel):
+    title: str
+    client_id: int
+    manager_id: int | None = None
+    stage: str | None = None
+    description: str | None = None
+    due_at: datetime | None = None
+
+
+class DealPatchIn(BaseModel):
+    title: str | None = None
+    client_id: int | None = None
+    manager_id: int | None = None
+    stage: str | None = None
+    description: str | None = None
+    due_at: datetime | None = None
+    lost_reason: str | None = None
+
+
+class DealMoveIn(BaseModel):
+    stage: str
+    # Позиция внутри колонки. Не задана — карточка встаёт в конец.
+    sort_order: int | None = None
+    lost_reason: str | None = None
 
 
 class ClientPatchIn(BaseModel):
@@ -144,6 +174,71 @@ def client_out(client: Client) -> dict:
         "created_at": _iso(client.created_at),
         "updated_at": _iso(client.updated_at),
         "deleted_at": _iso(client.deleted_at),
+    }
+
+
+def document_out(document: Document) -> dict:
+    import json as _json
+
+    try:
+        payload = _json.loads(document.payload or "{}")
+    except ValueError:
+        payload = {}
+    return {
+        "id": document.id,
+        "number": document.number,
+        "kind": document.kind,
+        "locale": document.locale,
+        "status": document.status,
+        "client_id": document.client_id,
+        "deal_id": document.deal_id,
+        "payload": payload,
+        "created_at": _iso(document.created_at),
+        "updated_at": _iso(document.updated_at),
+    }
+
+
+def stage_out(stage: PipelineStage) -> dict:
+    return {
+        "key": stage.key,
+        "name": stage.name,
+        "kind": stage.kind,
+        "sort_order": stage.sort_order,
+        "color": stage.color,
+        "is_archived": stage.is_archived,
+    }
+
+
+def deal_out(deal: Deal, client_name: str | None = None, manager: User | None = None) -> dict:
+    return {
+        "id": deal.id,
+        "title": deal.title,
+        "client_id": deal.client_id,
+        # Имя клиента и ответственного кладём в ответ, а не заставляем фронт
+        # добирать их отдельным запросом на каждую карточку канбана. Без имени
+        # ответственного доска не отвечает на первый же вопрос: кто это ведёт.
+        "client_name": client_name,
+        "manager_id": deal.manager_id,
+        "manager_name": manager.name if manager else None,
+        "manager_avatar": (manager.avatar_path or None) if manager else None,
+        "stage": deal.stage,
+        "sort_order": deal.sort_order,
+        "description": deal.description,
+        "due_at": _iso(deal.due_at),
+        "lost_reason": deal.lost_reason,
+        "closed_at": _iso(deal.closed_at),
+        "created_at": _iso(deal.created_at),
+        "updated_at": _iso(deal.updated_at),
+    }
+
+
+def stage_change_out(change: DealStageChange, author_name: str | None = None) -> dict:
+    return {
+        "id": change.id,
+        "from_stage": change.from_stage,
+        "to_stage": change.to_stage,
+        "author_name": author_name,
+        "changed_at": _iso(change.changed_at),
     }
 
 

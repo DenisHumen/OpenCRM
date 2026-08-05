@@ -4,6 +4,10 @@ from database.models.board import Board, Work
 from database.models.share import ShareLink, ShareView
 from database.models.settings import SiteSetting
 from database.models.arcade import SnakeScore
+from database.models.deal import Deal, DealStageChange
+from database.models.pipeline import PipelineStage
+from database.models.document import Document, DocumentEvent
+from database.models.module import ModuleState
 
 __all__ = [
     "User",
@@ -17,4 +21,10 @@ __all__ = [
     "ShareView",
     "SiteSetting",
     "SnakeScore",
+    "Deal",
+    "DealStageChange",
+    "PipelineStage",
+    "Document",
+    "DocumentEvent",
+    "ModuleState",
 ]

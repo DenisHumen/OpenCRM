@@ -4,6 +4,7 @@ import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
 import { formatBytes, initials } from "../lib/format";
+import { moduleOn } from "../lib/modules";
 import { Icon } from "./Icon";
 import { Avatar } from "./ui";
 
@@ -72,7 +73,7 @@ function NavGroup({
 }
 
 export function Sidebar({ onOpenSearch }: { onOpenSearch: () => void }) {
-  const { user, t, settings, storage, setUser, logout, toastError } = useApp();
+  const { user, t, settings, storage, modules, setUser, logout, toastError } = useApp();
   const navigate = useNavigate();
   const [menuOpen, setMenuOpen] = useState(false);
   const [pendingCount, setPendingCount] = useState(0);
@@ -105,7 +106,10 @@ export function Sidebar({ onOpenSearch }: { onOpenSearch: () => void }) {
       <div className="side-top">
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <NavLink to="/" className="side-brand">
-            <div className="side-logo">O</div>
+            {/* Знак продукта, а не буква: ниже, в «рабочем пространстве»,
+                стоит первая буква названия студии, и две буквы подряд читались
+                как опечатка. Файл тот же, что у иконки вкладки. */}
+            <img className="side-logo" src="/static/favicon.svg" alt="" width={20} height={20} />
             <span style={{ color: "var(--text)", fontSize: 14, fontWeight: 600 }}>OpenCRM</span>
           </NavLink>
           <Icon name="sidebar" size={16} className="" />
@@ -152,10 +156,24 @@ export function Sidebar({ onOpenSearch }: { onOpenSearch: () => void }) {
           <Icon name="clients" size={16} />
           <span style={{ flex: 1 }}>{t("clients")}</span>
         </NavLink>
-        <NavLink to="/boards" className={({ isActive }) => "nav-item" + (isActive ? " active" : "")}>
-          <Icon name="boards" size={16} />
-          <span style={{ flex: 1 }}>{t("boards")}</span>
+        <NavLink to="/deals" className={({ isActive }) => "nav-item" + (isActive ? " active" : "")}>
+          <Icon name="deals" size={16} />
+          <span style={{ flex: 1 }}>{t("deals")}</span>
         </NavLink>
+        {/* Выключенный блок пропадает из меню целиком: обещать раздел, который
+            ответит отказом, хуже, чем не показывать его вовсе. */}
+        {moduleOn(modules, "documents") && (
+          <NavLink to="/documents" className={({ isActive }) => "nav-item" + (isActive ? " active" : "")}>
+            <Icon name="receipt" size={16} />
+            <span style={{ flex: 1 }}>{t("documents")}</span>
+          </NavLink>
+        )}
+        {moduleOn(modules, "boards") && (
+          <NavLink to="/boards" className={({ isActive }) => "nav-item" + (isActive ? " active" : "")}>
+            <Icon name="boards" size={16} />
+            <span style={{ flex: 1 }}>{t("boards")}</span>
+          </NavLink>
+        )}
         {isRoot && (
           <>
             <div className="nav-section">{t("admin")}</div>
@@ -163,15 +181,19 @@ export function Sidebar({ onOpenSearch }: { onOpenSearch: () => void }) {
               <Icon name="staff" size={16} />
               <span style={{ flex: 1 }}>{t("staff")}</span>
             </NavLink>
-            <NavLink to="/files" className={({ isActive }) => "nav-item" + (isActive ? " active" : "")}>
-              <Icon name="folder" size={16} />
-              <span style={{ flex: 1 }}>{t("files")}</span>
-            </NavLink>
+            {/* Файлы — это медиа досок, отдельного смысла без них не имеют. */}
+            {moduleOn(modules, "boards") && (
+              <NavLink to="/files" className={({ isActive }) => "nav-item" + (isActive ? " active" : "")}>
+                <Icon name="folder" size={16} />
+                <span style={{ flex: 1 }}>{t("files")}</span>
+              </NavLink>
+            )}
             <NavGroup
               icon="settings"
               label={t("siteSettings")}
               base="/settings"
               items={[
+                { to: "/settings/modules", label: t("modules") },
                 { to: "/settings/brand", label: t("brand") },
                 { to: "/settings/contacts", label: t("contacts") },
                 { to: "/settings/showcase", label: t("showcase") },

@@ -5,9 +5,12 @@ from core.services import share_service
 from database.models import User
 from database.repositories import shares as shares_repo
 from web.api import schemas
-from web.api.deps import get_db, require_staff
+from web.api.deps import get_db, require_module, require_staff
 
-router = APIRouter(prefix="/shares", tags=["shares"])
+# Ссылки на витрины — часть досок: выключили доски, делиться нечем.
+router = APIRouter(
+    prefix="/shares", tags=["shares"], dependencies=[Depends(require_module("boards"))]
+)
 
 
 @router.patch("/{share_id}")

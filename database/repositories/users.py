@@ -10,6 +10,14 @@ def get_by_id(db: Session, user_id: int) -> User | None:
     return db.get(User, user_id)
 
 
+def get_many(db: Session, ids) -> list[User]:
+    """Пользователи пачкой — одним запросом, а не по одному на строку истории."""
+    ids = [i for i in set(ids) if i]
+    if not ids:
+        return []
+    return list(db.scalars(select(User).where(User.id.in_(ids))))
+
+
 def count_by_role(db: Session, role: str) -> int:
     return db.scalar(select(func.count()).select_from(User).where(User.role == role)) or 0
 

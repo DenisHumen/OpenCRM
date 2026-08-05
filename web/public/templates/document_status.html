@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="{{ doc.locale }}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+{# Страница открывается с телефона клиента по QR с его же квитанции. Поэтому
+   здесь ровно то, что и так напечатано у него на руках: номер, что приняли и
+   текущее состояние. Ни телефона, ни цены, ни фамилии сотрудника — ссылку
+   могут переслать или подобрать, и она не должна выдавать лишнего. #}
+<title>{{ t.number }} {{ doc.number }}</title>
+<link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+<link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32.png">
+<style>
+  :root { --bg:#161514; --text:#F5F4EF; --muted:#9C998F; --faint:#706D64; --accent:#D97757; --line:#2A2724; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body {
+    background:var(--bg); color:var(--text);
+    font:16px/1.55 "Segoe UI", system-ui, -apple-system, sans-serif;
+    -webkit-font-smoothing:antialiased;
+    min-height:100vh; display:flex; align-items:center; justify-content:center; padding:24px;
+  }
+  .card { width:100%; max-width:380px; }
+  .company { color:var(--muted); font-size:13px; margin-bottom:22px; }
+  .num { color:var(--faint); font-size:12.5px; letter-spacing:0.04em; }
+  .state {
+    display:inline-flex; align-items:center; gap:9px; margin:6px 0 18px;
+    font-size:24px; font-weight:600; letter-spacing:-0.01em;
+  }
+  .dot { width:10px; height:10px; border-radius:50%; background:var(--accent); flex:none; }
+  .dot.ready { background:#6FAE7C; }
+  .dot.closed, .dot.cancelled { background:var(--faint); }
+  .rows { border-top:1px solid var(--line); }
+  .rows div { display:flex; gap:14px; padding:9px 0; border-bottom:1px solid var(--line); font-size:13.5px; }
+  .rows dt { color:var(--faint); flex:none; width:120px; }
+  .rows dd { color:var(--text); flex:1; min-width:0; word-break:break-word; }
+  .foot { color:var(--faint); font-size:12px; margin-top:20px; }
+</style>
+</head>
+<body>
+  <div class="card">
+    {% if payload.company.name %}<div class="company">{{ payload.company.name }}</div>{% endif %}
+    <div class="num">{{ t.number }} {{ doc.number }}</div>
+    <div class="state">
+      <span class="dot {{ doc.status }}"></span>
+      {{ t.statuses.get(doc.status, doc.status) }}
+    </div>
+    <dl class="rows">
+      <div><dt>{{ t.item }}</dt><dd>{{ payload.fields.item or '—' }}</dd></div>
+      <div><dt>{{ t.date }}</dt><dd>{{ created }}</dd></div>
+    </dl>
+    {% if payload.company.phone %}
+    <div class="foot">{{ t.phone }}: {{ payload.company.phone }}</div>
+    {% endif %}
+  </div>
+</body>
+</html>

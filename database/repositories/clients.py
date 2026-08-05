@@ -4,6 +4,18 @@ from sqlalchemy.orm import Session
 from database.models import Client, ClientFile, ClientNote
 
 
+def get_many(db: Session, ids) -> list[Client]:
+    """Клиенты пачкой — одним запросом на выдачу, а не по одному на строку.
+
+    Мягко удалённых не отсеиваем: у старой сделки клиент мог быть удалён, но имя
+    в карточке всё равно надо показать, иначе строка станет безымянной.
+    """
+    ids = [i for i in set(ids) if i]
+    if not ids:
+        return []
+    return list(db.scalars(select(Client).where(Client.id.in_(ids))))
+
+
 def get(db: Session, client_id: int, include_deleted: bool = False) -> Client | None:
     client = db.get(Client, client_id)
     if client is None:

@@ -29,18 +29,22 @@ export function Toggle({ on, onToggle }: { on: boolean; onToggle: () => void }) 
 export function Avatar({
   text,
   large,
+  small,
   src,
   online,
 }: {
   text: string;
   large?: boolean;
+  /** Для плотных мест — карточка канбана, строка списка. */
+  small?: boolean;
   src?: string | null;
   /** undefined — не показывать индикатор; true/false — точка «в сети»/«не в сети». */
   online?: boolean;
 }) {
+  const size = large ? " avatar-lg" : small ? " avatar-sm" : "";
   return (
     <div className={"avatar-wrap" + (large ? " avatar-wrap-lg" : "")}>
-      <div className={"avatar" + (large ? " avatar-lg" : "")}>
+      <div className={"avatar" + size}>
         {src ? <img className="avatar-img" src={src} alt="" /> : text}
       </div>
       {online !== undefined && <span className={"avatar-dot" + (online ? " on" : "")} />}

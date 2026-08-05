@@ -9,10 +9,12 @@ from database.repositories import clients as clients_repo
 from database.repositories import shares as shares_repo
 from database.repositories import stats as stats_repo
 from web.api import schemas
-from web.api.deps import get_db, require_staff
+from web.api.deps import get_db, require_module, require_staff
 from web.public import layout
 
-router = APIRouter(prefix="/boards", tags=["boards"])
+router = APIRouter(
+    prefix="/boards", tags=["boards"], dependencies=[Depends(require_module("boards"))]
+)
 
 
 @router.get("")

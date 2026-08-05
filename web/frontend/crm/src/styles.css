@@ -91,6 +91,227 @@ button { font-family: var(--sans); }
 .share-action-row > .btn-danger-link { flex-shrink: 0; }
 .share-action-hint { color: var(--faint); font-size: 11.5px; line-height: 1.4; text-align: right; margin-left: auto; }
 
+/* Канбан сделок.
+   Колонки одинаковой ширины с горизонтальной прокруткой: этапов шесть, и на
+   ноутбуке они в экран не помещаются. Схлопывать их в узкие полоски хуже —
+   названия сделок перестают читаться, а именно по ним доску и просматривают. */
+.kanban {
+  display: flex; gap: 12px; align-items: flex-start;
+  overflow-x: auto; padding-bottom: 12px;
+  /* прокрутка «доводит» колонку до края, а не оставляет её наполовину видимой */
+  scroll-snap-type: x proximity;
+}
+.kanban-col {
+  flex: 0 0 248px; scroll-snap-align: start;
+  background: var(--surface-2); border: 1px solid transparent; border-radius: 12px;
+  padding: 10px; min-height: 120px;
+  transition: border-color 160ms ease, background 160ms ease;
+}
+/* Подсветка колонки, над которой держат карточку: без неё непонятно, куда
+   именно она упадёт, и перетаскивание превращается в угадайку. */
+.kanban-col.over { border-color: var(--brand); background: var(--surface); }
+/* Конечные этапы приглушены: доску просматривают ради того, что в работе, а
+   закрытое и потерянное не должно перетягивать взгляд. Тип приходит с сервера
+   (open/won/lost) — названия у каждого бизнеса свои, а тип общий. */
+.kanban-won .kanban-head span:first-child { color: var(--success); }
+.kanban-lost .kanban-head span:first-child { color: var(--faint); }
+.kanban-lost .deal-card { opacity: 0.72; }
+.kanban-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 2px 4px 10px; color: var(--muted);
+  font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase;
+}
+.kanban-count { color: var(--faint); font-variant-numeric: tabular-nums; }
+.kanban-body { display: flex; flex-direction: column; gap: 8px; }
+
+.deal-card {
+  display: flex; flex-direction: column; gap: 5px; width: 100%;
+  padding: 10px 11px; text-align: left; cursor: grab;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 9px;
+  color: inherit; font: inherit;
+  transition: border-color 160ms ease, transform 160ms ease;
+}
+.deal-card:hover { border-color: var(--border-hover); }
+.deal-card:active { cursor: grabbing; }
+/* Перетаскиваемая карточка гаснет, но остаётся на месте: убери её совсем —
+   колонка дёрнется и «поедет» под курсором. */
+.deal-card.dragging { opacity: 0.4; }
+.deal-title { color: var(--text); font-size: 13px; font-weight: 500; line-height: 1.35; }
+.deal-client { color: var(--muted); font-size: 11.5px; }
+/* Подвал карточки — ответственный и срок. Это два вопроса, на которые доска
+   обязана отвечать без открытия сделки: кто ведёт и когда надо сдать. */
+.deal-foot {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  margin-top: 2px; min-width: 0;
+}
+.deal-who {
+  display: inline-flex; align-items: center; gap: 5px; min-width: 0;
+  color: var(--muted); font-size: 11px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* Ничейная сделка — это проблема, а не пустое место: помечаем явно. */
+.deal-nobody { color: var(--warning); font-size: 11px; }
+.deal-due {
+  display: inline-flex; align-items: center; gap: 4px; flex: none;
+  color: var(--faint); font-size: 11px;
+}
+.deal-due.overdue { color: var(--danger); }
+.deal-lost { color: var(--danger); font-size: 11px; }
+
+/* Пустая колонка без подсказки читается как поломка. */
+.kanban-empty {
+  padding: 14px 8px; text-align: center;
+  color: var(--faint); font-size: 11.5px;
+  border: 1px dashed var(--line); border-radius: 9px;
+}
+
+/* Системная полоса прокрутки поверх тёмной доски выглядит инородной белой
+   плашкой — подгоняем под интерфейс. */
+.kanban::-webkit-scrollbar { height: 8px; }
+.kanban::-webkit-scrollbar-track { background: transparent; }
+.kanban::-webkit-scrollbar-thumb { background: var(--line); border-radius: 4px; }
+.kanban::-webkit-scrollbar-thumb:hover { background: var(--border-hover); }
+.kanban { scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
+
+/* --- карточка сделки --- */
+
+.back-link {
+  display: inline-flex; align-items: center; gap: 6px; margin-bottom: 14px;
+  color: var(--muted); font-size: 12.5px; text-decoration: none;
+}
+.back-link:hover { color: var(--text); }
+/* Название правится на месте: отдельная форма ради одной строки — лишний шаг
+   в ежедневной работе. Поле выглядит заголовком, пока его не тронули. */
+.title-input {
+  width: 100%; padding: 0; margin-bottom: 4px;
+  background: none; border: none; border-bottom: 1px solid transparent;
+  color: var(--text); font-family: var(--sans);
+  font-size: 22px; font-weight: 600; letter-spacing: -0.01em;
+}
+.title-input:hover { border-bottom-color: var(--line); }
+.title-input:focus { outline: none; border-bottom-color: var(--brand); }
+
+.deal-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px 16px; }
+.input.overdue { border-color: var(--danger); }
+
+/* Смена этапа кнопками, а не только перетаскиванием: с карточки сделки
+   возвращаться на доску ради одного шага — бессмысленный крюк. */
+.stage-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.stage-btn {
+  padding: 7px 13px; border-radius: 999px; cursor: pointer;
+  background: var(--surface-2); border: 1px solid var(--border); color: var(--text);
+  font: inherit; font-size: 12.5px;
+  display: inline-flex; align-items: center; gap: 5px;
+  transition: border-color 160ms ease, background 160ms ease;
+}
+.stage-btn:hover:not(:disabled) { border-color: var(--border-hover); background: var(--surface); }
+.stage-btn.current { background: var(--brand); border-color: var(--brand); color: #fff; cursor: default; }
+.stage-btn:disabled:not(.current) { opacity: 0.5; cursor: default; }
+.stage-btn.stage-won { color: var(--success); }
+.stage-btn.stage-lost { color: var(--danger); }
+.stage-sep { width: 1px; height: 20px; background: var(--line); margin: 0 2px; }
+
+.stage-log { list-style: none; display: flex; flex-direction: column; gap: 7px; }
+.stage-log li {
+  display: flex; align-items: baseline; gap: 10px;
+  font-size: 12.5px; padding-bottom: 7px; border-bottom: 1px solid var(--line);
+}
+.stage-log li:last-child { border-bottom: none; padding-bottom: 0; }
+.stage-log-when { color: var(--faint); font-size: 11.5px; flex: none; width: 116px; }
+.stage-log-what { flex: 1; min-width: 0; color: var(--text); }
+.stage-log-who { color: var(--muted); font-size: 11.5px; flex: none; }
+
+/* Бланки.
+   Поле скана — отдельной полосой над фильтрами, а не одним из них. За стойкой
+   бланк ищут сканером в девяти случаях из десяти, и это поле должно быть тем,
+   куда попадёт ввод, если человек просто поднёс сканер и не целился мышью. */
+.scan-box {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 12px 14px; margin-bottom: 14px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+}
+.scan-box:focus-within { border-color: var(--accent); }
+.scan-icon { color: var(--brand); flex: none; }
+.scan-input {
+  flex: 1; min-width: 200px;
+  background: none; border: none; outline: none;
+  color: var(--text); font-family: var(--sans); font-size: 15px;
+  font-variant-numeric: tabular-nums; letter-spacing: 0.02em;
+}
+.scan-hint { color: var(--faint); font-size: 11.5px; flex: none; max-width: 320px; }
+
+.doc-toolbar { display: flex; gap: 10px; margin-bottom: 16px; }
+.doc-toolbar .input { width: 190px; flex: none; }
+/* Поиск с иконкой — та же коробка, что и на клиентах, но одним классом:
+   повторять её восемью строчками inline-стилей на каждом экране незачем. */
+.search-field {
+  flex: 1; display: flex; align-items: center; gap: 8px;
+  padding: 0 12px; height: 34px;
+  border: 1px solid var(--border); border-radius: 8px; background: var(--surface);
+  color: var(--faint);
+}
+.search-field input {
+  flex: 1; background: none; border: none; outline: none;
+  color: var(--text); font-size: 13.5px; font-family: var(--sans);
+}
+
+/* Номер бланка — то, что называют вслух по телефону и набирают руками, когда
+   штрихкод не читается. Моноширинные цифры, чтобы столбец не «плясал». */
+.doc-number {
+  flex: none; width: 94px;
+  color: var(--muted); font-size: 12.5px; font-variant-numeric: tabular-nums;
+}
+.doc-number-title { font-variant-numeric: tabular-nums; }
+
+.print-actions { display: flex; align-items: center; gap: 6px; flex: none; }
+.print-label {
+  display: inline-flex; align-items: center; gap: 5px;
+  color: var(--muted); font-size: 12.5px; margin-right: 2px;
+}
+/* Язык, на котором бланк выдали: печатать можно любым, но этот — по умолчанию. */
+.btn-current { border-color: var(--brand); color: var(--brand); }
+
+.doc-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.doc-table th, .doc-table td {
+  text-align: left; vertical-align: top; padding: 7px 0;
+  border-bottom: 1px solid var(--line);
+}
+.doc-table tr:last-child th, .doc-table tr:last-child td { border-bottom: none; }
+.doc-table th { width: 42%; color: var(--muted); font-weight: 400; padding-right: 14px; }
+.doc-table td { color: var(--text); word-break: break-word; }
+
+/* Модули: строка блока с переключателем */
+.module-row {
+  display: flex; align-items: flex-start; gap: 13px; padding: 14px 16px;
+  border-bottom: 1px solid var(--line); cursor: pointer;
+}
+.module-row:last-child { border-bottom: none; }
+.module-row:hover:not(.locked) { background: var(--surface-2); }
+/* Ядро и незаконченные блоки не переключаются: показываем это курсором и
+   приглушённым видом, а причину пишем текстом рядом. */
+.module-row.locked { cursor: default; opacity: 0.62; }
+.module-icon { flex: none; color: var(--muted); margin-top: 1px; }
+.module-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.module-name { display: flex; align-items: center; gap: 7px; font-size: 13.5px; font-weight: 500; }
+.module-tag {
+  padding: 1px 6px; border-radius: 999px; background: var(--surface-2);
+  color: var(--faint); font-size: 10.5px; font-weight: 500;
+  letter-spacing: 0.03em; text-transform: uppercase;
+}
+.module-tag.soon { background: rgba(108, 142, 239, 0.15); color: var(--accent); }
+.module-about { color: var(--muted); font-size: 12.5px; line-height: 1.5; }
+.module-why { color: var(--faint); font-size: 11.5px; line-height: 1.5; }
+
+/* Компактный список бланков внутри карточки сделки */
+.doc-mini-list { display: flex; flex-direction: column; }
+.doc-mini {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 0; border-bottom: 1px solid var(--line);
+  color: var(--text); font-size: 13px; text-decoration: none;
+}
+.doc-mini:last-child { border-bottom: none; }
+.doc-mini:hover { color: var(--brand); }
+
 /* Полоса «сайт закрыт на работы». Поверх всего и на каждом экране: режим
    выглядит изнутри как обычная работа, и забытым он держит закрытыми витрины
    клиентов и вход остальным сотрудникам. */
@@ -214,6 +435,7 @@ button { font-family: var(--sans); }
   font-size: 11px; font-weight: 600; flex-shrink: 0; overflow: hidden;
 }
 .avatar-lg { width: 46px; height: 46px; font-size: 15px; color: var(--text); }
+.avatar-sm { width: 18px; height: 18px; font-size: 8.5px; }
 .avatar-img { width: 100%; height: 100%; object-fit: cover; display: block; }
 /* обёртка нужна для точки-индикатора присутствия поверх аватара */
 .avatar-wrap { position: relative; display: inline-flex; flex-shrink: 0; }
@@ -269,7 +491,9 @@ button { font-family: var(--sans); }
 }
 .side-top { padding: 14px 14px 8px; display: flex; flex-direction: column; gap: 11px; }
 .side-brand { display: flex; align-items: center; gap: 8px; text-decoration: none; }
-.side-logo { width: 20px; height: 20px; border-radius: 6px; background: var(--brand); display: flex; align-items: center; justify-content: center; color: var(--bg-sidebar); font-size: 11px; font-weight: 700; }
+/* Знак продукта. Скругление своё, а не из картинки: в SVG оно задано для 64px,
+   и при показе в 20px угол выглядел бы тяжелее соседних элементов. */
+.side-logo { width: 20px; height: 20px; border-radius: 6px; display: block; flex-shrink: 0; }
 .side-workspace { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 8px; cursor: default; background: var(--bg); }
 .side-search { display: flex; align-items: center; gap: 8px; padding: 0 10px; height: 32px; width: 100%; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); cursor: pointer; color: var(--muted); font-family: var(--sans); }
 .side-search:hover { background: var(--surface); border-color: var(--border-hover); }

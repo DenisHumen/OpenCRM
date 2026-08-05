@@ -9,7 +9,7 @@ from sqlalchemy import text
 
 from config.settings import generate_secret_hint, get_settings
 from core.exceptions import DomainError
-from core.services import auth_service, maintenance_mode, settings_service
+from core.services import auth_service, maintenance_mode, pipeline_service, settings_service
 from core.utils import normalize_email
 from database import models  # noqa: F401 — регистрирует модели в metadata
 from database.models.user import ROLE_ROOT
@@ -20,6 +20,11 @@ from web.api.routes import (
     arcade,
     auth,
     boards,
+    deals,
+    documents,
+    modules,
+    people,
+    pipeline,
     clients,
     dashboard,
     search,
@@ -78,6 +83,10 @@ async def lifespan(app: FastAPI):
     try:
         created = auth_service.bootstrap_root(db)
         settings_service.seed_defaults(db)
+        # Пустая воронка означает пустую доску сделок на первом же экране —
+        # причину закрыть вкладку. Кладём универсальный набор, менять его на
+        # отраслевой можно одним нажатием в настройках.
+        pipeline_service.seed_defaults(db)
         users_repo.purge_expired_sessions(db)
         db.commit()
         if created is not None:
@@ -125,6 +134,17 @@ def create_app() -> FastAPI:
     MAINTENANCE_OPEN_PREFIXES = ("/healthz", "/assets/", "/api/v1/auth/")
     MAINTENANCE_OPEN_PATHS = {"/login"}
 
+    # Страницы, которые видит клиент, а не сотрудник: витрина доски и состояние
+    # заказа по QR. Сюда root не проходит даже со своей сессией.
+    #
+    # Пропуск для root существует ради одного: чтобы он мог войти в CRM и снять
+    # режим. К клиентской стороне это не относится, а раньше относилось — и
+    # получалось, что root проверяет свою же ссылку, видит работающую витрину и
+    # заключает, что режим не работает. Он работал; просто проверяющий был
+    # единственным, для кого сайт оставался открыт. Теперь «закрыто» на
+    # клиентской стороне означает закрыто для всех, включая root.
+    MAINTENANCE_PUBLIC_PREFIXES = ("/b/", "/d/")
+
     def _maintenance_page(note: str, locale: str) -> Response:
         strings = public_routes.MAINTENANCE_STRINGS.get(
             locale, public_routes.MAINTENANCE_STRINGS["en"]
@@ -149,11 +169,13 @@ def create_app() -> FastAPI:
             mode = maintenance_mode.state(db)
             if not mode["enabled"]:
                 return await call_next(request)
-            # Режим включён: root проходит как обычно, остальные — на заглушку.
-            token = request.cookies.get(SESSION_COOKIE)
-            user = auth_service.get_user_by_session(db, token) if token else None
-            if user is not None and user.role == ROLE_ROOT:
-                return await call_next(request)
+            # Режим включён: root проходит в CRM как обычно, остальные — на
+            # заглушку. На клиентские страницы не проходит никто.
+            if not path.startswith(MAINTENANCE_PUBLIC_PREFIXES):
+                token = request.cookies.get(SESSION_COOKIE)
+                user = auth_service.get_user_by_session(db, token) if token else None
+                if user is not None and user.role == ROLE_ROOT:
+                    return await call_next(request)
             note, locale = mode["note"], settings_service.get_all(db).get("showcase_locale", "en")
         finally:
             db.close()
@@ -202,8 +224,17 @@ def create_app() -> FastAPI:
             response.headers.setdefault("Content-Security-Policy", CSP_MEDIA)
         elif path.startswith(("/media/", "/branding/", "/avatars/")):
             response.headers.setdefault("Content-Security-Policy", CSP_MEDIA)
-        elif path.startswith("/b/"):
+        elif path.startswith("/b/") or path.startswith("/d/") or path.endswith("/print"):
+            # Бланк и страница состояния — серверный HTML со встроенными
+            # стилями, как витрина: строгая политика приложения их ломает.
             response.headers.setdefault("Content-Security-Policy", CSP_SHOWCASE)
+            # Кэшировать эти страницы нельзя. Ссылку на витрину отзывают, срок
+            # действия истекает, сайт закрывают на работы — и во всех трёх
+            # случаях страница обязана перестать открываться. Без заголовка
+            # браузер вправе показать её из кэша, а по кнопке «назад» покажет
+            # наверняка: отозванная ссылка продолжала бы работать у того, кто
+            # успел её открыть.
+            response.headers.setdefault("Cache-Control", "no-store, must-revalidate")
         else:
             response.headers.setdefault("Content-Security-Policy", CSP_APP)
             response.headers.setdefault("X-Frame-Options", "DENY")
@@ -216,7 +247,12 @@ def create_app() -> FastAPI:
     app.include_router(staff.router, prefix=api_prefix)
     app.include_router(clients.router, prefix=api_prefix)
     app.include_router(boards.router, prefix=api_prefix)
+    app.include_router(deals.router, prefix=api_prefix)
+    app.include_router(pipeline.router, prefix=api_prefix)
+    app.include_router(people.router, prefix=api_prefix)
+    app.include_router(documents.router, prefix=api_prefix)
     app.include_router(shares.router, prefix=api_prefix)
+    app.include_router(modules.router, prefix=api_prefix)
     app.include_router(site_settings.router, prefix=api_prefix)
     app.include_router(system.router, prefix=api_prefix)
     app.include_router(arcade.router, prefix=api_prefix)

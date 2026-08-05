@@ -5,12 +5,17 @@ import { CommandPalette } from "./components/CommandPalette";
 import { Sidebar } from "./components/Sidebar";
 import { ScreenLoading, Toasts } from "./components/ui";
 import { useApp } from "./lib/app";
+import { moduleOn } from "./lib/modules";
 import { AuthScreen, ForcePasswordChange } from "./screens/Auth";
 import { BoardEditor } from "./screens/BoardEditor";
 import { Boards } from "./screens/Boards";
 import { ClientCard } from "./screens/ClientCard";
 import { Clients } from "./screens/Clients";
 import { Dashboard } from "./screens/Dashboard";
+import { DealCard } from "./screens/DealCard";
+import { Deals } from "./screens/Deals";
+import { DocumentCard } from "./screens/DocumentCard";
+import { Documents } from "./screens/Documents";
 import { Files } from "./screens/Files";
 import { Profile } from "./screens/Profile";
 import {
@@ -21,6 +26,7 @@ import {
   SettingsReturnButton,
   SettingsShowcase,
 } from "./screens/Settings";
+import { SettingsModules } from "./screens/SettingsModules";
 import { Staff } from "./screens/Staff";
 
 function Protected() {
@@ -81,6 +87,17 @@ function RootOnly() {
   return <Outlet />;
 }
 
+/** Маршруты выключенного блока.
+ *
+ * Сервер такой раздел всё равно закроет, но упереться в пустой экран с ошибкой —
+ * плохой ответ на переход по старой закладке. Уводим на главную: раздела просто
+ * нет, как нет его и в меню. */
+function ModuleRoute({ module }: { module: string }) {
+  const { modules } = useApp();
+  if (!moduleOn(modules, module)) return <Navigate to="/" replace />;
+  return <Outlet />;
+}
+
 export default function App() {
   return (
     <>
@@ -90,12 +107,26 @@ export default function App() {
           <Route path="/" element={<Dashboard />} />
           <Route path="/clients" element={<Clients />} />
           <Route path="/clients/:id" element={<ClientCard />} />
-          <Route path="/boards" element={<Boards />} />
-          <Route path="/boards/:id" element={<BoardEditor />} />
+          <Route path="/deals" element={<Deals />} />
+          <Route path="/deals/:id" element={<DealCard />} />
+          <Route element={<ModuleRoute module="documents" />}>
+            <Route path="/documents" element={<Documents />} />
+            <Route path="/documents/:id" element={<DocumentCard />} />
+          </Route>
+          <Route element={<ModuleRoute module="boards" />}>
+            <Route path="/boards" element={<Boards />} />
+            <Route path="/boards/:id" element={<BoardEditor />} />
+          </Route>
           <Route path="/profile" element={<Profile />} />
           <Route element={<RootOnly />}>
             <Route path="/staff" element={<Staff />} />
-            <Route path="/files" element={<Files />} />
+            <Route element={<ModuleRoute module="boards" />}>
+              <Route path="/files" element={<Files />} />
+            </Route>
+            {/* Модули стоят отдельным маршрутом, а не разделом SettingsLayout:
+                там одна кнопка «Сохранить» на всю группу, а переключатель блока
+                применяется сразу — общая кнопка вводила бы в заблуждение. */}
+            <Route path="/settings/modules" element={<SettingsModules />} />
             {/* разделов настроек будет больше — каждый своим маршрутом,
                 чтобы на них можно было сослаться и открыть из сайдбара */}
             <Route path="/settings" element={<SettingsLayout />}>

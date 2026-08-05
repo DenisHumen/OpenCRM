@@ -1,0 +1,97 @@
+"""Тексты печатных бланков: русский, английский, украинский.
+
+Отдельным файлом, а не в общем словаре интерфейса: бумага живёт своей жизнью.
+Язык бланка выбирают под клиента, а не под сотрудника, — приехал турист,
+печатаем по-английски, при этом интерфейс мастера остаётся русским.
+"""
+
+DOCUMENT_STRINGS: dict[str, dict[str, str]] = {
+    "ru": {
+        "title": "Квитанция о приёме в работу",
+        "number": "Бланк №",
+        "date": "Дата",
+        "copy_client": "Экземпляр клиента",
+        "copy_shop": "Экземпляр мастерской",
+        "cut_here": "линия отреза",
+        "client": "Клиент",
+        "phone": "Телефон",
+        "item": "Принято в работу",
+        "serial": "Серийный номер",
+        "condition": "Внешнее состояние",
+        "accessories": "Комплектность",
+        "problem": "Со слов клиента",
+        "estimate": "Предварительная стоимость",
+        "terms": "Сроки и условия",
+        "handed_by": "Сдал",
+        "accepted_by": "Принял",
+        "signature": "подпись",
+        "status_hint": "Отсканируйте код, чтобы узнать состояние заказа",
+        "statuses": {
+            "issued": "Принято",
+            "in_progress": "В работе",
+            "ready": "Готово к выдаче",
+            "closed": "Выдано",
+            "cancelled": "Отменено",
+        },
+    },
+    "en": {
+        "title": "Service intake receipt",
+        "number": "Receipt No.",
+        "date": "Date",
+        "copy_client": "Customer copy",
+        "copy_shop": "Workshop copy",
+        "cut_here": "cut here",
+        "client": "Customer",
+        "phone": "Phone",
+        "item": "Item received",
+        "serial": "Serial number",
+        "condition": "Condition on arrival",
+        "accessories": "Included with the item",
+        "problem": "Reported problem",
+        "estimate": "Estimated cost",
+        "terms": "Turnaround and terms",
+        "handed_by": "Handed over by",
+        "accepted_by": "Received by",
+        "signature": "signature",
+        "status_hint": "Scan the code to check the status of your order",
+        "statuses": {
+            "issued": "Received",
+            "in_progress": "In progress",
+            "ready": "Ready for pickup",
+            "closed": "Picked up",
+            "cancelled": "Cancelled",
+        },
+    },
+    "uk": {
+        "title": "Квитанція про приймання в роботу",
+        "number": "Бланк №",
+        "date": "Дата",
+        "copy_client": "Примірник клієнта",
+        "copy_shop": "Примірник майстерні",
+        "cut_here": "лінія відрізу",
+        "client": "Клієнт",
+        "phone": "Телефон",
+        "item": "Прийнято в роботу",
+        "serial": "Серійний номер",
+        "condition": "Зовнішній стан",
+        "accessories": "Комплектність",
+        "problem": "Зі слів клієнта",
+        "estimate": "Попередня вартість",
+        "terms": "Терміни та умови",
+        "handed_by": "Здав",
+        "accepted_by": "Прийняв",
+        "signature": "підпис",
+        "status_hint": "Відскануйте код, щоб дізнатися стан замовлення",
+        "statuses": {
+            "issued": "Прийнято",
+            "in_progress": "В роботі",
+            "ready": "Готово до видачі",
+            "closed": "Видано",
+            "cancelled": "Скасовано",
+        },
+    },
+}
+
+
+def strings_for(locale: str) -> dict:
+    return DOCUMENT_STRINGS.get(locale, DOCUMENT_STRINGS["ru"])

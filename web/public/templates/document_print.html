@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="{{ doc.locale }}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>{{ t.number }} {{ doc.number }}</title>
+{# Бланк печатают, поэтому здесь нет тёмной темы, шрифтов со стороны и ничего,
+   что зависит от экрана: только чёрное по белому и миллиметры. Половины
+   одинаковые по составу и различаются одной подписью — клиент и мастер должны
+   держать в руках одно и то же, иначе спорить не о чем. #}
+<style>
+  @page { size: A4 portrait; margin: 10mm; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #fff; color: #000;
+    font: 8.5pt/1.2 "Segoe UI", system-ui, -apple-system, Arial, sans-serif;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
+  }
+  .sheet { width: 190mm; margin: 0 auto; }
+  /* Плотно: две половины обязаны уместиться на одном A4, иначе линия отреза
+     окажется на разных листах и резать станет нечего. */
+  .half { padding: 1mm 0 2mm; }
+  /* Линия отреза — реальная пунктирная линия с подписью: без неё режут на глаз
+     и попадают по тексту. */
+  .cut {
+    position: relative; border-top: 1px dashed #000; margin: 1.5mm 0 0;
+    text-align: center;
+  }
+  .cut span {
+    position: relative; top: -1.7mm; background: #fff; padding: 0 3mm;
+    font-size: 7pt; letter-spacing: 0.08em; text-transform: uppercase; color: #666;
+  }
+  .head { display: flex; justify-content: space-between; align-items: flex-start; gap: 6mm; }
+  .company { font-size: 11pt; font-weight: 700; }
+  .company small { display: block; font-size: 8pt; font-weight: 400; color: #444; }
+  .doc-title { font-size: 11pt; font-weight: 700; margin-top: 0.5mm; }
+  .copy-label {
+    display: inline-block; margin-top: 1mm; padding: 0.7mm 2mm;
+    border: 1px solid #000; font-size: 7.5pt; letter-spacing: 0.06em; text-transform: uppercase;
+  }
+  .codes { text-align: right; flex: none; }
+  .codes .num { font-size: 10.5pt; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .codes .date { font-size: 8pt; color: #444; margin-bottom: 1mm; }
+  .codes svg { display: block; margin-left: auto; }
+  .codes .qr { margin-top: 1.5mm; }
+  .hint { font-size: 6.5pt; color: #666; margin-top: 1mm; max-width: 42mm; text-align: right; }
+
+  table.rows { width: 100%; border-collapse: collapse; margin-top: 2mm; }
+  table.rows th, table.rows td {
+    border: 0.4pt solid #999; padding: 0.8mm 1.5mm; vertical-align: top; font-size: 8pt;
+  }
+  table.rows th {
+    width: 34mm; text-align: left; font-weight: 600; background: #f2f2f2; color: #222;
+  }
+  /* Пустое поле не должно выглядеть как забытое: ставим прочерк. */
+  td:empty::after { content: "—"; color: #999; }
+
+  .signs { display: flex; gap: 8mm; margin-top: 2.5mm; }
+  .signs div { flex: 1; }
+  .sign-line { border-bottom: 0.6pt solid #000; height: 5mm; }
+  .sign-label { font-size: 7.5pt; color: #444; margin-top: 0.8mm; }
+
+  @media screen {
+    body { background: #eee; padding: 8mm 0; }
+    .sheet { background: #fff; padding: 10mm; box-shadow: 0 2px 14px rgba(0,0,0,0.18); }
+    .print-bar { text-align: center; margin-bottom: 6mm; }
+    .print-bar button {
+      font: inherit; font-size: 10pt; padding: 2mm 6mm; cursor: pointer;
+      background: #161514; color: #fff; border: none; border-radius: 3mm;
+    }
+  }
+  @media print { .print-bar { display: none; } }
+</style>
+</head>
+<body>
+  <div class="print-bar"><button onclick="window.print()">{{ print_label }}</button></div>
+
+  <div class="sheet">
+    {% for copy_label in [t.copy_client, t.copy_shop] %}
+    <div class="half">
+      <div class="head">
+        <div>
+          <div class="company">
+            {{ payload.company.name or '—' }}
+            <small>
+              {%- if payload.company.phone %}{{ payload.company.phone }}{% endif -%}
+              {%- if payload.company.phone and payload.company.email %} · {% endif -%}
+              {%- if payload.company.email %}{{ payload.company.email }}{% endif -%}
+            </small>
+          </div>
+          <div class="doc-title">{{ t.title }}</div>
+          <div class="copy-label">{{ copy_label }}</div>
+        </div>
+        <div class="codes">
+          <div class="num">{{ t.number }} {{ doc.number }}</div>
+          <div class="date">{{ t.date }}: {{ created }}</div>
+          {{ barcode|safe }}
+          <div class="qr">{{ qr|safe }}</div>
+          <div class="hint">{{ t.status_hint }}</div>
+        </div>
+      </div>
+
+      {# Короткие поля стоят парами в одной строке. Это не украшение: девять
+         строк во всю ширину при длинных описаниях вырастают до 300 мм, и вторая
+         половина уезжает на следующий лист. Семь строк укладываются в A4. #}
+      <table class="rows">
+        <tr>
+          <th>{{ t.client }}</th><td>{{ payload.client.name }}</td>
+          <th>{{ t.phone }}</th><td>{{ payload.client.phone }}</td>
+        </tr>
+        <tr><th>{{ t.item }}</th><td colspan="3">{{ payload.fields.item }}</td></tr>
+        <tr>
+          <th>{{ t.serial }}</th><td>{{ payload.fields.serial }}</td>
+          <th>{{ t.estimate }}</th><td>{{ payload.fields.estimate }}</td>
+        </tr>
+        <tr><th>{{ t.condition }}</th><td colspan="3">{{ payload.fields.condition }}</td></tr>
+        <tr><th>{{ t.accessories }}</th><td colspan="3">{{ payload.fields.accessories }}</td></tr>
+        <tr><th>{{ t.problem }}</th><td colspan="3">{{ payload.fields.problem }}</td></tr>
+        <tr><th>{{ t.terms }}</th><td colspan="3">{{ payload.fields.terms }}</td></tr>
+      </table>
+
+      <div class="signs">
+        <div>
+          <div class="sign-line"></div>
+          <div class="sign-label">{{ t.handed_by }} — {{ t.signature }}</div>
+        </div>
+        <div>
+          <div class="sign-line"></div>
+          <div class="sign-label">{{ t.accepted_by }} — {{ t.signature }}</div>
+        </div>
+      </div>
+    </div>
+    {% if not loop.last %}<div class="cut"><span>{{ t.cut_here }}</span></div>{% endif %}
+    {% endfor %}
+  </div>
+</body>
+</html>

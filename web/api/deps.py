@@ -3,8 +3,9 @@ from sqlalchemy.orm import Session
 
 from config.settings import get_settings
 from core import exceptions as errors
+from core import modules as core_modules
 from core.ratelimit import SlidingWindowLimiter
-from core.services import auth_service
+from core.services import auth_service, modules_service
 from database.models import User
 from database.models.user import ROLE_ROOT
 from database.session import SessionLocal
@@ -58,6 +59,29 @@ def require_root(user: User = Depends(require_staff)) -> User:
     if user.role != ROLE_ROOT:
         raise errors.ForbiddenError("Root access required", code="root_required")
     return user
+
+
+def require_module(key: str):
+    """Закрыть раздел, если его блок выключен.
+
+    Прятать пункт в меню недостаточно: адрес остаётся рабочим, его помнит
+    браузер, он лежит в закладках и в старых письмах. Выключенный блок обязан
+    отвечать отказом и на прямой запрос, иначе «выключено» означает лишь
+    «не видно».
+
+    Ключ проверяется здесь же, при сборке приложения, а не при запросе: опечатка
+    в имени блока должна ронять запуск, а не тихо открывать раздел всем.
+    """
+    if core_modules.get(key) is None:
+        raise RuntimeError(f"Unknown module in route guard: {key}")
+
+    def dependency(db: Session = Depends(get_db)) -> None:
+        if not modules_service.is_enabled(db, key):
+            raise errors.ForbiddenError(
+                f"Module '{key}' is switched off", code="module_disabled"
+            )
+
+    return dependency
 
 
 def client_ip(request: Request) -> str:

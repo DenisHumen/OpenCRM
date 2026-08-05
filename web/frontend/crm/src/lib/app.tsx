@@ -30,6 +30,17 @@ export interface MaintenanceState {
   by: string;
 }
 
+export interface ModuleInfo {
+  key: string;
+  enabled: boolean;
+  core: boolean;
+  ready: boolean;
+  requires: string[];
+  required_by: string[];
+  updated_at: string | null;
+  updated_by_name: string | null;
+}
+
 interface AppContextValue {
   user: User | null;
   ready: boolean;
@@ -38,6 +49,9 @@ interface AppContextValue {
   settings: Record<string, string>;
   storage: StorageStatus | null;
   maintenance: MaintenanceState | null;
+  /** Ключ блока → включён ли. null, пока не загружено. */
+  modules: Record<string, boolean> | null;
+  refreshModules: () => Promise<void>;
   setUser: (user: User | null) => void;
   setMaintenance: (enabled: boolean, note: string) => Promise<void>;
   refreshSettings: () => Promise<void>;
@@ -62,6 +76,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [settings, setSettings] = useState<Record<string, string>>({});
   const [storage, setStorage] = useState<StorageStatus | null>(null);
   const [maintenance, setMaintenanceState] = useState<MaintenanceState | null>(null);
+  const [modules, setModules] = useState<Record<string, boolean> | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
 
   const locale: Locale = user?.locale === "ru" ? "ru" : "en";
@@ -101,6 +116,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
     })();
   }, []);
 
+  // Набор блоков общий для всей системы, а не личный: его читают все сотрудники,
+  // иначе интерфейс не знает, что показывать в меню. Переключает только root.
+  const refreshModules = useCallback(async () => {
+    try {
+      const data = await api.get<{ items: ModuleInfo[] }>("/modules");
+      setModules(Object.fromEntries(data.items.map((m) => [m.key, m.enabled])));
+    } catch {
+      // Не смогли узнать состав — показываем всё. Отсутствующий ключ читается
+      // как «включён» (moduleOn), поэтому пустая карта не прячет разделы, а
+      // оставляет решение серверу: выключенный блок всё равно ответит отказом.
+      // Обратный порядок оставил бы человека перед CRM без единого пункта меню.
+      setModules({});
+    }
+  }, []);
+
   const refreshStorage = useCallback(async () => {
     try {
       setStorage(await api.get<StorageStatus>("/system/storage"));
@@ -112,6 +142,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (user?.role === "root") void refreshSettings();
   }, [user?.role, refreshSettings]);
+
+  useEffect(() => {
+    if (!user || user.must_change_password) return;
+    void refreshModules();
+  }, [user, refreshModules]);
 
   useEffect(() => {
     if (!user || user.must_change_password) return;
@@ -158,11 +193,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo(
     () => ({
-      user, ready, locale, t, settings, storage, maintenance,
+      user, ready, locale, t, settings, storage, maintenance, modules, refreshModules,
       setUser, setMaintenance, refreshSettings, refreshStorage, logout, toast, toastError, toasts,
     }),
-    [user, ready, locale, t, settings, storage, maintenance, setMaintenance,
-     refreshSettings, refreshStorage, logout, toast, toastError, toasts],
+    [user, ready, locale, t, settings, storage, maintenance, modules, refreshModules,
+     setMaintenance, refreshSettings, refreshStorage, logout, toast, toastError, toasts],
   );
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

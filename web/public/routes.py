@@ -267,3 +267,40 @@ def avatar_file(filename: str):
         media_type="image/webp",
         headers={"Cache-Control": "public, max-age=86400", "X-Content-Type-Options": "nosniff"},
     )
+
+
+@router.get("/d/{number}")
+def document_status(number: str, request: Request, db: Session = Depends(get_db)):
+    """Состояние заказа по QR с квитанции — открывается без входа в систему.
+
+    Ссылку могут переслать или подобрать, поэтому здесь ровно то, что и так
+    напечатано у клиента на руках: номер, что приняли и текущее состояние.
+    Ни цены, ни телефона клиента, ни имён сотрудников.
+    """
+    from core.services import document_service, modules_service
+    from web.public.document_strings import strings_for
+
+    # Блок бланков выключили — снаружи это должно выглядеть так же, как
+    # несуществующий номер. Иначе «выключено» означало бы лишь «не видно в
+    # меню», а старые QR-коды продолжали бы открывать данные заказов.
+    if not modules_service.is_enabled(db, "documents"):
+        return _closed_page(request, db)
+
+    try:
+        doc = document_service.by_number(db, number)
+    except errors.NotFoundError:
+        # Та же страница, что у закрытой витрины: по ответу нельзя отличить
+        # «нет такого номера» от «есть, но не показываем», а значит перебором
+        # номеров не узнать, сколько у мастерской заказов.
+        return _closed_page(request, db)
+
+    return templates.TemplateResponse(
+        request,
+        "document_status.html",
+        {
+            "doc": doc,
+            "payload": document_service.payload_of(doc),
+            "t": strings_for(doc.locale),
+            "created": doc.created_at.strftime("%d.%m.%Y"),
+        },
+    )
