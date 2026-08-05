@@ -21,6 +21,7 @@ import { Documents } from "./screens/Documents";
 import { Files } from "./screens/Files";
 import { Mail } from "./screens/Mail";
 import { Mailboxes } from "./screens/Mailboxes";
+import { ProductCard } from "./screens/ProductCard";
 import { Profile } from "./screens/Profile";
 import { Reports } from "./screens/Reports";
 import {
@@ -34,6 +35,7 @@ import {
 import { SettingsModules } from "./screens/SettingsModules";
 import { Staff } from "./screens/Staff";
 import { Tasks } from "./screens/Tasks";
+import { Warehouse } from "./screens/Warehouse";
 
 function Protected() {
   const { user, ready } = useApp();
@@ -132,6 +134,10 @@ export default function App() {
           <Route element={<ModuleRoute module="boards" />}>
             <Route path="/boards" element={<Boards />} />
             <Route path="/boards/:id" element={<BoardEditor />} />
+          </Route>
+          <Route element={<ModuleRoute module="warehouse" />}>
+            <Route path="/warehouse" element={<Warehouse />} />
+            <Route path="/warehouse/:id" element={<ProductCard />} />
           </Route>
           <Route element={<ModuleRoute module="reports" />}>
             <Route path="/reports" element={<Reports />} />

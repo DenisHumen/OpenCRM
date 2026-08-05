@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
+import { DealStock } from "../components/DealStock";
 import { Feed } from "../components/Feed";
 import { Icon } from "../components/Icon";
 import { Chip, ConfirmModal, Modal, ScreenLoading } from "../components/ui";
@@ -368,6 +369,11 @@ export function DealCard() {
           <QuickTask dealId={deal.id} clientId={deal.client_id} onCreated={loadTasks} />
         </div>
       )}
+
+      {/* Что ушло со склада под эту заявку и во сколько это обошлось. Стоит
+          рядом с суммой не случайно: выручка без себестоимости не отвечает на
+          вопрос, заработали мы на этой работе или нет. */}
+      <DealStock dealId={deal.id} />
 
       {/* Доски, сделанные по этой заявке. Раньше доска знала только клиента,
           и у клиента с пятью заказами за год все они лежали одной кучей. */}

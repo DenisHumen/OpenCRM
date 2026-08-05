@@ -56,6 +56,11 @@ MODULES: tuple[Module, ...] = (
     # задача, и клиент с заявкой ей не нужны.
     Module(key="tasks"),
     Module(key="boards", default=True),
+    # Склад нужен магазину и мастерской, а дизайн-студии нет — поэтому, в
+    # отличие от остальных готовых блоков, по умолчанию выключен. Списание идёт
+    # под заявку, отсюда зависимость: без заявок остаётся голый учёт остатков,
+    # который не отвечает на вопрос «во сколько нам обошлась эта работа».
+    Module(key="warehouse", default=False, requires=("deals",)),
     # Отчёты считаются по заявкам и их этапам — без заявок считать нечего.
     Module(key="reports", requires=("deals",)),
     # Почта. Выключена у нового пользователя: ящик фирмы есть не у всех, а
@@ -63,7 +68,6 @@ MODULES: tuple[Module, ...] = (
     # клиентах: письмо привязывается к клиенту по адресу и ложится в его ленту.
     Module(key="mail", default=False, requires=("clients",)),
     # --- в разработке ---
-    Module(key="warehouse", ready=False, default=False, requires=("deals",)),
     Module(key="telephony", ready=False, default=False, requires=("clients",)),
 )
 

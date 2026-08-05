@@ -82,6 +82,21 @@ export function formatMoney(
   }
 }
 
+/** Количество из тысячных долей единицы в читаемый вид: 1500 → «1.5», 2000 → «2».
+ *
+ * Делим целочисленно, а не через `/ 1000`: количество и хранится целым ровно
+ * затем, чтобы не проходить через двоичную дробь. Хвостовые нули убираем —
+ * «0.5 кг» читается быстрее, чем «0.500 кг», а в списке это десятки строк. */
+export function formatQuantity(milli: number | null | undefined): string {
+  if (milli === null || milli === undefined) return "—";
+  const sign = milli < 0 ? "-" : "";
+  const abs = Math.abs(milli);
+  const frac = abs % 1000;
+  const whole = (abs - frac) / 1000;
+  if (frac === 0) return sign + whole;
+  return sign + whole + "." + String(frac).padStart(3, "0").replace(/0+$/, "");
+}
+
 /** Компактный размер: 4.2 GB, 512 MB, 18 KB. */
 export function formatBytes(bytes: number): string {
   const units = ["B", "KB", "MB", "GB", "TB"];

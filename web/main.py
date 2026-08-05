@@ -37,6 +37,7 @@ from web.api.routes import (
     staff,
     system,
     tasks,
+    warehouse,
     workspace,
 )
 from web.public import routes as public_routes
@@ -301,6 +302,7 @@ def create_app() -> FastAPI:
     app.include_router(modules.router, prefix=api_prefix)
     app.include_router(site_settings.router, prefix=api_prefix)
     app.include_router(tasks.router, prefix=api_prefix)
+    app.include_router(warehouse.router, prefix=api_prefix)
     app.include_router(system.router, prefix=api_prefix)
     app.include_router(workspace.router, prefix=api_prefix)
     app.include_router(arcade.router, prefix=api_prefix)

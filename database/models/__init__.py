@@ -11,6 +11,7 @@ from database.models.document import Document, DocumentEvent
 from database.models.module import ModuleState
 from database.models.task import Task
 from database.models.mail import MailAccount, MailMessage
+from database.models.warehouse import Product, StockMove
 
 __all__ = [
     "User",
@@ -34,4 +35,6 @@ __all__ = [
     "Task",
     "MailAccount",
     "MailMessage",
+    "Product",
+    "StockMove",
 ]

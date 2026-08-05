@@ -1,0 +1,376 @@
+"""Склад: проверяем то, из-за чего он потом не сойдётся.
+
+Склад ломается не там, где не нажимается кнопка, а там, где число на экране
+перестаёт соответствовать полке. Поэтому здесь почти нет тестов «ответ 200» —
+есть тесты на арифметику остатка, на неубиваемость истории и на то, что
+выключенный блок закрыт целиком.
+"""
+
+import pytest
+from fastapi.testclient import TestClient
+
+from core.services import modules_service, warehouse_service
+from tests.conftest import API
+
+WH = f"{API}/warehouse"
+
+
+@pytest.fixture(scope="module", autouse=True)
+def warehouse_on(root_client: TestClient):
+    """Склад по умолчанию выключен — для остальных тестов включаем.
+
+    Заодно это проверка, что включение вообще работает: без него весь файл
+    посыпался бы на 403, и было бы не видно, в чём дело.
+    """
+    response = root_client.post(f"{API}/modules/warehouse", json={"enabled": True})
+    assert response.status_code == 200, response.text
+    assert any(m["key"] == "warehouse" and m["enabled"] for m in response.json()["items"])
+    yield
+    root_client.post(f"{API}/modules/warehouse", json={"enabled": False})
+    modules_service.invalidate()
+
+
+@pytest.fixture(scope="module")
+def deal_id(root_client: TestClient) -> int:
+    """Заявка, под которую списывают товар."""
+    client = root_client.post(f"{API}/clients", json={"name": "Заказчик со складом"}).json()
+    deal = root_client.post(
+        f"{API}/deals", json={"title": "Ремонт витрины", "client_id": client["id"]}
+    )
+    assert deal.status_code == 201, deal.text
+    return deal.json()["id"]
+
+
+def new_product(client: TestClient, **fields) -> dict:
+    # Деньги — целыми в минимальных единицах, как во всём проекте: 120.00 → 12000
+    payload = {"name": "Плёнка матовая", "unit": "kg", "cost": 12000, "price": 20000}
+    payload.update(fields)
+    response = client.post(f"{WH}/products", json=payload)
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
+def move(client: TestClient, product_id: int, kind: str, quantity, **fields) -> dict:
+    payload = {"product_id": product_id, "kind": kind, "quantity": quantity}
+    payload.update(fields)
+    response = client.post(f"{WH}/moves", json=payload)
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
+def test_stock_is_the_sum_of_moves(root_client):
+    """Остаток — это сумма движений, и никакого другого остатка не существует."""
+    product = new_product(root_client, name="Гайка М8", unit="pcs", sku="N-M8")
+
+    move(root_client, product["id"], "in", 100)
+    move(root_client, product["id"], "out", 30)
+    move(root_client, product["id"], "in", 12)
+    move(root_client, product["id"], "writeoff", 2)
+    move(root_client, product["id"], "return", 5)
+
+    # 100 − 30 + 12 − 2 + 5 = 85
+    expected = 85 * 1000
+    card = root_client.get(f"{WH}/products/{product['id']}").json()
+    assert card["stock_milli"] == expected
+
+    # то же число в списке и рядом с историей: три ответа не имеют права
+    # расходиться, иначе оператор поверит тому, который ему нравится
+    listed = root_client.get(f"{WH}/products?search=Гайка М8").json()["items"]
+    assert [row["stock_milli"] for row in listed] == [expected]
+    history = root_client.get(f"{WH}/products/{product['id']}/moves").json()
+    assert history["stock_milli"] == expected
+    assert sum(m["quantity_milli"] for m in history["items"]) == expected
+
+
+def test_fractional_quantities_survive_a_hundred_operations(root_client):
+    """Дробные килограммы не должны копить ошибку: 1.0 − 0.1×10 = ровно 0.
+
+    Это и есть защита от «списать дважды одно и то же»: останься на остатке
+    хвостик в тысячную долю, кладовщик увидел бы товар, которого нет, и списал
+    бы его ещё раз.
+    """
+    product = new_product(root_client, name="Кофе зерно", unit="kg")
+    move(root_client, product["id"], "in", "1.0")
+    for _ in range(10):
+        move(root_client, product["id"], "out", "0.1")
+
+    card = root_client.get(f"{WH}/products/{product['id']}").json()
+    assert card["stock_milli"] == 0, "дробные списания разошлись с приходом"
+
+    # одиннадцатое списание уже уходит в минус, а не проходит «бесплатно»
+    result = move(root_client, product["id"], "out", "0.1")
+    assert result["went_negative"] is True
+    assert result["stock_milli"] == -100
+
+
+def test_too_precise_quantity_is_rejected_instead_of_rounded(root_client):
+    """Лишние знаки — отказ, а не тихое округление.
+
+    Округли сервер 0.3335 до 0.334 — и остаток разойдётся с накладной на грамм,
+    причём молча. Ошибку ввода исправляет человек, а не сервер за него.
+    """
+    product = new_product(root_client, name="Сахар", unit="kg")
+    response = root_client.post(
+        f"{WH}/moves", json={"product_id": product["id"], "kind": "in", "quantity": "0.3335"}
+    )
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "quantity_too_precise"
+    assert root_client.get(f"{WH}/products/{product['id']}").json()["stock_milli"] == 0
+
+
+def test_stock_can_go_negative_but_says_so(root_client):
+    """Минус разрешён и помечен: товар отдали, приход занести забыли.
+
+    Запрет заставил бы либо не записывать расход (склад разойдётся с реальностью
+    навсегда), либо выдумать приход (себестоимость станет фальшивой).
+    Обоснование — в warehouse_service.add_move.
+    """
+    product = new_product(root_client, name="Шуруп 3×20", unit="pcs")
+    move(root_client, product["id"], "in", 10)
+
+    result = move(root_client, product["id"], "out", 25)
+    assert result["went_negative"] is True
+    assert result["stock_milli"] == -15 * 1000
+
+    # приход задним числом чинит остаток сам, без правки истории
+    fixed = move(root_client, product["id"], "in", 40)
+    assert fixed["went_negative"] is False
+    assert fixed["stock_milli"] == 25 * 1000
+
+
+def test_deleting_a_product_keeps_its_moves(root_client):
+    """Удаление товара не стирает историю движений.
+
+    История списаний — это себестоимость прошлых заявок. Пропади она вместе с
+    карточкой, и прошлые заявки бесшумно подешевели бы.
+    """
+    product = new_product(root_client, name="Лента ПВХ", unit="m")
+    move(root_client, product["id"], "in", 50)
+    move(root_client, product["id"], "out", 20)
+
+    assert root_client.delete(f"{WH}/products/{product['id']}").status_code == 200
+    assert root_client.get(f"{WH}/products?search=Лента ПВХ").json()["items"] == []
+
+    history = root_client.get(f"{WH}/products/{product['id']}/moves").json()
+    assert history["total"] == 2
+    assert history["stock_milli"] == 30 * 1000
+
+    restored = root_client.post(f"{WH}/products/{product['id']}/restore").json()
+    assert restored["stock_milli"] == 30 * 1000
+
+
+def test_hard_delete_of_a_product_with_history_is_refused_by_the_database(root_client):
+    """Последний рубеж: даже прямой DELETE в базе не унесёт историю с собой.
+
+    Мягкое удаление — договорённость приложения, а внешний ключ RESTRICT — то,
+    что остаётся, когда базу чистят руками или скриптом.
+    """
+    from sqlalchemy.exc import IntegrityError
+
+    from database.models import Product
+    from database.session import SessionLocal
+
+    product = new_product(root_client, name="Штапик", unit="m")
+    move(root_client, product["id"], "in", 7)
+
+    db = SessionLocal()
+    try:
+        db.delete(db.get(Product, product["id"]))
+        with pytest.raises(IntegrityError):
+            db.commit()
+        db.rollback()
+    finally:
+        db.close()
+
+    assert root_client.get(f"{WH}/products/{product['id']}/moves").json()["total"] == 1
+
+
+def test_a_service_has_no_stock_at_all(root_client):
+    """У услуги остаток не ноль, а его нет — и оприходовать её нельзя."""
+    service = new_product(
+        root_client, name="Выезд мастера", unit="hour", is_service=True, cost=None
+    )
+    assert service["stock_milli"] is None
+    assert service["low_stock"] is False
+
+    response = root_client.post(
+        f"{WH}/moves", json={"product_id": service["id"], "kind": "in", "quantity": 1}
+    )
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "service_has_no_stock"
+
+    listed = root_client.get(f"{WH}/products?search=Выезд мастера").json()["items"]
+    assert listed[0]["stock_milli"] is None
+
+
+def test_aggregate_is_not_capped_by_the_page_size(root_client):
+    """Остаток считается запросом, а не сложением загруженной страницы.
+
+    Движений здесь больше, чем максимальный `per_page` (200). Сложи кто-нибудь
+    выбранные объекты — остаток занизился бы ровно на хвост, и выглядело бы это
+    совершенно правдоподобно.
+    """
+    product = new_product(root_client, name="Крепёж навалом", unit="pcs")
+    count = 250
+    for _ in range(count):
+        move(root_client, product["id"], "in", 1)
+
+    card = root_client.get(f"{WH}/products/{product['id']}").json()
+    assert card["stock_milli"] == count * 1000
+
+    page = root_client.get(f"{WH}/products/{product['id']}/moves?per_page=200").json()
+    assert page["total"] == count
+    assert len(page["items"]) == 200, "страница должна быть короче полной истории"
+    assert page["stock_milli"] == count * 1000
+    assert sum(m["quantity_milli"] for m in page["items"]) < page["stock_milli"]
+
+
+def test_low_stock_warning_uses_the_threshold(root_client):
+    product = new_product(root_client, name="Картридж", unit="pcs", min_stock=5)
+    move(root_client, product["id"], "in", 10)
+    assert root_client.get(f"{WH}/products/{product['id']}").json()["low_stock"] is False
+
+    move(root_client, product["id"], "out", 6)
+    card = root_client.get(f"{WH}/products/{product['id']}").json()
+    assert card["stock_milli"] == 4 * 1000
+    assert card["low_stock"] is True
+
+    low = root_client.get(f"{WH}/products?low_only=true&per_page=200").json()["items"]
+    assert product["id"] in [row["id"] for row in low]
+
+
+def test_money_stays_in_minor_units(root_client):
+    """Цены — целые копейки; «цену не назвали» это NULL, а не ноль."""
+    product = new_product(root_client, name="Краска", unit="l", price=125050, cost=90000)
+    assert product["price"] == 125050
+    assert product["cost"] == 90000
+
+    no_price = new_product(root_client, name="Образец", unit="pcs", price=None, cost=None)
+    assert no_price["price"] is None
+    assert no_price["cost"] is None
+
+
+def test_writeoff_against_a_deal_carries_its_cost(root_client, deal_id):
+    """Списание под заявку: движение с deal_id и снимком себестоимости."""
+    product = new_product(root_client, name="Профиль алюм.", unit="m", cost=15000)
+    move(root_client, product["id"], "in", 100)
+    move(root_client, product["id"], "out", 4, deal_id=deal_id)
+
+    # себестоимость снята на момент движения, а не подтянута сейчас
+    root_client.patch(f"{WH}/products/{product['id']}", json={"cost": 99900})
+
+    linked = root_client.get(f"{WH}/moves?deal_id={deal_id}").json()
+    assert linked["total"] == 1
+    assert linked["items"][0]["cost"] == 15000
+    assert linked["items"][0]["quantity_milli"] == -4000
+    assert linked["items"][0]["product_name"] == "Профиль алюм."
+    # 4 м × 150.00 = 600.00
+    assert linked["cost"] == 60000
+
+
+def test_move_for_a_missing_deal_is_a_clear_404(root_client):
+    """Несуществующая заявка — понятный отказ, а не 500 от внешнего ключа."""
+    product = new_product(root_client, name="Уголок", unit="pcs")
+    response = root_client.post(
+        f"{WH}/moves",
+        json={"product_id": product["id"], "kind": "out", "quantity": 1, "deal_id": 10_000_000},
+    )
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "deal_not_found"
+
+
+def test_deleting_a_deal_keeps_the_stock_history(root_client):
+    """Заявку удалили — товар со склада не вернулся.
+
+    Внешний ключ стоит на SET NULL именно поэтому: унеси удаление заявки
+    движение с собой, остаток вырос бы сам собой и никто бы не понял почему.
+    """
+    client = root_client.post(f"{API}/clients", json={"name": "Передумал"}).json()
+    deal = root_client.post(
+        f"{API}/deals", json={"title": "Отменённая", "client_id": client["id"]}
+    ).json()
+    product = new_product(root_client, name="Саморез", unit="pcs")
+    move(root_client, product["id"], "in", 20)
+    move(root_client, product["id"], "out", 5, deal_id=deal["id"])
+
+    assert root_client.delete(f"{API}/deals/{deal['id']}").status_code == 200
+
+    card = root_client.get(f"{WH}/products/{product['id']}").json()
+    assert card["stock_milli"] == 15 * 1000, "остаток изменился от удаления заявки"
+    assert root_client.get(f"{WH}/products/{product['id']}/moves").json()["total"] == 2
+
+
+def test_sku_is_unique_but_optional(root_client):
+    new_product(root_client, name="Товар с артикулом", sku="A-100")
+    clash = root_client.post(f"{WH}/products", json={"name": "Другой", "sku": "A-100"})
+    assert clash.status_code == 409
+    assert clash.json()["error"]["code"] == "sku_taken"
+
+    # два товара без артикула — норма: пустой артикул это NULL, а не ""
+    first = new_product(root_client, name="Без артикула 1", sku=None)
+    second = new_product(root_client, name="Без артикула 2", sku="   ")
+    assert first["sku"] is None and second["sku"] is None
+
+
+def test_zero_quantity_move_is_refused(root_client):
+    product = new_product(root_client, name="Ничего", unit="pcs")
+    response = root_client.post(
+        f"{WH}/moves", json={"product_id": product["id"], "kind": "in", "quantity": 0}
+    )
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "zero_quantity"
+
+
+def test_disabled_module_closes_the_api(root_client):
+    """Выключенный блок закрывает адреса целиком, а не отдаёт пустой список."""
+    assert root_client.post(f"{API}/modules/warehouse", json={"enabled": False}).status_code == 200
+    try:
+        for method, path in (
+            ("get", f"{WH}/products"),
+            ("get", f"{WH}/moves"),
+            ("post", f"{WH}/products"),
+        ):
+            response = getattr(root_client, method)(
+                path, **({} if method == "get" else {"json": {}})
+            )
+            assert response.status_code == 403, f"{method} {path} -> {response.status_code}"
+            assert response.json()["error"]["code"] == "module_disabled"
+    finally:
+        root_client.post(f"{API}/modules/warehouse", json={"enabled": True})
+
+
+def test_switching_the_warehouse_off_does_not_touch_anything_else(root_client):
+    """Ради этого блоки и разделены: выключили склад — работа не встала."""
+    assert root_client.post(f"{API}/modules/warehouse", json={"enabled": False}).status_code == 200
+    try:
+        for path in ("/clients", "/deals", "/documents", "/tasks", "/dashboard"):
+            alive = root_client.get(f"{API}{path}")
+            assert alive.status_code == 200, f"{path} слёг из-за выключенного склада: {alive.text}"
+    finally:
+        root_client.post(f"{API}/modules/warehouse", json={"enabled": True})
+
+
+def test_data_survives_switching_the_module_off_and_on(root_client):
+    """Выключение — «убрать с глаз», а не «стереть»: остаток обязан вернуться."""
+    product = new_product(root_client, name="Пережить выключение", unit="pcs")
+    move(root_client, product["id"], "in", 9)
+
+    root_client.post(f"{API}/modules/warehouse", json={"enabled": False})
+    root_client.post(f"{API}/modules/warehouse", json={"enabled": True})
+
+    back = root_client.get(f"{WH}/products/{product['id']}").json()
+    assert back["stock_milli"] == 9 * 1000
+    assert back["name"] == "Пережить выключение"
+
+
+def test_quantity_parsing_never_touches_float():
+    """Разбор количества — Decimal, а не float: 0.1 × 3 обязано быть ровно 0.3."""
+    assert warehouse_service.parse_quantity("0.1") == 100
+    assert sum(warehouse_service.parse_quantity("0.1") for _ in range(3)) == 300
+    assert warehouse_service.parse_quantity("0.1") * 3 == warehouse_service.parse_quantity("0.3")
+    assert warehouse_service.parse_quantity("1 250,5") == 1_250_500
+    assert warehouse_service.parse_quantity(None) is None
+    assert warehouse_service.parse_quantity("") is None
+    assert warehouse_service.format_quantity(1500) == "1.5"
+    assert warehouse_service.format_quantity(2000) == "2"
+    assert warehouse_service.format_quantity(-100) == "-0.1"
