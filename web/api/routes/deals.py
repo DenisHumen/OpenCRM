@@ -1,7 +1,13 @@
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
-from core.services import deal_service, modules_service, pipeline_service, settings_service
+from core.services import (
+    client_service,
+    deal_service,
+    modules_service,
+    pipeline_service,
+    settings_service,
+)
 from database.models import User
 from database.repositories import boards as boards_repo
 from database.repositories import clients as clients_repo
@@ -195,3 +201,44 @@ def delete_deal(
 ):
     deal_service.delete_deal(db, deal_id)
     return {"message": "Deal deleted"}
+
+
+@router.get("/{deal_id}/feed")
+def deal_feed(
+    deal_id: int,
+    kind: str | None = None,
+    _: User = Depends(require_staff),
+    db: Session = Depends(get_db),
+):
+    """Лента заявки: звонки, письма, встречи и заметки одним потоком.
+
+    Отдельная точка, а не фильтр в ленте клиента: заявка — стержень системы, и
+    спрашивать её события через клиента значит каждый раз помнить, чей это
+    клиент. К тому же у клиента событий больше, чем у одной заявки.
+    """
+    deal = deal_service.get_deal(db, deal_id)
+    notes, _total = clients_repo.list_notes(
+        db, client_id=deal.client_id, deal_id=deal_id, kind=kind, per_page=200
+    )
+    return {"items": [schemas.note_out(n) for n in notes]}
+
+
+@router.post("/{deal_id}/feed", status_code=201)
+def add_to_deal_feed(
+    deal_id: int,
+    payload: schemas.NoteIn,
+    user: User = Depends(require_staff),
+    db: Session = Depends(get_db),
+):
+    deal = deal_service.get_deal(db, deal_id)
+    note = client_service.add_note(
+        db,
+        deal.client_id,
+        user,
+        payload.kind,
+        payload.body,
+        payload.happened_at,
+        direction=payload.direction,
+        deal_id=deal_id,
+    )
+    return schemas.note_out(note)

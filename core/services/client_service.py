@@ -84,16 +84,31 @@ def _normalize_tags(tags) -> str:
 
 # --- заметки / история взаимодействий ---
 
-def add_note(db: Session, client_id: int, author: User, kind: str, body: str, happened_at=None) -> ClientNote:
+def add_note(
+    db: Session,
+    client_id: int,
+    author: User,
+    kind: str,
+    body: str,
+    happened_at=None,
+    direction: str = "",
+    deal_id: int | None = None,
+) -> ClientNote:
     get_client(db, client_id)
     if kind not in NOTE_KINDS:
         raise errors.ValidationError(f"kind must be one of {NOTE_KINDS}", code="bad_note_kind")
     if not body.strip():
         raise errors.ValidationError("Note body is required", code="body_required")
+    # Направление есть у звонка и письма; у заметки и встречи его нет, и
+    # выдумывать его нельзя: «нет направления» — не то же, что «входящее».
+    if direction not in ("", "in", "out"):
+        raise errors.ValidationError("direction must be in or out", code="bad_direction")
     note = ClientNote(
         client_id=client_id,
         author_id=author.id,
         kind=kind,
+        direction=direction,
+        deal_id=deal_id,
         body=body.strip(),
         happened_at=happened_at or now_utc(),
     )

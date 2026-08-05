@@ -723,3 +723,17 @@ button { font-family: var(--sans); }
   font-variant-numeric: tabular-nums;
 }
 .count.danger { background: rgba(229, 105, 94, 0.16); color: var(--danger); }
+
+/* Лента общения. Звонки, письма и заметки одним потоком — вид отличается
+   значком, а не отдельным списком. */
+.feed-new { display: flex; gap: 8px; margin-bottom: 14px; }
+.feed-new .input:not([style]) { flex: 1; }
+.feed-list { display: flex; flex-direction: column; }
+.feed-row {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 10px 0; border-bottom: 1px solid var(--line); font-size: 13px;
+}
+.feed-row:last-child { border-bottom: none; }
+.feed-icon { color: var(--faint); flex: none; margin-top: 2px; }
+.feed-text { flex: 1; min-width: 0; }
+.feed-meta { display: flex; gap: 10px; margin-top: 3px; color: var(--faint); font-size: 11.5px; }

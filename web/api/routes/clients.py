@@ -93,13 +93,17 @@ def restore_client(
 @router.get("/{client_id}/notes")
 def list_notes(
     client_id: int,
+    kind: str | None = None,
+    deal_id: int | None = None,
     page: int = Query(default=1, ge=1),
     per_page: int = Query(default=50, ge=1, le=200),
     _: User = Depends(require_staff),
     db: Session = Depends(get_db),
 ):
     client_service.get_client(db, client_id)
-    notes, total = clients_repo.list_notes(db, client_id, page=page, per_page=per_page)
+    notes, total = clients_repo.list_notes(
+        db, client_id, page=page, per_page=per_page, kind=kind, deal_id=deal_id
+    )
     return schemas.paginated([schemas.note_out(n) for n in notes], total, page, per_page)
 
 
@@ -111,7 +115,14 @@ def add_note(
     db: Session = Depends(get_db),
 ):
     note = client_service.add_note(
-        db, client_id, user, payload.kind, payload.body, payload.happened_at
+        db,
+        client_id,
+        user,
+        payload.kind,
+        payload.body,
+        payload.happened_at,
+        direction=payload.direction,
+        deal_id=payload.deal_id,
     )
     return schemas.note_out(note)
 

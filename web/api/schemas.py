@@ -103,6 +103,9 @@ class NoteIn(BaseModel):
     kind: str = "note"
     body: str
     happened_at: datetime | None = None
+    # Входящее или исходящее — у звонка и письма. У заметки пусто.
+    direction: str = ""
+    deal_id: int | None = None
 
 
 class BoardIn(BaseModel):
@@ -280,6 +283,8 @@ def note_out(note: ClientNote) -> dict:
         "client_id": note.client_id,
         "author_id": note.author_id,
         "kind": note.kind,
+        "direction": note.direction or None,
+        "deal_id": note.deal_id,
         "body": note.body,
         "happened_at": _iso(note.happened_at),
         "created_at": _iso(note.created_at),

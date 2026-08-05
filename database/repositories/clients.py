@@ -55,9 +55,25 @@ def search(
 
 
 def list_notes(
-    db: Session, client_id: int, page: int = 1, per_page: int = 50
+    db: Session,
+    client_id: int | None = None,
+    page: int = 1,
+    per_page: int = 50,
+    kind: str | None = None,
+    deal_id: int | None = None,
 ) -> tuple[list[ClientNote], int]:
-    base = select(ClientNote).where(ClientNote.client_id == client_id)
+    """Лента: заметки, звонки, встречи и письма одним потоком.
+
+    Порядок — по времени события, а не по времени записи: звонок вчерашний, а
+    занесли его сегодня, и в ленте он обязан стоять вчерашним числом.
+    """
+    base = select(ClientNote)
+    if client_id is not None:
+        base = base.where(ClientNote.client_id == client_id)
+    if kind:
+        base = base.where(ClientNote.kind == kind)
+    if deal_id is not None:
+        base = base.where(ClientNote.deal_id == deal_id)
     total = db.scalar(select(func.count()).select_from(base.subquery())) or 0
     stmt = (
         base.order_by(ClientNote.happened_at.desc(), ClientNote.id.desc())

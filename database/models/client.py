@@ -39,7 +39,20 @@ class ClientNote(Base):
     author_id: Mapped[int | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
+    # Вид записи: note | call | meeting | email. Поле было заведено сразу, но
+    # не использовалось — теперь это ось ленты: письма, звонки и заметки
+    # попадают в один поток, а не в три отдельных журнала. Решение принимается
+    # ДО почты и телефонии: склеивать три журнала потом больно.
     kind: Mapped[str] = mapped_column(String(16), default="note")
+    # Входящее или исходящее. Пусто у заметки: у неё направления нет, и «нет
+    # направления» — это не то же самое, что «входящее».
+    direction: Mapped[str] = mapped_column(String(3), default="")
+    # Заявка, к которой относится запись. Необязательная: «клиент звонил
+    # спросить про цены» бывает и без заявки. Клиент при этом обязателен —
+    # запись в ленте всегда о ком-то.
+    deal_id: Mapped[int | None] = mapped_column(
+        ForeignKey("deals.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     body: Mapped[str] = mapped_column(Text)
     happened_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
+import { Feed } from "../components/Feed";
 import { Icon } from "../components/Icon";
 import { Chip, ConfirmModal, Modal, ScreenLoading } from "../components/ui";
 import { api } from "../lib/api";
@@ -295,6 +296,10 @@ export function DealCard() {
           />
         </div>
       </div>
+
+      {/* Лента: звонки, письма, встречи и заметки одним потоком. Стоит
+          сразу после полей — это то, что читают, открыв заявку. */}
+      <Feed dealId={deal.id} clientId={deal.client_id} />
 
       {/* Напоминание прямо отсюда: «перезвонить в четверг» придумывается во
           время разговора о заявке, а не потом на отдельном экране. */}
