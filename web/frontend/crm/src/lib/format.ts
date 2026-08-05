@@ -127,3 +127,17 @@ export function formatDuration(sec: number | null | undefined): string | null {
   const s = Math.round(sec % 60);
   return `${m}:${String(s).padStart(2, "0")}`;
 }
+
+/**
+ * Длительность звонка: null и 0 — разные вещи.
+ *
+ * null — станция длительность не прислала или звонок ещё идёт; 0 — сняли трубку
+ * и тут же положили. formatDuration схлопывает их в одно (оба «ничего»), а в
+ * журнале звонков это два разных события, и путать их нельзя.
+ */
+export function formatCallDuration(sec: number | null | undefined): string {
+  if (sec === null || sec === undefined) return "—";
+  const m = Math.floor(sec / 60);
+  const s = Math.round(sec % 60);
+  return `${m}:${String(s).padStart(2, "0")}`;
+}

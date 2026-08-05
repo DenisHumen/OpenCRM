@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { DealStock } from "../components/DealStock";
+import { CallButton, CallsPanel } from "../components/CallsPanel";
 import { Feed } from "../components/Feed";
 import { Icon } from "../components/Icon";
 import { Chip, ConfirmModal, Modal, ScreenLoading } from "../components/ui";
@@ -189,6 +190,15 @@ export function DealCard() {
           <Icon name="trash" size={14} />
           {t("delete")}
         </button>
+        <div style={{ display: "flex", gap: 10 }}>
+          {/* Звонок из карточки уходит в эту же заявку: набравший и так знает,
+              о чём разговор, — незачем потом привязывать звонок руками. */}
+          <CallButton number={deal.client_phone ?? ""} dealId={deal.id} />
+          <button className="btn btn-secondary" onClick={() => setConfirmDelete(true)}>
+            <Icon name="trash" size={14} />
+            {t("delete")}
+          </button>
+        </div>
       </div>
 
       {/* Действия — первым делом. Главный вопрос к открытой сделке «что
@@ -350,6 +360,15 @@ export function DealCard() {
       {/* Лента: звонки, письма, встречи и заметки одним потоком. Стоит
           сразу после полей — это то, что читают, открыв заявку. */}
       <Feed dealId={deal.id} clientId={deal.client_id} />
+
+      {/* Звонки по этой заявке. Сам разговор уже стоит в ленте выше — здесь
+          то, что в строку ленты не влезает: длительность, итог, запись. */}
+      {moduleOn(modules, "telephony") && (
+        <div className="card card-pad" style={{ marginBottom: 20 }}>
+          <div className="metric-title" style={{ marginBottom: 12 }}>{t("calls")}</div>
+          <CallsPanel dealId={deal.id} />
+        </div>
+      )}
 
       {/* Напоминание прямо отсюда: «перезвонить в четверг» придумывается во
           время разговора о заявке, а не потом на отдельном экране. */}

@@ -9,6 +9,7 @@ import { moduleOn } from "./lib/modules";
 import { AuthScreen, ForcePasswordChange } from "./screens/Auth";
 import { BoardEditor } from "./screens/BoardEditor";
 import { Boards } from "./screens/Boards";
+import { Calls } from "./screens/Calls";
 import { ClientCard } from "./screens/ClientCard";
 import { Clients } from "./screens/Clients";
 import { Companies } from "./screens/Companies";
@@ -35,6 +36,7 @@ import {
 import { SettingsModules } from "./screens/SettingsModules";
 import { Staff } from "./screens/Staff";
 import { Tasks } from "./screens/Tasks";
+import { SettingsTelephony } from "./screens/TelephonySettings";
 import { Warehouse } from "./screens/Warehouse";
 
 function Protected() {
@@ -135,6 +137,7 @@ export default function App() {
             <Route path="/boards" element={<Boards />} />
             <Route path="/boards/:id" element={<BoardEditor />} />
           </Route>
+
           <Route element={<ModuleRoute module="warehouse" />}>
             <Route path="/warehouse" element={<Warehouse />} />
             <Route path="/warehouse/:id" element={<ProductCard />} />
@@ -144,6 +147,9 @@ export default function App() {
           </Route>
           <Route element={<ModuleRoute module="mail" />}>
             <Route path="/mail" element={<Mail />} />
+          </Route>
+          <Route element={<ModuleRoute module="telephony" />}>
+            <Route path="/calls" element={<Calls />} />
           </Route>
           <Route path="/profile" element={<Profile />} />
           <Route element={<RootOnly />}>
@@ -155,10 +161,14 @@ export default function App() {
                 там одна кнопка «Сохранить» на всю группу, а переключатель блока
                 применяется сразу — общая кнопка вводила бы в заблуждение. */}
             <Route path="/settings/modules" element={<SettingsModules />} />
+
             {/* Ящики — настройка блока, а не сам блок: доступны и при
                 выключенной почте, иначе включать было бы нечего настраивать.
                 ModuleRoute тут намеренно нет. */}
             <Route path="/settings/mailboxes" element={<Mailboxes />} />
+            {/* Подключение к АТС — тоже вне SettingsLayout: у него свои поля,
+                своя кнопка сохранения и секрет, который показывается один раз. */}
+            <Route path="/settings/telephony" element={<SettingsTelephony />} />
             {/* разделов настроек будет больше — каждый своим маршрутом,
                 чтобы на них можно было сослаться и открыть из сайдбара */}
             <Route path="/settings" element={<SettingsLayout />}>

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { BoardCard } from "../components/BoardCard";
+import { CallButton, CallsPanel } from "../components/CallsPanel";
 import { Icon } from "../components/Icon";
 import { SourcePicker } from "../components/SourcePicker";
 import { Avatar, Chip, ConfirmModal, EmptyState, ScreenLoading } from "../components/ui";
@@ -22,6 +23,12 @@ import { MailCompose, type MailAccount } from "./Mail";
 
 const NOTE_ICONS: Record<string, string> = { note: "note", call: "call", meeting: "meeting", email: "email" };
 
+/** Иконка записи ленты. У звонка она заодно показывает направление. */
+function noteIcon(note: { kind: string; direction?: string | null }): string {
+  if (note.kind !== "call") return NOTE_ICONS[note.kind] ?? "note";
+  return note.direction === "out" ? "callOut" : "callIn";
+}
+
 export function ClientCard() {
   const { id } = useParams();
   const { t, locale, user, workspace, modules, toast, toastError } = useApp();
@@ -31,7 +38,7 @@ export function ClientCard() {
   const [files, setFiles] = useState<any[]>([]);
   const [boards, setBoards] = useState<any[]>([]);
   const [deals, setDeals] = useState<any[]>([]);
-  const [tab, setTab] = useState<"history" | "files" | "boards" | "deals">("history");
+  const [tab, setTab] = useState<"history" | "calls" | "files" | "boards" | "deals">("history");
   const [draft, setDraft] = useState("");
   const [draftKind, setDraftKind] = useState("note");
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -157,6 +164,7 @@ export function ClientCard() {
               {t("compose")}
             </button>
           )}
+          <CallButton number={client.phone} />
           <button
             className="btn btn-primary"
             onClick={async () => {
@@ -212,6 +220,13 @@ export function ClientCard() {
         <button className={"tab" + (tab === "history" ? " active" : "")} onClick={() => setTab("history")}>
           {t("history")}
         </button>
+        {/* Звонки отдельной вкладкой, а не вместо ленты: сам разговор в ленту
+            уже попал записью, здесь — длительность, итог и запись разговора. */}
+        {moduleOn(modules, "telephony") && (
+          <button className={"tab" + (tab === "calls" ? " active" : "")} onClick={() => setTab("calls")}>
+            {t("calls")}
+          </button>
+        )}
         <button className={"tab" + (tab === "files" ? " active" : "")} onClick={() => setTab("files")}>
           {t("files")}
           {files.length > 0 && <span className="count">{files.length}</span>}
@@ -262,7 +277,7 @@ export function ClientCard() {
             {notes.map((note) => (
               <div className="feed-item" key={note.id}>
                 <div className="feed-icon">
-                  <Icon name={NOTE_ICONS[note.kind] ?? "note"} size={14} />
+                  <Icon name={noteIcon(note)} size={14} />
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 4 }}>
@@ -284,6 +299,10 @@ export function ClientCard() {
           </div>
         </>
       )}
+
+      {/* Заявки клиента передаём сюда: у звонка с незнакомого номера заявки
+          нет, и привязать его к заказу удобнее там же, где он виден. */}
+      {tab === "calls" && <CallsPanel clientId={client.id} deals={deals} limit={50} />}
 
       {tab === "files" && (
         <>

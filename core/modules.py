@@ -67,8 +67,11 @@ MODULES: tuple[Module, ...] = (
     # включённый блок без настроенного ящика — пустой раздел в меню. Стоит на
     # клиентах: письмо привязывается к клиенту по адресу и ложится в его ленту.
     Module(key="mail", default=False, requires=("clients",)),
-    # --- в разработке ---
-    Module(key="telephony", ready=False, default=False, requires=("clients",)),
+    # Телефония. Выключена по умолчанию: она бесполезна без настроенной АТС, а
+    # пустой журнал звонков в меню у того, у кого станции нет, — обещание, а не
+    # функция. Зависит только от клиентов: звонок обязан находить, кому он был,
+    # а заявка у звонка бывает не всегда («позвонил спросить про цены»).
+    Module(key="telephony", default=False, requires=("clients",)),
 )
 
 BY_KEY: dict[str, Module] = {module.key: module for module in MODULES}

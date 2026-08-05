@@ -12,6 +12,7 @@ from database.models.module import ModuleState
 from database.models.task import Task
 from database.models.mail import MailAccount, MailMessage
 from database.models.warehouse import Product, StockMove
+from database.models.telephony import PhoneCall
 
 __all__ = [
     "User",
@@ -37,4 +38,5 @@ __all__ = [
     "MailMessage",
     "Product",
     "StockMove",
+    "PhoneCall",
 ]

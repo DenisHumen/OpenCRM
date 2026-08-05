@@ -60,15 +60,30 @@ def test_core_modules_cannot_be_switched_off(root_client):
         assert states(root_client)[key] is True
 
 
-def test_unbuilt_modules_cannot_be_switched_on(root_client):
-    """Переключатель для того, чего нет, — обещание, а не функция."""
-    planned = [m.key for m in modules.MODULES if not m.ready]
-    assert planned, "в реестре не осталось запланированных блоков — поправьте тест"
-    for key in planned:
-        response = switch(root_client, key, True)
-        assert response.status_code == 422, key
-        assert response.json()["error"]["code"] == "module_not_ready"
-        assert states(root_client)[key] is False
+def test_unbuilt_modules_cannot_be_switched_on(root_client, monkeypatch):
+    """Переключатель для того, чего нет, — обещание, а не функция.
+
+    Раньше тест брал ненаписанные блоки из самого реестра — и перестал что-либо
+    проверять в тот день, когда написали последний из них: список оказался
+    пустым, а правило осталось непроверенным. Поэтому подкладываем свой блок:
+    проверяем правило, а не сегодняшний состав реестра. Правило понадобится
+    снова при первом же новом запланированном блоке.
+    """
+    planned = modules.Module(key="test_planned", ready=False, default=False)
+    fake = modules.MODULES + (planned,)
+    monkeypatch.setattr(modules, "MODULES", fake)
+    monkeypatch.setattr(modules, "BY_KEY", {m.key: m for m in fake})
+    modules_service.invalidate()
+
+    response = switch(root_client, "test_planned", True)
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "module_not_ready"
+    assert states(root_client)["test_planned"] is False
+
+    # и на всякий случай: настоящие ненаписанные блоки, если они появятся,
+    # подчиняются тому же правилу
+    for key in (m.key for m in modules.MODULES if not m.ready and m.key != "test_planned"):
+        assert switch(root_client, key, True).status_code == 422, key
 
 
 def test_unknown_module_is_rejected(root_client):

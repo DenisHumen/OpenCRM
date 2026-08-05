@@ -239,6 +239,11 @@ export function Sidebar({ onOpenSearch }: { onOpenSearch: () => void }) {
   if (moduleOn(modules, "reports")) {
     work.push({ to: "/reports", label: t("reports"), icon: "analytics" });
   }
+  // Журнал звонков — рядом с почтой: и то и другое про разговоры с клиентом,
+  // а подробности каждого разговора всё равно живут в ленте заявки.
+  if (moduleOn(modules, "telephony")) {
+    work.push({ to: "/calls", label: t("calls"), icon: "callIn" });
+  }
 
   const admin: NavItem[] = [];
   if (isRoot) {
@@ -325,6 +330,10 @@ export function Sidebar({ onOpenSearch }: { onOpenSearch: () => void }) {
                 // Ящики стоят в настройках, а не в «Работе»: это конфигурация
                 // фирмы, а не то, чем пользуются каждый день.
                 { to: "/settings/mailboxes", label: t("mailboxes") },
+                // Подключение к АТС показываем всегда: без него блок телефонии
+                // включать бессмысленно, а вход в настройку должен быть виден
+                // до того, как блок включили.
+                { to: "/settings/telephony", label: t("telephony") },
                 { to: "/settings/brand", label: t("brand") },
                 { to: "/settings/contacts", label: t("contacts") },
                 { to: "/settings/showcase", label: t("showcase") },

@@ -23,6 +23,11 @@ class Client(Base):
     name: Mapped[str] = mapped_column(String(200), index=True)
     company: Mapped[str] = mapped_column(String(200), default="")
     phone: Mapped[str] = mapped_column(String(64), default="")
+    # Тот же телефон, приведённый к сравнимому виду (core.utils.normalize_phone).
+    # Держим рядом с исходным: показываем и набираем то, что ввёл менеджер, а
+    # ищем — по этому. Без отдельной колонки звонок с 067… не находил бы карточку,
+    # где записано +380 67…, и телефония «не работала» бы через раз.
+    phone_norm: Mapped[str] = mapped_column(String(32), default="", index=True)
     email: Mapped[str] = mapped_column(String(255), default="")
     messenger: Mapped[str] = mapped_column(String(255), default="")
     tags: Mapped[str] = mapped_column(String(500), default="")  # comma-separated (MVP)

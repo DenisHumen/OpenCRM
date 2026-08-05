@@ -1,0 +1,169 @@
+import { useCallback, useEffect, useState } from "react";
+import { Link } from "react-router-dom";
+
+import { CallButton, callIcon, useOutcomeLabel } from "../components/CallsPanel";
+import { Icon } from "../components/Icon";
+import { Chip, EmptyState, ScreenLoading } from "../components/ui";
+import { api, type PhoneCall } from "../lib/api";
+import { useApp } from "../lib/app";
+import { formatCallDuration, formatDateTime } from "../lib/format";
+import { moduleOn } from "../lib/modules";
+
+// Ширины колонок общие для шапки и строк, чтобы всё было выровнено.
+const COL = {
+  when: { width: 150 } as const,
+  duration: { width: 90, textAlign: "right" } as const,
+  outcome: { width: 110 } as const,
+  actions: { width: 190, textAlign: "right" } as const,
+};
+
+export function Calls() {
+  const { t, locale, modules, toast, toastError, refreshTasks } = useApp();
+  const [items, setItems] = useState<PhoneCall[] | null>(null);
+  const [total, setTotal] = useState(0);
+  const [search, setSearch] = useState("");
+  const [missedOnly, setMissedOnly] = useState(false);
+  const outcomeLabel = useOutcomeLabel();
+  const tasksOn = moduleOn(modules, "tasks");
+
+  const load = useCallback(async () => {
+    const params = new URLSearchParams({ per_page: "100" });
+    if (search.trim()) params.set("number", search.trim());
+    if (missedOnly) params.set("outcome", "missed");
+    try {
+      const data = await api.get<{ items: PhoneCall[]; total: number }>(
+        `/telephony/calls?${params}`,
+      );
+      setItems(data.items);
+      setTotal(data.total);
+    } catch (e) {
+      toastError(e);
+    }
+  }, [search, missedOnly, toastError]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  if (!items) return <ScreenLoading />;
+
+  // Напоминание перезвонить живёт в блоке напоминаний: он выключен — кнопки
+  // просто нет, а журнал работает как работал.
+  const remind = async (call: PhoneCall) => {
+    try {
+      await api.post(`/telephony/calls/${call.id}/callback-task`);
+      toast(t("callbackTaskCreated"));
+      void refreshTasks();
+    } catch (e) {
+      toastError(e);
+    }
+  };
+
+  return (
+    <div className="page">
+      <div className="page-head" style={{ alignItems: "flex-start", marginBottom: 20 }}>
+        <div>
+          <h1 className="page-title">{t("calls")}</h1>
+          <div className="page-sub">{t("callsSub", { total })}</div>
+        </div>
+      </div>
+
+      <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 16 }}>
+        <input
+          className="input"
+          style={{ maxWidth: 320 }}
+          placeholder={t("callsSearch")}
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
+        {/* Пропущенные — то, ради чего в журнал заходят чаще всего: это
+            несостоявшийся разговор, и он ждёт действия. */}
+        <button
+          className={"option-chip" + (missedOnly ? " active" : "")}
+          onClick={() => setMissedOnly((on) => !on)}
+        >
+          <Icon name="callMissed" size={13} />
+          {t("onlyMissed")}
+        </button>
+      </div>
+
+      {items.length === 0 ? (
+        <EmptyState title={t("callsEmpty")} />
+      ) : (
+        <div className="list-card">
+          <div className="list-header">
+            <span style={{ width: 34 }} />
+            <span style={{ flex: 1 }}>{t("colNumber")}</span>
+            <span style={COL.when}>{t("colWhen")}</span>
+            <span style={COL.duration}>{t("colDuration")}</span>
+            <span style={COL.outcome}>{t("colOutcome")}</span>
+            <span style={COL.actions} />
+          </div>
+          {items.map((call) => (
+            <div key={call.id} className="list-row hoverable">
+              <span
+                className="feed-icon"
+                style={{ color: call.outcome === "missed" ? "var(--danger)" : undefined }}
+                title={call.direction === "in" ? t("feedIn") : t("feedOut")}
+              >
+                <Icon name={callIcon(call)} size={14} />
+              </span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ color: "var(--text)", fontSize: 13.5, fontWeight: 500 }}>
+                  {call.counterparty || t("unknownNumber")}
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 2 }}>
+                  <span style={{ color: "var(--faint)", fontSize: 12 }}>
+                    {call.direction === "in" ? t("feedIn") : t("feedOut")}
+                  </span>
+                  {call.client_id ? (
+                    <Link
+                      to={`/clients/${call.client_id}`}
+                      style={{ color: "var(--muted)", fontSize: 12 }}
+                    >
+                      {t("client")}
+                    </Link>
+                  ) : (
+                    // Звонок с незнакомого номера карточку не заводит: кто из
+                    // звонивших клиент, решает человек.
+                    <span style={{ color: "var(--faint)", fontSize: 12 }}>
+                      {t("unknownNumber")}
+                    </span>
+                  )}
+                  {call.has_recording && (
+                    <span style={{ color: "var(--faint)", fontSize: 12 }}>{t("callRecording")}</span>
+                  )}
+                </div>
+              </div>
+              <span style={{ ...COL.when, color: "var(--muted)", fontSize: 12.5 }}>
+                {formatDateTime(call.started_at, locale)}
+              </span>
+              <span style={{ ...COL.duration, color: "var(--text)", fontSize: 12.5 }}>
+                {formatCallDuration(call.duration_sec)}
+              </span>
+              <span style={COL.outcome}>
+                {call.outcome === "missed" ? (
+                  <Chip variant="warning">{outcomeLabel(call)}</Chip>
+                ) : (
+                  <span style={{ color: "var(--muted)", fontSize: 12.5 }}>
+                    {outcomeLabel(call)}
+                  </span>
+                )}
+              </span>
+              <span
+                style={{ ...COL.actions, display: "flex", gap: 8, justifyContent: "flex-end" }}
+              >
+                {call.outcome === "missed" && tasksOn && (
+                  <button className="text-link" onClick={() => void remind(call)}>
+                    {t("callbackTask")}
+                  </button>
+                )}
+                <CallButton number={call.counterparty} onCalled={() => void load()} />
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
