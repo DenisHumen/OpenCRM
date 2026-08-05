@@ -67,17 +67,46 @@ class Response:
     def ok(self) -> bool:
         return 200 <= self.status < 300
 
+    @property
+    def alive(self) -> bool:
+        """Сервер ответил осмысленно — включая перенаправление.
+
+        Для smoke-теста редирект — такой же признак жизни, как страница: его
+        выдаёт настроенный и работающий nginx.
+        """
+        return 200 <= self.status < 400
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Опенер, который не идёт по перенаправлению, а возвращает его как ответ."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ARG002
+        return None
+
 
 class HttpProbe:
     def __init__(self, timeout: float = 10.0, opener=None) -> None:
         self.timeout = timeout
         self._open = opener or urllib.request.urlopen
+        # Отдельный опенер для проверок, которым нельзя идти по редиректу.
+        # Подменённый снаружи (в тестах) используется как есть — иначе тест
+        # проверял бы не тот код, который работает на сервере.
+        self._open_here = opener or urllib.request.build_opener(_NoRedirect).open
 
-    def get(self, url: str) -> Response:
+    def get(self, url: str, follow: bool = True) -> Response:
+        """`follow=False` — не ходить по перенаправлению.
+
+        Нужно для проверок с самой машины. Сайт на HTTPS отвечает на
+        http://127.0.0.1/ перенаправлением на https://127.0.0.1/, а сертификат
+        выписан на домен и к IP-адресу не подходит — пойти по такому редиректу
+        значит гарантированно упереться в ошибку проверки сертификата. Именно
+        это и роняло smoke-тест деплоя после переезда на HTTPS.
+        """
         request = urllib.request.Request(url)
         request.add_header("User-Agent", "opencrm-autoupdate-healthcheck")
+        opener = self._open if follow else self._open_here
         try:
-            with self._open(request, timeout=self.timeout) as response:
+            with opener(request, timeout=self.timeout) as response:
                 return Response(response.status, response.read(4096).decode("utf-8", "replace"))
         except urllib.error.HTTPError as error:
             return Response(error.code, "")
