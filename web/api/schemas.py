@@ -11,6 +11,7 @@ from database.models import (
     Client,
     ClientFile,
     ClientNote,
+    Company,
     Deal,
     DealStageChange,
     Document,
@@ -60,6 +61,8 @@ class DealIn(BaseModel):
     title: str
     client_id: int
     manager_id: int | None = None
+    # От чьего имени ведём. Не прислали — работаем от фирмы по умолчанию.
+    company_id: int | None = None
     stage: str | None = None
     description: str | None = None
     due_at: datetime | None = None
@@ -74,6 +77,7 @@ class DealPatchIn(BaseModel):
     title: str | None = None
     client_id: int | None = None
     manager_id: int | None = None
+    company_id: int | None = None
     stage: str | None = None
     description: str | None = None
     due_at: datetime | None = None
@@ -87,6 +91,36 @@ class DealMoveIn(BaseModel):
     # Позиция внутри колонки. Не задана — карточка встаёт в конец.
     sort_order: int | None = None
     lost_reason: str | None = None
+
+
+class CompanyIn(BaseModel):
+    """Своё юрлицо. Обязательно только краткое название — с одним полем фирму
+    заводят за секунду, а реквизиты дописывают, когда дойдут руки до первого
+    счёта. Требовать всё сразу значит не завести фирму вовсе."""
+
+    name: str
+    legal_name: str | None = None
+    is_default: bool | None = None
+    tax_number: str | None = None
+    reg_number: str | None = None
+    vat_number: str | None = None
+    legal_address: str | None = None
+    actual_address: str | None = None
+    phone: str | None = None
+    email: str | None = None
+    website: str | None = None
+    bank_name: str | None = None
+    bank_account: str | None = None
+    bank_code: str | None = None
+    signatory_name: str | None = None
+    signatory_basis: str | None = None
+    signature_path: str | None = None
+    stamp_path: str | None = None
+    note: str | None = None
+
+
+class CompanyPatchIn(CompanyIn):
+    name: str | None = None
 
 
 class ClientPatchIn(BaseModel):
@@ -192,6 +226,33 @@ def client_out(client: Client) -> dict:
     }
 
 
+def company_out(company: Company) -> dict:
+    return {
+        "id": company.id,
+        "name": company.name,
+        "legal_name": company.legal_name,
+        "is_default": company.is_default,
+        "tax_number": company.tax_number,
+        "reg_number": company.reg_number,
+        "vat_number": company.vat_number,
+        "legal_address": company.legal_address,
+        "actual_address": company.actual_address,
+        "phone": company.phone,
+        "email": company.email,
+        "website": company.website,
+        "bank_name": company.bank_name,
+        "bank_account": company.bank_account,
+        "bank_code": company.bank_code,
+        "signatory_name": company.signatory_name,
+        "signatory_basis": company.signatory_basis,
+        "signature_path": company.signature_path,
+        "stamp_path": company.stamp_path,
+        "note": company.note,
+        "created_at": _iso(company.created_at),
+        "updated_at": _iso(company.updated_at),
+    }
+
+
 def document_out(document: Document) -> dict:
     import json as _json
 
@@ -253,6 +314,9 @@ def deal_out(deal: Deal, client_name: str | None = None, manager: User | None = 
         "manager_id": deal.manager_id,
         "manager_name": manager.name if manager else None,
         "manager_avatar": (manager.avatar_path or None) if manager else None,
+        # Название фирмы не кладём сюда: в списке и на канбане оно не нужно
+        # (у большинства фирма одна), а карточка добирает его сама.
+        "company_id": deal.company_id,
         "stage": deal.stage,
         "sort_order": deal.sort_order,
         "description": deal.description,

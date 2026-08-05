@@ -3,7 +3,7 @@
 from sqlalchemy.orm import Session
 
 from core import exceptions as errors
-from core.services import pipeline_service
+from core.services import company_service, pipeline_service
 from core.utils import now_utc
 from database.models import Deal, User
 from database.models.pipeline import CLOSED_KINDS, KIND_LOST
@@ -58,6 +58,19 @@ def money_of(deal: Deal) -> dict:
     }
 
 
+def _company_id(db: Session, data: dict) -> int | None:
+    """Фирма заявки из запроса, с проверкой существования.
+
+    Проверяем, а не доверяем числу: несуществующий id прошёл бы в базу и всплыл
+    бы только при выдаче бланка — пустой шапкой на уже напечатанной бумаге.
+    """
+    value = data.get("company_id")
+    if not value:
+        return None
+    company_service.get_company(db, int(value))
+    return int(value)
+
+
 def get_deal(db: Session, deal_id: int, include_deleted: bool = False) -> Deal:
     deal = deals_repo.get(db, deal_id, include_deleted=include_deleted)
     if deal is None:
@@ -90,6 +103,11 @@ def create_deal(db: Session, data: dict, author: User) -> Deal:
         title=title[:MAX_TITLE],
         client_id=int(client_id),
         manager_id=manager_id,
+        # Фирму не подставляем автоматически, хотя основная известна. Пустая
+        # ссылка означает «от основной» и следует за ней, если основную потом
+        # сменят; проставленная — заморозила бы сегодняшний выбор во всех
+        # заявках и разошлась бы со справочником при первой же смене.
+        company_id=_company_id(db, data),
         stage=stage,
         sort_order=deals_repo.next_sort_order(db, stage),
         description=(data.get("description") or "").strip(),
@@ -123,6 +141,10 @@ def update_deal(db: Session, deal_id: int, data: dict, author: User) -> Deal:
         if clients_repo.get(db, int(data["client_id"])) is None:
             raise errors.NotFoundError("Client not found", code="client_not_found")
         deal.client_id = int(data["client_id"])
+    # Прислали null — вернулись к «от основной фирмы». Это законное состояние,
+    # а не «поле не трогали», поэтому проверяем наличие ключа, а не значения.
+    if "company_id" in data:
+        deal.company_id = _company_id(db, data)
     if "lost_reason" in data and data["lost_reason"] is not None:
         deal.lost_reason = data["lost_reason"].strip()[:MAX_LOST_REASON]
     # Сумму можно и снять: прислали null — вернулись к «ещё не назвали».

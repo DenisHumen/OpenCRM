@@ -11,6 +11,8 @@ import { BoardEditor } from "./screens/BoardEditor";
 import { Boards } from "./screens/Boards";
 import { ClientCard } from "./screens/ClientCard";
 import { Clients } from "./screens/Clients";
+import { Companies } from "./screens/Companies";
+import { CompanyCard } from "./screens/CompanyCard";
 import { Dashboard } from "./screens/Dashboard";
 import { DealCard } from "./screens/DealCard";
 import { Deals } from "./screens/Deals";
@@ -112,6 +114,13 @@ export default function App() {
           <Route path="/deals/:id" element={<DealCard />} />
           <Route element={<ModuleRoute module="tasks" />}>
             <Route path="/tasks" element={<Tasks />} />
+          </Route>
+          {/* Фирмы не под RootOnly: читать реквизиты должен любой сотрудник —
+              менеджеру надо видеть, от кого ведётся заявка. Правка закрыта на
+              сервере, а карточка показывает менеджеру поля недоступными. */}
+          <Route element={<ModuleRoute module="companies" />}>
+            <Route path="/companies" element={<Companies />} />
+            <Route path="/companies/:id" element={<CompanyCard />} />
           </Route>
           <Route element={<ModuleRoute module="documents" />}>
             <Route path="/documents" element={<Documents />} />

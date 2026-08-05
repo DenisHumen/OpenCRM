@@ -20,6 +20,7 @@ from web.api.routes import (
     arcade,
     auth,
     boards,
+    companies,
     deals,
     documents,
     modules,
@@ -250,6 +251,7 @@ def create_app() -> FastAPI:
     app.include_router(clients.router, prefix=api_prefix)
     app.include_router(boards.router, prefix=api_prefix)
     app.include_router(deals.router, prefix=api_prefix)
+    app.include_router(companies.router, prefix=api_prefix)
     app.include_router(pipeline.router, prefix=api_prefix)
     app.include_router(people.router, prefix=api_prefix)
     app.include_router(documents.router, prefix=api_prefix)
