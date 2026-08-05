@@ -86,22 +86,28 @@ class FakeProbe:
     ответ должен отличаться от того, из-за которого откат случился.
     """
 
-    def __init__(self, health=(True,), smoke=(True,)):
+    def __init__(self, health=(True,), smoke=(True,), smoke_status=200):
         self.health = list(health)
         self.smoke = list(smoke)
+        # Чем именно отвечает smoke-адрес, когда он «живой». На боевом сервере с
+        # HTTPS это 301 на https://…, а не 200: подпись дубля обязана совпадать
+        # с настоящей, иначе тест проверяет не тот код, который работает.
+        self.smoke_status = smoke_status
         self.calls: list[str] = []
+        self.followed: list[bool] = []
 
     @staticmethod
     def _next(plan: list[bool]) -> bool:
         return plan.pop(0) if len(plan) > 1 else plan[0]
 
-    def get(self, url):
+    def get(self, url, follow=True):
         self.calls.append(url)
+        self.followed.append(follow)
         if "healthz" in url:
             ok = self._next(self.health)
             return Response(200, '{"status": "ok"}') if ok else Response(502, "bad gateway")
         ok = self._next(self.smoke)
-        return Response(200, "<html>ok</html>") if ok else Response(500, "")
+        return Response(self.smoke_status, "<html>ok</html>") if ok else Response(500, "")
 
 
 class FakeGitHub:
@@ -972,6 +978,29 @@ def test_a_deploy_without_a_snapshot_does_not_start(tmp_path):
 
 
 # --- обновление: откат ---
+
+
+def test_https_redirect_is_a_live_site_not_a_failure(tmp_path):
+    """Сайт на HTTPS отвечает на http://127.0.0.1/ перенаправлением.
+
+    Идти по нему нельзя: адрес ведёт на https://127.0.0.1/, а сертификат
+    выписан на домен и к IP-адресу не подходит — проверка сертификата
+    провалится всегда. Так и было на боевом сервере: деплой падал и
+    откатывался, а сайт при этом полностью работал.
+
+    Само перенаправление выдаёт настроенный и живой nginx, а живость
+    приложения уже подтвердил /healthz. Значит 3xx — успех.
+    """
+    probe = FakeProbe(smoke_status=301)
+    updater = make_updater(tmp_path, probe=probe)
+
+    outcome = updater.run_once()
+
+    assert outcome.status == STATUS_DEPLOYED, outcome.detail
+    # и по редиректу мы не пошли
+    smoke_calls = [f for url, f in zip(probe.calls, probe.followed) if "healthz" not in url]
+    assert smoke_calls, "smoke-тест не выполнялся вовсе"
+    assert not any(smoke_calls), "smoke пошёл по редиректу — упрётся в чужой сертификат"
 
 
 def test_a_dead_site_is_rolled_back(tmp_path):

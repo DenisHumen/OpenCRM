@@ -425,9 +425,19 @@ class Updater:
             return f"health-check не прошёл за {self.config.health_attempts} попыток — {last}"
 
         # Живая база — ещё не живой сайт: проверяем настоящие страницы.
+        #
+        # Без хождения по редиректу и с зачётом 3xx. Проверки идут с самой
+        # машины по http://127.0.0.1/, а сайт на HTTPS отвечает на это
+        # перенаправлением на https://127.0.0.1/ — где сертификат, выписанный на
+        # домен, к IP-адресу не подходит по определению. Пойти по такому
+        # редиректу значит всегда упереться в ошибку сертификата: после переезда
+        # на HTTPS деплой падал и откатывался при полностью работающем сайте.
+        #
+        # Само перенаправление и есть доказательство жизни: его выдаёт
+        # настроенный nginx, а живость приложения уже подтвердил /healthz выше.
         for url in self.config.smoke_urls:
-            response = self.probe.get(url)
-            if not response.ok:
+            response = self.probe.get(url, follow=False)
+            if not response.alive:
                 return f"smoke-тест {url}: {response.status or response.body[:120]}"
         return ""
 
