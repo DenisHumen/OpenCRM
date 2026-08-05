@@ -70,6 +70,12 @@ const PATHS: Record<string, string> = {
     '<path d="M6 9V3h12v6"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8" rx="1"/>',
   scan:
     '<path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><path d="M7 8v8"/><path d="M11 8v8"/><path d="M15 8v8"/>',
+  // Склад — ангар с воротами, а не коробка: коробка уже занята бланком.
+  warehouse:
+    '<path d="m3 9 9-6 9 6v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/><path d="M8 21v-6h8v6"/><path d="M8 12h8"/>',
+  // Приход и расход: стрелка внутрь и стрелка наружу.
+  arrowIn: '<path d="m7 7 10 10"/><path d="M17 7v10H7"/>',
+  arrowOut: '<path d="M7 17 17 7"/><path d="M7 7h10v10"/>',
 };
 
 export function Icon({

@@ -9,6 +9,7 @@ from database.models.pipeline import PipelineStage
 from database.models.document import Document, DocumentEvent
 from database.models.module import ModuleState
 from database.models.task import Task
+from database.models.warehouse import Product, StockMove
 
 __all__ = [
     "User",
@@ -29,4 +30,6 @@ __all__ = [
     "DocumentEvent",
     "ModuleState",
     "Task",
+    "Product",
+    "StockMove",
 ]

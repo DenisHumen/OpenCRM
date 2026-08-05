@@ -52,8 +52,12 @@ MODULES: tuple[Module, ...] = (
     # задача, и клиент с заявкой ей не нужны.
     Module(key="tasks"),
     Module(key="boards", default=True),
+    # Склад нужен магазину и мастерской, а дизайн-студии нет — поэтому, в
+    # отличие от остальных готовых блоков, по умолчанию выключен. Списание идёт
+    # под заявку, отсюда зависимость: без заявок остаётся голый учёт остатков,
+    # который не отвечает на вопрос «во сколько нам обошлась эта работа».
+    Module(key="warehouse", default=False, requires=("deals",)),
     # --- в разработке ---
-    Module(key="warehouse", ready=False, default=False, requires=("deals",)),
     Module(key="reports", ready=False, default=True, requires=("deals",)),
     Module(key="mail", ready=False, default=False, requires=("clients",)),
     Module(key="telephony", ready=False, default=False, requires=("clients",)),

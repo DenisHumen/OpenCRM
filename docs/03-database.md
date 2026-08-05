@@ -165,6 +165,67 @@ erDiagram
 - `ip_hash` — хэш IP с солью, не сырой адрес: достаточно для отличия уникальных посетителей, без хранения персональных данных.
 - Агрегаты для CRM (`count`, `last viewed`) считаются запросом; при росте — денормализовать счётчик в `share_links`.
 
+### products / stock_moves (блок «Склад»)
+
+```mermaid
+erDiagram
+    products ||--o{ stock_moves : ""
+    deals ||--o{ stock_moves : "списание под заявку"
+    users ||--o{ stock_moves : "автор"
+
+    products {
+        int id PK
+        string sku UK "nullable — артикул есть не у всех"
+        string name
+        string unit "pcs | kg | g | l | ml | m | m2 | pack | hour"
+        int price_minor "nullable — цену не назвали"
+        int cost_minor "nullable"
+        bool is_service "у услуги остатка не бывает"
+        int min_stock_milli "nullable — порог предупреждения"
+        text note
+        datetime created_at
+        datetime updated_at
+        datetime deleted_at
+    }
+
+    stock_moves {
+        int id PK
+        int product_id FK
+        int quantity_milli "знаковое: приход +, расход −"
+        string kind "in | out | writeoff | adjust | return"
+        int deal_id FK "nullable — списание под заявку"
+        int cost_minor "nullable — себестоимость на момент движения"
+        text comment
+        datetime happened_at "когда случилось"
+        datetime created_at "когда записали"
+        int author_id FK
+    }
+```
+
+- **Остатка среди колонок нет и не будет.** Остаток равен `SUM(quantity_milli)`
+  по товару и считается запросом (`database/repositories/warehouse.py`). Хранимое
+  число однажды разойдётся с историей — из-за отката, правки задним числом,
+  второго процесса, — и способа узнать, какая из двух цифр верна, не останется.
+  Понадобится кэш — он заводится отдельной таблицей и сверяется с этим запросом,
+  но источником правды не становится никогда.
+- `quantity_milli` — целое в **тысячных долях** единицы: дробные килограммы и
+  метры существуют, а float в учёте теряет сотые доли на каждой операции. Три
+  знака закрывают граммы и миллилитры; лишние знаки API отвергает, а не
+  округляет — молчаливое округление и есть причина, по которой одно и то же
+  списывают дважды.
+- `products.sku` — `NULL`, а не пустая строка: артикул есть не у всех, а две
+  пустые строки нарушили бы уникальность. `NULL` в уникальном индексе не
+  конфликтует ни в SQLite, ни в MySQL.
+- `stock_moves.product_id` — `ON DELETE RESTRICT`: снести товар вместе с
+  движениями значит бесшумно переписать себестоимость прошлых заявок. Штатный
+  путь удаления — `products.deleted_at`.
+- `stock_moves.deal_id` — `ON DELETE SET NULL`: товар со склада ушёл, и удаление
+  заявки не возвращает его на полку. Исчезни движение вместе с заявкой — остаток
+  вырос бы сам собой, и никто бы не понял почему.
+- Уход остатка в минус **разрешён** и помечается в ответе API: в жизни товар
+  отдают раньше, чем заносят приход. Запрет заставил бы либо не записывать
+  расход, либо выдумывать приход — обе лжи хуже честного «−3».
+
 ### site_settings
 - Ключ-значение: `brand_name`, `brand_logo_path`, `contact_email`, `contact_phone`, `social_telegram`, `showcase_locale`, `og_default_image` и т.п.
 - Тумблеры витрины хранятся строкой `"1"`/`"0"` (таблица строковая): `showcase_show_meta` — строка «7 works · updated …» под названием доски, `showcase_show_footer` — футер с контактами. Оба по умолчанию `"0"`.
@@ -198,6 +259,9 @@ erDiagram
 | works | `(board_id, sort_order)` | вывод доски по порядку |
 | share_links | `token` (unique) | открытие витрины — самый горячий запрос |
 | share_views | `(share_link_id, viewed_at)` | статистика |
+| products | `sku` (unique), `name`, `deleted_at` | поиск и списки |
+| stock_moves | `product_id` | внешний ключ **и** колонка группировки для остатка |
+| stock_moves | `deal_id`, `author_id`, `kind`, `happened_at` | врезка в карточке заявки, фильтры и порядок истории |
 
 ## Миграция SQLite → MySQL
 

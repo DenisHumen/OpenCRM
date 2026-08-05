@@ -227,6 +227,10 @@ export function Sidebar({ onOpenSearch }: { onOpenSearch: () => void }) {
   if (moduleOn(modules, "boards")) {
     work.push({ to: "/boards", label: t("boards"), icon: "boards" });
   }
+  // Склад по умолчанию выключен: он нужен магазину и мастерской, а студии нет.
+  if (moduleOn(modules, "warehouse")) {
+    work.push({ to: "/warehouse", label: t("warehouse"), icon: "warehouse" });
+  }
 
   const admin: NavItem[] = [];
   if (isRoot) {

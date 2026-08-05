@@ -4,7 +4,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
-from core.services import deal_service, media_service
+from core.services import deal_service, media_service, warehouse_service
 from core.utils import is_online
 from database.models import (
     Board,
@@ -15,8 +15,10 @@ from database.models import (
     DealStageChange,
     Document,
     PipelineStage,
+    Product,
     ShareLink,
     ShareView,
+    StockMove,
     Task,
     User,
     Work,
@@ -155,6 +157,48 @@ class SettingsPatchIn(BaseModel):
 
 class RoleUpdateIn(BaseModel):
     role: str
+
+
+#: Количество принимаем и строкой, и числом — в отличие от денег, которые
+#: приходят уже целыми в минимальных единицах. Разбирает его сервер через
+#: Decimal (`warehouse_service.parse_quantity`): у количества три знака после
+#: запятой, и `Math.round(0.3335 * 1000)` в браузере дал бы 334 — то самое
+#: молчаливое округление, из-за которого одно и то же списывают дважды.
+Quantity = str | int | float | None
+
+
+class ProductIn(BaseModel):
+    name: str
+    sku: str | None = None
+    unit: str = "pcs"
+    # Деньги — целыми в минимальных единицах, как у сделок. None и 0 разные:
+    # «цену не назвали» и «отдаём бесплатно».
+    price: int | None = None
+    cost: int | None = None
+    is_service: bool = False
+    min_stock: Quantity = None
+    note: str | None = None
+
+
+class ProductPatchIn(BaseModel):
+    name: str | None = None
+    sku: str | None = None
+    unit: str | None = None
+    price: int | None = None
+    cost: int | None = None
+    is_service: bool | None = None
+    min_stock: Quantity = None
+    note: str | None = None
+
+
+class StockMoveIn(BaseModel):
+    product_id: int
+    quantity: Quantity = None
+    kind: str
+    deal_id: int | None = None
+    cost: int | None = None
+    comment: str | None = None
+    happened_at: datetime | None = None
 
 
 # --- сериализация ---
@@ -374,6 +418,50 @@ def view_out(view: ShareView) -> dict:
         "viewed_at": _iso(view.viewed_at),
         "visitor": view.ip_hash[:12],  # анонимный идентификатор посетителя
         "user_agent": view.user_agent,
+    }
+
+
+def product_out(product: Product, stock_milli: int | None) -> dict:
+    """Карточка товара. Остаток приходит аргументом — его считает репозиторий запросом.
+
+    Сериализатор не ходит за остатком сам не из принципа: в списке товаров это
+    означало бы отдельный запрос на каждую строку, и склад на 500 позиций
+    открывался бы секундами.
+    """
+    return {
+        "id": product.id,
+        "sku": product.sku,
+        "name": product.name,
+        "unit": product.unit,
+        "price": product.price_minor,
+        "cost": product.cost_minor,
+        "is_service": product.is_service,
+        "min_stock_milli": product.min_stock_milli,
+        "note": product.note,
+        # У услуги остатка нет — именно null, а не 0: «остатка не бывает» и
+        # «товар закончился» на экране должны выглядеть по-разному.
+        "stock_milli": stock_milli,
+        "low_stock": warehouse_service.is_low(product, stock_milli),
+        "created_at": _iso(product.created_at),
+        "updated_at": _iso(product.updated_at),
+        "deleted_at": _iso(product.deleted_at),
+    }
+
+
+def stock_move_out(move: StockMove) -> dict:
+    return {
+        "id": move.id,
+        "product_id": move.product_id,
+        # Знаковое: приход +, расход −. Отдаём как есть, чтобы клиенту не
+        # приходилось выводить знак из вида движения второй раз.
+        "quantity_milli": move.quantity_milli,
+        "kind": move.kind,
+        "deal_id": move.deal_id,
+        "cost": move.cost_minor,
+        "comment": move.comment,
+        "happened_at": _iso(move.happened_at),
+        "created_at": _iso(move.created_at),
+        "author_id": move.author_id,
     }
 
 
