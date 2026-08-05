@@ -980,6 +980,52 @@ def test_a_deploy_without_a_snapshot_does_not_start(tmp_path):
 # --- обновление: откат ---
 
 
+def test_the_daemon_restarts_itself_when_its_own_code_changes(tmp_path):
+    """Python читает исходники один раз, при импорте.
+
+    Обновление правит файлы на диске, но уже запущенный демон продолжает
+    работать тем, что загрузил при старте. На боевом сервере это стоило
+    отдельного разбора: smoke-тест чинили дважды, а деплой оба раза падал
+    старым кодом, потому что служба крутилась с прошлой недели.
+
+    Выход из watch — это и есть перезапуск: systemd поднимет службу заново
+    (Restart=always), и следующий круг пойдёт новым кодом.
+    """
+    shell = FakeShell()
+    shell.rules.append(("diff --name-only", 0, "deploy/updater.py\nweb/main.py\n", ""))
+    # после деплоя HEAD уезжает на новый коммит
+    shell.effect("checkout --detach", lambda: setattr(shell, "head", NEW))
+    lines: list[str] = []
+    updater = make_updater(tmp_path, shell=shell)
+    # make_updater отдаёт лишние аргументы в конфиг, а не в обновлятор,
+    # поэтому лог подменяем напрямую.
+    updater.log = lines.append
+
+    updater.watch(rounds=5)
+
+    assert any("выхожу" in line for line in lines), (
+        "демон остался в работе со старым кодом в памяти"
+    )
+
+
+def test_a_foreign_change_does_not_restart_the_daemon(tmp_path):
+    """Перезапуск ради чужой правки — лишний простой в опросе."""
+    shell = FakeShell()
+    shell.rules.append(("diff --name-only", 0, "web/main.py\ncore/services/deal_service.py\n", ""))
+    shell.effect("checkout --detach", lambda: setattr(shell, "head", NEW))
+    lines: list[str] = []
+    updater = make_updater(tmp_path, shell=shell)
+    # make_updater отдаёт лишние аргументы в конфиг, а не в обновлятор,
+    # поэтому лог подменяем напрямую.
+    updater.log = lines.append
+
+    updater.watch(rounds=2)
+
+    assert not any("выхожу" in line for line in lines), (
+        "демон вышел из-за правки, которая его не касается"
+    )
+
+
 def test_https_redirect_is_a_live_site_not_a_failure(tmp_path):
     """Сайт на HTTPS отвечает на http://127.0.0.1/ перенаправлением.
 
