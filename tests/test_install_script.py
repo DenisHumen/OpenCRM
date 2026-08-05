@@ -76,6 +76,21 @@ def test_repair_writes_back_all_three_broken_values():
         assert f'env_set "$DOCKER_ENV" {key}' in repair, f"{key} не восстанавливается"
 
 
+def test_existing_certificate_is_detected_by_the_same_file_nginx_uses():
+    """Иначе получается тупик без объяснения.
+
+    Каталог live/<домен>/ остаётся после оборванного выпуска и от переезда с
+    другого сервера, а сертификата в нём нет. Проверка по каталогу заставляла
+    скрипт отвечать «уже выпущен» и ничего не делать, nginx при этом не находил
+    fullchain.pem и не поднимал 443 — человек оставался без HTTPS навсегда.
+    """
+    text = source()
+    issue = text[text.index("issue_certificate()") : text.index("setup_autoupdate()")]
+    assert "fullchain.pem" in issue, "наличие сертификата проверяется не по файлу"
+    nginx = (SCRIPT.parent / "docker" / "nginx" / "entrypoint.sh").read_text(encoding="utf-8")
+    assert "fullchain.pem" in nginx, "nginx смотрит на другой признак — они разойдутся"
+
+
 def test_doctor_explains_why_the_site_is_down():
     """Разбор аварии не должен превращаться в переписку «пришлите ещё логи».
 
