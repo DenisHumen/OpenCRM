@@ -8,6 +8,13 @@ from database.session import Base
 
 NOTE_KINDS = ("note", "call", "meeting", "email")
 
+MAX_SOURCE = 32
+
+# Откуда пришёл клиент. Справочник по умолчанию — ключами, а не словами: слова
+# у каждого дела свои («сарафан», «по рекомендации», «от знакомых» — это одно и
+# то же), а отчёт должен складывать их в одну строку.
+CLIENT_SOURCES = ("referral", "search", "social", "ads", "repeat", "other")
+
 
 class Client(Base):
     __tablename__ = "clients"
@@ -19,10 +26,33 @@ class Client(Base):
     email: Mapped[str] = mapped_column(String(255), default="")
     messenger: Mapped[str] = mapped_column(String(255), default="")
     tags: Mapped[str] = mapped_column(String(500), default="")  # comma-separated (MVP)
+    # Источник — колонкой с ключом, а не ссылкой на строку справочника.
+    #
+    # Справочник таблицей выглядит правильнее, но даёт ровно одно: редактируемое
+    # название. У источника, в отличие от этапа воронки, больше ничего и нет —
+    # ни вида, ни порядка, ни архивации; платить за одно название внешним
+    # ключом, отдельным экраном и join'ом в каждом отчёте не за что.
+    #
+    # Разрастание такой выбор не запирает: ссылаться будут именно на ключ.
+    # Понадобятся названия, цвета, слияние источников — рядом появится
+    # `client_sources` с тем же ключом, и ни одна карточка клиента не переедет.
+    # Обратный порядок (сразу таблица, потом выяснить, что ключ всё равно нужен)
+    # стоил бы миграции данных.
+    #
+    # NULL и "other" — разные вещи, и складывать их нельзя: «не спросили,
+    # откуда» — пробел в работе менеджера, «другое» — ответ клиента. Слитые
+    # вместе, они превращают дыру в данных в факт о бизнесе.
+    source: Mapped[str | None] = mapped_column(
+        String(MAX_SOURCE), nullable=True, index=True
+    )
     manager_id: Mapped[int | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
     )
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    # Индекс на дату появления: отчёт по источникам фильтрует клиентов периодом,
+    # и без него отчёт за год читает таблицу целиком.
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), index=True
+    )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()
     )

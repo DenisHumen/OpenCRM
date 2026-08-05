@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { BoardCard } from "../components/BoardCard";
 import { Icon } from "../components/Icon";
+import { SourcePicker } from "../components/SourcePicker";
 import { Avatar, Chip, ConfirmModal, EmptyState, ScreenLoading } from "../components/ui";
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
@@ -172,6 +173,16 @@ export function ClientCard() {
         {contacts.map((contact) => (
           <EditableContact key={contact.field} {...contact} onSave={saveContact} />
         ))}
+        {/* Источник стоит рядом с контактами, а не в отдельной вкладке: его
+            дописывают ровно тогда, когда выясняют — по ходу первого разговора,
+            в котором уточняют и телефон. */}
+        <div className="contact-cell">
+          <div className="contact-label">{t("clientSource")}</div>
+          <SourcePicker
+            value={client.source ?? ""}
+            onCommit={(next) => saveContact("source", next)}
+          />
+        </div>
       </div>
 
       <div className="tabs">

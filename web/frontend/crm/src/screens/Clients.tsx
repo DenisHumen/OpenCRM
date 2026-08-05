@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 
 import { Icon } from "../components/Icon";
+import { SourcePicker } from "../components/SourcePicker";
 import { Avatar, Chip, EmptyState, Modal, ScreenLoading } from "../components/ui";
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
@@ -129,7 +130,9 @@ export function Clients() {
 
 function NewClientModal({ onClose, onCreated }: { onClose: () => void; onCreated: (c: any) => void }) {
   const { t, toastError } = useApp();
-  const [form, setForm] = useState({ name: "", company: "", phone: "", email: "", messenger: "", tags: "" });
+  const [form, setForm] = useState({
+    name: "", company: "", phone: "", email: "", messenger: "", tags: "", source: "",
+  });
   const [busy, setBusy] = useState(false);
 
   const set = (key: string) => (e: any) => setForm((f) => ({ ...f, [key]: e.target.value }));
@@ -171,9 +174,17 @@ function NewClientModal({ onClose, onCreated }: { onClose: () => void; onCreated
           <label className="label">{t("telegram")}</label>
           <input className="input" value={form.messenger} onChange={set("messenger")} placeholder="@username" />
         </div>
-        <div className="field" style={{ marginBottom: 20 }}>
+        <div className="field">
           <label className="label">{t("tagsCommaHint")}</label>
           <input className="input" value={form.tags} onChange={set("tags")} placeholder="branding, web" />
+        </div>
+        {/* Источник спрашивают один раз — при заведении карточки. Через неделю
+            «откуда он пришёл» уже никто не вспомнит, и отчёт по рекламе
+            превращается в столбик «не указан». */}
+        <div className="field" style={{ marginBottom: 20 }}>
+          <label className="label">{t("clientSource")}</label>
+          <SourcePicker value={form.source} onChange={(next) => setForm((f) => ({ ...f, source: next }))} />
+          <div className="field-desc">{t("clientSourceHint")}</div>
         </div>
         <button className="btn btn-primary" style={{ width: "100%" }} disabled={busy}>
           {t("create")}
