@@ -1351,10 +1351,15 @@ cmd_repair() {
     _root_home=$(getent passwd root | cut -d: -f6 2>/dev/null || true)
     [ -n "$_root_home" ] || _root_home="/root"
 
+    # Брошенным считается место, где остались ЛЮБЫЕ данные — база или медиа.
+    # Проверять один лишь data мало: база может уже переехать, а картинки
+    # остаться, и тогда сайт выглядит рабочим, но все изображения битые.
+    _has_state() { _dir_has_data "$1/data" || _dir_has_data "$1/storage"; }
+
     _source=""
-    if [ "$_env_home" != "$_want_home" ] && _dir_has_data "$_env_home/data"; then
+    if [ "$_env_home" != "$_want_home" ] && _has_state "$_env_home"; then
         _source="$_env_home"
-    elif [ "$_root_home/opencrm" != "$_want_home" ] && _dir_has_data "$_root_home/opencrm/data"; then
+    elif [ "$_root_home/opencrm" != "$_want_home" ] && _has_state "$_root_home/opencrm"; then
         _source="$_root_home/opencrm"
     fi
 
@@ -1365,7 +1370,7 @@ cmd_repair() {
         else
             probe "$(tr_ "состояние" "state")" 0 "$(tr_ "путь исправим на" "path will become") $_want_home"
         fi
-    elif _dir_has_data "$_want_home/data"; then
+    elif _dir_has_data "$_want_home/data" && _dir_has_data "$_source/data"; then
         probe "$(tr_ "состояние" "state")" 0 "$(tr_ "данные и там, и там" "data in both places")"
         warn "$(tr_ "$_source/data и $_want_home/data — оба непустые" "$_source/data and $_want_home/data are both non-empty")"
         say "$(tr_ \
@@ -1407,10 +1412,20 @@ cmd_repair() {
         # `test` снова через $SUDO — источник лежит в /root, куда обычному
         # пользователю не заглянуть.
         for _item in data storage letsencrypt acme autoupdate.env; do
-            if $SUDO test -e "$_source/$_item" && ! $SUDO test -e "$_want_home/$_item"; then
-                $SUDO mv "$_source/$_item" "$_want_home/$_item"
-                ok "$_item"
+            if ! $SUDO test -e "$_source/$_item"; then continue; fi
+            # Пустой каталог в цели — след прошлого запуска починки, а не данные,
+            # и он не должен отменять перенос. Именно на этом переехала база, а
+            # медиа осталось: сайт выглядел рабочим, но все картинки были битые.
+            #
+            # Снимаем через rmdir, а не rm: непустой каталог он удалить
+            # откажется — ровно та страховка, которая тут и нужна.
+            $SUDO rmdir "$_want_home/$_item" 2>/dev/null || true
+            if $SUDO test -e "$_want_home/$_item"; then
+                warn "$(tr_ "$_item уже есть в цели и не пуст — оставляю как есть" "$_item already exists in the target and is not empty — leaving it alone")"
+                continue
             fi
+            $SUDO mv "$_source/$_item" "$_want_home/$_item"
+            ok "$_item"
         done
     fi
 

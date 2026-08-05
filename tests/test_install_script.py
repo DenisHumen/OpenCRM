@@ -162,6 +162,34 @@ def test_repair_looks_into_root_home_with_sudo():
     assert "_root_home" in repair, "починка ищет данные только по записи в .env"
 
 
+def test_empty_target_directory_does_not_block_the_move():
+    """Пустой каталог в цели — след прошлого запуска починки, а не данные.
+
+    На этом переехала база, а медиа осталось в /root: сайт выглядел рабочим,
+    доски открывались, но все картинки были битые — nginx отдаёт их с диска из
+    ${OPENCRM_HOME}/storage, а там было пусто.
+
+    Снимаем пустышку через rmdir: непустой каталог он удалить откажется, и это
+    та самая страховка, из-за которой здесь нельзя писать rm.
+    """
+    text = source()
+    repair = text[text.index("cmd_repair()") : text.index("cmd_doctor()")]
+    assert "rmdir" in repair, "пустой каталог в цели снова отменит перенос"
+    assert "rm -r" not in repair, "перенос удаляет каталоги рекурсивно — так нельзя"
+
+
+def test_repair_detects_stranded_media_not_only_the_database():
+    """Брошенным считается место с любыми данными — базой ИЛИ медиа.
+
+    Проверка одного лишь data пропускала случай «база уже переехала, картинки
+    нет»: починка отвечала «всё на месте» и не делала ничего.
+    """
+    text = source()
+    repair = text[text.index("cmd_repair()") : text.index("cmd_doctor()")]
+    assert "_has_state()" in repair
+    assert '_dir_has_data "$1/storage"' in repair, "медиа не учитывается при поиске"
+
+
 def test_repair_never_deletes_anything():
     """Аварийный инструмент на боевом сервере. Переносить — можно, удалять — нет."""
     text = source()
