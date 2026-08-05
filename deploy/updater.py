@@ -64,6 +64,10 @@ STATUS_BROKEN = "broken"  # откат тоже не поднялся
 
 QUIET = {STATUS_DISABLED, STATUS_UP_TO_DATE}
 
+# Файлы, из которых работает сам демон обновления. Изменились — процессу нужен
+# перезапуск: Python загрузил их при старте и правку на диске не заметит.
+SELF_PATHS = ("deploy/", "scripts/autoupdate.py")
+
 
 class _Stop(Exception):
     """Шаг провалился; что делать дальше, решает `_deploy` по флагу `touched`."""
@@ -244,6 +248,8 @@ class Updater:
     def watch(self, rounds: int | None = None) -> None:
         """Демон: опрашивать ветку, пока не остановят (`rounds` — предел для тестов)."""
         done = 0
+        # SHA, на котором демон стартовал: с него и загружен его собственный код.
+        started_from = self.head_sha()
         while rounds is None or done < rounds:
             try:
                 outcome = self.run_once()
@@ -252,8 +258,38 @@ class Updater:
             except Exception as failure:  # noqa: BLE001 — демон не имеет права упасть
                 self.log(f"неожиданная ошибка: {failure!r}")
             done += 1
+            if self._self_changed(started_from):
+                # Выходим, а не продолжаем: systemd поднимет службу заново
+                # (Restart=always), и следующий круг пойдёт уже новым кодом.
+                self.log(
+                    "код обновлятора изменился — выхожу, чтобы systemd поднял меня новым"
+                )
+                return
             if rounds is None or done < rounds:
                 self._sleep(self.config.poll_seconds)
+
+    def _self_changed(self, since: str) -> bool:
+        """Обновился ли код, из которого работает сам демон.
+
+        Python читает исходники один раз, при импорте. Обновление правит файлы
+        на диске, но уже запущенный процесс продолжает работать тем, что загрузил
+        при старте, — и правка деплоя вступает в силу только после перезапуска
+        службы. На боевом сервере это стоило отдельного разбора: smoke-тест
+        чинили дважды, а деплой оба раза падал старым кодом, потому что демон
+        крутился с прошлой недели.
+
+        Проверяем именно свои файлы, а не любое изменение: перезапуск ради чужой
+        правки — лишний простой в опросе.
+        """
+        if not since:
+            return False
+        now = self.head_sha()
+        if not now or now == since:
+            return False
+        result = self._git("diff", "--name-only", since, now)
+        if result.code != 0:
+            return False
+        return any(line.strip().startswith(SELF_PATHS) for line in result.out.splitlines())
 
     def head_sha(self) -> str:
         return self._git("rev-parse", "HEAD").out.strip()
