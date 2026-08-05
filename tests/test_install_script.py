@@ -41,6 +41,55 @@ def test_the_script_is_valid_posix_sh():
     assert result.returncode == 0, result.stderr
 
 
+def test_painted_output_keeps_the_exit_code():
+    """Пайп подменяет код возврата — это ловушка, а не мелочь.
+
+    В `cmd | paint` значение $? принадлежит раскраске, и она успешна всегда.
+    Проверки вида `if compose up; then` начали бы считать успехом любой исход,
+    включая упавший деплой. POSIX sh не знает PIPESTATUS, поэтому код обязан
+    переноситься отдельно.
+    """
+    text = source()
+    runner = text[text.index("run_painted() {") : text.index("run_painted() {") + 700]
+    assert "mktemp" in runner, "код возврата снова теряется в пайпе"
+    assert 'return "${_rc:-1}"' in runner, "функция не возвращает код команды"
+    # Отсутствие mktemp не должно превращать раскраску в отказ работать.
+    assert '|| { "$@" 2>&1; return $?; }' in runner, "без mktemp команда не выполнится вовсе"
+
+
+def test_colorizer_avoids_gnu_only_regex():
+    """В Ubuntu awk — это mawk, и расширения GNU там молча не работают.
+
+    `\\b` в шаблоне не даёт ошибки: он просто никогда не совпадает, и подсветка
+    успеха тихо исчезает именно на той системе, ради которой писалась.
+    """
+    text = source()
+    paint = text[text.index("paint() {") : text.index("run_painted() {")]
+    assert "awk" in paint
+    # Смотрим сами шаблоны, а не пояснения к ним: в комментарии \b упомянут
+    # словами, и проверка всего блока целиком ловила бы собственный текст.
+    patterns = [line for line in paint.splitlines() if "~ /" in line]
+    assert patterns, "в раскраске не осталось шаблонов"
+    for line in patterns:
+        assert "\\b" not in line, f"граница слова из GNU awk: {line.strip()[:60]}"
+    assert "fflush()" in paint, "без сброса буфера живые логи идут рывками"
+    # Слово из отчёта деплоя должно попадать в красное: перечисление форм по
+    # одной (failed|failure) как раз и пропускало голое FAIL.
+    assert "fail" in paint
+
+
+def test_menu_commands_paint_their_output():
+    """Цвет нужен во всех пунктах, а не только в сообщениях самого скрипта.
+
+    Docker, git и python сыплют ровной простынёй, и именно в ней тонули
+    сегодняшние поломки: строка про ошибку ничем не отличалась от соседних.
+    """
+    text = source()
+    assert text.count("run_painted ") >= 10, "раскраска подключена не везде"
+    for noisy in ("run_painted compose up -d", "run_painted compose ps", "run_painted autoupdate"):
+        assert noisy in text, f"без раскраски: {noisy}"
+
+
 def test_sudo_is_refused():
     """Заслон обязан смотреть на SUDO_USER, а не только на id -u.
 

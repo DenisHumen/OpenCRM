@@ -38,3 +38,18 @@ jobs:
         working-directory: web/frontend/crm
       - run: pip install . pytest
       - run: python -m pytest
+
+  # Установщик и точки входа контейнеров — обычный код, который выполняется на
+  # чужих серверах, и цена ошибки в нём выше обычной. Сегодняшние поломки прода
+  # были ровно этого класса: `\b` в шаблоне, не работающий в mawk; пайп,
+  # съедавший код возврата; аргументы, уезжавшие в позиционные параметры sh -c.
+  # Всё это ловится статическим анализом до сервера, а не на нём.
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # -s sh, а не bash: скрипты обязаны работать под dash — на голой Ubuntu
+      # /bin/sh это он, и установщик не имеет права требовать того, что сам
+      # ещё не поставил.
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends shellcheck
+      - run: shellcheck -s sh $(git ls-files '*.sh')
