@@ -276,7 +276,14 @@ def sources(db: Session, start: datetime, end: datetime) -> dict:
                 "clients": clients.get(key, 0),
                 "won_count": won["count"],
                 "lost_count": lost["count"],
-                "revenue": won["total"],
+                # Выигранная сделка, у которой цену не назвали, даёт «выиграно
+                # 1, выручка 0» — а это читается как «с рекламы не заработали».
+                # Ноль здесь означал бы «работали даром»; верный ответ —
+                # «сумму не назвали», и он показывается прочерком, как у
+                # среднего чека. Ноль остаётся только там, где он настоящий:
+                # цена названа и равна нулю.
+                "revenue": won["total"] if won["priced"] else None,
+                "revenue_priced": won["priced"],
                 # Конверсия источника — доля выигранных среди ЗАКРЫТЫХ сделок.
                 # Сделки в работе в знаменатель не идут: они ещё ничем не
                 # кончились, а источник с большим объёмом работы выглядел бы
@@ -285,11 +292,14 @@ def sources(db: Session, start: datetime, end: datetime) -> dict:
             }
         )
 
-    rows.sort(key=lambda row: (-row["revenue"], -row["clients"], str(row["source"] or "")))
+    # Источник без названной цены сортируется как ноль, но показывается
+    # прочерком: сортировать None напрямую нельзя, а ставить такие строки выше
+    # платящих — неверно.
+    rows.sort(key=lambda row: (-(row["revenue"] or 0), -row["clients"], str(row["source"] or "")))
     return {
         "items": rows,
         "clients_total": sum(row["clients"] for row in rows),
-        "revenue_total": sum(row["revenue"] for row in rows),
+        "revenue_total": sum(row["revenue"] or 0 for row in rows),
     }
 
 

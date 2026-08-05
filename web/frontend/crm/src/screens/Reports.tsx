@@ -95,7 +95,7 @@ export function Reports() {
     1,
     ...revenue.months.map((m: any) => Math.max(m.won_amount, m.lost_amount)),
   );
-  const maxSource = Math.max(1, ...sources.items.map((row: any) => row.revenue));
+  const maxSource = Math.max(1, ...sources.items.map((row: any) => row.revenue ?? 0));
 
   return (
     <div className="page page-wide">
@@ -279,13 +279,18 @@ export function Reports() {
               <div className="src-row" key={row.source ?? "__none__"}>
                 <span
                   className="src-bar"
-                  style={{ width: `${Math.round((row.revenue / maxSource) * 100)}%` }}
+                  style={{ width: `${Math.round(((row.revenue ?? 0) / maxSource) * 100)}%` }}
                 />
                 <span className="src-name truncate">{sourceLabel(row.source, t)}</span>
                 <span className="src-num">{row.clients}</span>
                 <span className="src-num">{row.won_count}</span>
                 <span className="src-num">{row.lost_count}</span>
-                <span className="src-money">{money(row.revenue)}</span>
+                {/* Прочерк, а не «0 $»: у выигранной сделки могли не назвать
+                    цену, и ноль прочитался бы как «с этого источника не
+                    заработали». Ноль остаётся там, где он настоящий. */}
+                <span className="src-money">
+                  {row.revenue === null ? "—" : money(row.revenue)}
+                </span>
                 <span className="src-num">{percent(row.conversion, locale)}</span>
               </div>
             ))}

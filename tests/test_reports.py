@@ -355,8 +355,11 @@ def test_sources_split_clients_and_money(manager_client):
 
     after = {row["source"]: row for row in report(manager_client, "sources")["items"]}
 
+    # `or 0` — потому что источник без единой названной цены отвечает
+    # прочерком (None), а не нулём: см.
+    # test_a_source_without_a_named_price_shows_a_dash_not_zero.
     assert after["ads"]["clients"] == before["ads"]["clients"] + 1
-    assert after["ads"]["revenue"] - before["ads"]["revenue"] == 400_000
+    assert (after["ads"]["revenue"] or 0) - (before["ads"]["revenue"] or 0) == 400_000
     assert after["referral"]["clients"] == before["referral"]["clients"] + 1
     assert after["referral"]["revenue"] == before["referral"]["revenue"]
     assert after["referral"]["lost_count"] == before["referral"]["lost_count"] + 1
@@ -463,3 +466,34 @@ def test_reports_close_with_their_module(manager_client, root_client):
 def test_reports_require_login(base_client):
     assert base_client.get(f"{REPORTS}/funnel").status_code == 401
     assert base_client.get(f"{REPORTS}/revenue.csv").status_code == 401
+
+
+def test_a_source_without_a_named_price_shows_a_dash_not_zero(manager_client):
+    """«Выиграно 1, выручка 0» читается как «с рекламы не заработали».
+
+    Верный ответ — «сумму не назвали», и он обязан отличаться от настоящего
+    нуля так же, как отличается средний чек. Иначе источник, по которому просто
+    не заполнили цену, выглядит убыточным, и на него перестают тратить деньги.
+    """
+    # Свои источники, а не пресетные: база у прогона одна, и в «ads» соседние
+    # тесты уже кладут свои сделки.
+    unpriced = new_client(manager_client, "Пришёл без цены", source="щит-у-дороги")
+    make_deal(manager_client, unpriced["id"], "won", at(10))  # цену не назвали
+
+    free = new_client(manager_client, "Пришёл за бесплатным", source="буклет-в-подъезде")
+    make_deal(manager_client, free["id"], "won", at(11), amount=0)  # работали даром
+
+    rows = {row["source"]: row for row in report(manager_client, "sources")["items"]}
+
+    assert rows["щит-у-дороги"]["won_count"] == 1
+    assert rows["щит-у-дороги"]["revenue"] is None, "цену не назвали — это не ноль"
+
+    assert rows["буклет-в-подъезде"]["won_count"] == 1
+    assert rows["буклет-в-подъезде"]["revenue"] == 0, "названный ноль обязан остаться нулём"
+
+
+def test_unnamed_price_does_not_inflate_the_total_across_sources(manager_client):
+    """Прочерк не должен ломать итог: сумма по источникам остаётся числом."""
+    data = report(manager_client, "sources")
+    named = sum(row["revenue"] for row in data["items"] if row["revenue"] is not None)
+    assert data["revenue_total"] == named
