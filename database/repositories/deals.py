@@ -2,7 +2,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from database.models import Client, Deal, DealStageChange, PipelineStage
-from database.models.pipeline import CLOSED_KINDS
+from database.models.pipeline import CLOSED_KINDS, KIND_OPEN, KIND_WON
 
 
 def get(db: Session, deal_id: int, include_deleted: bool = False) -> Deal | None:
@@ -59,6 +59,44 @@ def by_stage(db: Session, stage: str, limit: int = 200) -> list[Deal]:
             .limit(limit)
         )
     )
+
+
+def amount_by_stage(db: Session) -> dict[str, int]:
+    """Сумма сделок в каждом этапе — запросом, а не сложением карточек.
+
+    `by_stage` отдаёт колонку с пределом, и сумма по загруженным карточкам
+    занижала бы итог ровно там, где сделок много, — то есть там, где на него и
+    смотрят. Ошибка при этом тихая: число есть, оно правдоподобное, и заметить
+    его можно только сверив вручную.
+    """
+    rows = db.execute(
+        select(Deal.stage, func.coalesce(func.sum(Deal.amount), 0))
+        .where(Deal.deleted_at.is_(None))
+        .group_by(Deal.stage)
+    ).all()
+    return {stage: int(total or 0) for stage, total in rows}
+
+
+def money_summary(db: Session, since) -> dict[str, int]:
+    """Деньги для сводки: сколько в работе и сколько выиграно с даты.
+
+    Считаем по ВИДУ этапа, а не по названию: у каждого бизнеса воронка своя, и
+    «Выдано», «Оплачено», «Договор подписан» — это всё один и тот же `won`.
+    """
+    def total(kind: str, closed_since=None) -> int:
+        query = (
+            select(func.coalesce(func.sum(Deal.amount), 0))
+            .join(PipelineStage, PipelineStage.key == Deal.stage)
+            .where(Deal.deleted_at.is_(None), PipelineStage.kind == kind)
+        )
+        if closed_since is not None:
+            query = query.where(Deal.closed_at >= closed_since)
+        return int(db.scalar(query) or 0)
+
+    return {
+        "in_work": total(KIND_OPEN),
+        "won_since": total(KIND_WON, since),
+    }
 
 
 def stage_counts(db: Session) -> dict[str, int]:

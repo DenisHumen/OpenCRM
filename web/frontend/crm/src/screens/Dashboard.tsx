@@ -7,7 +7,7 @@ import { StorageCard } from "../components/StorageCard";
 import { Avatar, Chip, EmptyState, ScreenLoading } from "../components/ui";
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
-import { formatDateTime, initials, relativeDay } from "../lib/format";
+import { formatDateTime, formatMoney, initials, relativeDay } from "../lib/format";
 
 export function Dashboard() {
   const { user, t, locale, storage, refreshStorage, toastError } = useApp();
@@ -60,6 +60,21 @@ export function Dashboard() {
       </div>
 
       <div className="metric-grid">
+        {/* Деньги первыми: владелец открывает сводку ради них, а не ради
+            количества карточек. «Закрыто» считаем с начала месяца, а не за
+            последние 30 дней — иначе число не сходится с месячной отчётностью. */}
+        <div className="card card-pad">
+          <div className="metric-title" style={{ marginBottom: 14 }}>
+            {t("moneyInWork")}
+          </div>
+          <div className="metric-value money-value">
+            {formatMoney(data.money_in_work, data.currency, locale)}
+          </div>
+          <div className="metric-sub">
+            {t("moneyWonThisMonth")}:{" "}
+            {formatMoney(data.money_won_this_month, data.currency, locale)}
+          </div>
+        </div>
         <div className="card card-pad">
           <div className="metric-title" style={{ marginBottom: 14 }}>
             {t("metricClients")}

@@ -4,7 +4,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
-from core.services import media_service
+from core.services import deal_service, media_service
 from core.utils import is_online
 from database.models import (
     Board,
@@ -62,6 +62,11 @@ class DealIn(BaseModel):
     stage: str | None = None
     description: str | None = None
     due_at: datetime | None = None
+    # Деньги — целыми в минимальных единицах (копейки, центы). int, а не float:
+    # на дробных округление вылезает всегда, и сумма колонки канбана расходится
+    # с суммой карточек.
+    amount: int | None = None
+    prepaid: int | None = None
 
 
 class DealPatchIn(BaseModel):
@@ -72,6 +77,8 @@ class DealPatchIn(BaseModel):
     description: str | None = None
     due_at: datetime | None = None
     lost_reason: str | None = None
+    amount: int | None = None
+    prepaid: int | None = None
 
 
 class DealMoveIn(BaseModel):
@@ -224,6 +231,9 @@ def deal_out(deal: Deal, client_name: str | None = None, manager: User | None = 
         "stage": deal.stage,
         "sort_order": deal.sort_order,
         "description": deal.description,
+        # Остаток и признак оплаты считаются, а не хранятся: лишнее поле в базе
+        # разошлось бы с суммой и предоплатой при первой же правке.
+        **deal_service.money_of(deal),
         "due_at": _iso(deal.due_at),
         "lost_reason": deal.lost_reason,
         "closed_at": _iso(deal.closed_at),

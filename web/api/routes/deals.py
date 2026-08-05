@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
-from core.services import deal_service, pipeline_service
+from core.services import deal_service, pipeline_service, settings_service
 from database.models import User
 from database.repositories import clients as clients_repo
 from database.repositories import deals as deals_repo
@@ -40,6 +40,9 @@ def _card(db: Session, deal) -> dict:
     stages = {s.key: s for s in pipeline_service.list_stages(db, include_archived=True)}
 
     data = schemas.deal_out(deal, client.name if client else None, manager)
+    # Карточку открывают и менеджеры, а настройки читает только root — валюту
+    # кладём в ответ, иначе сумма показывалась бы голым числом.
+    data["currency"] = settings_service.get_all(db).get("currency", "USD")
     # Названия этапов в истории берём из воронки: голые ключи вроде
     # `in_progress` человеку ничего не говорят, а у каждого бизнеса они свои.
     data["stage_history"] = [
@@ -58,12 +61,22 @@ def kanban(_: User = Depends(require_staff), db: Session = Depends(get_db)):
     columns = deal_service.board(db)
     everything = [deal for column in columns for deal in column["deals"]]
     clients, managers = _lookup(db, everything)
+    # Суммы — отдельным запросом по всем сделкам этапа: колонка отдаётся с
+    # пределом, и сложение загруженных карточек занижало бы итог там, где
+    # сделок много. Тихо и правдоподобно, то есть хуже всего.
+    totals = deals_repo.amount_by_stage(db)
+    # Валюта одна на систему, но лежит в настройках, а их читает только root.
+    # Отдаём её вместе с доской: иначе менеджер видел бы суммы без обозначения,
+    # а заводить ради одной строки отдельный запрос — хуже.
+    currency = settings_service.get_all(db).get("currency", "USD")
     return {
+        "currency": currency,
         "columns": [
             {
                 # Отдаём этап целиком, а не один ключ: фронт рисует названия
                 # воронки этого бизнеса и не может знать их заранее.
                 **schemas.stage_out(column["stage"]),
+                "amount_total": totals.get(column["stage"].key, 0),
                 "deals": [
                     schemas.deal_out(
                         d,

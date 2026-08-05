@@ -3,11 +3,12 @@ from datetime import timedelta
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from core.services import board_service
+from core.services import board_service, settings_service
 from core.utils import now_utc
 from database.models import User
 from database.repositories import boards as boards_repo
 from database.repositories import clients as clients_repo
+from database.repositories import deals as deals_repo
 from database.repositories import stats as stats_repo
 from web.api import schemas
 from web.api.deps import get_db, require_staff
@@ -40,7 +41,16 @@ def dashboard(_: User = Depends(require_staff), db: Session = Depends(get_db)):
 
     recent_clients, _total = clients_repo.search(db, page=1, per_page=5)
 
+    # Деньги с начала текущего месяца, а не за последние 30 дней: владелец
+    # сверяет их с месячной отчётностью, и скользящее окно давало бы число,
+    # которое ни с чем не сходится.
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    money = deals_repo.money_summary(db, month_start)
+
     return {
+        "currency": settings_service.get_all(db).get("currency", "USD"),
+        "money_in_work": money["in_work"],
+        "money_won_this_month": money["won_since"],
         "clients_total": clients_total,
         "clients_this_month": clients_this_month,
         "boards_total": boards_total,

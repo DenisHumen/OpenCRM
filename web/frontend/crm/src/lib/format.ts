@@ -52,6 +52,36 @@ export function relativeDay(iso: string | null | undefined, locale: Locale): str
   return formatDate(iso, locale);
 }
 
+/** Сумма из минимальных единиц (копеек, центов) в читаемый вид.
+ *
+ * В базе деньги лежат целыми: на дробных типах округление вылезает всегда, и
+ * сумма колонки расходится с суммой карточек. Делим на 100 только здесь, на
+ * самом краю, где число уже никуда не пойдёт дальше в расчёты.
+ *
+ * Копейки показываем, только когда они есть: «1 500 ₽» читается быстрее, чем
+ * «1 500,00 ₽», а в канбане это десятки чисел подряд.
+ */
+export function formatMoney(
+  minor: number | null | undefined,
+  currency: string,
+  locale: Locale,
+): string {
+  if (minor === null || minor === undefined) return "—";
+  const whole = minor % 100 === 0;
+  try {
+    return new Intl.NumberFormat(locale === "ru" ? "ru-RU" : "en-US", {
+      style: "currency",
+      currency,
+      minimumFractionDigits: whole ? 0 : 2,
+      maximumFractionDigits: 2,
+    }).format(minor / 100);
+  } catch {
+    // Неизвестный код валюты уронил бы Intl, а вместе с ним и весь экран.
+    // Показать сумму без обозначения лучше, чем не показать ничего.
+    return (minor / 100).toFixed(whole ? 0 : 2);
+  }
+}
+
 /** Компактный размер: 4.2 GB, 512 MB, 18 KB. */
 export function formatBytes(bytes: number): string {
   const units = ["B", "KB", "MB", "GB", "TB"];

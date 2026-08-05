@@ -5,7 +5,7 @@ import { Icon } from "../components/Icon";
 import { Avatar, EmptyState, Modal, ScreenLoading } from "../components/ui";
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
-import { formatDate, initials } from "../lib/format";
+import { formatDate, formatMoney, initials } from "../lib/format";
 
 
 /** Названия этапов приходят с сервера: у ремонта техники «диагностика», у
@@ -23,6 +23,12 @@ type Deal = {
   sort_order: number;
   due_at: string | null;
   lost_reason: string;
+  /** Деньги в минимальных единицах. null — сумму ещё не называли; это не ноль:
+   *  ноль означает «работа бесплатная», и в отчёте они считаются по-разному. */
+  amount: number | null;
+  prepaid: number;
+  remainder: number | null;
+  is_paid: boolean;
 };
 
 type Column = {
@@ -30,6 +36,9 @@ type Column = {
   name: string;
   kind: "open" | "won" | "lost";
   color: string;
+  /** Сумма по всем сделкам этапа — считает сервер: колонка отдаётся с
+   *  пределом, и сложение показанных карточек занижало бы итог. */
+  amount_total: number;
   deals: Deal[];
 };
 
@@ -42,6 +51,9 @@ export function Deals() {
   const [overStage, setOverStage] = useState<string | null>(null);
   const [people, setPeople] = useState<any[]>([]);
   const [creating, setCreating] = useState(false);
+  // Валюта одна на систему и приходит вместе с доской: настройки читает
+  // только root, а суммы видят все.
+  const [currency, setCurrency] = useState("USD");
   const [draft, setDraft] = useState({
     title: "",
     client_id: "",
@@ -52,7 +64,9 @@ export function Deals() {
 
   const load = useCallback(async () => {
     try {
-      setColumns((await api.get("/deals/board")).columns);
+      const board = await api.get("/deals/board");
+      setColumns(board.columns);
+      setCurrency(board.currency);
     } catch (e) {
       toastError(e);
     }
@@ -153,6 +167,14 @@ export function Deals() {
                 </span>
                 <span className="kanban-count">{column.deals.length}</span>
               </div>
+              {/* Сумма по колонке: малый бизнес смотрит на деньги, а не на
+                  количество карточек. Ноль не показываем — пустая строка
+                  честнее нуля, которого никто не называл. */}
+              {column.amount_total > 0 && (
+                <div className="kanban-money">
+                  {formatMoney(column.amount_total, currency, locale)}
+                </div>
+              )}
               <div className="kanban-body">
                 {column.deals.length === 0 && (
                   <div className="kanban-empty">{t("dragHere")}</div>
@@ -170,6 +192,17 @@ export function Deals() {
                       onClick={() => navigate(`/deals/${deal.id}`)}
                     >
                       <span className="deal-title">{deal.title}</span>
+                      {deal.amount !== null && (
+                        <span className={"deal-money" + (deal.is_paid ? " paid" : "")}>
+                          {formatMoney(deal.amount, currency, locale)}
+                          {deal.prepaid > 0 && !deal.is_paid && (
+                            <span className="deal-owed">
+                              {" · "}
+                              {formatMoney(deal.remainder, currency, locale)}
+                            </span>
+                          )}
+                        </span>
+                      )}
                       {deal.client_name && <span className="deal-client">{deal.client_name}</span>}
                       <span className="deal-foot">
                         {/* Кто ведёт — первое, что спрашивают у доски. Без

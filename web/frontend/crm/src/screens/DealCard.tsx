@@ -6,7 +6,7 @@ import { Chip, ConfirmModal, Modal, ScreenLoading } from "../components/ui";
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
 import { statusLabel, statusVariant } from "../lib/documents";
-import { formatDate, formatDateTime } from "../lib/format";
+import { formatDate, formatDateTime, formatMoney } from "../lib/format";
 import { moduleOn } from "../lib/modules";
 import { NewDocumentModal } from "./Documents";
 
@@ -14,6 +14,20 @@ type Stage = { key: string; name: string; kind: "open" | "won" | "lost" };
 
 /** Дата в поле ввода — «ГГГГ-ММ-ДД», сервер отдаёт ISO с временем. */
 const asDateInput = (iso: string | null) => (iso ? iso.slice(0, 10) : "");
+
+/** Минимальные единицы → поле ввода. Пусто, если суммы нет: ноль в поле
+ *  выглядел бы как «работа бесплатная», а это другое состояние. */
+const asMoneyInput = (minor: number | null | undefined) =>
+  minor === null || minor === undefined ? "" : String(minor / 100);
+
+/** Поле ввода → минимальные единицы. Округляем, а не отбрасываем дробь:
+ *  «10.999» от быстрого набора должно стать 11.00, а не 10.99. */
+function toMinor(value: string): number | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const parsed = Number(trimmed);
+  return Number.isFinite(parsed) ? Math.round(parsed * 100) : null;
+}
 
 export function DealCard() {
   const { id } = useParams();
@@ -57,6 +71,7 @@ export function DealCard() {
 
   if (!deal) return <ScreenLoading />;
 
+  const currency: string = deal.currency || "USD";
   const stage: Stage | undefined = stages.find((s) => s.key === deal.stage);
   const overdue =
     deal.due_at && !deal.closed_at && new Date(deal.due_at) < new Date();
@@ -210,6 +225,52 @@ export function DealCard() {
             {overdue && <div className="field-desc" style={{ color: "var(--danger)" }}>{t("overdue")}</div>}
           </div>
         </div>
+        {/* Деньги. Вводятся в обычных единицах, хранятся в минимальных —
+            перевод делаем здесь, на краю, а не в базе. */}
+        <div className="deal-fields" style={{ marginTop: 4 }}>
+          <div className="field">
+            <label className="label">{t("dealAmount")}</label>
+            <input
+              className="input"
+              type="number"
+              min={0}
+              step="0.01"
+              defaultValue={asMoneyInput(deal.amount)}
+              onBlur={(e) => {
+                const next = toMinor(e.target.value);
+                if (next !== deal.amount) void patch({ amount: next });
+              }}
+            />
+          </div>
+          <div className="field">
+            <label className="label">{t("dealPrepaid")}</label>
+            <input
+              className="input"
+              type="number"
+              min={0}
+              step="0.01"
+              defaultValue={asMoneyInput(deal.prepaid)}
+              onBlur={(e) => {
+                const next = toMinor(e.target.value) ?? 0;
+                if (next !== deal.prepaid) void patch({ prepaid: next });
+              }}
+            />
+          </div>
+          <div className="field">
+            <label className="label">{t("dealRemainder")}</label>
+            <div className={"money-readout" + (deal.is_paid ? " paid" : "")}>
+              {deal.is_paid ? t("dealPaidInFull") : formatMoney(deal.remainder, currency, locale)}
+            </div>
+            {/* Переплату не прячем: клиент округлил вверх или доплатил за
+                срочность — это надо видеть, а не молча считать нулём. */}
+            {deal.remainder !== null && deal.remainder < 0 && (
+              <div className="field-desc">
+                {t("dealOverpaid", { sum: formatMoney(-deal.remainder, currency, locale) })}
+              </div>
+            )}
+          </div>
+        </div>
+
         <div className="field" style={{ marginTop: 4 }}>
           <label className="label">{t("dealDetails")}</label>
           <textarea

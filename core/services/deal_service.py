@@ -13,6 +13,50 @@ from database.repositories import deals as deals_repo
 MAX_TITLE = 200
 MAX_LOST_REASON = 200
 
+# Потолок суммы в минимальных единицах: 10 миллиардов в валюте. Не про
+# ограничение бизнеса, а про опечатку: лишний ноль в поле превращает отчёт за
+# месяц в бессмыслицу, и заметить это тем труднее, чем позже смотришь.
+MAX_MONEY = 10**12
+
+
+def parse_money(value, field: str) -> int | None:
+    """Сумма из запроса в минимальные единицы.
+
+    None пропускаем как есть: «сумму ещё не назвали» — законное состояние, и
+    подменять его нулём нельзя. Ноль означает другое — работа бесплатная.
+    """
+    if value is None or value == "":
+        return None
+    try:
+        amount = int(value)
+    except (TypeError, ValueError):
+        raise errors.ValidationError(
+            f"{field} must be a whole number of minor units", code="bad_money"
+        ) from None
+    if amount < 0:
+        raise errors.ValidationError(f"{field} cannot be negative", code="negative_money")
+    if amount > MAX_MONEY:
+        raise errors.ValidationError(f"{field} is too large", code="money_too_large")
+    return amount
+
+
+def money_of(deal: Deal) -> dict:
+    """Деньги сделки для ответа API.
+
+    Остаток считается здесь и нигде не хранится: третье поле рядом с суммой и
+    предоплатой начало бы расходиться с ними при первой же правке.
+
+    Переплату не запрещаем: клиент округлил вверх, доплатил за срочность — это
+    жизнь, а не ошибка. Остаток тогда отрицательный, и это видно.
+    """
+    amount, prepaid = deal.amount, deal.prepaid or 0
+    return {
+        "amount": amount,
+        "prepaid": prepaid,
+        "remainder": None if amount is None else amount - prepaid,
+        "is_paid": amount is not None and prepaid >= amount,
+    }
+
 
 def get_deal(db: Session, deal_id: int, include_deleted: bool = False) -> Deal:
     deal = deals_repo.get(db, deal_id, include_deleted=include_deleted)
@@ -49,6 +93,8 @@ def create_deal(db: Session, data: dict, author: User) -> Deal:
         stage=stage,
         sort_order=deals_repo.next_sort_order(db, stage),
         description=(data.get("description") or "").strip(),
+        amount=parse_money(data.get("amount"), "amount"),
+        prepaid=parse_money(data.get("prepaid"), "prepaid") or 0,
         due_at=data.get("due_at"),
         closed_at=now_utc() if pipeline_service.is_closed(db, stage) else None,
     )
@@ -79,6 +125,11 @@ def update_deal(db: Session, deal_id: int, data: dict, author: User) -> Deal:
         deal.client_id = int(data["client_id"])
     if "lost_reason" in data and data["lost_reason"] is not None:
         deal.lost_reason = data["lost_reason"].strip()[:MAX_LOST_REASON]
+    # Сумму можно и снять: прислали null — вернулись к «ещё не назвали».
+    if "amount" in data:
+        deal.amount = parse_money(data["amount"], "amount")
+    if "prepaid" in data:
+        deal.prepaid = parse_money(data["prepaid"], "prepaid") or 0
 
     # Этап меняем через общий путь, чтобы журнал заполнялся и здесь тоже.
     if "stage" in data and data["stage"] and data["stage"] != deal.stage:
