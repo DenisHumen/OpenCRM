@@ -16,6 +16,10 @@
 set -eu
 
 VERSION="1.0"
+# CDPATH= перед cd — не опечатка: у пользователя в CDPATH может лежать
+# каталог, из-за которого `cd` уйдёт не туда и напечатает свой путь в stdout,
+# испортив подстановку. Пустое значение выключает это на одну команду.
+# shellcheck disable=SC1007
 REPO_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 COMPOSE_FILE="$REPO_DIR/docker/docker-compose.yml"
 APP_ENV="$REPO_DIR/config/.env"
@@ -79,6 +83,57 @@ info() { printf '    %s.%s %s%s%s\n' "$D" "$R" "$D" "$*" "$R"; }
 warn() { printf '    %s!%s %s%s%s\n' "$YELLOW" "$R" "$YELLOW" "$*" "$R"; }
 die()  { printf '\n%s[!] %s%s\n' "$RED" "$*" "$R" >&2; exit 1; }
 
+# Раскраска чужого вывода.
+#
+# Сообщения самого скрипта различаются взглядом, а docker, git и python сыплют
+# ровной простынёй, в которой ни ошибку, ни успех глазом не выхватить — и
+# именно в ней тонули сегодняшние поломки. Подсвечиваем только значимые строки:
+# красить всё подряд значит снова получить кашу, просто цветную.
+#
+# Разбор идёт по словам, а не по коду возврата: у docker compose одна команда
+# печатает и «Started», и «Error» в одном потоке.
+paint() {
+    if [ -z "$RED" ]; then cat; return 0; fi
+    # Без \b и прочих расширений GNU: в Ubuntu awk — это mawk, и `ok\b` там
+    # молча не сработает. Границу слова выражаем явно через [^a-z].
+    #
+    # `fail` подстрокой покрывает и failed, и failure, и FAIL из отчёта деплоя —
+    # перечисление форм по одной как раз и пропускало главное слово.
+    #
+    # Проверка «нездоров» идёт раньше «здоров»: строка docker про контейнер
+    # содержит оба слова, и выиграть должно тревожное.
+    awk -v red="$RED" -v green="$GREEN" -v yellow="$YELLOW" -v reset="$R" '
+        {
+            low = tolower($0)
+            if (low ~ /error|fail|fatal|denied|refused|cannot|unable|traceback|exception|not found|no such|unhealthy|broken|✘|✗/)
+                printf "%s%s%s\n", red, $0, reset
+            else if (low ~ /warn|deprecat|skipped|pending/)
+                printf "%s%s%s\n", yellow, $0, reset
+            else if (low ~ /done|success|started|running|healthy|created|built|up-to-date|✔|✓/ || low ~ /(^|[^a-z])ok([^a-z]|$)/)
+                printf "%s%s%s\n", green, $0, reset
+            else
+                print
+            # Без сброса буфера awk копит вывод блоками, и `logs -f` шёл бы
+            # рывками по 4 КБ вместо живой ленты.
+            fflush()
+        }
+    '
+}
+
+# Запуск команды с раскраской и СОХРАНЁННЫМ кодом возврата.
+#
+# Просто `cmd | paint` использовать нельзя: в пайпе `$?` — это код последней
+# команды, то есть раскраски, и она успешна всегда. Проверки вида
+# `if compose up; then` начали бы считать успехом любой исход. POSIX sh не знает
+# PIPESTATUS, поэтому код переносим через файл.
+run_painted() {
+    _rc_file=$(mktemp 2>/dev/null) || { "$@" 2>&1; return $?; }
+    { "$@" 2>&1; printf '%s' "$?" > "$_rc_file"; } | paint
+    _rc=$(cat "$_rc_file" 2>/dev/null || printf '1')
+    rm -f "$_rc_file"
+    return "${_rc:-1}"
+}
+
 # Вопросы читаются из /dev/tty, а не со stdin: скрипт должен работать и когда
 # его скормили через пайп (`curl ... | sh`), где stdin занят самим скриптом и
 # `read` съел бы его собственный текст.
@@ -127,13 +182,12 @@ confirm() {
 # Окружение
 # --------------------------------------------------------------------------
 
-OS_ID=""; OS_VERSION=""; OS_NAME=""; OS_CODENAME=""
+OS_ID=""; OS_NAME=""; OS_CODENAME=""
 detect_os() {
     [ -r /etc/os-release ] || die "$(tr_ "не вижу /etc/os-release — не знаю, что за система" "no /etc/os-release — cannot tell what system this is")"
     # shellcheck disable=SC1091
     . /etc/os-release
     OS_ID=${ID:-}
-    OS_VERSION=${VERSION_ID:-}
     OS_NAME=${PRETTY_NAME:-$OS_ID}
     OS_CODENAME=${UBUNTU_CODENAME:-${VERSION_CODENAME:-}}
 }
@@ -857,7 +911,7 @@ compose() {
 # жить со старыми значениями. Молча и потому опасно: после выпуска сертификата
 # сайт уже за TLS, а cookie так и остались бы без флага Secure.
 apply_env_change() {
-    compose up -d --force-recreate app
+    run_painted compose up -d --force-recreate app
     # nginx проксирует в app и до его готовности отдаёт 502 — ждём здесь, иначе
     # каждый вызывающий получал бы «сайт лежит» сразу после успешной настройки.
     if wait_health 90; then
@@ -874,7 +928,7 @@ build_and_start() {
     # в которой про фаервол ни слова. Разрешение узкое, лишним не будет.
     ensure_docker_dns
     info "$(tr_ "первая сборка занимает 3-10 минут: собирается фронтенд и ставится ffmpeg" "the first build takes 3-10 minutes: frontend compile plus ffmpeg install")"
-    compose up -d --build
+    run_painted compose up -d --build
     ok "$(tr_ "контейнеры подняты" "containers are up")"
 }
 
@@ -898,7 +952,7 @@ check_health() {
     else
         warn "$(tr_ "сайт не ответил за 3 минуты" "no answer from the site in 3 minutes")"
         say ""
-        compose logs --tail 40 app || true
+        run_painted compose logs --tail 40 app || true
         die "$(tr_ "не удалось дождаться /healthz — логи выше" "gave up waiting for /healthz — logs above")"
     fi
 }
@@ -955,14 +1009,14 @@ issue_certificate() {
     # выпуск висит на «Created» до Ctrl+C. Сертификат при этом не выпускается
     # никогда, а nginx без файла сертификата не поднимает 443 — сайт остаётся
     # доступен только по HTTP, и снаружи это выглядит как отказ соединения.
-    if compose run --rm --entrypoint certbot certbot certonly --webroot -w /var/www/certbot \
+    if run_painted compose run --rm --entrypoint certbot certbot certonly --webroot -w /var/www/certbot \
         -d "$_domain" --email "$_email" --agree-tos --no-eff-email --non-interactive; then
         # Теперь сайт правда за TLS — можно и нужно переводить BASE_URL на https,
         # чтобы cookie получили флаг Secure. Настройки читаются при старте
         # процесса, поэтому контейнер приложения пересоздаётся, а не просто ждёт.
         env_set "$APP_ENV" OPENCRM_BASE_URL "https://$_domain"
         apply_env_change
-        compose restart nginx
+        run_painted compose restart nginx
         ok "$(tr_ "HTTPS включён, cookie получили флаг Secure, продление идёт само" "HTTPS is on, cookies got the Secure flag, renewal runs by itself")"
     else
         warn "$(tr_ "certbot не справился — сайт остаётся на HTTP" "certbot failed — the site stays on HTTP")"
@@ -1144,8 +1198,12 @@ autoupdate() {
     _home=$(home_dir)
     _env_file="$_home/autoupdate.env"
     if [ -f "$_env_file" ]; then
-        # shellcheck disable=SC1090
-        set -a; . "$_env_file"; set +a
+        # Директива обязана стоять вплотную к `.`, поэтому он на отдельной
+        # строке: в связке `set -a; . файл; set +a` она относилась бы к `set`.
+        set -a
+        # shellcheck disable=SC1090  # путь известен только в рантайме
+        . "$_env_file"
+        set +a
     fi
     OPENCRM_UPDATE_PROJECT_DIR="$REPO_DIR" python3 "$REPO_DIR/scripts/autoupdate.py" "$@"
 }
@@ -1153,7 +1211,7 @@ autoupdate() {
 cmd_status() {
     need_install
     step "$(tr_ "Контейнеры" "Containers")"
-    compose ps
+    run_painted compose ps
     step "$(tr_ "Сайт" "Site")"
     if curl -fsS --max-time 3 http://127.0.0.1/healthz 2>/dev/null | grep -q '"ok"'; then
         ok "$(tr_ "/healthz отвечает ok" "/healthz answers ok")  ($(env_get "$APP_ENV" OPENCRM_BASE_URL))"
@@ -1166,24 +1224,24 @@ cmd_status() {
     df -h "$(home_dir)" | tail -n 2
 }
 
-cmd_start()   { need_install; step "$(tr_ "Запуск" "Start")"; compose up -d; wait_health 60 && ok "$(tr_ "сайт отвечает" "the site is answering")" || warn "$(tr_ "сайт ещё поднимается" "the site is still coming up")"; }
-cmd_stop()    { need_install; step "$(tr_ "Остановка" "Stop")"; compose down; ok "$(tr_ "остановлено" "stopped")"; }
-cmd_restart() { need_install; step "$(tr_ "Перезапуск" "Restart")"; compose restart; wait_health 60 && ok "$(tr_ "сайт отвечает" "the site is answering")" || warn "$(tr_ "сайт ещё поднимается" "the site is still coming up")"; }
+cmd_start()   { need_install; step "$(tr_ "Запуск" "Start")"; run_painted compose up -d; if wait_health 60; then ok "$(tr_ "сайт отвечает" "the site is answering")"; else warn "$(tr_ "сайт ещё поднимается" "the site is still coming up")"; fi; }
+cmd_stop()    { need_install; step "$(tr_ "Остановка" "Stop")"; run_painted compose down; ok "$(tr_ "остановлено" "stopped")"; }
+cmd_restart() { need_install; step "$(tr_ "Перезапуск" "Restart")"; run_painted compose restart; if wait_health 60; then ok "$(tr_ "сайт отвечает" "the site is answering")"; else warn "$(tr_ "сайт ещё поднимается" "the site is still coming up")"; fi; }
 
 cmd_logs() {
     need_install
     _service=${1:-}
     if [ -n "$_service" ]; then
-        compose logs -f --tail 100 "$_service"
+        run_painted compose logs -f --tail 100 "$_service"
     else
-        compose logs -f --tail 100
+        run_painted compose logs -f --tail 100
     fi
 }
 
 cmd_update() {
     need_install
     step "$(tr_ "Обновление до последней версии" "Updating to the latest version")"
-    autoupdate force-update
+    run_painted autoupdate force-update
 }
 
 cmd_autoupdate() {
@@ -1193,9 +1251,17 @@ cmd_autoupdate() {
         off) autoupdate disable ;;
         *)
             if autoupdate status | grep -q "$(tr_ "автообновление: включено" "auto-update: enabled")"; then
-                confirm "$(tr_ "    Сейчас включено. Выключить?" "    Currently enabled. Disable it?")" n && autoupdate disable || info "$(tr_ "оставляю как есть" "leaving it as is")"
+                if confirm "$(tr_ "    Сейчас включено. Выключить?" "    Currently enabled. Disable it?")" n; then
+                    autoupdate disable
+                else
+                    info "$(tr_ "оставляю как есть" "leaving it as is")"
+                fi
             else
-                confirm "$(tr_ "    Сейчас выключено. Включить?" "    Currently disabled. Enable it?")" y && autoupdate enable || info "$(tr_ "оставляю как есть" "leaving it as is")"
+                if confirm "$(tr_ "    Сейчас выключено. Включить?" "    Currently disabled. Enable it?")" y; then
+                    autoupdate enable
+                else
+                    info "$(tr_ "оставляю как есть" "leaving it as is")"
+                fi
             fi
             ;;
     esac
@@ -1206,7 +1272,7 @@ cmd_history() { need_install; autoupdate history -n "${1:-15}"; }
 cmd_backup() {
     need_install
     step "$(tr_ "Резервная копия" "Backup")"
-    compose exec -T app sh scripts/backup.sh
+    run_painted compose exec -T app sh scripts/backup.sh
     ok "$(tr_ "готово: $(home_dir)/data/backups" "done: $(home_dir)/data/backups")"
 }
 
@@ -1216,10 +1282,12 @@ cmd_restore() {
     _dir="$(home_dir)/data/backups/daily"
     [ -d "$_dir" ] || die "$(tr_ "копий ещё нет ($_dir)" "no backups yet ($_dir)")"
     say ""
+    # shellcheck disable=SC2012  # имена копий делает сам скрипт: db-ГГГГ-ММ-ДД.db
     ls -1t "$_dir"/db-*.db 2>/dev/null | head -n 10 | nl -w4 -s') '
     say ""
     _n=$(ask "$(tr_ "    Номер копии (Enter — отмена)" "    Backup number (Enter — cancel)")" "")
     [ -n "$_n" ] || { info "$(tr_ "отменено" "cancelled")"; return 0; }
+    # shellcheck disable=SC2012  # имена копий делает сам скрипт: db-ГГГГ-ММ-ДД.db
     _db=$(ls -1t "$_dir"/db-*.db | sed -n "${_n}p")
     [ -n "$_db" ] || die "$(tr_ "нет такого номера" "no such number")"
     _stamp=$(basename "$_db" | sed 's/^db-//; s/\.db$//')
@@ -1227,15 +1295,19 @@ cmd_restore() {
     [ -f "$_storage" ] || die "$(tr_ "нет пары к базе: $_storage" "no storage archive to match the database: $_storage")"
     warn "$(tr_ "текущие данные будут заменены копией от $_stamp" "current data will be replaced by the backup from $_stamp")"
     confirm "$(tr_ "    Продолжить?" "    Continue?")" n || { info "$(tr_ "отменено" "cancelled")"; return 0; }
-    compose stop app
+    run_painted compose stop app
     # --entrypoint sh обязателен: у образа ENTRYPOINT — это entrypoint.sh, и
     # `compose run app <команда>` передаёт команду ему аргументами, а не вместо
     # него. Без переопределения вместо восстановления поднимался бы uvicorn.
-    compose run --rm -T --entrypoint sh app scripts/restore.sh \
+    run_painted compose run --rm -T --entrypoint sh app scripts/restore.sh \
         "/app/data/backups/daily/$(basename "$_db")" \
         "/app/data/backups/daily/$(basename "$_storage")"
-    compose up -d
-    wait_health 60 && ok "$(tr_ "восстановлено, сайт отвечает" "restored, the site is answering")" || warn "$(tr_ "сайт не поднялся — смотрите логи" "the site did not come up — check the logs")"
+    run_painted compose up -d
+    if wait_health 60; then
+        ok "$(tr_ "восстановлено, сайт отвечает" "restored, the site is answering")"
+    else
+        warn "$(tr_ "сайт не поднялся — смотрите логи" "the site did not come up — check the logs")"
+    fi
 }
 
 cmd_https() { need_install; detect_sudo; issue_certificate; }
@@ -1268,7 +1340,7 @@ cmd_password() {
         _password=$(gen_secret 20)
         printf '    Сгенерирован: %s%s%s\n' "$B" "$_password" "$R"
     fi
-    compose exec -T app python scripts/reset_root.py --email "$_email" --password "$_password"
+    run_painted compose exec -T app python scripts/reset_root.py --email "$_email" --password "$_password"
     ok "$(tr_ "пароль изменён" "password changed")"
 }
 
@@ -1487,7 +1559,7 @@ cmd_repair() {
     fi
 
     step "$(tr_ "Запуск" "Starting")"
-    compose up -d
+    run_painted compose up -d
     if wait_health 90; then
         ok "$(tr_ "сайт отвечает" "the site is answering")"
     else
@@ -1573,6 +1645,7 @@ cmd_doctor() {
         probe "$(tr_ "сеть сборки" "build network")" 0 "$(tr_ "контейнеры без DNS — обновление не соберётся; ./opencrm.sh firewall" "containers have no DNS — updates will not build; ./opencrm.sh firewall")"
     fi
 
+    # shellcheck disable=SC2012  # имена копий делает сам скрипт: db-ГГГГ-ММ-ДД.db
     _last=$(ls -1t "$(home_dir)"/data/backups/daily/db-*.db 2>/dev/null | head -n 1)
     if [ -n "$_last" ]; then
         _stamp_last=$(basename "$_last" | sed 's/^db-//; s/\.db$//')
@@ -1722,7 +1795,7 @@ menu() {
             1)  cmd_status ;;
             2)  cmd_start ;;
             3)  cmd_restart ;;
-            4)  confirm "$(tr_ "    Остановить сайт?" "    Stop the site?")" n && cmd_stop || info "$(tr_ "отменено" "cancelled")" ;;
+            4)  if confirm "$(tr_ "    Остановить сайт?" "    Stop the site?")" n; then cmd_stop; else info "$(tr_ "отменено" "cancelled")"; fi ;;
             5)  cmd_update ;;
             6)  cmd_autoupdate ;;
             7)  cmd_history ;;
