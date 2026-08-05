@@ -6,9 +6,9 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from core import exceptions as errors
-from core.services import settings_service
+from core.services import company_service, settings_service
 from core.utils import now_utc
-from database.models import Client, Deal, Document, DocumentEvent, User
+from database.models import Client, Company, Deal, Document, DocumentEvent, User
 from database.models.document import (
     DOCUMENT_KINDS,
     DOCUMENT_LOCALES,
@@ -44,7 +44,41 @@ INTAKE_FIELDS = (
 )
 
 
-def _payload(data: dict, client: Client | None, deal: Deal | None, site: dict) -> dict:
+def _company_snapshot(company: Company | None, site: dict) -> dict:
+    """Реквизиты фирмы в том виде, в каком они уходят на бумагу.
+
+    Это самое важное место во всём бланке. Реквизиты обязаны попасть в снимок
+    именно СЕЙЧАС, при выпуске, а не подтягиваться на печать: фирма сменит банк
+    или счёт — и старый акт, перепечатанный через полгода, покажет новый счёт
+    там, где у клиента на руках лежит бумага со старым. Спорить после этого не
+    о чем: обе стороны держат «оригинал», и они не совпадают.
+
+    Фирмы может не быть — справочник не заполнен или блок выключен. Тогда
+    падаем на настройки сайта, как было до появления юрлиц: бланк без вывески
+    хуже, чем бланк без реквизитов.
+    """
+    if company is not None:
+        snapshot = company_service.requisites(company)
+        # Телефон и почта фирмы бывают не заполнены, а в шапке они нужны:
+        # клиент звонит по тому номеру, что напечатан. Добираем из настроек
+        # сайта — это те же контакты, просто записанные в другом месте.
+        snapshot["phone"] = snapshot.get("phone") or site.get("contact_phone") or ""
+        snapshot["email"] = snapshot.get("email") or site.get("contact_email") or ""
+        return snapshot
+    return {
+        "name": site.get("brand_name") or "",
+        "phone": site.get("contact_phone") or "",
+        "email": site.get("contact_email") or "",
+    }
+
+
+def _payload(
+    data: dict,
+    client: Client | None,
+    deal: Deal | None,
+    site: dict,
+    company: Company | None,
+) -> dict:
     """Снимок того, что напечатано.
 
     Ссылками не обойтись: у человека на руках бумага, и она обязана совпадать с
@@ -52,11 +86,7 @@ def _payload(data: dict, client: Client | None, deal: Deal | None, site: dict) -
     сделку удалили. Иначе спор «что вы у меня приняли» решать нечем.
     """
     return {
-        "company": {
-            "name": site.get("brand_name") or "",
-            "phone": site.get("contact_phone") or "",
-            "email": site.get("contact_email") or "",
-        },
+        "company": _company_snapshot(company, site),
         "client": {
             "name": (client.name if client else data.get("client_name") or ""),
             "phone": (client.phone if client else data.get("client_phone") or ""),
@@ -104,6 +134,10 @@ def create(db: Session, data: dict, author: User) -> Document:
     if not (data.get("item") or "").strip():
         raise errors.ValidationError("Item is required", code="item_required")
 
+    # От чьего имени выдаём. Выбранная руками фирма важнее фирмы заявки: бланк
+    # печатают у стойки, и там иногда виднее, чем при заведении заявки.
+    company = company_service.for_document(db, data.get("company_id"), deal)
+
     document = Document(
         number=next_number(db),
         kind=kind,
@@ -112,7 +146,8 @@ def create(db: Session, data: dict, author: User) -> Document:
         client_id=client.id if client else None,
         deal_id=deal.id if deal else None,
         payload=json.dumps(
-            _payload(data, client, deal, settings_service.get_all(db)), ensure_ascii=False
+            _payload(data, client, deal, settings_service.get_all(db), company),
+            ensure_ascii=False,
         ),
         created_by=author.id,
     )

@@ -237,6 +237,12 @@ export function Sidebar({ onOpenSearch }: { onOpenSearch: () => void }) {
       badge: pendingCount,
       badgeTitle: t("signupRequests"),
     });
+    // Фирмы — в «Админ», а не в «Работу»: реквизиты правят раз в несколько лет
+    // и только root. Менеджер читает их через выбор фирмы в заявке, и отдельный
+    // пункт меню, где ему всё равно ничего не поддаётся, был бы шумом.
+    if (moduleOn(modules, "companies")) {
+      admin.push({ to: "/companies", label: t("companies"), icon: "building" });
+    }
     // Файлы — это медиа досок, отдельного смысла без них не имеют.
     if (moduleOn(modules, "boards")) {
       admin.push({ to: "/files", label: t("files"), icon: "folder" });

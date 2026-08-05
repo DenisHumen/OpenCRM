@@ -34,6 +34,19 @@ class Deal(Base):
     manager_id: Mapped[int | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
     )
+    # От чьего имени ведём работу. Необязательное поле: у большинства фирма
+    # одна, и спрашивать её на каждой заявке — лишний вопрос ради ответа,
+    # который всегда один и тот же. Пусто означает «от фирмы по умолчанию», а
+    # не «неизвестно».
+    #
+    # SET NULL, а не CASCADE и не RESTRICT. CASCADE снёс бы заявки вместе с
+    # фирмой — потерять работу из-за правки справочника недопустимо. RESTRICT
+    # запретил бы удалять фирму, которой хоть раз пользовались, то есть любую.
+    # Остаётся SET NULL: заявка теряет ссылку, но живёт. Выданные по ней бланки
+    # при этом не меняются — там снимок реквизитов, а не ссылка.
+    company_id: Mapped[int | None] = mapped_column(
+        ForeignKey("companies.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     # Ключ этапа из `pipeline_stages`. Не внешний ключ намеренно: этап могут
     # заархивировать, а сделка обязана остаться читаемой.
     stage: Mapped[str] = mapped_column(String(32), index=True)

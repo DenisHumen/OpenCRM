@@ -11,6 +11,7 @@ import type { TranslationKey } from "../lib/i18n";
 const LABEL: Record<string, TranslationKey> = {
   clients: "clients",
   deals: "deals",
+  companies: "companies",
   documents: "documents",
   tasks: "tasks",
   boards: "boards",
@@ -23,6 +24,7 @@ const LABEL: Record<string, TranslationKey> = {
 const ABOUT: Record<string, TranslationKey> = {
   clients: "modClientsAbout",
   deals: "modDealsAbout",
+  companies: "modCompaniesAbout",
   documents: "modDocumentsAbout",
   tasks: "modTasksAbout",
   boards: "modBoardsAbout",
@@ -35,6 +37,7 @@ const ABOUT: Record<string, TranslationKey> = {
 const ICON: Record<string, string> = {
   clients: "clients",
   deals: "deals",
+  companies: "building",
   documents: "receipt",
   tasks: "clock",
   boards: "boards",

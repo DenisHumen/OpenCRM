@@ -34,6 +34,22 @@
   .head { display: flex; justify-content: space-between; align-items: flex-start; gap: 6mm; }
   .company { font-size: 11pt; font-weight: 700; }
   .company small { display: block; font-size: 8pt; font-weight: 400; color: #444; }
+  /* Реквизиты стоят в ЛЕВОЙ колонке шапки намеренно, и это не про красоту.
+     .head — flex-строка, её высота равна высоте более длинной колонки. Справа
+     номер, дата, штрихкод (8 мм полосок + подпись) и QR (~23 мм) — вместе
+     около 50 мм. Слева до сих пор было около 23 мм: название, контакты,
+     заголовок и рамка с подписью экземпляра. Значит слева оставалось порядка
+     25 мм пустоты, и три строки реквизитов по 2,9 мм в неё укладываются, не
+     удлиняя лист НИ НА МИЛЛИМЕТР. Это условие того, что обе половины
+     по-прежнему помещаются на один A4 (277 мм при полях 10 мм).
+
+     Отсюда же max-width: 118 мм — ширина, при которой строка реквизитов не
+     наезжает на блок с кодами. Менять размер шрифта или ширину можно только
+     вместе с пересчётом: запас слева конечен. */
+  .reqs {
+    max-width: 118mm; margin-top: 0.8mm;
+    font-size: 6.8pt; line-height: 1.25; font-weight: 400; color: #333;
+  }
   .doc-title { font-size: 11pt; font-weight: 700; margin-top: 0.5mm; }
   .copy-label {
     display: inline-block; margin-top: 1mm; padding: 0.7mm 2mm;
@@ -89,6 +105,21 @@
               {%- if payload.company.email %}{{ payload.company.email }}{% endif -%}
             </small>
           </div>
+          {# Реквизиты — из снимка, а не из справочника. Фирма сменит счёт, и
+             перепечатанная через полгода бумага обязана показать тот счёт,
+             который лежит у клиента на руках, а не сегодняшний.
+             Пустые реквизиты не печатаем совсем: строка «Счёт: —» в шапке
+             документа выглядит как незаполненный бланк. #}
+          {% set c = payload.company %}
+          {% set reqs = [] %}
+          {% if c.tax_number %}{% set _ = reqs.append(t.tax_number ~ ' ' ~ c.tax_number) %}{% endif %}
+          {% if c.reg_number %}{% set _ = reqs.append(t.reg_number ~ ' ' ~ c.reg_number) %}{% endif %}
+          {% if c.vat_number %}{% set _ = reqs.append(t.vat_number ~ ' ' ~ c.vat_number) %}{% endif %}
+          {% if c.legal_address %}{% set _ = reqs.append(t.address ~ ': ' ~ c.legal_address) %}{% endif %}
+          {% if c.bank_name %}{% set _ = reqs.append(t.bank ~ ': ' ~ c.bank_name) %}{% endif %}
+          {% if c.bank_account %}{% set _ = reqs.append(t.account ~ ' ' ~ c.bank_account) %}{% endif %}
+          {% if c.bank_code %}{% set _ = reqs.append(c.bank_code) %}{% endif %}
+          {% if reqs %}<div class="reqs">{{ reqs|join(' · ') }}</div>{% endif %}
           <div class="doc-title">{{ t.title }}</div>
           <div class="copy-label">{{ copy_label }}</div>
         </div>

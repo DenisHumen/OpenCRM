@@ -26,6 +26,9 @@ PRINT_LABELS = {"ru": "Печать", "en": "Print", "uk": "Друк"}
 class DocumentIn(BaseModel):
     client_id: int | None = None
     deal_id: int | None = None
+    # От чьего имени выдаём бланк. Не прислали — берём фирму заявки, а если её
+    # нет, фирму по умолчанию (core/services/company_service.for_document).
+    company_id: int | None = None
     locale: str = "ru"
     # Если клиента в базе ещё нет — принимаем данные прямо в бланк: в мастерской
     # человек стоит у стойки, и заводить карточку до квитанции неудобно.

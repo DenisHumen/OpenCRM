@@ -40,6 +40,7 @@ export function DealCard() {
   const [stages, setStages] = useState<Stage[]>([]);
   const [people, setPeople] = useState<any[]>([]);
   const [clients, setClients] = useState<any[]>([]);
+  const [companies, setCompanies] = useState<any[]>([]);
   const [docs, setDocs] = useState<any[]>([]);
   const [tasks, setTasks] = useState<any[]>([]);
   const [issuing, setIssuing] = useState(false);
@@ -65,6 +66,8 @@ export function DealCard() {
     api.get(`/documents?deal_id=${id}`).then((d) => setDocs(d.items)).catch(() => undefined);
   }, [id, hasDocuments]);
 
+  const hasCompanies = moduleOn(modules, "companies");
+
   const hasTasks = moduleOn(modules, "tasks");
 
   const loadTasks = useCallback(() => {
@@ -79,7 +82,10 @@ export function DealCard() {
     api.get("/pipeline/stages").then((d) => setStages(d.items)).catch(() => undefined);
     api.get("/people").then((d) => setPeople(d.items)).catch(() => undefined);
     api.get("/clients?per_page=200").then((d) => setClients(d.items)).catch(() => undefined);
-  }, [load, loadDocs, loadTasks]);
+    if (hasCompanies) {
+      api.get("/companies").then((d) => setCompanies(d.items)).catch(() => undefined);
+    }
+  }, [load, loadDocs, loadTasks, hasCompanies]);
 
   if (!deal) return <ScreenLoading />;
 
@@ -226,6 +232,26 @@ export function DealCard() {
               ))}
             </select>
           </div>
+          {/* Спрашиваем, только когда есть из чего выбирать. У большинства
+              фирма одна, и поле с единственным вариантом — вопрос ради ответа,
+              который всегда один и тот же. Пусто означает «от основной». */}
+          {hasCompanies && companies.length > 1 && (
+            <div className="field">
+              <label className="label">{t("companyOfDeal")}</label>
+              <select
+                className="input"
+                value={deal.company_id ?? ""}
+                onChange={(e) =>
+                  void patch({ company_id: e.target.value ? Number(e.target.value) : null })
+                }
+              >
+                <option value="">{t("companyOfDealDefault")}</option>
+                {companies.map((c: any) => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
           <div className="field">
             <label className="label">{t("dueDate")}</label>
             <input
