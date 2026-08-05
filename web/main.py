@@ -34,6 +34,7 @@ from web.api.routes import (
     staff,
     system,
     tasks,
+    telephony,
     workspace,
 )
 from web.public import routes as public_routes
@@ -261,6 +262,10 @@ def create_app() -> FastAPI:
     app.include_router(tasks.router, prefix=api_prefix)
     app.include_router(system.router, prefix=api_prefix)
     app.include_router(workspace.router, prefix=api_prefix)
+    app.include_router(telephony.router, prefix=api_prefix)
+    # Вебхук АТС — отдельным роутером: он единственный не закрыт блоком
+    # телефонии (обоснование — в web/api/routes/telephony.py).
+    app.include_router(telephony.webhook_router, prefix=api_prefix)
     app.include_router(arcade.router, prefix=api_prefix)
     app.include_router(public_routes.router)
 

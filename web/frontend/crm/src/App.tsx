@@ -9,6 +9,7 @@ import { moduleOn } from "./lib/modules";
 import { AuthScreen, ForcePasswordChange } from "./screens/Auth";
 import { BoardEditor } from "./screens/BoardEditor";
 import { Boards } from "./screens/Boards";
+import { Calls } from "./screens/Calls";
 import { ClientCard } from "./screens/ClientCard";
 import { Clients } from "./screens/Clients";
 import { Companies } from "./screens/Companies";
@@ -31,6 +32,7 @@ import {
 import { SettingsModules } from "./screens/SettingsModules";
 import { Staff } from "./screens/Staff";
 import { Tasks } from "./screens/Tasks";
+import { SettingsTelephony } from "./screens/TelephonySettings";
 
 function Protected() {
   const { user, ready } = useApp();
@@ -130,6 +132,9 @@ export default function App() {
             <Route path="/boards" element={<Boards />} />
             <Route path="/boards/:id" element={<BoardEditor />} />
           </Route>
+          <Route element={<ModuleRoute module="telephony" />}>
+            <Route path="/calls" element={<Calls />} />
+          </Route>
           <Route path="/profile" element={<Profile />} />
           <Route element={<RootOnly />}>
             <Route path="/staff" element={<Staff />} />
@@ -140,6 +145,9 @@ export default function App() {
                 там одна кнопка «Сохранить» на всю группу, а переключатель блока
                 применяется сразу — общая кнопка вводила бы в заблуждение. */}
             <Route path="/settings/modules" element={<SettingsModules />} />
+            {/* Подключение к АТС — тоже вне SettingsLayout: у него свои поля,
+                своя кнопка сохранения и секрет, который показывается один раз. */}
+            <Route path="/settings/telephony" element={<SettingsTelephony />} />
             {/* разделов настроек будет больше — каждый своим маршрутом,
                 чтобы на них можно было сослаться и открыть из сайдбара */}
             <Route path="/settings" element={<SettingsLayout />}>

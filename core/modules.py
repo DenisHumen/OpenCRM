@@ -56,11 +56,15 @@ MODULES: tuple[Module, ...] = (
     # задача, и клиент с заявкой ей не нужны.
     Module(key="tasks"),
     Module(key="boards", default=True),
+    # Телефония. Выключена по умолчанию: она бесполезна без настроенной АТС, а
+    # пустой журнал звонков в меню у того, у кого станции нет, — обещание, а не
+    # функция. Зависит только от клиентов: звонок обязан находить, кому он был,
+    # а заявка у звонка бывает не всегда («позвонил спросить про цены»).
+    Module(key="telephony", default=False, requires=("clients",)),
     # --- в разработке ---
     Module(key="warehouse", ready=False, default=False, requires=("deals",)),
     Module(key="reports", ready=False, default=True, requires=("deals",)),
     Module(key="mail", ready=False, default=False, requires=("clients",)),
-    Module(key="telephony", ready=False, default=False, requires=("clients",)),
 )
 
 BY_KEY: dict[str, Module] = {module.key: module for module in MODULES}

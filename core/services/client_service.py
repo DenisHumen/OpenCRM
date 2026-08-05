@@ -5,8 +5,8 @@ from sqlalchemy.orm import Session
 from config.settings import get_settings
 from core import exceptions as errors
 from core.security import tokens
-from core.services import storage_service
-from core.utils import now_utc
+from core.services import settings_service, storage_service
+from core.utils import normalize_phone, now_utc
 from database.models import Client, ClientFile, ClientNote, User
 from database.models.client import NOTE_KINDS
 from database.models.user import ROLE_ROOT
@@ -30,10 +30,12 @@ def get_client(db: Session, client_id: int, include_deleted: bool = False) -> Cl
 def create_client(db: Session, data: dict, author: User) -> Client:
     if not (data.get("name") or "").strip():
         raise errors.ValidationError("Name is required", code="name_required")
+    phone = (data.get("phone") or "").strip()
     client = Client(
         name=data["name"].strip(),
         company=(data.get("company") or "").strip(),
-        phone=(data.get("phone") or "").strip(),
+        phone=phone,
+        phone_norm=_normalize_phone_for(db, phone),
         email=(data.get("email") or "").strip(),
         messenger=(data.get("messenger") or "").strip(),
         tags=_normalize_tags(data.get("tags")),
@@ -52,6 +54,10 @@ def update_client(db: Session, client_id: int, data: dict) -> Client:
             if field == "name" and not value:
                 raise errors.ValidationError("Name is required", code="name_required")
             setattr(client, field, value)
+            if field == "phone":
+                # нормализованный вид пересчитывается вместе с исходным, иначе
+                # после правки телефона звонки уходили бы мимо карточки
+                client.phone_norm = _normalize_phone_for(db, value)
     if "tags" in data and data["tags"] is not None:
         client.tags = _normalize_tags(data["tags"])
     if "manager_id" in data:
@@ -69,6 +75,11 @@ def restore_client(db: Session, client_id: int) -> Client:
     client = get_client(db, client_id, include_deleted=True)
     client.deleted_at = None
     return client
+
+
+def _normalize_phone_for(db: Session, phone: str) -> str:
+    code = settings_service.get_all(db).get("default_country_code", "")
+    return normalize_phone(phone, code)[:32]
 
 
 def _normalize_tags(tags) -> str:

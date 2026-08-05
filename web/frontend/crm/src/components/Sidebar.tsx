@@ -227,6 +227,9 @@ export function Sidebar({ onOpenSearch }: { onOpenSearch: () => void }) {
   if (moduleOn(modules, "boards")) {
     work.push({ to: "/boards", label: t("boards"), icon: "boards" });
   }
+  if (moduleOn(modules, "telephony")) {
+    work.push({ to: "/calls", label: t("calls"), icon: "callIn" });
+  }
 
   const admin: NavItem[] = [];
   if (isRoot) {
@@ -310,6 +313,10 @@ export function Sidebar({ onOpenSearch }: { onOpenSearch: () => void }) {
               base="/settings"
               items={[
                 { to: "/settings/modules", label: t("modules") },
+                // Подключение к АТС показываем всегда: без него блок телефонии
+                // включать бессмысленно, а вход в настройку должен быть виден
+                // до того, как блок включили.
+                { to: "/settings/telephony", label: t("telephony") },
                 { to: "/settings/brand", label: t("brand") },
                 { to: "/settings/contacts", label: t("contacts") },
                 { to: "/settings/showcase", label: t("showcase") },

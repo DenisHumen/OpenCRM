@@ -15,6 +15,7 @@ from database.models import (
     Deal,
     DealStageChange,
     Document,
+    PhoneCall,
     PipelineStage,
     ShareLink,
     ShareView,
@@ -352,6 +353,30 @@ def note_out(note: ClientNote) -> dict:
         "body": note.body,
         "happened_at": _iso(note.happened_at),
         "created_at": _iso(note.created_at),
+    }
+
+
+def call_out(call: PhoneCall) -> dict:
+    return {
+        "id": call.id,
+        "external_id": call.external_id,
+        "direction": call.direction,
+        "from_number": call.from_number,
+        "to_number": call.to_number,
+        # С кем говорили: во входящем это звонивший, в исходящем — вызываемый.
+        # Считается на сервере, чтобы каждый список не повторял эту логику.
+        "counterparty": call.from_number if call.direction == "in" else call.to_number,
+        "started_at": _iso(call.started_at),
+        # null — длительность неизвестна, это не то же самое, что 0 секунд
+        "duration_sec": call.duration_sec,
+        # null — звонок ещё идёт
+        "outcome": call.outcome,
+        "has_recording": bool(call.recording_path),
+        "client_id": call.client_id,
+        "deal_id": call.deal_id,
+        "user_id": call.user_id,
+        "note_id": call.note_id,
+        "created_at": _iso(call.created_at),
     }
 
 

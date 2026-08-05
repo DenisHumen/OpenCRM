@@ -61,3 +61,54 @@ def normalize_external_url(value: str | None) -> str:
 
 def normalize_email(email: str) -> str:
     return email.strip().lower()
+
+
+# Короче этого — не абонент, а внутренний номер АТС (101, 2345) или служебная
+# метка вроде «anonymous»: приводить такое к международному виду нечего.
+PHONE_MIN_DIGITS = 7
+# Длиннее этого номер уже содержит код страны, и дописывать ему ещё один —
+# испортить данные. Национальные номера абонентов почти везде укладываются
+# в 10 цифр (UA/PL — 9, US — 10, DE — до 11 с нулём).
+PHONE_NATIONAL_MAX_DIGITS = 10
+
+
+def normalize_phone(raw: str, country_code: str = "") -> str:
+    """Приводит номер к единому виду для сравнения: только цифры, без «+».
+
+    Один и тот же человек приходит из АТС, из формы и из импорта в разном
+    написании: ``+380671234567``, ``380671234567``, ``0671234567``,
+    ``+38 (067) 123-45-67``. Пока сравниваются исходные строки, звонок не
+    находит клиента — это самая частая причина, по которой телефония «не
+    работает». Поэтому рядом с исходным номером всегда хранится результат этой
+    функции, и ищут по нему.
+
+    «+» в каноническом виде не участвует: он ничего не добавляет к сравнению,
+    а вариантов записи с ним и без него ровно вдвое больше, чем нужно.
+
+    ``country_code`` (настройка ``default_country_code``, например ``380``)
+    нужен, чтобы местный набор ``067…`` сошёлся с международным ``+380 67…``.
+    Без него местные номера остаются как есть — это промах поиска, но не порча
+    данных: дописать чужой код страны хуже, чем не дописать никакой.
+    """
+    value = (raw or "").strip()
+    if not value:
+        return ""
+    plus = value.startswith("+")
+    digits = "".join(ch for ch in value if ch.isdigit())
+    if not digits:
+        return ""
+    # «00» — международный префикс набора, тот же смысл, что «+»
+    if not plus and digits.startswith("00"):
+        digits, plus = digits[2:], True
+    if len(digits) < PHONE_MIN_DIGITS:
+        return digits
+
+    code = "".join(ch for ch in (country_code or "") if ch.isdigit())
+    if not plus and code and not digits.startswith(code):
+        if digits.startswith("0"):
+            # междугородний префикс страны: 067… → 380 67…
+            digits = code + digits.lstrip("0")
+        elif len(digits) <= PHONE_NATIONAL_MAX_DIGITS:
+            # номер без префикса и без кода страны — считаем местным
+            digits = code + digits
+    return digits

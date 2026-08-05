@@ -115,6 +115,33 @@
 | POST | `/settings/logo` | 👑 | Загрузить логотип (multipart). Путь возвращается с меткой версии `?v=` |
 | POST | `/settings/site-logo` | 👑 | Логотип сайта для кнопки «Return to the site»; `DELETE` — убрать |
 
+## Телефония (блок `telephony`)
+
+| Метод | Путь | Права | Описание |
+|---|---|---|---|
+| GET | `/telephony/calls` | 👤 | Журнал: `?direction=in\|out`, `?outcome=`, `?client_id=`, `?deal_id=`, `?user_id=`, `?number=` (приводится к нормализованному виду), `?since=`, `?until=`, пагинация |
+| GET | `/telephony/calls/{id}` | 👤 | Карточка звонка |
+| PATCH | `/telephony/calls/{id}` | 👤 | Привязать разговор к заявке или отвязать: `{"deal_id": 7 \| null}`. `422 deal_other_client` — заявка чужого клиента |
+| POST | `/telephony/calls/{id}/callback-task` | 👤 | Напоминание перезвонить по пропущенному. `422 call_not_missed`, `409 module_disabled` — блок напоминаний выключен |
+| POST | `/telephony/click-to-call` | 👤 | Просит АТС набрать: `{"number": "…", "from_ext": "…", "deal_id": 7}`. `422 telephony_not_configured`, `400 pbx_unavailable` |
+| GET | `/telephony/settings` | 👑 | Настройки подключения. Секреты не отдаются — только `has_api_token` / `has_webhook_secret` |
+| PATCH | `/telephony/settings` | 👑 | Провайдер, адрес команды набора, токен, внутренний номер, смещение зоны АТС, код страны |
+| POST | `/telephony/settings/secret` | 👑 | Новый секрет подписи вебхука; возвращается **один раз** |
+| POST | `/telephony/webhook` | 🔓 | События звонка от АТС. Подпись обязательна (см. [07-security.md](07-security.md)) |
+
+Поля звонка: `duration_sec = null` — длительность неизвестна (не то же, что `0`),
+`outcome = null` — звонок ещё идёт. `counterparty` — номер собеседника: у входящего это
+звонивший, у исходящего — вызываемый.
+
+Формат события вебхука: `call_id` (обязателен), `direction`, `from`, `to`, `started_at`
+(ISO 8601, лучше со смещением), `duration`, `outcome`, `recording`, `operator_email`.
+Клиента в теле не спрашиваем и не принимаем — он определяется по номеру.
+
+Вебхук **не закрыт блоком**: у АТС нет способа узнать, что владелец выключил телефонию,
+и на ошибку она уходит в ретраи. При выключенном блоке запрос принимается (`200`) с телом
+`{"status": "ignored", "reason": "module_disabled"}` и ничего не пишет; подпись
+проверяется в любом случае.
+
 ## Публичные маршруты (витрина, вне /api)
 
 | Метод | Путь | Описание |

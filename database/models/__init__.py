@@ -10,6 +10,7 @@ from database.models.pipeline import PipelineStage
 from database.models.document import Document, DocumentEvent
 from database.models.module import ModuleState
 from database.models.task import Task
+from database.models.telephony import PhoneCall
 
 __all__ = [
     "User",
@@ -31,4 +32,5 @@ __all__ = [
     "DocumentEvent",
     "ModuleState",
     "Task",
+    "PhoneCall",
 ]

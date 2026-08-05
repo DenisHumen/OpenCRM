@@ -52,6 +52,27 @@ export const api = {
   },
 };
 
+export interface PhoneCall {
+  id: number;
+  external_id: string;
+  direction: "in" | "out";
+  from_number: string;
+  to_number: string;
+  /** Номер собеседника: у входящего — звонивший, у исходящего — вызываемый. */
+  counterparty: string;
+  started_at: string | null;
+  /** null — длительность неизвестна; 0 — разговор длился ноль секунд. */
+  duration_sec: number | null;
+  /** null — звонок ещё идёт. */
+  outcome: "answered" | "missed" | "busy" | "failed" | "canceled" | null;
+  has_recording: boolean;
+  client_id: number | null;
+  deal_id: number | null;
+  user_id: number | null;
+  note_id: number | null;
+  created_at: string | null;
+}
+
 export interface User {
   id: number;
   email: string;
