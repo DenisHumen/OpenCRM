@@ -64,7 +64,16 @@ services:
     logging: *logging
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz')"]
-      interval: 30s
+      # start_period — не украшение. Без него отсчёт неудач идёт с первой
+      # секунды, и приложению остаётся interval × retries на то, чтобы снять
+      # копию базы, прогнать миграции и подняться. Сразу после `up -d --build`
+      # машина занята сборкой, диск холодный — на боевом VPS в этот бюджет не
+      # уложились, контейнер объявили нездоровым, деплой откатился, откат тоже
+      # «не поднялся». В окне запуска неудачи не считаются вовсе.
+      start_period: 90s
+      # Короткий интервал не нагружает (запрос к localhost), зато готовность
+      # замечается за секунды, а не за полминуты.
+      interval: 10s
       timeout: 5s
       retries: 3
 
@@ -85,9 +94,18 @@ services:
       - ${OPENCRM_HOME:-${HOME}/opencrm}/letsencrypt:/etc/letsencrypt:ro
       - ${OPENCRM_HOME:-${HOME}/opencrm}/acme:/var/www/certbot
     entrypoint: ["/bin/sh", "/opencrm/entrypoint.sh"]
+    # service_started, а НЕ service_healthy. nginx не обращается к приложению
+    # при старте: имя `app` резолвится на каждый запрос через встроенный DNS
+    # (см. resolver в locations.inc), поэтому подниматься раньше ему ничто не
+    # мешает. А вот ждать здоровья — мешает сильно: пока приложение
+    # разворачивается после сборки, nginx не стартовал вовсе, и сайт не просто
+    # показывал заглушку, а не отвечал совсем — 80 и 443 никто не слушал.
+    #
+    # Страница обслуживания существует ровно для этого промежутка: пусть лучше
+    # посетитель увидит «скоро вернёмся», чем отказ соединения.
     depends_on:
       app:
-        condition: service_healthy
+        condition: service_started
     restart: unless-stopped
     logging: *logging
 

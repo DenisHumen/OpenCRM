@@ -1433,6 +1433,14 @@ cmd_repair() {
     $SUDO mkdir -p "$_want_home/data" "$_want_home/storage"
     $SUDO chown "$_want_uid:$_want_gid" "$_want_home"
     $SUDO chown -R "$_want_uid:$_want_gid" "$_want_home/data" "$_want_home/storage"
+    # Настройки автообновления читает и пишет скрипт от имени человека. Остались
+    # root-овскими — и меню спотыкается о «Permission denied» на ровном месте.
+    if $SUDO test -e "$_want_home/autoupdate.env"; then
+        $SUDO chown "$_want_uid:$_want_gid" "$_want_home/autoupdate.env"
+    fi
+    if $SUDO test -d "$_want_home/updates"; then
+        $SUDO chown -R "$_want_uid:$_want_gid" "$_want_home/updates"
+    fi
     ok "$(tr_ "данные: $_want_home" "data: $_want_home")"
     # Репозиторий: под sudo git и правки конфигов оставляли root-овские файлы,
     # после чего обновление вставало на «dubious ownership».
