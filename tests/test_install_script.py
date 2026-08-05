@@ -76,6 +76,24 @@ def test_repair_writes_back_all_three_broken_values():
         assert f'env_set "$DOCKER_ENV" {key}' in repair, f"{key} не восстанавливается"
 
 
+def test_doctor_explains_why_the_site_is_down():
+    """Разбор аварии не должен превращаться в переписку «пришлите ещё логи».
+
+    Причина лежачего сайта каждый раз складывалась из трёх вещей: состояние
+    контейнеров, слушает ли кто-то 80/443, и хвост лога того, кто не поднялся.
+    Диагностика обязана отдавать их разом.
+    """
+    text = source()
+    assert "why_down()" in text, "диагностика больше не объясняет, почему сайт лежит"
+    section = text[text.index("why_down() {") :]
+    assert "compose ps" in section, "не видно состояния контейнеров"
+    assert "compose logs" in section, "не видно логов"
+    assert ":(80|443)" in section or "80|443" in section, "не проверяются порты"
+    # Вывод человек отдаёт тому, кто помогает, — секретов в нём быть не должно.
+    for secret in ("OPENCRM_SECRET_KEY", "OPENCRM_IP_HASH_SALT", "cat \"$APP_ENV\""):
+        assert secret not in section, f"в разбор аварии попал секрет: {secret}"
+
+
 def test_certbot_is_run_with_its_entrypoint_overridden():
     """Сервис certbot объявляет entrypoint — бесконечный цикл продления, а
     `docker compose run` подменяет команду, а не entrypoint.
