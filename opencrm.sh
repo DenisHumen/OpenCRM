@@ -1318,13 +1318,37 @@ cmd_repair() {
 
     # Состояние в /root — след запуска под sudo: данные хозяина машины остались
     # в его домашней папке, а сайт с тех пор писал в другое место.
+    #
+    # Проверять существование обязательно через $SUDO. Каталог /root закрыт
+    # (0700), и обычный `[ -d /root/opencrm/data ]` от имени пользователя
+    # отвечает «нет» не потому, что каталога нет, а потому, что туда не
+    # заглянуть. Первая версия этой починки так и сделала: не увидела боевую
+    # базу в /root/opencrm, отрапортовала «путь исправим» и оставила сайт с
+    # пустым каталогом. Данные были целы, но выглядело это как их потеря.
+    _dir_has_data() { $SUDO test -d "$1" && [ -n "$($SUDO ls -A "$1" 2>/dev/null || true)" ]; }
+
+    # Ищем брошенное состояние не только по записи в .env: если починку уже
+    # запускали, путь там исправлен, а данные так и остались в /root.
+    _root_home=$(getent passwd root | cut -d: -f6 2>/dev/null || true)
+    [ -n "$_root_home" ] || _root_home="/root"
+
+    _source=""
+    if [ "$_env_home" != "$_want_home" ] && _dir_has_data "$_env_home/data"; then
+        _source="$_env_home"
+    elif [ "$_root_home/opencrm" != "$_want_home" ] && _dir_has_data "$_root_home/opencrm/data"; then
+        _source="$_root_home/opencrm"
+    fi
+
     _move_state=0
-    if [ "$_env_home" = "$_want_home" ]; then
-        probe "$(tr_ "состояние" "state")" 1 "$_env_home"
-    elif [ -d "$_env_home/data" ] && [ -n "$($SUDO ls -A "$_env_home/data" 2>/dev/null || true)" ] \
-        && [ -n "$($SUDO ls -A "$_want_home/data" 2>/dev/null || true)" ]; then
+    if [ -z "$_source" ]; then
+        if [ "$_env_home" = "$_want_home" ]; then
+            probe "$(tr_ "состояние" "state")" 1 "$_env_home"
+        else
+            probe "$(tr_ "состояние" "state")" 0 "$(tr_ "путь исправим на" "path will become") $_want_home"
+        fi
+    elif _dir_has_data "$_want_home/data"; then
         probe "$(tr_ "состояние" "state")" 0 "$(tr_ "данные и там, и там" "data in both places")"
-        warn "$(tr_ "$_env_home/data и $_want_home/data — оба непустые" "$_env_home/data and $_want_home/data are both non-empty")"
+        warn "$(tr_ "$_source/data и $_want_home/data — оба непустые" "$_source/data and $_want_home/data are both non-empty")"
         say "$(tr_ \
             "    Какая из баз рабочая, знаете только вы. Перенесите нужную вручную" \
             "    Only you know which database is the live one. Move the right one by hand")"
@@ -1332,18 +1356,16 @@ cmd_repair() {
             "    и запустите починку снова." \
             "    and run the repair again.")"
         die "$(tr_ "останавливаюсь, чтобы не потерять данные" "stopping so that no data is lost")"
-    elif [ -d "$_env_home/data" ]; then
-        probe "$(tr_ "состояние" "state")" 0 "$_env_home → $_want_home"
-        _move_state=1
     else
-        probe "$(tr_ "состояние" "state")" 0 "$(tr_ "путь исправим на" "path will become") $_want_home"
+        probe "$(tr_ "состояние" "state")" 0 "$_source → $_want_home"
+        _move_state=1
     fi
 
     say ""
     say "$(tr_ "    Что будет сделано:" "    What will be done:")"
     say "$(tr_ "      1. остановка сайта" "      1. stop the site")"
     if [ "$_move_state" = "1" ]; then
-        say "$(tr_ "      2. перенос $_env_home → $_want_home" "      2. move $_env_home → $_want_home")"
+        say "$(tr_ "      2. перенос $_source → $_want_home" "      2. move $_source → $_want_home")"
     fi
     say "$(tr_ "      3. владелец данных и репозитория → $_owner" "      3. owner of data and repository → $_owner")"
     say "$(tr_ "      4. правка docker/.env (UID, GID, путь)" "      4. update docker/.env (UID, GID, path)")"
@@ -1362,9 +1384,12 @@ cmd_repair() {
         $SUDO mkdir -p "$_want_home"
         # Переносим содержимое, а не каталог: цель может уже существовать
         # (пустая), и `mv` вложил бы источник внутрь неё.
+        #
+        # `test` снова через $SUDO — источник лежит в /root, куда обычному
+        # пользователю не заглянуть.
         for _item in data storage letsencrypt acme autoupdate.env; do
-            if [ -e "$_env_home/$_item" ] && [ ! -e "$_want_home/$_item" ]; then
-                $SUDO mv "$_env_home/$_item" "$_want_home/$_item"
+            if $SUDO test -e "$_source/$_item" && ! $SUDO test -e "$_want_home/$_item"; then
+                $SUDO mv "$_source/$_item" "$_want_home/$_item"
                 ok "$_item"
             fi
         done
