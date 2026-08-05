@@ -52,10 +52,13 @@ MODULES: tuple[Module, ...] = (
     # задача, и клиент с заявкой ей не нужны.
     Module(key="tasks"),
     Module(key="boards", default=True),
+    # Почта. Выключена у нового пользователя: ящик фирмы есть не у всех, а
+    # включённый блок без настроенного ящика — пустой раздел в меню. Стоит на
+    # клиентах: письмо привязывается к клиенту по адресу и ложится в его ленту.
+    Module(key="mail", default=False, requires=("clients",)),
     # --- в разработке ---
     Module(key="warehouse", ready=False, default=False, requires=("deals",)),
     Module(key="reports", ready=False, default=True, requires=("deals",)),
-    Module(key="mail", ready=False, default=False, requires=("clients",)),
     Module(key="telephony", ready=False, default=False, requires=("clients",)),
 )
 

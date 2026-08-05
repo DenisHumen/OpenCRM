@@ -224,6 +224,9 @@ export function Sidebar({ onOpenSearch }: { onOpenSearch: () => void }) {
   if (moduleOn(modules, "documents")) {
     work.push({ to: "/documents", label: t("documents"), icon: "receipt" });
   }
+  if (moduleOn(modules, "mail")) {
+    work.push({ to: "/mail", label: t("mail"), icon: "email" });
+  }
   if (moduleOn(modules, "boards")) {
     work.push({ to: "/boards", label: t("boards"), icon: "boards" });
   }
@@ -304,6 +307,9 @@ export function Sidebar({ onOpenSearch }: { onOpenSearch: () => void }) {
               base="/settings"
               items={[
                 { to: "/settings/modules", label: t("modules") },
+                // Ящики стоят в настройках, а не в «Работе»: это конфигурация
+                // фирмы, а не то, чем пользуются каждый день.
+                { to: "/settings/mailboxes", label: t("mailboxes") },
                 { to: "/settings/brand", label: t("brand") },
                 { to: "/settings/contacts", label: t("contacts") },
                 { to: "/settings/showcase", label: t("showcase") },

@@ -22,6 +22,7 @@ from web.api.routes import (
     boards,
     deals,
     documents,
+    mail,
     modules,
     people,
     pipeline,
@@ -253,6 +254,7 @@ def create_app() -> FastAPI:
     app.include_router(pipeline.router, prefix=api_prefix)
     app.include_router(people.router, prefix=api_prefix)
     app.include_router(documents.router, prefix=api_prefix)
+    app.include_router(mail.router, prefix=api_prefix)
     app.include_router(shares.router, prefix=api_prefix)
     app.include_router(modules.router, prefix=api_prefix)
     app.include_router(site_settings.router, prefix=api_prefix)

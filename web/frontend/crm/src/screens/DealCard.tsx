@@ -11,6 +11,7 @@ import { formatDate, formatDateTime, formatMoney } from "../lib/format";
 import { moduleOn } from "../lib/modules";
 import { term } from "../lib/terms";
 import { NewDocumentModal } from "./Documents";
+import { MailCompose, type MailAccount } from "./Mail";
 import { QuickTask } from "./Tasks";
 
 type Stage = { key: string; name: string; kind: "open" | "won" | "lost" };
@@ -46,6 +47,8 @@ export function DealCard() {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [askReason, setAskReason] = useState<string | null>(null);
   const [reason, setReason] = useState("");
+  const [composing, setComposing] = useState(false);
+  const [mailAccounts, setMailAccounts] = useState<MailAccount[]>([]);
 
   const load = useCallback(async () => {
     try {
@@ -72,6 +75,15 @@ export function DealCard() {
     api.get(`/tasks?deal_id=${id}`).then((d) => setTasks(d.items)).catch(() => undefined);
   }, [id, hasTasks]);
 
+  const hasMail = moduleOn(modules, "mail");
+
+  // Ящики нужны только выбору отправителя и доступны только root. Не ответило —
+  // форма работает: сервер возьмёт первый активный ящик сам.
+  useEffect(() => {
+    if (!hasMail) return;
+    api.get("/mail/accounts").then((d) => setMailAccounts(d.items)).catch(() => undefined);
+  }, [hasMail]);
+
   useEffect(() => {
     void load();
     loadDocs();
@@ -84,6 +96,9 @@ export function DealCard() {
   if (!deal) return <ScreenLoading />;
 
   const currency: string = deal.currency || "USD";
+  // Адрес берём из уже загруженного списка клиентов: отдельный запрос ради
+  // одной строки в форме отправки — лишний круг к серверу на каждой карточке.
+  const dealClientEmail: string = clients.find((c) => c.id === deal.client_id)?.email || "";
   const stage: Stage | undefined = stages.find((s) => s.key === deal.stage);
   const overdue =
     deal.due_at && !deal.closed_at && new Date(deal.due_at) < new Date();
@@ -155,6 +170,14 @@ export function DealCard() {
             )}
           </div>
         </div>
+        {/* Письмо по заявке уходит отсюда и попадает в ленту ЭТОЙ заявки —
+            ради этого в записи ленты и есть deal_id. */}
+        {hasMail && dealClientEmail && (
+          <button className="btn btn-secondary" onClick={() => setComposing(true)}>
+            <Icon name="send" size={14} />
+            {t("compose")}
+          </button>
+        )}
         <button className="btn btn-secondary" onClick={() => setConfirmDelete(true)}>
           <Icon name="trash" size={14} />
           {t("delete")}
@@ -418,6 +441,17 @@ export function DealCard() {
           clientId={deal.client_id}
           onClose={() => setIssuing(false)}
           onCreated={(doc) => navigate(`/documents/${doc.id}`)}
+        />
+      )}
+
+      {composing && (
+        <MailCompose
+          accounts={mailAccounts}
+          to={dealClientEmail}
+          clientId={deal.client_id}
+          dealId={deal.id}
+          onClose={() => setComposing(false)}
+          onSent={() => void load()}
         />
       )}
 
