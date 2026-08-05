@@ -6,6 +6,7 @@ import { ScreenLoading, Toggle } from "../components/ui";
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
 import { formatDateTime } from "../lib/format";
+import { DEAL_TERMS, term } from "../lib/terms";
 
 const SWATCHES = ["#D97757", "#6C8EEF", "#4CAF6E", "#E8A23D"];
 
@@ -101,7 +102,7 @@ export function SettingsLayout() {
 }
 
 export function SettingsBrand() {
-  const { t, refreshSettings, toastError } = useApp();
+  const { t, locale, refreshSettings, refreshWorkspace, toastError } = useApp();
   const { values, patch, input } = useSettings();
   const logoInput = useRef<HTMLInputElement>(null);
 
@@ -159,6 +160,43 @@ export function SettingsBrand() {
         <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 14 }}>
           {input("brand_name", t("studioName"), t("studioNameDesc"))}
           {input("brand_tagline", t("tagline"), t("taglineDesc"))}
+        </div>
+      </div>
+
+      {/* Как этот бизнес называет свои записи. Пресет, а не свободный текст:
+          русский требует падежей («Новый заказ», «Заказов пока нет»), и
+          произвольная строка дала бы «Новый запись». */}
+      <div className="deal-fields" style={{ marginTop: 18 }}>
+        <div>
+          <label className="label">{t("dealTermTitle")}</label>
+          <select
+            className="input"
+            value={values.deal_term ?? "deal"}
+            onChange={(e) => {
+              patch({ deal_term: e.target.value });
+              // Меню и экраны читают название из общего состояния — обновляем
+              // сразу после сохранения, иначе оно поменяется только после
+              // перезагрузки страницы.
+              setTimeout(() => void refreshWorkspace(), 0);
+            }}
+          >
+            {DEAL_TERMS.map((name) => (
+              <option key={name} value={name}>
+                {term(name, locale, "many")}
+              </option>
+            ))}
+          </select>
+          <div className="field-desc">{t("dealTermDesc")}</div>
+        </div>
+        <div>
+          <label className="label">{t("currencyTitle")}</label>
+          <input
+            className="input"
+            value={values.currency ?? "USD"}
+            maxLength={3}
+            onChange={(e) => patch({ currency: e.target.value.toUpperCase() })}
+          />
+          <div className="field-desc">{t("currencyDesc")}</div>
         </div>
       </div>
       <div style={{ marginTop: 18 }}>

@@ -8,6 +8,7 @@ import { useApp } from "../lib/app";
 import { statusLabel, statusVariant } from "../lib/documents";
 import { formatDate, formatDateTime, formatMoney } from "../lib/format";
 import { moduleOn } from "../lib/modules";
+import { term } from "../lib/terms";
 import { NewDocumentModal } from "./Documents";
 
 type Stage = { key: string; name: string; kind: "open" | "won" | "lost" };
@@ -31,7 +32,7 @@ function toMinor(value: string): number | null {
 
 export function DealCard() {
   const { id } = useParams();
-  const { t, locale, modules, toast, toastError } = useApp();
+  const { t, locale, modules, workspace, toast, toastError } = useApp();
   const navigate = useNavigate();
   const [deal, setDeal] = useState<any>(null);
   const [stages, setStages] = useState<Stage[]>([]);
@@ -117,7 +118,7 @@ export function DealCard() {
     <div className="page page-narrow">
       <Link to="/deals" className="back-link">
         <Icon name="arrowLeft" size={14} />
-        {t("deals")}
+        {term(workspace.deal_term, locale, "many")}
       </Link>
 
       <div className="page-head" style={{ alignItems: "flex-start" }}>

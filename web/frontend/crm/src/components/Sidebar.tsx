@@ -5,6 +5,7 @@ import { api } from "../lib/api";
 import { useApp } from "../lib/app";
 import { formatBytes, initials } from "../lib/format";
 import { moduleOn } from "../lib/modules";
+import { term } from "../lib/terms";
 import { Icon } from "./Icon";
 import { Avatar } from "./ui";
 
@@ -73,7 +74,7 @@ function NavGroup({
 }
 
 export function Sidebar({ onOpenSearch }: { onOpenSearch: () => void }) {
-  const { user, t, settings, storage, modules, setUser, logout, toastError } = useApp();
+  const { user, t, locale, settings, storage, modules, workspace, setUser, logout, toastError } = useApp();
   const navigate = useNavigate();
   const [menuOpen, setMenuOpen] = useState(false);
   const [pendingCount, setPendingCount] = useState(0);
@@ -158,7 +159,7 @@ export function Sidebar({ onOpenSearch }: { onOpenSearch: () => void }) {
         </NavLink>
         <NavLink to="/deals" className={({ isActive }) => "nav-item" + (isActive ? " active" : "")}>
           <Icon name="deals" size={16} />
-          <span style={{ flex: 1 }}>{t("deals")}</span>
+          <span style={{ flex: 1 }}>{term(workspace.deal_term, locale, "many")}</span>
         </NavLink>
         {/* Выключенный блок пропадает из меню целиком: обещать раздел, который
             ответит отказом, хуже, чем не показывать его вовсе. */}

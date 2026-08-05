@@ -6,6 +6,7 @@ import { Avatar, EmptyState, Modal, ScreenLoading } from "../components/ui";
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
 import { formatDate, formatMoney, initials } from "../lib/format";
+import { term } from "../lib/terms";
 
 
 /** Названия этапов приходят с сервера: у ремонта техники «диагностика», у
@@ -43,7 +44,7 @@ type Column = {
 };
 
 export function Deals() {
-  const { t, locale, toastError } = useApp();
+  const { t, locale, workspace, toastError } = useApp();
   const navigate = useNavigate();
   const [columns, setColumns] = useState<Column[] | null>(null);
   const [clients, setClients] = useState<any[]>([]);
@@ -134,17 +135,20 @@ export function Deals() {
     <div className="page page-wide">
       <div className="page-head">
         <div>
-          <h1 className="page-title">{t("deals")}</h1>
+          <h1 className="page-title">{term(workspace.deal_term, locale, "many")}</h1>
           <div className="page-sub">{t("dealsSub", { total })}</div>
         </div>
         <button className="btn btn-primary" onClick={() => setCreating(true)}>
           <Icon name="plus" stroke={2} />
-          {t("newDeal")}
+          {term(workspace.deal_term, locale, "new")}
         </button>
       </div>
 
       {total === 0 ? (
-        <EmptyState title={t("noDeals")} sub={t("noDealsHint")} />
+        <EmptyState
+          title={term(workspace.deal_term, locale, "none")}
+          sub={term(workspace.deal_term, locale, "noneHint")}
+        />
       ) : (
         <div className="kanban">
           {columns.map((column) => (

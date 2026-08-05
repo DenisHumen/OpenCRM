@@ -15,12 +15,13 @@ import {
   initials,
   relativeDay,
 } from "../lib/format";
+import { term } from "../lib/terms";
 
 const NOTE_ICONS: Record<string, string> = { note: "note", call: "call", meeting: "meeting", email: "email" };
 
 export function ClientCard() {
   const { id } = useParams();
-  const { t, locale, user, toast, toastError } = useApp();
+  const { t, locale, user, workspace, toast, toastError } = useApp();
   const navigate = useNavigate();
   const [client, setClient] = useState<any>(null);
   const [notes, setNotes] = useState<any[]>([]);
@@ -188,7 +189,7 @@ export function ClientCard() {
         {/* Заявки клиента: за год их бывает пять, и «что мы для него делали»
             должно быть вопросом к системе, а не к памяти. */}
         <button className={"tab" + (tab === "deals" ? " active" : "")} onClick={() => setTab("deals")}>
-          {t("deals")}
+          {term(workspace.deal_term, locale, "many")}
           {deals.length > 0 && <span className="count">{deals.length}</span>}
         </button>
       </div>
@@ -332,7 +333,7 @@ export function ClientCard() {
               </div>
               {deal.amount !== null && (
                 <span style={{ color: "var(--muted)", fontSize: 12.5, flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>
-                  {formatMoney(deal.amount, client.currency || "USD", locale)}
+                  {formatMoney(deal.amount, workspace.currency, locale)}
                 </span>
               )}
               <span style={{ width: 90, textAlign: "right", color: "var(--faint)", fontSize: 12, flexShrink: 0 }}>
@@ -340,7 +341,7 @@ export function ClientCard() {
               </span>
             </Link>
           ))}
-          {deals.length === 0 && <EmptyState title={t("noDeals")} />}
+          {deals.length === 0 && <EmptyState title={term(workspace.deal_term, locale, "none")} />}
         </div>
       )}
 

@@ -41,6 +41,13 @@ export interface ModuleInfo {
   updated_by_name: string | null;
 }
 
+export interface Workspace {
+  brand_name: string;
+  currency: string;
+  /** Как этот бизнес называет свои записи: deal | order | request | booking. */
+  deal_term: string;
+}
+
 interface AppContextValue {
   user: User | null;
   ready: boolean;
@@ -52,6 +59,9 @@ interface AppContextValue {
   /** Ключ блока → включён ли. null, пока не загружено. */
   modules: Record<string, boolean> | null;
   refreshModules: () => Promise<void>;
+  /** Валюта и названия — нужны всем, а полные настройки читает только root. */
+  workspace: Workspace;
+  refreshWorkspace: () => Promise<void>;
   setUser: (user: User | null) => void;
   setMaintenance: (enabled: boolean, note: string) => Promise<void>;
   refreshSettings: () => Promise<void>;
@@ -77,6 +87,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [storage, setStorage] = useState<StorageStatus | null>(null);
   const [maintenance, setMaintenanceState] = useState<MaintenanceState | null>(null);
   const [modules, setModules] = useState<Record<string, boolean> | null>(null);
+  const [workspace, setWorkspace] = useState<Workspace>({
+    brand_name: "",
+    currency: "USD",
+    deal_term: "deal",
+  });
   const [toasts, setToasts] = useState<Toast[]>([]);
 
   const locale: Locale = user?.locale === "ru" ? "ru" : "en";
@@ -131,6 +146,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const refreshWorkspace = useCallback(async () => {
+    try {
+      setWorkspace(await api.get<Workspace>("/workspace"));
+    } catch {
+      // Не ответило — остаёмся на значениях по умолчанию: экран без подписей
+      // хуже, чем экран с подписями по умолчанию.
+    }
+  }, []);
+
   const refreshStorage = useCallback(async () => {
     try {
       setStorage(await api.get<StorageStatus>("/system/storage"));
@@ -146,7 +170,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!user || user.must_change_password) return;
     void refreshModules();
-  }, [user, refreshModules]);
+    void refreshWorkspace();
+  }, [user, refreshModules, refreshWorkspace]);
 
   useEffect(() => {
     if (!user || user.must_change_password) return;
@@ -194,9 +219,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const value = useMemo(
     () => ({
       user, ready, locale, t, settings, storage, maintenance, modules, refreshModules,
+      workspace, refreshWorkspace,
       setUser, setMaintenance, refreshSettings, refreshStorage, logout, toast, toastError, toasts,
     }),
     [user, ready, locale, t, settings, storage, maintenance, modules, refreshModules,
+     workspace, refreshWorkspace,
      setMaintenance, refreshSettings, refreshStorage, logout, toast, toastError, toasts],
   );
 
