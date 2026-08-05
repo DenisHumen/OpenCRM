@@ -5,6 +5,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="robots" content="noindex" />
     <title>OpenCRM</title>
+    <!-- Иконка вкладки. Лежит в web/public/static и раздаётся приложением по
+         /static — тем же путём, что шрифты витрины: один файл на SPA и на
+         серверные страницы, без второй копии в сборке фронтенда.
+         PNG рядом не лишний: SVG-иконку понимают Chrome, Edge и Firefox, а
+         Safari до 16-й версии — нет, и вкладка осталась бы с пустым глобусом. -->
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32.png" />
+    <link rel="apple-touch-icon" href="/static/apple-touch-icon.png" />
     <!-- Шрифты подключает src/main.tsx локальными файлами. Ссылки на
          fonts.googleapis.com здесь быть не должно: CSP её блокирует, а сайт
          вдобавок не обязан ходить на чужой домен на каждой загрузке. -->

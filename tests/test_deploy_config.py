@@ -26,6 +26,53 @@ def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
+# --- иконка вкладки ---
+
+
+def test_icon_files_are_where_the_pages_point():
+    """Ссылка на иконку и сам файл живут в разных местах и легко расходятся.
+
+    Вкладка с пустым глобусом — это не ошибка в логах и не упавший тест: её
+    просто никто не замечает, пока не посмотрит на браузер.
+    """
+    static = ROOT / "web" / "public" / "static"
+    for name in ("favicon.svg", "favicon-32.png", "apple-touch-icon.png"):
+        assert (static / name).is_file(), f"нет файла иконки: {name}"
+
+    templates = ROOT / "web" / "public" / "templates"
+    pages = [
+        ROOT / "web" / "frontend" / "crm" / "index.html",
+        templates / "base.html",
+        templates / "maintenance_mode.html",
+        # Появляется вместе со своей функцией — проверяем, только если он есть.
+        templates / "document_status.html",
+    ]
+    checked = 0
+    for page in pages:
+        if not page.is_file():
+            continue
+        assert 'rel="icon"' in _read(page), f"страница без иконки: {page.name}"
+        checked += 1
+    assert checked >= 3, "проверять оказалось нечего — список страниц устарел"
+
+
+def test_png_icon_exists_for_browsers_without_svg_support():
+    """SVG-иконку понимают Chrome, Edge и Firefox, а Safari до 16-й — нет.
+
+    Без растрового запасного варианта у части посетителей вкладка осталась бы
+    пустой, и заметить это по логам невозможно.
+    """
+    index = _read(ROOT / "web" / "frontend" / "crm" / "index.html")
+    assert 'type="image/png"' in index, "нет растровой иконки для старых браузеров"
+
+
+def test_showcase_prefers_the_studio_own_logo():
+    """Витрину открывает клиент студии, а не мы: в его вкладке должен стоять
+    знак студии, если она его загрузила, и только иначе — знак продукта."""
+    base = _read(ROOT / "web" / "public" / "templates" / "base.html")
+    assert "site.brand_logo_path" in base, "витрина всегда показывает чужой знак"
+
+
 # --- проверка здоровья ---
 
 
