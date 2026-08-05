@@ -523,7 +523,16 @@ button { font-family: var(--sans); }
 .nav-item { display: flex; align-items: center; gap: 9px; padding: 7px 10px; border-radius: 8px; font-size: 13px; text-decoration: none; color: var(--muted); font-weight: 450; }
 .nav-item:hover { background: var(--surface); color: var(--text); }
 .nav-item.active { color: var(--text); font-weight: 500; background: var(--surface-2); }
-.nav-section { margin: 12px 10px 4px; font-size: 10.5px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--faint); }
+/* Категория меню: заголовок сам сворачивает свои пункты */
+.nav-cat { display: flex; flex-direction: column; gap: 2px; }
+.nav-cat-items { display: flex; flex-direction: column; gap: 2px; }
+.nav-section { display: flex; align-items: center; gap: 6px; width: 100%; margin: 12px 0 2px; padding: 3px 10px; background: none; border: none; border-radius: 6px; cursor: pointer; font-family: var(--sans); font-size: 10.5px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--faint); }
+.nav-section:hover { color: var(--muted); }
+/* стрелка проявляется на наведении: в спокойном виде заголовок остаётся
+   подписью раздела, а не элементом управления, спорящим с пунктами меню */
+.nav-section .nav-chevron { opacity: 0; transform: rotate(180deg); }
+.nav-cat:hover .nav-section .nav-chevron { opacity: 1; }
+.nav-cat:not(.open) .nav-section .nav-chevron { opacity: 1; transform: rotate(0deg); }
 
 /* Группа с вложенным списком (настройки сайта: разделов будет больше) */
 .nav-group { display: flex; flex-direction: column; gap: 2px; }

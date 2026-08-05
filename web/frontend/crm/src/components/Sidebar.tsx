@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 
 import { api } from "../lib/api";
@@ -73,6 +73,101 @@ function NavGroup({
   );
 }
 
+/**
+ * Пункт меню. Счётчик показывается только когда ему есть что сказать, и всегда
+ * с подписью: голое число рядом с «Сотрудники» читается как их количество, а
+ * не как «столько ждут решения».
+ */
+type NavItem = {
+  to: string;
+  label: string;
+  icon: string;
+  end?: boolean;
+  badge?: number;
+  badgeTitle?: string;
+};
+
+function NavRow({ item }: { item: NavItem }) {
+  return (
+    <NavLink
+      to={item.to}
+      end={item.end}
+      className={({ isActive }) => "nav-item" + (isActive ? " active" : "")}
+    >
+      <Icon name={item.icon} size={16} />
+      <span style={{ flex: 1 }}>{item.label}</span>
+      {!!item.badge && (
+        <span className="nav-badge" title={item.badgeTitle}>
+          {item.badge}
+        </span>
+      )}
+    </NavLink>
+  );
+}
+
+/**
+ * Категория меню: заголовок раздела, сворачивающий свои пункты.
+ *
+ * Плоский список перестал читаться, когда разделов стало семь. Раскрыто по
+ * умолчанию и запомнено в localStorage: свернул один раз — осталось свёрнутым,
+ * иначе категория не экономит ничего.
+ *
+ * Пустая категория не рисуется вовсе: заголовок без пунктов — обещание
+ * раздела, которого нет. Так бывает, когда все модули внутри выключены.
+ */
+function NavSection({
+  id,
+  label,
+  items,
+  children,
+}: {
+  id: string;
+  label: string;
+  items: NavItem[];
+  children?: ReactNode;
+}) {
+  const [open, setOpen] = useState(() => localStorage.getItem(`nav:cat:${id}`) !== "0");
+
+  if (items.length === 0 && !children) return null;
+
+  const toggle = () => {
+    const next = !open;
+    setOpen(next);
+    localStorage.setItem(`nav:cat:${id}`, next ? "1" : "0");
+  };
+
+  // Свёрнутая категория забирает счётчики своих пунктов: иначе свернул один
+  // раз — и перестал видеть, что там кого-то ждут. Сворачивание убирает
+  // подробности, но не сам сигнал.
+  const counted = open ? [] : items.filter((item) => !!item.badge);
+  const hidden = counted.reduce((sum, item) => sum + (item.badge ?? 0), 0);
+
+  return (
+    <div className={"nav-cat" + (open ? " open" : "")}>
+      <button type="button" className="nav-section" aria-expanded={open} onClick={toggle}>
+        <span style={{ flex: 1, textAlign: "left" }}>{label}</span>
+        {hidden > 0 && (
+          <span
+            className="nav-badge"
+            title={counted.map((item) => `${item.label}: ${item.badgeTitle}`).join(", ")}
+          >
+            {hidden}
+          </span>
+        )}
+        <Icon name="chevronDown" size={11} className="nav-chevron" />
+      </button>
+      {open && (
+        <div className="nav-cat-items">
+          {items.map((item) => (
+            <NavRow key={item.to} item={item} />
+          ))}
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function Sidebar({ onOpenSearch }: { onOpenSearch: () => void }) {
   const {
     user, t, locale, settings, storage, modules, workspace, overdueTasks,
@@ -105,6 +200,48 @@ export function Sidebar({ onOpenSearch }: { onOpenSearch: () => void }) {
   };
 
   const brandName = settings.brand_name || "OpenCRM";
+
+  // Меню собирается списком, а не разметкой: так «выключенный модуль не
+  // показываем» и «пустую категорию не показываем» — одно и то же правило,
+  // а не два разных условия в разных местах.
+  const daily: NavItem[] = [
+    { to: "/", label: t("dashboard"), icon: "dashboard", end: true },
+  ];
+  if (moduleOn(modules, "tasks")) {
+    daily.push({
+      to: "/tasks",
+      label: t("tasks"),
+      icon: "clock",
+      badge: overdueTasks,
+      badgeTitle: t("tasksOverdue"),
+    });
+  }
+
+  const work: NavItem[] = [
+    { to: "/clients", label: t("clients"), icon: "clients" },
+    { to: "/deals", label: term(workspace.deal_term, locale, "many"), icon: "deals" },
+  ];
+  if (moduleOn(modules, "documents")) {
+    work.push({ to: "/documents", label: t("documents"), icon: "receipt" });
+  }
+  if (moduleOn(modules, "boards")) {
+    work.push({ to: "/boards", label: t("boards"), icon: "boards" });
+  }
+
+  const admin: NavItem[] = [];
+  if (isRoot) {
+    admin.push({
+      to: "/staff",
+      label: t("staff"),
+      icon: "staff",
+      badge: pendingCount,
+      badgeTitle: t("signupRequests"),
+    });
+    // Файлы — это медиа досок, отдельного смысла без них не имеют.
+    if (moduleOn(modules, "boards")) {
+      admin.push({ to: "/files", label: t("files"), icon: "folder" });
+    }
+  }
 
   return (
     <aside className="sidebar">
@@ -153,53 +290,14 @@ export function Sidebar({ onOpenSearch }: { onOpenSearch: () => void }) {
         </button>
       </div>
       <nav className="side-nav">
-        <NavLink to="/" end className={({ isActive }) => "nav-item" + (isActive ? " active" : "")}>
-          <Icon name="dashboard" size={16} />
-          <span style={{ flex: 1 }}>{t("dashboard")}</span>
-        </NavLink>
-        <NavLink to="/clients" className={({ isActive }) => "nav-item" + (isActive ? " active" : "")}>
-          <Icon name="clients" size={16} />
-          <span style={{ flex: 1 }}>{t("clients")}</span>
-        </NavLink>
-        <NavLink to="/deals" className={({ isActive }) => "nav-item" + (isActive ? " active" : "")}>
-          <Icon name="deals" size={16} />
-          <span style={{ flex: 1 }}>{term(workspace.deal_term, locale, "many")}</span>
-        </NavLink>
-        {/* Выключенный блок пропадает из меню целиком: обещать раздел, который
-            ответит отказом, хуже, чем не показывать его вовсе. */}
-        {moduleOn(modules, "tasks") && (
-          <NavLink to="/tasks" className={({ isActive }) => "nav-item" + (isActive ? " active" : "")}>
-            <Icon name="clock" size={16} />
-            <span style={{ flex: 1 }}>{t("tasks")}</span>
-            {overdueTasks > 0 && <span className="nav-badge">{overdueTasks}</span>}
-          </NavLink>
-        )}
-        {moduleOn(modules, "documents") && (
-          <NavLink to="/documents" className={({ isActive }) => "nav-item" + (isActive ? " active" : "")}>
-            <Icon name="receipt" size={16} />
-            <span style={{ flex: 1 }}>{t("documents")}</span>
-          </NavLink>
-        )}
-        {moduleOn(modules, "boards") && (
-          <NavLink to="/boards" className={({ isActive }) => "nav-item" + (isActive ? " active" : "")}>
-            <Icon name="boards" size={16} />
-            <span style={{ flex: 1 }}>{t("boards")}</span>
-          </NavLink>
-        )}
-        {isRoot && (
-          <>
-            <div className="nav-section">{t("admin")}</div>
-            <NavLink to="/staff" className={({ isActive }) => "nav-item" + (isActive ? " active" : "")}>
-              <Icon name="staff" size={16} />
-              <span style={{ flex: 1 }}>{t("staff")}</span>
-            </NavLink>
-            {/* Файлы — это медиа досок, отдельного смысла без них не имеют. */}
-            {moduleOn(modules, "boards") && (
-              <NavLink to="/files" className={({ isActive }) => "nav-item" + (isActive ? " active" : "")}>
-                <Icon name="folder" size={16} />
-                <span style={{ flex: 1 }}>{t("files")}</span>
-              </NavLink>
-            )}
+        {/* Наверху — то, с чего начинают день, и оно вне категорий: свернуть
+            его нельзя, иначе просроченное напоминание можно спрятать от себя. */}
+        {daily.map((item) => (
+          <NavRow key={item.to} item={item} />
+        ))}
+        <NavSection id="work" label={t("navWork")} items={work} />
+        <NavSection id="admin" label={t("admin")} items={admin}>
+          {isRoot && (
             <NavGroup
               icon="settings"
               label={t("siteSettings")}
@@ -213,8 +311,8 @@ export function Sidebar({ onOpenSearch }: { onOpenSearch: () => void }) {
                 { to: "/settings/maintenance", label: t("maintenance") },
               ]}
             />
-          </>
-        )}
+          )}
+        </NavSection>
       </nav>
       <div className="side-bottom">
         {storage && storage.level !== "ok" && (
@@ -236,14 +334,6 @@ export function Sidebar({ onOpenSearch }: { onOpenSearch: () => void }) {
             <span style={{ textDecoration: "underline", textUnderlineOffset: 2 }}>
               {t("diskBannerAction")}
             </span>
-          </NavLink>
-        )}
-        {isRoot && pendingCount > 0 && (
-          <NavLink to="/staff" className="side-banner">
-            <strong style={{ fontWeight: 600 }}>
-              {pendingCount} {t("signupRequests").toLowerCase()}
-            </strong>{" "}
-            <span style={{ textDecoration: "underline", textUnderlineOffset: 2 }}>{t("approve")}</span>
           </NavLink>
         )}
         <a
