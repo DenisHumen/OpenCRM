@@ -14,11 +14,11 @@ from core import exceptions as errors
 from core.ratelimit import SlidingWindowLimiter
 from core.security import tokens
 from core.services import modules_service, telephony_service
-from core.utils import normalize_phone
+from core.utils import normalize_phone, to_utc_naive
 from database.models import PhoneCall, User
 from database.repositories import telephony as telephony_repo
 from web.api import schemas
-from web.api.deps import client_ip, get_db, require_module, require_perm
+from web.api.deps import MAX_SEARCH, client_ip, get_db, require_module, require_perm
 
 # Рабочие ручки: сотрудник + включённый блок.
 router = APIRouter(
@@ -63,7 +63,7 @@ def list_calls(
     client_id: int | None = None,
     deal_id: int | None = None,
     user_id: int | None = None,
-    number: str | None = None,
+    number: str | None = Query(default=None, max_length=MAX_SEARCH),
     since: datetime | None = None,
     until: datetime | None = None,
     page: int = Query(default=1, ge=1),
@@ -83,8 +83,11 @@ def list_calls(
         deal_id=deal_id,
         user_id=user_id,
         number=number,
-        since=since,
-        until=until,
+        # Границы приводим к тому виду, в каком время лежит в базе. Без этого
+        # «13:00+03:00» сравнивалось с naive UTC как 13:00 — фильтр молча врал
+        # ровно на смещение зоны и терял звонки, попадающие в период.
+        since=to_utc_naive(since),
+        until=to_utc_naive(until),
         page=page,
         per_page=per_page,
     )
@@ -203,7 +206,15 @@ async def webhook(request: Request, db: Session = Depends(get_db)):
     if not modules_service.is_enabled(db, "telephony"):
         return {"status": "ignored", "reason": "module_disabled"}
 
-    payload = await request.json()
+    try:
+        payload = await request.json()
+    except ValueError as exc:
+        # Оборванная передача или мусор вместо тела — отказ с объяснением, а не
+        # 500. Станция на ошибку сервера считает событие недоставленным и шлёт
+        # его снова: одно кривое тело раскручивало петлю повторов.
+        raise errors.ValidationError(
+            "Event must be valid JSON", code="bad_payload"
+        ) from exc
     if not isinstance(payload, dict):
         raise errors.ValidationError("Event must be a JSON object", code="bad_payload")
     call = telephony_service.ingest_event(db, payload)

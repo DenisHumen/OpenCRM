@@ -235,6 +235,16 @@ def _parse_offset(value: str | None) -> timedelta:
     return sign * timedelta(hours=hours, minutes=minutes)
 
 
+#: Длина колонки `phone_calls.external_id`. Ключ приходит от станции, и его
+#: длину выбирает не сервер.
+MAX_EXTERNAL_ID = 128
+
+#: Потолок длительности разговора: сутки в секундах. Смысл тот же, что у
+#: потолков денег и количества, — защита не от бизнеса, а от мусора в поле:
+#: число вроде 10^19 доезжало до вставки и роняло запрос переполнением.
+MAX_DURATION_SECONDS = 24 * 60 * 60
+
+
 def parse_started_at(value: Any, offset: timedelta) -> datetime:
     """Момент начала звонка в naive UTC.
 
@@ -323,7 +333,12 @@ def ingest_event(db: Session, payload: dict) -> PhoneCall:
     того же события ничего не удваивает: ни звонок, ни запись в ленте, — в том
     числе когда события пришли ОДНОВРЕМЕННО (см. ``_insert_or_take_existing``).
     """
-    external_id = str(payload.get("call_id") or payload.get("id") or "").strip()
+    # Ключ идемпотентности обрезаем под длину колонки, как и все соседние поля.
+    # Не обрезанный, он на SQLite ложился целиком (длину она не держит), а на
+    # MySQL, на который проект рассчитан, — либо ронял вставку, либо молча
+    # обрезался сам. Второе хуже: два РАЗНЫХ звонка с общим началом ключа
+    # склеились бы в один.
+    external_id = str(payload.get("call_id") or payload.get("id") or "").strip()[:MAX_EXTERNAL_ID]
     if not external_id:
         raise errors.ValidationError("call_id is required", code="call_id_required")
     direction = str(payload.get("direction") or "").strip()
@@ -419,8 +434,13 @@ def _clean_duration(value: Any) -> int | None:
         return None
     try:
         seconds = int(value)
-    except (TypeError, ValueError) as exc:
+    except (TypeError, ValueError, OverflowError) as exc:
         raise errors.ValidationError("duration must be a number", code="bad_duration") from exc
+    if seconds > MAX_DURATION_SECONDS:
+        # Сутки разговора — уже не разговор. Без потолка число вроде 10^19
+        # доезжало до вставки и роняло запрос переполнением, то есть станция
+        # получала 500 и уходила в петлю повторов.
+        raise errors.ValidationError("duration is too large", code="duration_too_large")
     return max(seconds, 0)
 
 

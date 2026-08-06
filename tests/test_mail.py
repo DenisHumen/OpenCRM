@@ -495,3 +495,38 @@ def test_message_list_does_not_carry_bodies(root_client, mail_on):
 
     full = root_client.get(f"{MAIL}/messages/{listed[0]['id']}").json()
     assert len(full["body_text"]) == 5000
+
+
+def test_a_broken_message_does_not_take_the_whole_batch_with_it(root_client, mail_on):
+    """Одно письмо, которое не разобрать, не останавливает почту фирмы.
+
+    Цикл не изолировал письма: исключение на N-м откатывало уже сохранённые
+    1…N−1, `last_uid` не двигался, и следующая синхронизация тянула ту же пачку
+    и падала так же. Ящик вставал насовсем, а целые письма до битого исчезали.
+    """
+    account = make_account(root_client, "batch@studio.test")
+    FakeTransport.inbox = [
+        incoming(9001, "<good-one@example.com>", "client@example.com", now_utc()),
+        # Дата отправки обязательна в базе: такое письмо разобрать не удастся.
+        FetchedMessage(
+            uid=9002,
+            message_id="<broken-one@example.com>",
+            subject="Битое",
+            from_addr="client@example.com",
+            to_addrs=["office@studio.test"],
+            sent_at=None,
+            body_text="текст",
+        ),
+        incoming(9003, "<good-two@example.com>", "client@example.com", now_utc()),
+    ]
+
+    synced = root_client.post(f"{API}/mail/accounts/{account['id']}/sync")
+    assert synced.status_code == 200, synced.text
+    result = synced.json()
+
+    assert result["stored"] == 2, f"целые письма потерялись: {result}"
+    assert result["broken"] == 1, f"битое письмо не посчитано: {result}"
+
+    # Ящик остался рабочим: следующий заход не упирается в то же письмо.
+    again = root_client.post(f"{API}/mail/accounts/{account['id']}/sync")
+    assert again.status_code == 200, again.text

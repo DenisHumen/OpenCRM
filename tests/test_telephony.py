@@ -519,3 +519,104 @@ def test_the_station_names_who_talked_but_does_not_sign_the_entry(
     entry = next(n for n in notes if n["kind"] == "call")
     assert entry["author_id"] is None, "станция подписала запись живым человеком"
     assert entry["author_name"] is None
+
+
+def test_a_broken_webhook_never_answers_with_a_server_error(root_client, telephony):
+    """Кривое поле от станции — отказ с объяснением, а не 500.
+
+    Станция на 500 считает событие недоставленным и шлёт его снова, раскручивая
+    петлю повторов. Хуже того, часть этих ответов не требовала ни секрета, ни
+    правильного тела: большая метка времени в заголовке или один не-ASCII байт
+    в подписи роняли запрос у любого из интернета.
+    """
+    from fastapi.testclient import TestClient as Client
+
+    quiet = Client(app, raise_server_exceptions=False)
+
+    # 1. Заголовки: подпись и метка времени. Секрет знать не нужно.
+    body = json.dumps({"call_id": "probe"}).encode()
+    for headers, name in (
+        ({"X-OpenCRM-Timestamp": "1000000000000", "X-OpenCRM-Signature": "0" * 64}, "метка из будущего"),
+        # Значение байтами: так его пришлёт настоящий клиент, а Starlette
+        # декодирует заголовки как latin-1 — отсюда и не-ASCII в подписи.
+        (
+            {
+                "X-OpenCRM-Timestamp": str(int(time.time())).encode(),
+                "X-OpenCRM-Signature": bytes([0xFF]) * 64,
+            },
+            "подпись не ASCII",
+        ),
+    ):
+        answer = quiet.post(
+            WEBHOOK, content=body, headers={**headers, "Content-Type": "application/json"}
+        )
+        assert answer.status_code < 500, f"{name}: {answer.status_code}"
+
+    # 2. Тело с подписью настоящей станции: каждое поле по отдельности.
+    for payload, name in (
+        ({"call_id": "p1", "direction": "in", "started_at": float("inf")}, "время: бесконечность"),
+        ({"call_id": "p2", "direction": "in", "started_at": 1e20}, "время: гигант"),
+        ({"call_id": "p3", "direction": "in", "started_at": "9999-12-31T23:59:59"}, "время у края календаря"),
+        ({"call_id": "p4", "direction": "in", "duration": 10**19}, "длительность: гигант"),
+        ({"call_id": "p" * 5000, "direction": "in"}, "ключ длиной 5000"),
+    ):
+        raw = json.dumps(payload).encode()
+        answer = quiet.post(WEBHOOK, content=raw, headers=sign(telephony, raw))
+        assert answer.status_code < 500, f"{name}: {answer.status_code} {answer.text[:120]}"
+
+    # 3. Тело — не JSON вовсе (оборвалась передача).
+    raw = b"not json at all"
+    answer = quiet.post(WEBHOOK, content=raw, headers=sign(telephony, raw))
+    assert answer.status_code < 500, f"мусор вместо JSON: {answer.status_code}"
+
+
+def test_the_call_key_fits_the_column(root_client, telephony, client_record):
+    """Длинный ключ обрезается под колонку, а не ломает вставку.
+
+    На SQLite длина не держится, и всё «работало»; на MySQL, на который проект
+    рассчитан, такой ключ либо роняет вставку, либо обрезается молча — и тогда
+    два разных звонка с общим началом ключа склеиваются в один.
+    """
+    from core.services.telephony_service import MAX_EXTERNAL_ID
+
+    long_id = "z" * 5000
+    sent = send_event(telephony, {
+        "call_id": long_id, "direction": "in", "from": "+380671234567",
+        "to": "0442000000", "started_at": "2026-08-06T10:00:00+00:00", "status": "answered",
+    })
+    assert sent.status_code == 200, sent.text
+
+    stored = root_client.get(CALLS).json()["items"]
+    saved = next(c for c in stored if c["external_id"].startswith("zzz"))
+    assert len(saved["external_id"]) == MAX_EXTERNAL_ID, len(saved["external_id"])
+
+
+def test_a_period_filter_with_a_zone_finds_the_call(root_client, telephony):
+    """Границы периода звонков считаются в UTC, а не как пришло.
+
+    «13:00+03:00» — это 10:00 UTC. Без приведения фильтр сравнивал его с naive
+    UTC как 13:00 и терял звонки, попадающие в период.
+    """
+    sent = send_event(telephony, {
+        "call_id": "period-probe", "direction": "in", "from": "+380671234567",
+        "to": "0442000000", "started_at": "2026-08-05T10:00:00+00:00", "status": "answered",
+    })
+    assert sent.status_code == 200, sent.text
+
+    naive = root_client.get(CALLS, params={"since": "2026-08-05T09:00:00"}).json()["items"]
+    aware = root_client.get(CALLS, params={"since": "2026-08-05T12:00:00+03:00"}).json()["items"]
+    assert [c["external_id"] for c in naive if c["external_id"] == "period-probe"], "звонка нет и без зоны"
+    assert [c["external_id"] for c in aware if c["external_id"] == "period-probe"], (
+        "смещение зоны в границе периода потеряло звонок"
+    )
+
+
+def test_a_long_number_filter_is_refused_not_crashed(root_client, telephony):
+    """Пятьдесят тысяч знаков в фильтре номера — отказ, а не ошибка сервера."""
+    from web.api.deps import MAX_SEARCH
+
+    fine = root_client.get(CALLS, params={"number": "7" * MAX_SEARCH})
+    assert fine.status_code == 200, fine.text
+
+    too_long = root_client.get(CALLS, params={"number": "7" * (MAX_SEARCH + 1)})
+    assert too_long.status_code == 422, too_long.text

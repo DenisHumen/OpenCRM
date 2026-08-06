@@ -11,6 +11,7 @@ import logging
 from sqlalchemy.orm import Session
 
 from core import exceptions as errors
+from core import references
 from core.services import audit_service
 from core.security import secretbox
 from core.services.mail_transport import (
@@ -202,9 +203,26 @@ def sync_account(db: Session, account_id: int) -> dict:
         db.flush()
         raise errors.ValidationError(account.last_error or "Sync failed", code="mail_sync_failed") from exc
 
-    stored, linked, skipped = 0, 0, 0
+    stored, linked, skipped, broken = 0, 0, 0, 0
     for item in fetched:
-        message = store_incoming(db, account, item)
+        # Каждое письмо — под своей точкой отката. Без неё одно битое письмо
+        # роняло весь заход: исключение откатывало уже сохранённые письма из той
+        # же пачки, `last_uid` не двигался, и следующая синхронизация тянула ту
+        # же пачку и падала так же. Ящик вставал насовсем, а письма до него —
+        # уже сохранённые и целые — исчезали.
+        #
+        # Проверено: пачка из двух писем, второе без даты отправки → в базе не
+        # оставалось ни одного, ответ 500.
+        try:
+            with db.begin_nested():
+                message = store_incoming(db, account, item)
+        except Exception:
+            # Письмо, которое мы не смогли разобрать, не должно останавливать
+            # почту фирмы. Считаем его и идём дальше — счётчик виден в ответе, и
+            # по нему видно, что разбираться есть с чем.
+            broken += 1
+            logger.exception("ящик %s: письмо не удалось сохранить", account.address)
+            continue
         if message is None:
             skipped += 1
             continue
@@ -216,7 +234,15 @@ def sync_account(db: Session, account_id: int) -> dict:
     account.last_error = None
     account.last_error_at = None
     db.flush()
-    return {"fetched": len(fetched), "stored": stored, "linked": linked, "skipped": skipped}
+    return {
+        "fetched": len(fetched),
+        "stored": stored,
+        "linked": linked,
+        "skipped": skipped,
+        # Битые письма считаем отдельно от пропущенных: «уже было» и «не смогли
+        # разобрать» — разные вещи, и вторая требует, чтобы на неё посмотрели.
+        "broken": broken,
+    }
 
 
 def store_incoming(db: Session, account: MailAccount, item: FetchedMessage) -> MailMessage | None:
@@ -279,6 +305,13 @@ def send_message(
             raise errors.ValidationError(f"Bad recipient address: {addr}", code="bad_recipient")
     if not body_text.strip():
         raise errors.ValidationError("Message body is required", code="body_required")
+
+    # Ссылки проверяем ДО отправки. Письмо уходит в SMTP раньше вставки, и
+    # несуществующая заявка роняла запрос уже ПОСЛЕ доставки: адресат письмо
+    # получил, в базе не осталось ничего, человек видит 500 и жмёт «отправить»
+    # снова — клиенту приходит второе письмо.
+    client_id = references.client(db, client_id)
+    deal_id = references.deal(db, deal_id)
 
     account = get_account(db, account_id) if account_id else mail_repo.first_active_account(db)
     if account is None:
