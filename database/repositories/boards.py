@@ -31,6 +31,36 @@ def search(
     return list(db.scalars(stmt)), total
 
 
+def works_count_by_board(db: Session, board_ids: list[int]) -> dict[int, int]:
+    """Сколько работ на каждой доске — одним запросом на весь список.
+
+    Досок в списке до двухсот, и спрашивать про каждую отдельно значит двести
+    запросов на одну страницу. Доски без работ в ответе нет: «ноль» подставляет
+    тот, кто спрашивал, — ему виднее, отличать ли пустую доску от отсутствующей.
+    """
+    if not board_ids:
+        return {}
+    rows = db.execute(
+        select(Work.board_id, func.count())
+        .where(Work.board_id.in_(board_ids))
+        .group_by(Work.board_id)
+    ).all()
+    return {board_id: count for board_id, count in rows}
+
+
+def works_by_board(db: Session, board_ids: list[int], only_ready: bool = False) -> dict[int, list[Work]]:
+    """Работы досок разом, в том же порядке, что и поштучно."""
+    if not board_ids:
+        return {}
+    stmt = select(Work).where(Work.board_id.in_(board_ids))
+    if only_ready:
+        stmt = stmt.where(Work.status == "ready")
+    grouped: dict[int, list[Work]] = {}
+    for work in db.scalars(stmt.order_by(Work.sort_order.asc(), Work.id.asc())):
+        grouped.setdefault(work.board_id, []).append(work)
+    return grouped
+
+
 def list_works(db: Session, board_id: int, only_ready: bool = False) -> list[Work]:
     stmt = select(Work).where(Work.board_id == board_id)
     if only_ready:

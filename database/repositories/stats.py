@@ -86,6 +86,38 @@ def board_views_count(db: Session, board_id: int) -> int:
     )
 
 
+def views_by_board(db: Session, board_ids: list[int]) -> dict[int, int]:
+    """Просмотры каждой доски — одним запросом на весь список."""
+    if not board_ids:
+        return {}
+    rows = db.execute(
+        select(ShareLink.board_id, func.count())
+        .select_from(ShareView)
+        .join(ShareLink, ShareLink.id == ShareView.share_link_id)
+        .where(ShareLink.board_id.in_(board_ids))
+        .group_by(ShareLink.board_id)
+    ).all()
+    return {board_id: count for board_id, count in rows}
+
+
+def share_flags_by_board(db: Session, board_ids: list[int]) -> dict[int, dict]:
+    """Флаги ссылок сразу для списка досок. Правило то же, что и поштучно."""
+    if not board_ids:
+        return {}
+    now = now_utc()
+    flags: dict[int, dict] = {}
+    for link in db.scalars(select(ShareLink).where(ShareLink.board_id.in_(board_ids))):
+        state = flags.setdefault(
+            link.board_id, {"has_links": False, "has_active_link": False, "has_pin": False}
+        )
+        state["has_links"] = True
+        if link.is_active and (link.expires_at is None or link.expires_at > now):
+            state["has_active_link"] = True
+            if link.pin_hash is not None:
+                state["has_pin"] = True
+    return flags
+
+
 def board_share_flags(db: Session, board_id: int) -> dict:
     """Флаги ссылок доски: есть ли активная, есть ли PIN, были ли ссылки вообще."""
     links = db.scalars(select(ShareLink).where(ShareLink.board_id == board_id)).all()

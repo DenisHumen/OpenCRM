@@ -162,3 +162,76 @@ def test_work_title_description_update(manager_client):
     )
     assert updated.status_code == 200
     assert updated.json()["title"] == "Логотип, вариант 1"
+
+
+def test_the_board_list_asks_a_fixed_number_of_questions(manager_client):
+    """Список досок не растёт запросами вместе с числом досок.
+
+    Карточка доски собиралась поштучно: работы, обложка, просмотры, ссылки,
+    клиент — пять запросов на доску, то есть двести пятьдесят на страницу из
+    пятидесяти. И собиралась она так в трёх местах сразу — в списке, на
+    дашборде и в палитре Ctrl+K, — слово в слово.
+
+    Считаем сами запросы, а не время: время на стенде зависит от диска и
+    соседей, число обращений — только от кода.
+    """
+    from sqlalchemy import event
+
+    from database.session import engine
+
+    def cost_of_listing(boards_count: int) -> int:
+        client = manager_client.post(
+            f"{API}/clients", json={"name": f"Заказчик досок {boards_count}"}
+        ).json()
+        for i in range(boards_count):
+            created = _board(manager_client, title=f"Доска {boards_count}-{i}")
+            manager_client.patch(
+                f"{API}/boards/{created['id']}", json={"client_id": client["id"]}
+            )
+            _upload_png(manager_client, created["id"])
+
+        queries = []
+        listener = lambda conn, cursor, statement, *rest: queries.append(statement)
+        event.listen(engine, "before_cursor_execute", listener)
+        try:
+            listed = manager_client.get(f"{API}/boards?per_page=200")
+            assert listed.status_code == 200, listed.text
+        finally:
+            event.remove(engine, "before_cursor_execute", listener)
+        return len(queries)
+
+    few = cost_of_listing(2)
+    many = cost_of_listing(10)
+
+    assert many <= few, (
+        f"восемь лишних досок стоили лишних запросов: было {few}, стало {many}"
+    )
+
+
+def test_the_three_places_show_the_same_board_card(manager_client):
+    """Список, дашборд и палитра показывают одну и ту же карточку.
+
+    Пока сборка была скопирована трижды, поле, добавленное в одном месте, в
+    двух других не появлялось — и заметить это можно было только глазами.
+    """
+    client = manager_client.post(f"{API}/clients", json={"name": "Общий заказчик"}).json()
+    board = _board(manager_client, title="Доска для трёх экранов")
+    manager_client.patch(f"{API}/boards/{board['id']}", json={"client_id": client["id"]})
+    _upload_png(manager_client, board["id"])
+
+    def find(items):
+        return next((b for b in items if b["id"] == board["id"]), None)
+
+    in_list = find(manager_client.get(f"{API}/boards?per_page=200").json()["items"])
+    in_palette = find(
+        manager_client.get(f"{API}/search", params={"q": "Доска для трёх"}).json()["boards"]["items"]
+    )
+    in_dashboard = find(manager_client.get(f"{API}/dashboard").json()["recent_boards"])
+
+    assert in_list and in_palette, "доска потерялась в списке или в палитре"
+    assert set(in_list) == set(in_palette), "палитра отдаёт другой набор полей"
+    assert in_list["works_count"] == in_palette["works_count"] == 1
+    assert in_list["client_name"] == in_palette["client_name"] == "Общий заказчик"
+    if in_dashboard is not None:   # дашборд показывает только четыре свежих
+        assert set(in_dashboard) <= set(in_list)
+        assert in_dashboard["works_count"] == 1

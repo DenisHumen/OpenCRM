@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 
 import { BoardCard } from "../components/BoardCard";
 import { Icon } from "../components/Icon";
+import { NewBoardButton } from "../components/NewBoardButton";
 import { StorageCard } from "../components/StorageCard";
 import { Avatar, Chip, EmptyState, ScreenLoading } from "../components/ui";
 import { api } from "../lib/api";
@@ -57,22 +58,7 @@ export function Dashboard() {
             <Icon name="userPlus" />
             {t("newClient")}
           </Link>
-          {moduleOn(modules, "boards") && (
-            <button
-              className="btn btn-primary"
-              onClick={async () => {
-                try {
-                  const board = await api.post("/boards", { title: t("newBoard") });
-                  navigate(`/boards/${board.id}`);
-                } catch (e) {
-                  toastError(e);
-                }
-              }}
-            >
-              <Icon name="plus" stroke={2} />
-              {t("newBoard")}
-            </button>
-          )}
+          {moduleOn(modules, "boards") && <NewBoardButton />}
         </div>
       </div>
 

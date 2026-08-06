@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 
 import { BoardCard } from "../components/BoardCard";
 import { Icon } from "../components/Icon";
+import { NewBoardButton } from "../components/NewBoardButton";
 import { EmptyState, ScreenLoading } from "../components/ui";
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
@@ -49,20 +50,7 @@ export function Boards() {
           <h1 className="page-title">{t("boards")}</h1>
           <div className="page-sub">{t("boardsSub", { total: data.total, published: published.length })}</div>
         </div>
-        <button
-          className="btn btn-primary"
-          onClick={async () => {
-            try {
-              const board = await api.post("/boards", { title: t("newBoard") });
-              navigate(`/boards/${board.id}`);
-            } catch (e) {
-              toastError(e);
-            }
-          }}
-        >
-          <Icon name="plus" stroke={2} />
-          {t("newBoard")}
-        </button>
+        <NewBoardButton />
       </div>
 
       <div style={{ display: "flex", gap: 6, marginBottom: 20 }}>

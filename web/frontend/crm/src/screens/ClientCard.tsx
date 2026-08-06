@@ -4,9 +4,11 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { BoardCard } from "../components/BoardCard";
 import { CallButton, CallsPanel } from "../components/CallsPanel";
 import { Icon } from "../components/Icon";
+import { NewBoardButton } from "../components/NewBoardButton";
 import { SourcePicker } from "../components/SourcePicker";
 import { Avatar, Chip, ConfirmModal, EmptyState, ScreenLoading } from "../components/ui";
 import { api, ApiError } from "../lib/api";
+import { dropTarget } from "../lib/dnd";
 import { useApp } from "../lib/app";
 import { useFailure } from "../lib/failure";
 import type { TranslationKey } from "../lib/i18n";
@@ -261,22 +263,7 @@ export function ClientCard() {
           <CallButton number={client.phone} />
           {/* Кнопка уходит вместе с блоком: предлагать создать доску там, где
               раздела досок нет, — обещание, ведущее в отказ сервера. */}
-          {hasBoards && (
-            <button
-              className="btn btn-primary"
-              onClick={async () => {
-                try {
-                  const board = await api.post("/boards", { title: t("newBoard"), client_id: client.id });
-                  navigate(`/boards/${board.id}`);
-                } catch (e) {
-                  toastError(e);
-                }
-              }}
-            >
-              <Icon name="plus" stroke={2} />
-              {t("newBoard")}
-            </button>
-          )}
+          {hasBoards && <NewBoardButton clientId={client.id} />}
           <button className="btn-icon" onClick={() => setMenuOpen((open) => !open)}>
             <Icon name="dots" />
           </button>
@@ -408,16 +395,7 @@ export function ClientCard() {
             className="dropzone"
             style={{ marginBottom: 20 }}
             onClick={() => fileInput.current?.click()}
-            onDragOver={(e) => {
-              e.preventDefault();
-              e.currentTarget.classList.add("drag-over");
-            }}
-            onDragLeave={(e) => e.currentTarget.classList.remove("drag-over")}
-            onDrop={(e) => {
-              e.preventDefault();
-              e.currentTarget.classList.remove("drag-over");
-              void uploadFiles(e.dataTransfer.files);
-            }}
+            {...dropTarget((e) => void uploadFiles(e.dataTransfer.files))}
           >
             {t("dropFiles")} <span style={{ color: "var(--accent)", textDecoration: "underline", textUnderlineOffset: 2 }}>{t("browse")}</span>{" "}
             {t("filesInternal")}

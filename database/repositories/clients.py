@@ -16,6 +16,18 @@ def get_many(db: Session, ids) -> list[Client]:
     return list(db.scalars(select(Client).where(Client.id.in_(ids))))
 
 
+def names_by_ids(db: Session, client_ids: list[int]) -> dict[int, str]:
+    """Имена клиентов разом — для списков, где клиент нужен одной подписью.
+
+    Удалённые тоже возвращаются: доска, сделанная для клиента, которого потом
+    убрали, остаётся его доской, и подпись «—» вместо имени сказала бы неправду.
+    """
+    if not client_ids:
+        return {}
+    rows = db.execute(select(Client.id, Client.name).where(Client.id.in_(client_ids))).all()
+    return {client_id: name for client_id, name in rows}
+
+
 def get(db: Session, client_id: int, include_deleted: bool = False) -> Client | None:
     client = db.get(Client, client_id)
     if client is None:

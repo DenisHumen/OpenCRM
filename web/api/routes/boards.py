@@ -5,10 +5,8 @@ from core import exceptions as errors
 from core.services import board_service, share_service
 from database.models import User
 from database.repositories import boards as boards_repo
-from database.repositories import clients as clients_repo
 from database.repositories import shares as shares_repo
-from database.repositories import stats as stats_repo
-from web.api import schemas
+from web.api import cards, schemas
 from web.api.deps import get_db, require_module, require_perm
 from web.public import layout
 
@@ -27,19 +25,7 @@ def list_boards(
     db: Session = Depends(get_db),
 ):
     boards, total = boards_repo.search(db, q=search, client_id=client_id, page=page, per_page=per_page)
-    items = []
-    for board in boards:
-        data = schemas.board_out(board, works_count=boards_repo.count_works(db, board.id))
-        cover = board_service.cover_work(db, board)
-        data["cover"] = schemas.work_out(cover)["media"] if cover else None
-        data["views_count"] = stats_repo.board_views_count(db, board.id)
-        data.update(stats_repo.board_share_flags(db, board.id))
-        if board.client_id:
-            client = clients_repo.get(db, board.client_id)
-            data["client_name"] = client.name if client else None
-        else:
-            data["client_name"] = None
-        items.append(data)
+    items = cards.board_cards(db, boards, with_client=True)
     return schemas.paginated(items, total, page, per_page)
 
 

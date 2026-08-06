@@ -4,7 +4,6 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from core.services import (
-    board_service,
     modules_service,
     permissions_service,
     pipeline_service,
@@ -17,7 +16,7 @@ from database.repositories import boards as boards_repo
 from database.repositories import clients as clients_repo
 from database.repositories import deals as deals_repo
 from database.repositories import stats as stats_repo
-from web.api import schemas
+from web.api import cards, schemas
 from web.api.deps import get_db, require_staff
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
@@ -47,13 +46,7 @@ def dashboard(user: User = Depends(require_staff), db: Session = Depends(get_db)
         last_view = stats_repo.last_view_at(db)
 
         recent_boards, _total = boards_repo.search(db, page=1, per_page=4)
-        for board in recent_boards:
-            data = schemas.board_out(board, works_count=boards_repo.count_works(db, board.id))
-            cover = board_service.cover_work(db, board)
-            data["cover"] = schemas.work_out(cover)["media"] if cover else None
-            data["views_count"] = stats_repo.board_views_count(db, board.id)
-            data.update(stats_repo.board_share_flags(db, board.id))
-            boards_payload.append(data)
+        boards_payload = cards.board_cards(db, recent_boards)
     else:
         # Дни остаются, счётчики обнуляются: график просмотров рисуется по этому
         # списку, и пустой массив сузил бы не слагаемое, а саму ось. Считаем

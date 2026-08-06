@@ -4,6 +4,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { Icon } from "../components/Icon";
 import { Chip, ConfirmModal, EmptyState, Modal, ScreenLoading, Toggle } from "../components/ui";
 import { api, ApiError } from "../lib/api";
+import { dropTarget } from "../lib/dnd";
 import { useApp } from "../lib/app";
 import { useFailure } from "../lib/failure";
 import { copyText } from "../lib/clipboard";
@@ -251,16 +252,9 @@ export function BoardEditor() {
                 draggable
                 onDragStart={() => setDragId(work.id)}
                 onDragEnd={() => setDragId(null)}
-                onDragOver={(e) => {
-                  e.preventDefault();
-                  e.currentTarget.classList.add("drag-over");
-                }}
-                onDragLeave={(e) => e.currentTarget.classList.remove("drag-over")}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  e.currentTarget.classList.remove("drag-over");
+                {...dropTarget(() => {
                   if (dragId !== null) void reorder(dragId, work.id);
-                }}
+                })}
               >
                 <div className="work-media">
                   {work.media?.card || work.media?.poster ? (
@@ -339,16 +333,7 @@ export function BoardEditor() {
               className="dropzone"
               style={{ minHeight: 200, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8 }}
               onClick={() => fileInput.current?.click()}
-              onDragOver={(e) => {
-                e.preventDefault();
-                e.currentTarget.classList.add("drag-over");
-              }}
-              onDragLeave={(e) => e.currentTarget.classList.remove("drag-over")}
-              onDrop={(e) => {
-                e.preventDefault();
-                e.currentTarget.classList.remove("drag-over");
-                void uploadFiles(e.dataTransfer.files);
-              }}
+              {...dropTarget((e) => void uploadFiles(e.dataTransfer.files))}
             >
               <Icon name="upload" size={20} />
               <span style={{ fontSize: 12.5, textAlign: "center", lineHeight: 1.5, whiteSpace: "pre-line" }}>{t("dropWorks")}</span>
