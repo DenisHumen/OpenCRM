@@ -6,9 +6,13 @@
 разных видов лежат вместе и фильтруются, а не живут по отдельным спискам.
 """
 
+import pathlib
+import re
+
 import pytest
 
 from core.services import modules_service
+from database.models.client import SYSTEM_NOTE_KINDS
 from core.services.document_service import DOCUMENT_ISSUED
 from core.services.warehouse_service import STOCK_WRITTEN_OFF
 from tests.conftest import API, make_manager
@@ -23,6 +27,8 @@ FEED_KINDS = ("note", "call", "meeting", "email")
 DOCUMENTS = f"{API}/documents"
 WAREHOUSE = f"{API}/warehouse"
 MODULES = f"{API}/modules"
+
+ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 
 def make_deal(manager_client, client_id):
@@ -421,6 +427,43 @@ def test_new_system_entries_cannot_be_deleted_by_anyone(
         assert denied.json()["error"]["code"] == "system_note_immutable"
         # и root тоже: журнал, который можно поправить, ничего не доказывает
         assert root_client.delete(f"{API}/clients/{client_id}/notes/{note_id}").status_code == 403
+
+
+def test_the_screens_offer_no_delete_where_the_server_refuses_it():
+    """Кнопки «Удалить» нет ровно там, где сервер удалять не даст.
+
+    Отказ на сервере — это последняя защита, а не объяснение пользователю. Пока
+    у системной записи оставалась ссылка «Удалить», человек нажимал её и
+    получал отказ: интерфейс обещал действие, которого нет. Проверять руками
+    это некому — вид записи приходит нетипизированным, и `tsc` про новый вид
+    молчит, как смолчал про два предыдущих.
+
+    Поэтому сверяем состав видов: списки в двух экранах должны совпадать с
+    серверным `SYSTEM_NOTE_KINDS`. Разъедутся — узнаем здесь, а не от человека,
+    которому кнопка ответила отказом.
+    """
+    screens = ROOT / "web" / "frontend" / "crm" / "src"
+    sources = {
+        "ClientCard.tsx": screens / "screens" / "ClientCard.tsx",
+        "Feed.tsx": screens / "components" / "Feed.tsx",
+    }
+
+    for name, path in sources.items():
+        text = path.read_text(encoding="utf-8")
+        listed = re.search(r"SYSTEM_(?:NOTE_)?KINDS\s*=\s*(?:new Set\()?\[([^\]]*)\]", text)
+        assert listed, f"{name}: список системных видов пропал — удаление снова предложат везде"
+        kinds = set(re.findall(r'"([a-z_]+)"', listed.group(1)))
+        assert kinds == set(SYSTEM_NOTE_KINDS), (
+            f"{name}: экран знает {sorted(kinds)}, сервер — {sorted(SYSTEM_NOTE_KINDS)}"
+        )
+
+    # Мало знать состав видов — надо им пользоваться там, где стоит кнопка.
+    card = sources["ClientCard.tsx"].read_text(encoding="utf-8")
+    guarded = re.search(
+        r"!SYSTEM_NOTE_KINDS\.has\(note\.kind\)[\s\S]{0,400}?onClick=\{\(\) => void deleteNote",
+        card, re.S,
+    )
+    assert guarded, "ссылка «Удалить» на карточке клиента снова показывается у системных записей"
 
 
 def test_a_broken_feed_entry_undoes_neither_the_form_nor_the_write_off(

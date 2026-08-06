@@ -23,6 +23,14 @@ import { can } from "../lib/permissions";
 import { term } from "../lib/terms";
 import { MailCompose, type MailAccount } from "./Mail";
 
+/** Виды записей, которые ставит система, а не человек.
+ *
+ *  Список повторяет `SYSTEM_NOTE_KINDS` из `database/models/client.py`. Держать
+ *  его здесь второй раз неприятно, но альтернатива — гонять состав видов
+ *  отдельным запросом ради трёх строк, которые меняются раз в полгода вместе с
+ *  новым блоком. Разъедется — тест на сервере всё равно откажет в удалении. */
+const SYSTEM_NOTE_KINDS = new Set(["stage", "document", "stock"]);
+
 const NOTE_ICONS: Record<string, string> = {
   note: "note", call: "call", meeting: "meeting", email: "email",
   // Смену этапа ставит подписчик на событие, а не человек: в списке «добавить»
@@ -357,11 +365,17 @@ export function ClientCard() {
                     {note.author_name && (
                       <span style={{ color: "var(--faint)", fontSize: 12 }}>{note.author_name}</span>
                     )}
-                    {(user?.role === "root" || note.author_id === user?.id) && (
-                      <button className="text-link" style={{ marginLeft: "auto", fontSize: 11.5 }} onClick={() => void deleteNote(note.id)}>
-                        {t("delete")}
-                      </button>
-                    )}
+                    {/* У записи о событии кнопки удаления нет ни у кого, включая
+                        root: сервер такое удаление отклоняет, и показывать
+                        действие, которое гарантированно ответит отказом, хуже,
+                        чем не показывать его вовсе. Заметку автор убирает —
+                        ошибся при вводе; смена этапа либо была, либо нет. */}
+                    {!SYSTEM_NOTE_KINDS.has(note.kind) &&
+                      (user?.role === "root" || note.author_id === user?.id) && (
+                        <button className="text-link" style={{ marginLeft: "auto", fontSize: 11.5 }} onClick={() => void deleteNote(note.id)}>
+                          {t("delete")}
+                        </button>
+                      )}
                   </div>
                   <div style={{ color: "var(--text)", fontSize: 13.5, lineHeight: 1.55 }}>{note.body}</div>
                 </div>
