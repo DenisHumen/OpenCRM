@@ -92,11 +92,17 @@ def amount_by_stage(db: Session, only_manager_id: int | None = None) -> dict[str
     return {stage: int(total or 0) for stage, total in rows}
 
 
-def money_summary(db: Session, since) -> dict[str, int | None]:
+def money_summary(db: Session, since, only_manager_id: int | None = None) -> dict[str, int | None]:
     """Деньги для сводки: сколько в работе и сколько выиграно с даты.
 
     Считаем по ВИДУ этапа, а не по названию: у каждого бизнеса воронка своя, и
     «Выдано», «Оплачено», «Договор подписан» — это всё один и тот же `won`.
+
+    `only_manager_id` — то же ограничение доступа, что у списка и канбана
+    (`deals.view_others`). Без него сводка отвечала бы на вопрос, которого
+    сотруднику не задавали: список показывает три его заявки, а плитка сверху —
+    выручку всей фирмы. Спрятать чужие карточки и оставить их сумму — это не
+    половина запрета, а его отсутствие: узнать оборот фирмы и было целью.
     """
     def total(kind: str, closed_since=None) -> int:
         query = (
@@ -104,6 +110,8 @@ def money_summary(db: Session, since) -> dict[str, int | None]:
             .join(PipelineStage, PipelineStage.key == Deal.stage)
             .where(Deal.deleted_at.is_(None), PipelineStage.kind == kind)
         )
+        if only_manager_id is not None:
+            query = query.where(Deal.manager_id == only_manager_id)
         if closed_since is not None:
             query = query.where(Deal.closed_at >= closed_since)
         return int(db.scalar(query) or 0)
@@ -112,18 +120,18 @@ def money_summary(db: Session, since) -> dict[str, int | None]:
     # не считает NULL, и это здесь главное: «сумму ещё не назвали» — не то же
     # самое, что «работа бесплатная». Возьми в знаменатель все выигранные — и
     # каждая сделка без цены будет тихо занижать средний чек.
-    priced_won = int(
-        db.scalar(
-            select(func.count(Deal.amount))
-            .join(PipelineStage, PipelineStage.key == Deal.stage)
-            .where(
-                Deal.deleted_at.is_(None),
-                PipelineStage.kind == KIND_WON,
-                Deal.closed_at >= since,
-            )
+    priced = (
+        select(func.count(Deal.amount))
+        .join(PipelineStage, PipelineStage.key == Deal.stage)
+        .where(
+            Deal.deleted_at.is_(None),
+            PipelineStage.kind == KIND_WON,
+            Deal.closed_at >= since,
         )
-        or 0
     )
+    if only_manager_id is not None:
+        priced = priced.where(Deal.manager_id == only_manager_id)
+    priced_won = int(db.scalar(priced) or 0)
     won_since = total(KIND_WON, since)
 
     return {
@@ -137,12 +145,13 @@ def money_summary(db: Session, since) -> dict[str, int | None]:
     }
 
 
-def stage_counts(db: Session) -> dict[str, int]:
-    rows = db.execute(
-        select(Deal.stage, func.count())
-        .where(Deal.deleted_at.is_(None))
-        .group_by(Deal.stage)
-    ).all()
+def stage_counts(db: Session, only_manager_id: int | None = None) -> dict[str, int]:
+    """Сколько заявок в каждом этапе. Сужается тем же правом, что и суммы:
+    воронка из чужих карточек — это тоже сведения о чужой работе."""
+    stmt = select(Deal.stage, func.count()).where(Deal.deleted_at.is_(None))
+    if only_manager_id is not None:
+        stmt = stmt.where(Deal.manager_id == only_manager_id)
+    rows = db.execute(stmt.group_by(Deal.stage)).all()
     return {stage: count for stage, count in rows}
 
 

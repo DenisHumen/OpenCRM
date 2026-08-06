@@ -57,6 +57,18 @@ class Period:
         }
 
 
+def _scope(db: Session, user: User) -> int | None:
+    """Чьи заявки попадают в отчёт.
+
+    То же правило, что у списка и канбана: `deals.view_others` решает, ЧЬИ
+    заявки считаются, а не только какие карточки видно на экране. Без этого
+    запрет декоративен — заявок в списке три, а в отчёте оборот всей фирмы, и
+    узнать его как раз и было целью. Нужны общие цифры сотруднику — выдайте
+    ему это право явно, одним переключателем в матрице.
+    """
+    return permissions_service.deals_scope(db, user)
+
+
 def _csv_response(content: bytes, name: str, period: Period) -> Response:
     # Имя файла с периодом: в папке «Загрузки» через месяц лежит пять выгрузок,
     # и «reports.csv (3)» не отвечает, какая из них за июль.
@@ -76,10 +88,10 @@ def _csv_response(content: bytes, name: str, period: Period) -> Response:
 @router.get("/funnel")
 def funnel_report(
     period: Period = Depends(),
-    _: User = Depends(require_perm("reports", "view")),
+    user: User = Depends(require_perm("reports", "view")),
     db: Session = Depends(get_db),
 ):
-    return {**period.envelope(db), **report_service.funnel(db, period.start, period.end)}
+    return {**period.envelope(db), **report_service.funnel(db, period.start, period.end, _scope(db, user))}
 
 
 @router.get("/funnel.csv")
@@ -88,7 +100,7 @@ def funnel_export(
     user: User = Depends(require_perm("reports", "view")),
     db: Session = Depends(get_db),
 ):
-    data = report_service.funnel(db, period.start, period.end)
+    data = report_service.funnel(db, period.start, period.end, _scope(db, user))
     return _csv_response(report_service.funnel_csv(data, user.locale), "funnel", period)
 
 
@@ -98,10 +110,12 @@ def funnel_export(
 @router.get("/revenue")
 def revenue_report(
     period: Period = Depends(),
-    _: User = Depends(require_perm("reports", "view_amounts")),
+    user: User = Depends(require_perm("reports", "view_amounts")),
     db: Session = Depends(get_db),
 ):
-    data = report_service.revenue(db, period.start_day, period.end_day, period.tz_offset)
+    data = report_service.revenue(
+        db, period.start_day, period.end_day, period.tz_offset, _scope(db, user)
+    )
     return {**period.envelope(db), **data}
 
 
@@ -111,7 +125,9 @@ def revenue_export(
     user: User = Depends(require_perm("reports", "view_amounts")),
     db: Session = Depends(get_db),
 ):
-    data = report_service.revenue(db, period.start_day, period.end_day, period.tz_offset)
+    data = report_service.revenue(
+        db, period.start_day, period.end_day, period.tz_offset, _scope(db, user)
+    )
     return _csv_response(report_service.revenue_csv(data, user.locale), "revenue", period)
 
 
@@ -142,7 +158,7 @@ def sources_report(
     user: User = Depends(require_perm("reports", "view")),
     db: Session = Depends(get_db),
 ):
-    data = report_service.sources(db, period.start, period.end)
+    data = report_service.sources(db, period.start, period.end, _scope(db, user))
     if not permissions_service.sees_amounts(db, user, "reports"):
         data = _without_money(data)
     return {**period.envelope(db), **data}
@@ -154,7 +170,7 @@ def sources_export(
     user: User = Depends(require_perm("reports", "view")),
     db: Session = Depends(get_db),
 ):
-    data = report_service.sources(db, period.start, period.end)
+    data = report_service.sources(db, period.start, period.end, _scope(db, user))
     if not permissions_service.sees_amounts(db, user, "reports"):
         # Выгрузка обязана совпадать с экраном: иначе право обходится кнопкой
         # «скачать», и это самый вероятный обход из всех.

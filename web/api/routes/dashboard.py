@@ -67,7 +67,11 @@ def dashboard(user: User = Depends(require_staff), db: Session = Depends(get_db)
     # сверяет их с месячной отчётностью, и скользящее окно давало бы число,
     # которое ни с чем не сходится.
     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    money = deals_repo.money_summary(db, month_start)
+    # Сводка сужается тем же правом, что список и канбан: спрятать чужие
+    # карточки и оставить их сумму значит не запретить ничего — узнать
+    # оборот фирмы и было целью.
+    mine_only = permissions_service.deals_scope(db, user)
+    money = deals_repo.money_summary(db, month_start, only_manager_id=mine_only)
     # Плитки с деньгами пустеют вместе с правом на суммы. Пустые значения, а не
     # отсутствующие ключи — то же правило, что у выключенных блоков выше.
     #
@@ -82,7 +86,7 @@ def dashboard(user: User = Depends(require_staff), db: Session = Depends(get_db)
     # Воронка целиком, включая пустые этапы: «в согласовании ноль» — это тоже
     # ответ, и чаще всего именно он и нужен. Показывай только непустые — и
     # провал в середине воронки станет невидимым.
-    counts = deals_repo.stage_counts(db)
+    counts = deals_repo.stage_counts(db, only_manager_id=mine_only)
     stages = [
         {
             "key": stage.key,

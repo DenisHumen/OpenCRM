@@ -20,7 +20,23 @@ from database.models import Client, Deal, DealStageChange, PipelineStage
 from database.models.pipeline import CLOSED_KINDS, KIND_LOST
 
 
-def stage_entries(db: Session, start: datetime, end: datetime) -> dict[str, int]:
+def _mine(only_manager_id: int | None):
+    """Сужение отчёта до своих заявок — одним условием на все запросы файла.
+
+    `deals.view_others` решает, ЧЬИ заявки вообще считаются, а не только какие
+    карточки видно на экране. Иначе запрет декоративный: список показывает три
+    заявки, а отчёт рядом — оборот всей фирмы, и узнать его как раз и было
+    целью. Хочешь общие цифры сотруднику — выдай ему это право явно.
+
+    Возвращаем кортеж условий, а не одно: пустой распаковывается в `where`
+    бесследно, и ни один запрос не приходится писать в двух вариантах.
+    """
+    return () if only_manager_id is None else (Deal.manager_id == only_manager_id,)
+
+
+def stage_entries(
+    db: Session, start: datetime, end: datetime, only_manager_id: int | None = None
+) -> dict[str, int]:
     """Сколько РАЗНЫХ сделок вошло в каждый этап за период.
 
     Считаем по журналу перемещений, а не по текущему этапу сделок. Текущий этап
@@ -37,6 +53,7 @@ def stage_entries(db: Session, start: datetime, end: datetime) -> dict[str, int]
         .join(Deal, Deal.id == DealStageChange.deal_id)
         .where(
             Deal.deleted_at.is_(None),
+            *_mine(only_manager_id),
             DealStageChange.changed_at >= start,
             DealStageChange.changed_at < end,
         )
@@ -45,7 +62,9 @@ def stage_entries(db: Session, start: datetime, end: datetime) -> dict[str, int]
     return {stage: int(count or 0) for stage, count in rows}
 
 
-def entries_by_kind(db: Session, start: datetime, end: datetime) -> dict[str, int]:
+def entries_by_kind(
+    db: Session, start: datetime, end: datetime, only_manager_id: int | None = None
+) -> dict[str, int]:
     """То же самое, но свёрнутое до вида этапа.
 
     Нужно отдельным запросом, а не суммой по `stage_entries`: одна сделка может
@@ -58,6 +77,7 @@ def entries_by_kind(db: Session, start: datetime, end: datetime) -> dict[str, in
         .join(PipelineStage, PipelineStage.key == DealStageChange.to_stage)
         .where(
             Deal.deleted_at.is_(None),
+            *_mine(only_manager_id),
             DealStageChange.changed_at >= start,
             DealStageChange.changed_at < end,
         )
@@ -67,7 +87,9 @@ def entries_by_kind(db: Session, start: datetime, end: datetime) -> dict[str, in
 
 
 def money_by_month(
-    db: Session, buckets: list[tuple[datetime, datetime]]
+    db: Session,
+    buckets: list[tuple[datetime, datetime]],
+    only_manager_id: int | None = None,
 ) -> dict[tuple[int, str], dict[str, int]]:
     """Деньги закрытых сделок по месяцам и видам этапов — одним запросом.
 
@@ -105,6 +127,7 @@ def money_by_month(
         .join(PipelineStage, PipelineStage.key == Deal.stage)
         .where(
             Deal.deleted_at.is_(None),
+            *_mine(only_manager_id),
             PipelineStage.kind.in_(CLOSED_KINDS),
             Deal.closed_at >= buckets[0][0],
             Deal.closed_at < buckets[-1][1],
@@ -143,7 +166,7 @@ def clients_by_source(db: Session, start: datetime, end: datetime) -> dict[str |
 
 
 def closed_deals_by_source(
-    db: Session, start: datetime, end: datetime
+    db: Session, start: datetime, end: datetime, only_manager_id: int | None = None
 ) -> dict[tuple[str | None, str], dict[str, int]]:
     """Закрытые за период сделки в разрезе источника клиента и вида этапа.
 
@@ -165,6 +188,7 @@ def closed_deals_by_source(
         .join(PipelineStage, PipelineStage.key == Deal.stage)
         .where(
             Deal.deleted_at.is_(None),
+            *_mine(only_manager_id),
             PipelineStage.kind.in_(CLOSED_KINDS),
             Deal.closed_at >= start,
             Deal.closed_at < end,
@@ -194,7 +218,10 @@ def known_sources(db: Session) -> list[str]:
     return sorted(row for row in rows if row)
 
 
-def lost_reasons(db: Session, start: datetime, end: datetime, limit: int = 10) -> list[dict]:
+def lost_reasons(
+    db: Session, start: datetime, end: datetime, limit: int = 10,
+    only_manager_id: int | None = None,
+) -> list[dict]:
     """Почему не сложилось. Без этого отчёт по потерям — одно число.
 
     Пустая причина в список не попадает: строка «(не указано): 12» ничего не
@@ -205,6 +232,7 @@ def lost_reasons(db: Session, start: datetime, end: datetime, limit: int = 10) -
         .join(PipelineStage, PipelineStage.key == Deal.stage)
         .where(
             Deal.deleted_at.is_(None),
+            *_mine(only_manager_id),
             PipelineStage.kind == KIND_LOST,
             Deal.lost_reason != "",
             Deal.closed_at >= start,

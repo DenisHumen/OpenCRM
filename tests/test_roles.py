@@ -1012,3 +1012,47 @@ def test_naming_a_sum_needs_the_same_right_as_seeing_one(
     created = poor.post(f"{API}/deals", json={"title": "Без суммы", "client_id": client["id"]})
     assert created.status_code == 201, created.text
     assert created.json()["amount"] is None
+
+
+def test_own_deals_only_narrows_the_summary_and_the_reports(
+    root_client, role_maker, staff_maker
+):
+    """`deals.view_others` решает, ЧЬИ заявки считаются, — везде, а не в списке.
+
+    Сужать список карточек и оставлять их сумму — это не половина запрета, а
+    его отсутствие: узнать оборот фирмы и было целью. Найдено живым прогоном
+    уже ПОСЛЕ того, как роли были признаны готовыми: список и канбан сужались
+    верно, а сводка и отчёт отдавали общие числа.
+    """
+    role = role_maker(
+        "Только свои, но с деньгами",
+        [
+            "clients.view", "deals.view", "deals.create", "deals.edit",
+            "deals.move_stage", "deals.view_amounts",
+            "reports.view", "reports.view_amounts",
+        ],
+    )
+    staff = staff_maker("own-only@test.local", role["id"])
+
+    client = root_client.post(f"{API}/clients", json={"name": "Общий клиент"}).json()
+    # чужая заявка: ответственный — root, и она закрыта выигрышем
+    alien = root_client.post(
+        f"{API}/deals", json={"title": "Чужая", "client_id": client["id"], "amount": 1_000_00}
+    ).json()
+    won = next(
+        c for c in root_client.get(f"{API}/deals/board").json()["columns"] if c["kind"] == "won"
+    )["key"]
+    root_client.post(f"{API}/deals/{alien['id']}/move", json={"stage": won})
+
+    staff.post(f"{API}/deals", json={"title": "Моя", "client_id": client["id"], "amount": 100_00})
+
+    board = staff.get(f"{API}/deals/board").json()
+    dashboard = staff.get(f"{API}/dashboard").json()
+    revenue = staff.get(f"{API}/reports/revenue", params={"tz_offset": 0}).json()
+
+    assert len(staff.get(f"{API}/deals").json()["items"]) == 1, "в списке чужая заявка"
+    assert sum(c.get("amount_total") or 0 for c in board["columns"]) == 100_00
+    assert (dashboard["money_won_this_month"] or 0) == 0, "сводка отдала чужую выручку"
+    assert (revenue["won_amount"] or 0) == 0, "отчёт отдал чужую выручку"
+    # своя заявка при этом видна и посчитана
+    assert dashboard["money_in_work"] == 100_00

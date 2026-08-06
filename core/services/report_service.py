@@ -145,11 +145,13 @@ def share(part: int, whole: int) -> float | None:
 
 # --- воронка ---
 
-def funnel(db: Session, start: datetime, end: datetime) -> dict:
+def funnel(
+    db: Session, start: datetime, end: datetime, only_manager_id: int | None = None
+) -> dict:
     """Сколько заявок вошло в каждый этап и сколько дошло до конца."""
     stages = pipeline_service.list_stages(db)
-    entered = reports_repo.stage_entries(db, start, end)
-    by_kind = reports_repo.entries_by_kind(db, start, end)
+    entered = reports_repo.stage_entries(db, start, end, only_manager_id)
+    by_kind = reports_repo.entries_by_kind(db, start, end, only_manager_id)
 
     steps: list[dict] = []
     previous: int | None = None
@@ -198,16 +200,23 @@ def funnel(db: Session, start: datetime, end: datetime) -> dict:
         # Доля потерь считается от того же знаменателя, что и конверсия, иначе
         # два процента на одном экране означали бы разное.
         "loss_rate": share(lost, entries),
-        "lost_reasons": reports_repo.lost_reasons(db, start, end),
+        "lost_reasons": reports_repo.lost_reasons(
+            db, start, end, only_manager_id=only_manager_id
+        ),
     }
 
 
 # --- выручка ---
 
-def revenue(db: Session, start_day: date, end_day: date, tz_offset: int) -> dict:
+def revenue(
+    db: Session, start_day: date, end_day: date, tz_offset: int,
+    only_manager_id: int | None = None,
+) -> dict:
     """Деньги по месяцам, по видам этапов и средний чек."""
     buckets = month_buckets(start_day, end_day, tz_offset)
-    money = reports_repo.money_by_month(db, [(s, e) for _label, s, e in buckets])
+    money = reports_repo.money_by_month(
+        db, [(s, e) for _label, s, e in buckets], only_manager_id
+    )
 
     months: list[dict] = []
     totals = {kind: {"count": 0, "priced": 0, "total": 0} for kind in (KIND_WON, KIND_LOST)}
@@ -273,7 +282,9 @@ def _avg(totals: dict | None) -> int | None:
 
 # --- источники ---
 
-def sources(db: Session, start: datetime, end: datetime) -> dict:
+def sources(
+    db: Session, start: datetime, end: datetime, only_manager_id: int | None = None
+) -> dict:
     """Сколько клиентов и денег пришло с каждого источника.
 
     Клиенты считаются по дате появления, деньги — по дате закрытия сделки, и это
@@ -283,7 +294,7 @@ def sources(db: Session, start: datetime, end: datetime) -> dict:
     деле пришло два десятка.
     """
     clients = reports_repo.clients_by_source(db, start, end)
-    deals = reports_repo.closed_deals_by_source(db, start, end)
+    deals = reports_repo.closed_deals_by_source(db, start, end, only_manager_id)
 
     # Пресет показываем всегда: «с рекламы ноль» — это ответ, ради которого
     # отчёт и открывают. Плюс свои значения и те, что встретились в периоде.
