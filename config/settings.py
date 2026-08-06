@@ -20,6 +20,12 @@ class Settings(BaseSettings):
     env: str = "dev"
     secret_key: str = DEV_SECRET_KEY
     db_url: str = f"sqlite:///{(BASE_DIR / 'data' / 'opencrm.db').as_posix()}"
+    #: Сколько рабочих процессов поднимает uvicorn (docker/entrypoint.sh).
+    #:
+    #: Читается и приложением: на SQLite значение больше единицы не работает
+    #: вовсе, и сказать об этом надо на старте, а не оставлять человека гадать,
+    #: почему контейнер не поднимается.
+    workers: int = 1
     storage_dir: Path = BASE_DIR / "storage"
     base_url: str = "http://localhost:8000"
 
@@ -96,9 +102,29 @@ class Settings(BaseSettings):
         Пустой secret_key подписывает cookie PIN-доступа пустым ключом —
         подделать её смог бы кто угодно, поэтому падаем, а не «работаем как есть».
         """
-        if not self.is_production:
-            return []
         errors = []
+
+        # Эта проверка стоит ДО отсечки по окружению, потому что она не про
+        # безопасность, а про невозможность: несколько рабочих процессов на
+        # SQLite не работают нигде, включая разработку.
+        #
+        # SQLite допускает одного писателя на всю базу. Два процесса на старте
+        # создают схему и сеют умолчания одновременно, и проигравший падает с
+        # «database is locked», не поднявшись вовсе. Даже если старт разойдётся
+        # по времени, каждая одновременная запись остаётся лотереей — а «иногда
+        # не сохраняется» ищут неделями и не находят.
+        #
+        # Проверено живьём: `--workers 2` на пустой базе SQLite не поднимается.
+        if self.workers > 1 and self.db_url.startswith("sqlite"):
+            errors.append(
+                f"OPENCRM_WORKERS={self.workers} с базой SQLite не работает: "
+                "SQLite допускает одного писателя, и процессы не поднимутся. "
+                "Оставьте OPENCRM_WORKERS=1 или переезжайте на MySQL "
+                "(scripts/migrate_to_mysql.py)."
+            )
+
+        if not self.is_production:
+            return errors
         if not self.secret_key.strip() or self.secret_key == DEV_SECRET_KEY:
             errors.append(
                 "OPENCRM_SECRET_KEY пуст или равен dev-значению — подписи cookie "

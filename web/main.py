@@ -6,7 +6,8 @@ from fastapi import FastAPI, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import text
+from sqlalchemy import inspect, text
+from sqlalchemy.exc import OperationalError, ProgrammingError
 
 from config.settings import generate_secret_hint, get_settings
 from core.exceptions import DomainError
@@ -22,6 +23,7 @@ from core.services import (
 )
 from core.utils import normalize_email
 from database import models  # noqa: F401 — регистрирует модели в metadata
+from database.models import User
 from database.repositories import users as users_repo
 from database.session import Base, SessionLocal, engine
 from web.api.routes import (
@@ -53,6 +55,30 @@ from web.api.routes import (
 from web import middleware
 from web.public import routes as public_routes
 
+def _ensure_schema() -> None:
+    """Схема на месте — создать недостающее, если её строит не alembic.
+
+    В контейнере схему делает `alembic upgrade head` из entrypoint, и здесь
+    остаётся проверкой на пустом месте. Нужна она для запуска без контейнера
+    (`uvicorn web.main:app`) — иначе первый же такой запуск встречает пустую базу.
+
+    Терпит соседа. `create_all` смотрит, каких таблиц нет, и создаёт их — то есть
+    внутри у него та же «проверил и сделал», что и у посева. При
+    `OPENCRM_WORKERS=2` два процесса поднимаются разом, оба видят пустую базу,
+    и проигравший падает с «table users already exists», не поднявшись вовсе.
+
+    Молча глотать ошибку нельзя: так же выглядела бы и настоящая поломка схемы.
+    Поэтому после отказа смотрим, на месте ли таблицы: есть — сосед успел
+    раньше, и это ровно тот итог, который нам нужен; нет — беда наша, и она
+    должна быть видна.
+    """
+    try:
+        Base.metadata.create_all(engine)
+    except (OperationalError, ProgrammingError):
+        if not inspect(engine).has_table(User.__tablename__):
+            raise
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
@@ -74,7 +100,7 @@ async def lifespan(app: FastAPI):
         settings.avatars_dir,
     ):
         directory.mkdir(parents=True, exist_ok=True)
-    Base.metadata.create_all(engine)
+    _ensure_schema()
     db = SessionLocal()
     try:
         created = auth_service.bootstrap_root(db)
