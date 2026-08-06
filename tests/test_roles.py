@@ -810,7 +810,7 @@ def test_editing_your_own_role_cannot_add_permissions(root_client, role_maker, s
         f"{ROLES}/{role['id']}", json={"permissions": list(permissions.all_codes())}
     )
     assert denied.status_code == 403, denied.text
-    assert denied.json()["error"]["code"] == "cannot_grant_to_own_role"
+    assert denied.json()["error"]["code"] == "cannot_grant_what_you_lack"
     # Отказ называет, чего именно нельзя выдать: иначе настройка доступов
     # превращается в гадание — ровно как у остальных отказов здесь.
     assert "audit.view" in denied.json()["error"]["message"]
@@ -1056,3 +1056,100 @@ def test_own_deals_only_narrows_the_summary_and_the_reports(
     assert (revenue["won_amount"] or 0) == 0, "отчёт отдал чужую выручку"
     # своя заявка при этом видна и посчитана
     assert dashboard["money_in_work"] == 100_00
+
+
+def test_a_role_cannot_be_born_with_permissions_its_author_lacks(role_maker, staff_maker):
+    """Роль со всеми правами больше неоткуда взять.
+
+    Это тот шаг, на котором обход держался. Дописать прав своей роли было
+    нельзя, назначить себе чужую — нельзя, а **завести новую роль со всем
+    реестром** — можно, и это проходило с кодом 201. Дальше в два аккаунта:
+    отдать её коллеге, коллега отдаёт её тебе. Каждый шаг по отдельности
+    выглядел законным.
+    """
+    role = role_maker("Только доступы, второй", ["roles.view", "roles.manage"])
+    gate = staff_maker("gate-create@test.local", role["id"])
+
+    denied = gate.post(ROLES, json={"name": "Всё сразу", "permissions": list(permissions.all_codes())})
+    assert denied.status_code == 403, denied.text
+    assert denied.json()["error"]["code"] == "cannot_grant_what_you_lack"
+    # Отказ называет, чего именно не хватает: настройка доступов не должна
+    # превращаться в гадание.
+    assert "audit.view" in denied.json()["error"]["message"]
+
+    # Роль в пределах собственных прав заводится по-прежнему: запрет узкий.
+    allowed = gate.post(ROLES, json={"name": "Смотрит доступы", "permissions": ["roles.view"]})
+    assert allowed.status_code == 201, allowed.text
+    gate.delete(f"{ROLES}/{allowed.json()['id']}")
+
+
+def test_a_ready_made_preset_does_not_smuggle_permissions_in(role_maker, staff_maker):
+    """Пресет — та же выдача прав, только готовым набором.
+
+    Дверь легко не заметить: имя другое, тело запроса — одно слово. Но роль
+    «Гендиректор» из пресета содержит ровно тот же реестр, что и собранная
+    руками.
+    """
+    role = role_maker("Только доступы, третий", ["roles.view", "roles.manage"])
+    gate = staff_maker("gate-preset@test.local", role["id"])
+
+    presets = gate.get(f"{ROLES}/matrix").json()["presets"]
+    widest = max(presets, key=lambda p: len(p["permissions"]))
+
+    denied = gate.post(f"{ROLES}/from-preset", json={"preset": widest["key"]})
+    assert denied.status_code == 403, denied.text
+    assert denied.json()["error"]["code"] == "cannot_grant_what_you_lack"
+
+
+def test_you_cannot_hand_out_a_role_wider_than_your_own(root_client, role_maker, staff_maker):
+    """Второй шаг обхода: раздать чужими руками то, чего нет у себя.
+
+    Роль с широкими правами уже есть в системе — её собрал root. Сотрудник,
+    который умеет только раздавать доступы, назначить её никому не может: иначе
+    запрет «нельзя себе» обходится за два аккаунта, по кругу.
+    """
+    wide = role_maker("Видит всё", ["audit.view", "clients.view", "roles.view"])
+    narrow = role_maker("Только доступы, четвёртый", ["roles.view", "roles.manage"])
+    gate = staff_maker("gate-assign@test.local", narrow["id"])
+
+    staff_maker("colleague@test.local", None)
+    colleague_id = _user_id(root_client, "colleague@test.local")
+
+    denied = gate.post(f"{ROLES}/assign/{colleague_id}", json={"role_id": wide["id"]})
+    assert denied.status_code == 403, denied.text
+    assert denied.json()["error"]["code"] == "cannot_grant_what_you_lack"
+
+    # А в пределах своих прав — раздаёт как раздавал.
+    same = gate.post(f"{ROLES}/assign/{colleague_id}", json={"role_id": narrow["id"]})
+    assert same.status_code == 200, same.text
+
+
+def test_only_root_makes_another_root(root_client, role_maker, staff_maker):
+    """Root'а производит только root.
+
+    `POST /staff/{id}/role {"role": "root"}` делал root'а из любого сотрудника,
+    и права на это хватало того же `roles.manage`. Вместе со сбросом пароля
+    (временный пароль возвращается прямо в ответе) это был готовый путь внутрь:
+    произвести сообщника и войти под ним.
+
+    Понижение root'а закрыто там же: снимать начальника не должен тот, кого
+    начальник назначил.
+    """
+    narrow = role_maker("Раздаёт должности", ["roles.view", "roles.manage", "staff.view"])
+    gate = staff_maker("gate-root@test.local", narrow["id"])
+    staff_maker("root-made-here@test.local", None)
+    victim_id = _user_id(root_client, "root-made-here@test.local")
+
+    denied = gate.post(f"{STAFF}/{victim_id}/role", json={"role": "root"})
+    assert denied.status_code == 403, denied.text
+    assert denied.json()["error"]["code"] == "only_root_grants_root"
+
+    # И обратно: понизить настоящего root'а тоже нельзя.
+    root_id = _user_id(root_client, "root@test.local")
+    demote = gate.post(f"{STAFF}/{root_id}/role", json={"role": "manager"})
+    assert demote.status_code == 403, demote.text
+
+    # У root'а дверь на месте — иначе тест проверял бы отсутствие возможности.
+    promoted = root_client.post(f"{STAFF}/{victim_id}/role", json={"role": "root"})
+    assert promoted.status_code == 200, promoted.text
+    root_client.post(f"{STAFF}/{victim_id}/role", json={"role": "manager"})

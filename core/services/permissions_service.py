@@ -322,55 +322,79 @@ def _write_codes(db: Session, role: Role, pairs: list[tuple[str, str]]) -> None:
 
 
 def create_role(
-    db: Session, name: str, codes, *, preset: str = "", is_default: bool = False
+    db: Session,
+    name: str,
+    codes,
+    *,
+    preset: str = "",
+    is_default: bool = False,
+    actor: User | None = None,
 ) -> Role:
+    """`actor` необязателен только ради установки: при посеве раздавать права
+    некому и не от кого. Из запроса он приходит всегда — иначе сюда вернётся
+    роль со всеми правами, заведённая тем, у кого их нет."""
+    pairs = _clean_codes(codes)
+    if actor is not None:
+        _refuse_granting_what_you_lack(
+            db, actor, {permissions.code(area, action) for area, action in pairs}
+        )
     role = Role(name=_clean_name(db, name), preset=preset[:32], is_default=False)
     db.add(role)
     db.flush()
-    _write_codes(db, role, _clean_codes(codes))
+    _write_codes(db, role, pairs)
     if is_default:
         set_default(db, role.id)
     return role
 
 
-def create_from_preset(db: Session, preset: str, name: str | None = None) -> Role:
+def create_from_preset(
+    db: Session, preset: str, name: str | None = None, *, actor: User | None = None
+) -> Role:
     if preset not in PRESETS:
         raise errors.ValidationError(f"Unknown preset: {preset}", code="unknown_preset")
     template = PRESETS[preset]
     return create_role(
-        db, name or template["name"], template["permissions"], preset=preset
+        db, name or template["name"], template["permissions"], preset=preset, actor=actor
     )
 
 
-def _refuse_self_promotion(db: Session, actor: User, role: Role, pairs: list[tuple[str, str]]) -> None:
-    """Своей должности новых прав не выписывают.
+def _refuse_granting_what_you_lack(db: Session, actor: User, codes: set[str]) -> None:
+    """Раздать можно только то, что есть у самого.
 
-    Это вторая половина запрета из `assign`, без которой первая ничего не
-    стоила. Там сказано: нельзя назначить себе другую роль, потому что иначе
-    «управляет правами» становится «имеет все права». Ровно то же самое
-    получалось одним запросом с другой стороны — не менять роль, а дописать
-    права в ту, которая уже своя. Сотрудник с одним лишь `roles.manage`
-    отправлял `PATCH /roles/{своя}` со всем реестром и получал журнал,
-    настройки, сотрудников и суммы; проверялось это на стенде и работало.
+    Одно правило на все двери сразу, и оно же — единственное, что отделяет
+    «управляет правами» от «имеет все права».
 
-    Убавлять — можно. Снять с себя лишнее не escalation, а обычная уборка, и
-    запрещать её значило бы требовать второго человека ради того, чтобы отдать
-    доступ. Переименовать роль — тем более можно: `codes=None` сюда не доходит.
+    Первым закрывали частный случай: нельзя дописать прав своей же роли.
+    Сотрудник с одним лишь `roles.manage` отправлял `PATCH /roles/{своя}` со
+    всем реестром и получал журнал, настройки, сотрудников и суммы. Запрет
+    работал, но обходился в два шага и два аккаунта: завести роль со всеми
+    правами (это разрешалось!), отдать её коллеге, коллега отдаёт её тебе.
+    Каждый шаг по отдельности выглядел законным.
 
-    Root сюда не попадает: у него прав весь реестр и добавить к ним нечего.
-    Проверка всё равно общая, а не «если не root»: исключение, написанное
-    руками, однажды окажется единственным местом, где новую роль забыли учесть.
+    Поэтому проверка стоит не на «своей роли», а на самих правах: чего нет у
+    тебя, того ты не выдашь — ни себе, ни коллеге, ни новой роли, ни через
+    неделю чужими руками. Обход через второго человека закрывается тем, что
+    роли-со-всеми-правами больше неоткуда взяться.
+
+    **Чем за это платим.** Сотрудник с узкой ролью и `roles.manage` теперь
+    раздаёт только то, что умеет сам. Офис-менеджер, заводивший людей на роль
+    «Гендиректор», больше не может — это делает root или тот, у кого такие
+    права есть. Размен сознательный: «раздаёт кто угодно что угодно» и есть та
+    дыра, ради которой всё это писалось, а узкое место лечится выдачей нужных
+    прав тому, кто раздаёт.
+
+    Убавлять — можно всегда: снять лишнее не escalation, а уборка.
+
+    Root сюда попадает наравне со всеми, и правило для него истинно само собой:
+    у него весь реестр. Исключение «если не root», написанное руками, однажды
+    окажется единственным местом, где про новую дверь забыли.
     """
-    if actor.role_id != role.id:
-        return
-    have = codes_of(db, actor)
-    added = sorted(permissions.code(area, action) for area, action in pairs)
-    new = [code for code in added if code not in have]
-    if not new:
+    missing = sorted(codes - codes_of(db, actor))
+    if not missing:
         return
     raise errors.ForbiddenError(
-        "Cannot grant yourself permissions you do not have: " + ", ".join(new),
-        code="cannot_grant_to_own_role",
+        "Cannot grant permissions you do not have: " + ", ".join(missing),
+        code="cannot_grant_what_you_lack",
     )
 
 
@@ -383,7 +407,10 @@ def update_role(db: Session, role_id: int, name: str | None, codes, *, actor: Us
         role.name = _clean_name(db, name, role_id=role.id)
     if codes is not None:
         pairs = _clean_codes(codes)
-        _refuse_self_promotion(db, actor, role, pairs)
+        # Сверяем только добавленное: убавлять роль можно и тем, у кого этих
+        # прав нет, — иначе снять лишнее было бы некому.
+        added = {permissions.code(area, action) for area, action in pairs}
+        _refuse_granting_what_you_lack(db, actor, added - codes_of_role(db, role.id))
         loses_manage = _grants_manage(db, role.id) and (
             ("roles", permissions.MANAGE) not in pairs
         )
@@ -452,6 +479,11 @@ def assign(db: Session, actor: User, user_id: int, role_id: int | None) -> User:
         )
 
     role = get_role(db, role_id) if role_id is not None else None
+    if role is not None:
+        # Выдать чужими руками то, чего у тебя нет, — тот же обход, только в
+        # два шага. Роль уже существует, значит её собрал кто-то с этими
+        # правами; раздавать её вправе тоже они.
+        _refuse_granting_what_you_lack(db, actor, codes_of_role(db, role.id))
     # Человек теряет право раздавать доступы, если оно у него было, а новая
     # должность его не даёт. Себя из счёта исключаем: после правки он уже не
     # в числе тех, кто может.

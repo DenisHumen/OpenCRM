@@ -478,3 +478,44 @@ def test_disabled_module_closes_api(root_client, manager_client, telephony):
     # событие, пришедшее при выключенном блоке, в базу не попало
     stored = root_client.get(f"{CALLS}?per_page=200").json()["items"]
     assert all(c["external_id"] != "while-off" for c in stored)
+
+
+def test_the_station_names_who_talked_but_does_not_sign_the_entry(
+    root_client, telephony, client_record
+):
+    """Оператор от станции виден в журнале звонков и не подписывает ленту.
+
+    Это было единственное место во всей системе, где **внешний источник выбирал
+    живого автора**: `operator_email` в теле вебхука превращался в `author_id`
+    записи ленты. Держатель секрета присылал почту root'а и получал в карточке
+    клиента строку за его подписью.
+
+    Кто говорил — станция знает и называет, это законно и полезно. Но
+    «поговорил» и «сделал запись в CRM» — разные утверждения, и второе именем
+    человека не подписывается.
+    """
+    root = root_client.get(f"{API}/auth/me").json()
+    sent = send_event(telephony, {
+        "call_id": "operator-signature-probe",
+        "direction": "in",
+        "from": "+380671234567",
+        "to": "0442000000",
+        "started_at": "2026-08-06T10:00:00+00:00",
+        "status": "answered",
+        "duration": 30,
+        "operator_email": root["email"],
+    })
+    assert sent.status_code == 200, sent.text
+
+    # В журнале звонков оператор на месте: станция про него знает.
+    call = next(
+        c for c in root_client.get(CALLS).json()["items"]
+        if c["external_id"] == "operator-signature-probe"
+    )
+    assert call["user_id"] == root["id"], "оператор от станции потерялся"
+
+    # А в ленте у записи автора нет — её сделала станция, а не человек.
+    notes = root_client.get(f"{API}/clients/{client_record['id']}/notes").json()["items"]
+    entry = next(n for n in notes if n["kind"] == "call")
+    assert entry["author_id"] is None, "станция подписала запись живым человеком"
+    assert entry["author_name"] is None

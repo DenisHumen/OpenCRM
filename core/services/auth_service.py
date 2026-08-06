@@ -266,6 +266,19 @@ def set_role(db: Session, actor: User, user_id: int, new_role: str) -> User:
         raise errors.ForbiddenError("Cannot change your own role", code="cannot_change_own_role")
     if user.status != STATUS_ACTIVE:
         raise errors.ConflictError("Only active staff can change role", code="not_active")
+    # Root'а делает только root. Право `roles.manage` — про должности, которые
+    # собираются из реестра и им же ограничены; root не описывается должностью
+    # вовсе, у него весь реестр и завтрашние права заодно. Пока эта дверь была
+    # открыта, любой, кто раздаёт роли, коротким запросом производил себе
+    # сообщника с полным доступом — а вместе со сбросом пароля (временный
+    # пароль возвращается в ответе) это и вход под ним.
+    #
+    # Понижение root'а — там же и по той же причине: снять начальника не должен
+    # тот, кого начальник назначил.
+    if ROLE_ROOT in (new_role, user.role) and actor.role != ROLE_ROOT:
+        raise errors.ForbiddenError(
+            "Only root can grant or revoke root", code="only_root_grants_root"
+        )
     if user.role == new_role:
         return user
     if user.role == ROLE_ROOT and users_repo.count_by_role(db, ROLE_ROOT) <= 1:

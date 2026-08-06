@@ -87,17 +87,25 @@ def get_role(
     )
 
 
-@router.post("", status_code=201, dependencies=[manage])
-def create_role(payload: RoleIn, db: Session = Depends(get_db)):
-    role = permissions_service.create_role(db, payload.name, payload.permissions)
+@router.post("", status_code=201)
+def create_role(
+    payload: RoleIn,
+    actor: User = Depends(require_perm("roles", "manage")),
+    db: Session = Depends(get_db),
+):
+    role = permissions_service.create_role(db, payload.name, payload.permissions, actor=actor)
     return schemas.role_out(role, codes=sorted(permissions_service.codes_of_role(db, role.id)))
 
 
-@router.post("/from-preset", status_code=201, dependencies=[manage])
-def create_from_preset(payload: RoleFromPresetIn, db: Session = Depends(get_db)):
+@router.post("/from-preset", status_code=201)
+def create_from_preset(
+    payload: RoleFromPresetIn,
+    actor: User = Depends(require_perm("roles", "manage")),
+    db: Session = Depends(get_db),
+):
     """Готовый набор под должность. Пресет — начало, а не приговор: сразу после
     создания роль правится как любая другая."""
-    role = permissions_service.create_from_preset(db, payload.preset, payload.name)
+    role = permissions_service.create_from_preset(db, payload.preset, payload.name, actor=actor)
     return schemas.role_out(role, codes=sorted(permissions_service.codes_of_role(db, role.id)))
 
 
