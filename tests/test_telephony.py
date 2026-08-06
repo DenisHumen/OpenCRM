@@ -177,6 +177,54 @@ def test_repeated_event_does_not_duplicate(root_client, telephony, client_record
     assert bodies.count("Incoming call from +380671234567 — 1:15") == 1
 
 
+def test_simultaneous_events_with_one_call_id_do_not_fail(root_client, telephony, monkeypatch):
+    """Два события одного звонка, пришедшие РАЗОМ, — это по-прежнему один звонок.
+
+    Идемпотентность держалась проверкой «нет ли уже такого» и уникальным
+    индексом, а между ними есть окно. События одного звонка станция шлёт
+    подряд, при разрыве связи — повторяет пачкой, и в это окно она попадает
+    регулярно: оба запроса читают «нет такого», оба вставляют, второй получает
+    нарушение уникальности. Данные оставались целы, но станция видела 500,
+    считала событие недоставленным и слала его снова.
+
+    Гонку здесь воспроизводим не потоками (их исход на общей SQLite зависит от
+    того, кто успел взять блокировку, и тест был бы плавающим), а тем самым
+    промахом чтения: заставляем сервис один раз не увидеть уже существующую
+    строку — ровно то, что видит запрос, прочитавший базу до чужого коммита.
+    """
+    payload = {
+        "call_id": "race-1",
+        "direction": "in",
+        "from": "+380671230001",
+        "to": "0442000000",
+        "started_at": "2026-08-05T12:00:00+00:00",
+    }
+    first = send_event(telephony, payload)
+    assert first.status_code == 200, first.text
+
+    from core.services import telephony_service as service
+
+    real = service.telephony_repo.get_by_external_id
+    seen = {"lookups": 0}
+
+    def blind_once(db, external_id):
+        """Первый поиск промахивается — как у проигравшего гонку запроса."""
+        seen["lookups"] += 1
+        return None if seen["lookups"] == 1 else real(db, external_id)
+
+    monkeypatch.setattr(service.telephony_repo, "get_by_external_id", blind_once)
+
+    second = send_event(telephony, {**payload, "outcome": "answered", "duration": 30})
+    assert second.status_code == 200, second.text
+    assert seen["lookups"] >= 2, "запасной поиск после нарушения уникальности не сработал"
+    assert second.json()["call"]["id"] == first.json()["call"]["id"], "звонок задвоился"
+    # проигравший вставку не теряет своё событие: поля из него доехали
+    assert second.json()["call"]["duration_sec"] == 30
+
+    calls = root_client.get(f"{CALLS}?per_page=200").json()
+    assert len([c for c in calls["items"] if c["external_id"] == "race-1"]) == 1
+
+
 def test_call_lifecycle_events_update_one_record(root_client, telephony):
     """Начался → ответили → завершился: одна строка, а не три."""
     for event in (

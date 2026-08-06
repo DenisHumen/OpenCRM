@@ -182,7 +182,11 @@ def test_period_boundary_follows_the_local_midnight(manager_client):
     after_utc = report(manager_client, "revenue", **february, tz_offset=0)["won_amount"]
     after_kyiv = report(manager_client, "revenue", **february, tz_offset=KYIV)["won_amount"]
 
-    assert after_utc - before_utc == 430_000, "сделка последнего дня выпала из отчёта по UTC"
+    # `or 0` — потому что период без единой названной цены отвечает прочерком
+    # (None), а не нулём: см. test_revenue_without_a_named_price_is_a_dash_not_a_zero.
+    assert (after_utc or 0) - (before_utc or 0) == 430_000, (
+        "сделка последнего дня выпала из отчёта по UTC"
+    )
     assert after_kyiv == before_kyiv, "граница периода посчитана по UTC, а не по местной полуночи"
 
 
@@ -246,7 +250,8 @@ def test_losses_are_counted_separately_from_revenue(manager_client):
     make_deal(manager_client, person["id"], "lost", at(14), amount=120_000)
     after = report(manager_client, "revenue")
 
-    assert after["lost_amount"] - before["lost_amount"] == 120_000
+    # `or 0` — прочерк вместо нуля, пока ни у одной потери не названа цена.
+    assert (after["lost_amount"] or 0) - (before["lost_amount"] or 0) == 120_000
     assert after["won_amount"] == before["won_amount"], "потеря попала в выручку"
 
 
@@ -312,7 +317,11 @@ def test_empty_period_does_not_divide_by_zero(manager_client):
     assert funnel.json()["conversion"] is None
     assert all(step["from_previous"] is None for step in funnel.json()["stages"])
     assert revenue.json()["avg_check"] is None, "средний чек без сделок с ценой — не ноль"
-    assert revenue.json()["won_amount"] == 0
+    # Выручка на пустом периоде — тоже прочерк, а не ноль: ноль означал бы
+    # «работали даром», а сделок не было вовсе. То же правило, что у среднего
+    # чека и у строк таблицы источников; см.
+    # test_revenue_without_a_named_price_is_a_dash_not_a_zero.
+    assert revenue.json()["won_amount"] is None
     assert all(row["conversion"] is None for row in sources.json()["items"])
 
 
@@ -497,3 +506,118 @@ def test_unnamed_price_does_not_inflate_the_total_across_sources(manager_client)
     data = report(manager_client, "sources")
     named = sum(row["revenue"] for row in data["items"] if row["revenue"] is not None)
     assert data["revenue_total"] == named
+
+
+# --- границы периода против помесячной разбивки ---
+
+# Сентябрь 2026 — своё пустое окно: в марте у соседних тестов свои сделки, а
+# здесь важны абсолютные числа, а не приросты.
+def sep(day: int, hour: int = 12, minute: int = 0) -> datetime:
+    return datetime(2026, 9, day, hour, minute)
+
+
+def test_revenue_stays_inside_the_requested_days(manager_client):
+    """Отчёт за 1–10 сентября не имеет права считать сделку, закрытую 28-го.
+
+    Выручка разбита по месяцам, и месяцы легко нарезать целиком — от первого
+    числа до первого числа. Тогда период «с 1 по 10» молча превращается во «весь
+    сентябрь»: воронка и источники считают запрошенные дни, выручка — месяц, а
+    подпись над ними одна. Два несводимых числа на одном экране отменяют доверие
+    ко всему отчёту, и заметить подмену можно только пересчитав руками.
+    """
+    person = new_client(manager_client, "Вне запрошенных дней", moment=sep(1))
+    narrow = {"from": "2026-09-01", "to": "2026-09-10", "tz_offset": 0}
+    make_deal(manager_client, person["id"], "won", sep(28), amount=500_000)
+
+    inside = report(manager_client, "revenue", **narrow)
+    assert inside["won_count"] == 0, "сделка вне периода попала в выручку"
+    assert inside["won_amount"] is None
+    assert inside["months"][0]["won_count"] == 0, "месяц посчитан целиком, а не по периоду"
+
+    # и та же сделка обязана найтись, когда её день в период входит
+    wide = report(manager_client, "revenue", **{**narrow, "to": "2026-09-30"})
+    assert wide["won_count"] == 1
+    assert wide["won_amount"] == 500_000
+
+
+def test_revenue_agrees_with_sources_on_a_partial_month(manager_client):
+    """Три отчёта на одном экране обязаны считать один и тот же период."""
+    person = new_client(
+        manager_client, "Сверка выручки с источниками", source="сверка-периода", moment=sep(1)
+    )
+    make_deal(manager_client, person["id"], "won", sep(25), amount=310_000)
+
+    window = {"from": "2026-09-01", "to": "2026-09-05", "tz_offset": 0}
+    revenue = report(manager_client, "revenue", **window)
+    sources = report(manager_client, "sources", **window)
+    row = next(r for r in sources["items"] if r["source"] == "сверка-периода")
+
+    assert row["won_count"] == 0, "источники не увидели сделку вне периода"
+    assert revenue["won_count"] == 0, "а выручка увидела — периоды разъехались"
+
+
+def test_partial_month_boundary_still_follows_the_local_midnight(manager_client):
+    """Подрезка периода не должна съесть поправку на часовой пояс.
+
+    Для Киева 11 октября 00:30 по местному — это 10 октября 21:30 UTC. Период,
+    оканчивающийся 10 октября, такую сделку включать НЕ должен, а закрытую в
+    23:30 по местному (20:30 UTC) — обязан.
+    """
+    KYIV = -180
+    window = {"from": "2026-10-01", "to": "2026-10-10", "tz_offset": KYIV}
+    person = new_client(manager_client, "Полночь на границе подрезки", moment=datetime(2026, 10, 1))
+
+    make_deal(manager_client, person["id"], "won", datetime(2026, 10, 10, 21, 30), amount=170_000)
+    after = report(manager_client, "revenue", **window)
+    assert after["won_count"] == 0, "граница подрезки посчитана по UTC, а не по местной полуночи"
+
+    # 10 октября 20:30 UTC — это ещё 23:30 по Киеву, последний вечер периода
+    earlier = new_client(manager_client, "Последний вечер периода", moment=datetime(2026, 10, 1))
+    make_deal(manager_client, earlier["id"], "won", datetime(2026, 10, 10, 20, 30), amount=170_000)
+    later = report(manager_client, "revenue", **window)
+    assert later["won_count"] == 1, "вечер последнего дня периода потерян"
+    assert later["won_amount"] == 170_000
+
+
+# --- ноль против прочерка в выручке ---
+
+def test_revenue_without_a_named_price_is_a_dash_not_a_zero(manager_client):
+    """«Выиграно 1, выручка 0» читается как «сработали даром».
+
+    Верный ответ — «сумму не назвали», и показывается он прочерком: ровно так
+    же, как в таблице источников на том же экране и как у среднего чека. Пока
+    здесь стоял ноль, две строки одного отчёта отвечали на один вопрос
+    по-разному, причём про одну и ту же сделку.
+    """
+    window = {"from": "2026-06-01", "to": "2026-06-30", "tz_offset": 0}
+    june = datetime(2026, 6, 15, 12, 0)
+
+    empty = report(manager_client, "revenue", **window)
+    assert empty["won_amount"] is None, "пустой период выдал ноль вместо прочерка"
+
+    person = new_client(manager_client, "Июньский без цены", moment=june)
+    make_deal(manager_client, person["id"], "won", june)
+    unpriced = report(manager_client, "revenue", **window)
+
+    assert unpriced["won_count"] == 1, "сделка без цены пропала совсем"
+    assert unpriced["won_priced"] == 0
+    assert unpriced["won_amount"] is None, "сделка без цены дала выручку 0"
+    assert unpriced["months"][0]["won_amount"] is None
+
+    # названный ноль обязан остаться нулём — это другое состояние
+    free = new_client(manager_client, "Июньский за бесплатно", moment=june)
+    make_deal(manager_client, free["id"], "won", june, amount=0)
+    priced = report(manager_client, "revenue", **window)
+    assert priced["won_priced"] == 1
+    assert priced["won_amount"] == 0, "названный ноль превратился в прочерк"
+
+
+def test_revenue_csv_leaves_an_unnamed_total_empty(manager_client):
+    """Выгрузка обязана повторять экран: прочерк — пустая ячейка, не «0,00»."""
+    window = {"from": "2019-01-01", "to": "2019-01-31"}
+    text = manager_client.get(f"{REPORTS}/revenue.csv", params=window).content.decode("utf-8-sig")
+    lines = text.splitlines()
+    header, row = lines[0].split(";"), lines[1].split(";")
+
+    assert row[header.index("Revenue")] == "", "выручка без названной цены выгрузилась нулём"
+    assert row[header.index("Lost value")] == "", "сумма потерь без цены выгрузилась нулём"
