@@ -355,6 +355,9 @@ def add_move(
     move = StockMove(
         product_id=product.id,
         warehouse_id=warehouse.id,
+        # Каким бланком вызвано движение. Без этой ссылки отгрузку заказа нельзя
+        # ни назвать, ни отменить точно.
+        document_id=data.get("document_id"),
         quantity_milli=quantity,
         kind=kind,
         deal_id=deal_id,

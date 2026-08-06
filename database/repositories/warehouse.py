@@ -348,3 +348,15 @@ def products_by_ids(db: Session, product_ids) -> list[Product]:
             select(Product).where(Product.id.in_(product_ids), Product.deleted_at.is_(None))
         )
     )
+
+
+def moves_of_document(db: Session, document_id: int) -> list[StockMove]:
+    """Движения, сделанные одним бланком. Нужны отмене: без них нельзя сказать,
+    что именно списала эта отгрузка, и откатить её точно."""
+    return list(
+        db.scalars(
+            select(StockMove)
+            .where(StockMove.document_id == document_id)
+            .order_by(StockMove.id.asc())
+        )
+    )
