@@ -469,3 +469,64 @@ def test_the_actor_travels_into_both_new_entries(manager_client, deal, warehouse
     for kind in ("stock", "document"):
         entry = deal_feed(manager_client, deal["id"], kind=kind)[0]
         assert entry["author_id"] == me["id"], f"запись вида {kind} осталась ничьей"
+
+
+def test_the_feed_says_who(manager_client):
+    """Лента отвечает на «кто», а не только на «что» и «когда».
+
+    `author_id` писался верно с самого начала, но до экрана не доезжал: в
+    ответе было число, а имени не было ни в API, ни в разметке. Половина
+    смысла ленты при этом пропадала — «позвонили и договорились» без имени не
+    отвечает на вопрос, ради которого в ленту и заходят.
+    """
+    client = make_client(manager_client, "Клиент с автором")
+    deal = make_deal(manager_client, client["id"])
+    manager_client.post(f"{DEALS}/{deal['id']}/feed", json={"kind": "note", "body": "Позвонил"})
+
+    entries = manager_client.get(f"{DEALS}/{deal['id']}/feed").json()["items"]
+    assert entries, "лента пуста — проверять нечего"
+    assert all("author_name" in e for e in entries), "поля автора нет в ответе"
+    assert all(e["author_name"] for e in entries), "автор не подставился"
+
+    # то же в ленте клиента: одна запись не может называться по-разному на двух экранах
+    notes = manager_client.get(f"{API}/clients/{client['id']}/notes").json()["items"]
+    assert all(n["author_name"] for n in notes if n["author_id"])
+
+
+def test_an_entry_without_a_person_has_no_author(manager_client, root_client):
+    """Пусто — законное состояние, а не недосмотр.
+
+    У звонка, пришедшего от станции, живого автора нет. Подписать его
+    «системой» значило бы соврать: человека там действительно не было, и
+    именно это отличает такую запись от действия сотрудника.
+
+    Идём настоящим путём — подписанным вебхуком, а не сборкой записи руками:
+    проверять надо то, что происходит в бою.
+    """
+    import hmac, hashlib, json, time
+
+    root_client.post(f"{API}/modules/telephony", json={"enabled": True})
+    secret = root_client.post(f"{API}/telephony/settings/secret", json={}).json()["secret"]
+    client = make_client(manager_client, "Клиент со звонком")
+    root_client.patch(f"{API}/clients/{client['id']}", json={"phone": "+380671112233"})
+
+    body = json.dumps({
+        "call_id": "feed-author-probe", "direction": "in",
+        "from": "+380671112233", "to": "0442000000",
+        "started_at": "2026-08-06T10:00:00+00:00", "status": "answered", "duration": 42,
+    }).encode()
+    stamp = str(int(time.time()))
+    signature = hmac.new(secret.encode(), f"{stamp}.".encode() + body, hashlib.sha256).hexdigest()
+
+    sent = root_client.post(
+        f"{API}/telephony/webhook", content=body,
+        headers={"Content-Type": "application/json",
+                 "X-OpenCRM-Timestamp": stamp, "X-OpenCRM-Signature": signature},
+    )
+    assert sent.status_code == 200, sent.text
+
+    notes = manager_client.get(f"{API}/clients/{client['id']}/notes").json()["items"]
+    call = next((n for n in notes if n["kind"] == "call"), None)
+    assert call is not None, "звонок не попал в ленту — проверять нечего"
+    assert call["author_id"] is None
+    assert call["author_name"] is None, "звонку от станции приписали автора"

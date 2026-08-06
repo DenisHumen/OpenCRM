@@ -451,11 +451,24 @@ def stage_change_out(change: DealStageChange, author_name: str | None = None) ->
     }
 
 
-def note_out(note: ClientNote) -> dict:
+def note_out(note: ClientNote, author_name: str | None = None) -> dict:
+    """Запись ленты наружу.
+
+    Имя автора приходит отдельным аргументом, а не берётся из `note.author`:
+    лента отдаётся списками, и обращение к связи на каждой строке — это запрос
+    на запись. Имена вызывающий берёт пачкой (`users_repo.get_many`), как это
+    уже сделано в истории этапов.
+
+    Без имени лента не отвечает на вопрос «кто», ради которого она наполовину и
+    заведена: у записи есть `author_id`, но число на экране никому ни о чём не
+    говорит. Пусто — законное состояние: у письма и звонка, пришедших извне,
+    живого автора нет.
+    """
     return {
         "id": note.id,
         "client_id": note.client_id,
         "author_id": note.author_id,
+        "author_name": author_name,
         "kind": note.kind,
         "direction": note.direction or None,
         "deal_id": note.deal_id,

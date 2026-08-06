@@ -352,6 +352,11 @@ export function ClientCard() {
                       {t(NOTE_LABELS[note.kind])}
                     </span>
                     <span style={{ color: "var(--faint)", fontSize: 12 }}>{formatDateTime(note.happened_at, locale)}</span>
+                    {/* Кто — половина смысла ленты. Пусто у письма и звонка
+                        извне: там живого автора действительно не было. */}
+                    {note.author_name && (
+                      <span style={{ color: "var(--faint)", fontSize: 12 }}>{note.author_name}</span>
+                    )}
                     {(user?.role === "root" || note.author_id === user?.id) && (
                       <button className="text-link" style={{ marginLeft: "auto", fontSize: 11.5 }} onClick={() => void deleteNote(note.id)}>
                         {t("delete")}

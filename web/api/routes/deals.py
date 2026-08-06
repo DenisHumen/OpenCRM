@@ -18,6 +18,17 @@ from database.repositories import users as users_repo
 from web.api import schemas
 from web.api.deps import get_db, require_perm
 
+
+def _note_authors(db, notes) -> dict[int, str]:
+    """Имена авторов записей ленты — одним запросом на список.
+
+    Пачкой, а не по строке: лента открывается на каждой карточке, и запрос на
+    запись превратил бы её в самое дорогое место экрана.
+    """
+    people = users_repo.get_many(db, [n.author_id for n in notes])
+    return {person.id: person.name for person in people}
+
+
 router = APIRouter(prefix="/deals", tags=["deals"])
 
 #: Поля запроса, в которых приезжают деньги. Перечислены здесь, а не выводятся
@@ -280,7 +291,8 @@ def deal_feed(
     notes, _total = clients_repo.list_notes(
         db, client_id=deal.client_id, deal_id=deal_id, kind=kind, per_page=200
     )
-    return {"items": [schemas.note_out(n) for n in notes]}
+    authors = _note_authors(db, notes)
+    return {"items": [schemas.note_out(n, authors.get(n.author_id)) for n in notes]}
 
 
 @router.post("/{deal_id}/feed", status_code=201)
@@ -301,4 +313,4 @@ def add_to_deal_feed(
         direction=payload.direction,
         deal_id=deal_id,
     )
-    return schemas.note_out(note)
+    return schemas.note_out(note, note.author_id and _note_authors(db, [note]).get(note.author_id))

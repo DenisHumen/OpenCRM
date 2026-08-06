@@ -7,8 +7,20 @@ from core.services import client_service, permissions_service, settings_service
 from database.models import User
 from database.repositories import clients as clients_repo
 from database.repositories import deals as deals_repo
+from database.repositories import users as users_repo
 from web.api import schemas
 from web.api.deps import get_db, require_perm
+
+
+def _note_authors(db, notes) -> dict[int, str]:
+    """Имена авторов записей ленты — одним запросом на список.
+
+    Пачкой, а не по строке: лента открывается на каждой карточке, и запрос на
+    запись превратил бы её в самое дорогое место экрана.
+    """
+    people = users_repo.get_many(db, [n.author_id for n in notes])
+    return {person.id: person.name for person in people}
+
 
 router = APIRouter(prefix="/clients", tags=["clients"])
 
@@ -49,7 +61,10 @@ def get_client(
     notes, _total = clients_repo.list_notes(db, client_id, page=1, per_page=10)
     files = clients_repo.list_files(db, client_id)
     data = schemas.client_out(client)
-    data["recent_notes"] = [schemas.note_out(n) for n in notes]
+    note_authors = _note_authors(db, notes)
+    data["recent_notes"] = [
+        schemas.note_out(n, note_authors.get(n.author_id)) for n in notes
+    ]
     data["files"] = [schemas.file_out(f) for f in files]
     # Заявки клиента прямо в карточке: без них «что мы для него делали» —
     # вопрос к памяти, а не к системе. Врезка подчиняется тем же правилам, что
@@ -112,7 +127,10 @@ def list_notes(
     notes, total = clients_repo.list_notes(
         db, client_id, page=page, per_page=per_page, kind=kind, deal_id=deal_id
     )
-    return schemas.paginated([schemas.note_out(n) for n in notes], total, page, per_page)
+    authors = _note_authors(db, notes)
+    return schemas.paginated(
+        [schemas.note_out(n, authors.get(n.author_id)) for n in notes], total, page, per_page
+    )
 
 
 @router.post("/{client_id}/notes", status_code=201)
@@ -132,7 +150,7 @@ def add_note(
         direction=payload.direction,
         deal_id=payload.deal_id,
     )
-    return schemas.note_out(note)
+    return schemas.note_out(note, note.author_id and _note_authors(db, [note]).get(note.author_id))
 
 
 @router.delete("/{client_id}/notes/{note_id}")

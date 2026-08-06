@@ -152,6 +152,10 @@ export function Feed({ dealId, clientId }: { dealId: number; clientId: number })
                 <div>{entry.body}</div>
                 <div className="feed-meta">
                   <span>{formatDateTime(entry.happened_at, locale)}</span>
+                  {/* Кто — половина смысла ленты. У письма и звонка, пришедших
+                      извне, живого автора нет, и подписывать их «системой»
+                      значило бы соврать: там его действительно не было. */}
+                  {entry.author_name && <span>{entry.author_name}</span>}
                   {entry.direction && (
                     <span>{entry.direction === "in" ? t("feedIn") : t("feedOut")}</span>
                   )}
