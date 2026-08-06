@@ -173,3 +173,66 @@ def test_poisk_po_stroke_vezde_ekranirovan():
             if re.search(r"\.i?like\(", line) and "escape=" not in line:
                 guilty.append(f"{path.relative_to(root)}:{number}")
     assert guilty == [], "поиск по подстроке мимо contains():\n" + "\n".join(guilty)
+
+
+def test_ravnye_stroki_vsegda_v_odnom_poryadke(db):
+    """Списки сортируются по времени правки, а оно хранится с точностью до секунды.
+
+    Пять карточек, заведённых подряд, получают одну и ту же отметку, и порядок
+    между ними не задан ничем. Пока страницу отдают целиком, это незаметно; но
+    выдача идёт кусками, и каждая страница — отдельный запрос. База вправе
+    разложить равные строки в этот раз иначе, чем в прошлый: тогда одна карточка
+    попадает на две страницы, а другая ни на одну, и человек уверен, что клиент
+    пропал.
+    """
+    for i in range(6):
+        db.add(Client(name=f"тайбрейк-{i:02d}"))
+    db.flush()
+
+    collected = []
+    for page in range(1, 4):
+        rows, _total = clients_repo.search(db, q="тайбрейк-", page=page, per_page=2)
+        collected.extend(client.id for client in rows)
+
+    assert len(collected) == 6, "страница потеряла или продублировала строки"
+    assert len(set(collected)) == 6, f"строка попала на две страницы: {collected}"
+
+
+def test_pervichnyy_klyuch_dopisan_v_sortirovku():
+    """Проверяем сам запрос, а не только его исход на SQLite.
+
+    SQLite равные ключи отдаёт в порядке rowid и делает это стабильно, поэтому
+    исход теста выше на нём сошёлся бы и без починки. MySQL при сортировке во
+    временном файле такого обещания не даёт — то есть беда не проявится до дня
+    переезда и проявится сразу везде. Смотрим на текст запроса.
+    """
+    from database.query import _with_tiebreak
+
+    stmt = select(Client).order_by(Client.updated_at.desc())
+    sql = " ".join(str(_with_tiebreak(stmt).compile()).split())
+    assert "ORDER BY clients.updated_at DESC, clients.id DESC" in sql, sql
+
+
+def test_schyotchik_ne_sortiruet(db):
+    """Считать количество можно без сортировки — а база об этом не знает.
+
+    `count(*)` от порядка не зависит, но подзапрос с `ORDER BY` заставляет базу
+    честно отсортировать всё найденное, чтобы затем просто сосчитать. На таблице
+    в сотню тысяч строк это лишняя сортировка на каждый показ страницы.
+    """
+    from sqlalchemy import event
+
+    from database.session import engine
+
+    statements = []
+    listener = lambda conn, cursor, statement, *rest: statements.append(statement)
+    event.listen(engine, "before_cursor_execute", listener)
+    try:
+        clients_repo.search(db, q="чего-то-заведомо-нет", page=1, per_page=10)
+    finally:
+        event.remove(engine, "before_cursor_execute", listener)
+
+    counting = [s for s in statements if "count(" in s]
+    assert counting, "запрос на количество не найден"
+    for statement in counting:
+        assert "ORDER BY" not in statement.upper(), f"счётчик сортирует: {statement}"

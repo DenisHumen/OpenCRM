@@ -27,7 +27,7 @@ SQLite и MySQL собраны в одном месте**. Пока эти вы�
 
 from typing import TypeVar
 
-from sqlalchemy import Select, func, select
+from sqlalchemy import Select, func, inspect, select
 from sqlalchemy.orm import Session
 
 Row = TypeVar("Row")
@@ -56,10 +56,48 @@ def page_of(
     Считаем по подзапросу от того же `stmt`, а не собираем условия второй раз:
     два выражения одного отбора однажды разъедутся, и счётчик начнёт врать —
     «найдено 40» при семи строках на экране.
+
+    Сортировку из счётного подзапроса снимаем. На ответ она не влияет — count
+    не зависит от порядка, — но база об этом не знает и честно сортирует всё
+    найденное, чтобы затем сосчитать. На таблице в сотню тысяч строк это лишняя
+    сортировка на каждый показ страницы.
     """
-    total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
-    rows = db.scalars(stmt.offset(offset_for(page, per_page)).limit(clamp_per_page(per_page)))
+    total = db.scalar(select(func.count()).select_from(stmt.order_by(None).subquery())) or 0
+    ordered = _with_tiebreak(stmt)
+    rows = db.scalars(ordered.offset(offset_for(page, per_page)).limit(clamp_per_page(per_page)))
     return list(rows), total
+
+
+def _with_tiebreak(stmt: "Select[tuple[Row]]") -> "Select[tuple[Row]]":
+    """Дописать в сортировку первичный ключ, чтобы порядок был определён всегда.
+
+    Списки сортируются по времени правки, по имени, по сроку — то есть по
+    значениям, которые у разных строк совпадают сплошь и рядом. `updated_at`
+    хранится с точностью до секунды: пять карточек, заведённых подряд, получают
+    одну и ту же отметку. **Порядок между ними не задан ничем.**
+
+    Пока страницу отдают целиком, это незаметно. Но выдача идёт кусками через
+    `LIMIT/OFFSET`, и каждая страница — отдельный запрос: база вправе разложить
+    равные строки в этот раз иначе, чем в прошлый. Тогда одна карточка попадает
+    на две страницы, а другая — ни на одну, и человек уверен, что клиент
+    «пропал».
+
+    SQLite такое прощает — он отдаёт равные ключи в порядке rowid и делает это
+    стабильно (проверено: 20 карточек одной секундой, десять страниц по две,
+    ни одной потери). MySQL при сортировке во временном файле такого обещания
+    не даёт. То есть беда не проявится до дня переезда и проявится сразу везде.
+
+    Ключ дописывается по убыванию: среди равных выше оказывается заведённая
+    позже — так же, как «свежее сверху» во всех списках.
+    """
+    described = stmt.column_descriptions
+    entity = described[0].get("entity") if described else None
+    if entity is None:
+        # Выборка не по модели, а по колонкам: первичного ключа взять неоткуда.
+        # Такие места сортируют сами и отвечают за порядок сами.
+        return stmt
+    keys = inspect(entity).primary_key
+    return stmt.order_by(*(key.desc() for key in keys))
 
 
 def clamp_per_page(per_page: int) -> int:
