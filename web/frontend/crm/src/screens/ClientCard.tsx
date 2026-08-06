@@ -6,8 +6,9 @@ import { CallButton, CallsPanel } from "../components/CallsPanel";
 import { Icon } from "../components/Icon";
 import { SourcePicker } from "../components/SourcePicker";
 import { Avatar, Chip, ConfirmModal, EmptyState, ScreenLoading } from "../components/ui";
-import { api } from "../lib/api";
+import { api, ApiError } from "../lib/api";
 import { useApp } from "../lib/app";
+import { useFailure } from "../lib/failure";
 import type { TranslationKey } from "../lib/i18n";
 import {
   fileExt,
@@ -96,7 +97,10 @@ export function ClientCard() {
   const hasMail = moduleOn(modules, "mail") && can(user, "mail.create");
   const hasBoards = moduleOn(modules, "boards") && can(user, "boards.view");
 
+  const { failure, fail, clear } = useFailure();
+
   const load = useCallback(async () => {
+    clear();
     try {
       const data = await api.get(`/clients/${id}`);
       setClient(data);
@@ -106,10 +110,18 @@ export function ClientCard() {
       // Заявки приходят вместе с карточкой — отдельный запрос не нужен.
       setDeals(data.deals ?? []);
     } catch (e) {
-      toastError(e);
-      navigate("/clients");
+      // Записи нет или она не наша: показывать «попробуйте ещё раз» тут не о
+      // чем — повтор вернёт тот же ответ. Возвращаемся в список, как и раньше.
+      if (e instanceof ApiError && (e.status === 404 || e.status === 403)) {
+        toastError(e);
+        navigate("/clients");
+        return;
+      }
+      // Всё остальное — беда связи или сервера. Карточку не бросаем: адрес в
+      // строке верный, и повторить имеет смысл именно его, а не список.
+      fail(e);
     }
-  }, [id, toastError, navigate]);
+  }, [id, toastError, navigate, fail, clear]);
 
   // Доски — отдельным запросом и вне общего try. Пока они грузились вместе с
   // карточкой, выключенный блок досок отвечал 403 на середине загрузки, и
@@ -140,7 +152,7 @@ export function ClientCard() {
       .catch(() => setMailAccounts([]));
   }, [hasMail]);
 
-  if (!client) return <ScreenLoading />;
+  if (!client) return <ScreenLoading error={failure} onRetry={() => void load()} />;
 
   const addNote = async () => {
     const body = draft.trim();

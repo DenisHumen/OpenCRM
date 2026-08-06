@@ -3,8 +3,9 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { Icon } from "../components/Icon";
 import { Chip, ConfirmModal, EmptyState, Modal, ScreenLoading, Toggle } from "../components/ui";
-import { api } from "../lib/api";
+import { api, ApiError } from "../lib/api";
 import { useApp } from "../lib/app";
+import { useFailure } from "../lib/failure";
 import { copyText } from "../lib/clipboard";
 import { formatDateTime, formatDuration } from "../lib/format";
 
@@ -28,14 +29,25 @@ export function BoardEditor() {
   const fileInput = useRef<HTMLInputElement>(null);
   const pollTimer = useRef<number>();
 
+  const { failure, fail, clear } = useFailure();
+
   const load = useCallback(async () => {
+    clear();
     try {
       setBoard(await api.get(`/boards/${id}`));
     } catch (e) {
-      toastError(e);
-      navigate("/boards");
+      // Записи нет или она не наша: показывать «попробуйте ещё раз» тут не о
+      // чем — повтор вернёт тот же ответ. Возвращаемся в список, как и раньше.
+      if (e instanceof ApiError && (e.status === 404 || e.status === 403)) {
+        toastError(e);
+        navigate("/boards");
+        return;
+      }
+      // Всё остальное — беда связи или сервера. Карточку не бросаем: адрес в
+      // строке верный, и повторить имеет смысл именно его, а не список.
+      fail(e);
     }
-  }, [id, toastError, navigate]);
+  }, [id, toastError, navigate, fail, clear]);
 
   useEffect(() => {
     void load();
@@ -77,7 +89,7 @@ export function BoardEditor() {
     return () => window.clearTimeout(pollTimer.current);
   }, [board, id, load]);
 
-  if (!board) return <ScreenLoading />;
+  if (!board) return <ScreenLoading error={failure} onRetry={() => void load()} />;
 
   const share = board.shares.find((s: any) => s.is_active) ?? board.shares[0] ?? null;
 

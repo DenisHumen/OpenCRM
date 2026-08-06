@@ -5,6 +5,7 @@ import { Icon } from "../components/Icon";
 import { Chip, EmptyState, Modal, ScreenLoading } from "../components/ui";
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
+import { useFailure } from "../lib/failure";
 
 export interface Company {
   id: number;
@@ -37,20 +38,23 @@ export function Companies() {
 
   const isRoot = user?.role === "root";
 
+  const { failure, fail, clear } = useFailure();
+
   const load = useCallback(async () => {
+    clear();
     try {
       const data = await api.get<{ items: Company[] }>("/companies");
       setItems(data.items);
     } catch (e) {
-      toastError(e);
+      fail(e);
     }
-  }, [toastError]);
+  }, [fail, clear]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
-  if (!items) return <ScreenLoading />;
+  if (!items) return <ScreenLoading error={failure} onRetry={() => void load()} />;
 
   return (
     <div className="page page-narrow">

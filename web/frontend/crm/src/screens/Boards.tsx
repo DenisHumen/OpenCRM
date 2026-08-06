@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { BoardCard } from "../components/BoardCard";
@@ -6,6 +6,7 @@ import { Icon } from "../components/Icon";
 import { EmptyState, ScreenLoading } from "../components/ui";
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
+import { useFailure } from "../lib/failure";
 
 type Filter = "all" | "published" | "drafts" | "revoked";
 
@@ -15,11 +16,16 @@ export function Boards() {
   const [data, setData] = useState<any>(null);
   const [filter, setFilter] = useState<Filter>("all");
 
-  useEffect(() => {
-    api.get("/boards?per_page=100").then(setData).catch(toastError);
-  }, [toastError]);
+  const { failure, fail, clear } = useFailure();
 
-  if (!data) return <ScreenLoading />;
+  const load = useCallback(() => {
+    clear();
+    api.get("/boards?per_page=100").then(setData).catch(fail);
+  }, [fail, clear]);
+
+  useEffect(load, [load]);
+
+  if (!data) return <ScreenLoading error={failure} onRetry={load} />;
 
   const published = data.items.filter((b: any) => b.is_published);
   const filtered = data.items.filter((board: any) => {

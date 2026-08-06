@@ -6,8 +6,9 @@ import { CallButton, CallsPanel } from "../components/CallsPanel";
 import { Feed } from "../components/Feed";
 import { Icon } from "../components/Icon";
 import { Chip, ConfirmModal, Modal, ScreenLoading } from "../components/ui";
-import { api } from "../lib/api";
+import { api, ApiError } from "../lib/api";
 import { useApp } from "../lib/app";
+import { useFailure } from "../lib/failure";
 import { statusLabel, statusVariant } from "../lib/documents";
 import { formatDate, formatDateTime, formatMoney } from "../lib/format";
 import { moduleOn } from "../lib/modules";
@@ -55,14 +56,25 @@ export function DealCard() {
   const [composing, setComposing] = useState(false);
   const [mailAccounts, setMailAccounts] = useState<MailAccount[]>([]);
 
+  const { failure, fail, clear } = useFailure();
+
   const load = useCallback(async () => {
+    clear();
     try {
       setDeal(await api.get(`/deals/${id}`));
     } catch (e) {
-      toastError(e);
-      navigate("/deals");
+      // Записи нет или она не наша: показывать «попробуйте ещё раз» тут не о
+      // чем — повтор вернёт тот же ответ. Возвращаемся в список, как и раньше.
+      if (e instanceof ApiError && (e.status === 404 || e.status === 403)) {
+        toastError(e);
+        navigate("/deals");
+        return;
+      }
+      // Всё остальное — беда связи или сервера. Карточку не бросаем: адрес в
+      // строке верный, и повторить имеет смысл именно его, а не список.
+      fail(e);
     }
-  }, [id, toastError, navigate]);
+  }, [id, toastError, navigate, fail, clear]);
 
   // Врезка живёт по двум условиям сразу: блок включён И право есть. Порядок тот
   // же, что на сервере. Без права раздел не просто пуст — его не показываем
@@ -105,7 +117,7 @@ export function DealCard() {
     }
   }, [load, loadDocs, loadTasks, hasCompanies]);
 
-  if (!deal) return <ScreenLoading />;
+  if (!deal) return <ScreenLoading error={failure} onRetry={() => void load()} />;
 
   const currency: string = deal.currency || "USD";
   // Адрес берём из уже загруженного списка клиентов: отдельный запрос ради

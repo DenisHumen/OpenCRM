@@ -3,8 +3,9 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { Icon } from "../components/Icon";
 import { Chip, ConfirmModal, ScreenLoading } from "../components/ui";
-import { api } from "../lib/api";
+import { api, ApiError } from "../lib/api";
 import { useApp } from "../lib/app";
+import { useFailure } from "../lib/failure";
 import { copyText } from "../lib/clipboard";
 import { isFinished, nextStatuses, statusLabel, statusVariant } from "../lib/documents";
 import { formatDateTime } from "../lib/format";
@@ -34,20 +35,31 @@ export function DocumentCard() {
   const [doc, setDoc] = useState<any>(null);
   const [confirmCancel, setConfirmCancel] = useState(false);
 
+  const { failure, fail, clear } = useFailure();
+
   const load = useCallback(async () => {
+    clear();
     try {
       setDoc(await api.get(`/documents/${id}`));
     } catch (e) {
-      toastError(e);
-      navigate("/documents");
+      // Записи нет или она не наша: показывать «попробуйте ещё раз» тут не о
+      // чем — повтор вернёт тот же ответ. Возвращаемся в список, как и раньше.
+      if (e instanceof ApiError && (e.status === 404 || e.status === 403)) {
+        toastError(e);
+        navigate("/documents");
+        return;
+      }
+      // Всё остальное — беда связи или сервера. Карточку не бросаем: адрес в
+      // строке верный, и повторить имеет смысл именно его, а не список.
+      fail(e);
     }
-  }, [id, toastError, navigate]);
+  }, [id, toastError, navigate, fail, clear]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
-  if (!doc) return <ScreenLoading />;
+  if (!doc) return <ScreenLoading error={failure} onRetry={() => void load()} />;
 
   const fields = doc.payload?.fields ?? {};
   const client = doc.payload?.client ?? {};

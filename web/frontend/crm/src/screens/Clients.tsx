@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 
 import { Icon } from "../components/Icon";
@@ -6,6 +6,7 @@ import { SourcePicker } from "../components/SourcePicker";
 import { Avatar, Chip, EmptyState, Modal, ScreenLoading } from "../components/ui";
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
+import { useFailure } from "../lib/failure";
 import { initials, relativeDay } from "../lib/format";
 
 export function Clients() {
@@ -17,14 +18,17 @@ export function Clients() {
   const [showNew, setShowNew] = useState(params.get("new") === "1");
   const timer = useRef<number>();
 
-  const load = useMemo(
-    () => (q: string) => {
+  const { failure, fail, clear } = useFailure();
+
+  const load = useCallback(
+    (q: string) => {
+      clear();
       api
         .get(`/clients?search=${encodeURIComponent(q)}&per_page=100`)
         .then(setData)
-        .catch(toastError);
+        .catch(fail);
     },
-    [toastError],
+    [fail, clear],
   );
 
   useEffect(() => {
@@ -37,7 +41,7 @@ export function Clients() {
     return () => window.clearTimeout(timer.current);
   }, [query, load]);
 
-  if (!data) return <ScreenLoading />;
+  if (!data) return <ScreenLoading error={failure} onRetry={() => load(query)} />;
 
   return (
     <div className="page">

@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { Icon } from "../components/Icon";
 import { ConfirmModal, ScreenLoading } from "../components/ui";
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
+import { useFailure } from "../lib/failure";
 import type { TranslationKey } from "../lib/i18n";
 
 interface TelephonyConfig {
@@ -41,11 +42,16 @@ export function SettingsTelephony() {
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
 
-  useEffect(() => {
-    api.get<TelephonyConfig>("/telephony/settings").then(setConfig).catch(toastError);
-  }, [toastError]);
+  const { failure, fail, clear } = useFailure();
 
-  if (!config) return <ScreenLoading />;
+  const load = useCallback(() => {
+    clear();
+    api.get<TelephonyConfig>("/telephony/settings").then(setConfig).catch(fail);
+  }, [fail, clear]);
+
+  useEffect(load, [load]);
+
+  if (!config) return <ScreenLoading error={failure} onRetry={load} />;
 
   const set = (key: keyof TelephonyConfig) => (value: string) =>
     setConfig((prev) => ({ ...prev!, [key]: value }));

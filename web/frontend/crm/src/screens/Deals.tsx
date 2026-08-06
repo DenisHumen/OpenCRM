@@ -5,6 +5,7 @@ import { Icon } from "../components/Icon";
 import { Avatar, EmptyState, Modal, ScreenLoading } from "../components/ui";
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
+import { useFailure } from "../lib/failure";
 import { formatDate, formatMoney, initials } from "../lib/format";
 import { term } from "../lib/terms";
 
@@ -120,15 +121,18 @@ export function Deals() {
     description: "",
   });
 
+  const { failure, fail, clear } = useFailure();
+
   const load = useCallback(async () => {
+    clear();
     try {
       const board = await api.get("/deals/board");
       setColumns(board.columns);
       setCurrency(board.currency);
     } catch (e) {
-      toastError(e);
+      fail(e);
     }
-  }, [toastError]);
+  }, [fail, clear]);
 
   useEffect(() => {
     void load();
@@ -136,7 +140,7 @@ export function Deals() {
     api.get("/people").then((d) => setPeople(d.items)).catch(() => undefined);
   }, [load]);
 
-  if (!columns) return <ScreenLoading />;
+  if (!columns) return <ScreenLoading error={failure} onRetry={() => void load()} />;
 
   const total = columns.reduce((sum, c) => sum + c.deals.length, 0);
 

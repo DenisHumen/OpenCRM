@@ -5,6 +5,7 @@ import { Chip, ConfirmModal, EmptyState, ScreenLoading } from "../components/ui"
 import { Icon } from "../components/Icon";
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
+import { useFailure } from "../lib/failure";
 import { formatBytes, formatDate, formatDateTime } from "../lib/format";
 
 interface MediaFile {
@@ -35,12 +36,15 @@ export function Files() {
   const [items, setItems] = useState<MediaFile[] | null>(null);
   const [confirmId, setConfirmId] = useState<number | null>(null);
 
+  const { failure, fail, clear } = useFailure();
+
   const load = useCallback(() => {
+    clear();
     api
       .get<{ items: MediaFile[] }>("/system/files")
       .then((d) => setItems(d.items))
-      .catch(toastError);
-  }, [toastError]);
+      .catch(fail);
+  }, [fail, clear]);
 
   useEffect(() => {
     load();
@@ -51,7 +55,7 @@ export function Files() {
     [items],
   );
 
-  if (!items) return <ScreenLoading />;
+  if (!items) return <ScreenLoading error={failure} onRetry={load} />;
 
   const remove = async (id: number) => {
     try {

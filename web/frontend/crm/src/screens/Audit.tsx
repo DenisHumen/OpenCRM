@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import { EmptyState, ScreenLoading } from "../components/ui";
 import { api, type AuditEvent } from "../lib/api";
 import { useApp } from "../lib/app";
+import { useFailure } from "../lib/failure";
 import { formatDateTime, formatMoney } from "../lib/format";
 import type { TranslationKey } from "../lib/i18n";
 import { term } from "../lib/terms";
@@ -57,30 +58,33 @@ const SOURCE: Record<string, TranslationKey> = {
 const MONEY_ACTIONS = new Set(["deal.amount_changed", "deal.prepaid_changed"]);
 
 export function Audit() {
-  const { t, locale, workspace, settings, toastError } = useApp();
+  const { t, locale, workspace, settings } = useApp();
   const [items, setItems] = useState<AuditEvent[] | null>(null);
   const [total, setTotal] = useState(0);
   const [search, setSearch] = useState("");
   const [source, setSource] = useState("");
 
+  const { failure, fail, clear } = useFailure();
+
   const load = useCallback(async () => {
     const params = new URLSearchParams({ per_page: "100" });
     if (search.trim()) params.set("search", search.trim());
     if (source) params.set("source", source);
+    clear();
     try {
       const data = await api.get<{ items: AuditEvent[]; total: number }>(`/audit?${params}`);
       setItems(data.items);
       setTotal(data.total);
     } catch (e) {
-      toastError(e);
+      fail(e);
     }
-  }, [search, source, toastError]);
+  }, [search, source, fail, clear]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
-  if (!items) return <ScreenLoading />;
+  if (!items) return <ScreenLoading error={failure} onRetry={() => void load()} />;
 
   // Заявку каждый бизнес называет по-своему, и журнал не исключение: «Удалил
   // deal» в мастерской, где всё зовут заказами, читается как чужая запись.

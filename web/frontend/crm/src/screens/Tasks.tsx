@@ -5,6 +5,7 @@ import { Icon } from "../components/Icon";
 import { EmptyState, ScreenLoading } from "../components/ui";
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
+import { useFailure } from "../lib/failure";
 import { formatDateTime, parseDate } from "../lib/format";
 
 /** Списки, которыми пользуются каждый день. Порядок — от срочного к общему. */
@@ -49,7 +50,10 @@ export function Tasks() {
   const [title, setTitle] = useState("");
   const [due, setDue] = useState("");
 
+  const { failure, fail, clear } = useFailure();
+
   const load = useCallback(async () => {
+    clear();
     try {
       const [list, summary] = await Promise.all([
         api.get(`/tasks?scope=${scope}`),
@@ -61,15 +65,15 @@ export function Tasks() {
       // вместе со списком, иначе он отстаёт до следующего перехода.
       void refreshTasks();
     } catch (e) {
-      toastError(e);
+      fail(e);
     }
-  }, [scope, refreshTasks, toastError]);
+  }, [scope, refreshTasks, fail, clear]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
-  if (!items) return <ScreenLoading />;
+  if (!items) return <ScreenLoading error={failure} onRetry={() => void load()} />;
 
   const add = async () => {
     const text = title.trim();

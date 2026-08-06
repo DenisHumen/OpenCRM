@@ -4,6 +4,7 @@ import { Icon } from "../components/Icon";
 import { ConfirmModal, EmptyState, Modal, ScreenLoading, Toggle } from "../components/ui";
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
+import { useFailure } from "../lib/failure";
 import { formatDateTime } from "../lib/format";
 import { moduleOn } from "../lib/modules";
 
@@ -61,13 +62,18 @@ export function Mailboxes() {
   // вместо пустого списка показываем, где включается сам блок.
   const enabled = moduleOn(modules, "mail");
 
+  const { failure, fail, clear } = useFailure();
+
   const load = useCallback(async () => {
+    clear();
     try {
       setAccounts((await api.get("/mail/accounts")).items);
-    } catch {
-      setAccounts([]);
+    } catch (e) {
+      // Пустой список тут врал: «ящиков нет» вместо «не спросили». Выключенный
+      // блок — случай ниже, он в отказ не превращается: там список пуст по делу.
+      fail(e);
     }
-  }, []);
+  }, [fail, clear]);
 
   useEffect(() => {
     if (enabled) void load();
@@ -108,7 +114,7 @@ export function Mailboxes() {
     }
   };
 
-  if (!accounts) return <ScreenLoading />;
+  if (!accounts) return <ScreenLoading error={failure} onRetry={() => void load()} />;
 
   return (
     <div className="page page-narrow">

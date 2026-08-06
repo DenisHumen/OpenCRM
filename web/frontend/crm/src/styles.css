@@ -771,6 +771,8 @@ button { font-family: var(--sans); }
 .swatch { width: 30px; height: 30px; border-radius: 8px; cursor: pointer; border: 2px solid transparent; }
 .swatch.active { border-color: var(--text); }
 .screen-loading { display: flex; align-items: center; justify-content: center; min-height: 40vh; }
+.screen-failed { display: flex; flex-direction: column; align-items: center; text-align: center; max-width: 380px; padding: 0 16px; }
+.screen-failed-icon { display: flex; align-items: center; justify-content: center; width: 44px; height: 44px; margin-bottom: 12px; border-radius: 12px; background: rgba(229, 105, 94, 0.14); color: var(--danger); }
 
 /* Командная палитра (Ctrl+K) */
 .cp-backdrop { position: fixed; inset: 0; z-index: 80; background: rgba(12, 12, 11, 0.62); display: flex; justify-content: center; align-items: flex-start; padding: 12vh 24px 24px; animation: cp-fade 120ms ease-out; }

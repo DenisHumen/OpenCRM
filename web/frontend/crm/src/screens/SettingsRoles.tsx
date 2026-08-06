@@ -9,6 +9,7 @@ import {
   type RolePreset,
 } from "../lib/api";
 import { useApp } from "../lib/app";
+import { useFailure } from "../lib/failure";
 import type { TranslationKey } from "../lib/i18n";
 import { moduleOn } from "../lib/modules";
 
@@ -61,7 +62,10 @@ export function SettingsRoles() {
   const [removing, setRemoving] = useState<Role | null>(null);
   const [busy, setBusy] = useState(false);
 
+  const { failure, fail, clear } = useFailure();
+
   const load = useCallback(async () => {
+    clear();
     try {
       const [m, r] = await Promise.all([
         api.get<Matrix>("/roles/matrix"),
@@ -70,10 +74,9 @@ export function SettingsRoles() {
       setMatrix(m);
       setRoles(r.items);
     } catch (e) {
-      toastError(e);
-      setRoles([]);
+      fail(e);
     }
-  }, [toastError]);
+  }, [fail, clear]);
 
   useEffect(() => {
     void load();
@@ -86,7 +89,7 @@ export function SettingsRoles() {
     [matrix],
   );
 
-  if (!matrix || !roles) return <ScreenLoading />;
+  if (!matrix || !roles) return <ScreenLoading error={failure} onRetry={() => void load()} />;
 
   const open = (role: Role) => {
     setCreating(false);

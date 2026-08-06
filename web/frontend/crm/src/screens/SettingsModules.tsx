@@ -4,6 +4,7 @@ import { Icon } from "../components/Icon";
 import { ScreenLoading, Toggle } from "../components/ui";
 import { api } from "../lib/api";
 import { useApp, type ModuleInfo } from "../lib/app";
+import { useFailure } from "../lib/failure";
 import { formatDateTime } from "../lib/format";
 import type { TranslationKey } from "../lib/i18n";
 
@@ -52,20 +53,23 @@ export function SettingsModules() {
   const [items, setItems] = useState<ModuleInfo[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
+  const { failure, fail, clear } = useFailure();
+
   const load = useCallback(async () => {
+    clear();
     try {
       const data = await api.get<{ items: ModuleInfo[] }>("/modules");
       setItems(data.items);
     } catch (e) {
-      toastError(e);
+      fail(e);
     }
-  }, [toastError]);
+  }, [fail, clear]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
-  if (!items) return <ScreenLoading />;
+  if (!items) return <ScreenLoading error={failure} onRetry={() => void load()} />;
 
   const switchModule = async (item: ModuleInfo) => {
     if (item.core || !item.ready || busy) return;

@@ -5,6 +5,7 @@ import { Icon } from "../components/Icon";
 import { EmptyState, Modal, ScreenLoading } from "../components/ui";
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
+import { useFailure } from "../lib/failure";
 import { formatDateTime } from "../lib/format";
 
 export interface MailMessage {
@@ -44,20 +45,25 @@ export function Mail() {
   const [open, setOpen] = useState<MailMessage | null>(null);
   const [composing, setComposing] = useState(false);
 
+  const { failure, fail, clear } = useFailure();
+
   const load = useCallback(async () => {
     const params = new URLSearchParams({ per_page: "100" });
     if (filter === "in" || filter === "out") params.set("direction", filter);
     if (filter === "unread") params.set("unread", "true");
     if (search.trim()) params.set("search", search.trim());
+    clear();
     try {
       const data = await api.get(`/mail/messages?${params}`);
       setMessages(data.items);
       setTotal(data.total);
     } catch (e) {
-      toastError(e);
-      setMessages([]);
+      // Раньше здесь стоял пустой список — и экран показывал «писем нет» там,
+      // где на деле не ответил сервер. Пустая почта и недоступная почта для
+      // человека решения принимают разные: первую он закроет, вторую повторит.
+      fail(e);
     }
-  }, [filter, search, toastError]);
+  }, [filter, search, fail, clear]);
 
   useEffect(() => {
     void load();
@@ -87,7 +93,7 @@ export function Mail() {
     }
   };
 
-  if (!messages) return <ScreenLoading />;
+  if (!messages) return <ScreenLoading error={failure} onRetry={() => void load()} />;
 
   const filters: { id: Filter; label: string }[] = [
     { id: "all", label: t("all") },

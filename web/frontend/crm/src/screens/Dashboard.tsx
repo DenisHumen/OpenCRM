@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
 import { BoardCard } from "../components/BoardCard";
@@ -7,6 +7,7 @@ import { StorageCard } from "../components/StorageCard";
 import { Avatar, Chip, EmptyState, ScreenLoading } from "../components/ui";
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
+import { useFailure } from "../lib/failure";
 import { formatDateTime, formatMoney, initials, parseDate, relativeDay } from "../lib/format";
 import { moduleOn } from "../lib/modules";
 import { can } from "../lib/permissions";
@@ -17,11 +18,16 @@ export function Dashboard() {
   const navigate = useNavigate();
   const [data, setData] = useState<any>(null);
 
-  useEffect(() => {
-    api.get("/dashboard").then(setData).catch(toastError);
-  }, [toastError]);
+  const { failure, fail, clear } = useFailure();
 
-  if (!data) return <ScreenLoading />;
+  const load = useCallback(() => {
+    clear();
+    api.get("/dashboard").then(setData).catch(fail);
+  }, [fail, clear]);
+
+  useEffect(load, [load]);
+
+  if (!data) return <ScreenLoading error={failure} onRetry={load} />;
 
   const hour = new Date().getHours();
   const greeting = hour < 12 ? t("goodMorning") : hour < 18 ? t("goodAfternoon") : t("goodEvening");

@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
 import { Icon } from "../components/Icon";
 import { Chip, EmptyState, Modal, ScreenLoading } from "../components/ui";
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
+import { useFailure } from "../lib/failure";
 import { formatMoney, formatQuantity } from "../lib/format";
 
 export const UNITS = ["pcs", "kg", "g", "l", "ml", "m", "m2", "pack", "hour"] as const;
@@ -48,14 +49,17 @@ export function Warehouse() {
   const [showNew, setShowNew] = useState(false);
   const timer = useRef<number>();
 
-  const load = useMemo(
-    () => (q: string, low: boolean) => {
+  const { failure, fail, clear } = useFailure();
+
+  const load = useCallback(
+    (q: string, low: boolean) => {
+      clear();
       api
         .get(`/warehouse/products?search=${encodeURIComponent(q)}&low_only=${low}&per_page=200`)
         .then(setData)
-        .catch(toastError);
+        .catch(fail);
     },
-    [toastError],
+    [fail, clear],
   );
 
   useEffect(() => {
@@ -64,7 +68,7 @@ export function Warehouse() {
     return () => window.clearTimeout(timer.current);
   }, [query, lowOnly, load]);
 
-  if (!data) return <ScreenLoading />;
+  if (!data) return <ScreenLoading error={failure} onRetry={() => load(query, lowOnly)} />;
 
   const currency = data.currency || workspace.currency;
 

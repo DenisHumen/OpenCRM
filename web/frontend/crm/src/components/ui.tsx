@@ -1,5 +1,6 @@
 import { useEffect, useRef, type ReactNode } from "react";
 
+import { ApiError } from "../lib/api";
 import { useApp } from "../lib/app";
 import { Icon } from "./Icon";
 
@@ -63,10 +64,49 @@ export function Spinner() {
   return <div className="spinner" />;
 }
 
-export function ScreenLoading() {
+/**
+ * Место экрана, пока данных нет.
+ *
+ * Вертушка честна ровно до первого отказа сервера. Дальше она врёт: загрузка
+ * кончилась, а экран продолжает обещать, что вот-вот покажет. Сообщение об
+ * ошибке живёт четыре секунды и уходит — и человек остаётся один на один с
+ * бесконечным кружком, из которого не следует ни что случилось, ни что делать.
+ *
+ * Поэтому решение «вертушка или отказ» принимается здесь, в единственном месте,
+ * где экран и так уже выбирает, что показать вместо данных. Экрану остаётся
+ * передать, чем кончилась загрузка, и чем её повторить.
+ *
+ * Сообщение берём от сервера, если он его прислал: «Раздел выключен» и «нет
+ * связи» — разные беды, и на вторую есть смысл нажать «ещё раз», а на первую
+ * нет. Своё общее объяснение — только когда сервер промолчал.
+ */
+export function ScreenLoading({ error, onRetry }: { error?: unknown; onRetry?: () => void }) {
+  const { t } = useApp();
+
+  if (error === undefined || error === null) {
+    return (
+      <div className="screen-loading">
+        <Spinner />
+      </div>
+    );
+  }
+
   return (
     <div className="screen-loading">
-      <Spinner />
+      <div className="screen-failed">
+        <span className="screen-failed-icon">
+          <Icon name="alert" size={20} />
+        </span>
+        <div className="empty-title">{t("loadFailed")}</div>
+        <div className="empty-sub">
+          {error instanceof ApiError ? error.message : t("loadFailedHint")}
+        </div>
+        {onRetry && (
+          <button className="btn btn-secondary" onClick={onRetry} style={{ marginTop: 14 }}>
+            {t("retry")}
+          </button>
+        )}
+      </div>
     </div>
   );
 }

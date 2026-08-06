@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Outlet, useOutletContext } from "react-router-dom";
 
 import { StorageCard } from "../components/StorageCard";
 import { ScreenLoading, Toggle } from "../components/ui";
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
+import { useFailure } from "../lib/failure";
 import { formatDateTime } from "../lib/format";
 import { DEAL_TERMS, term } from "../lib/terms";
 
@@ -38,11 +39,16 @@ export function SettingsLayout() {
   const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState(false);
 
-  useEffect(() => {
-    api.get("/settings").then(setValues).catch(toastError);
-  }, [toastError]);
+  const { failure, fail, clear } = useFailure();
 
-  if (!values) return <ScreenLoading />;
+  const load = useCallback(() => {
+    clear();
+    api.get("/settings").then(setValues).catch(fail);
+  }, [fail, clear]);
+
+  useEffect(load, [load]);
+
+  if (!values) return <ScreenLoading error={failure} onRetry={load} />;
 
   const patch = (next: Values) => setValues((v) => ({ ...v!, ...next }));
   const set = (key: string) => (e: { target: { value: string } }) => patch({ [key]: e.target.value });

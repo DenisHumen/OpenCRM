@@ -4,6 +4,7 @@ import { Icon } from "../components/Icon";
 import { Avatar, Chip, ConfirmModal, EmptyState, Modal, ScreenLoading } from "../components/ui";
 import { api, type Role } from "../lib/api";
 import { useApp } from "../lib/app";
+import { useFailure } from "../lib/failure";
 import { formatDateTime, initials } from "../lib/format";
 import { can } from "../lib/permissions";
 
@@ -21,9 +22,12 @@ export function Staff() {
   // не спрашиваем вовсе, иначе на каждой загрузке стучались бы в закрытую дверь.
   const managesRoles = can(user, "roles.manage");
 
+  const { failure, fail, clear } = useFailure();
+
   const load = useCallback(() => {
-    api.get("/staff").then((d) => setItems(d.items)).catch(toastError);
-  }, [toastError]);
+    clear();
+    api.get("/staff").then((d) => setItems(d.items)).catch(fail);
+  }, [fail, clear]);
 
   useEffect(() => {
     load();
@@ -40,7 +44,7 @@ export function Staff() {
       .catch(() => undefined);
   }, [managesRoles]);
 
-  if (!items) return <ScreenLoading />;
+  if (!items) return <ScreenLoading error={failure} onRetry={load} />;
 
   const presence = (person: any) =>
     person.is_online

@@ -5,6 +5,7 @@ import { Icon } from "../components/Icon";
 import { EmptyState, ScreenLoading } from "../components/ui";
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
+import { useFailure } from "../lib/failure";
 import { formatMoney } from "../lib/format";
 import { sourceLabel } from "../lib/sources";
 
@@ -44,7 +45,7 @@ function percent(value: number | null, locale: string): string {
 }
 
 export function Reports() {
-  const { t, locale, toastError } = useApp();
+  const { t, locale } = useApp();
   const today = useMemo(() => new Date(), []);
   const quick = useMemo(() => presets(today), [today]);
   const [from, setFrom] = useState(quick[0].from);
@@ -64,10 +65,14 @@ export function Reports() {
     [from, to],
   );
 
+  const { failure, fail, clear } = useFailure();
+  // Периоды переключают быстрее, чем отвечает сервер: без этого счётчика ответ
+  // на прошлый период мог бы лечь поверх текущего и показать чужие числа.
+  const [attempt, setAttempt] = useState(0);
+
   useEffect(() => {
-    // Периоды переключают быстрее, чем отвечает сервер: без этого флага ответ
-    // на прошлый период мог бы лечь поверх текущего и показать чужие числа.
     let current = true;
+    clear();
     Promise.all([
       api.get(`/reports/funnel?${query}`),
       api.get(`/reports/revenue?${query}`),
@@ -76,13 +81,17 @@ export function Reports() {
       .then(([funnel, revenue, sources]) => {
         if (current) setData({ funnel, revenue, sources });
       })
-      .catch(toastError);
+      .catch((e) => {
+        if (current) fail(e);
+      });
     return () => {
       current = false;
     };
-  }, [query, toastError]);
+  }, [query, attempt, fail, clear]);
 
-  if (!data) return <ScreenLoading />;
+  if (!data) {
+    return <ScreenLoading error={failure} onRetry={() => setAttempt((n) => n + 1)} />;
+  }
 
   const { funnel, revenue, sources } = data;
   const currency = revenue.currency ?? "USD";

@@ -3,8 +3,9 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { Icon } from "../components/Icon";
 import { ConfirmModal, EmptyState, ScreenLoading } from "../components/ui";
-import { api } from "../lib/api";
+import { api, ApiError } from "../lib/api";
 import { useApp } from "../lib/app";
+import { useFailure } from "../lib/failure";
 import { formatDateTime, formatMoney, formatQuantity } from "../lib/format";
 import { StockValue, unitKey, type Product } from "./Warehouse";
 
@@ -48,7 +49,10 @@ export function ProductCard() {
   const [currency, setCurrency] = useState(workspace.currency);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
+  const { failure, fail, clear } = useFailure();
+
   const load = useCallback(async () => {
+    clear();
     try {
       const card = await api.get<Product & { currency: string }>(`/warehouse/products/${id}`);
       setProduct(card);
@@ -57,16 +61,24 @@ export function ProductCard() {
       setMoves(history.items);
       setTotal(history.total);
     } catch (e) {
-      toastError(e);
-      navigate("/warehouse");
+      // Записи нет или она не наша: показывать «попробуйте ещё раз» тут не о
+      // чем — повтор вернёт тот же ответ. Возвращаемся в список, как и раньше.
+      if (e instanceof ApiError && (e.status === 404 || e.status === 403)) {
+        toastError(e);
+        navigate("/warehouse");
+        return;
+      }
+      // Всё остальное — беда связи или сервера. Карточку не бросаем: адрес в
+      // строке верный, и повторить имеет смысл именно его, а не список.
+      fail(e);
     }
-  }, [id, workspace.currency, toastError, navigate]);
+  }, [id, workspace.currency, toastError, navigate, fail, clear]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
-  if (!product) return <ScreenLoading />;
+  if (!product) return <ScreenLoading error={failure} onRetry={() => void load()} />;
 
   const negative = product.stock_milli !== null && product.stock_milli < 0;
 

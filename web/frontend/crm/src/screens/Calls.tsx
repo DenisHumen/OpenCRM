@@ -6,6 +6,7 @@ import { Icon } from "../components/Icon";
 import { Chip, EmptyState, ScreenLoading } from "../components/ui";
 import { api, type PhoneCall } from "../lib/api";
 import { useApp } from "../lib/app";
+import { useFailure } from "../lib/failure";
 import { formatCallDuration, formatDateTime } from "../lib/format";
 import { moduleOn } from "../lib/modules";
 
@@ -26,10 +27,13 @@ export function Calls() {
   const outcomeLabel = useOutcomeLabel();
   const tasksOn = moduleOn(modules, "tasks");
 
+  const { failure, fail, clear } = useFailure();
+
   const load = useCallback(async () => {
     const params = new URLSearchParams({ per_page: "100" });
     if (search.trim()) params.set("number", search.trim());
     if (missedOnly) params.set("outcome", "missed");
+    clear();
     try {
       const data = await api.get<{ items: PhoneCall[]; total: number }>(
         `/telephony/calls?${params}`,
@@ -37,15 +41,15 @@ export function Calls() {
       setItems(data.items);
       setTotal(data.total);
     } catch (e) {
-      toastError(e);
+      fail(e);
     }
-  }, [search, missedOnly, toastError]);
+  }, [search, missedOnly, fail, clear]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
-  if (!items) return <ScreenLoading />;
+  if (!items) return <ScreenLoading error={failure} onRetry={() => void load()} />;
 
   // Напоминание перезвонить живёт в блоке напоминаний: он выключен — кнопки
   // просто нет, а журнал работает как работал.

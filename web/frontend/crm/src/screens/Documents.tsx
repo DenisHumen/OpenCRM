@@ -5,6 +5,7 @@ import { Icon } from "../components/Icon";
 import { Chip, EmptyState, Modal, ScreenLoading } from "../components/ui";
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
+import { useFailure } from "../lib/failure";
 import { formatDate } from "../lib/format";
 import { DOC_STATUSES, statusLabel, statusVariant } from "../lib/documents";
 
@@ -21,18 +22,21 @@ export function Documents() {
   const focused = useRef(false);
   const timer = useRef<number>();
 
+  const { failure, fail, clear } = useFailure();
+
   const load = useCallback(
     async (q: string, only: string) => {
       const search = new URLSearchParams({ per_page: "100" });
       if (q.trim()) search.set("search", q.trim());
       if (only) search.set("status", only);
+      clear();
       try {
         setData(await api.get(`/documents?${search}`));
       } catch (e) {
-        toastError(e);
+        fail(e);
       }
     },
-    [toastError],
+    [fail, clear],
   );
 
   useEffect(() => {
@@ -41,7 +45,7 @@ export function Documents() {
     return () => window.clearTimeout(timer.current);
   }, [query, status, load]);
 
-  if (!data) return <ScreenLoading />;
+  if (!data) return <ScreenLoading error={failure} onRetry={() => void load(query, status)} />;
 
   // Сканер работает как клавиатура: набирает номер и жмёт Enter. Поле должно
   // ждать его сразу — иначе первый скан уходит в пустоту, и приёмщик решает,
