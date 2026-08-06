@@ -753,3 +753,20 @@ def _iso(dt: datetime | None) -> str | None:
 
 def paginated(items: list[dict], total: int, page: int, per_page: int) -> dict:
     return {"items": items, "total": total, "page": page, "per_page": per_page}
+
+
+def barcode_out(barcode) -> dict:
+    """Штрихкод товара для ответа.
+
+    `pack_size_milli` отдаётся как есть, в тысячных: приводить к «штукам» на
+    сервере значило бы делить целое на 1000 и однажды получить 0.999 у товара,
+    который меряют в граммах. Делит тот, кто показывает.
+    """
+    return {
+        "id": barcode.id,
+        "product_id": barcode.product_id,
+        "code": barcode.code,
+        "kind": barcode.kind,
+        "pack_size_milli": barcode.pack_size_milli,
+        "is_primary": barcode.is_primary,
+    }

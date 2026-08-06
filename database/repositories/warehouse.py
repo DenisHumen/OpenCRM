@@ -9,10 +9,10 @@
 зависит ни от пагинации, ни от того, что успело попасть в сессию.
 """
 
-from sqlalchemy import Select, func, or_, select
+from sqlalchemy import Select, func, or_, select, update
 from sqlalchemy.orm import Session
 
-from database.models import Product, StockMove
+from database.models import Product, ProductBarcode, StockMove
 from database.models.warehouse import QUANTITY_SCALE
 from database.query import contains, page_of
 
@@ -166,3 +166,108 @@ def deal_cost_by_deal(db: Session, deal_ids: list[int]) -> dict[int, int]:
         .group_by(StockMove.deal_id)
     ).all()
     return {deal_id: _scaled_to_minor(total or 0) for deal_id, total in rows}
+
+
+# --- штрихкоды ---
+#
+# Их у товара несколько, и почему — разобрано в модели `ProductBarcode`.
+
+
+def barcodes_of(db: Session, product_id: int) -> list[ProductBarcode]:
+    """Коды товара. Основной первым — его печатают на наклейке."""
+    return list(
+        db.scalars(
+            select(ProductBarcode)
+            .where(ProductBarcode.product_id == product_id)
+            .order_by(ProductBarcode.is_primary.desc(), ProductBarcode.id.asc())
+        )
+    )
+
+
+def barcodes_by_products(db: Session, product_ids) -> dict[int, list[ProductBarcode]]:
+    """Коды сразу нескольких товаров — одним запросом на весь список.
+
+    Список товаров показывает код рядом с позицией, и запрос на каждую строку
+    превратил бы страницу склада в двести обращений к базе.
+    """
+    product_ids = [i for i in set(product_ids) if i]
+    if not product_ids:
+        return {}
+    grouped: dict[int, list[ProductBarcode]] = {}
+    rows = db.scalars(
+        select(ProductBarcode)
+        .where(ProductBarcode.product_id.in_(product_ids))
+        .order_by(ProductBarcode.is_primary.desc(), ProductBarcode.id.asc())
+    )
+    for row in rows:
+        grouped.setdefault(row.product_id, []).append(row)
+    return grouped
+
+
+def get_barcode(db: Session, code: str) -> ProductBarcode | None:
+    return db.scalar(select(ProductBarcode).where(ProductBarcode.code == code))
+
+
+def barcode_of_product(db: Session, product_id: int, barcode_id: int) -> ProductBarcode | None:
+    """Код, принадлежащий именно этому товару — иначе чужой удаляли бы по номеру."""
+    row = db.get(ProductBarcode, barcode_id)
+    if row is None or row.product_id != product_id:
+        return None
+    return row
+
+
+def product_by_code(db: Session, code: str) -> Product | None:
+    """Товар по отсканированному коду. Удалённый не считается.
+
+    Мягко удалённый товар возвращать нельзя: сканер тогда молча подставил бы в
+    заказ позицию, которой в справочнике нет, и найти её потом было бы негде.
+    """
+    return db.scalar(
+        select(Product)
+        .join(ProductBarcode, ProductBarcode.product_id == Product.id)
+        .where(ProductBarcode.code == code, Product.deleted_at.is_(None))
+    )
+
+
+def internal_codes_like(db: Session, prefix: str) -> list[str]:
+    """Выданные внутренние коды с этой приставкой — чтобы выдать следующий."""
+    return list(
+        db.scalars(
+            select(ProductBarcode.code).where(
+                ProductBarcode.code.startswith(prefix, autoescape=True)
+            )
+        )
+    )
+
+
+def add_barcode(db: Session, row: ProductBarcode) -> ProductBarcode:
+    db.add(row)
+    db.flush()
+    return row
+
+
+def drop_barcode(db: Session, row: ProductBarcode) -> None:
+    db.delete(row)
+    db.flush()
+
+
+def make_primary(db: Session, row: ProductBarcode) -> None:
+    """Сделать код основным, сняв признак с остальных кодов ЭТОГО товара.
+
+    Двумя явными UPDATE и «свой» первым — по той же причине, что у основной
+    фирмы: присваивание полю ORM ничего не пишет, если значение уже такое, и в
+    гонке основных не остаётся вовсе. Здесь цена ошибки меньше (на наклейке
+    окажется не тот из двух кодов), но приём один, и разводить два разных
+    способа делать одно и то же незачем.
+    """
+    db.execute(update(ProductBarcode).where(ProductBarcode.id == row.id).values(is_primary=True))
+    db.execute(
+        update(ProductBarcode)
+        .where(
+            ProductBarcode.product_id == row.product_id,
+            ProductBarcode.id != row.id,
+            ProductBarcode.is_primary.is_(True),
+        )
+        .values(is_primary=False)
+    )
+    db.refresh(row)
