@@ -210,3 +210,33 @@ def scan(db: Session, code: str):
 def list_of(db: Session, product_id: int) -> list[ProductBarcode]:
     """Коды товара. Основной первым — его печатают на наклейке."""
     return warehouse_repo.barcodes_of(db, product_id)
+
+
+#: Настройки наклейки, которые блок отдаёт экрану печати.
+LABEL_SETTINGS = (
+    "label_width_mm",
+    "label_height_mm",
+    "label_show_price",
+    "label_show_name",
+    "label_show_sku",
+)
+
+
+def label_settings(db: Session) -> dict:
+    """Размер наклейки и состав полей.
+
+    Размер в миллиметрах строкой — он уезжает прямо в `@page { size }` печатной
+    страницы, и приводить его туда-обратно незачем. Печатает браузер, а не
+    сервер: термопринтер стоит на столе в мастерской, и с VPS до него дороги
+    нет и не будет.
+    """
+    from core.services import settings_service
+
+    values = settings_service.get_all(db)
+    return {
+        "width_mm": values.get("label_width_mm", "58"),
+        "height_mm": values.get("label_height_mm", "40"),
+        "show_price": values.get("label_show_price", "0") == "1",
+        "show_name": values.get("label_show_name", "1") == "1",
+        "show_sku": values.get("label_show_sku", "1") == "1",
+    }

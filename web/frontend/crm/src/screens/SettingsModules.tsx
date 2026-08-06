@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { Icon } from "../components/Icon";
-import { ScreenLoading, Toggle } from "../components/ui";
+import { ConfirmModal, ScreenLoading, Toggle } from "../components/ui";
 import { api } from "../lib/api";
 import { useApp, type ModuleInfo } from "../lib/app";
 import { useFailure } from "../lib/failure";
@@ -52,6 +52,10 @@ export function SettingsModules() {
   const { t, locale, refreshModules, toast, toastError } = useApp();
   const [items, setItems] = useState<ModuleInfo[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  // Блок, выключение которого уведёт за собой соседей: спрашиваем ДО нажатия.
+  // Забрать разделы с данными одним движением и молча — самый быстрый способ
+  // потерять доверие к настройкам.
+  const [asking, setAsking] = useState<ModuleInfo | null>(null);
 
   const { failure, fail, clear } = useFailure();
 
@@ -70,6 +74,20 @@ export function SettingsModules() {
   }, [load]);
 
   if (!items) return <ScreenLoading error={failure} onRetry={() => void load()} />;
+
+  const names = (keys: string[]) => keys.map((k) => t(LABEL[k] ?? "modules")).join(", ");
+
+  const askThenSwitch = (item: ModuleInfo) => {
+    if (item.core || !item.ready || busy) return;
+    // Спрашиваем только про выключение с каскадом: оно убирает разделы.
+    // Включение тоже тянет соседей, но добавляет, а не отнимает — про него
+    // достаточно строки в карточке.
+    if (item.enabled && item.off_takes.length > 0) {
+      setAsking(item);
+      return;
+    }
+    void switchModule(item);
+  };
 
   const switchModule = async (item: ModuleInfo) => {
     if (item.core || !item.ready || busy) return;
@@ -110,7 +128,7 @@ export function SettingsModules() {
             <div
               key={item.key}
               className={"module-row" + (locked ? " locked" : "")}
-              onClick={() => void switchModule(item)}
+              onClick={() => askThenSwitch(item)}
             >
               <span className="module-icon">
                 <Icon name={ICON[item.key] ?? "docs"} size={17} />
@@ -126,11 +144,28 @@ export function SettingsModules() {
                     ошибкой после нажатия. */}
                 {item.core && <span className="module-why">{t("moduleCoreWhy")}</span>}
                 {!item.ready && <span className="module-why">{t("moduleSoonWhy")}</span>}
+                {/* Связь показываем ВСЕГДА, а не только когда она мешает.
+                    Человек должен видеть устройство набора до того, как
+                    упрётся в последствие: «наклейки стоят на складе» понятнее
+                    из спокойной строки, чем из вопроса при выключении. */}
+                {item.requires.length > 0 && (
+                  <span className="module-why">
+                    {t("moduleRestsOn", { list: names(item.requires) })}
+                  </span>
+                )}
                 {item.required_by.length > 0 && !item.core && (
                   <span className="module-why">
-                    {t("moduleNeededBy", {
-                      list: item.required_by.map((k) => t(LABEL[k] ?? "modules")).join(", "),
-                    })}
+                    {t("moduleNeededBy", { list: names(item.required_by) })}
+                  </span>
+                )}
+                {item.enabled && item.off_takes.length > 0 && (
+                  <span className="module-why">
+                    {t("moduleOffTakes", { list: names(item.off_takes) })}
+                  </span>
+                )}
+                {!item.enabled && item.on_needs.length > 0 && (
+                  <span className="module-why">
+                    {t("moduleOnNeeds", { list: names(item.on_needs) })}
                   </span>
                 )}
                 {item.updated_by_name && item.updated_at && (
@@ -147,6 +182,19 @@ export function SettingsModules() {
           );
         })}
       </div>
+
+      {asking && (
+        <ConfirmModal
+          text={t("moduleOffConfirm", {
+            name: t(LABEL[asking.key] ?? "modules"),
+            list: names(asking.off_takes),
+          })}
+          confirmLabel={t("moduleOffConfirmYes")}
+          danger
+          onConfirm={() => void switchModule(asking)}
+          onClose={() => setAsking(null)}
+        />
+      )}
     </div>
   );
 }

@@ -71,13 +71,38 @@ def is_enabled(db: Session, key: str) -> bool:
     return state(db).get(key, False)
 
 
-def set_enabled(db: Session, key: str, enabled: bool, user: User) -> dict[str, bool]:
-    """Включить или выключить блок.
+def affected_by(db: Session, key: str, enabled: bool) -> list[str]:
+    """Кого ещё придётся переключить вместе с этим блоком. Без самого блока.
 
-    Отказ здесь — не придирка. Выключить то, на чём держится другой включённый
-    блок, значит получить раздел, который открывается и падает; включить блок
-    без его основания — раздел, которому не на что опереться. В обоих случаях
-    честнее отказать с указанием причины, чем молча увести за собой соседей.
+    Отвечает на вопрос интерфейса «что случится, если я нажму» — до нажатия.
+    Молча уводить за собой соседние разделы нельзя: человек выключает склад,
+    а из меню пропадают ещё и наклейки с их настройками, и связать одно с
+    другим ему нечем.
+    """
+    current = state(db)
+    if enabled:
+        return [dep for dep in modules.requirements_tree(key) if not current.get(dep)]
+    return [dep for dep in modules.dependents_tree(key) if current.get(dep)]
+
+
+def set_enabled(db: Session, key: str, enabled: bool, user: User) -> dict[str, bool]:
+    """Включить или выключить блок — вместе со всем, что от него зависит.
+
+    **Зависимости не отказ, а последовательность.** Выключаешь склад — гаснут и
+    наклейки, которые без него не имеют смысла; включаешь наклейки — поднимается
+    склад, без которого им не на что опереться. Прежде система в обоих случаях
+    отказывала и называла причину, и это было честно, но перекладывало на
+    человека работу, которую может сделать сама: он читал «блок ещё нужен вот
+    этим», шёл выключать их по одному и возвращался. При цепочке в три звена
+    порядок приходилось угадывать.
+
+    Уводя соседей, система обязана **сказать, кого увела** — это делает ответ
+    (`state` целиком) и запись в журнале на каждый переключённый блок. А
+    предупредить заранее — дело интерфейса, для того и `affected_by`.
+
+    Порядок важен: гасим снизу вверх (сначала тех, кто стоит выше), включаем
+    сверху вниз (сначала основание). Иначе на середине цепочки окажется блок,
+    чьё основание уже погасили.
     """
     module = modules.get(key)
     if module is None:
@@ -92,48 +117,21 @@ def set_enabled(db: Session, key: str, enabled: bool, user: User) -> dict[str, b
             f"Module '{key}' is not built yet", code="module_not_ready"
         )
 
-    current = state(db)
-    if enabled:
-        missing = [dep for dep in module.requires if not current.get(dep)]
-        if missing:
+    # Ненаписанный блок нельзя поднять и заодно: он бы включился «за компанию»
+    # и обещал раздел, которого нет. Такую цепочку честнее не начинать вовсе.
+    for dependency in affected_by(db, key, enabled):
+        neighbour = modules.get(dependency)
+        if enabled and neighbour is not None and not neighbour.ready:
             raise errors.ValidationError(
-                f"Module '{key}' needs these switched on first: {', '.join(missing)}",
-                code="module_requires",
-            )
-    else:
-        blocking = [dep for dep in modules.dependents_of(key) if current.get(dep)]
-        if blocking:
-            raise errors.ValidationError(
-                f"Module '{key}' is still needed by: {', '.join(blocking)}",
-                code="module_required_by",
+                f"Module '{key}' needs '{dependency}', which is not built yet",
+                code="module_requires_unbuilt",
             )
 
-    # Состояние до переключения. `state` всегда содержит все блоки реестра,
-    # поэтому ключ на месте, даже если строки в базе ещё нет.
-    was = current[key]
-    row = modules_repo.get(db, key)
-    if row is None:
-        db.add(ModuleState(key=key, enabled=enabled, updated_by=user.id))
-    else:
-        row.enabled = enabled
-        row.updated_by = user.id
-        row.updated_at = now_utc()
-    db.flush()
-    # Выключенный блок исчезает из меню, из API и из отчётов целиком. Вопрос
-    # «куда делся раздел» задают на следующий день после того, как его выключили,
-    # и `module_states.updated_by` отвечает только про последнее переключение —
-    # предыдущие он затирает собой.
-    audit_service.record(
-        db,
-        action=audit_service.ACTION_MODULE_SWITCHED,
-        actor=user,
-        source=audit_service.SOURCE_MANUAL,
-        entity_type=audit_service.ENTITY_MODULE,
-        # У блока нет числового идентификатора — ключ и есть его имя.
-        entity_label=key,
-        before="on" if was else "off",
-        after="on" if enabled else "off",
-    )
+    current = state(db)
+    # Сам блок — последним при выключении (сначала гаснут стоящие на нём) и
+    # последним при включении (сначала поднимается основание).
+    for target in [*affected_by(db, key, enabled), key]:
+        _write_state(db, target, enabled, user, was=current.get(target, False))
     invalidate()
     # Кэш НЕ набиваем здесь. `state(db)` внутри незакоммиченной транзакции
     # положил бы в глобальный кэш то, что видит только эта сессия: откатись она
@@ -161,13 +159,58 @@ def details(db: Session) -> list[dict]:
                 "core": module.core,
                 "ready": module.ready,
                 "requires": list(module.requires),
-                # Кто держит этот блок включённым: показываем в подсказке, чтобы
-                # отказ переключить не выглядел необъяснимым.
-                "required_by": [
-                    dep for dep in modules.dependents_of(module.key) if current.get(dep)
+                # Кто стоит на этом блоке — все, не только включённые: экран
+                # рисует связь целиком, а не только её работающую половину.
+                "required_by": list(modules.dependents_of(module.key)),
+                # Что произойдёт при нажатии — посчитано здесь, а не угадано
+                # экраном. Угадывать пришлось бы обходом дерева на фронтенде,
+                # то есть тем же правилом во втором экземпляре; такие два
+                # экземпляра расходятся, и расходятся молча.
+                "off_takes": [
+                    dep for dep in modules.dependents_tree(module.key) if current.get(dep)
+                ],
+                "on_needs": [
+                    dep
+                    for dep in modules.requirements_tree(module.key)
+                    if not current.get(dep)
                 ],
                 "updated_at": row.updated_at.isoformat() if row else None,
                 "updated_by": row.updated_by if row else None,
             }
         )
     return result
+
+
+def _write_state(db: Session, key: str, enabled: bool, user: User, *, was: bool) -> None:
+    """Записать состояние одного блока и след в журнале.
+
+    Запись делается даже когда значение не меняется — при каскаде так проще
+    рассуждать, а лишней она не будет: журнал пишется только для тех, кого
+    `affected_by` уже отобрал как «придётся переключить», то есть значение у
+    них другое по построению.
+    """
+    row = modules_repo.get(db, key)
+    if row is None:
+        db.add(ModuleState(key=key, enabled=enabled, updated_by=user.id))
+    else:
+        row.enabled = enabled
+        row.updated_by = user.id
+        row.updated_at = now_utc()
+    db.flush()
+    # Выключенный блок исчезает из меню, из API и из отчётов целиком. Вопрос
+    # «куда делся раздел» задают на следующий день после того, как его выключили,
+    # и `module_states.updated_by` отвечает только про последнее переключение —
+    # предыдущие он затирает собой. Тем более это верно для каскада: блок мог
+    # погаснуть не сам по себе, а вслед за соседом, и в журнале это видно по
+    # двум записям одной секундой.
+    audit_service.record(
+        db,
+        action=audit_service.ACTION_MODULE_SWITCHED,
+        actor=user,
+        source=audit_service.SOURCE_MANUAL,
+        entity_type=audit_service.ENTITY_MODULE,
+        # У блока нет числового идентификатора — ключ и есть его имя.
+        entity_label=key,
+        before="on" if was else "off",
+        after="on" if enabled else "off",
+    )

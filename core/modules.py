@@ -93,5 +93,55 @@ def get(key: str) -> Module | None:
 
 
 def dependents_of(key: str) -> tuple[str, ...]:
-    """Кто перестанет иметь смысл, если выключить этот блок."""
+    """Кто перестанет иметь смысл, если выключить этот блок. Только прямые."""
     return tuple(m.key for m in MODULES if key in m.requires)
+
+
+def dependents_tree(key: str) -> tuple[str, ...]:
+    """Все, кто уйдёт следом за этим блоком, — включая зависимых от зависимых.
+
+    Цепочки длиннее одного звена уже есть: наклейки стоят на складе, склад на
+    заявках. Выключить склад, погасив наклейки, но не тронув то, что стоит на
+    наклейках, значит оставить раздел, которому не на что опереться, — ровно то,
+    ради чего зависимости и заводились.
+
+    Порядок — от дальних к ближним: гасить надо снизу вверх, иначе на середине
+    цепочки окажется блок, чьё основание уже погасили.
+    """
+    order: list[str] = []
+    seen = {key}
+
+    def walk(current: str) -> None:
+        for dependent in dependents_of(current):
+            if dependent in seen:
+                continue
+            seen.add(dependent)
+            walk(dependent)
+            order.append(dependent)
+
+    walk(key)
+    return tuple(order)
+
+
+def requirements_tree(key: str) -> tuple[str, ...]:
+    """Всё, что должно быть включено, чтобы этот блок имел смысл.
+
+    Порядок — от дальних к ближним: включать надо сверху вниз, основание
+    раньше того, что на нём стоит.
+    """
+    order: list[str] = []
+    seen = {key}
+
+    def walk(current: str) -> None:
+        module = BY_KEY.get(current)
+        if module is None:
+            return
+        for required in module.requires:
+            if required in seen:
+                continue
+            seen.add(required)
+            walk(required)
+            order.append(required)
+
+    walk(key)
+    return tuple(order)

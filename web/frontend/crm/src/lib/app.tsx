@@ -38,6 +38,10 @@ export interface ModuleInfo {
   ready: boolean;
   requires: string[];
   required_by: string[];
+  /** Кого выключение уведёт за собой — считает сервер, обходя дерево связей. */
+  off_takes: string[];
+  /** Кого включение поднимет следом — по той же причине считает сервер. */
+  on_needs: string[];
   updated_at: string | null;
   updated_by_name: string | null;
 }

@@ -173,14 +173,19 @@ def test_boards_switch_off_takes_their_share_links_with_them(root_client, manage
     assert manager_client.get(f"{API}/clients").status_code == 200
 
 
-def test_dependencies_are_respected_in_both_directions(root_client, monkeypatch):
-    """Зависимость между двумя необязательными блоками.
+def test_dependencies_pull_each_other_in_both_directions(root_client, monkeypatch):
+    """Зависимость между двумя необязательными блоками — это последовательность.
 
-    Сейчас такой пары в реестре нет: всё готовое опирается на ядро, которое не
-    выключается. Значит обе ветки проверки зависимостей не исполняются ни одним
-    тестом — и молча сломаются к появлению склада, который опирается на заявки.
-    Поэтому заводим пару прямо здесь: проверяем правило, а не сегодняшний состав
-    реестра.
+    Готовых пар «выключаемый на выключаемом» в реестре может не быть, а правило
+    исполняться обязано, поэтому пара заводится прямо здесь: проверяем правило, а
+    не сегодняшний состав реестра.
+
+    **Выключаешь основание — гаснет и надстройка; включаешь надстройку —
+    поднимается основание.** Прежде система в обоих случаях отказывала и
+    называла причину. Это было честно, но перекладывало на человека работу,
+    которую может сделать сама: он читал «блок ещё нужен вот этим», шёл
+    выключать их по одному и возвращался. При цепочке в три звена порядок
+    приходилось угадывать.
     """
     base = modules.Module(key="test_base", ready=True, default=False)
     on_top = modules.Module(key="test_on_top", ready=True, default=False, requires=("test_base",))
@@ -189,20 +194,57 @@ def test_dependencies_are_respected_in_both_directions(root_client, monkeypatch)
     monkeypatch.setattr(modules, "BY_KEY", {m.key: m for m in fake})
     modules_service.invalidate()
 
-    # надстройку нельзя включить, пока не включено основание
-    denied = switch(root_client, "test_on_top", True)
-    assert denied.status_code == 422
-    assert denied.json()["error"]["code"] == "module_requires"
-    assert "test_base" in denied.json()["error"]["message"]
+    # Включили надстройку — основание поднялось следом, отдельного нажатия не
+    # потребовалось.
+    turned_on = switch(root_client, "test_on_top", True)
+    assert turned_on.status_code == 200, turned_on.text
+    state = {item["key"]: item["enabled"] for item in turned_on.json()["items"]}
+    assert state["test_on_top"] is True
+    assert state["test_base"] is True, "основание не поднялось вместе с надстройкой"
 
-    assert switch(root_client, "test_base", True).status_code == 200
+    # Выбили основание — надстройка погасла вместе с ним, а не осталась висеть
+    # разделом, которому не на что опереться.
+    turned_off = switch(root_client, "test_base", False)
+    assert turned_off.status_code == 200, turned_off.text
+    state = {item["key"]: item["enabled"] for item in turned_off.json()["items"]}
+    assert state["test_base"] is False
+    assert state["test_on_top"] is False, "надстройка осталась включённой без основания"
+
+
+def test_the_screen_is_told_what_a_switch_will_take_with_it(root_client, monkeypatch):
+    """Экран обязан предупредить ДО нажатия, а знание о связях считает сервер.
+
+    Молча уводить за собой соседние разделы нельзя: человек выключает склад, а
+    из меню пропадают ещё и наклейки, и связать одно с другим ему нечем.
+    Считает это сервер, а не экран: обход дерева на фронтенде был бы тем же
+    правилом во втором экземпляре, а два экземпляра расходятся молча.
+    """
+    base = modules.Module(key="test_base", ready=True, default=False)
+    on_top = modules.Module(key="test_on_top", ready=True, default=False, requires=("test_base",))
+    fake = modules.MODULES + (base, on_top)
+    monkeypatch.setattr(modules, "MODULES", fake)
+    monkeypatch.setattr(modules, "BY_KEY", {m.key: m for m in fake})
+    modules_service.invalidate()
+
     assert switch(root_client, "test_on_top", True).status_code == 200
 
-    # и нельзя выбить основание из-под включённой надстройки
-    blocked = switch(root_client, "test_base", False)
-    assert blocked.status_code == 422
-    assert blocked.json()["error"]["code"] == "module_required_by"
-    assert "test_on_top" in blocked.json()["error"]["message"]
+    listed = root_client.get(f"{API}/modules").json()["items"]
+    by_key = {item["key"]: item for item in listed}
+
+    assert by_key["test_base"]["off_takes"] == ["test_on_top"], (
+        "экран не узнает, что выключение основания погасит надстройку"
+    )
+    assert by_key["test_base"]["required_by"] == ["test_on_top"]
+    assert by_key["test_on_top"]["requires"] == ["test_base"]
+    # Всё уже включено — поднимать нечего, и экрану нечего показывать.
+    assert by_key["test_on_top"]["on_needs"] == []
+
+    switch(root_client, "test_base", False)
+    listed = root_client.get(f"{API}/modules").json()["items"]
+    by_key = {item["key"]: item for item in listed}
+    assert by_key["test_on_top"]["on_needs"] == ["test_base"], (
+        "экран не узнает, что включение надстройки поднимет основание"
+    )
 
     # выключили надстройку — основание снова свободно
     assert switch(root_client, "test_on_top", False).status_code == 200
@@ -307,12 +349,22 @@ def test_each_optional_module_off_alone_breaks_nothing(key, root_client):
     закрывал их именно он, а не задетый по дороге сосед.
     """
     switch_all(root_client, True)
+
+    # Кого блок уведёт за собой: наклейки стоят на складе, и выключение склада
+    # гасит их следом. Возвращая склад, наклейки система НЕ поднимает — их
+    # могли не хотеть, — поэтому включать обратно надо обоих, и знать об этом
+    # тест должен заранее.
+    listed = {item["key"]: item for item in root_client.get(f"{API}/modules").json()["items"]}
+    cascaded = listed[key]["off_takes"]
+
     assert switch(root_client, key, False).status_code == 200
 
     closed = sweep(root_client, f"при выключенном блоке «{key}»")
     assert closed, f"выключили «{key}», а ни один адрес не закрылся"
 
     assert switch(root_client, key, True).status_code == 200
+    for dependent in cascaded:
+        assert switch(root_client, dependent, True).status_code == 200
     for path in sorted(closed):
         response = root_client.get(path)
         assert response.status_code == 200, f"{path} не открылся обратно: {response.text}"

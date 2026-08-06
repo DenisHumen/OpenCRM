@@ -113,3 +113,16 @@ def scan(
     """
     product = barcode_service.scan(db, code)
     return schemas.product_out(product, stock_milli=None, amounts=False)
+
+
+@router.get("/settings")
+def label_settings(
+    _: User = Depends(require_perm("labels", "view")),
+    db: Session = Depends(get_db),
+):
+    """Размер наклейки и что на ней печатать.
+
+    Отдельной ручкой, а не куском общих настроек: общие читает только root
+    (там реквизиты и ключи), а размер рулона нужен всякому, кто печатает.
+    """
+    return barcode_service.label_settings(db)
