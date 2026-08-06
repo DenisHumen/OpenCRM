@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 # молча и только в момент вызова.
 from core import events as event_bus
 from core import exceptions as errors
+from core import references
 from core import uniqueness
 from core.services import company_service, settings_service
 from core.utils import now_utc
@@ -166,11 +167,19 @@ def create(db: Session, data: dict, author: User) -> Document:
     if locale not in DOCUMENT_LOCALES:
         raise errors.ValidationError(f"Unknown locale: {locale}", code="unknown_locale")
 
-    client = db.get(Client, int(data["client_id"])) if data.get("client_id") else None
-    deal = db.get(Deal, int(data["deal_id"])) if data.get("deal_id") else None
+    # Указанное должно существовать. Раньше несуществующий клиент превращался в
+    # None и уезжал в общую проверку ниже — человек получал «укажите клиента» на
+    # запрос, где клиент как раз указан, просто такого нет. Искать причину по
+    # такому ответу невозможно: он говорит не о том, что случилось.
+    client_id = references.client(db, data.get("client_id"))
+    deal_id = references.deal(db, data.get("deal_id"))
+    client = db.get(Client, client_id) if client_id else None
+    deal = db.get(Deal, deal_id) if deal_id else None
     if deal is not None and client is None:
         client = db.get(Client, deal.client_id)
     if client is None and not (data.get("client_name") or "").strip():
+        # А вот это — настоящий случай «не назвали никого»: бланк прохожему без
+        # карточки законен, но имя на бумаге должно стоять хоть какое-то.
         raise errors.ValidationError(
             "Document needs a client or at least a name", code="client_required"
         )

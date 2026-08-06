@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from config.settings import get_settings
 from core import exceptions as errors
+from core import references
 from core.services import media_service, storage_service
 from core.utils import normalize_external_url, now_utc
 from database.models import Board, User, Work
@@ -34,8 +35,8 @@ def create_board(
     board = Board(
         title=title.strip(),
         description=(description or "").strip(),
-        client_id=client_id,
-        deal_id=deal_id,
+        client_id=references.client(db, client_id),
+        deal_id=references.deal(db, deal_id),
         created_by=author.id,
         is_published=False,
     )

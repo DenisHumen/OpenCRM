@@ -6,6 +6,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from core import exceptions as errors
+from core import references
 from core.utils import now_utc, to_utc_naive
 from database.models import Task, User
 
@@ -33,9 +34,15 @@ def create(db: Session, data: dict, author: User) -> Task:
         due_at=to_utc_naive(data.get("due_at")),
         # Не указали исполнителя — задача на авторе. «Ничья» задача не делается
         # никем: каждый считает, что её возьмёт кто-то другой.
-        assignee_id=data["assignee_id"] if "assignee_id" in data else author.id,
-        client_id=data.get("client_id"),
-        deal_id=data.get("deal_id"),
+        assignee_id=(
+            references.user(
+                db, data["assignee_id"], code="assignee_not_found", message="Assignee not found"
+            )
+            if "assignee_id" in data
+            else author.id
+        ),
+        client_id=references.client(db, data.get("client_id")),
+        deal_id=references.deal(db, data.get("deal_id")),
         created_by=author.id,
     )
     db.add(task)
@@ -53,11 +60,13 @@ def update(db: Session, task_id: int, data: dict) -> Task:
     if "due_at" in data:
         task.due_at = to_utc_naive(data["due_at"])
     if "assignee_id" in data:
-        task.assignee_id = data["assignee_id"]
+        task.assignee_id = references.user(
+            db, data["assignee_id"], code="assignee_not_found", message="Assignee not found"
+        )
     if "client_id" in data:
-        task.client_id = data["client_id"]
+        task.client_id = references.client(db, data["client_id"])
     if "deal_id" in data:
-        task.deal_id = data["deal_id"]
+        task.deal_id = references.deal(db, data["deal_id"])
     if "is_done" in data and data["is_done"] is not None:
         # Дата закрытия отвечает сразу на два вопроса: сделано ли и когда.
         task.done_at = now_utc() if data["is_done"] else None

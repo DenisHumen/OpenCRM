@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from core import events
 from core import exceptions as errors
+from core import references
 from core.services import audit_service, company_service, pipeline_service
 from core.utils import now_utc, to_utc_naive
 from database.models import Deal, User
@@ -80,27 +81,6 @@ def _company_id(db: Session, data: dict) -> int | None:
     return int(value)
 
 
-def _manager_id(db: Session, value) -> int | None:
-    """Ответственный из запроса, с проверкой существования.
-
-    Пустое значение законно и означает «общая очередь, разберут потом» — это
-    решение принято при заведении заявки и здесь повторяется.
-
-    Проверяем, а не доверяем числу: несуществующий id доезжал до вставки и
-    падал нарушением внешнего ключа, то есть пятисоткой на обычную опечатку в
-    запросе. Ровно так же и по той же причине проверяется клиент.
-
-    Отключённого сотрудника не запрещаем: человек уволился, а заявки, которые
-    он вёл, остаются его — переписывать историю ради красоты списка нельзя.
-    Выбрать его в интерфейсе всё равно нельзя, там показывают только активных.
-    """
-    if not value:
-        return None
-    if users_repo.get_by_id(db, int(value)) is None:
-        raise errors.NotFoundError("Manager not found", code="manager_not_found")
-    return int(value)
-
-
 def get_deal(db: Session, deal_id: int, include_deleted: bool = False) -> Deal:
     deal = deals_repo.get(db, deal_id, include_deleted=include_deleted)
     if deal is None:
@@ -118,8 +98,7 @@ def create_deal(db: Session, data: dict, author: User) -> Deal:
         raise errors.ValidationError("Client is required", code="client_required")
     # Сделка без клиента бессмысленна: некому выставлять счёт и не с кем
     # переписываться. Проверяем существование, а не только наличие числа.
-    if clients_repo.get(db, int(client_id)) is None:
-        raise errors.NotFoundError("Client not found", code="client_not_found")
+    client_id = references.client(db, client_id)
 
     stage = data.get("stage") or pipeline_service.first_open_key(db)
     pipeline_service.get_stage(db, stage)   # бросит unknown_stage, если этапа нет
@@ -127,7 +106,13 @@ def create_deal(db: Session, data: dict, author: User) -> Deal:
     # «Поле не прислали» и «прислали пустым» — разные вещи. Не указали
     # ответственного — ставим автора, чтобы сделка не осталась ничьей случайно.
     # Указали пусто явно — значит так и хотели: общая очередь, разберут потом.
-    manager_id = _manager_id(db, data["manager_id"]) if "manager_id" in data else author.id
+    manager_id = (
+        references.user(
+            db, data["manager_id"], code="manager_not_found", message="Manager not found"
+        )
+        if "manager_id" in data
+        else author.id
+    )
 
     deal = Deal(
         title=title[:MAX_TITLE],
@@ -177,11 +162,11 @@ def update_deal(
         # есть API отвечал не тем, что записал.
         deal.due_at = to_utc_naive(data["due_at"])
     if "manager_id" in data:
-        deal.manager_id = _manager_id(db, data["manager_id"])
+        deal.manager_id = references.user(
+            db, data["manager_id"], code="manager_not_found", message="Manager not found"
+        )
     if "client_id" in data and data["client_id"]:
-        if clients_repo.get(db, int(data["client_id"])) is None:
-            raise errors.NotFoundError("Client not found", code="client_not_found")
-        deal.client_id = int(data["client_id"])
+        deal.client_id = references.client(db, data["client_id"])
     # Прислали null — вернулись к «от основной фирмы». Это законное состояние,
     # а не «поле не трогали», поэтому проверяем наличие ключа, а не значения.
     if "company_id" in data:
