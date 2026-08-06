@@ -87,8 +87,12 @@ def _ctx(db: Session) -> tuple[dict, dict]:
     return site, strings
 
 
+#: Приставка cookie с пропуском по PIN. Одна ссылка — одна cookie.
+PIN_COOKIE_PREFIX = "opencrm_bv_"
+
+
 def _pin_cookie_name(link_id: int) -> str:
-    return f"opencrm_bv_{link_id}"
+    return f"{PIN_COOKIE_PREFIX}{link_id}"
 
 
 def _has_pin_access(request: Request, link) -> bool:
@@ -230,18 +234,59 @@ _MEDIA_TYPES = {
 }
 
 
+def _pins_held(request: Request) -> dict[int, str]:
+    """Пропуска, которые посетитель предъявляет: {id ссылки: значение cookie}."""
+    held: dict[int, str] = {}
+    for name, value in request.cookies.items():
+        if not name.startswith(PIN_COOKIE_PREFIX):
+            continue
+        try:
+            held[int(name[len(PIN_COOKIE_PREFIX):])] = value
+        except ValueError:
+            # Cookie с нашей приставкой и не-числом после неё поставили не мы.
+            continue
+    return held
+
+
+def _is_staff(request: Request, db: Session) -> bool:
+    """Сотрудник, вошедший в CRM, видит файлы всех досок — как и сами доски.
+
+    Право на доски здесь не спрашивается нарочно: файл работы виден в списке
+    досок, в поиске, на дашборде и в палитре, и все эти экраны уже закрыты
+    правами. Требовать право повторно на каждой картинке значило бы получить
+    экран с рамками вместо изображений там, где сам экран открыт.
+    """
+    from core.services import auth_service
+    from web.api.deps import SESSION_COOKIE
+
+    token = request.cookies.get(SESSION_COOKIE)
+    return bool(token and auth_service.get_user_by_session(db, token) is not None)
+
+
 @router.get("/media/{work_uid}/{filename}")
-def media_file(work_uid: str, filename: str):
+def media_file(work_uid: str, filename: str, request: Request, db: Session = Depends(get_db)):
     if filename not in media_service.PUBLIC_FILENAMES or "/" in work_uid or "\\" in work_uid:
         return JSONResponse({"error": {"code": "not_found", "message": "Not found"}}, status_code=404)
     path = media_service.work_dir(work_uid) / filename
     if not path.is_file():
         return JSONResponse({"error": {"code": "not_found", "message": "Not found"}}, status_code=404)
+
+    # Доступ к файлу — тот же, что к витрине; разбор правила в
+    # `share_service.media_is_public`. Отказ выглядит как «нет такого»: сказать
+    # «есть, но не покажем» значило бы подтвердить, что работа существует.
+    staff = _is_staff(request, db)
+    if not staff and not share_service.media_is_public(db, work_uid, _pins_held(request)):
+        return JSONResponse({"error": {"code": "not_found", "message": "Not found"}}, status_code=404)
+
     return FileResponse(
         path,
         media_type=_MEDIA_TYPES.get(path.suffix, "application/octet-stream"),
         headers={
-            "Cache-Control": "public, max-age=31536000, immutable",
+            # `private`, а не `public`: за файлом стоит проверка, и общий кэш
+            # (прокси провайдера, кэш в офисе) не должен раздавать его тем, кто
+            # эту проверку не проходил. Срок оставлен длинным — имя каталога
+            # неизменяемо, и повторная загрузка той же картинки бессмысленна.
+            "Cache-Control": "private, max-age=31536000, immutable",
             "X-Content-Type-Options": "nosniff",
         },
     )

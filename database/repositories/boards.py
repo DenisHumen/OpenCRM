@@ -98,6 +98,13 @@ def count_works(db: Session, board_id: int) -> int:
     return db.scalar(select(func.count()).where(Work.board_id == board_id).select_from(Work)) or 0
 
 
+def get_work_by_uid(db: Session, work_uid: str) -> Work | None:
+    """Работа по имени её каталога на диске — так к ней приходят за файлом."""
+    if not work_uid:
+        return None
+    return db.scalar(select(Work).where(Work.work_uid == work_uid))
+
+
 def get_work_by_id(db: Session, work_id: int) -> Work | None:
     """Работа без оглядки на доску — для менеджера файлов, где доски ещё не знают."""
     return db.get(Work, work_id)

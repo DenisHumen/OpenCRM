@@ -31,6 +31,25 @@ def get_by_token(db: Session, token: str) -> ShareLink | None:
     return db.scalar(select(ShareLink).where(ShareLink.token == token))
 
 
+def live_for_board(db: Session, board_id: int, now: datetime) -> list[ShareLink]:
+    """Ссылки доски, которые прямо сейчас работают: включённые и не просроченные.
+
+    Отдельно от `list_for_board`: тот показывает хозяину все ссылки, включая
+    отозванные и истёкшие, — ему надо видеть, что он выдавал. Здесь спрашивают
+    другое: «можно ли по этой доске что-нибудь показать снаружи», и отозванная
+    ссылка на такой вопрос отвечает «нет».
+    """
+    return list(
+        db.scalars(
+            select(ShareLink).where(
+                ShareLink.board_id == board_id,
+                ShareLink.is_active.is_(True),
+                (ShareLink.expires_at.is_(None)) | (ShareLink.expires_at >= now),
+            )
+        )
+    )
+
+
 def list_for_board(db: Session, board_id: int) -> list[ShareLink]:
     return list(
         db.scalars(

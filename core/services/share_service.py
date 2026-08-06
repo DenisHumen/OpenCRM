@@ -144,6 +144,44 @@ def resolve_public(db: Session, token: str) -> tuple[ShareLink, Board] | None:
     return link, board
 
 
+def media_is_public(db: Session, work_uid: str, pins_held: dict[int, str]) -> bool:
+    """Можно ли отдать наружу файл этой работы.
+
+    **Файл витрины закрывается теми же пятью ручками, что и сама витрина.**
+    Раньше — ни одной. Проверено прогоном: клиент один раз открыл витрину и
+    запомнил адреса картинок; после смены PIN, отзыва ссылки, истечения срока,
+    снятия доски с публикации и даже удаления ссылки страница отвечала 401/404,
+    а файлы — 200, причём анониму и вовсе без PIN. Витрина закрыта, работы
+    открыты.
+
+    Смягчало это одно: имя каталога — `token_hex(16)`, его не подобрать. То есть
+    беда была не «доступно всем», а «доступно навсегда тому, кому однажды
+    показали», — ровно то, от чего отзыв ссылки и заводят.
+
+    Правило: файл виден, если у его доски есть **хотя бы одна живая ссылка**, по
+    которой этот посетитель прошёл бы и на саму страницу. Без PIN — проходит
+    любой; с PIN — только предъявивший пропуск именно по этой ссылке.
+    `pins_held` — пропуска из cookie, по одному на ссылку.
+
+    Ссылок у доски бывает несколько, и хватает одной подходящей: две ссылки —
+    это два разных приглашения к одной работе, и закрывать одно из-за другого
+    было бы неверно.
+    """
+    work = boards_repo.get_work_by_uid(db, work_uid)
+    if work is None:
+        return False
+    board = boards_repo.get(db, work.board_id)
+    if board is None or not board.is_published:
+        return False
+    for link in shares_repo.live_for_board(db, board.id, now_utc()):
+        if link.pin_hash is None:
+            return True
+        held = pins_held.get(link.id)
+        if held and tokens.check_pin_access_cookie(held, link.id, link.pin_hash):
+            return True
+    return False
+
+
 def verify_pin(db: Session, link: ShareLink, pin: str, ip: str, limiter) -> bool:
     key = f"{link.id}:{tokens.hash_ip(ip)}"
     if limiter.is_blocked(key):
