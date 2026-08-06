@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
+import { PALETTE_DELAY, useDebounced } from "../lib/debounce";
 import { initials, relativeDay } from "../lib/format";
 import { type Gated, shown } from "../lib/modules";
 import { Icon } from "./Icon";
@@ -37,7 +38,6 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
   const [loading, setLoading] = useState(true);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
-  const debounce = useRef<number>();
 
   const go = useCallback(
     (path: string) => {
@@ -51,20 +51,29 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
     inputRef.current?.focus();
   }, []);
 
+  const typed = useDebounced(query, PALETTE_DELAY);
+  // Набор ещё идёт: запроса с этими буквами пока не было. Раньше это состояние
+  // приходилось выставлять руками рядом с таймером — теперь оно просто видно.
+  const typing = typed !== query;
+
   useEffect(() => {
-    window.clearTimeout(debounce.current);
+    let current = true;
     setLoading(true);
-    debounce.current = window.setTimeout(async () => {
-      try {
-        setData(await api.get(`/search?q=${encodeURIComponent(query)}`));
-      } catch (e) {
-        toastError(e);
-      } finally {
-        setLoading(false);
-      }
-    }, 180);
-    return () => window.clearTimeout(debounce.current);
-  }, [query, toastError]);
+    api
+      .get(`/search?q=${encodeURIComponent(typed)}`)
+      .then((found) => {
+        if (current) setData(found);
+      })
+      .catch((e) => {
+        if (current) toastError(e);
+      })
+      .finally(() => {
+        if (current) setLoading(false);
+      });
+    return () => {
+      current = false;
+    };
+  }, [typed, toastError]);
 
   const rows = useMemo<Row[]>(() => {
     const term = query.trim().toLowerCase();
@@ -210,7 +219,7 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
           <span className="kbd">Esc</span>
         </div>
         <div className="cp-list" ref={listRef}>
-          {rows.length === 0 && !loading && (
+          {rows.length === 0 && !loading && !typing && (
             <div className="cp-empty">
               <div className="empty-title">{query ? t("nothingFound", { q: query }) : t("loading")}</div>
               {query && <div className="empty-sub">{t("tryDifferent")}</div>}

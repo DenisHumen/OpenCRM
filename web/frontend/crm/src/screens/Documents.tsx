@@ -5,6 +5,7 @@ import { Icon } from "../components/Icon";
 import { Chip, EmptyState, Modal, ScreenLoading } from "../components/ui";
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
+import { useDebounced } from "../lib/debounce";
 import { useFailure } from "../lib/failure";
 import { formatDate } from "../lib/format";
 import { DOC_STATUSES, statusLabel, statusVariant } from "../lib/documents";
@@ -20,7 +21,6 @@ export function Documents() {
   const [showNew, setShowNew] = useState(params.get("new") === "1");
   const scanInput = useRef<HTMLInputElement | null>(null);
   const focused = useRef(false);
-  const timer = useRef<number>();
 
   const { failure, fail, clear } = useFailure();
 
@@ -39,11 +39,11 @@ export function Documents() {
     [fail, clear],
   );
 
+  const search = useDebounced(query);
+
   useEffect(() => {
-    window.clearTimeout(timer.current);
-    timer.current = window.setTimeout(() => void load(query, status), 250);
-    return () => window.clearTimeout(timer.current);
-  }, [query, status, load]);
+    void load(search, status);
+  }, [search, status, load]);
 
   if (!data) return <ScreenLoading error={failure} onRetry={() => void load(query, status)} />;
 

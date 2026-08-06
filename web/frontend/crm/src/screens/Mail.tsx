@@ -5,6 +5,7 @@ import { Icon } from "../components/Icon";
 import { EmptyState, Modal, ScreenLoading } from "../components/ui";
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
+import { useDebounced } from "../lib/debounce";
 import { useFailure } from "../lib/failure";
 import { formatDateTime } from "../lib/format";
 
@@ -47,11 +48,13 @@ export function Mail() {
 
   const { failure, fail, clear } = useFailure();
 
+  const typed = useDebounced(search);
+
   const load = useCallback(async () => {
     const params = new URLSearchParams({ per_page: "100" });
     if (filter === "in" || filter === "out") params.set("direction", filter);
     if (filter === "unread") params.set("unread", "true");
-    if (search.trim()) params.set("search", search.trim());
+    if (typed.trim()) params.set("search", typed.trim());
     clear();
     try {
       const data = await api.get(`/mail/messages?${params}`);
@@ -63,7 +66,7 @@ export function Mail() {
       // человека решения принимают разные: первую он закроет, вторую повторит.
       fail(e);
     }
-  }, [filter, search, fail, clear]);
+  }, [filter, typed, fail, clear]);
 
   useEffect(() => {
     void load();

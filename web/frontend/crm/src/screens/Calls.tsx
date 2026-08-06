@@ -6,6 +6,7 @@ import { Icon } from "../components/Icon";
 import { Chip, EmptyState, ScreenLoading } from "../components/ui";
 import { api, type PhoneCall } from "../lib/api";
 import { useApp } from "../lib/app";
+import { useDebounced } from "../lib/debounce";
 import { useFailure } from "../lib/failure";
 import { formatCallDuration, formatDateTime } from "../lib/format";
 import { moduleOn } from "../lib/modules";
@@ -29,9 +30,11 @@ export function Calls() {
 
   const { failure, fail, clear } = useFailure();
 
+  const typed = useDebounced(search);
+
   const load = useCallback(async () => {
     const params = new URLSearchParams({ per_page: "100" });
-    if (search.trim()) params.set("number", search.trim());
+    if (typed.trim()) params.set("number", typed.trim());
     if (missedOnly) params.set("outcome", "missed");
     clear();
     try {
@@ -43,7 +46,7 @@ export function Calls() {
     } catch (e) {
       fail(e);
     }
-  }, [search, missedOnly, fail, clear]);
+  }, [typed, missedOnly, fail, clear]);
 
   useEffect(() => {
     void load();

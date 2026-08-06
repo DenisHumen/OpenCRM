@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import { EmptyState, ScreenLoading } from "../components/ui";
 import { api, type AuditEvent } from "../lib/api";
 import { useApp } from "../lib/app";
+import { useDebounced } from "../lib/debounce";
 import { useFailure } from "../lib/failure";
 import { formatDateTime, formatMoney } from "../lib/format";
 import type { TranslationKey } from "../lib/i18n";
@@ -66,9 +67,11 @@ export function Audit() {
 
   const { failure, fail, clear } = useFailure();
 
+  const typed = useDebounced(search);
+
   const load = useCallback(async () => {
     const params = new URLSearchParams({ per_page: "100" });
-    if (search.trim()) params.set("search", search.trim());
+    if (typed.trim()) params.set("search", typed.trim());
     if (source) params.set("source", source);
     clear();
     try {
@@ -78,7 +81,7 @@ export function Audit() {
     } catch (e) {
       fail(e);
     }
-  }, [search, source, fail, clear]);
+  }, [typed, source, fail, clear]);
 
   useEffect(() => {
     void load();

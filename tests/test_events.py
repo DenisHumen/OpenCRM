@@ -349,3 +349,54 @@ def test_system_entry_cannot_be_deleted_by_anyone(manager_client, root_client):
 
     still = manager_client.get(f"{API}/clients/{client['id']}/notes").json()["items"]
     assert any(n["id"] == note_id for n in still), "запись всё-таки удалилась"
+
+
+def test_the_two_decorators_subscribe_the_two_different_ways(manager_client, deal):
+    """`@participant` и `@observer` — не синонимы, и разница проверяется здесь.
+
+    Подписки в рабочем коде расставлены декораторами, а тесты до сих пор звали
+    `subscribe(...)` напрямую — то есть проверяли механизм, но не тот вход,
+    которым им пользуются. Разойдись декоратор с механизмом (перепутан флаг,
+    потерян порядок), ни один тест этого бы не заметил, а склад молча перестал
+    бы отменять акт, на который нечего списать.
+
+    Снимаем подписки руками: фикстура `subscribe` умеет только прямой вызов, а
+    декоратор подписывает сам, в момент объявления.
+    """
+    order = []
+
+    @events.observer(DEAL_STAGE_CHANGED)
+    def watches(event):
+        order.append("наблюдатель")
+
+    @events.participant(DEAL_STAGE_CHANGED)
+    def takes_part(event):
+        order.append("участник")
+
+    try:
+        assert move(manager_client, deal).status_code == 200
+        # Участник идёт первым — как и при прямой подписке.
+        assert order == ["участник", "наблюдатель"]
+
+        # И право отменить у него настоящее: наблюдатель того же события
+        # отменить ничего не может — это и есть разница между двумя словами.
+        order.clear()
+
+        @events.participant(DEAL_STAGE_CHANGED)
+        def refuses(event):
+            raise errors.ValidationError("Нечего списывать", code="nothing_to_write_off")
+
+        try:
+            second = manager_client.post(
+                f"{DEALS}/{deal['id']}/move", json={"stage": "ready"}
+            )
+            assert second.status_code == 422, second.text
+            assert second.json()["error"]["code"] == "nothing_to_write_off"
+        finally:
+            for sub in list(events._subscribers):
+                if sub.handler is refuses:
+                    events.unsubscribe(sub)
+    finally:
+        for sub in list(events._subscribers):
+            if sub.handler in (watches, takes_part):
+                events.unsubscribe(sub)

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 
 import { Icon } from "../components/Icon";
@@ -6,6 +6,7 @@ import { SourcePicker } from "../components/SourcePicker";
 import { Avatar, Chip, EmptyState, Modal, ScreenLoading } from "../components/ui";
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
+import { useDebounced } from "../lib/debounce";
 import { useFailure } from "../lib/failure";
 import { initials, relativeDay } from "../lib/format";
 
@@ -16,7 +17,6 @@ export function Clients() {
   const [query, setQuery] = useState("");
   const [data, setData] = useState<any>(null);
   const [showNew, setShowNew] = useState(params.get("new") === "1");
-  const timer = useRef<number>();
 
   const { failure, fail, clear } = useFailure();
 
@@ -31,15 +31,11 @@ export function Clients() {
     [fail, clear],
   );
 
-  useEffect(() => {
-    load("");
-  }, [load]);
+  const search = useDebounced(query);
 
   useEffect(() => {
-    window.clearTimeout(timer.current);
-    timer.current = window.setTimeout(() => load(query), 250);
-    return () => window.clearTimeout(timer.current);
-  }, [query, load]);
+    load(search);
+  }, [search, load]);
 
   if (!data) return <ScreenLoading error={failure} onRetry={() => load(query)} />;
 

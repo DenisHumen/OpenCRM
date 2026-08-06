@@ -412,3 +412,42 @@ def test_quantity_parsing_never_touches_float():
     assert warehouse_service.format_quantity(1500) == "1.5"
     assert warehouse_service.format_quantity(2000) == "2"
     assert warehouse_service.format_quantity(-100) == "-0.1"
+
+
+def test_cost_of_many_deals_matches_the_cost_of_each(root_client, warehouse_on):
+    """Себестоимость пачкой считается так же, как поштучно.
+
+    Пачечный запрос написан для финансового блока и отчётов, где заявок сотни и
+    спрашивать про каждую отдельно нельзя. Пока его никто не звал, он оставался
+    непроверенным — а «похоже на правильное» в деньгах не считается: расхождение
+    в округлении на копейку заметят в отчёте, а объяснить его будет нечем.
+    """
+    from database.repositories import warehouse as warehouse_repo
+    from database.session import SessionLocal
+
+    product = new_product(root_client, name="Профиль алюминиевый", unit="m", cost=33_33)
+    clients = root_client.post(f"{API}/clients", json={"name": "Три заявки"}).json()
+
+    deals = []
+    for title, quantity in (("Первая", "3"), ("Вторая", "7"), ("Третья", "0")):
+        deal = root_client.post(
+            f"{API}/deals", json={"title": title, "client_id": clients["id"]}
+        ).json()
+        if quantity != "0":
+            move(root_client, product["id"], "in", quantity, deal_id=None)
+            move(root_client, product["id"], "out", quantity, deal_id=deal["id"])
+        deals.append(deal["id"])
+
+    with SessionLocal() as db:
+        one_by_one = {deal: warehouse_repo.deal_cost_minor(db, deal) for deal in deals}
+        in_batch = warehouse_repo.deal_cost_by_deal(db, deals)
+
+        # Заявка без списаний в пачке отсутствует, а поштучно даёт ноль: это не
+        # расхождение, а разные вопросы — «сколько ушло» и «ушло ли вообще».
+        assert in_batch == {deal: cost for deal, cost in one_by_one.items() if cost}
+        assert one_by_one[deals[0]] == 3 * 33_33
+        assert one_by_one[deals[1]] == 7 * 33_33
+        assert one_by_one[deals[2]] == 0
+
+        # Пустой список не должен превращаться в «спроси про все».
+        assert warehouse_repo.deal_cost_by_deal(db, []) == {}

@@ -136,8 +136,15 @@ def test_purge_frees_disk_space(root_client, manager_client):
     assert result["clients"] >= 1
     assert result["freed_bytes"] > 0
 
+    # Проверяем судьбу своего клиента, а не общий счётчик до нуля. Нулём тест
+    # требовал, чтобы корзина после уборки была пуста, — а это неправда даже в
+    # рабочей системе: клиента с выигранной заявкой уборка не трогает нарочно.
+    # Стоило соседнему тесту оставить такого, и этот падал на чужих данных;
+    # в полном наборе спасал только случайный порядок.
     after = root_client.get(f"{API}/system/storage").json()["reclaimable"]
-    assert after["clients"] == 0 and after["bytes"] == 0
+    assert after["clients"] < before["clients"], "корзина не убавилась"
+    assert after["bytes"] < before["bytes"], "место не освободилось"
+    assert root_client.get(f"{API}/clients/{client['id']}").status_code == 404
 
 
 def test_purge_is_root_only(manager_client):
@@ -147,3 +154,44 @@ def test_purge_is_root_only(manager_client):
 def test_format_bytes():
     assert storage_service.format_bytes(512) == "512 B"
     assert storage_service.format_bytes(2 * 1024**3).startswith("2.0 GB")
+
+
+def test_cleanup_asks_the_database_a_fixed_number_of_questions(root_client, manager_client):
+    """Уборка не растёт запросами вместе с корзиной.
+
+    Раньше на каждого клиента уходило по три запроса — «есть ли выручка»,
+    «сколько заявок», «какие файлы», — и по одному на каждую доску. На базе,
+    ради которой уборку и запускают, это тысячи запросов внутри одной
+    транзакции: минуты ожидания там, где работы на секунду.
+
+    Считаем не время, а сами запросы: время на стенде зависит от диска и
+    соседей, а число обращений — только от кода. Проверка сравнивает два
+    прогона, у которых разница лишь в количестве мусора: если запросов стало
+    больше, значит какой-то снова ушёл в цикл.
+    """
+    from sqlalchemy import event
+
+    from database.session import engine
+
+    def purge_with_counting(clients_count: int) -> int:
+        for i in range(clients_count):
+            created = manager_client.post(
+                f"{API}/clients", json={"name": f"Мусор {clients_count}-{i}"}
+            ).json()
+            manager_client.delete(f"{API}/clients/{created['id']}")
+
+        queries = []
+        listener = lambda conn, cursor, statement, *rest: queries.append(statement)
+        event.listen(engine, "before_cursor_execute", listener)
+        try:
+            assert root_client.post(f"{API}/system/storage/purge").status_code == 200
+        finally:
+            event.remove(engine, "before_cursor_execute", listener)
+        return len(queries)
+
+    few = purge_with_counting(2)
+    many = purge_with_counting(12)
+
+    assert many <= few, (
+        f"уборка десяти лишних клиентов стоила лишних запросов: было {few}, стало {many}"
+    )

@@ -43,14 +43,28 @@ def purge_soft_deleted(db: Session, older_than_days: int = 0, dry_run: bool = Fa
     removed_deals = 0
     kept_with_revenue = 0
 
-    boards = list(
-        db.scalars(
-            select(Board).where(Board.deleted_at.is_not(None), Board.deleted_at <= cutoff)
-        )
+    # Всё, что нужно про доски и клиентов, спрашивается наперёд — по разу на
+    # весь список, а не по разу на запись. Уборка запускается редко, но именно
+    # на той базе, где мусора накопилось много: запрос в цикле там означает
+    # тысячи запросов и минуты ожидания на операции, которая держит транзакцию.
+    #
+    # Отбор идёт подзапросом с тем же условием, а не списком id: список из
+    # тысячи чисел упёрся бы в потолок параметров SQLite ровно тогда, когда
+    # уборка нужнее всего.
+    doomed_boards = select(Board.id).where(
+        Board.deleted_at.is_not(None), Board.deleted_at <= cutoff
     )
+    doomed_clients = select(Client.id).where(
+        Client.deleted_at.is_not(None), Client.deleted_at <= cutoff
+    )
+
+    boards = list(db.scalars(select(Board).where(Board.id.in_(doomed_boards))))
+    works_of: dict[int, list[Work]] = {}
+    for work in db.scalars(select(Work).where(Work.board_id.in_(doomed_boards))):
+        works_of.setdefault(work.board_id, []).append(work)
+
     for board in boards:
-        works = list(db.scalars(select(Work).where(Work.board_id == board.id)))
-        for work in works:
+        for work in works_of.get(board.id, ()):
             directory = media_service.work_dir(work.work_uid)
             freed_bytes += storage_service.dir_size(directory)
             removed_works += 1
@@ -60,39 +74,41 @@ def purge_soft_deleted(db: Session, older_than_days: int = 0, dry_run: bool = Fa
         if not dry_run:
             db.delete(board)  # works и share_links уходят каскадом
 
-    clients = list(
+    clients = list(db.scalars(select(Client).where(Client.id.in_(doomed_clients))))
+    # Выигранная заявка — полученные деньги. Такого клиента не трогаем: отчёт за
+    # прошлый год не должен меняться от уборки диска.
+    with_revenue = set(
         db.scalars(
-            select(Client).where(Client.deleted_at.is_not(None), Client.deleted_at <= cutoff)
-        )
-    )
-    for client in clients:
-        # Выигранная заявка — полученные деньги. Такого клиента не трогаем:
-        # отчёт за прошлый год не должен меняться от уборки диска.
-        has_revenue = db.scalar(
-            select(Deal.id)
+            select(Deal.client_id)
             .join(PipelineStage, PipelineStage.key == Deal.stage)
             .where(
-                Deal.client_id == client.id,
+                Deal.client_id.in_(doomed_clients),
                 Deal.deleted_at.is_(None),
                 PipelineStage.kind == KIND_WON,
             )
-            .limit(1)
         )
-        if has_revenue is not None:
+    )
+    # Сколько заявок уйдёт вместе с клиентом — считаем и НАЗЫВАЕМ. Молчать об
+    # этом хуже, чем удалить: человек видит «удалено 3 клиента» и не знает про
+    # сорок заявок.
+    deals_of = dict(
+        db.execute(
+            select(Deal.client_id, func.count())
+            .where(Deal.client_id.in_(doomed_clients))
+            .group_by(Deal.client_id)
+        ).all()
+    )
+    files_of: dict[int, list[ClientFile]] = {}
+    for file in db.scalars(select(ClientFile).where(ClientFile.client_id.in_(doomed_clients))):
+        files_of.setdefault(file.client_id, []).append(file)
+
+    for client in clients:
+        if client.id in with_revenue:
             kept_with_revenue += 1
             continue
 
-        # Сколько заявок уйдёт вместе с клиентом — считаем и НАЗЫВАЕМ. Молчать
-        # об этом хуже, чем удалить: человек видит «удалено 3 клиента» и не
-        # знает про сорок заявок.
-        removed_deals += int(
-            db.scalar(
-                select(func.count()).select_from(Deal).where(Deal.client_id == client.id)
-            )
-            or 0
-        )
-        files = list(db.scalars(select(ClientFile).where(ClientFile.client_id == client.id)))
-        for file in files:
+        removed_deals += int(deals_of.get(client.id) or 0)
+        for file in files_of.get(client.id, ()):
             path = client_service.file_path_on_disk(file)
             if path.exists():
                 freed_bytes += path.stat().st_size

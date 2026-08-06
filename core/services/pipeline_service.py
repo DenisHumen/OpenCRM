@@ -100,10 +100,6 @@ def list_stages(db: Session, include_archived: bool = False) -> list[PipelineSta
     return list(db.scalars(stmt.order_by(PipelineStage.sort_order.asc(), PipelineStage.id.asc())))
 
 
-def stage_keys(db: Session) -> list[str]:
-    return [s.key for s in list_stages(db)]
-
-
 def get_stage(db: Session, key: str) -> PipelineStage:
     stage = db.scalar(select(PipelineStage).where(PipelineStage.key == key))
     if stage is None:
