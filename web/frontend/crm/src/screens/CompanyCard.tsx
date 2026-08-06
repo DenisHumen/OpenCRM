@@ -5,6 +5,7 @@ import { Icon } from "../components/Icon";
 import { Chip, ConfirmModal, ScreenLoading } from "../components/ui";
 import { api, ApiError } from "../lib/api";
 import { useApp } from "../lib/app";
+import { can } from "../lib/permissions";
 import { useFailure } from "../lib/failure";
 import type { TranslationKey } from "../lib/i18n";
 import type { Company } from "./Companies";
@@ -72,7 +73,12 @@ export function CompanyCard() {
   const [company, setCompany] = useState<Company | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
-  const isRoot = user?.role === "root";
+  // Право, а не «root». Сервер спрашивает `companies.edit` / `companies.delete`
+  // (см. web/api/routes/companies.py), и менеджер, которому его выдали, видел
+  // пункт меню, открывал карточку — и все поля были заперты с подписью «правит
+  // владелец». Право выдано и работает, интерфейс его не признавал.
+  const mayEdit = can(user, "companies.edit");
+  const mayDelete = can(user, "companies.delete");
 
   const { failure, fail, clear } = useFailure();
 
@@ -131,7 +137,7 @@ export function CompanyCard() {
           <input
             className="title-input"
             defaultValue={company.name}
-            disabled={!isRoot}
+            disabled={!mayEdit}
             onBlur={(e) => {
               const value = e.target.value.trim();
               if (value && value !== company.name) void patch({ name: value });
@@ -141,7 +147,7 @@ export function CompanyCard() {
             {company.is_default ? (
               <Chip variant="brand">{t("companyDefaultTag")}</Chip>
             ) : (
-              isRoot && (
+              mayEdit && (
                 <button className="btn btn-secondary btn-sm" onClick={() => void makeDefault()}>
                   {t("companyMakeDefault")}
                 </button>
@@ -149,7 +155,7 @@ export function CompanyCard() {
             )}
           </div>
         </div>
-        {isRoot && (
+        {mayDelete && (
           <button className="btn btn-secondary" onClick={() => setConfirmDelete(true)}>
             <Icon name="trash" size={14} />
             {t("delete")}
@@ -161,7 +167,7 @@ export function CompanyCard() {
           отказом сервера после того, как он набрал новый номер счёта. */}
       <div className="card card-pad" style={{ marginBottom: 20 }}>
         <div className="field-desc" style={{ marginTop: 0 }}>
-          {isRoot ? t("companyDefaultHint") : t("companyReadOnly")}
+          {mayEdit ? t("companyDefaultHint") : t("companyReadOnly")}
         </div>
       </div>
 
@@ -180,7 +186,7 @@ export function CompanyCard() {
                 <label className="label">{t(field.label)}</label>
                 <input
                   className="input"
-                  disabled={!isRoot}
+                  disabled={!mayEdit}
                   defaultValue={String(company[field.key] ?? "")}
                   onBlur={(e) => {
                     if (e.target.value !== company[field.key]) {
@@ -201,7 +207,7 @@ export function CompanyCard() {
           <textarea
             className="input"
             rows={3}
-            disabled={!isRoot}
+            disabled={!mayEdit}
             defaultValue={company.note}
             onBlur={(e) => {
               if (e.target.value !== company.note) void patch({ note: e.target.value });

@@ -157,3 +157,54 @@ def _all_screen_code() -> str:
     parts = [p.read_text(encoding="utf-8") for p in SCREENS.rglob("*.tsx")]
     parts += [p.read_text(encoding="utf-8") for p in SCREENS.rglob("*.ts") if p.name != "i18n.ts"]
     return chr(10).join(parts)
+
+
+def test_a_screen_does_not_offer_what_the_server_will_refuse():
+    """Кнопка действия стоит за тем же правом, что спросит сервер.
+
+    Правило записано в `lib/permissions.ts`: «интерфейс прячет то, что всё равно
+    получит отказ». Держалось оно не везде: экран сотрудников закрыт правом
+    `staff.view`, а кнопки одобрения, сброса пароля, отключения и удаления
+    спрашивают `staff.manage` — смотрящий получал полный набор, включая «Удалить
+    навсегда», и каждая кнопка отвечала отказом.
+
+    Фирмы проверяли `role === "root"` вместо права: менеджер с `companies.edit`
+    видел пункт меню, открывал карточку и находил все поля запертыми с подписью
+    «правит владелец». Право выдано и работает — интерфейс его не признавал.
+    """
+    rules = {
+        "Staff.tsx": ("staff.manage", "deletePermanently"),
+        "Companies.tsx": ("companies.create", "newCompany"),
+        "CompanyCard.tsx": ("companies.edit", "companyReadOnly"),
+    }
+    for name, (permission, marker) in rules.items():
+        text = (SCREENS / "screens" / name).read_text(encoding="utf-8")
+        assert marker in text, f"{name}: проверка смотрит не туда, {marker} не найден"
+        assert f'can(user, "{permission}")' in text, (
+            f"{name}: действие показывается без проверки права {permission}"
+        )
+        assert 'user?.role === "root"' not in text, (
+            f"{name}: право подменено проверкой «это root» — роль с этим правом останется ни с чем"
+        )
+
+
+def test_the_journal_reads_currency_from_where_everyone_has_it():
+    """Валюта журнала берётся из рабочего пространства, а не из настроек сайта.
+
+    Настройки сайта подгружаются только для root (`lib/app.tsx`), и сотрудник с
+    правом на журнал видел суммы в долларах там, где фирма работает в гривне.
+    """
+    text = (SCREENS / "screens" / "Audit.tsx").read_text(encoding="utf-8")
+    assert "workspace.currency" in text
+    assert "settings.currency" not in text
+
+
+def test_the_profile_calls_the_job_by_its_name():
+    """В профиле стоит настоящая должность, а не слово «Менеджер».
+
+    В левой колонке тот же человек подписан своей должностью — с комментарием
+    «ролей теперь столько, сколько их завели». В профиль правка не дошла:
+    бухгалтер видел в меню «Бухгалтер», а у себя в профиле «Менеджер».
+    """
+    text = (SCREENS / "screens" / "Profile.tsx").read_text(encoding="utf-8")
+    assert "role_name" in text, "профиль по-прежнему называет должность словом из словаря"

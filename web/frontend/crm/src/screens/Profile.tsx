@@ -93,7 +93,7 @@ export function Profile() {
           <div className="page-sub" style={{ marginTop: 4 }}>
             {user.email} ·{" "}
             <span style={{ color: user.role === "root" ? "var(--brand)" : "var(--muted)" }}>
-              {user.role === "root" ? t("root") : t("managerRole")}
+              {user.role === "root" ? t("root") : user.role_name || t("noRole")}
             </span>{" "}
             · {t("joined")} {formatDate(user.created_at, locale)}
           </div>

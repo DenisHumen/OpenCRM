@@ -423,7 +423,6 @@ const en = {
   tempPasswordHint: "Send it to the person — they must change it on first sign-in.",
   deactivateConfirm: "Deactivate this account? Their session ends immediately.",
   root: "Root",
-  managerRole: "Manager",
   // settings
   settingsSub: "Everything the client sees around your works. Only you can edit this.",
   brand: "Brand",
@@ -1159,7 +1158,6 @@ const ru: typeof en = {
   tempPasswordHint: "Передайте его лично — при первом входе потребуется смена.",
   deactivateConfirm: "Деактивировать аккаунт? Сессия завершится немедленно.",
   root: "Root",
-  managerRole: "Менеджер",
   settingsSub: "Всё, что клиент видит вокруг ваших работ. Редактировать можете только вы.",
   brand: "Бренд",
   brandSub: "Как ваше дело представляется: название и знак, которые видит клиент.",

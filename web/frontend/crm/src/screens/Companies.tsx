@@ -5,6 +5,7 @@ import { Icon } from "../components/Icon";
 import { Chip, EmptyState, Modal, ScreenLoading } from "../components/ui";
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
+import { can } from "../lib/permissions";
 import { useFailure } from "../lib/failure";
 
 export interface Company {
@@ -36,7 +37,11 @@ export function Companies() {
   const [items, setItems] = useState<Company[] | null>(null);
   const [showNew, setShowNew] = useState(false);
 
-  const isRoot = user?.role === "root";
+  // Право, а не «root». Сервер спрашивает `companies.edit` / `companies.delete`
+  // (см. web/api/routes/companies.py), и менеджер, которому его выдали, видел
+  // пункт меню, открывал карточку — и все поля были заперты с подписью «правит
+  // владелец». Право выдано и работает, интерфейс его не признавал.
+  const mayCreate = can(user, "companies.create");
 
   const { failure, fail, clear } = useFailure();
 
@@ -65,7 +70,7 @@ export function Companies() {
         </div>
         {/* Кнопка есть только у root: у остальных нажимать её было бы
             приглашением к отказу сервера. */}
-        {isRoot && (
+        {mayCreate && (
           <button className="btn btn-primary" onClick={() => setShowNew(true)}>
             <Icon name="plus" stroke={2} />
             {t("newCompany")}

@@ -67,7 +67,7 @@ const SOURCE: Record<string, TranslationKey> = {
 const MONEY_ACTIONS = new Set(["deal.amount_changed", "deal.prepaid_changed"]);
 
 export function Audit() {
-  const { t, locale, workspace, settings } = useApp();
+  const { t, locale, workspace } = useApp();
   const [items, setItems] = useState<AuditEvent[] | null>(null);
   const [total, setTotal] = useState(0);
   const [search, setSearch] = useState("");
@@ -125,7 +125,7 @@ export function Audit() {
   const value = (entry: AuditEvent, raw: string | null) => {
     if (raw === null) return "—";
     if (!MONEY_ACTIONS.has(entry.action)) return raw || "—";
-    return formatMoney(Number(raw), settings.currency || "USD", locale);
+    return formatMoney(Number(raw), workspace.currency || "USD", locale);
   };
 
   return (

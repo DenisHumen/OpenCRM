@@ -21,6 +21,11 @@ export function Staff() {
   // и решить, что ему можно, — разные по весу решения. Без права список ролей
   // не спрашиваем вовсе, иначе на каждой загрузке стучались бы в закрытую дверь.
   const managesRoles = can(user, "roles.manage");
+  // Управление людьми — своё право, и сервер спрашивает именно его
+  // (`staff.manage` во всех маршрутах одобрения, отключения и удаления). Маршрут
+  // экрана закрыт только `staff.view`, поэтому смотрящий получал полный набор
+  // кнопок, включая «Удалить навсегда», и каждая отвечала отказом.
+  const managesStaff = can(user, "staff.manage");
 
   const { failure, fail, clear } = useFailure();
 
@@ -120,17 +125,21 @@ export function Staff() {
                     {person.email} · {t("requested")} {formatDateTime(person.created_at, locale)}
                   </div>
                 </div>
-                <button className="btn btn-primary btn-sm" onClick={() => void action(`/staff/${person.id}/approve`)}>
-                  <Icon name="check" size={13} stroke={2} />
-                  {t("approve")}
-                </button>
-                <button
-                  className="btn btn-secondary btn-sm"
-                  style={{ color: "var(--danger)" }}
-                  onClick={() => void action(`/staff/${person.id}/reject`)}
-                >
-                  {t("reject")}
-                </button>
+                {managesStaff && (
+                  <>
+                    <button className="btn btn-primary btn-sm" onClick={() => void action(`/staff/${person.id}/approve`)}>
+                      <Icon name="check" size={13} stroke={2} />
+                      {t("approve")}
+                    </button>
+                    <button
+                      className="btn btn-secondary btn-sm"
+                      style={{ color: "var(--danger)" }}
+                      onClick={() => void action(`/staff/${person.id}/reject`)}
+                    >
+                      {t("reject")}
+                    </button>
+                  </>
+                )}
               </div>
             ))}
           </div>
@@ -213,7 +222,7 @@ export function Staff() {
                           {t("makeRoot")}
                         </button>
                       )}
-                  {!isRoot && (
+                  {!isRoot && managesStaff && (
                     <>
                       <button
                         className="text-link"
@@ -233,7 +242,7 @@ export function Staff() {
                       </button>
                     </>
                   )}
-                  {!isLastRoot && (
+                  {!isLastRoot && managesStaff && (
                     <button
                       className="text-link danger"
                       onClick={() => setConfirmDelete({ id: person.id, name: person.name })}
@@ -261,17 +270,19 @@ export function Staff() {
                   <div className="truncate" style={{ color: "var(--muted)", fontSize: 13.5, fontWeight: 500 }}>{person.name}</div>
                   <div className="truncate" style={{ color: "var(--faint)", fontSize: 12 }}>{person.email}</div>
                 </div>
-                <div style={{ display: "flex", gap: 12 }}>
-                  <button className="text-link" onClick={() => void action(`/staff/${person.id}/enable`)}>
-                    {t("restore")}
-                  </button>
-                  <button
-                    className="text-link danger"
-                    onClick={() => setConfirmDelete({ id: person.id, name: person.name })}
-                  >
-                    {t("deletePermanently")}
-                  </button>
-                </div>
+                {managesStaff && (
+                  <div style={{ display: "flex", gap: 12 }}>
+                    <button className="text-link" onClick={() => void action(`/staff/${person.id}/enable`)}>
+                      {t("restore")}
+                    </button>
+                    <button
+                      className="text-link danger"
+                      onClick={() => setConfirmDelete({ id: person.id, name: person.name })}
+                    >
+                      {t("deletePermanently")}
+                    </button>
+                  </div>
+                )}
               </div>
             ))}
           </div>
