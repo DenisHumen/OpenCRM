@@ -21,7 +21,13 @@ import { moduleOn } from "../lib/modules";
 import { term } from "../lib/terms";
 import { MailCompose, type MailAccount } from "./Mail";
 
-const NOTE_ICONS: Record<string, string> = { note: "note", call: "call", meeting: "meeting", email: "email" };
+const NOTE_ICONS: Record<string, string> = {
+  note: "note", call: "call", meeting: "meeting", email: "email",
+  // Смену этапа ставит подписчик на событие, а не человек: в списке «добавить»
+  // её нет, а в ленте она обязана быть — иначе карточка клиента молчит о том,
+  // что заявка доехала до следующего этапа.
+  stage: "deals",
+};
 
 /** Иконка записи ленты. У звонка она заодно показывает направление. */
 function noteIcon(note: { kind: string; direction?: string | null }): string {

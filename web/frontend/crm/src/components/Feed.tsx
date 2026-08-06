@@ -15,11 +15,18 @@ import { Icon } from "./Icon";
  */
 const KINDS = ["note", "call", "meeting", "email"] as const;
 
+// Виды, которые появляются сами — от подписчика на событие, а не из формы.
+// В выпадающем списке «добавить» их нет: набрать смену этапа, которой не было,
+// нельзя, иначе лента перестаёт быть свидетельством. Отфильтровать — можно.
+const SYSTEM_KINDS = ["stage"] as const;
+
 const KIND_ICON: Record<string, string> = {
   note: "note",
   call: "call",
   meeting: "meeting",
   email: "email",
+  // Та же воронка, что и у раздела сделок: строка про этап узнаётся без чтения.
+  stage: "deals",
 };
 
 const KIND_LABEL = {
@@ -27,6 +34,7 @@ const KIND_LABEL = {
   call: "feedCall",
   meeting: "feedMeeting",
   email: "feedEmail",
+  stage: "feedStage",
 } as const;
 
 export function Feed({ dealId, clientId }: { dealId: number; clientId: number }) {
@@ -89,7 +97,7 @@ export function Feed({ dealId, clientId }: { dealId: number; clientId: number })
         <div className="metric-title">{t("feed")}</div>
         <select className="input" style={{ width: 150 }} value={filter} onChange={(e) => setFilter(e.target.value)}>
           <option value="">{t("feedAll")}</option>
-          {KINDS.map((name) => (
+          {[...KINDS, ...SYSTEM_KINDS].map((name) => (
             <option key={name} value={name}>{t(KIND_LABEL[name])}</option>
           ))}
         </select>
@@ -139,7 +147,10 @@ export function Feed({ dealId, clientId }: { dealId: number; clientId: number })
                   )}
                 </div>
               </div>
-              {moduleOn(modules, "tasks") && (
+              {/* Из записи, набранной человеком, задача осмысленна («перезвонить
+                  в четверг»); из строки «этап: Новая → В работе» получилось бы
+                  напоминание с машинным заголовком. */}
+              {moduleOn(modules, "tasks") && !SYSTEM_KINDS.includes(entry.kind) && (
                 <button
                   className="btn-icon"
                   title={t("feedToTask")}

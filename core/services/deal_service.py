@@ -2,6 +2,7 @@
 
 from sqlalchemy.orm import Session
 
+from core import events
 from core import exceptions as errors
 from core.services import company_service, pipeline_service
 from core.utils import now_utc
@@ -12,6 +13,11 @@ from database.repositories import deals as deals_repo
 
 MAX_TITLE = 200
 MAX_LOST_REASON = 200
+
+#: Сделка сменила этап. Подробности: `deal`, `from_stage`, `to_stage` — ключи
+#: этапов. Заведение сделки событием не считается: этапа до неё не было, менять
+#: было нечего, — поэтому `from_stage` здесь всегда заполнен.
+DEAL_STAGE_CHANGED = "deal.stage_changed"
 
 # Потолок суммы в минимальных единицах: 10 миллиардов в валюте. Не про
 # ограничение бизнеса, а про опечатку: лишний ноль в поле превращает отчёт за
@@ -155,7 +161,16 @@ def update_deal(db: Session, deal_id: int, data: dict, author: User) -> Deal:
 
     # Этап меняем через общий путь, чтобы журнал заполнялся и здесь тоже.
     if "stage" in data and data["stage"] and data["stage"] != deal.stage:
-        move_stage(db, deal_id, data["stage"], author, lost_reason=data.get("lost_reason"))
+        move_stage(
+            db,
+            deal_id,
+            data["stage"],
+            author,
+            lost_reason=data.get("lost_reason"),
+            # Причина у двух путей разная, и разница видна в ленте: карточку
+            # правят осознанно, карточку на доске перетаскивают мимоходом.
+            reason="edited on the deal card",
+        )
         return get_deal(db, deal_id)
 
     db.flush()
@@ -169,12 +184,15 @@ def move_stage(
     author: User,
     sort_order: int | None = None,
     lost_reason: str | None = None,
+    reason: str = "moved on the board",
 ) -> Deal:
     """Передвинуть сделку по воронке.
 
     Единственная точка смены этапа: журнал должен заполняться всегда, иначе
     отчёт «сколько сделка стоит в этапе» окажется дырявым ровно там, где кто-то
-    поменял этап другим путём.
+    поменял этап другим путём. По той же причине событие поднимается отсюда, а
+    не из роутов: путей в эту функцию два, и подписчик не должен зависеть от
+    того, каким из них пришли.
     """
     deal = get_deal(db, deal_id)
     target = pipeline_service.get_stage(db, stage)
@@ -202,6 +220,15 @@ def move_stage(
 
     db.flush()
     deals_repo.add_stage_change(db, deal.id, previous, stage, author.id)
+    events.emit(
+        DEAL_STAGE_CHANGED,
+        db=db,
+        actor=author,
+        reason=reason,
+        deal=deal,
+        from_stage=previous,
+        to_stage=stage,
+    )
     return deal
 
 

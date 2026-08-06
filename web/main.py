@@ -10,6 +10,10 @@ from sqlalchemy import text
 
 from config.settings import generate_secret_hint, get_settings
 from core.exceptions import DomainError
+# Подписки на события грузятся при первом же событии сами, но импорт здесь
+# оставлен нарочно: опечатка в обработчике должна ронять запуск приложения, а
+# не всплывать через неделю при первом переводе заявки по воронке.
+from core import subscriptions  # noqa: F401
 from core.services import auth_service, maintenance_mode, pipeline_service, settings_service
 from core.utils import normalize_email
 from database import models  # noqa: F401 — регистрирует модели в metadata

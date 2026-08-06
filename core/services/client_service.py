@@ -8,7 +8,7 @@ from core.security import tokens
 from core.services import settings_service, storage_service
 from core.utils import normalize_phone, now_utc
 from database.models import Client, ClientFile, ClientNote, User
-from database.models.client import MAX_SOURCE, NOTE_KINDS
+from database.models.client import MAX_SOURCE, NOTE_KINDS, SYSTEM_NOTE_KINDS
 from database.models.user import ROLE_ROOT
 from database.repositories import clients as clients_repo
 
@@ -145,6 +145,42 @@ def add_note(
         deal_id=deal_id,
         body=body.strip(),
         happened_at=happened_at or now_utc(),
+    )
+    db.add(note)
+    db.flush()
+    return note
+
+
+def add_system_note(
+    db: Session,
+    client_id: int,
+    actor: User,
+    kind: str,
+    body: str,
+    deal_id: int | None = None,
+) -> ClientNote:
+    """Запись в ленте, порождённая действием, а не набранная в форме.
+
+    Отдельный вход, а не флаг у `add_note`: у рукописной записи проверяется
+    вид, потому что он приходит из запроса, а здесь вид задаёт код — и
+    пропускать его через тот же список значило бы разрешить менеджеру прислать
+    «смену этапа», которой не было.
+
+    Исполнитель — тот же живой человек, чьё действие всё это запустило, а не
+    «система»: лента отвечает на вопрос «кто», и ничьих строк в ней быть не
+    должно.
+    """
+    if kind not in SYSTEM_NOTE_KINDS:
+        raise errors.ValidationError(
+            f"kind must be one of {SYSTEM_NOTE_KINDS}", code="bad_note_kind"
+        )
+    note = ClientNote(
+        client_id=client_id,
+        author_id=actor.id,
+        kind=kind,
+        deal_id=deal_id,
+        body=body.strip(),
+        happened_at=now_utc(),
     )
     db.add(note)
     db.flush()
