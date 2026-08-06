@@ -8,6 +8,7 @@ import { SourcePicker } from "../components/SourcePicker";
 import { Avatar, Chip, ConfirmModal, EmptyState, ScreenLoading } from "../components/ui";
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
+import type { TranslationKey } from "../lib/i18n";
 import {
   fileExt,
   fileSize,
@@ -28,6 +29,35 @@ const NOTE_ICONS: Record<string, string> = {
   // её нет, а в ленте она обязана быть — иначе карточка клиента молчит о том,
   // что заявка доехала до следующего этапа.
   stage: "deals",
+  // Бланк и списание приходят оттуда же — от подписчиков на события
+  // (`core/subscriptions.py`). Значки те же, что в ленте заявки и у самих
+  // разделов: строку узнаёшь, не читая её.
+  document: "receipt",
+  stock: "warehouse",
+};
+
+/**
+ * Как называется вид записи.
+ *
+ * Отдельная таблица, а не `t(note.kind)`: ключ вида и ключ перевода совпадают
+ * не у всех. У письма он свой (`emailNote`), а у записей, которые появляются
+ * сами, — общий с лентой заявки. Пока подпись бралась прямо из вида, «stock»
+ * попадал в ключ `stock` («Остаток») из словаря склада, а `document` перевода
+ * не имел вовсе и показывался как есть, латиницей, в обеих локалях.
+ *
+ * Виды заданы сервером закрытым списком (`NOTE_KINDS` + `SYSTEM_NOTE_KINDS` в
+ * `database/models/client.py`), и таблица покрывает их все. Заметить пропуск
+ * здесь придётся глазами: записи ленты приходят нетипизированными, поэтому
+ * `tsc` про новый вид не скажет — он и не сказал про два предыдущих.
+ */
+const NOTE_LABELS: Record<string, TranslationKey> = {
+  note: "note",
+  call: "call",
+  meeting: "meeting",
+  email: "emailNote",
+  stage: "feedStage",
+  document: "feedDocument",
+  stock: "feedStock",
 };
 
 type TabKey = "history" | "calls" | "files" | "boards" | "deals";
@@ -289,8 +319,11 @@ export function ClientCard() {
                 if (e.key === "Enter") void addNote();
               }}
             />
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <div style={{ display: "flex", gap: 6 }}>
+            {/* Переносится по строкам: на узком экране четыре вида записи и
+                кнопка в одну строку не помещаются, и без переноса ряд утаскивал
+                вбок всю карточку клиента. На широком строка одна, как и была. */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                 {(["note", "call", "meeting", "email"] as const).map((kind) => (
                   <button
                     key={kind}
@@ -316,7 +349,7 @@ export function ClientCard() {
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 4 }}>
                     <span style={{ color: "var(--muted)", fontSize: 12.5, fontWeight: 500 }}>
-                      {t(note.kind === "email" ? "emailNote" : note.kind)}
+                      {t(NOTE_LABELS[note.kind])}
                     </span>
                     <span style={{ color: "var(--faint)", fontSize: 12 }}>{formatDateTime(note.happened_at, locale)}</span>
                     {(user?.role === "root" || note.author_id === user?.id) && (

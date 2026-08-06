@@ -282,6 +282,14 @@ def create_app() -> FastAPI:
                 "Cache-Control", "public, max-age=31536000, immutable"
             )
             response.headers.setdefault("Content-Security-Policy", CSP_MEDIA)
+        elif path.startswith("/assets/"):
+            # Сборка SPA: имя файла содержит хэш содержимого, поэтому изменённый
+            # файл приезжает под новым именем, а старое имя навсегда означает
+            # старое содержимое. Такое кэшируется бессрочно и без переспроса —
+            # ровно то, ради чего хэш в имени и заведён.
+            response.headers.setdefault(
+                "Cache-Control", "public, max-age=31536000, immutable"
+            )
         elif path.startswith(("/media/", "/branding/", "/avatars/")):
             response.headers.setdefault("Content-Security-Policy", CSP_MEDIA)
         elif path.startswith("/b/") or path.startswith("/d/") or path.endswith("/print"):
@@ -366,7 +374,21 @@ def create_app() -> FastAPI:
                 return JSONResponse(
                     {"error": {"code": "not_found", "message": "Not found"}}, status_code=404
                 )
-            return FileResponse(spa_dist / "index.html")
+            # `no-cache` — это «спроси перед тем, как показать», а не «не храни»:
+            # с ETag переспрос стоит один 304 и ничего не весит.
+            #
+            # Без заголовка браузер вправе кэшировать страницу по своему
+            # усмотрению (эвристика от Last-Modified) и делает это. А index.html
+            # — единственный файл сборки без хэша в имени, и внутри него лежат
+            # имена тех, у кого хэш есть. Обновление кладёт новую сборку и
+            # уносит старые файлы: /assets/index-СТАРЫЙ.js после него отвечает
+            # 404. Браузер со вчерашним index.html просит именно его и получает
+            # пустой экран вместо CRM — до тех пор, пока человек не догадается
+            # обновить страницу с очисткой кэша. Поймано на стенде: после
+            # пересборки открытая вкладка продолжала грузить снесённый бандл.
+            return FileResponse(
+                spa_dist / "index.html", headers={"Cache-Control": "no-cache"}
+            )
 
     return app
 

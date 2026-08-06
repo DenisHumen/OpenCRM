@@ -134,10 +134,10 @@ export function Documents() {
                 {doc.payload?.client?.name || "—"}
               </div>
             </div>
-            <span style={{ width: 90, textAlign: "right", color: "var(--faint)", fontSize: 12, flexShrink: 0 }}>
+            <span className="doc-row-date" style={{ width: 90, textAlign: "right", color: "var(--faint)", fontSize: 12, flexShrink: 0 }}>
               {formatDate(doc.created_at, locale)}
             </span>
-            <span style={{ width: 130, flexShrink: 0, display: "flex", justifyContent: "flex-end" }}>
+            <span className="doc-row-status" style={{ width: 130, flexShrink: 0, display: "flex", justifyContent: "flex-end" }}>
               <Chip variant={statusVariant(doc.status)}>{statusLabel(t, doc.status)}</Chip>
             </span>
           </Link>
