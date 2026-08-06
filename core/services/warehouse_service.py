@@ -31,8 +31,10 @@ from database.models.warehouse import (
     QUANTITY_SCALE,
     UNITS,
 )
+from database.models.warehouse import StockTransfer, Warehouse
 from database.repositories import deals as deals_repo
 from database.repositories import warehouse as warehouse_repo
+from database.repositories import warehouses as places_repo
 
 #: сколько знаков после запятой помещается в выбранный масштаб количества
 QUANTITY_DIGITS = 3
@@ -337,6 +339,8 @@ def add_move(
         # нечего, а движение потом некуда было бы показать.
         raise errors.NotFoundError("Deal not found", code="deal_not_found")
 
+    warehouse = resolve_warehouse(db, data.get("warehouse_id"))
+
     cost = parse_money(data.get("cost"), "cost")
     if cost is None:
         # Снимок себестоимости на момент движения: цена закупки поменяется, а
@@ -346,10 +350,11 @@ def add_move(
     # Остаток до движения — та самая «старая величина рядом с новой». Спросить
     # его после вставки уже нельзя: он считается суммой движений, и только что
     # записанное в неё войдёт.
-    stock_before = warehouse_repo.stock_of(db, product.id)
+    stock_before = warehouse_repo.stock_of(db, product.id, warehouse.id)
 
     move = StockMove(
         product_id=product.id,
+        warehouse_id=warehouse.id,
         quantity_milli=quantity,
         kind=kind,
         deal_id=deal_id,
@@ -381,7 +386,11 @@ def add_move(
     # Остаток спрашиваем у базы уже после flush — она и складывает движения,
     # включая только что записанное. Никакого «старый остаток плюс дельта»:
     # именно так расходятся хранимые остатки.
-    stock_after = warehouse_repo.stock_of(db, product.id)
+    # Остаток считаем ПО СКЛАДУ, а не по товару целиком: «ушло в минус» — это
+    # про место, где товара физически не осталось. По сумме всех складов минус
+    # мог бы и не наступить, хотя на точке пусто, и предупреждение не пришло бы
+    # ровно тогда, когда оно нужно.
+    stock_after = warehouse_repo.stock_of(db, product.id, warehouse.id)
     went_negative = quantity < 0 and stock_after < 0
 
     # «Кто списал две матрицы» — тот самый вопрос, ради которого журнал заведён.
@@ -401,3 +410,390 @@ def add_move(
         after=format_quantity(stock_after),
     )
     return move, went_negative
+
+
+# --- склады как места ---------------------------------------------------------
+#
+# Разбор, почему склад живёт на движении, а не на товаре, — в докстроке модели
+# `Warehouse`. Здесь только правила, которые нельзя выразить схемой.
+
+
+MAX_WAREHOUSE_NAME = 200
+MAX_WAREHOUSE_CODE = 32
+
+
+def list_warehouses(db: Session) -> list[Warehouse]:
+    return places_repo.list_alive(db)
+
+
+def warehouse_count(db: Session) -> int:
+    """Сколько складов открыто.
+
+    Отвечает и на вопрос интерфейса «показывать ли выбор склада»: **выбор
+    появляется, когда складов больше одного**. Не настройкой и не выключателем —
+    выводится из данных. Мастерской с одной подсобкой выбор склада в каждой
+    форме помеха, а не возможность; завёл второй — выбор появился везде сам.
+    """
+    return places_repo.count_alive(db)
+
+
+def seed_defaults(db: Session) -> None:
+    """Один склад обязан существовать: без места система не примет ни прихода.
+
+    На боевом сервере его кладёт миграция, здесь — страховка для базы, поднятой
+    `create_all` (путь разработки) или почищенной руками. Идемпотентно: есть
+    хоть один склад — не делаем ничего, даже если он закрыт... нет, именно
+    открытый: закрытый склад приходом не воспользуешься.
+    """
+    if places_repo.count_alive(db) > 0:
+        return
+    warehouse = Warehouse(name="Основной")
+    db.add(warehouse)
+    db.flush()
+    places_repo.make_default(db, warehouse)
+
+
+def get_warehouse(db: Session, warehouse_id: int, include_deleted: bool = False) -> Warehouse:
+    warehouse = places_repo.get(db, warehouse_id, include_deleted=include_deleted)
+    if warehouse is None:
+        raise errors.NotFoundError("Warehouse not found", code="warehouse_not_found")
+    return warehouse
+
+
+def default_warehouse(db: Session) -> Warehouse:
+    """Куда попадает приход, если склад не выбрали.
+
+    Основного не оказалось — назначаем самый давний и говорим об этом в базе, а
+    не молча подставляем первый попавшийся: без пометки следующий вызов выбрал
+    бы, возможно, другой, и приход поехал бы то туда, то сюда.
+    """
+    warehouse = places_repo.default_warehouse(db)
+    if warehouse is not None:
+        return warehouse
+    fallback = places_repo.oldest_alive(db)
+    if fallback is None:
+        # Система без склада не может принять ни одного прихода. На боевой базе
+        # такого не бывает — склад засевает миграция, — но на пустой тестовой
+        # или после ручной чистки бывает, и отказ должен объяснять, что делать.
+        raise errors.ValidationError(
+            "No warehouse exists — create one first", code="no_warehouse"
+        )
+    places_repo.make_default(db, fallback)
+    return fallback
+
+
+def resolve_warehouse(db: Session, warehouse_id: int | None) -> Warehouse:
+    """Склад из формы или основной, если не выбрали."""
+    if warehouse_id is None:
+        return default_warehouse(db)
+    return get_warehouse(db, warehouse_id)
+
+
+def create_warehouse(db: Session, data: dict) -> Warehouse:
+    warehouse = Warehouse(
+        name=_clean_warehouse_name(data.get("name")),
+        code=_clean_warehouse_code(db, data.get("code"), warehouse_id=None),
+        address=(data.get("address") or "").strip(),
+        note=(data.get("note") or "").strip(),
+    )
+    # Код уникален, и проверка выше не спасает от соседа, который завёл такой же
+    # между «проверили» и «вставили». Ловим отказ базы и отвечаем по-человечески.
+    warehouse = uniqueness.insert_unique(
+        db,
+        warehouse,
+        taken=lambda new: new.code is not None
+        and places_repo.get_by_code(db, new.code) is not None,
+        message="This warehouse code is already used",
+        code="warehouse_code_taken",
+    )
+    # Первый склад становится основным сам: иначе приход упёрся бы в «основной
+    # не выбран» ровно тогда, когда выбирать не из чего.
+    if places_repo.default_warehouse(db) is None:
+        places_repo.make_default(db, warehouse)
+    if data.get("is_default"):
+        places_repo.make_default(db, warehouse)
+
+    return warehouse
+
+
+def update_warehouse(db: Session, warehouse_id: int, data: dict) -> Warehouse:
+    warehouse = get_warehouse(db, warehouse_id)
+    if "name" in data:
+        warehouse.name = _clean_warehouse_name(data.get("name"))
+    if "code" in data:
+        warehouse.code = _clean_warehouse_code(db, data.get("code"), warehouse_id=warehouse.id)
+    if "address" in data:
+        warehouse.address = (data.get("address") or "").strip()
+    if "note" in data:
+        warehouse.note = (data.get("note") or "").strip()
+    db.flush()
+
+    if data.get("is_default"):
+        places_repo.make_default(db, warehouse)
+
+    return warehouse
+
+
+def set_default_warehouse(db: Session, warehouse_id: int) -> Warehouse:
+    warehouse = get_warehouse(db, warehouse_id)
+    places_repo.make_default(db, warehouse)
+    return warehouse
+
+
+def close_warehouse(db: Session, warehouse_id: int, actor: User) -> None:
+    """Закрыть склад. Именно закрыть, а не удалить.
+
+    Три отказа, и каждый закрывает свою дыру:
+
+    - **последний склад** — система без склада не примет ни одного прихода;
+    - **склад с остатком** — товар физически лежит, а в системе его нет нигде;
+      сначала перемещение, потом закрытие;
+    - удалять склад с историей нельзя вовсе, поэтому здесь `deleted_at`, а не
+      DELETE: движения старше закрытия, и подписать их будет нечем.
+    """
+    warehouse = get_warehouse(db, warehouse_id)
+
+    if places_repo.count_alive(db) <= 1:
+        raise errors.ValidationError(
+            "The last warehouse cannot be closed", code="last_warehouse"
+        )
+
+    left = places_repo.nonzero_stock(db, warehouse.id)
+    if left:
+        # Называем, сколько позиций осталось: отказ без этого отправляет человека
+        # искать их глазами по всему справочнику.
+        raise errors.ValidationError(
+            f"{len(left)} item(s) still on this warehouse — move them first",
+            code="warehouse_not_empty",
+        )
+
+    warehouse.deleted_at = now_utc()
+    warehouse.is_default = False
+    db.flush()
+
+    audit_service.record_deletion(
+        db,
+        actor=actor,
+        entity_type=audit_service.ENTITY_WAREHOUSE,
+        entity_id=warehouse.id,
+        entity_label=warehouse.name,
+    )
+
+    # Закрыли основной — назначаем следующий. Оставить систему без основного
+    # значит вернуть приход к вопросу «куда», причём незаметно.
+    if places_repo.default_warehouse(db) is None:
+        replacement = places_repo.oldest_alive(db)
+        if replacement is not None:
+            places_repo.make_default(db, replacement)
+
+
+def _clean_warehouse_name(name: str | None) -> str:
+    value = (name or "").strip()
+    if not value:
+        raise errors.ValidationError("Name is required", code="name_required")
+    if len(value) > MAX_WAREHOUSE_NAME:
+        raise errors.ValidationError("Name is too long", code="name_too_long")
+    return value
+
+
+def _clean_warehouse_code(db: Session, code: str | None, warehouse_id: int | None) -> str | None:
+    """Пустой код — это NULL, а не пустая строка: см. комментарий у модели."""
+    value = (code or "").strip()
+    if not value:
+        return None
+    if len(value) > MAX_WAREHOUSE_CODE:
+        raise errors.ValidationError("Code is too long", code="code_too_long")
+    existing = places_repo.get_by_code(db, value)
+    if existing is not None and existing.id != warehouse_id:
+        raise errors.ConflictError(
+            f"Code {value} is already used", code="warehouse_code_taken"
+        )
+    return value
+
+
+# --- переезд между складами ---------------------------------------------------
+
+
+def transfer(db: Session, data: dict, author: User) -> StockTransfer:
+    """Перевезти товар с одного склада на другой.
+
+    **Две строки движения в одной транзакции**, связанные шапкой. Почему не одна
+    строка с двумя складами — разобрано в докстроке модели `StockTransfer`.
+
+    Отказов здесь больше, чем у обычного движения, и каждый закрывает свою дыру:
+
+    - **переезд на тот же склад** — это не операция, а опечатка, но в истории
+      она выглядит как настоящий переезд и сбивает с толку при разборе;
+    - **переезд услуги** — остатка у неё нет и быть не может;
+    - **не хватает на источнике** — увезти с пустого склада нечего физически.
+      У обычного движения минус разрешён (деталь поставили сегодня, накладную
+      занесут в пятницу), здесь этого мало: остановка и явное подтверждение,
+      которое записывается в комментарий переезда.
+
+    Себестоимость копируется в обе строки. Иначе переезд менял бы себестоимость,
+    и заявка, куда деталь спишут потом, обошлась бы дороже или дешевле оттого,
+    что коробку переставили с полки на полку.
+    """
+    product = get_product(db, data["product_id"])
+    if product.is_service:
+        raise errors.ValidationError("A service has no stock", code="service_has_no_stock")
+
+    source = get_warehouse(db, data["from_warehouse_id"])
+    target = get_warehouse(db, data["to_warehouse_id"])
+    if source.id == target.id:
+        raise errors.ValidationError(
+            "Source and destination are the same warehouse", code="same_warehouse"
+        )
+
+    quantity = parse_quantity(data.get("quantity"))
+    if quantity is None or quantity <= 0:
+        # Отрицательный переезд — это переезд в обратную сторону, и записывать
+        # его так значит прятать направление в знаке. Пусть меняют склады местами.
+        raise errors.ValidationError(
+            "Quantity must be greater than zero", code="bad_transfer_quantity"
+        )
+
+    available = warehouse_repo.stock_of(db, product.id, source.id)
+    if quantity > available and not data.get("confirm_negative"):
+        raise errors.ValidationError(
+            f"Only {format_quantity(available)} left on {source.name}",
+            code="not_enough_on_source",
+        )
+
+    cost = product.cost_minor
+    comment = (data.get("comment") or "").strip()
+    if quantity > available:
+        # Подтверждение записывается, а не просто пропускает проверку: через
+        # месяц вопрос «почему на складе минус» задаст не тот, кто нажимал.
+        note = f"перевезено сверх остатка ({format_quantity(available)})"
+        comment = f"{comment} · {note}" if comment else note
+
+    happened = to_utc_naive(data.get("happened_at")) or now_utc()
+    header = StockTransfer(
+        from_warehouse_id=source.id,
+        to_warehouse_id=target.id,
+        comment=comment,
+        happened_at=happened,
+        author_id=author.id,
+    )
+    db.add(header)
+    db.flush()
+
+    _transfer_pair(db, header, product, quantity, cost, author, happened)
+
+    audit_service.record(
+        db,
+        action=audit_service.ACTION_STOCK_TRANSFERRED,
+        actor=author,
+        source=SOURCE_MANUAL,
+        entity_type=audit_service.ENTITY_PRODUCT,
+        entity_id=product.id,
+        entity_label=product.name,
+        before=source.name,
+        after=f"{target.name} ({format_quantity(quantity)})",
+    )
+    return header
+
+
+def revert_transfer(db: Session, transfer_id: int, author: User) -> StockTransfer:
+    """Отменить переезд — обратным переездом, а не удалением строк.
+
+    Склад обязан помнить, что уезжало и что вернулось: удали мы две строки, и
+    вопрос «куда делись две матрицы» останется без ответа, а остаток при этом
+    сойдётся — то есть ошибка станет невидимой.
+
+    Второй раз тот же переезд не отменяется: иначе двойное нажатие увезло бы
+    товар обратно дважды.
+    """
+    header = places_repo.get_transfer(db, transfer_id)
+    if header is None:
+        raise errors.NotFoundError("Transfer not found", code="transfer_not_found")
+    if places_repo.reversal_of(db, header.id) is not None:
+        raise errors.ConflictError(
+            "This transfer is already reverted", code="transfer_already_reverted"
+        )
+    if header.reverses_id is not None:
+        # Отмена отмены — это обычный переезд, и делать его надо руками: иначе
+        # в журнале появится цепочка, в которой не разобраться.
+        raise errors.ValidationError(
+            "A reverting transfer cannot be reverted", code="transfer_is_reversal"
+        )
+
+    happened = now_utc()
+    back = StockTransfer(
+        from_warehouse_id=header.to_warehouse_id,
+        to_warehouse_id=header.from_warehouse_id,
+        comment=f"отмена переезда №{header.id}",
+        reverses_id=header.id,
+        happened_at=happened,
+        author_id=author.id,
+    )
+    db.add(back)
+    db.flush()
+
+    for move in places_repo.moves_of_transfer(db, header.id):
+        if move.quantity_milli >= 0:
+            # Обратный переезд строим по расходной строке: она называет и товар,
+            # и количество, и себестоимость на момент отъезда.
+            continue
+        product = get_product(db, move.product_id)
+        _transfer_pair(
+            db, back, product, abs(move.quantity_milli), move.cost_minor, author, happened
+        )
+
+    audit_service.record(
+        db,
+        action=audit_service.ACTION_STOCK_TRANSFERRED,
+        actor=author,
+        source=SOURCE_MANUAL,
+        entity_type=audit_service.ENTITY_WAREHOUSE,
+        entity_id=header.from_warehouse_id,
+        entity_label=f"отмена переезда №{header.id}",
+    )
+    return back
+
+
+def _transfer_pair(
+    db: Session,
+    header: StockTransfer,
+    product: Product,
+    quantity: int,
+    cost: int | None,
+    author: User,
+    happened,
+) -> None:
+    """Расход с источника и приход на приёмник — обе строки сразу.
+
+    Отдельной функцией, потому что зовут её двое (переезд и его отмена), а
+    половина перемещения — это товар, пропавший с одного склада и не появившийся
+    на другом. Хуже, чем не перевозить вовсе: остаток врёт, а следов нет.
+    """
+    db.add(
+        StockMove(
+            product_id=product.id,
+            warehouse_id=header.from_warehouse_id,
+            transfer_id=header.id,
+            quantity_milli=-quantity,
+            kind=MOVE_OUT,
+            cost_minor=cost,
+            comment=header.comment,
+            happened_at=happened,
+            author_id=author.id,
+        )
+    )
+    db.add(
+        StockMove(
+            product_id=product.id,
+            warehouse_id=header.to_warehouse_id,
+            transfer_id=header.id,
+            quantity_milli=quantity,
+            kind=MOVE_IN,
+            # Тот же снимок себестоимости, что у расхода: переезд не имеет права
+            # менять, во сколько товар обошёлся.
+            cost_minor=cost,
+            comment=header.comment,
+            happened_at=happened,
+            author_id=author.id,
+        )
+    )
+    db.flush()

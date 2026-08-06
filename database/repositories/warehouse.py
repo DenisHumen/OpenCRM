@@ -58,23 +58,40 @@ def names_of(db: Session, product_ids: set[int]) -> dict[int, tuple[str, str]]:
     return {product_id: (name, unit) for product_id, name, unit in rows}
 
 
-def stock_of(db: Session, product_id: int) -> int:
+def stock_of(
+    db: Session,
+    product_id: int,
+    warehouse_id: int | None = None,
+    on_date=None,
+) -> int:
     """Остаток одного товара в тысячных долях единицы.
+
+    `warehouse_id` — остаток на конкретном складе; без него сумма по всем.
+
+    `on_date` — остаток НА ДАТУ: «сколько было на первое число». Это побочная
+    выгода того, что остаток не хранится, и назвать её стоит вслух — при
+    хранимом числе такой вопрос не имел бы ответа вовсе, а он нужен и для сверки
+    с бумажной инвентаризацией, и для разговора с бухгалтером.
 
     coalesce — потому что SUM по пустому набору даёт NULL, а «движений не было»
     означает ровно ноль, а не «неизвестно».
     """
-    return (
-        db.scalar(
-            select(func.coalesce(func.sum(StockMove.quantity_milli), 0)).where(
-                StockMove.product_id == product_id
-            )
-        )
-        or 0
+    stmt = select(func.coalesce(func.sum(StockMove.quantity_milli), 0)).where(
+        StockMove.product_id == product_id
     )
+    if warehouse_id is not None:
+        stmt = stmt.where(StockMove.warehouse_id == warehouse_id)
+    if on_date is not None:
+        stmt = stmt.where(StockMove.happened_at <= on_date)
+    return db.scalar(stmt) or 0
 
 
-def stock_by_product(db: Session, product_ids: list[int] | None = None) -> dict[int, int]:
+def stock_by_product(
+    db: Session,
+    product_ids: list[int] | None = None,
+    warehouse_id: int | None = None,
+    on_date=None,
+) -> dict[int, int]:
     """Остатки пачкой: {product_id: остаток в тысячных}.
 
     Один запрос на весь список товаров вместо запроса на строку — иначе экран
@@ -92,16 +109,62 @@ def stock_by_product(db: Session, product_ids: list[int] | None = None) -> dict[
         if not product_ids:
             return {}
         stmt = stmt.where(StockMove.product_id.in_(product_ids))
+    if warehouse_id is not None:
+        stmt = stmt.where(StockMove.warehouse_id == warehouse_id)
+    if on_date is not None:
+        stmt = stmt.where(StockMove.happened_at <= on_date)
     stmt = stmt.group_by(StockMove.product_id)
     return {product_id: total for product_id, total in db.execute(stmt).all()}
 
 
-def _moves_base(product_id: int | None, deal_id: int | None) -> Select:
+def stock_by_warehouse(
+    db: Session,
+    product_ids: list[int] | None = None,
+    on_date=None,
+) -> dict[int, dict[int, int]]:
+    """Раскладка остатков по местам: {product_id: {warehouse_id: остаток}}.
+
+    То, ради чего половина задачи. Ищем по данным товара, а в ответе показываем
+    **где и сколько** — иначе на вопрос «а на точке-то оно есть?» отвечать
+    нечем, и продавец звонит и спрашивает голосом.
+
+    Один запрос на всю страницу, как и `stock_by_product`. Запрос на строку
+    превратил бы поиск из 500 позиций в 500 обращений к базе — эта ошибка в
+    блоке уже разбиралась и закрывалась, повторять её нельзя.
+
+    Нули в ответ не попадают: склад, где товара никогда не было, — это не «0 шт»,
+    а отсутствие строки. Дорисовать нули там, где они осмысленны (все склады в
+    карточке товара), — дело вызывающего, у которого есть список складов.
+    """
+    stmt = select(
+        StockMove.product_id,
+        StockMove.warehouse_id,
+        func.coalesce(func.sum(StockMove.quantity_milli), 0),
+    )
+    if product_ids is not None:
+        if not product_ids:
+            return {}
+        stmt = stmt.where(StockMove.product_id.in_(product_ids))
+    if on_date is not None:
+        stmt = stmt.where(StockMove.happened_at <= on_date)
+    stmt = stmt.group_by(StockMove.product_id, StockMove.warehouse_id)
+
+    spread: dict[int, dict[int, int]] = {}
+    for product_id, warehouse_id, total in db.execute(stmt).all():
+        spread.setdefault(product_id, {})[warehouse_id] = total
+    return spread
+
+
+def _moves_base(
+    product_id: int | None, deal_id: int | None, warehouse_id: int | None = None
+) -> Select:
     stmt = select(StockMove)
     if product_id is not None:
         stmt = stmt.where(StockMove.product_id == product_id)
     if deal_id is not None:
         stmt = stmt.where(StockMove.deal_id == deal_id)
+    if warehouse_id is not None:
+        stmt = stmt.where(StockMove.warehouse_id == warehouse_id)
     return stmt
 
 
@@ -109,10 +172,11 @@ def list_moves(
     db: Session,
     product_id: int | None = None,
     deal_id: int | None = None,
+    warehouse_id: int | None = None,
     page: int = 1,
     per_page: int = 50,
 ) -> tuple[list[StockMove], int]:
-    stmt = _moves_base(product_id, deal_id).order_by(
+    stmt = _moves_base(product_id, deal_id, warehouse_id).order_by(
         StockMove.happened_at.desc(), StockMove.id.desc()
     )
     return page_of(db, stmt, page=page, per_page=per_page)

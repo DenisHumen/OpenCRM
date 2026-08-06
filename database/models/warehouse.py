@@ -38,6 +38,92 @@ MOVE_RETURN = "return"      # возврат
 MOVE_KINDS = (MOVE_IN, MOVE_OUT, MOVE_WRITEOFF, MOVE_ADJUST, MOVE_RETURN)
 
 
+class Warehouse(Base):
+    """Место, где лежит товар: торговый зал, подсобка, машина выездного мастера.
+
+    **Склад живёт на движении, а не на товаре.** Товар — строка справочника, он
+    существует один раз; лежит он в разных местах, и это свойство операции, а не
+    карточки. Отсюда `stock_moves.warehouse_id` и остаток
+    `SUM(quantity_milli) GROUP BY product_id, warehouse_id`.
+
+    Инвариант блока при этом цел: остаток по-прежнему **не хранится** и
+    по-прежнему считается запросом, меняется только группировка. Колонка «остаток
+    на складе N» сломала бы ровно то, ради чего склад устроен так, как устроен, —
+    хранимое число однажды разойдётся с историей, и узнать, какая из двух цифр
+    верна, будет неоткуда.
+
+    **Складов всегда хотя бы один**, и ровно один помечен основным — тот же вид
+    инварианта, что «основная фирма ровно одна», и держится он так же, запросами
+    (частичных индексов в проекте нет: в MySQL их не существует).
+    """
+
+    __tablename__ = "warehouses"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(200), index=True)
+    # Короткое обозначение для наклеек и печати. NULL, а не пустая строка: два
+    # склада без кода — норма, а две пустые строки нарушили бы уникальность.
+    code: Mapped[str | None] = mapped_column(
+        String(32), nullable=True, unique=True, index=True
+    )
+    address: Mapped[str] = mapped_column(Text, default="", server_default="")
+    # Куда попадает приход, если склад не выбрали.
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    note: Mapped[str] = mapped_column(Text, default="", server_default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
+    # Мягкое удаление: на склад ссылаются движения, а история не должна исчезать
+    # вместе с местом. Склад с движениями не удаляют, а закрывают.
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+
+
+class StockTransfer(Base):
+    """Шапка переезда товара между складами. Строки — это движения со ссылкой сюда.
+
+    **Перемещение — не приход и не расход, а два движения, связанные ссылкой.**
+
+    Соблазн сделать одну строку с `from_warehouse_id` и `to_warehouse_id` велик и
+    ломает всё сразу: одна строка влияла бы на два склада с разными знаками, и
+    `SUM GROUP BY warehouse_id` перестал бы быть верным; каждый будущий запрос по
+    складу обязан был бы знать про особый случай «а у перемещений всё иначе»;
+    забыть про этот случай можно ровно один раз — и остаток тихо разойдётся.
+
+    Поэтому расход со склада А и приход на склад Б — две обычные строки. Агрегат
+    остаётся ровно таким, каким был, а «это один переезд, а не два независимых
+    события» несёт `transfer_id`.
+
+    Нового вида движения не нужно: годятся `out` и `in`. Отличает перемещение
+    именно ссылка — это честнее, чем ещё один `kind`, который пришлось бы
+    исключать в половине отчётов.
+    """
+
+    __tablename__ = "stock_transfers"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    # RESTRICT: переезд — это история, и удалить склад вместе с ней значит
+    # переписать прошлое. Штатный путь — закрытие склада (`deleted_at`).
+    from_warehouse_id: Mapped[int] = mapped_column(
+        ForeignKey("warehouses.id", ondelete="RESTRICT"), index=True
+    )
+    to_warehouse_id: Mapped[int] = mapped_column(
+        ForeignKey("warehouses.id", ondelete="RESTRICT"), index=True
+    )
+    comment: Mapped[str] = mapped_column(Text, default="", server_default="")
+    # Отмена переезда — это обратный переезд, а не удаление строк: склад обязан
+    # помнить, что уезжало и что вернулось. Здесь лежит ссылка на тот переезд,
+    # который этот отменяет; у обычного переезда NULL.
+    reverses_id: Mapped[int | None] = mapped_column(
+        ForeignKey("stock_transfers.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    happened_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    author_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+
+
 class Product(Base):
     """Позиция номенклатуры: товар или услуга."""
 
@@ -145,6 +231,16 @@ class StockMove(Base):
     product_id: Mapped[int] = mapped_column(
         ForeignKey("products.id", ondelete="RESTRICT"), index=True
     )
+    # Где это произошло. RESTRICT по той же причине, что у товара: удалить склад
+    # вместе с движениями значит бесшумно переписать историю.
+    warehouse_id: Mapped[int] = mapped_column(
+        ForeignKey("warehouses.id", ondelete="RESTRICT"), index=True
+    )
+    # Часть переезда или обычное движение. SET NULL, а не CASCADE: пропади
+    # движение вместе с шапкой переезда — остаток вырос бы сам собой.
+    transfer_id: Mapped[int | None] = mapped_column(
+        ForeignKey("stock_transfers.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     # Знаковое: приход +, расход −. Остаток = SUM(quantity_milli) по товару,
     # поэтому вычитать при чтении ничего не нужно и перепутать знак негде.
     quantity_milli: Mapped[int] = mapped_column(Integer)
@@ -177,4 +273,10 @@ class StockMove(Base):
         Index("ix_stock_moves_product_qty", "product_id", "quantity_milli"),
         # История движений в карточке товара — по времени операции, а не записи.
         Index("ix_stock_moves_product_happened", "product_id", "happened_at"),
+        # То же самое, но для раскладки по складам: группировка стала парой, и
+        # индекса по одному товару ей мало — база пошла бы по нему, а за складом
+        # и количеством лезла бы в таблицу на каждой строке.
+        Index("ix_stock_moves_wh_product_qty", "warehouse_id", "product_id", "quantity_milli"),
+        # История одного склада: «что происходило в подсобке за неделю».
+        Index("ix_stock_moves_wh_happened", "warehouse_id", "happened_at"),
     )

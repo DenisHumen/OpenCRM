@@ -15,11 +15,24 @@ from core.services import permissions_service, settings_service, warehouse_servi
 from database.models import User
 from database.repositories import users as users_repo
 from database.repositories import warehouse as warehouse_repo
+from database.repositories import warehouses as places_repo
 from web.api import schemas
 from web.api.deps import MAX_SEARCH, get_db, require_module, require_perm
 
 router = APIRouter(
     prefix="/warehouse",
+    tags=["warehouse"],
+    dependencies=[Depends(require_module("warehouse"))],
+)
+
+#: Склады как места — отдельным ресурсом верхнего уровня.
+#:
+#: Адрес `/warehouse/warehouses` читался бы как оговорка, а склад — не часть
+#: карточки товара: это место, у которого своя жизнь, свои права и свой журнал.
+#: Гейт блока тот же и назван явно: пропусти его — и выключенный склад
+#: продолжал бы отдавать список мест тому, кто помнит адрес.
+places_router = APIRouter(
+    prefix="/warehouses",
     tags=["warehouse"],
     dependencies=[Depends(require_module("warehouse"))],
 )
@@ -56,6 +69,8 @@ def list_products(
     search: str | None = Query(default=None, max_length=MAX_SEARCH),
     low_only: bool = False,
     include_services: bool = True,
+    # Остаток одного склада вместо суммы по всем: «а на точке-то оно есть?».
+    warehouse_id: int | None = None,
     page: int = Query(default=1, ge=1),
     per_page: int = Query(default=50, ge=1, le=200),
     user: User = Depends(require_perm("warehouse", "view")),
@@ -65,12 +80,21 @@ def list_products(
     items, total = warehouse_repo.search_products(
         db, q=search, include_services=include_services, page=page, per_page=per_page
     )
+    goods = [p.id for p in items if not p.is_service]
     # Остатки — одним запросом на всю страницу списка, а не по одному на строку.
-    stock = warehouse_repo.stock_by_product(db, [p.id for p in items if not p.is_service])
-    rows = [
-        schemas.product_out(p, None if p.is_service else stock.get(p.id, 0), amounts=amounts)
-        for p in items
-    ]
+    stock = warehouse_repo.stock_by_product(db, goods, warehouse_id=warehouse_id)
+    # Раскладка «где и сколько» — тоже одним запросом и только когда складов
+    # больше одного: при единственном складе она повторяла бы общий остаток.
+    many = warehouse_service.warehouse_count(db) > 1
+    spread = warehouse_repo.stock_by_warehouse(db, goods) if many else {}
+    rows = []
+    for p in items:
+        row = schemas.product_out(
+            p, None if p.is_service else stock.get(p.id, 0), amounts=amounts
+        )
+        if many and not p.is_service:
+            row["by_warehouse"] = spread.get(p.id, {})
+        rows.append(row)
     if low_only:
         # Фильтр применяется после подсчёта остатков: «мало» — свойство не строки
         # в таблице, а суммы движений, и в WHERE его не выразить, не повторив тот
@@ -112,6 +136,14 @@ def get_product(
         warehouse_service.stock_of(db, product),
         amounts=permissions_service.sees_amounts(db, user, "warehouse"),
     )
+    # Раскладка «где и сколько» — здесь же, а не отдельной ручкой и не выуживанием
+    # карточки из списка: остаток один, и способов посчитать его должно быть
+    # столько же. Только когда складов больше одного — иначе она повторяла бы
+    # общий остаток строка в строку.
+    if not product.is_service and warehouse_service.warehouse_count(db) > 1:
+        data["by_warehouse"] = warehouse_repo.stock_by_warehouse(db, [product.id]).get(
+            product.id, {}
+        )
     data["currency"] = _currency(db)
     return data
 
@@ -188,6 +220,7 @@ def product_moves(
 def list_moves(
     product_id: int | None = None,
     deal_id: int | None = None,
+    warehouse_id: int | None = None,
     page: int = Query(default=1, ge=1),
     per_page: int = Query(default=50, ge=1, le=200),
     user: User = Depends(require_perm("warehouse", "view")),
@@ -195,7 +228,8 @@ def list_moves(
 ):
     amounts = permissions_service.sees_amounts(db, user, "warehouse")
     items, total = warehouse_repo.list_moves(
-        db, product_id=product_id, deal_id=deal_id, page=page, per_page=per_page
+        db, product_id=product_id, deal_id=deal_id, warehouse_id=warehouse_id,
+        page=page, per_page=per_page
     )
     data = schemas.paginated(
         _decorate(db, [schemas.stock_move_out(m, amounts=amounts) for m in items]),
@@ -226,3 +260,120 @@ def create_move(
     data["went_negative"] = went_negative
     data["stock_milli"] = warehouse_repo.stock_of(db, move.product_id)
     return data
+
+
+# --- склады как места ---------------------------------------------------------
+#
+# Заводить склады — действие структурное, вроде «завести юрлицо», поэтому оно на
+# `warehouse.manage`, а не на `create`: приход, расход и перемещение остаются у
+# кладовщика, а склады заводит тот, кто отвечает за структуру.
+
+
+@places_router.get("")
+def list_warehouses(
+    _: User = Depends(require_perm("warehouse", "view")),
+    db: Session = Depends(get_db),
+):
+    """Список складов. `many` — показывать ли выбор склада в формах.
+
+    Считает сервер, а не экран: правило «выбор появляется, когда складов больше
+    одного» посчитанное на фронте стало бы вторым экземпляром того же правила, а
+    два экземпляра расходятся молча.
+    """
+    items = warehouse_service.list_warehouses(db)
+    return {"items": [schemas.warehouse_out(w) for w in items], "many": len(items) > 1}
+
+
+@places_router.post("", status_code=201)
+def create_warehouse(
+    payload: schemas.WarehouseIn,
+    _: User = Depends(require_perm("warehouse", "manage")),
+    db: Session = Depends(get_db),
+):
+    return schemas.warehouse_out(warehouse_service.create_warehouse(db, payload.model_dump()))
+
+
+@places_router.patch("/{warehouse_id}")
+def update_warehouse(
+    warehouse_id: int,
+    payload: schemas.WarehousePatchIn,
+    _: User = Depends(require_perm("warehouse", "manage")),
+    db: Session = Depends(get_db),
+):
+    return schemas.warehouse_out(
+        warehouse_service.update_warehouse(
+            db, warehouse_id, payload.model_dump(exclude_unset=True)
+        )
+    )
+
+
+@places_router.delete("/{warehouse_id}")
+def close_warehouse(
+    warehouse_id: int,
+    user: User = Depends(require_perm("warehouse", "manage")),
+    db: Session = Depends(get_db),
+):
+    """Закрыть склад. Последний и непустой закрыть нельзя — почему, в сервисе."""
+    warehouse_service.close_warehouse(db, warehouse_id, user)
+    return {"message": "Warehouse closed"}
+
+
+# --- переезды -----------------------------------------------------------------
+
+
+@router.get("/transfers")
+def list_transfers(
+    warehouse_id: int | None = None,
+    product_id: int | None = None,
+    page: int = Query(default=1, ge=1),
+    per_page: int = Query(default=50, ge=1, le=200),
+    _: User = Depends(require_perm("warehouse", "view")),
+    db: Session = Depends(get_db),
+):
+    """Журнал переездов — отдельным списком, а не строками в общей истории.
+
+    В общем списке движений переезд читается плохо: две строки подряд с разными
+    знаками, и понять, одно это событие или два разных, можно только по времени
+    и по памяти. Здесь он — одна запись: что, сколько, откуда, куда и кто.
+    """
+    headers, total = places_repo.list_transfers(
+        db, warehouse_id=warehouse_id, product_id=product_id, page=page, per_page=per_page
+    )
+    # Три запроса на страницу, а не три на строку: имена складов и позиции
+    # переездов берём пачкой — ровно как остатки в списке товаров.
+    rows = places_repo.moves_by_transfers(db, [h.id for h in headers])
+    names = places_repo.names_of(
+        db, [h.from_warehouse_id for h in headers] + [h.to_warehouse_id for h in headers]
+    )
+    reverted = places_repo.reverted_ids(db, [h.id for h in headers])
+    items = [
+        schemas.transfer_out(h, rows.get(h.id, []), names, reverted=h.id in reverted)
+        for h in headers
+    ]
+    return schemas.paginated(items, total, page, per_page)
+
+
+@router.post("/transfers", status_code=201)
+def create_transfer(
+    payload: schemas.TransferIn,
+    user: User = Depends(require_perm("warehouse", "create")),
+    db: Session = Depends(get_db),
+):
+    """Перевезти товар. Две строки движения в одной транзакции — см. сервис."""
+    header = warehouse_service.transfer(db, payload.model_dump(), user)
+    moves = places_repo.moves_of_transfer(db, header.id)
+    names = places_repo.names_of(db, [header.from_warehouse_id, header.to_warehouse_id])
+    return schemas.transfer_out(header, moves, names)
+
+
+@router.post("/transfers/{transfer_id}/revert", status_code=201)
+def revert_transfer(
+    transfer_id: int,
+    user: User = Depends(require_perm("warehouse", "create")),
+    db: Session = Depends(get_db),
+):
+    """Отменить переезд обратным переездом. Дважды один и тот же — отказ."""
+    header = warehouse_service.revert_transfer(db, transfer_id, user)
+    moves = places_repo.moves_of_transfer(db, header.id)
+    names = places_repo.names_of(db, [header.from_warehouse_id, header.to_warehouse_id])
+    return schemas.transfer_out(header, moves, names)

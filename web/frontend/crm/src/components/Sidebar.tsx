@@ -286,6 +286,9 @@ export function Sidebar({
     // обязательно правит логотип сайта, и наоборот.
     { perm: "roles.view", to: "/settings/roles", label: t("roles") },
     { perm: "settings.manage", to: "/settings/modules", label: t("modules") },
+    // Склады как места. Своё право: их заводит тот, кто отвечает за структуру,
+    // а не тот, кто правит логотип.
+    { module: "warehouse", perm: "warehouse.manage", to: "/settings/warehouses", label: t("warehouses") },
     // Ящики стоят в настройках, а не в «Работе»: это конфигурация фирмы, а не
     // то, чем пользуются каждый день.
     { module: "mail", perm: "settings.manage", to: "/settings/mailboxes", label: t("mailboxes") },

@@ -38,6 +38,7 @@ import {
 } from "./screens/Settings";
 import { SettingsModules } from "./screens/SettingsModules";
 import { SettingsRoles } from "./screens/SettingsRoles";
+import { SettingsWarehouses } from "./screens/SettingsWarehouses";
 import { Staff } from "./screens/Staff";
 import { Tasks } from "./screens/Tasks";
 import { SettingsTelephony } from "./screens/TelephonySettings";
@@ -227,6 +228,14 @@ export default function App() {
               и менять логотип сайта — разные по весу решения. */}
           <Route element={<PermRoute perm="roles.view" />}>
             <Route path="/settings/roles" element={<SettingsRoles />} />
+          </Route>
+          {/* Склады — своё право и свой блок. Не внутри группы `settings.manage`:
+              завести склад и поменять логотип сайта — разные по весу решения, и
+              кладовщику первое нужно, а второе нет. */}
+          <Route element={<ModuleRoute module="warehouse" />}>
+            <Route element={<PermRoute perm="warehouse.manage" />}>
+              <Route path="/settings/warehouses" element={<SettingsWarehouses />} />
+            </Route>
           </Route>
           <Route element={<PermRoute perm="settings.manage" />}>
             <Route element={<ModuleRoute module="boards" />}>

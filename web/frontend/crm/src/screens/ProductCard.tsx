@@ -3,6 +3,13 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { Icon } from "../components/Icon";
 import { ProductBarcodes } from "../components/ProductBarcodes";
+import {
+  TransferLog,
+  TransferModal,
+  WarehousePicker,
+  WarehouseSpread,
+  useWarehouses,
+} from "../components/Warehouses";
 import { ConfirmModal, EmptyState, ScreenLoading } from "../components/ui";
 import { api, ApiError } from "../lib/api";
 import { useApp } from "../lib/app";
@@ -49,6 +56,12 @@ export function ProductCard() {
   const [total, setTotal] = useState(0);
   const [currency, setCurrency] = useState(workspace.currency);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const places = useWarehouses();
+  const [showTransfer, setShowTransfer] = useState(false);
+  // Раскладка «где и сколько» приходит вместе со списком, а не с карточкой:
+  // карточка спрашивает один товар, и отдельная ручка ради неё была бы третьим
+  // способом посчитать один и тот же остаток.
+  const [spread, setSpread] = useState<Record<string, number> | undefined>();
 
   const { failure, fail, clear } = useFailure();
 
@@ -58,6 +71,7 @@ export function ProductCard() {
       const card = await api.get<Product & { currency: string }>(`/warehouse/products/${id}`);
       setProduct(card);
       setCurrency(card.currency || workspace.currency);
+      setSpread(card.by_warehouse);
       const history = await api.get(`/warehouse/products/${id}/moves?per_page=200`);
       setMoves(history.items);
       setTotal(history.total);
@@ -126,6 +140,9 @@ export function ProductCard() {
             </div>
           </div>
         </div>
+        {/* Где лежит. Раскладка по местам появляется вместе со вторым складом:
+            пока склад один, она повторяла бы общий остаток. */}
+        <WarehouseSpread places={places} spread={spread} unit={t(unitKey(product.unit))} />
         {/* Об этом стоит напоминать прямо на экране: увидев число, человек ищет
             поле, где его правят, — а правится оно только движением. */}
         <div className="field-desc" style={{ marginTop: 12 }}>{t("stockIsSumOfMoves")}</div>
@@ -136,7 +153,29 @@ export function ProductCard() {
         )}
       </div>
 
-      {!product.is_service && <MoveForm product={product} onSaved={() => void load()} />}
+      {!product.is_service && (
+        <MoveForm product={product} places={places} onSaved={() => void load()} />
+      )}
+
+      {/* Переезд — отдельное действие, а не «расход тут, приход там»: товар не
+          появился и не пропал, и в истории это одно событие. Кнопка появляется
+          вместе со вторым складом: перевозить внутри одного места нечего. */}
+      {!product.is_service && places?.many && (
+        <>
+          <div className="section-head" style={{ marginTop: 28 }}>
+            <h2 className="section-title">{t("transfers")}</h2>
+            <button
+              className="btn btn-secondary btn-sm"
+              style={{ marginLeft: "auto" }}
+              onClick={() => setShowTransfer(true)}
+            >
+              <Icon name="arrowOut" size={13} />
+              {t("transfer")}
+            </button>
+          </div>
+          <TransferLog productId={product.id} productNames={{ [product.id]: product.name }} />
+        </>
+      )}
 
       {/* Раздел сам решает, показываться ли: выключен блок или нет права —
           возвращает null. Услуге штрихкод не нужен, её не сканируют с полки. */}
@@ -188,6 +227,15 @@ export function ProductCard() {
         {moves.length === 0 && <EmptyState title={t("noMovesYet")} />}
       </div>
 
+      {showTransfer && places && (
+        <TransferModal
+          productId={product.id}
+          places={places}
+          onClose={() => setShowTransfer(false)}
+          onDone={() => void load()}
+        />
+      )}
+
       {confirmDelete && (
         <ConfirmModal
           text={t("deleteProductConfirm")}
@@ -214,9 +262,20 @@ export function ProductCard() {
  * Движение записывается, а не редактируется: ошибку исправляют обратным
  * движением, поэтому здесь нет ни правки, ни удаления. Иначе остаток на прошлую
  * пятницу зависел бы от того, когда его спросили. */
-function MoveForm({ product, onSaved }: { product: Product; onSaved: () => void }) {
+function MoveForm({
+  product,
+  places,
+  onSaved,
+}: {
+  product: Product;
+  places: ReturnType<typeof useWarehouses>;
+  onSaved: () => void;
+}) {
   const { t, toast, toastError } = useApp();
   const [kind, setKind] = useState<MoveKind>("in");
+  // Склад по умолчанию — основной, но выбирается явно. Молчаливое списание с
+  // основного однажды спишет деталь не оттуда, где её взяли.
+  const [place, setPlace] = useState<number | null>(null);
   const [quantity, setQuantity] = useState("");
   const [comment, setComment] = useState("");
   const [busy, setBusy] = useState(false);
@@ -233,6 +292,7 @@ function MoveForm({ product, onSaved }: { product: Product; onSaved: () => void 
         kind,
         quantity: quantity.trim(),
         comment: comment.trim() || null,
+        warehouse_id: place,
       });
       // Уход в минус — не отказ: движение записано, а предупреждение видит
       // оператор, чтобы пойти искать неоприходованный приход.
@@ -261,8 +321,11 @@ function MoveForm({ product, onSaved }: { product: Product; onSaved: () => void 
           </button>
         ))}
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "160px 1fr auto", gap: 12, alignItems: "end" }}>
-        <div className="field" style={{ marginBottom: 0 }}>
+      {/* Не сетка с колонками, а перенос: на телефоне четыре поля в один ряд
+          не встают, и жёсткие колонки увозили страницу вбок. Каждое поле
+          называет свою минимальную ширину и переносится, когда её не хватает. */}
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "end" }}>
+        <div className="field" style={{ marginBottom: 0, flex: "0 1 140px" }}>
           <label className="label">
             {t("quantity")}, {t(unitKey(product.unit))}
           </label>
@@ -274,7 +337,13 @@ function MoveForm({ product, onSaved }: { product: Product; onSaved: () => void 
             required
           />
         </div>
-        <div className="field" style={{ marginBottom: 0 }}>
+        {places?.many && (
+          <div className="field" style={{ marginBottom: 0, flex: "0 1 150px" }}>
+            <label className="label">{t("warehousePick")}</label>
+            <WarehousePicker places={places} value={place ?? places.items[0]?.id ?? null} onChange={setPlace} />
+          </div>
+        )}
+        <div className="field" style={{ marginBottom: 0, flex: "1 1 170px", minWidth: 0 }}>
           <label className="label">{t("moveComment")}</label>
           <input className="input" value={comment} onChange={(e) => setComment(e.target.value)} />
         </div>

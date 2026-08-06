@@ -238,9 +238,41 @@ class StockMoveIn(BaseModel):
     quantity: Quantity = None
     kind: str
     deal_id: int | None = None
+    # Где это произошло. Не прислали — основной склад: пока склад один, форма о
+    # нём вообще не спрашивает (см. `warehouse_service.warehouse_count`).
+    warehouse_id: int | None = None
     cost: int | None = None
     comment: str | None = None
     happened_at: datetime | None = None
+
+
+class WarehouseIn(BaseModel):
+    name: str
+    code: str | None = None
+    address: str | None = None
+    note: str | None = None
+    is_default: bool = False
+
+
+class WarehousePatchIn(BaseModel):
+    name: str | None = None
+    code: str | None = None
+    address: str | None = None
+    note: str | None = None
+    is_default: bool = False
+
+
+class TransferIn(BaseModel):
+    product_id: int
+    from_warehouse_id: int
+    to_warehouse_id: int
+    quantity: Quantity = None
+    comment: str | None = None
+    happened_at: datetime | None = None
+    # Явное согласие увезти больше, чем лежит. По умолчанию такой переезд
+    # останавливается: с пустого склада увезти нечего физически, и молчаливый
+    # минус здесь означал бы, что коробку «перевезли» из воздуха.
+    confirm_negative: bool = False
 
 
 # --- сериализация ---
@@ -730,6 +762,10 @@ def stock_move_out(move: StockMove, amounts: bool = True) -> dict:
         "quantity_milli": move.quantity_milli,
         "kind": move.kind,
         "deal_id": move.deal_id,
+        "warehouse_id": move.warehouse_id,
+        # Не NULL — значит это половина переезда, а не самостоятельное движение.
+        # Экран рисует такие строки стрелкой между складами, а не «приход/расход».
+        "transfer_id": move.transfer_id,
         "cost": move.cost_minor if amounts else None,
         "comment": move.comment,
         "happened_at": _iso(move.happened_at),
@@ -769,4 +805,54 @@ def barcode_out(barcode) -> dict:
         "kind": barcode.kind,
         "pack_size_milli": barcode.pack_size_milli,
         "is_primary": barcode.is_primary,
+    }
+
+
+def warehouse_out(warehouse) -> dict:
+    return {
+        "id": warehouse.id,
+        "name": warehouse.name,
+        "code": warehouse.code,
+        "address": warehouse.address,
+        "is_default": warehouse.is_default,
+        "note": warehouse.note,
+        "created_at": _iso(warehouse.created_at),
+        "deleted_at": _iso(warehouse.deleted_at),
+    }
+
+
+def transfer_out(
+    header, moves: list | None = None, names: dict | None = None, reverted: bool = False
+) -> dict:
+    """Переезд для журнала: шапка плюс строки.
+
+    Строки приходят готовыми, а не догружаются здесь: журнал показывает их
+    пачкой, и запрос на строку превратил бы страницу из пятидесяти переездов в
+    пятьдесят обращений к базе.
+    """
+    names = names or {}
+    rows = [
+        {
+            "product_id": move.product_id,
+            "quantity_milli": abs(move.quantity_milli),
+        }
+        for move in (moves or [])
+        # Строк у переезда две на позицию, а в журнале нужна одна: берём
+        # расходную — она называет и товар, и сколько уехало.
+        if move.quantity_milli < 0
+    ]
+    return {
+        "id": header.id,
+        "from_warehouse_id": header.from_warehouse_id,
+        "from_warehouse_name": names.get(header.from_warehouse_id),
+        "to_warehouse_id": header.to_warehouse_id,
+        "to_warehouse_name": names.get(header.to_warehouse_id),
+        "comment": header.comment,
+        "reverses_id": header.reverses_id,
+        # Уже отменён — кнопку «отменить» показывать не за чем: сервер откажет,
+        # и это будет правильный отказ на неправильное предложение.
+        "reverted": reverted,
+        "happened_at": _iso(header.happened_at),
+        "author_id": header.author_id,
+        "items": rows,
     }

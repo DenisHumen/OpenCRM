@@ -54,6 +54,9 @@ ACTION_DEAL_STAGE_CHANGED = "deal.stage_changed"
 ACTION_DEAL_AMOUNT_CHANGED = "deal.amount_changed"
 ACTION_DEAL_PREPAID_CHANGED = "deal.prepaid_changed"
 ACTION_STOCK_MOVE_ADDED = "stock.move_added"
+#: Переезд товара между складами. Отдельным действием, а не двумя записями о
+#: движении: в журнале это одно решение человека, и читать его надо как одно.
+ACTION_STOCK_TRANSFERRED = "stock.transferred"
 ACTION_MODULE_SWITCHED = "module.switched"
 #: Окончательная уборка мягко удалённого. Единственное действие, которое
 #: стирает данные безвозвратно, — и потому обязано быть в журнале даже
@@ -94,6 +97,9 @@ ENTITY_BOARD = "board"
 ENTITY_SHARE = "share"
 #: Почтовый ящик: чужой сервер, логин и пароль.
 ENTITY_MAILBOX = "mailbox"
+#: Склад как место: торговый зал, подсобка, машина мастера. Отдельно от товара —
+#: «куда делась подсобка» и «что было с этой матрицей» это разные вопросы.
+ENTITY_WAREHOUSE = "warehouse"
 ENTITY_NOTE = "note"
 ENTITY_FILE = "file"
 

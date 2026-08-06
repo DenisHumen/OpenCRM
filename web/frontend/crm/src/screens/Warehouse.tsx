@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 
 import { Icon } from "../components/Icon";
 import { BarcodeScanner, useLabelsOn } from "../components/ProductBarcodes";
+import { WarehousePicker, useWarehouses } from "../components/Warehouses";
 import { Chip, EmptyState, Modal, ScreenLoading } from "../components/ui";
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
@@ -38,6 +39,8 @@ export interface Product {
   /** null у услуги: остатка не бывает — это не то же самое, что ноль. */
   stock_milli: number | null;
   low_stock: boolean;
+  /** Где и сколько. Приходит только когда складов больше одного. */
+  by_warehouse?: Record<string, number>;
 }
 
 export function Warehouse() {
@@ -51,14 +54,20 @@ export function Warehouse() {
   const [showNew, setShowNew] = useState(false);
   // Есть ли на экране поле сканера — от этого зависит, кто забирает фокус.
   const scanning = useLabelsOn();
+  const places = useWarehouses();
+  // Остаток одного склада вместо суммы по всем — «а на точке-то оно есть?».
+  const [place, setPlace] = useState<number | null>(null);
 
   const { failure, fail, clear } = useFailure();
 
   const load = useCallback(
-    (q: string, low: boolean) => {
+    (q: string, low: boolean, where: number | null) => {
       clear();
       api
-        .get(`/warehouse/products?search=${encodeURIComponent(q)}&low_only=${low}&per_page=200`)
+        .get(
+          `/warehouse/products?search=${encodeURIComponent(q)}&low_only=${low}&per_page=200` +
+            (where ? `&warehouse_id=${where}` : ""),
+        )
         .then(setData)
         .catch(fail);
     },
@@ -68,10 +77,10 @@ export function Warehouse() {
   const search = useDebounced(query);
 
   useEffect(() => {
-    load(search, lowOnly);
-  }, [search, lowOnly, load]);
+    load(search, lowOnly, place);
+  }, [search, lowOnly, place, load]);
 
-  if (!data) return <ScreenLoading error={failure} onRetry={() => load(query, lowOnly)} />;
+  if (!data) return <ScreenLoading error={failure} onRetry={() => load(query, lowOnly, place)} />;
 
   const currency = data.currency || workspace.currency;
 
@@ -118,6 +127,9 @@ export function Warehouse() {
           />
         </div>
         <BarcodeScanner />
+        {/* Выбор склада появляется сам, когда складов больше одного, — правило
+            считает сервер, не этот экран. */}
+        <WarehousePicker places={places} value={place} onChange={setPlace} allowAll />
         <button
           className={"filter-chip" + (lowOnly ? " active" : "")}
           onClick={() => setLowOnly((on) => !on)}

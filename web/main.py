@@ -20,6 +20,7 @@ from core.services import (
     permissions_service,
     pipeline_service,
     settings_service,
+    warehouse_service,
 )
 from core.utils import normalize_email
 from database import models  # noqa: F401 — регистрирует модели в metadata
@@ -113,6 +114,10 @@ async def lifespan(app: FastAPI):
         # причину закрыть вкладку. Кладём универсальный набор, менять его на
         # отраслевой можно одним нажатием в настройках.
         pipeline_service.seed_defaults(db)
+        # Склад без единого места не примет ни одного прихода. На боевом
+        # сервере его кладёт миграция; здесь страховка для базы, поднятой
+        # `create_all`, и для той, где склады почистили руками.
+        warehouse_service.seed_defaults(db)
         users_repo.purge_expired_sessions(db)
         db.commit()
         if created is not None:
@@ -213,6 +218,7 @@ def create_app() -> FastAPI:
     app.include_router(site_settings.router, prefix=api_prefix)
     app.include_router(tasks.router, prefix=api_prefix)
     app.include_router(warehouse.router, prefix=api_prefix)
+    app.include_router(warehouse.places_router, prefix=api_prefix)
     app.include_router(system.router, prefix=api_prefix)
     app.include_router(workspace.router, prefix=api_prefix)
     app.include_router(telephony.router, prefix=api_prefix)
