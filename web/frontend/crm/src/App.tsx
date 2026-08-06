@@ -37,6 +37,8 @@ import {
   SettingsShowcase,
 } from "./screens/Settings";
 import { SettingsModules } from "./screens/SettingsModules";
+import { OrderCard } from "./screens/OrderCard";
+import { Orders } from "./screens/Orders";
 import { SettingsRoles } from "./screens/SettingsRoles";
 import { SettingsWarehouses } from "./screens/SettingsWarehouses";
 import { Staff } from "./screens/Staff";
@@ -197,6 +199,10 @@ export default function App() {
             <Route element={<PermRoute perm="warehouse.view" />}>
               <Route path="/warehouse" element={<Warehouse />} />
               <Route path="/warehouse/:id" element={<ProductCard />} />
+            </Route>
+            <Route element={<ModuleRoute module="orders" />}>
+              <Route path="/orders" element={<Orders />} />
+              <Route path="/orders/:id" element={<OrderCard />} />
             </Route>
           </Route>
           <Route element={<ModuleRoute module="reports" />}>

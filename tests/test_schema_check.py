@@ -171,3 +171,52 @@ def test_sklad_est_srazu_posle_migratsiy(tmp_path):
         ).all()
     assert rows, "после миграций не осталось ни одного склада"
     assert sum(1 for _, is_default in rows if is_default) == 1
+
+
+def test_baza_sobrannaya_mimo_migratsiy_otmechaetsya(tmp_path, monkeypatch):
+    """Так выглядит база, построенная прежним безусловным `create_all`.
+
+    Гнать по ней миграции с нуля нельзя — первая же упрётся в «table
+    site_settings already exists», и приложение не поднимется вовсе. Именно это
+    и случилось дважды: на базе разработки и на одноразовом стенде.
+
+    Раз схема сходится, база фактически на голове — просто об этом никто не
+    записал. Отмечаем и идём дальше.
+    """
+    from alembic.script import ScriptDirectory
+    from alembic.config import Config
+    import web.main as main
+
+    url = f"sqlite:///{(tmp_path / 'unstamped.db').as_posix()}"
+    other = create_engine(url)
+    Base.metadata.create_all(other)
+    assert schema_check.current_revision(other) is None
+    assert not schema_check.is_empty(other)
+
+    monkeypatch.setattr(main, "engine", other)
+    main._ensure_schema()
+
+    head = ScriptDirectory.from_config(Config("alembic.ini")).get_current_head()
+    assert schema_check.current_revision(other) == head, "база осталась неотмеченной"
+
+
+def test_baza_mimo_migratsiy_i_ne_shoditsya_ostanavlivaet(tmp_path, monkeypatch):
+    """Чинить вслепую нечего: неизвестно, каких шагов не хватает.
+
+    Молчаливая догадка здесь опаснее честной остановки — она отметила бы как
+    «последнюю» базу, в которой чего-то нет, и расхождение стало бы вечным.
+    """
+    import pytest
+
+    import web.main as main
+
+    url = f"sqlite:///{(tmp_path / 'broken.db').as_posix()}"
+    other = create_engine(url)
+    Base.metadata.create_all(other)
+    with other.begin() as connection:
+        connection.execute(text("DROP TABLE warehouses"))
+
+    monkeypatch.setattr(main, "engine", other)
+    with pytest.raises(RuntimeError) as failure:
+        main._ensure_schema()
+    assert "warehouses" in str(failure.value)

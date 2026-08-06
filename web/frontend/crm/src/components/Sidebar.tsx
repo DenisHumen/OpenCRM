@@ -246,6 +246,7 @@ export function Sidebar({
     { module: "mail", perm: "mail.view", to: "/mail", label: t("mail"), icon: "email" },
     { module: "boards", perm: "boards.view", to: "/boards", label: t("boards"), icon: "boards" },
     // Склад по умолчанию выключен: он нужен магазину и мастерской, а студии нет.
+    { module: "orders", perm: "orders.view", to: "/orders", label: t("orders"), icon: "receipt" },
     { module: "warehouse", perm: "warehouse.view", to: "/warehouse", label: t("warehouse"), icon: "warehouse" },
     // Отчёты последними в «Работе»: за ними приходят не каждый день, а когда
     // сводят месяц, — и они читают то, что накопили разделы выше.
