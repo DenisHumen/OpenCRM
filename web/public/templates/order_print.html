@@ -1,0 +1,114 @@
+{# Печатная форма заказа: таблица позиций и итог.
+
+   Отличается от квитанции по существу, а не оформлением. Квитанция отвечает на
+   вопрос «что вы у меня взяли», заказ — «что и почём мне отдадут»; поэтому
+   здесь таблица с количествами и суммами, а не описание одной вещи.
+
+   Печатает браузер, как и всё остальное в системе: сервер стоит на VPS, а
+   принтер — на столе. Лист A4, потому что заказ подшивают и отдают на руки;
+   термонаклейка тут ни при чём.
+
+   Ни тёмной темы, ни шрифтов со стороны: только чёрное по белому. #}
+<!doctype html>
+<html lang="{{ locale }}">
+<head>
+<meta charset="utf-8">
+<meta name="robots" content="noindex">
+<title>{{ t.title }} {{ doc.number }}</title>
+<style>
+  @page { size: A4 portrait; margin: 12mm; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { background: #fff; color: #000; }
+  body { font: 10pt/1.45 "Segoe UI", system-ui, -apple-system, Arial, sans-serif; }
+  .head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12mm; }
+  .who { font-size: 9pt; line-height: 1.5; }
+  .who b { font-size: 11pt; }
+  h1 { font-size: 15pt; font-weight: 700; margin-bottom: 2mm; }
+  .when { color: #444; font-size: 9pt; }
+  .party { margin-top: 6mm; font-size: 10pt; }
+  .party span { color: #444; }
+  table { width: 100%; border-collapse: collapse; margin-top: 6mm; }
+  th, td { padding: 2mm 2.5mm; border-bottom: 0.3mm solid #000; text-align: left; }
+  th { font-size: 8.5pt; text-transform: uppercase; letter-spacing: 0.04em; color: #333; }
+  /* Числа — вправо и моноширинно: столбец сумм читают сверху вниз, а не по
+     строкам, и разъезжающиеся разряды делают это невозможным. */
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  tr.total td { border-bottom: none; padding-top: 3mm; font-weight: 700; font-size: 11pt; }
+  .sign { margin-top: 14mm; display: flex; justify-content: space-between; gap: 12mm; font-size: 9pt; }
+  .sign div { flex: 1; border-top: 0.3mm solid #000; padding-top: 1.5mm; color: #444; }
+  .code { margin-top: 8mm; text-align: center; }
+  .code svg { height: 14mm; }
+  .digits { font: 8pt/1 "Courier New", monospace; letter-spacing: 0.1em; margin-top: 1mm; }
+  /* Кнопка только на экране: печатать её незачем, а без неё страница была бы
+     тупиком для того, кто закрыл диалог принтера. */
+  .bar { margin-top: 10mm; text-align: center; }
+  .bar button {
+    font: 500 13px/1 system-ui, sans-serif; padding: 8px 18px;
+    border: 1px solid #000; border-radius: 6px; background: #fff; cursor: pointer;
+  }
+  @media print { .bar { display: none; } }
+</style>
+</head>
+<body>
+<div class="head">
+  <div>
+    <h1>{{ t.title }} {{ doc.number }}</h1>
+    <div class="when">{{ created }}</div>
+  </div>
+  {% if company %}
+    <div class="who">
+      <b>{{ company.name }}</b><br>
+      {% if company.address %}{{ company.address }}<br>{% endif %}
+      {% if company.phone %}{{ company.phone }}{% endif %}
+    </div>
+  {% endif %}
+</div>
+
+<div class="party"><span>{{ t.party }}:</span> {{ party or "—" }}</div>
+
+<table>
+  <thead>
+    <tr>
+      <th style="width: 8mm">№</th>
+      <th>{{ t.item }}</th>
+      <th class="num" style="width: 22mm">{{ t.qty }}</th>
+      <th class="num" style="width: 28mm">{{ t.price }}</th>
+      <th class="num" style="width: 30mm">{{ t.sum }}</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for line in lines %}
+      <tr>
+        <td>{{ loop.index }}</td>
+        <td>{{ line.name }}</td>
+        <td class="num">{{ line.quantity }}</td>
+        <td class="num">{{ line.price }}</td>
+        <td class="num">{{ line.sum }}</td>
+      </tr>
+    {% endfor %}
+    <tr class="total">
+      <td colspan="4" class="num">{{ t.total }}</td>
+      <td class="num">{{ total }}</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="sign">
+  <div>{{ t.gave }}</div>
+  <div>{{ t.took }}</div>
+</div>
+
+{% if barcode %}
+  {# Тот же номер, что в шапке: заказ находят сканером так же, как квитанцию. #}
+  <div class="code">
+    {{ barcode|safe }}
+    <div class="digits">{{ doc.number }}</div>
+  </div>
+{% endif %}
+
+<div class="bar"><button onclick="window.print()">{{ t.print }}</button></div>
+<script>
+  window.addEventListener("load", function () { window.print(); });
+</script>
+</body>
+</html>
