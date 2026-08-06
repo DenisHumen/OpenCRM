@@ -180,3 +180,100 @@ def test_multiple_links_per_board(manager_client):
     visitor = TestClient(app)
     assert visitor.get(f"/b/{a['token']}").status_code == 404
     assert visitor.get(f"/b/{b['token']}").status_code == 200
+
+
+def test_an_expired_link_closes_on_time_not_hours_later(manager_client):
+    """Срок ссылки считается в UTC, а не в зоне сервера.
+
+    Срок приводился к местной зоне, а сравнивался с UTC — ссылка жила дольше
+    заявленного ровно на смещение. На машине UTC+3 закрытая «в 15:00» ссылка
+    работала до 18:00. Тихо: ни в логе, ни в интерфейсе не видно. Прежний тест
+    брал запас в сутки и трёх часов не замечал — здесь запас в полчаса.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from core.utils import now_utc
+
+    board = manager_client.post(f"{API}/boards", json={"title": "Доска со сроком"}).json()
+    manager_client.patch(f"{API}/boards/{board['id']}", json={"is_published": True})
+
+    half_hour_ago = datetime.now(timezone.utc) - timedelta(minutes=30)
+    link = manager_client.post(
+        f"{API}/boards/{board['id']}/shares",
+        json={"expires_at": half_hour_ago.isoformat()},
+    ).json()
+
+    assert TestClient(app).get(f"/b/{link['token']}").status_code == 404, (
+        "просроченная полчаса назад ссылка всё ещё открывается"
+    )
+
+    # И обратная сторона: живая ссылка не должна закрыться раньше времени.
+    later = datetime.now(timezone.utc) + timedelta(minutes=30)
+    alive = manager_client.post(
+        f"{API}/boards/{board['id']}/shares", json={"expires_at": later.isoformat()}
+    ).json()
+    assert TestClient(app).get(f"/b/{alive['token']}").status_code == 200
+
+
+def test_changing_the_pin_closes_the_door_for_everyone(manager_client):
+    """Смена кода отзывает выданные пропуска.
+
+    Пропуск был подписанной строкой без метки времени и без связи с самим
+    кодом: скопировал значение — доступ навсегда, а «сменить PIN» не отрезало
+    никого. Единственным способом закрыть доступ оставался отзыв ссылки, то
+    есть кнопка обещала не то, что делала.
+    """
+    board = manager_client.post(f"{API}/boards", json={"title": "Доска с кодом"}).json()
+    manager_client.patch(f"{API}/boards/{board['id']}", json={"is_published": True})
+    link = manager_client.post(
+        f"{API}/boards/{board['id']}/shares", json={"pin": "1234"}
+    ).json()
+
+    guest = TestClient(app)
+    assert guest.get(f"/b/{link['token']}").status_code == 200        # страница ввода кода
+    entered = guest.post(f"/b/{link['token']}/pin", data={"pin": "1234"}, follow_redirects=False)
+    assert entered.status_code == 303, entered.text
+    assert guest.get(f"/b/{link['token']}/data").status_code == 200, "код не пустил"
+
+    # Владелец сменил код — старый пропуск обязан перестать работать.
+    assert manager_client.patch(f"{API}/shares/{link['id']}", json={"pin": "9999"}).status_code == 200
+    assert guest.get(f"/b/{link['token']}/data").status_code == 401, (
+        "после смены кода старый пропуск всё ещё открывает доску"
+    )
+
+    # А новый код пускает.
+    again = guest.post(f"/b/{link['token']}/pin", data={"pin": "9999"}, follow_redirects=False)
+    assert again.status_code == 303
+    assert guest.get(f"/b/{link['token']}/data").status_code == 200
+
+
+def test_the_showcase_does_not_ship_internal_fields(manager_client):
+    """Клиенту студии не уходит ни имя файла, ни размер, ни счётчики.
+
+    Имя файла на диске студии — это обычно фамилия клиента, сумма или внутренняя
+    пометка («Иванов_Смета_180000грн», «правки_после_скандала_v3»). Менеджер
+    правит видимую подпись работы и не подозревает, что рядом уезжает исходное
+    имя: витрина встраивала весь ответ сериализатора в HTML страницы.
+    """
+    board = manager_client.post(f"{API}/boards", json={"title": "Витрина без лишнего"}).json()
+    manager_client.patch(f"{API}/boards/{board['id']}", json={"is_published": True})
+    uploaded = manager_client.post(
+        f"{API}/boards/{board['id']}/works",
+        files={"file": ("Иванов_Смета_180000грн.png", png_bytes(), "image/png")},
+    )
+    assert uploaded.status_code == 202, uploaded.text
+    link = manager_client.post(f"{API}/boards/{board['id']}/shares", json={}).json()
+
+    page = TestClient(app).get(f"/b/{link['token']}")
+    assert page.status_code == 200
+    assert "Иванов_Смета" not in page.text, "исходное имя файла уехало на публичную страницу"
+    assert "original_name" not in page.text
+    assert "size_bytes" not in page.text
+
+    data = TestClient(app).get(f"/b/{link['token']}/data").json()
+    for work in data["works"]:
+        assert "original_name" not in work, work.keys()
+        assert "size_bytes" not in work
+        assert "id" not in work, "внутренний счётчик работ виден снаружи"
+        # А то, ради чего витрина существует, на месте.
+        assert "media" in work and "title" in work

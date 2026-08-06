@@ -559,8 +559,17 @@ def board_out(board: Board, works_count: int | None = None) -> dict:
     return data
 
 
-def work_out(work: Work) -> dict:
-    return {
+def work_out(work: Work, public: bool = False) -> dict:
+    """Работа для ответа. `public=True` — то, что уходит клиенту студии.
+
+    Клиенту не отдаётся то, что нужно только редактору: исходное имя файла, его
+    размер, порядок в списке и состояние обработки. Имя файла на диске студии —
+    это обычно фамилия клиента, сумма или внутренняя пометка
+    («Иванов_Смета_180000», «правки_после_скандала_v3»); менеджер переименовывает
+    видимую подпись и не подозревает, что рядом уезжает исходное имя. Так и было:
+    витрина встраивала эти поля в HTML страницы целиком.
+    """
+    visible = {
         "id": work.id,
         "board_id": work.board_id,
         "kind": work.kind,
@@ -582,6 +591,15 @@ def work_out(work: Work) -> dict:
         "media": media_service.work_media_urls(work) if work.status == "ready" else None,
         # кандидаты по ширине для плитки витрины (см. media_service.work_srcset)
         "srcset": media_service.work_srcset(work) if work.status == "ready" else "",
+    }
+    if not public:
+        return visible
+    #: Что уходит наружу. Список разрешённого, а не запрещённого: новое поле в
+    #: `work_out` не должно попадать на публичную страницу само по себе.
+    return {
+        key: visible[key]
+        for key in ("kind", "title", "description", "project_url", "width", "height",
+                    "duration_sec", "blurhash", "preview_focus", "media", "srcset")
     }
 
 

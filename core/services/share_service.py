@@ -6,7 +6,7 @@ from config.settings import get_settings
 from core import exceptions as errors
 from core.services import audit_service
 from core.security import passwords, tokens
-from core.utils import now_utc
+from core.utils import now_utc, to_utc_naive
 from database.models import Board, ShareLink, ShareView, User
 from database.repositories import boards as boards_repo
 from database.repositories import shares as shares_repo
@@ -108,11 +108,18 @@ def regenerate(db: Session, share_id: int, author: User) -> ShareLink:
 
 
 def _validate_expiry(expires_at: datetime | None) -> datetime | None:
-    if expires_at is None:
-        return None
-    if expires_at.tzinfo is not None:
-        expires_at = expires_at.astimezone(tz=None).replace(tzinfo=None)
-    return expires_at
+    """Срок жизни ссылки — к тому виду, в каком время лежит в базе: naive UTC.
+
+    Раньше здесь стояло `astimezone(tz=None)` — приведение к МЕСТНОЙ зоне
+    сервера, — а сравнение при выдаче идёт с `now_utc()`. Ссылка жила дольше
+    заявленного ровно на смещение зоны: на машине UTC+3 срок «до 15:00»
+    закрывался в 18:00. Тихо: ни в логе, ни в интерфейсе этого не видно, а
+    существующий тест брал запас в сутки и трёх часов не замечал.
+
+    То же с временем без зоны (его шлёт поле `datetime-local`): оно считается
+    уже UTC — то же соглашение, что и везде в проекте.
+    """
+    return to_utc_naive(expires_at)
 
 
 def _hash_pin(pin: str) -> str:

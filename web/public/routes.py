@@ -95,7 +95,7 @@ def _has_pin_access(request: Request, link) -> bool:
     if link.pin_hash is None:
         return True
     value = request.cookies.get(_pin_cookie_name(link.id))
-    return bool(value and tokens.check_pin_access_cookie(value, link.id))
+    return bool(value and tokens.check_pin_access_cookie(value, link.id, link.pin_hash or ""))
 
 
 def _closed_page(request: Request, db: Session):
@@ -133,7 +133,7 @@ def showcase(token: str, request: Request, db: Session = Depends(get_db)):
     if og_image is None:
         og_image = _og_default_url(site)
 
-    works_payload = [schemas.work_out(w) for w in works]
+    works_payload = [schemas.work_out(w, public=True) for w in works]
     return templates.TemplateResponse(
         request, "showcase.html",
         {
@@ -187,11 +187,16 @@ def check_pin(
     response = RedirectResponse(url=f"/b/{token}", status_code=303)
     response.set_cookie(
         _pin_cookie_name(link.id),
-        tokens.make_pin_access_cookie(link.id),
+        tokens.make_pin_access_cookie(link.id, link.pin_hash or ""),
         httponly=True,
         secure=get_settings().cookies_secure,
         samesite="lax",
-        # cookie сессии браузера: без max_age
+        # Срок жизни у пропуска теперь есть и в самой подписи
+        # (`tokens.PIN_ACCESS_SECONDS`), и здесь: без `max_age` cookie
+        # восстанавливается вместе с сессией браузера, а «продолжить с того же
+        # места» делает это молча. Совпадение сроков важнее удобства: доступ,
+        # который нельзя отозвать, отозвать нельзя.
+        max_age=tokens.PIN_ACCESS_SECONDS,
     )
     return response
 
@@ -211,7 +216,7 @@ def showcase_data(token: str, request: Request, db: Session = Depends(get_db)):
     works = boards_repo.list_works(db, board.id, only_ready=True)
     return {
         "board": {"title": board.title, "description": board.description},
-        "works": [schemas.work_out(w) for w in works],
+        "works": [schemas.work_out(w, public=True) for w in works],
     }
 
 
