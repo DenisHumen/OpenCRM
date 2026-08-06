@@ -53,6 +53,10 @@ ACTION_DEAL_AMOUNT_CHANGED = "deal.amount_changed"
 ACTION_DEAL_PREPAID_CHANGED = "deal.prepaid_changed"
 ACTION_STOCK_MOVE_ADDED = "stock.move_added"
 ACTION_MODULE_SWITCHED = "module.switched"
+#: Окончательная уборка мягко удалённого. Единственное действие, которое
+#: стирает данные безвозвратно, — и потому обязано быть в журнале даже
+#: тогда, когда стирать оказалось нечего.
+ACTION_STORAGE_PURGED = "storage.purged"
 ACTION_STAFF_ROLE_CHANGED = "staff.role_changed"
 ACTION_STAFF_APPROVED = "staff.approved"
 ACTION_STAFF_REJECTED = "staff.rejected"

@@ -130,3 +130,66 @@ def test_who_and_when_are_recorded(root_client, closed):
     assert state["enabled"] is True
     assert state["by"], "не записано, кто закрыл сайт"
     assert state["since"], "не записано, когда закрыли"
+
+
+def test_cleanup_never_removes_money(root_client, manager_client):
+    """Уборка места убирает мусор, но не деньги.
+
+    Удаление клиента уходит каскадом в заявки, и «Очистить место» задним
+    числом стирало прошлогоднюю выручку из отчётов — молча: заявок не было ни
+    в ответе, ни в журнале. Человек освобождал диск и не знал, что стёр.
+    """
+    from tests.test_deals import DEALS
+
+    paying = manager_client.post(f"{API}/clients", json={"name": "Заплатил и ушёл"}).json()
+    deal = manager_client.post(
+        DEALS, json={"title": "Оплаченная", "client_id": paying["id"], "amount": 300_00}
+    ).json()
+    won = next(
+        c for c in manager_client.get(f"{DEALS}/board").json()["columns"] if c["kind"] == "won"
+    )["key"]
+    manager_client.post(f"{DEALS}/{deal['id']}/move", json={"stage": won})
+
+    empty = manager_client.post(f"{API}/clients", json={"name": "Ничего не купил"}).json()
+
+    manager_client.delete(f"{API}/clients/{paying['id']}")
+    manager_client.delete(f"{API}/clients/{empty['id']}")
+
+    result = root_client.post(f"{API}/system/storage/purge").json()
+
+    assert result["clients_kept_with_revenue"] >= 1, "клиент с выручкой всё-таки удалён"
+    # заявка с деньгами на месте, и отчёт её по-прежнему видит
+    assert manager_client.get(f"{DEALS}/{deal['id']}").status_code == 200
+    revenue = manager_client.get(f"{API}/reports/revenue", params={"tz_offset": 0}).json()
+    assert (revenue["won_amount"] or 0) >= 300_00, "выручка исчезла после уборки"
+
+
+def test_cleanup_says_how_many_deals_it_took(root_client, manager_client):
+    """«Удалено 3 клиента» без числа заявок — половина правды."""
+    from tests.test_deals import DEALS
+
+    person = manager_client.post(f"{API}/clients", json={"name": "С незакрытой заявкой"}).json()
+    manager_client.post(DEALS, json={"title": "В работе", "client_id": person["id"]})
+    manager_client.delete(f"{API}/clients/{person['id']}")
+
+    result = root_client.post(f"{API}/system/storage/purge").json()
+    assert "deals" in result, "в ответе нет числа удалённых заявок"
+    assert result["deals"] >= 1
+
+
+def test_cleanup_is_written_into_the_journal(root_client):
+    """Единственное место, где данные исчезают навсегда, обязано быть в журнале."""
+    # Ищем по действию, а не по приросту числа записей: журнал отдаётся
+    # страницей, и в полном прогоне соседние тесты успевают её заполнить —
+    # проверка на «стало больше» тогда врёт про свою же причину.
+    root_client.post(f"{API}/system/storage/purge")
+    entries = root_client.get(
+        f"{API}/audit", params={"action": "storage.purged"}
+    ).json()["items"]
+    if not entries:  # фильтра по действию может не быть — смотрим страницу целиком
+        entries = [
+            e
+            for e in root_client.get(f"{API}/audit").json()["items"]
+            if e["action"] == "storage.purged"
+        ]
+    assert entries, "уборка не попала в журнал"
