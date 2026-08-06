@@ -402,3 +402,21 @@ def test_provesti_zakaz_pravo_otdelnoye(manager_client, root_client, client_row)
     denied = manager_client.post(f"{ORDERS}/{order['id']}/close", json={})
     assert denied.status_code == 403, denied.text
     assert stock_of(root_client, item["id"]) == 5000
+
+
+def test_zakaz_postavshchiku_bez_klienta(root_client):
+    """У заказа поставщику клиента нет и быть не может.
+
+    Бланк требует хоть какое-то имя на бумаге, и без подстановки заказ
+    поставщику не создавался вовсе: система отвечала «укажите клиента» на
+    запрос, где клиента не бывает по устройству. Поймано живым прогоном на
+    стенде, а не рассуждением.
+    """
+    created = root_client.post(ORDERS, json={"kind": "purchase_order"})
+    assert created.status_code == 201, created.text
+    assert created.json()["client_id"] is None
+
+    named = root_client.post(
+        ORDERS, json={"kind": "purchase_order", "client_name": "ООО «Поставщик»"}
+    )
+    assert named.status_code == 201, named.text

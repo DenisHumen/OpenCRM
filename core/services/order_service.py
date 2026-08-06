@@ -110,9 +110,20 @@ def create(db: Session, data: dict, author: User) -> Document:
     kind = data.get("kind")
     if kind not in ORDER_KINDS:
         raise errors.ValidationError(f"Not an order kind: {kind}", code="not_an_order")
+
+    fields = dict(data)
     # Квитанция требует описания вещи, заказу оно не нужно: у него есть строки.
-    # Поэтому идём мимо `document_service.create` только этим полем.
-    return document_service.create(db, {**data, "item": data.get("item") or _title(kind)}, author)
+    fields["item"] = data.get("item") or _title(kind)
+    # У заказа поставщику клиента нет и быть не может: он адресован поставщику,
+    # а поставщик в системе отдельной сущностью не заведён (и заводить его до
+    # того, как попросят, незачем). Бланк же требует хоть какое-то имя на
+    # бумаге — подставляем название вида, а вписать поставщика можно потом.
+    #
+    # Без этого заказ поставщику не создавался вовсе: бланк отвечал «укажите
+    # клиента» на запрос, где клиента не бывает по устройству.
+    if kind == KIND_PURCHASE_ORDER and not data.get("client_id"):
+        fields["client_name"] = (data.get("client_name") or "").strip() or _title(kind)
+    return document_service.create(db, fields, author)
 
 
 def _title(kind: str) -> str:
