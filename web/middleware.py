@@ -9,10 +9,35 @@
 Правила заголовков (CSP, кэш) в одном месте ещё и потому, что ошибиться в них
 легко, а заметить ошибку — нет: слишком строгая политика ломает витрину сразу,
 слишком мягкая не ломает ничего и годами выглядит рабочей.
+
+**Посредники здесь написаны на голом ASGI, а не через `@app.middleware("http")`,
+и это не вкусовщина.** Тот удобный вид разворачивается в `BaseHTTPMiddleware`,
+который запускает нижележащее приложение отдельной задачей и отдаёт ответ
+потоком: **ответ уходит клиенту, пока задача ещё не закончилась**. А заканчивает
+её `get_db` — фиксацией транзакции. То есть браузер получал «готово» раньше, чем
+запись доезжала до базы, и следующий его запрос своей же записи не видел.
+
+Найдено пробой на живом стенде, воспроизводится детерминированно:
+
+    завели клиента → сразу читаем карточку:  404 в 6 случаях из 8
+    перевели заявку по этапу → сразу читаем: прежний этап в 3 из 4
+    вошли → первый же запрос:                401 «сеанс недействителен», 5 из 5
+
+Пауза в 50 мс лечила всё. Человек видел другое: вошёл — выкинуло на форму входа,
+создал клиента и открыл — «не найдено», передвинул заявку — отскочила назад.
+Всё это выглядит как «программа глючит», и на быстрой сети случается постоянно.
+
+Голый ASGI-посредник ничего не разветвляет: он вызывает нижележащее приложение
+и ждёт, пока то полностью отработает. Порядок восстанавливается сам и для всех
+запросов разом.
 """
 
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, JSONResponse
+from starlette.datastructures import MutableHeaders
+from starlette.requests import Request
+from starlette.responses import Response
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from core.services import auth_service, maintenance_mode, settings_service
 from database.models.user import ROLE_ROOT
@@ -59,66 +84,78 @@ CSP_APP = (
 CSP_MEDIA = "default-src 'none'; img-src 'self'; media-src 'self'; style-src 'unsafe-inline'; sandbox"
 
 
-def register(app: FastAPI) -> None:
-    """Навесить посредников на приложение. Порядок важен: FastAPI зовёт их
-    в обратном порядке регистрации, поэтому заголовки безопасности
-    навешиваются последними и достаются даже ответу заглушки."""
-    # Пути, которые работают даже при закрытом на обслуживание сайте.
-    # /healthz — иначе docker сочтёт контейнер больным и начнёт его дёргать.
-    # /login и /assets — чтобы root мог войти: без них он упирается в ту же
-    # заглушку, что и все, и снять режим уже неоткуда.
-    # /api/v1/auth — сам вход и проверка сессии.
-    MAINTENANCE_OPEN_PREFIXES = ("/healthz", "/assets/", "/api/v1/auth/")
-    MAINTENANCE_OPEN_PATHS = {"/login"}
+# Пути, которые работают даже при закрытом на обслуживание сайте.
+# /healthz — иначе docker сочтёт контейнер больным и начнёт его дёргать.
+# /login и /assets — чтобы root мог войти: без них он упирается в ту же
+# заглушку, что и все, и снять режим уже неоткуда.
+# /api/v1/auth — сам вход и проверка сессии.
+MAINTENANCE_OPEN_PREFIXES = ("/healthz", "/assets/", "/api/v1/auth/")
+MAINTENANCE_OPEN_PATHS = {"/login"}
 
-    # Страницы, которые видит клиент, а не сотрудник: витрина доски и состояние
-    # заказа по QR. Сюда root не проходит даже со своей сессией.
-    #
-    # Пропуск для root существует ради одного: чтобы он мог войти в CRM и снять
-    # режим. К клиентской стороне это не относится, а раньше относилось — и
-    # получалось, что root проверяет свою же ссылку, видит работающую витрину и
-    # заключает, что режим не работает. Он работал; просто проверяющий был
-    # единственным, для кого сайт оставался открыт. Теперь «закрыто» на
-    # клиентской стороне означает закрыто для всех, включая root.
-    MAINTENANCE_PUBLIC_PREFIXES = ("/b/", "/d/")
+# Страницы, которые видит клиент, а не сотрудник: витрина доски и состояние
+# заказа по QR. Сюда root не проходит даже со своей сессией.
+#
+# Пропуск для root существует ради одного: чтобы он мог войти в CRM и снять
+# режим. К клиентской стороне это не относится, а раньше относилось — и
+# получалось, что root проверяет свою же ссылку, видит работающую витрину и
+# заключает, что режим не работает. Он работал; просто проверяющий был
+# единственным, для кого сайт оставался открыт. Теперь «закрыто» на
+# клиентской стороне означает закрыто для всех, включая root.
+MAINTENANCE_PUBLIC_PREFIXES = ("/b/", "/d/")
 
-    def _maintenance_page(note: str, locale: str) -> Response:
-        strings = public_routes.MAINTENANCE_STRINGS.get(
-            locale, public_routes.MAINTENANCE_STRINGS["en"]
-        )
-        html = public_routes.templates.get_template("maintenance_mode.html").render(
-            note=note, locale=locale, t=strings
-        )
-        # 503, а не 200: для поисковика это «зайдите позже», а не «страница
-        # стала такой». Retry-After — по той же причине, что у заглушки nginx.
-        return HTMLResponse(
-            html, status_code=503, headers={"Retry-After": "600", "Cache-Control": "no-store"}
-        )
 
-    @app.middleware("http")
-    async def maintenance_middleware(request: Request, call_next):
+def _maintenance_page(note: str, locale: str) -> Response:
+    strings = public_routes.MAINTENANCE_STRINGS.get(
+        locale, public_routes.MAINTENANCE_STRINGS["en"]
+    )
+    html = public_routes.templates.get_template("maintenance_mode.html").render(
+        note=note, locale=locale, t=strings
+    )
+    # 503, а не 200: для поисковика это «зайдите позже», а не «страница
+    # стала такой». Retry-After — по той же причине, что у заглушки nginx.
+    return HTMLResponse(
+        html, status_code=503, headers={"Retry-After": "600", "Cache-Control": "no-store"}
+    )
+
+
+class MaintenanceMode:
+    """Сайт закрыт на работы — кого пускать и что показывать остальным."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        request = Request(scope, receive)
         path = request.url.path
         if path in MAINTENANCE_OPEN_PATHS or path.startswith(MAINTENANCE_OPEN_PREFIXES):
-            return await call_next(request)
+            await self.app(scope, receive, send)
+            return
 
         db = SessionLocal()
         try:
             mode = maintenance_mode.state(db)
             if not mode["enabled"]:
-                return await call_next(request)
+                await self.app(scope, receive, send)
+                return
             # Режим включён: root проходит в CRM как обычно, остальные — на
             # заглушку. На клиентские страницы не проходит никто.
             if not path.startswith(MAINTENANCE_PUBLIC_PREFIXES):
                 token = request.cookies.get(SESSION_COOKIE)
                 user = auth_service.get_user_by_session(db, token) if token else None
                 if user is not None and user.role == ROLE_ROOT:
-                    return await call_next(request)
-            note, locale = mode["note"], settings_service.get_all(db).get("showcase_locale", "en")
+                    await self.app(scope, receive, send)
+                    return
+            note = mode["note"]
+            locale = settings_service.get_all(db).get("showcase_locale", "en")
         finally:
             db.close()
 
         if path.startswith("/api/"):
-            return JSONResponse(
+            response: Response = JSONResponse(
                 status_code=503,
                 content={
                     "error": {
@@ -129,10 +166,39 @@ def register(app: FastAPI) -> None:
                 },
                 headers={"Retry-After": "600"},
             )
-        return _maintenance_page(note, locale)
+        else:
+            response = _maintenance_page(note, locale)
+        await response(scope, receive, send)
 
-    @app.middleware("http")
-    async def security_middleware(request: Request, call_next):
+
+class SecurityHeaders:
+    """Потолок тела, проверка CSRF и заголовки безопасности на каждом ответе."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        request = Request(scope, receive)
+        refusal = self._refuse(request)
+        if refusal is not None:
+            await refusal(scope, receive, send)
+            return
+
+        path = request.url.path
+
+        async def send_with_headers(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                self._decorate(MutableHeaders(scope=message), path)
+            await send(message)
+
+        await self.app(scope, receive, send_with_headers)
+
+    def _refuse(self, request: Request) -> Response | None:
+        """Отказ до того, как запрос дошёл до приложения. None — пропускаем."""
         # Тело не по размеру отсекаем ДО чтения: разбирать 200 МБ, чтобы затем
         # ответить «слишком длинное имя», — уже проигранная память.
         if request.method in MUTATING_METHODS:
@@ -163,40 +229,47 @@ def register(app: FastAPI) -> None:
                     status_code=403,
                     content={"error": {"code": "csrf_failed", "message": "CSRF check failed"}},
                 )
-        response = await call_next(request)
-        response.headers.setdefault("X-Content-Type-Options", "nosniff")
-        response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
-        path = request.url.path
+        return None
+
+    def _decorate(self, headers: MutableHeaders, path: str) -> None:
+        headers.setdefault("X-Content-Type-Options", "nosniff")
+        headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
         if path.startswith("/static/"):
             # Шрифты витрины лежат под постоянными именами и не меняются: без
             # max-age браузер переспрашивал бы их на каждой загрузке страницы
             # (в логе — вереница 304 Not Modified вместо попадания в кэш).
-            response.headers.setdefault(
-                "Cache-Control", "public, max-age=31536000, immutable"
-            )
-            response.headers.setdefault("Content-Security-Policy", CSP_MEDIA)
+            headers.setdefault("Cache-Control", "public, max-age=31536000, immutable")
+            headers.setdefault("Content-Security-Policy", CSP_MEDIA)
         elif path.startswith("/assets/"):
             # Сборка SPA: имя файла содержит хэш содержимого, поэтому изменённый
             # файл приезжает под новым именем, а старое имя навсегда означает
             # старое содержимое. Такое кэшируется бессрочно и без переспроса —
             # ровно то, ради чего хэш в имени и заведён.
-            response.headers.setdefault(
-                "Cache-Control", "public, max-age=31536000, immutable"
-            )
+            headers.setdefault("Cache-Control", "public, max-age=31536000, immutable")
         elif path.startswith(("/media/", "/branding/", "/avatars/")):
-            response.headers.setdefault("Content-Security-Policy", CSP_MEDIA)
+            headers.setdefault("Content-Security-Policy", CSP_MEDIA)
         elif path.startswith("/b/") or path.startswith("/d/") or path.endswith("/print"):
             # Бланк и страница состояния — серверный HTML со встроенными
             # стилями, как витрина: строгая политика приложения их ломает.
-            response.headers.setdefault("Content-Security-Policy", CSP_SHOWCASE)
+            headers.setdefault("Content-Security-Policy", CSP_SHOWCASE)
             # Кэшировать эти страницы нельзя. Ссылку на витрину отзывают, срок
             # действия истекает, сайт закрывают на работы — и во всех трёх
             # случаях страница обязана перестать открываться. Без заголовка
             # браузер вправе показать её из кэша, а по кнопке «назад» покажет
             # наверняка: отозванная ссылка продолжала бы работать у того, кто
             # успел её открыть.
-            response.headers.setdefault("Cache-Control", "no-store, must-revalidate")
+            headers.setdefault("Cache-Control", "no-store, must-revalidate")
         else:
-            response.headers.setdefault("Content-Security-Policy", CSP_APP)
-            response.headers.setdefault("X-Frame-Options", "DENY")
-        return response
+            headers.setdefault("Content-Security-Policy", CSP_APP)
+            headers.setdefault("X-Frame-Options", "DENY")
+
+
+def register(app: FastAPI) -> None:
+    """Навесить посредников. Заголовки безопасности — снаружи всех.
+
+    `add_middleware` кладёт нового посредника поверх прежних, поэтому режим
+    обслуживания добавляется первым, а заголовки вторым: так они достаются и
+    ответу заглушки, а не только обычным страницам.
+    """
+    app.add_middleware(MaintenanceMode)
+    app.add_middleware(SecurityHeaders)
