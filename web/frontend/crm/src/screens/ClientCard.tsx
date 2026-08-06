@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
+import { OrdersOfCard } from "../components/OrdersOfCard";
 import { BoardCard } from "../components/BoardCard";
 import { CallButton, CallsPanel } from "../components/CallsPanel";
 import { Icon } from "../components/Icon";
@@ -284,6 +285,10 @@ export function ClientCard() {
           )}
         </div>
       </div>
+
+      {/* Заказы клиента. Врезка та же, что в заявке: список один, и второй его
+          экземпляр разошёлся бы с первым при первой же правке. */}
+      <OrdersOfCard clientId={Number(id)} />
 
       <div className="card contact-grid" style={{ marginBottom: 28 }}>
         {contacts.map((contact) => (

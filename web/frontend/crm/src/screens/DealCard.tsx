@@ -14,6 +14,7 @@ import { formatDate, formatDateTime, formatMoney } from "../lib/format";
 import { moduleOn } from "../lib/modules";
 import { can } from "../lib/permissions";
 import { term } from "../lib/terms";
+import { OrdersOfCard } from "../components/OrdersOfCard";
 import { NewDocumentModal } from "./Documents";
 import { MailCompose, type MailAccount } from "./Mail";
 import { QuickTask } from "./Tasks";
@@ -440,6 +441,10 @@ export function DealCard() {
           </div>
         </div>
       )}
+
+      {/* Заказы этой заявки. Заказ может принадлежать заявке, но не заменяет
+          её: заявка — это работа, заказ — перечень позиций. */}
+      <OrdersOfCard dealId={Number(id)} />
 
       {/* Бланки этой сделки. Приняли вещь — выдали бумагу; искать её потом в
           общем списке значит потерять связь с работой, ради которой её выдали. */}
