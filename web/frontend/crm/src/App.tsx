@@ -162,13 +162,19 @@ export default function App() {
                 применяется сразу — общая кнопка вводила бы в заблуждение. */}
             <Route path="/settings/modules" element={<SettingsModules />} />
 
-            {/* Ящики — настройка блока, а не сам блок: доступны и при
-                выключенной почте, иначе включать было бы нечего настраивать.
-                ModuleRoute тут намеренно нет. */}
-            <Route path="/settings/mailboxes" element={<Mailboxes />} />
-            {/* Подключение к АТС — тоже вне SettingsLayout: у него свои поля,
-                своя кнопка сохранения и секрет, который показывается один раз. */}
-            <Route path="/settings/telephony" element={<SettingsTelephony />} />
+            {/* Настройки блока закрыты вместе с блоком. Раньше ящики и
+                подключение к АТС были открыты всегда — «иначе перед включением
+                нечего настраивать», — но выключенный блок обязан исчезать
+                отовсюду, включая настройки. Порядок для пользователя:
+                включить блок → настроить его. */}
+            <Route element={<ModuleRoute module="mail" />}>
+              <Route path="/settings/mailboxes" element={<Mailboxes />} />
+            </Route>
+            {/* Подключение к АТС — вне SettingsLayout: у него свои поля, своя
+                кнопка сохранения и секрет, который показывается один раз. */}
+            <Route element={<ModuleRoute module="telephony" />}>
+              <Route path="/settings/telephony" element={<SettingsTelephony />} />
+            </Route>
             {/* разделов настроек будет больше — каждый своим маршрутом,
                 чтобы на них можно было сослаться и открыть из сайдбара */}
             <Route path="/settings" element={<SettingsLayout />}>

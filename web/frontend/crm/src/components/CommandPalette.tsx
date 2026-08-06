@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
 import { initials, relativeDay } from "../lib/format";
+import { type Gated, shown } from "../lib/modules";
 import { Icon } from "./Icon";
 import { Avatar, Chip } from "./ui";
 
@@ -17,8 +18,18 @@ interface Row {
   run: () => void;
 }
 
+/** Действие палитры. `module` — блок, без которого действие бессмысленно. */
+type Action = Gated & {
+  key: string;
+  title: string;
+  icon: React.ReactNode;
+  /** Слова, по которым действие находится; пустой запрос показывает все. */
+  match: string[];
+  run: () => void;
+};
+
 export function CommandPalette({ onClose }: { onClose: () => void }) {
-  const { t, locale, toastError } = useApp();
+  const { t, locale, modules, toastError } = useApp();
   const navigate = useNavigate();
   const [query, setQuery] = useState("");
   const [data, setData] = useState<any>(null);
@@ -56,56 +67,64 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
   }, [query, toastError]);
 
   const rows = useMemo<Row[]>(() => {
-    const result: Row[] = [];
     const term = query.trim().toLowerCase();
 
-    for (const client of data?.clients?.items ?? []) {
-      result.push({
-        key: `client-${client.id}`,
-        group: t("clients"),
-        icon: <Avatar text={initials(client.name)} />,
-        title: client.name,
-        subtitle: client.company || client.email || client.phone,
-        meta: <span className="cp-meta">{relativeDay(client.updated_at, locale)}</span>,
-        run: () => go(`/clients/${client.id}`),
-      });
-    }
-
-    for (const board of data?.boards?.items ?? []) {
-      result.push({
-        key: `board-${board.id}`,
-        group: t("boards"),
-        icon: (
-          <div className="cp-cover">
-            {board.cover ? (
-              <img src={board.cover.thumb ?? board.cover.card} alt="" />
-            ) : (
-              <Icon name="image" size={14} />
-            )}
-          </div>
-        ),
-        title: board.title,
-        subtitle: board.client_name ?? undefined,
-        meta: (
-          <span className="cp-meta">
-            {!board.is_published && (
-              <Chip>
-                <span className="dot" />
-                {t("draft")}
-              </Chip>
-            )}
-            {board.has_pin && <Chip variant="accent">PIN</Chip>}
-            <span>
-              {board.works_count} {t("works")}
+    // Группы выдачи — списком, как пункты меню: у группы есть необязательный
+    // `module`, и выключенный блок уходит из поиска тем же правилом, каким
+    // уходит из левой колонки. Раньше доски искались всегда, и выключенный
+    // блок продолжал предлагать переходы в раздел, которого в меню уже нет.
+    //
+    // Сервер выключенный блок в выдачу тоже не кладёт; условие здесь не дубль,
+    // а защита от разъезда: ответ мог прийти до того, как блок выключили.
+    const groups = shown<Gated & { rows: Row[] }>(modules, [
+      {
+        rows: (data?.clients?.items ?? []).map((client: any) => ({
+          key: `client-${client.id}`,
+          group: t("clients"),
+          icon: <Avatar text={initials(client.name)} />,
+          title: client.name,
+          subtitle: client.company || client.email || client.phone,
+          meta: <span className="cp-meta">{relativeDay(client.updated_at, locale)}</span>,
+          run: () => go(`/clients/${client.id}`),
+        })),
+      },
+      {
+        module: "boards",
+        rows: (data?.boards?.items ?? []).map((board: any) => ({
+          key: `board-${board.id}`,
+          group: t("boards"),
+          icon: (
+            <div className="cp-cover">
+              {board.cover ? (
+                <img src={board.cover.thumb ?? board.cover.card} alt="" />
+              ) : (
+                <Icon name="image" size={14} />
+              )}
+            </div>
+          ),
+          title: board.title,
+          subtitle: board.client_name ?? undefined,
+          meta: (
+            <span className="cp-meta">
+              {!board.is_published && (
+                <Chip>
+                  <span className="dot" />
+                  {t("draft")}
+                </Chip>
+              )}
+              {board.has_pin && <Chip variant="accent">PIN</Chip>}
+              <span>
+                {board.works_count} {t("works")}
+              </span>
             </span>
-          </span>
-        ),
-        run: () => go(`/boards/${board.id}`),
-      });
-    }
+          ),
+          run: () => go(`/boards/${board.id}`),
+        })),
+      },
+    ]);
 
     // действия показываем, когда их видно по названию или когда искать ещё нечего
-    const actions = [
+    const actions = shown<Action>(modules, [
       {
         key: "action-new-client",
         title: t("newClient"),
@@ -114,6 +133,7 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
         run: () => go("/clients?new=1"),
       },
       {
+        module: "boards",
         key: "action-new-board",
         title: t("newBoard"),
         icon: <Icon name="plus" size={15} stroke={2} />,
@@ -127,21 +147,21 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
           }
         },
       },
-    ];
-    for (const action of actions) {
-      const matches = !term || action.match.some((m) => m.toLowerCase().includes(term));
-      if (matches) {
-        result.push({
+    ]);
+
+    return [
+      ...groups.flatMap((group) => group.rows),
+      ...actions
+        .filter((action) => !term || action.match.some((m) => m.toLowerCase().includes(term)))
+        .map((action) => ({
           key: action.key,
           group: t("actions"),
           icon: <div className="cp-action-icon">{action.icon}</div>,
           title: action.title,
           run: action.run,
-        });
-      }
-    }
-    return result;
-  }, [data, query, t, locale, go, toastError]);
+        })),
+    ];
+  }, [data, query, t, locale, modules, go, toastError]);
 
   useEffect(() => {
     setActive(0);

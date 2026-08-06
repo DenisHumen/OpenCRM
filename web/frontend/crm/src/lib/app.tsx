@@ -11,6 +11,7 @@ import {
 import type { StorageStatus } from "../components/StorageCard";
 import { api, ApiError, type User } from "./api";
 import { makeT, type Locale, type TFunc } from "./i18n";
+import { cachedModules, moduleOn, rememberModules } from "./modules";
 
 // проверка места дешёвая, но не бесплатная: обновляем раз в пару минут
 const STORAGE_POLL_MS = 120_000;
@@ -91,7 +92,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [settings, setSettings] = useState<Record<string, string>>({});
   const [storage, setStorage] = useState<StorageStatus | null>(null);
   const [maintenance, setMaintenanceState] = useState<MaintenanceState | null>(null);
-  const [modules, setModules] = useState<Record<string, boolean> | null>(null);
+  // Начинаем с карты блоков прошлой загрузки, а не с пустой: иначе блоки,
+  // выключенные по умолчанию, успевают мелькнуть в меню до ответа сервера
+  // (обоснование — в lib/modules.ts).
+  const [modules, setModules] = useState<Record<string, boolean> | null>(cachedModules);
   const [workspace, setWorkspace] = useState<Workspace>({
     brand_name: "",
     currency: "USD",
@@ -142,7 +146,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const refreshModules = useCallback(async () => {
     try {
       const data = await api.get<{ items: ModuleInfo[] }>("/modules");
-      setModules(Object.fromEntries(data.items.map((m) => [m.key, m.enabled])));
+      const map = Object.fromEntries(data.items.map((m) => [m.key, m.enabled]));
+      setModules(map);
+      // Запоминаем только настоящий ответ: заглушка ниже не должна остаться в
+      // кэше как «у этого бизнеса включено всё».
+      rememberModules(map);
     } catch {
       // Не смогли узнать состав — показываем всё. Отсутствующий ключ читается
       // как «включён» (moduleOn), поэтому пустая карта не прячет разделы, а
@@ -161,7 +169,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  // Счётчик просроченных напоминаний. Выключенный блок не спрашиваем вовсе:
+  // отказ мы всё равно проглотим, но стучаться в закрытый раздел на каждой
+  // загрузке — то же самое «выключено, а оно живёт», только в журнале сервера.
+  // Проверка не заменяет `catch`: карта блоков могла ещё не приехать.
+  const tasksOn = moduleOn(modules, "tasks");
+
   const refreshTasks = useCallback(async () => {
+    if (!tasksOn) {
+      setOverdueTasks(0);
+      return;
+    }
     try {
       const data = await api.get<{ overdue: number }>("/tasks/summary");
       setOverdueTasks(data.overdue ?? 0);
@@ -169,7 +187,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       // Блок напоминаний выключен или недоступен — счётчика просто нет.
       setOverdueTasks(0);
     }
-  }, []);
+  }, [tasksOn]);
 
   const refreshStorage = useCallback(async () => {
     try {

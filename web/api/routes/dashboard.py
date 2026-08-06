@@ -29,21 +29,36 @@ def dashboard(user: User = Depends(require_staff), db: Session = Depends(get_db)
     two_weeks_ago = now - timedelta(days=14)
 
     clients_total, clients_this_month = stats_repo.clients_totals(db)
-    boards_total, boards_published = stats_repo.boards_totals(db)
-    views_7d = stats_repo.views_in_range(db, week_ago, now)
-    views_prev_7d = stats_repo.views_in_range(db, two_weeks_ago, week_ago)
-    unique_7d = stats_repo.unique_viewers_in_range(db, week_ago, now)
-    last_view = stats_repo.last_view_at(db)
 
-    recent_boards, _total = boards_repo.search(db, page=1, per_page=4)
-    boards_payload = []
-    for board in recent_boards:
-        data = schemas.board_out(board, works_count=boards_repo.count_works(db, board.id))
-        cover = board_service.cover_work(db, board)
-        data["cover"] = schemas.work_out(cover)["media"] if cover else None
-        data["views_count"] = stats_repo.board_views_count(db, board.id)
-        data.update(stats_repo.board_share_flags(db, board.id))
-        boards_payload.append(data)
+    # Сводка сужается вместе с блоками, а не отказывает: выключили доски —
+    # слагаемых про витрины в ответе просто нет, остальные числа считаются как
+    # считались. Пустые значения, а не отсутствующие ключи: форма ответа одна
+    # при любом наборе блоков.
+    boards_total = boards_published = views_7d = views_prev_7d = unique_7d = 0
+    last_view = None
+    views_by_day: list[dict] = stats_repo.views_by_day(db, 7)
+    boards_payload: list[dict] = []
+    if modules_service.is_enabled(db, "boards"):
+        boards_total, boards_published = stats_repo.boards_totals(db)
+        views_7d = stats_repo.views_in_range(db, week_ago, now)
+        views_prev_7d = stats_repo.views_in_range(db, two_weeks_ago, week_ago)
+        unique_7d = stats_repo.unique_viewers_in_range(db, week_ago, now)
+        last_view = stats_repo.last_view_at(db)
+
+        recent_boards, _total = boards_repo.search(db, page=1, per_page=4)
+        for board in recent_boards:
+            data = schemas.board_out(board, works_count=boards_repo.count_works(db, board.id))
+            cover = board_service.cover_work(db, board)
+            data["cover"] = schemas.work_out(cover)["media"] if cover else None
+            data["views_count"] = stats_repo.board_views_count(db, board.id)
+            data.update(stats_repo.board_share_flags(db, board.id))
+            boards_payload.append(data)
+    else:
+        # Дни остаются, счётчики обнуляются: график просмотров рисуется по этому
+        # списку, и пустой массив сузил бы не слагаемое, а саму ось. Считаем
+        # список тем же вызовом, а не собираем даты заново — арифметика
+        # календаря в двух местах разъедется раньше, чем окупится один запрос.
+        views_by_day = [{**day, "count": 0} for day in views_by_day]
 
     recent_clients, _total = clients_repo.search(db, page=1, per_page=5)
 
@@ -93,7 +108,7 @@ def dashboard(user: User = Depends(require_staff), db: Session = Depends(get_db)
         "views_7d": views_7d,
         "views_prev_7d": views_prev_7d,
         "unique_viewers_7d": unique_7d,
-        "views_by_day": stats_repo.views_by_day(db, 7),
+        "views_by_day": views_by_day,
         "last_view_at": last_view.isoformat() if last_view else None,
         "recent_boards": boards_payload,
         "recent_clients": [schemas.client_out(c) for c in recent_clients],
