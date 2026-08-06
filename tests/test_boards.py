@@ -190,6 +190,12 @@ def test_the_board_list_asks_a_fixed_number_of_questions(manager_client):
             )
             _upload_png(manager_client, created["id"])
 
+        # Холостой заход перед замером. Состав блоков и настройки сайта живут в
+        # кэше на весь процесс, и первый запрос после чужого `invalidate()`
+        # платит за их чтение — два лишних запроса, не имеющих отношения к
+        # числу досок. Тест об этом не спрашивает, а падал именно на этом.
+        manager_client.get(f"{API}/boards?per_page=200")
+
         queries = []
         listener = lambda conn, cursor, statement, *rest: queries.append(statement)
         event.listen(engine, "before_cursor_execute", listener)

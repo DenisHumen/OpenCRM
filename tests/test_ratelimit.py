@@ -24,11 +24,18 @@ def test_blocks_after_the_last_allowed_attempt():
 
 
 def test_the_window_lets_go():
-    limiter = SlidingWindowLimiter(max_attempts=1, window_seconds=0.05)
+    """Окно кончилось — блокировка снята.
+
+    Запас между окном и ожиданием намеренно большой. Windows будит спящий поток
+    с шагом около 16 мс, и разница в 10 мс, которая стояла здесь сначала, иногда
+    не набиралась: тест падал не на поведении ограничителя, а на точности сна.
+    Проверка про «окно кончается», а не про то, за сколько именно.
+    """
+    limiter = SlidingWindowLimiter(max_attempts=1, window_seconds=0.1)
     limiter.record_failure("ivan@example.com")
     assert limiter.is_blocked("ivan@example.com")
 
-    time.sleep(0.06)
+    time.sleep(0.5)
     assert not limiter.is_blocked("ivan@example.com"), "окно не отпустило"
 
 
@@ -64,12 +71,12 @@ def test_expired_keys_do_not_pile_up():
     просроченные записи оставались лежать, память росла на каждый новый адрес и
     не убывала никогда: отказа не видно, процесс просто пухнет.
     """
-    limiter = SlidingWindowLimiter(max_attempts=3, window_seconds=0.05)
+    limiter = SlidingWindowLimiter(max_attempts=3, window_seconds=0.1)
 
     for i in range(SWEEP_AFTER + 200):
         limiter.record_failure(f"attacker-{i}@example.com")
 
-    time.sleep(0.06)   # окно всех этих попыток истекло
+    time.sleep(0.5)   # окно всех этих попыток истекло
     limiter.record_failure("someone-else@example.com")
 
     assert limiter.tracked() <= SWEEP_AFTER, (

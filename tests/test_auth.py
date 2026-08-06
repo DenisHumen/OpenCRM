@@ -136,3 +136,44 @@ def test_csrf_required_for_mutations(manager_client):
     )
     assert response.status_code == 403
     assert response.json()["error"]["code"] == "csrf_failed"
+
+
+def test_double_click_on_request_access_is_a_conflict_not_a_crash():
+    """Второе нажатие «Запросить доступ» отвечает «адрес занят», а не 500.
+
+    Между проверкой «такой почты ещё нет» и вставкой есть окно, и попадают в
+    него не злоумышленники, а обычное двойное нажатие: форма открыта в
+    интернет, кнопка отправляет сразу. Живой прогон на настоящем сервере: из
+    двенадцати одновременных заявок восемь отвечали ошибкой сервера — человек
+    смотрел на успешно принятую заявку как на поломку и слал третью.
+
+    Соседа изображаем: он заводит того же пользователя ровно между проверкой и
+    вставкой. Настоящую параллельность `TestClient` не даёт — он в одном
+    процессе, — а порядок событий тот же.
+    """
+    from core.services import auth_service
+    from database.repositories import users as users_repo
+    from database.session import SessionLocal
+
+    email = "double-click@test.local"
+    real_lookup = users_repo.get_by_email
+    stolen: list[str] = []
+
+    def free_then_taken(db, address):
+        found = real_lookup(db, address)
+        if found is None and address == email and not stolen:
+            stolen.append(address)
+            with SessionLocal() as neighbour:
+                auth_service.register(neighbour, "Сосед", email, "neighbour-pass-123")
+                neighbour.commit()
+        return found
+
+    users_repo.get_by_email = free_then_taken
+    try:
+        response = register(TestClient(app), "Двойное нажатие", email, "manager-pass-123")
+    finally:
+        users_repo.get_by_email = real_lookup
+
+    assert stolen, "перехвата не случилось — тест ничего не проверил"
+    assert response.status_code == 409, response.text
+    assert response.json()["error"]["code"] == "email_taken"

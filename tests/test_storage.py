@@ -180,6 +180,10 @@ def test_cleanup_asks_the_database_a_fixed_number_of_questions(root_client, mana
             ).json()
             manager_client.delete(f"{API}/clients/{created['id']}")
 
+        # Холостой заход: первый запрос после чужого сброса кэша платит за
+        # чтение настроек и состава блоков, а тест не про них.
+        root_client.get(f"{API}/system/storage")
+
         queries = []
         listener = lambda conn, cursor, statement, *rest: queries.append(statement)
         event.listen(engine, "before_cursor_execute", listener)
