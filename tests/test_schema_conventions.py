@@ -182,3 +182,111 @@ def test_models_and_migrations_do_not_diverge():
         + "\n".join(f"  {item}" for item in diff)
         + "\n\nПочинить миграцией, а не правкой модели под базу."
     )
+
+
+def test_every_migration_can_be_rolled_back(tmp_path):
+    """Круг: наверх, вниз до пустоты, снова наверх.
+
+    Откат нужен ровно один раз — когда обновление на сервере встало посередине
+    и надо вернуться к рабочей версии. Проверять его в этот момент поздно, а до
+    этого момента никто и не проверяет: `upgrade` гоняется на каждом деплое,
+    `downgrade` не гоняется никогда.
+
+    Отдельная база в каталоге теста, а не общая: проверка сносит схему до
+    основания, и делать это с базой, на которой стоит весь остальной набор,
+    нельзя.
+
+    Схема после круга сверяется с моделями. Отката «почти правильного» не
+    бывает: миграция, которая при откате потеряла индекс, при следующем подъёме
+    построит базу без него — и никто этого не заметит, пока запрос не начнёт
+    читать таблицу целиком.
+    """
+    from alembic import command
+    from alembic.config import Config
+    from alembic.autogenerate import compare_metadata
+    from alembic.migration import MigrationContext
+    from sqlalchemy import create_engine
+
+    url = f"sqlite:///{tmp_path / 'roundtrip.db'}"
+    config = Config("alembic.ini")
+    config.set_main_option("sqlalchemy.url", url)
+    config.attributes["configure_logger"] = False
+
+    command.upgrade(config, "head")
+
+    # Убеждаемся, что миграции пошли именно сюда, ДО того как звать откат.
+    # Если `env.py` снова начнёт затирать переданный адрес своим, откат уедет на
+    # общую базу набора и снесёт её посреди прогона: соседние тесты посыпались
+    # бы с непонятными ошибками, а причина осталась бы здесь. Пусть лучше
+    # падает эта строка — она называет причину прямо.
+    engine = create_engine(url)
+    with engine.connect() as connection:
+        built = MigrationContext.configure(connection).connection.dialect.get_table_names(connection)
+    assert "clients" in built, (
+        "миграции ушли не в тестовую базу: alembic подменил переданный адрес своим"
+    )
+
+    command.downgrade(config, "base")
+    with engine.connect() as connection:
+        left = MigrationContext.configure(connection).connection.dialect.get_table_names(connection)
+    # `alembic_version` остаётся: это учётная таблица самого alembic, а не схемы.
+    assert [name for name in left if name != "alembic_version"] == [], (
+        "после отката до основания в базе остались таблицы: " + ", ".join(left)
+    )
+
+    command.upgrade(config, "head")
+    with engine.connect() as connection:
+        diff = compare_metadata(MigrationContext.configure(connection), Base.metadata)
+    engine.dispose()
+
+    assert not diff, (
+        "после круга «вверх — вниз — вверх» схема разошлась с моделями:\n"
+        + "\n".join(f"  {item}" for item in diff)
+    )
+
+
+def test_running_migrations_does_not_silence_the_application_log(tmp_path):
+    """Прогон миграций не выключает журнал приложения.
+
+    `logging.config.fileConfig` по умолчанию глушит все логгеры, созданные до
+    него, — а alembic зовёт его из `env.py` на каждом прогоне. Из отдельного
+    процесса это безобидно, но миграции вызывают и изнутри приложения: так
+    делают тесты, так однажды сделает автоматическое обновление на старте. Тогда
+    вместе с alembic замолкает `opencrm.events`, и «наблюдатель упал молча»
+    превращается из фигуры речи в описание происходящего.
+
+    Поймано обратным прогоном набора: тесты про упавшего наблюдателя падали не
+    сами по себе, а после соседа, гонявшего миграции.
+    """
+    import logging
+
+    from alembic import command
+    from alembic.config import Config
+
+    talker = logging.getLogger("opencrm.events")
+
+    config = Config("alembic.ini")
+    config.set_main_option("sqlalchemy.url", f"sqlite:///{tmp_path / 'quiet.db'}")
+    command.upgrade(config, "head")
+
+    assert not talker.disabled, "миграции выключили журнал событий"
+
+    # Свой приёмник, а не `caplog`: pytest вешает свой заново на каждый тест и
+    # тем самым чинит последствие внутри одного прогона. В бою чинить некому —
+    # приложение настраивает журнал один раз при старте. Проверяем то, что
+    # важно на самом деле: запись доходит до приёмника, повешенного после
+    # миграций.
+    heard = []
+
+    class Ear(logging.Handler):
+        def emit(self, record):
+            heard.append(record.getMessage())
+
+    ear = Ear(level=logging.ERROR)
+    talker.addHandler(ear)
+    try:
+        talker.error("подписчик упал")
+    finally:
+        talker.removeHandler(ear)
+
+    assert heard == ["подписчик упал"], "после миграций ошибки не доходят до журнала"
