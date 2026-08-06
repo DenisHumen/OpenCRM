@@ -315,3 +315,37 @@ def test_system_entries_cannot_be_faked_by_hand(manager_client, deal):
     )
     assert response.status_code == 422
     assert response.json()["error"]["code"] == "bad_note_kind"
+
+
+def test_system_entry_cannot_be_deleted_by_anyone(manager_client, root_client):
+    """След собственного действия не должен стираться тем, кто его оставил.
+
+    Автором записи о смене этапа стоит тот, кто двигал заявку, — и общее
+    правило «автор может удалить своё» отдало бы ему право убрать отметку о
+    том, что он сделал. Рукописную заметку удаляют, потому что ошиблись при
+    вводе; смена этапа либо была, либо нет.
+    """
+    from tests.conftest import API
+    from tests.test_deals import DEALS, make_client
+
+    client = make_client(manager_client, "Клиент неудаляемой записи")
+    deal = manager_client.post(DEALS, json={"title": "Поедет по этапам", "client_id": client["id"]}).json()
+    board = manager_client.get(f"{DEALS}/board").json()
+    won = next(c for c in board["columns"] if c["kind"] == "won")["key"]
+    manager_client.post(f"{DEALS}/{deal['id']}/move", json={"stage": won})
+
+    notes = manager_client.get(f"{API}/clients/{client['id']}/notes").json()["items"]
+    system = [n for n in notes if n["kind"] == "stage"]
+    assert system, "смена этапа не попала в ленту — проверять нечего"
+
+    note_id = system[0]["id"]
+    # автор записи — тот, кто двигал заявку
+    denied = manager_client.delete(f"{API}/clients/{client['id']}/notes/{note_id}")
+    assert denied.status_code == 403
+    assert denied.json()["error"]["code"] == "system_note_immutable"
+
+    # и root тоже: журнал, который можно поправить, ничего не доказывает
+    assert root_client.delete(f"{API}/clients/{client['id']}/notes/{note_id}").status_code == 403
+
+    still = manager_client.get(f"{API}/clients/{client['id']}/notes").json()["items"]
+    assert any(n["id"] == note_id for n in still), "запись всё-таки удалилась"

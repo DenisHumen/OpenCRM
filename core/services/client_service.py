@@ -191,6 +191,18 @@ def delete_note(db: Session, client_id: int, note_id: int, actor: User) -> None:
     note = clients_repo.get_note(db, client_id, note_id)
     if note is None:
         raise errors.NotFoundError("Note not found", code="note_not_found")
+    # Запись о событии не удаляется никем, включая root и самого автора.
+    #
+    # Автором системной записи стоит тот, кто двигал заявку, — и правило
+    # «автор может удалить своё» отдало бы ему право стереть след
+    # собственного действия. Лента при этом перестаёт отвечать на вопрос
+    # «что происходило», ради которого она и заведена: рукописную заметку
+    # убирают, потому что ошиблись при вводе, а смена этапа либо была, либо
+    # нет, и передумать тут нечего.
+    if note.kind in SYSTEM_NOTE_KINDS:
+        raise errors.ForbiddenError(
+            "System entries cannot be deleted", code="system_note_immutable"
+        )
     if actor.role != ROLE_ROOT and note.author_id != actor.id:
         raise errors.ForbiddenError("Only the author or root can delete a note", code="not_note_author")
     db.delete(note)
