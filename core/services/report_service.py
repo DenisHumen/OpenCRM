@@ -337,10 +337,16 @@ def sources(
     # прочерком: сортировать None напрямую нельзя, а ставить такие строки выше
     # платящих — неверно.
     rows.sort(key=lambda row: (-(row["revenue"] or 0), -row["clients"], str(row["source"] or "")))
+    # Итог по выручке считается тем же правилом, что и всё остальное в отчётах:
+    # цену не назвали ни у одной строки — прочерк, а не ноль. Иначе на одном
+    # экране блок «Выручка» пишет «—», а таблица источников «0 ₽», и владелец
+    # получает два разных ответа на один вопрос. Ради этого правила написан
+    # `_sum`, и здесь оно было единственным местом, где его обошли.
+    priced = [row["revenue"] for row in rows if row["revenue"] is not None]
     return {
         "items": rows,
         "clients_total": sum(row["clients"] for row in rows),
-        "revenue_total": sum(row["revenue"] or 0 for row in rows),
+        "revenue_total": sum(priced) if priced else None,
     }
 
 

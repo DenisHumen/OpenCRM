@@ -621,3 +621,85 @@ def test_revenue_csv_leaves_an_unnamed_total_empty(manager_client):
 
     assert row[header.index("Revenue")] == "", "выручка без названной цены выгрузилась нулём"
     assert row[header.index("Lost value")] == "", "сумма потерь без цены выгрузилась нулём"
+
+
+def test_hidden_amounts_do_not_show_through_the_order_of_rows(root_client):
+    """Порядок строк — тоже сведения о суммах.
+
+    Числа зануляются, а ранжирование по ним оставалось: сузив период до одного
+    дня с одной сделкой на источник, человек читает порядок конкретных сумм, а
+    повторяя с разными периодами — оценивает каждую. Запрет выглядел
+    работающим, не будучи им.
+    """
+    from tests.conftest import make_manager
+    from tests.test_roles import ROLES, _user_id
+
+    made = root_client.post(
+        ROLES,
+        json={
+            "name": "Смотрит отчёты без денег",
+            "permissions": ["clients.view", "deals.view", "deals.view_others", "reports.view"],
+        },
+    )
+    assert made.status_code == 201, made.text
+    role = made.json()
+    watcher = make_manager(root_client, "nomoney-order@test.local")
+    user_id = _user_id(root_client, "nomoney-order@test.local")
+    assert root_client.post(f"{ROLES}/assign/{user_id}", json={"role_id": role["id"]}).status_code == 200
+
+    client = root_client.post(f"{API}/clients", json={"name": "Источники", "source": "ads"}).json()
+    won = next(
+        c for c in root_client.get(f"{API}/deals/board").json()["columns"] if c["kind"] == "won"
+    )["key"]
+    # Свои источники, а не общие «ads»/«search»: база одна на весь прогон, и
+    # деньги, добавленные сюда, попадали бы в чужие проверки итогов.
+    for source, amount in (
+        ("probe-order-low", 50_00),
+        ("probe-order-high", 5000_00),
+        ("probe-order-mid", 300_00),
+    ):
+        buyer = root_client.post(
+            f"{API}/clients", json={"name": f"Клиент {source}", "source": source}
+        ).json()
+        deal = root_client.post(
+            f"{API}/deals", json={"title": source, "client_id": buyer["id"], "amount": amount}
+        ).json()
+        root_client.post(f"{API}/deals/{deal['id']}/move", json={"stage": won})
+
+    seen = watcher.get(f"{API}/reports/sources", params={"tz_offset": 0}).json()
+    rows = [row for row in seen["items"] if str(row["source"] or "").startswith("probe-order")]
+
+    assert all(row["revenue"] is None for row in rows), "суммы не спрятаны"
+    # Порядок по деньгам был бы search → social → ads. Проверяем, что его нет.
+    by_money = ["probe-order-high", "probe-order-mid", "probe-order-low"]
+    assert [row["source"] for row in rows] != by_money, (
+        "строки по-прежнему выстроены по спрятанным суммам"
+    )
+
+
+def test_the_sources_total_says_nothing_instead_of_zero(root_client):
+    """Цену не назвали ни у одной строки — прочерк, а не ноль.
+
+    Иначе на одном экране блок «Выручка» пишет «—», а таблица источников
+    «0 ₽», и владелец получает два разных ответа на один вопрос.
+    """
+    client = root_client.post(
+        f"{API}/clients", json={"name": "Без цены", "source": "referral"}
+    ).json()
+    deal = root_client.post(
+        f"{API}/deals", json={"title": "Без суммы", "client_id": client["id"]}
+    ).json()
+    won = next(
+        c for c in root_client.get(f"{API}/deals/board").json()["columns"] if c["kind"] == "won"
+    )["key"]
+    root_client.post(f"{API}/deals/{deal['id']}/move", json={"stage": won})
+
+    revenue = root_client.get(f"{API}/reports/revenue", params={"tz_offset": 0}).json()
+    sources = root_client.get(f"{API}/reports/sources", params={"tz_offset": 0}).json()
+
+    row = next(r for r in sources["items"] if r["source"] == "referral")
+    assert row["revenue"] is None, "строка источника показала ноль вместо прочерка"
+    if revenue["won_amount"] is None:
+        assert sources["revenue_total"] is None, (
+            "выручка показывает прочерк, а итог источников — ноль"
+        )

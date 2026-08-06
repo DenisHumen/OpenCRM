@@ -134,9 +134,33 @@ def money_summary(db: Session, since, only_manager_id: int | None = None) -> dic
     priced_won = int(db.scalar(priced) or 0)
     won_since = total(KIND_WON, since)
 
+    # Сколько сделок выиграно за период — ВСЕХ, а не только с названной ценой.
+    # Плитка сводки подписана «выиграно за месяц», и показывать там число
+    # оценённых значило отвечать не на тот вопрос: менеджер выиграл сделку и не
+    # заполнил сумму — на сводке месяц пустой, а в отчёте за тот же месяц
+    # «выиграно 1». Два разных ответа на один вопрос.
+    counted = (
+        select(func.count())
+        .select_from(Deal)
+        .join(PipelineStage, PipelineStage.key == Deal.stage)
+        .where(
+            Deal.deleted_at.is_(None),
+            PipelineStage.kind == KIND_WON,
+            Deal.closed_at >= since,
+        )
+    )
+    if only_manager_id is not None:
+        counted = counted.where(Deal.manager_id == only_manager_id)
+    won_count = int(db.scalar(counted) or 0)
+
     return {
         "in_work": total(KIND_OPEN),
-        "won_since": won_since,
+        # «Цену не назвали» и «работа бесплатная» — разные вещи, и на сводке
+        # тоже: без единой оценённой сделки здесь прочерк, а не ноль. Иначе
+        # плитка пишет «0 ₽» там, где верный ответ — «пока не о чем говорить»,
+        # и расходится с отчётом за тот же месяц.
+        "won_since": won_since if priced_won else None,
+        "won_count": won_count,
         "won_count_priced": priced_won,
         # Без единой сделки с ценой среднего чека нет — и это НЕ ноль. Ноль
         # прочитают как «работаем даром», а верный ответ — «пока не о чем

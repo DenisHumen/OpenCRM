@@ -46,17 +46,26 @@ def test_deals_without_a_price_do_not_drag_the_average_down(manager_client):
     win(manager_client, person["id"], amount=200000)
     after_priced = manager_client.get(DASH).json()
 
-    added_sum = after_priced["money_won_this_month"] - before["money_won_this_month"]
+    # «Ещё ни одной сделки с ценой» отдаётся прочерком, а не нулём — отсюда `or 0`.
+    added_sum = (after_priced["money_won_this_month"] or 0) - (before["money_won_this_month"] or 0)
     added_count = after_priced["won_count_this_month"] - before["won_count_this_month"]
     assert added_sum == 300000
     assert added_count == 2
 
-    # сделка без названной цены не должна менять ни знаменатель, ни средний чек
+    # Сделка без названной цены СЧИТАЕТСЯ выигранной — плитка подписана
+    # «выиграно за месяц», и не показывать её там значило бы отвечать не на тот
+    # вопрос: в отчёте за тот же месяц она есть. А вот средний чек она менять не
+    # должна: её цены нет, и в знаменатель ей идти не с чем.
     win(manager_client, person["id"])
     after_unpriced = manager_client.get(DASH).json()
 
-    assert after_unpriced["won_count_this_month"] == after_priced["won_count_this_month"]
-    assert after_unpriced["avg_check"] == after_priced["avg_check"]
+    assert after_unpriced["won_count_this_month"] == after_priced["won_count_this_month"] + 1, (
+        "выигранная сделка без цены пропала из счётчика выигранных"
+    )
+    assert after_unpriced["avg_check"] == after_priced["avg_check"], (
+        "сделка без цены сдвинула средний чек"
+    )
+    assert after_unpriced["money_won_this_month"] == after_priced["money_won_this_month"]
 
 
 def test_average_check_without_a_single_priced_deal_is_not_zero(manager_client):
@@ -75,7 +84,10 @@ def test_average_check_without_a_single_priced_deal_is_not_zero(manager_client):
         empty = deals_repo.money_summary(db, now_utc() + timedelta(days=365))
 
     assert empty["won_count_priced"] == 0, "окно должно быть пустым, иначе тест ни о чём"
-    assert empty["won_since"] == 0
+    # Ни одной сделки с ценой — значит и выручке взяться неоткуда: прочерк, а не
+    # ноль. Ноль прочитают как «работали даром», а верный ответ — «пока не о чем
+    # говорить». То же правило, что у среднего чека строкой ниже.
+    assert empty["won_since"] is None, "выручка без сделок с ценой — не ноль"
     assert empty["avg_check"] is None, "средний чек без сделок с ценой — не ноль"
 
 
