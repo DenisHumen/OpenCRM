@@ -696,6 +696,7 @@ const en = {
   auditActEnabled: "Access restored",
   auditActPasswordReset: "Password reset",
   auditActDeleted: "Deleted",
+  auditActRestored: "Restored",
   // роли и конструктор доступов
   roles: "Roles",
   rolesSub: "Who may do what. A role is a job title with a set of permissions — you name it, you pick the set.",
@@ -1421,6 +1422,7 @@ const ru: typeof en = {
   auditActEnabled: "Вернул доступ",
   auditActPasswordReset: "Сбросил пароль",
   auditActDeleted: "Удалил",
+  auditActRestored: "Вернул из корзины",
   // роли и конструктор доступов
   roles: "Роли",
   rolesSub: "Кому что можно. Роль — это должность с набором прав: название своё, набор свой.",

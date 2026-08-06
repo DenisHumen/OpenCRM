@@ -6,7 +6,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from core import exceptions as errors
-from core.utils import now_utc
+from core.utils import now_utc, to_utc_naive
 from database.models import Task, User
 
 MAX_TITLE = 300
@@ -14,24 +14,6 @@ MAX_TITLE = 300
 #: Потолок списка напоминаний. Счётчики в меню считают мимо него: их дело —
 #: сказать, сколько есть всего, а не сколько поместилось на экран.
 LIST_LIMIT = 200
-
-
-def to_utc_naive(value: datetime | None) -> datetime | None:
-    """Приводит срок к тому виду, в каком время лежит в базе: naive UTC.
-
-    Клиент присылает абсолютный момент со смещением («18:00 по Киеву»), и
-    сохранить его как есть нельзя: SQLite сложит вместе aware и naive значения,
-    а сравнение «просрочено ли» начнёт врать на величину смещения. Ошибка при
-    этом тихая — напоминание просто сработает не тогда.
-    """
-    if value is None:
-        return None
-    if value.tzinfo is None:
-        # Пришло без зоны — считаем, что это уже UTC. Другого разумного
-        # предположения нет: гадать о зоне отправителя хуже, чем принять
-        # соглашение и записать его здесь.
-        return value
-    return value.astimezone(timezone.utc).replace(tzinfo=None)
 
 
 def get_task(db: Session, task_id: int) -> Task:

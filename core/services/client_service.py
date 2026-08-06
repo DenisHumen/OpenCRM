@@ -93,9 +93,35 @@ def delete_client(
     )
 
 
-def restore_client(db: Session, client_id: int) -> Client:
+def restore_client(
+    db: Session,
+    client_id: int,
+    actor: User,
+    source: str = SOURCE_MANUAL,
+    source_ref: str = "",
+) -> Client:
+    """Вернуть клиента из корзины.
+
+    Возврат попадает в журнал наравне с удалением. Иначе журнал врёт умолчанием:
+    «удалил клиента» в нём есть, «вернул через час» — нет, и читающий через
+    месяц уверен, что карточки не стало.
+    """
     client = get_client(db, client_id, include_deleted=True)
+    if client.deleted_at is None:
+        # Возвращать нечего: запись и так на месте. Молча отвечать «готово»
+        # нельзя — в журнале появилась бы отметка о возврате, которого не было.
+        return client
     client.deleted_at = None
+    db.flush()
+    audit_service.record_restore(
+        db,
+        actor=actor,
+        source=source,
+        source_ref=source_ref,
+        entity_type=audit_service.ENTITY_CLIENT,
+        entity_id=client.id,
+        entity_label=client.name,
+    )
     return client
 
 

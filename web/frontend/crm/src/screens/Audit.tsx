@@ -104,6 +104,7 @@ export function Audit() {
     // отдельную подпись под каждый вид значило бы дописывать её при появлении
     // каждого следующего.
     if (entry.action.endsWith(".deleted")) return t("auditActDeleted");
+    if (entry.action.endsWith(".restored")) return t("auditActRestored");
     return entry.action;
   };
 

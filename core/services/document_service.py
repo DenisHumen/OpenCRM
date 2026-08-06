@@ -3,7 +3,6 @@
 import json
 
 from sqlalchemy import func, select
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 # Под псевдонимом: ниже в этом же модуле есть функция `events()` — история
@@ -11,6 +10,7 @@ from sqlalchemy.orm import Session
 # молча и только в момент вызова.
 from core import events as event_bus
 from core import exceptions as errors
+from core import uniqueness
 from core.services import company_service, settings_service
 from core.utils import now_utc
 from database.models import Client, Company, Deal, Document, DocumentEvent, User
@@ -132,46 +132,28 @@ def next_number(db: Session) -> str:
     return f"{prefix}{counter:06d}"
 
 
-#: Сколько раз пробуем занять номер, если его перехватили.
-#:
-#: Три, а не «пока не выйдет»: если номер не даётся трижды подряд, дело не в
-#: соседе у стойки, а в чём-то другом, и крутить цикл дальше — прятать это.
-NUMBER_ATTEMPTS = 3
-
-
 def _insert_with_free_number(db: Session, **fields) -> Document:
     """Вставить бланк, заняв следующий свободный номер.
 
     Номер считается как «максимум по году плюс один», и между счётом и вставкой
     есть окно. У стойки в него попадают: двое приёмщиков выдают бумагу
     одновременно, оба видят один и тот же максимум. Уникальный индекс данные
-    спасал — обоим номер один не доставался, — но проигравший получал 500.
-    Проверено живым прогоном: из двадцати одновременных выдач тринадцать
-    отвечали ошибкой сервера. Приёмщик при этом жмёт «выдать» снова, попадает в
-    ту же гонку и решает, что сломалась программа.
+    спасал — двух бланков с одним номером не появлялось, — но проигравший
+    получал 500. Проверено живым прогоном: из двадцати одновременных выдач
+    тринадцать отвечали ошибкой сервера. Приёмщик при этом жмёт «выдать» снова,
+    попадает в ту же гонку и решает, что сломалась программа.
 
-    Вставка идёт под точкой отката: откатывается только она, и номер считается
-    заново — уже с учётом того, кто успел раньше. Тот же приём, что у звонков от
-    АТС (`telephony_service._insert_or_take_existing`), и по той же причине.
-    Разница одна: там проигравший берёт чужую строку (событие про один и тот же
-    звонок), здесь — берёт следующий номер, потому что бланки разные.
+    Номер считается заново перед каждой попыткой — уже с учётом того, кто успел
+    раньше. Общий приём и разбор трёх видов «проиграл» — в `core/uniqueness.py`.
     """
-    for _ in range(NUMBER_ATTEMPTS):
-        document = Document(number=next_number(db), status=STATUS_ISSUED, **fields)
-        try:
-            with db.begin_nested():
-                db.add(document)
-                db.flush()
-            return document
-        except IntegrityError:
-            # Откат точки обычно сам выбрасывает добавленное в ней из сессии, но
-            # полагаться на это нельзя: останься объект ожидающим вставки —
-            # следующий flush повторил бы её и упал уже без спасения.
-            if document in db:
-                db.expunge(document)
-
-    raise errors.ConflictError(
-        "Could not take a free number, try again", code="document_number_taken"
+    return uniqueness.insert_retrying(
+        db,
+        lambda: Document(number=next_number(db), status=STATUS_ISSUED, **fields),
+        taken=lambda row: db.scalar(
+            select(Document.id).where(Document.number == row.number)
+        ) is not None,
+        message="Could not take a free number, try again",
+        code="document_number_taken",
     )
 
 

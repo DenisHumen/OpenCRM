@@ -6,12 +6,13 @@ from sqlalchemy.orm import Session
 from core import events
 from core import exceptions as errors
 from core.services import audit_service, company_service, pipeline_service
-from core.utils import now_utc
+from core.utils import now_utc, to_utc_naive
 from database.models import Deal, User
 from database.models.audit import SOURCE_MANUAL
 from database.models.pipeline import CLOSED_KINDS, KIND_LOST
 from database.repositories import clients as clients_repo
 from database.repositories import deals as deals_repo
+from database.repositories import users as users_repo
 
 MAX_TITLE = 200
 MAX_LOST_REASON = 200
@@ -79,6 +80,27 @@ def _company_id(db: Session, data: dict) -> int | None:
     return int(value)
 
 
+def _manager_id(db: Session, value) -> int | None:
+    """Ответственный из запроса, с проверкой существования.
+
+    Пустое значение законно и означает «общая очередь, разберут потом» — это
+    решение принято при заведении заявки и здесь повторяется.
+
+    Проверяем, а не доверяем числу: несуществующий id доезжал до вставки и
+    падал нарушением внешнего ключа, то есть пятисоткой на обычную опечатку в
+    запросе. Ровно так же и по той же причине проверяется клиент.
+
+    Отключённого сотрудника не запрещаем: человек уволился, а заявки, которые
+    он вёл, остаются его — переписывать историю ради красоты списка нельзя.
+    Выбрать его в интерфейсе всё равно нельзя, там показывают только активных.
+    """
+    if not value:
+        return None
+    if users_repo.get_by_id(db, int(value)) is None:
+        raise errors.NotFoundError("Manager not found", code="manager_not_found")
+    return int(value)
+
+
 def get_deal(db: Session, deal_id: int, include_deleted: bool = False) -> Deal:
     deal = deals_repo.get(db, deal_id, include_deleted=include_deleted)
     if deal is None:
@@ -105,7 +127,7 @@ def create_deal(db: Session, data: dict, author: User) -> Deal:
     # «Поле не прислали» и «прислали пустым» — разные вещи. Не указали
     # ответственного — ставим автора, чтобы сделка не осталась ничьей случайно.
     # Указали пусто явно — значит так и хотели: общая очередь, разберут потом.
-    manager_id = data["manager_id"] if "manager_id" in data else author.id
+    manager_id = _manager_id(db, data["manager_id"]) if "manager_id" in data else author.id
 
     deal = Deal(
         title=title[:MAX_TITLE],
@@ -121,7 +143,7 @@ def create_deal(db: Session, data: dict, author: User) -> Deal:
         description=(data.get("description") or "").strip(),
         amount=parse_money(data.get("amount"), "amount"),
         prepaid=parse_money(data.get("prepaid"), "prepaid") or 0,
-        due_at=data.get("due_at"),
+        due_at=to_utc_naive(data.get("due_at")),
         closed_at=now_utc() if pipeline_service.is_closed(db, stage) else None,
     )
     db.add(deal)
@@ -149,9 +171,13 @@ def update_deal(
     if "description" in data and data["description"] is not None:
         deal.description = data["description"].strip()
     if "due_at" in data:
-        deal.due_at = data["due_at"]
+        # Смещение зоны приводим, а не отбрасываем: «18:00 по Киеву» — это
+        # 15:00 UTC, и без приведения срок наступал на три часа позже, чем
+        # человек назначил. В ответе при этом стояло присланное значение, то
+        # есть API отвечал не тем, что записал.
+        deal.due_at = to_utc_naive(data["due_at"])
     if "manager_id" in data:
-        deal.manager_id = data["manager_id"]
+        deal.manager_id = _manager_id(db, data["manager_id"])
     if "client_id" in data and data["client_id"]:
         if clients_repo.get(db, int(data["client_id"])) is None:
             raise errors.NotFoundError("Client not found", code="client_not_found")

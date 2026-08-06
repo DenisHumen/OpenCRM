@@ -25,6 +25,7 @@ from sqlalchemy.orm import Session
 
 from core import exceptions as errors
 from core import permissions
+from core import uniqueness
 from database.models import Role, RolePermission, User
 from database.models.role import MAX_ROLE_NAME
 from database.models.user import ROLE_ROOT
@@ -338,9 +339,17 @@ def create_role(
         _refuse_granting_what_you_lack(
             db, actor, {permissions.code(area, action) for area, action in pairs}
         )
-    role = Role(name=_clean_name(db, name), preset=preset[:32], is_default=False)
-    db.add(role)
-    db.flush()
+    # Имя роли уникально, и между проверкой в `_clean_name` и вставкой есть то
+    # же окно, что у почты и у номера бланка. Двое администраторов заводят
+    # «Бухгалтера» одновременно — редкость, но отвечать на неё пятисоткой не
+    # повод: сообщение «такая роль уже есть» человек понимает и без нас.
+    role = uniqueness.insert_unique(
+        db,
+        Role(name=_clean_name(db, name), preset=preset[:32], is_default=False),
+        taken=lambda row: db.scalar(select(Role.id).where(Role.name == row.name)) is not None,
+        message="A role with this name already exists",
+        code="role_name_taken",
+    )
     _write_codes(db, role, pairs)
     if is_default:
         set_default(db, role.id)

@@ -149,7 +149,7 @@ def restore_product(
     user: User = Depends(require_perm("warehouse", "restore")),
     db: Session = Depends(get_db),
 ):
-    product = warehouse_service.restore_product(db, product_id)
+    product = warehouse_service.restore_product(db, product_id, user)
     return schemas.product_out(
         product,
         warehouse_service.stock_of(db, product),

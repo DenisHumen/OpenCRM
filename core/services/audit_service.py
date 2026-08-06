@@ -39,6 +39,7 @@ __all__ = [
     "assert_actor",
     "record",
     "record_deletion",
+    "record_restore",
     "money_text",
 ]
 
@@ -171,6 +172,37 @@ def record_deletion(
     return record(
         db,
         action=f"{entity_type}.deleted",
+        actor=actor,
+        source=source,
+        source_ref=source_ref,
+        entity_type=entity_type,
+        entity_id=entity_id,
+        entity_label=entity_label,
+    )
+
+
+def record_restore(
+    db: Session,
+    *,
+    actor: User | None,
+    entity_type: str,
+    entity_id: int | None,
+    entity_label: str,
+    source: str = SOURCE_MANUAL,
+    source_ref: str = "",
+) -> AuditEvent:
+    """Возврат из корзины — записью той же формы, что и удаление.
+
+    Без неё журнал врал умолчанием: «удалил клиента» в нём было, а того, что
+    клиента вернули через час, — нет. Читающий через месяц видит одно удаление
+    и делает вывод, что карточки больше нет; вывод неверный, а спорить не с чем.
+
+    Пары «было/стало» здесь нет по той же причине, что и у удаления: менялось не
+    значение, а само наличие записи.
+    """
+    return record(
+        db,
+        action=f"{entity_type}.restored",
         actor=actor,
         source=source,
         source_ref=source_ref,

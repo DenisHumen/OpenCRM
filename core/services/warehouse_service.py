@@ -16,10 +16,10 @@ from sqlalchemy.orm import Session
 
 from core import events
 from core import exceptions as errors
+from core import uniqueness
 from core.services import audit_service
 from core.services.deal_service import parse_money
-from core.services.task_service import to_utc_naive
-from core.utils import now_utc
+from core.utils import now_utc, to_utc_naive
 from database.models import Product, StockMove, User
 from database.models.audit import SOURCE_MANUAL
 from database.models.warehouse import (
@@ -149,9 +149,17 @@ def create_product(db: Session, data: dict) -> Product:
         raise errors.ValidationError(
             "A service has no stock threshold", code="service_has_no_stock"
         )
-    db.add(product)
-    db.flush()
-    return product
+    # Артикул уникален, и проверка в `_clean_sku` не спасает от соседа, который
+    # заводит ту же позицию в ту же секунду: приёмка товара — как раз то место,
+    # где двое работают с одной накладной.
+    return uniqueness.insert_unique(
+        db,
+        product,
+        taken=lambda row: row.sku is not None
+        and warehouse_repo.get_by_sku(db, row.sku) is not None,
+        message=f"SKU {product.sku} is already used",
+        code="sku_taken",
+    )
 
 
 def update_product(db: Session, product_id: int, data: dict) -> Product:
@@ -209,9 +217,28 @@ def delete_product(
     )
 
 
-def restore_product(db: Session, product_id: int) -> Product:
+def restore_product(
+    db: Session,
+    product_id: int,
+    actor: User,
+    source: str = SOURCE_MANUAL,
+    source_ref: str = "",
+) -> Product:
+    """Вернуть товар из корзины. В журнал — наравне с удалением (см. клиентов)."""
     product = get_product(db, product_id, include_deleted=True)
+    if product.deleted_at is None:
+        return product
     product.deleted_at = None
+    db.flush()
+    audit_service.record_restore(
+        db,
+        actor=actor,
+        source=source,
+        source_ref=source_ref,
+        entity_type=audit_service.ENTITY_PRODUCT,
+        entity_id=product.id,
+        entity_label=product.name,
+    )
     return product
 
 

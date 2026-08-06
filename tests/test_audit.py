@@ -594,3 +594,38 @@ def test_no_stray_notes_without_an_author(root_client, manager_client, deal, ses
         "ничья запись в ленте у вида, где человек есть: "
         + ", ".join(sorted({n.kind for n in orphans}))
     )
+
+
+def test_bringing_a_client_back_is_recorded_too(root_client, manager_client):
+    """Возврат из корзины виден в журнале наравне с удалением.
+
+    Иначе журнал врёт умолчанием: «удалил клиента» в нём есть, «вернул через
+    час» — нет, и читающий через месяц уверен, что карточки не стало. Спорить
+    при этом не с чем: записи о возврате просто не существует.
+    """
+    client = manager_client.post(f"{API}/clients", json={"name": "Ушёл и вернулся"}).json()
+    assert manager_client.delete(f"{API}/clients/{client['id']}").status_code == 200
+    assert root_client.post(f"{API}/clients/{client['id']}/restore").status_code == 200
+
+    trail = [e["action"] for e in about(root_client, "client", client["id"])]
+    assert trail[:2] == ["client.restored", "client.deleted"], trail
+
+    restored = about(root_client, "client", client["id"])[0]
+    assert restored["entity_label"] == "Ушёл и вернулся"
+    assert restored["actor_name"], "возврат записан без исполнителя"
+
+
+def test_restoring_what_was_not_deleted_does_not_invent_a_record(root_client, manager_client):
+    """Возврат живой записи — не событие.
+
+    Кнопка «вернуть» доступна там, где карточка уже на месте (открыли две
+    вкладки, в одной вернули). Молча отвечать «готово» можно, а вот писать в
+    журнал возврат, которого не было, — нельзя: журнал перестанет быть
+    свидетельством.
+    """
+    client = manager_client.post(f"{API}/clients", json={"name": "Никуда не уходил"}).json()
+    before = len(about(root_client, "client", client["id"]))
+
+    assert root_client.post(f"{API}/clients/{client['id']}/restore").status_code == 200
+
+    assert len(about(root_client, "client", client["id"])) == before, "записан возврат без удаления"

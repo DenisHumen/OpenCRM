@@ -105,10 +105,10 @@ def delete_client(
 @router.post("/{client_id}/restore")
 def restore_client(
     client_id: int,
-    _: User = Depends(require_perm("clients", "restore")),
+    actor: User = Depends(require_perm("clients", "restore")),
     db: Session = Depends(get_db),
 ):
-    return schemas.client_out(client_service.restore_client(db, client_id))
+    return schemas.client_out(client_service.restore_client(db, client_id, actor))
 
 
 # --- заметки ---

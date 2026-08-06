@@ -252,3 +252,64 @@ def test_two_people_moving_one_deal_do_not_tear_the_journal(manager_client):
     chain = [(row["from_stage"], row["to_stage"]) for row in card["stage_history"]]
     assert ("new", "in_progress") not in chain, "запись о непроизошедшем переходе всё же появилась"
     assert card["stage"] == "done"
+
+
+def test_a_deal_cannot_be_handed_to_someone_who_does_not_exist(manager_client):
+    """Несуществующий ответственный — отказ с объяснением, а не 500.
+
+    Клиента заявка проверяет, а ответственного проверять забывала: число
+    доезжало до вставки и падало нарушением внешнего ключа. Для человека это
+    пятисотка на обычную опечатку в запросе.
+    """
+    client = make_client(manager_client, "Клиент без ответственного")
+
+    born = manager_client.post(
+        DEALS, json={"title": "Ничья", "client_id": client["id"], "manager_id": 999_999}
+    )
+    assert born.status_code == 404, born.text
+    assert born.json()["error"]["code"] == "manager_not_found"
+
+    deal = manager_client.post(DEALS, json={"title": "Живая", "client_id": client["id"]}).json()
+    moved = manager_client.patch(f"{DEALS}/{deal['id']}", json={"manager_id": 999_999})
+    assert moved.status_code == 404, moved.text
+    assert moved.json()["error"]["code"] == "manager_not_found"
+
+    # Пустой ответственный по-прежнему законен: общая очередь, разберут потом.
+    freed = manager_client.patch(f"{DEALS}/{deal['id']}", json={"manager_id": None})
+    assert freed.status_code == 200, freed.text
+    assert freed.json()["manager_id"] is None
+
+
+def test_a_deadline_with_a_zone_keeps_its_moment(manager_client):
+    """«18:00 по Киеву» — это 15:00 UTC, а не 18:00 UTC.
+
+    Смещение молча отбрасывалось: в базу ложилось присланное время как есть, и
+    срок наступал на величину смещения позже, чем человек назначил. В ответе
+    при этом стояло присланное значение — то есть API отвечал не тем, что
+    записал, и проверить расхождение было нечем.
+    """
+    from database.models import Deal
+    from database.session import SessionLocal
+
+    client = make_client(manager_client, "Клиент со сроком")
+    deal = manager_client.post(
+        DEALS,
+        json={
+            "title": "Срочная",
+            "client_id": client["id"],
+            "due_at": "2026-09-01T18:00:00+03:00",
+        },
+    ).json()
+
+    assert deal["due_at"] == "2026-09-01T15:00:00", deal["due_at"]
+
+    with SessionLocal() as db:
+        stored = db.get(Deal, deal["id"])
+        assert stored.due_at.tzinfo is None, "в базе оказалось время с зоной"
+        assert stored.due_at.hour == 15, "смещение зоны потеряно при записи"
+
+    # То же и при правке, и то же с зоной западнее UTC.
+    edited = manager_client.patch(
+        f"{DEALS}/{deal['id']}", json={"due_at": "2026-09-01T10:00:00-05:00"}
+    ).json()
+    assert edited["due_at"] == "2026-09-01T15:00:00", edited["due_at"]

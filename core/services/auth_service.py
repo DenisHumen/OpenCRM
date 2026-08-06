@@ -1,11 +1,11 @@
 import secrets
 from datetime import timedelta
 
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from config.settings import get_settings
 from core import exceptions as errors
+from core import uniqueness
 from core.security import passwords, tokens
 from core.services import audit_service
 from core.utils import PRESENCE_TOUCH_SECONDS, is_valid_email, normalize_email, now_utc
@@ -48,26 +48,22 @@ def register(db: Session, name: str, email: str, password: str) -> User:
         role_id=default_role.id if default_role else None,
         status=STATUS_PENDING,
     )
-    try:
-        with db.begin_nested():
-            db.add(user)
-            db.flush()
-    except IntegrityError:
-        # Между проверкой «такой почты ещё нет» и вставкой есть окно, и попадают
-        # в него не злоумышленники, а обычное двойное нажатие: форма запроса
-        # доступа открыта в интернет, кнопка отправляет сразу. Оба запроса
-        # видели «свободно», один вставил, второй получал 500 — то есть человек
-        # на успешную заявку смотрел как на поломку и слал третью.
-        #
-        # Ответ тот же, что и при обычном занятом адресе: к моменту вставки он и
-        # правда был занят. Чем именно — соседним нажатием того же человека или
-        # чужой регистрацией — для ответа не важно.
-        if user in db:
-            db.expunge(user)
-        raise errors.ConflictError(
-            "Email already registered", code="email_taken"
-        ) from None
-    return user
+    # Между проверкой выше и вставкой есть окно, и попадают в него не
+    # злоумышленники, а обычное двойное нажатие: форма запроса доступа открыта в
+    # интернет, кнопка отправляет сразу. Оба запроса видели «свободно», один
+    # вставил, второй получал 500 — человек смотрел на успешно принятую заявку
+    # как на поломку и слал третью.
+    #
+    # Ответ тот же, что и при обычном занятом адресе: к моменту вставки он и
+    # правда был занят. Чем именно — соседним нажатием того же человека или
+    # чужой регистрацией — для ответа не важно.
+    return uniqueness.insert_unique(
+        db,
+        user,
+        taken=lambda row: users_repo.get_by_email(db, row.email) is not None,
+        message="Email already registered",
+        code="email_taken",
+    )
 
 
 def login(db: Session, email: str, password: str, limiter) -> tuple[User, str]:
