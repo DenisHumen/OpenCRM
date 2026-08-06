@@ -7,6 +7,7 @@
 """
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from core import exceptions as errors
@@ -123,10 +124,18 @@ def first_open_key(db: Session) -> str:
 
 
 def seed_defaults(db: Session) -> None:
-    """Кладёт набор по умолчанию, если воронка пуста. Зовётся при старте."""
+    """Кладёт набор по умолчанию, если воронка пуста. Зовётся при старте.
+
+    Терпит соседа: при `uvicorn --workers 2` оба процесса поднимаются разом и
+    оба видят пустую воронку. Итог нужен один и тот же, и если его достиг
+    другой — падать в момент старта незачем.
+    """
     if db.scalar(select(PipelineStage).limit(1)) is not None:
         return
-    apply_preset(db, DEFAULT_PRESET)
+    try:
+        apply_preset(db, DEFAULT_PRESET)
+    except (errors.ConflictError, IntegrityError):
+        db.rollback()
 
 
 def apply_preset(db: Session, preset: str) -> list[PipelineStage]:

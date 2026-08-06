@@ -585,7 +585,14 @@ def seed_defaults(db: Session) -> None:
     """
     if db.scalar(select(Role).limit(1)) is not None:
         return
-    role = create_from_preset(db, DEFAULT_PRESET)
+    try:
+        role = create_from_preset(db, DEFAULT_PRESET)
+    except errors.ConflictError:
+        # Соседний процесс успел посеять ту же роль между нашей проверкой и
+        # вставкой: `uvicorn --workers 2` поднимает оба разом. Итог нужен один и
+        # тот же, и он уже достигнут — падать в этот момент значит не поднять
+        # приложение вовсе.
+        return
     set_default(db, role.id)
 
 

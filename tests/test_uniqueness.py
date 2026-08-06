@@ -147,3 +147,36 @@ def test_two_products_cannot_take_one_sku(root_client):
     )
     assert second.status_code == 409, second.text
     assert second.json()["error"]["code"] == "sku_taken"
+
+
+def test_seeding_survives_a_second_worker():
+    """Посев умолчаний терпит соседа, который сеет то же самое.
+
+    `uvicorn --workers 2` поднимает два процесса одновременно, и оба выполняют
+    посев: оба видят «ключа нет», оба вставляют. Проигравший падал прямо в
+    момент старта — и приложение не поднималось вовсе. Заметить это на одном
+    рабочем процессе (умолчание) нельзя, а `OPENCRM_WORKERS` настраивается
+    снаружи и ставится ровно тогда, когда нагрузка выросла.
+    """
+    from database.models import SiteSetting
+    from database.session import SessionLocal
+
+    key = "probe_seed_key"
+    taken = lambda row: db.scalar(select(SiteSetting.id).where(SiteSetting.key == row.key)) is not None
+
+    with SessionLocal() as db:
+        db.execute(SiteSetting.__table__.delete().where(SiteSetting.key == key))
+        db.commit()
+
+        first = uniqueness.insert_or_ignore(db, SiteSetting(key=key, value="1"), taken=taken)
+        db.commit()
+        assert first is True, "первая вставка не прошла"
+
+        # Второй процесс приходит с тем же ключом — и не падает.
+        second = uniqueness.insert_or_ignore(db, SiteSetting(key=key, value="2"), taken=taken)
+        assert second is False, "второй посев не заметил, что всё уже сделано"
+
+        # Сессия жива, значение первого не затёрто.
+        assert db.scalar(select(SiteSetting.value).where(SiteSetting.key == key)) == "1"
+        db.execute(SiteSetting.__table__.delete().where(SiteSetting.key == key))
+        db.commit()

@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from config.settings import get_settings
 from core import exceptions as errors
+from core import uniqueness
 from core.utils import normalize_external_url, now_utc
 from database.models import SiteSetting
 from database.models.settings import SETTING_DEFAULTS
@@ -109,8 +110,20 @@ def clear_og_default(db: Session) -> None:
 
 
 def seed_defaults(db: Session) -> None:
+    """Умолчания настроек при первом запуске.
+
+    Терпимо к тому, что соседний процесс сеет то же самое: `uvicorn --workers 2`
+    поднимает оба разом, и оба видят «ключа нет». Без этого проигравший падал
+    прямо на старте, и приложение не поднималось.
+    """
     existing = {row.key for row in db.scalars(select(SiteSetting))}
     for key, value in SETTING_DEFAULTS.items():
-        if key not in existing:
-            db.add(SiteSetting(key=key, value=value))
-    db.flush()
+        if key in existing:
+            continue
+        uniqueness.insert_or_ignore(
+            db,
+            SiteSetting(key=key, value=value),
+            taken=lambda row: db.scalar(
+                select(SiteSetting.id).where(SiteSetting.key == row.key)
+            ) is not None,
+        )

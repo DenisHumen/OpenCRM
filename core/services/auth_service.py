@@ -352,7 +352,11 @@ def delete_user(db: Session, actor: User, user_id: int) -> None:
 # --- bootstrap ---
 
 def bootstrap_root(db: Session) -> User | None:
-    """Создаёт root-аккаунт при первом запуске. Возвращает его, если создал."""
+    """Создаёт root-аккаунт при первом запуске. Возвращает его, если создал.
+
+    None означает «уже был» — и его же возвращает проигравший гонку за первый
+    запуск: аккаунт есть, создал его сосед, сообщать человеку не о чем.
+    """
     if users_repo.get_root(db) is not None:
         return None
     settings = get_settings()
@@ -364,6 +368,10 @@ def bootstrap_root(db: Session) -> User | None:
         status=STATUS_ACTIVE,
         must_change_password=True,
     )
-    db.add(root)
-    db.flush()
-    return root
+    # Терпим соседа: при `uvicorn --workers 2` оба процесса поднимаются разом и
+    # оба видят «root'а нет». Второй получал нарушение уникальности по адресу и
+    # не поднимался вовсе — в самый неудачный момент, при первом же запуске.
+    placed = uniqueness.insert_or_ignore(
+        db, root, taken=lambda row: users_repo.get_by_email(db, row.email) is not None
+    )
+    return root if placed else None
