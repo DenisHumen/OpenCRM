@@ -5,7 +5,7 @@ from core.services import share_service
 from database.models import User
 from database.repositories import shares as shares_repo
 from web.api import schemas
-from web.api.deps import get_db, require_module, require_staff
+from web.api.deps import get_db, require_module, require_perm
 
 # Ссылки на витрины — часть досок: выключили доски, делиться нечем.
 router = APIRouter(
@@ -17,7 +17,7 @@ router = APIRouter(
 def update_share(
     share_id: int,
     payload: schemas.SharePatchIn,
-    _: User = Depends(require_staff),
+    _: User = Depends(require_perm("boards", "edit")),
     db: Session = Depends(get_db),
 ):
     fields = payload.model_fields_set
@@ -34,7 +34,7 @@ def update_share(
 @router.delete("/{share_id}")
 def delete_share(
     share_id: int,
-    _: User = Depends(require_staff),
+    _: User = Depends(require_perm("boards", "delete")),
     db: Session = Depends(get_db),
 ):
     share_service.delete_share(db, share_id)
@@ -44,7 +44,7 @@ def delete_share(
 @router.post("/{share_id}/regenerate")
 def regenerate_share(
     share_id: int,
-    user: User = Depends(require_staff),
+    user: User = Depends(require_perm("boards", "edit")),
     db: Session = Depends(get_db),
 ):
     link = share_service.regenerate(db, share_id, user)
@@ -56,7 +56,7 @@ def share_views(
     share_id: int,
     page: int = Query(default=1, ge=1),
     per_page: int = Query(default=50, ge=1, le=200),
-    _: User = Depends(require_staff),
+    _: User = Depends(require_perm("boards", "view")),
     db: Session = Depends(get_db),
 ):
     link = share_service.get_share(db, share_id)

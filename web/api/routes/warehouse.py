@@ -11,12 +11,12 @@
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
-from core.services import settings_service, warehouse_service
+from core.services import permissions_service, settings_service, warehouse_service
 from database.models import User
 from database.repositories import users as users_repo
 from database.repositories import warehouse as warehouse_repo
 from web.api import schemas
-from web.api.deps import get_db, require_module, require_staff
+from web.api.deps import get_db, require_module, require_perm
 
 router = APIRouter(
     prefix="/warehouse",
@@ -58,16 +58,18 @@ def list_products(
     include_services: bool = True,
     page: int = Query(default=1, ge=1),
     per_page: int = Query(default=50, ge=1, le=200),
-    _: User = Depends(require_staff),
+    user: User = Depends(require_perm("warehouse", "view")),
     db: Session = Depends(get_db),
 ):
+    amounts = permissions_service.sees_amounts(db, user, "warehouse")
     items, total = warehouse_repo.search_products(
         db, q=search, include_services=include_services, page=page, per_page=per_page
     )
     # Остатки — одним запросом на всю страницу списка, а не по одному на строку.
     stock = warehouse_repo.stock_by_product(db, [p.id for p in items if not p.is_service])
     rows = [
-        schemas.product_out(p, None if p.is_service else stock.get(p.id, 0)) for p in items
+        schemas.product_out(p, None if p.is_service else stock.get(p.id, 0), amounts=amounts)
+        for p in items
     ]
     if low_only:
         # Фильтр применяется после подсчёта остатков: «мало» — свойство не строки
@@ -83,7 +85,7 @@ def list_products(
 @router.post("/products", status_code=201)
 def create_product(
     payload: schemas.ProductIn,
-    _: User = Depends(require_staff),
+    _: User = Depends(require_perm("warehouse", "create")),
     db: Session = Depends(get_db),
 ):
     product = warehouse_service.create_product(db, payload.model_dump())
@@ -93,11 +95,15 @@ def create_product(
 @router.get("/products/{product_id}")
 def get_product(
     product_id: int,
-    _: User = Depends(require_staff),
+    user: User = Depends(require_perm("warehouse", "view")),
     db: Session = Depends(get_db),
 ):
     product = warehouse_service.get_product(db, product_id)
-    data = schemas.product_out(product, warehouse_service.stock_of(db, product))
+    data = schemas.product_out(
+        product,
+        warehouse_service.stock_of(db, product),
+        amounts=permissions_service.sees_amounts(db, user, "warehouse"),
+    )
     data["currency"] = _currency(db)
     return data
 
@@ -106,7 +112,7 @@ def get_product(
 def update_product(
     product_id: int,
     payload: schemas.ProductPatchIn,
-    _: User = Depends(require_staff),
+    _: User = Depends(require_perm("warehouse", "edit")),
     db: Session = Depends(get_db),
 ):
     product = warehouse_service.update_product(
@@ -118,7 +124,7 @@ def update_product(
 @router.delete("/products/{product_id}")
 def delete_product(
     product_id: int,
-    _: User = Depends(require_staff),
+    _: User = Depends(require_perm("warehouse", "delete")),
     db: Session = Depends(get_db),
 ):
     warehouse_service.delete_product(db, product_id)
@@ -128,7 +134,7 @@ def delete_product(
 @router.post("/products/{product_id}/restore")
 def restore_product(
     product_id: int,
-    _: User = Depends(require_staff),
+    _: User = Depends(require_perm("warehouse", "restore")),
     db: Session = Depends(get_db),
 ):
     product = warehouse_service.restore_product(db, product_id)
@@ -140,14 +146,18 @@ def product_moves(
     product_id: int,
     page: int = Query(default=1, ge=1),
     per_page: int = Query(default=50, ge=1, le=200),
-    _: User = Depends(require_staff),
+    user: User = Depends(require_perm("warehouse", "view")),
     db: Session = Depends(get_db),
 ):
     """История по товару. Товар ищем вместе с удалёнными: карточки нет, а история есть."""
+    amounts = permissions_service.sees_amounts(db, user, "warehouse")
     product = warehouse_service.get_product(db, product_id, include_deleted=True)
     items, total = warehouse_repo.list_moves(db, product_id=product.id, page=page, per_page=per_page)
     data = schemas.paginated(
-        _decorate(db, [schemas.stock_move_out(m) for m in items]), total, page, per_page
+        _decorate(db, [schemas.stock_move_out(m, amounts=amounts) for m in items]),
+        total,
+        page,
+        per_page,
     )
     # Остаток отдаём рядом с историей и считаем запросом: страница показывает
     # 50 движений из 3000, и сложить видимые значило бы соврать.
@@ -164,31 +174,37 @@ def list_moves(
     deal_id: int | None = None,
     page: int = Query(default=1, ge=1),
     per_page: int = Query(default=50, ge=1, le=200),
-    _: User = Depends(require_staff),
+    user: User = Depends(require_perm("warehouse", "view")),
     db: Session = Depends(get_db),
 ):
+    amounts = permissions_service.sees_amounts(db, user, "warehouse")
     items, total = warehouse_repo.list_moves(
         db, product_id=product_id, deal_id=deal_id, page=page, per_page=per_page
     )
     data = schemas.paginated(
-        _decorate(db, [schemas.stock_move_out(m) for m in items]), total, page, per_page
+        _decorate(db, [schemas.stock_move_out(m, amounts=amounts) for m in items]),
+        total,
+        page,
+        per_page,
     )
     data["currency"] = _currency(db)
     if deal_id is not None:
         # Врезка в карточке заявки: во сколько списанные товары обошлись складу.
         # Считает база — сумма по видимой странице занизила бы итог.
-        data["cost"] = warehouse_repo.deal_cost_minor(db, deal_id)
+        data["cost"] = warehouse_repo.deal_cost_minor(db, deal_id) if amounts else None
     return data
 
 
 @router.post("/moves", status_code=201)
 def create_move(
     payload: schemas.StockMoveIn,
-    user: User = Depends(require_staff),
+    user: User = Depends(require_perm("warehouse", "create")),
     db: Session = Depends(get_db),
 ):
     move, went_negative = warehouse_service.add_move(db, payload.model_dump(), user)
-    data = schemas.stock_move_out(move)
+    data = schemas.stock_move_out(
+        move, amounts=permissions_service.sees_amounts(db, user, "warehouse")
+    )
     # Уход в минус — предупреждение, а не отказ (обоснование — в add_move).
     # Движение уже записано; клиент показывает предупреждение оператору.
     data["went_negative"] = went_negative

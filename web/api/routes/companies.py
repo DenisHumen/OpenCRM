@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from core.services import company_service
 from database.models import User
 from web.api import schemas
-from web.api.deps import get_db, require_module, require_root, require_staff
+from web.api.deps import get_db, require_module, require_perm
 
 router = APIRouter(
     prefix="/companies",
@@ -22,14 +22,14 @@ router = APIRouter(
 
 
 @router.get("")
-def list_companies(_: User = Depends(require_staff), db: Session = Depends(get_db)):
+def list_companies(_: User = Depends(require_perm("companies", "view")), db: Session = Depends(get_db)):
     return {"items": [schemas.company_out(c) for c in company_service.list_companies(db)]}
 
 
 @router.get("/{company_id}")
 def get_company(
     company_id: int,
-    _: User = Depends(require_staff),
+    _: User = Depends(require_perm("companies", "view")),
     db: Session = Depends(get_db),
 ):
     return schemas.company_out(company_service.get_company(db, company_id))
@@ -38,7 +38,7 @@ def get_company(
 @router.post("", status_code=201)
 def create_company(
     payload: schemas.CompanyIn,
-    _: User = Depends(require_root),
+    _: User = Depends(require_perm("companies", "create")),
     db: Session = Depends(get_db),
 ):
     company = company_service.create(db, payload.model_dump(exclude_unset=True))
@@ -49,7 +49,7 @@ def create_company(
 def update_company(
     company_id: int,
     payload: schemas.CompanyPatchIn,
-    _: User = Depends(require_root),
+    _: User = Depends(require_perm("companies", "edit")),
     db: Session = Depends(get_db),
 ):
     # exclude_unset: «поле не прислали» и «прислали пустым» — разные вещи.
@@ -62,7 +62,7 @@ def update_company(
 @router.post("/{company_id}/default")
 def make_default(
     company_id: int,
-    _: User = Depends(require_root),
+    _: User = Depends(require_perm("companies", "edit")),
     db: Session = Depends(get_db),
 ):
     """Отдельная точка, а не поле в PATCH.
@@ -78,7 +78,7 @@ def make_default(
 @router.delete("/{company_id}")
 def delete_company(
     company_id: int,
-    _: User = Depends(require_root),
+    _: User = Depends(require_perm("companies", "delete")),
     db: Session = Depends(get_db),
 ):
     company_service.delete(db, company_id)

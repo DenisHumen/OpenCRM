@@ -4,6 +4,7 @@ import { api } from "../lib/api";
 import { useApp } from "../lib/app";
 import { formatDateTime } from "../lib/format";
 import { moduleOn } from "../lib/modules";
+import { can } from "../lib/permissions";
 import { Icon } from "./Icon";
 
 /**
@@ -38,7 +39,7 @@ const KIND_LABEL = {
 } as const;
 
 export function Feed({ dealId, clientId }: { dealId: number; clientId: number }) {
-  const { t, locale, modules, toast, toastError, refreshTasks } = useApp();
+  const { t, locale, user, modules, toast, toastError, refreshTasks } = useApp();
   const [items, setItems] = useState<any[]>([]);
   const [filter, setFilter] = useState<string>("");
   const [kind, setKind] = useState<(typeof KINDS)[number]>("note");
@@ -150,7 +151,8 @@ export function Feed({ dealId, clientId }: { dealId: number; clientId: number })
               {/* Из записи, набранной человеком, задача осмысленна («перезвонить
                   в четверг»); из строки «этап: Новая → В работе» получилось бы
                   напоминание с машинным заголовком. */}
-              {moduleOn(modules, "tasks") && !SYSTEM_KINDS.includes(entry.kind) && (
+              {moduleOn(modules, "tasks") && can(user, "tasks.create")
+                && !SYSTEM_KINDS.includes(entry.kind) && (
                 <button
                   className="btn-icon"
                   title={t("feedToTask")}

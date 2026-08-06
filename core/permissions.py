@@ -1,0 +1,167 @@
+"""Реестр прав: какие бывают области и какие действия в них осмысленны.
+
+Здесь только описание — как в `core/modules.py`. Кто чем владеет, живёт в базе
+(`roles`, `role_permissions`), а собирает всё вместе
+`core/services/permissions_service.py`. Разделение то же самое и по той же
+причине: код — источник правды о том, какие права существуют, база — только о
+том, кому они выданы. Иначе строка в базе от снесённого блока продолжала бы
+«давать право» на то, чего в коде уже нет.
+
+**Матрица строится по реестру блоков, а не пишется руками.** Появился блок в
+`core/modules.py` — появилась строка здесь, сама, с базовым набором действий.
+Список прав, набранный вручную, разошёлся бы с реестром при первом же новом
+блоке и разошёлся бы молча: право на несуществующий раздел никто не проверит, а
+раздел без права открыт всем.
+
+Особые действия и сужения объявляются поимённо в `AREA_ACTIONS` — их нельзя
+угадать по ключу блока: «выпускать документ» есть только у бланков, «менять
+этап» только у заявок.
+"""
+
+from dataclasses import dataclass
+
+from core import modules
+
+# --- действия ---
+
+#: Базовые действия. Есть у любой области, если не сказано иное.
+VIEW = "view"
+CREATE = "create"
+EDIT = "edit"
+DELETE = "delete"
+
+BASE_ACTIONS: tuple[str, ...] = (VIEW, CREATE, EDIT, DELETE)
+
+#: Особые действия. Каждое существует потому, что через «видит / не видит
+#: раздел» соответствующая просьба не описывается.
+#:
+#: Выпустить бланк — не то же самое, что завести его: квитанцию печатает
+#: приёмщик, а закрывает работу мастер.
+ISSUE = "issue"
+#: Двигать заявку по воронке. Вести заявку и решать, что она «выполнена», —
+#: разные полномочия: на этапе `won` считается выручка.
+MOVE_STAGE = "move_stage"
+#: Видеть чужие заявки. Без права человек видит только те, где он ответственный;
+#: это фильтр в запросах, а не признак в интерфейсе.
+VIEW_OTHERS = "view_others"
+#: Видеть суммы. Самая частая просьба и главная причина, по которой прав на
+#: раздел недостаточно: менеджер ведёт заявку, но не видит её маржу.
+VIEW_AMOUNTS = "view_amounts"
+#: Вернуть мягко удалённое. Отдельно от `delete`: удалять — рутина, поднимать
+#: удалённое — разбор происшествия.
+RESTORE = "restore"
+#: Распоряжаться системной областью (сотрудники, роли, настройки). Дробить их
+#: на четыре базовых действия нечего: «создать половину настройки» не бывает.
+MANAGE = "manage"
+
+#: Все действия, какие бывают. Порядок — как показывать столбцы матрицы.
+ACTIONS: tuple[str, ...] = (
+    VIEW,
+    CREATE,
+    EDIT,
+    DELETE,
+    RESTORE,
+    ISSUE,
+    MOVE_STAGE,
+    VIEW_OTHERS,
+    VIEW_AMOUNTS,
+    MANAGE,
+)
+
+
+@dataclass(frozen=True)
+class Area:
+    """Строка матрицы: раздел, в котором раздаются права."""
+
+    key: str
+    #: Блок, вместе с которым область закрывается. None — область вне блоков
+    #: (сотрудники, роли, настройки): их выключить нельзя, значит и проверять
+    #: нечего.
+    module: str | None
+    actions: tuple[str, ...]
+
+    @property
+    def is_system(self) -> bool:
+        return self.module is None
+
+
+# Чем область отличается от базового набора. Блок, не названный здесь, получает
+# ровно `BASE_ACTIONS` — это и есть «появился блок, появилась строка».
+AREA_ACTIONS: dict[str, tuple[str, ...]] = {
+    "clients": BASE_ACTIONS + (RESTORE,),
+    "deals": BASE_ACTIONS + (MOVE_STAGE, VIEW_OTHERS, VIEW_AMOUNTS),
+    "documents": BASE_ACTIONS + (ISSUE,),
+    "warehouse": BASE_ACTIONS + (RESTORE, VIEW_AMOUNTS),
+    # Отчёты нельзя «создать» или «удалить» — они считаются по заявкам.
+    # Единственное деление, которое здесь имеет смысл: видеть картину и видеть
+    # в ней деньги.
+    "reports": (VIEW, VIEW_AMOUNTS),
+}
+
+# Области вне реестра блоков. Их три, и каждая — про управление системой, а не
+# про работу с клиентами; выключить их нельзя, поэтому `module=None`.
+#
+# `roles` отделена от `staff` намеренно. Завести сотрудника и решить, что ему
+# можно, — разные по весу решения: первое делает офис-менеджер, второе —
+# владелец. Слитые в одно право они означали бы, что всякий, кто заводит людей,
+# может выдать себе что угодно.
+SYSTEM_AREAS: tuple[Area, ...] = (
+    Area(key="staff", module=None, actions=(VIEW, MANAGE)),
+    Area(key="roles", module=None, actions=(VIEW, MANAGE)),
+    Area(key="settings", module=None, actions=(VIEW, MANAGE)),
+)
+
+
+def _build() -> tuple[Area, ...]:
+    """Матрица: сначала блоки в порядке реестра, потом системные области."""
+    from_modules = tuple(
+        Area(
+            key=module.key,
+            module=module.key,
+            actions=AREA_ACTIONS.get(module.key, BASE_ACTIONS),
+        )
+        for module in modules.MODULES
+    )
+    return from_modules + SYSTEM_AREAS
+
+
+AREAS: tuple[Area, ...] = _build()
+
+BY_KEY: dict[str, Area] = {area.key: area for area in AREAS}
+
+
+def get(key: str) -> Area | None:
+    return BY_KEY.get(key)
+
+
+def exists(area: str, action: str) -> bool:
+    found = BY_KEY.get(area)
+    return found is not None and action in found.actions
+
+
+def module_of(area: str) -> str | None:
+    """Какой блок закрывает область. None — область вне блоков."""
+    found = BY_KEY.get(area)
+    return found.module if found else None
+
+
+def code(area: str, action: str) -> str:
+    """Строковый вид права — то, чем оно ездит в API и лежит во фронтенде."""
+    return f"{area}.{action}"
+
+
+def all_codes() -> tuple[str, ...]:
+    """Все права, какие есть. У root — ровно этот набор, всегда."""
+    return tuple(code(area.key, action) for area in AREAS for action in area.actions)
+
+
+def parse(value: str) -> tuple[str, str] | None:
+    """Разобрать «область.действие». None — если такого права не существует.
+
+    Разбор через `rsplit`, а не `split`: ключ блока с точкой в реестре не
+    появится, но полагаться на это незачем — правая часть всегда действие.
+    """
+    if "." not in value:
+        return None
+    area, _, action = value.rpartition(".")
+    return (area, action) if exists(area, action) else None

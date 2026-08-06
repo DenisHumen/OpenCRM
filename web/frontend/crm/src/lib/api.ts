@@ -77,7 +77,11 @@ export interface User {
   id: number;
   email: string;
   name: string;
+  /** Владелец системы или обычный сотрудник. Набор прав — в `permissions`. */
   role: "root" | "manager";
+  /** Должность с набором прав. У root её нет: права у него все и всегда. */
+  role_id: number | null;
+  role_name: string | null;
   status: string;
   locale: "en" | "ru";
   must_change_password: boolean;
@@ -86,4 +90,34 @@ export interface User {
   is_online: boolean;
   created_at: string | null;
   approved_at: string | null;
+  /** Права вида «раздел.действие». Приходят только в ответах о себе
+   *  (`/auth/me`, вход, правка профиля) — чужой набор прав это чужое дело. */
+  permissions?: string[];
+}
+
+export interface Role {
+  id: number;
+  name: string;
+  preset: string;
+  is_default: boolean;
+  permissions?: string[];
+  users_count?: number;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+/** Строка матрицы доступов: раздел и осмысленные в нём действия. */
+export interface PermissionArea {
+  key: string;
+  /** Блок, вместе с которым раздел закрывается. null — раздел вне блоков. */
+  module: string | null;
+  system: boolean;
+  actions: string[];
+}
+
+export interface RolePreset {
+  key: string;
+  name: string;
+  hint: string;
+  permissions: string[];
 }

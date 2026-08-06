@@ -381,7 +381,11 @@ def test_manager_cannot_touch_mailboxes(root_client, mail_on):
     ]
     for response in forbidden:
         assert response.status_code == 403, response.text
-        assert response.json()["error"]["code"] == "root_required"
+        # Ящик — настройка системы, поэтому право на него `settings.manage`,
+        # а не «нужен root»: должность «гендиректор» заводит ящики, не будучи
+        # владельцем системы.
+        assert response.json()["error"]["code"] == "permission_denied"
+        assert "settings.manage" in response.json()["error"]["message"]
 
     # Читать почту и синхронизировать её менеджеру при этом можно.
     assert manager.get(f"{MAIL}/messages").status_code == 200

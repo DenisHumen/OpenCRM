@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from core.services import pipeline_service
 from database.models import User
 from web.api import schemas
-from web.api.deps import get_db, require_root, require_staff
+from web.api.deps import get_db, require_perm
 
 router = APIRouter(prefix="/pipeline", tags=["pipeline"])
 
@@ -35,12 +35,12 @@ class PresetIn(BaseModel):
 
 
 @router.get("/stages")
-def list_stages(_: User = Depends(require_staff), db: Session = Depends(get_db)):
+def list_stages(_: User = Depends(require_perm("deals", "view")), db: Session = Depends(get_db)):
     return {"items": [schemas.stage_out(s) for s in pipeline_service.list_stages(db)]}
 
 
 @router.get("/presets")
-def list_presets(_: User = Depends(require_root)):
+def list_presets(_: User = Depends(require_perm("settings", "manage"))):
     return {
         "items": [
             {"key": key, "name": preset["name"], "hint": preset["hint"],
@@ -53,7 +53,7 @@ def list_presets(_: User = Depends(require_root)):
 @router.post("/preset")
 def apply_preset(
     payload: PresetIn,
-    _: User = Depends(require_root),
+    _: User = Depends(require_perm("settings", "manage")),
     db: Session = Depends(get_db),
 ):
     stages = pipeline_service.apply_preset(db, payload.preset)
@@ -63,7 +63,7 @@ def apply_preset(
 @router.post("/stages", status_code=201)
 def create_stage(
     payload: StageIn,
-    _: User = Depends(require_root),
+    _: User = Depends(require_perm("settings", "manage")),
     db: Session = Depends(get_db),
 ):
     stage = pipeline_service.create_stage(db, payload.name, payload.kind, payload.after)
@@ -74,7 +74,7 @@ def create_stage(
 def update_stage(
     key: str,
     payload: StagePatchIn,
-    _: User = Depends(require_root),
+    _: User = Depends(require_perm("settings", "manage")),
     db: Session = Depends(get_db),
 ):
     stage = pipeline_service.update_stage(db, key, payload.model_dump(exclude_unset=True))
@@ -84,7 +84,7 @@ def update_stage(
 @router.delete("/stages/{key}")
 def archive_stage(
     key: str,
-    _: User = Depends(require_root),
+    _: User = Depends(require_perm("settings", "manage")),
     db: Session = Depends(get_db),
 ):
     """Убрать этап с доски. Сделки из него переезжают на первый открытый."""

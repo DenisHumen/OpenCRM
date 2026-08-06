@@ -2,17 +2,24 @@ import { useCallback, useEffect, useState } from "react";
 
 import { Icon } from "../components/Icon";
 import { Avatar, Chip, ConfirmModal, EmptyState, Modal, ScreenLoading } from "../components/ui";
-import { api } from "../lib/api";
+import { api, type Role } from "../lib/api";
 import { useApp } from "../lib/app";
 import { formatDateTime, initials } from "../lib/format";
+import { can } from "../lib/permissions";
 
 export function Staff() {
-  const { t, locale, user, toastError } = useApp();
+  const { t, locale, user, toast, toastError } = useApp();
   const [items, setItems] = useState<any[] | null>(null);
+  const [roles, setRoles] = useState<Role[]>([]);
   const [tempPassword, setTempPassword] = useState<{ name: string; password: string } | null>(null);
   const [confirmDisable, setConfirmDisable] = useState<number | null>(null);
   const [confirmRole, setConfirmRole] = useState<{ id: number; name: string; role: "root" | "manager" } | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<{ id: number; name: string } | null>(null);
+
+  // Должности раздаёт не всякий, кто видит список сотрудников: завести человека
+  // и решить, что ему можно, — разные по весу решения. Без права список ролей
+  // не спрашиваем вовсе, иначе на каждой загрузке стучались бы в закрытую дверь.
+  const managesRoles = can(user, "roles.manage");
 
   const load = useCallback(() => {
     api.get("/staff").then((d) => setItems(d.items)).catch(toastError);
@@ -24,6 +31,14 @@ export function Staff() {
     const timer = window.setInterval(load, 60_000);
     return () => window.clearInterval(timer);
   }, [load]);
+
+  useEffect(() => {
+    if (!managesRoles) return;
+    api
+      .get<{ items: Role[] }>("/roles")
+      .then((d) => setRoles(d.items))
+      .catch(() => undefined);
+  }, [managesRoles]);
 
   if (!items) return <ScreenLoading />;
 
@@ -53,6 +68,18 @@ export function Staff() {
       await api.post(`/staff/${id}/role`, { role });
       load();
     } catch (e) {
+      toastError(e);
+    }
+  };
+
+  const assignRole = async (id: number, roleId: number | null) => {
+    try {
+      await api.post(`/roles/assign/${id}`, { role_id: roleId });
+      load();
+      toast(t("roleAssigned"));
+    } catch (e) {
+      // Отказ здесь осмысленный: себе роль менять нельзя, и последнего, кто
+      // раздаёт права, снять тоже. Показываем причину сервера, а не «ошибка».
       toastError(e);
     }
   };
@@ -133,7 +160,34 @@ export function Staff() {
               >
                 {presence(person)}
               </div>
-              <Chip variant={isRoot ? "brand" : undefined}>{isRoot ? t("root") : t("managerRole")}</Chip>
+              {/* Должность. У root её нет и быть не может: права у него все и
+                  всегда — иначе можно было бы собрать конфигурацию, в которой
+                  раздать доступ обратно уже некому. Свою менять нельзя, поэтому
+                  себе показываем название, а не список. */}
+              {isRoot ? (
+                <Chip variant="brand" title={t("rootHasEverything")}>{t("root")}</Chip>
+              ) : managesRoles && !isSelf ? (
+                <select
+                  className="input input-sm"
+                  style={{ width: 168, flexShrink: 0 }}
+                  value={person.role_id ?? ""}
+                  aria-label={t("assignRole")}
+                  onChange={(e) =>
+                    void assignRole(person.id, e.target.value ? Number(e.target.value) : null)
+                  }
+                >
+                  <option value="">{t("noRole")}</option>
+                  {roles.map((role) => (
+                    <option key={role.id} value={role.id}>
+                      {role.name}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <Chip title={isSelf ? t("cannotChangeOwnRole") : undefined}>
+                  {person.role_name || t("noRole")}
+                </Chip>
+              )}
               {isSelf ? (
                 <span style={{ fontSize: 12, color: "var(--faint)", marginLeft: 8 }}>{t("you")}</span>
               ) : (

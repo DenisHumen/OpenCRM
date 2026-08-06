@@ -238,13 +238,35 @@ def delete_deal(db: Session, deal_id: int) -> None:
     db.flush()
 
 
-def board(db: Session) -> list[dict]:
+def board(db: Session, only_manager_id: int | None = None) -> list[dict]:
     """Канбан: колонки по этапам со сделками внутри.
 
     Состав и порядок колонок берём из воронки, а не из констант: у ремонта
     техники, салона и магазина этапы разные, и доска обязана показывать их.
+
+    Колонки остаются все, даже если сотруднику видны не все заявки: пустая
+    колонка — это ответ («в согласовании у меня ничего»), а исчезнувшая — повод
+    решить, что этап убрали из воронки.
     """
     return [
-        {"stage": stage, "deals": deals_repo.by_stage(db, stage.key)}
+        {
+            "stage": stage,
+            "deals": deals_repo.by_stage(db, stage.key, only_manager_id=only_manager_id),
+        }
         for stage in pipeline_service.list_stages(db)
     ]
+
+
+def ensure_visible(db: Session, deal: Deal, only_manager_id: int | None) -> Deal:
+    """Отказать, если заявка чужая, а права видеть чужие нет.
+
+    403 с названной причиной, а не 404. Молчаливое «не найдено» здесь было бы
+    ложью дважды: заявка существует, и сотрудник о ней, скорее всего, знает —
+    коллега прислал ссылку. Ответ «нужно право deals.view_others» говорит
+    правду и подсказывает, что просить у того, кто раздаёт доступы.
+    """
+    if only_manager_id is None or deal.manager_id == only_manager_id:
+        return deal
+    raise errors.ForbiddenError(
+        "Permission required: deals.view_others", code="permission_denied"
+    )

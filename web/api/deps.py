@@ -4,10 +4,10 @@ from sqlalchemy.orm import Session
 from config.settings import get_settings
 from core import exceptions as errors
 from core import modules as core_modules
+from core import permissions as core_permissions
 from core.ratelimit import SlidingWindowLimiter
-from core.services import auth_service, modules_service
+from core.services import auth_service, modules_service, permissions_service
 from database.models import User
-from database.models.user import ROLE_ROOT
 from database.session import SessionLocal
 
 SESSION_COOKIE = "opencrm_session"
@@ -55,10 +55,14 @@ def require_staff(user: User = Depends(get_current_user)) -> User:
     return user
 
 
-def require_root(user: User = Depends(require_staff)) -> User:
-    if user.role != ROLE_ROOT:
-        raise errors.ForbiddenError("Root access required", code="root_required")
-    return user
+# `require_root` здесь больше нет намеренно. Права раздаются ролями, и «нужен
+# root» перестало быть ответом на вопрос «кому можно»: должность «гендиректор»
+# заводит ящики и переключает блоки, не будучи владельцем системы. Осталась бы
+# эта зависимость — она стала бы удобным способом закрыть очередной маршрут мимо
+# матрицы доступов, и матрица начала бы врать о том, что настраивает.
+#
+# Root при этом никуда не делся: `permissions_service.has` отдаёт ему все права
+# всегда, поэтому `require_perm` пропускает его в любой раздел.
 
 
 def require_module(key: str):
@@ -80,6 +84,49 @@ def require_module(key: str):
             raise errors.ForbiddenError(
                 f"Module '{key}' is switched off", code="module_disabled"
             )
+
+    return dependency
+
+
+def require_perm(area: str, action: str):
+    """Закрыть действие, если у сотрудника нет права на него.
+
+    Спрятать кнопку недостаточно — адрес продолжает работать, его помнит
+    браузер и знает всякий, кто открывал раздел вчера. Поэтому право
+    проверяется здесь, в API; интерфейс лишь прячет то, что всё равно получит
+    отказ.
+
+    **Порядок: блок включён → есть право.** Не наоборот. У сотрудника вполне
+    может быть право на склад, который в этом бизнесе выключен, — и тогда
+    правдивый ответ «блок выключен», а не «нет права»: второй отправил бы
+    владельца искать несуществующую ошибку в матрице доступов. Проверка блока
+    стоит внутри этой же зависимости, а не рядом с ней, чтобы порядок не
+    зависел от того, в каком месте роутера её однажды пропишут.
+
+    Существование права проверяется при сборке приложения, как ключ блока в
+    `require_module`: опечатка в имени должна ронять запуск, а не тихо
+    открывать действие всем.
+    """
+    if not core_permissions.exists(area, action):
+        raise RuntimeError(f"Unknown permission in route guard: {area}.{action}")
+    module = core_permissions.module_of(area)
+
+    def dependency(
+        user: User = Depends(require_staff), db: Session = Depends(get_db)
+    ) -> User:
+        if module is not None and not modules_service.is_enabled(db, module):
+            raise errors.ForbiddenError(
+                f"Module '{module}' is switched off", code="module_disabled"
+            )
+        if not permissions_service.has(db, user, area, action):
+            # Причину называем полностью: и что нельзя, и какого права не
+            # хватает. Молчаливый отказ превращает настройку доступов в гадание,
+            # а «нет права» без имени права — в гадание с подсказкой.
+            raise errors.ForbiddenError(
+                f"Permission required: {core_permissions.code(area, action)}",
+                code="permission_denied",
+            )
+        return user
 
     return dependency
 

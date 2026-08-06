@@ -213,7 +213,8 @@ def test_only_root_can_switch_modules(manager_client):
     """Это решение уровня «каким бизнесом мы занимаемся», а не личная настройка."""
     denied = switch(manager_client, "documents", False)
     assert denied.status_code == 403
-    assert denied.json()["error"]["code"] == "root_required"
+    assert denied.json()["error"]["code"] == "permission_denied"
+    assert "settings.manage" in denied.json()["error"]["message"]
     # но видеть список менеджер обязан: иначе интерфейс не знает, что показывать
     assert manager_client.get(MODULES).status_code == 200
 

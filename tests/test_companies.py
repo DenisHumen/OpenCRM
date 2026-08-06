@@ -257,7 +257,11 @@ def test_a_deal_cannot_point_at_a_company_that_does_not_exist(manager_client):
 
 def test_a_manager_can_read_companies_but_not_change_them(manager_client, root_client):
     """Читать надо всем: без списка менеджер не выберет, от кого ведётся
-    заявка. Менять — решение уровня «кто мы такие», а не личная настройка."""
+    заявка. Менять — решение уровня «кто мы такие», а не личная настройка.
+
+    Отказ называет недостающее право, а не «нужен root»: ролей теперь много, и
+    «нет права companies.create» говорит настраивающему, что именно выдать.
+    """
     company = make_company(root_client, "Только для чтения")
 
     assert manager_client.get(COMPANIES).status_code == 200
@@ -270,7 +274,8 @@ def test_a_manager_can_read_companies_but_not_change_them(manager_client, root_c
         manager_client.delete(f"{COMPANIES}/{company['id']}"),
     ):
         assert response.status_code == 403, response.text
-        assert response.json()["error"]["code"] == "root_required"
+        assert response.json()["error"]["code"] == "permission_denied"
+        assert "companies." in response.json()["error"]["message"]
 
 
 def test_a_company_needs_a_name(root_client):

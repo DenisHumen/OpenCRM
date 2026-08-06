@@ -4,7 +4,7 @@ import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
 import { formatBytes, initials } from "../lib/format";
-import { type Gated, shown } from "../lib/modules";
+import { allowed, can, type Guarded } from "../lib/permissions";
 import { term } from "../lib/terms";
 import { Icon } from "./Icon";
 import { Avatar } from "./ui";
@@ -83,7 +83,7 @@ function NavGroup({
  * с подписью: голое число рядом с «Сотрудники» читается как их количество, а
  * не как «столько ждут решения».
  */
-type NavItem = Gated & {
+type NavItem = Guarded & {
   to: string;
   label: string;
   icon: string;
@@ -191,15 +191,17 @@ export function Sidebar({
   const [pendingCount, setPendingCount] = useState(0);
 
 
-  const isRoot = user?.role === "root";
+  // Счётчик заявок на регистрацию нужен только тому, кто их разбирает.
+  // Спрашивать его без права — стучаться в закрытую дверь на каждой загрузке.
+  const seesStaff = can(user, "staff.view");
 
   useEffect(() => {
-    if (!isRoot) return;
+    if (!seesStaff) return;
     api
       .get("/staff?status=pending")
       .then((data) => setPendingCount(data.items.length))
       .catch(() => undefined);
-  }, [isRoot]);
+  }, [seesStaff]);
 
   // язык интерфейса у каждого свой и хранится в аккаунте (users.locale),
   // поэтому переключение — обычный PATCH профиля, а не настройка браузера
@@ -214,14 +216,16 @@ export function Sidebar({
 
   const brandName = settings.brand_name || "OpenCRM";
 
-  // Меню собирается списком, а не разметкой: так «выключенный модуль не
-  // показываем» и «пустую категорию не показываем» — одно и то же правило,
-  // а не два разных условия в разных местах. Принадлежность блоку — поле
-  // `module` у пункта; отбирает их `shown`, один раз на весь файл.
-  const daily = shown<NavItem>(modules, [
+  // Меню собирается списком, а не разметкой: так «выключенный блок не
+  // показываем», «нет права — не показываем» и «пустую категорию не показываем»
+  // остаются одним правилом, а не тремя условиями в разных местах.
+  // Принадлежность блоку — поле `module`, требуемое право — `perm`; отбирает их
+  // `allowed`, один раз на весь файл.
+  const daily = allowed<NavItem>(user, modules, [
     { to: "/", label: t("dashboard"), icon: "dashboard", end: true },
     {
       module: "tasks",
+      perm: "tasks.view",
       to: "/tasks",
       label: t("tasks"),
       icon: "clock",
@@ -230,57 +234,63 @@ export function Sidebar({
     },
   ]);
 
-  const work = shown<NavItem>(modules, [
-    { to: "/clients", label: t("clients"), icon: "clients" },
-    { to: "/deals", label: term(workspace.deal_term, locale, "many"), icon: "deals" },
-    { module: "documents", to: "/documents", label: t("documents"), icon: "receipt" },
-    { module: "mail", to: "/mail", label: t("mail"), icon: "email" },
-    { module: "boards", to: "/boards", label: t("boards"), icon: "boards" },
+  const work = allowed<NavItem>(user, modules, [
+    { perm: "clients.view", to: "/clients", label: t("clients"), icon: "clients" },
+    {
+      perm: "deals.view",
+      to: "/deals",
+      label: term(workspace.deal_term, locale, "many"),
+      icon: "deals",
+    },
+    { module: "documents", perm: "documents.view", to: "/documents", label: t("documents"), icon: "receipt" },
+    { module: "mail", perm: "mail.view", to: "/mail", label: t("mail"), icon: "email" },
+    { module: "boards", perm: "boards.view", to: "/boards", label: t("boards"), icon: "boards" },
     // Склад по умолчанию выключен: он нужен магазину и мастерской, а студии нет.
-    { module: "warehouse", to: "/warehouse", label: t("warehouse"), icon: "warehouse" },
+    { module: "warehouse", perm: "warehouse.view", to: "/warehouse", label: t("warehouse"), icon: "warehouse" },
     // Отчёты последними в «Работе»: за ними приходят не каждый день, а когда
     // сводят месяц, — и они читают то, что накопили разделы выше.
-    { module: "reports", to: "/reports", label: t("reports"), icon: "analytics" },
+    { module: "reports", perm: "reports.view", to: "/reports", label: t("reports"), icon: "analytics" },
     // Журнал звонков — рядом с почтой: и то и другое про разговоры с клиентом,
     // а подробности каждого разговора всё равно живут в ленте заявки.
-    { module: "telephony", to: "/calls", label: t("calls"), icon: "callIn" },
+    { module: "telephony", perm: "telephony.view", to: "/calls", label: t("calls"), icon: "callIn" },
   ]);
 
-  const admin = isRoot
-    ? shown<NavItem>(modules, [
-        {
-          to: "/staff",
-          label: t("staff"),
-          icon: "staff",
-          badge: pendingCount,
-          badgeTitle: t("signupRequests"),
-        },
-        // Фирмы — в «Админ», а не в «Работу»: реквизиты правят раз в несколько
-        // лет и только root. Менеджер читает их через выбор фирмы в заявке, и
-        // отдельный пункт меню, где ему всё равно ничего не поддаётся, был бы
-        // шумом.
-        { module: "companies", to: "/companies", label: t("companies"), icon: "building" },
-        // Файлы — это медиа досок, отдельного смысла без них не имеют.
-        { module: "boards", to: "/files", label: t("files"), icon: "folder" },
-      ])
-    : [];
+  const admin = allowed<NavItem>(user, modules, [
+    {
+      perm: "staff.view",
+      to: "/staff",
+      label: t("staff"),
+      icon: "staff",
+      badge: pendingCount,
+      badgeTitle: t("signupRequests"),
+    },
+    // Фирмы — в «Админ», а не в «Работу»: реквизиты правят раз в несколько лет.
+    // Пункт показываем тому, кто их правит; тот, кто только читает, попадает
+    // сюда из заявки, и отдельная строка в меню была бы шумом.
+    { module: "companies", perm: "companies.edit", to: "/companies", label: t("companies"), icon: "building" },
+    // Файлы — это медиа досок, отдельного смысла без них не имеют.
+    { module: "boards", perm: "settings.manage", to: "/files", label: t("files"), icon: "folder" },
+  ]);
 
   // Настройки блока видны только когда блок включён. Раньше ящики и подключение
   // к АТС показывались всегда — «иначе перед включением нечего настраивать», — и
   // это противоречило правилу «выключено значит не видно»: у того, кто почтой не
   // пользуется, в настройках всё равно висел раздел про ящики. Порядок для
   // пользователя обратный: включить блок → настроить его.
-  const settingsItems = shown<Gated & { to: string; label: string }>(modules, [
-    { to: "/settings/modules", label: t("modules") },
+  const settingsItems = allowed<Guarded & { to: string; label: string }>(user, modules, [
+    // Роли стоят первыми и на своём праве: тот, кто раздаёт доступы, не
+    // обязательно правит логотип сайта, и наоборот.
+    { perm: "roles.view", to: "/settings/roles", label: t("roles") },
+    { perm: "settings.manage", to: "/settings/modules", label: t("modules") },
     // Ящики стоят в настройках, а не в «Работе»: это конфигурация фирмы, а не
     // то, чем пользуются каждый день.
-    { module: "mail", to: "/settings/mailboxes", label: t("mailboxes") },
-    { module: "telephony", to: "/settings/telephony", label: t("telephony") },
-    { to: "/settings/brand", label: t("brand") },
-    { to: "/settings/contacts", label: t("contacts") },
-    { to: "/settings/showcase", label: t("showcase") },
-    { to: "/settings/return-button", label: t("returnButtonShort") },
-    { to: "/settings/maintenance", label: t("maintenance") },
+    { module: "mail", perm: "settings.manage", to: "/settings/mailboxes", label: t("mailboxes") },
+    { module: "telephony", perm: "settings.manage", to: "/settings/telephony", label: t("telephony") },
+    { perm: "settings.manage", to: "/settings/brand", label: t("brand") },
+    { perm: "settings.manage", to: "/settings/contacts", label: t("contacts") },
+    { perm: "settings.manage", to: "/settings/showcase", label: t("showcase") },
+    { perm: "settings.manage", to: "/settings/return-button", label: t("returnButtonShort") },
+    { perm: "settings.manage", to: "/settings/maintenance", label: t("maintenance") },
   ]);
 
   return (
@@ -337,7 +347,11 @@ export function Sidebar({
         ))}
         <NavSection id="work" label={t("navWork")} items={work} />
         <NavSection id="admin" label={t("admin")} items={admin}>
-          {isRoot && (
+          {/* Условие именно на длину списка, а не на его наличие: пустой
+              `NavGroup` не рисует себя, но для `NavSection` он всё равно
+              остаётся ребёнком — и категория «Админ» показывала бы заголовок
+              без единого пункта тому, у кого нет ни одного из этих прав. */}
+          {settingsItems.length > 0 && (
             <NavGroup
               icon="settings"
               label={t("siteSettings")}
@@ -350,7 +364,7 @@ export function Sidebar({
       <div className="side-bottom">
         {storage && storage.level !== "ok" && (
           <NavLink
-            to={isRoot ? "/settings/maintenance" : "/"}
+            to={can(user, "settings.manage") ? "/settings/maintenance" : "/"}
             className={"side-banner" + (storage.level === "critical" ? " critical" : "")}
           >
             <span style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 2 }}>
@@ -421,8 +435,11 @@ export function Sidebar({
             <Avatar text={initials(user?.name ?? "?")} src={user?.avatar_url} online />
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ color: "var(--text)", fontSize: 13, fontWeight: 500 }}>{user?.name}</div>
+              {/* Должность, а не «менеджер»: ролей теперь столько, сколько их
+                  завели, и подпись обязана называть ту, что у человека на
+                  самом деле. */}
               <div style={{ color: "var(--faint)", fontSize: 11 }}>
-                {user?.role === "root" ? t("root") : t("managerRole")}
+                {user?.role === "root" ? t("root") : user?.role_name || t("noRole")}
               </div>
             </div>
             <Icon name="chevronsUpDown" size={14} />

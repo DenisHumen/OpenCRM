@@ -23,8 +23,18 @@ def search(
     include_closed: bool = True,
     page: int = 1,
     per_page: int = 50,
+    only_manager_id: int | None = None,
 ) -> tuple[list[Deal], int]:
+    """`only_manager_id` — ограничение доступа, а не фильтр из интерфейса.
+
+    Отдельно от `manager_id` намеренно: тот приходит из запроса и его можно
+    снять, этот приходит из прав и снять его нельзя. Слитые в один параметр они
+    означали бы, что достаточно прислать чужой `manager_id`, чтобы обойти
+    ограничение, — а выглядело бы это как работающая проверка.
+    """
     stmt = select(Deal).where(Deal.deleted_at.is_(None))
+    if only_manager_id is not None:
+        stmt = stmt.where(Deal.manager_id == only_manager_id)
     if q:
         like = f"%{q.strip()}%"
         # Ищем и по названию клиента: в жизни спрашивают «что там по Ромашке»,
@@ -49,31 +59,36 @@ def search(
     return list(db.scalars(stmt)), total
 
 
-def by_stage(db: Session, stage: str, limit: int = 200) -> list[Deal]:
+def by_stage(
+    db: Session, stage: str, limit: int = 200, only_manager_id: int | None = None
+) -> list[Deal]:
     """Колонка канбана. Порядок — заданный руками, при равенстве свежие выше."""
+    stmt = select(Deal).where(Deal.deleted_at.is_(None), Deal.stage == stage)
+    if only_manager_id is not None:
+        stmt = stmt.where(Deal.manager_id == only_manager_id)
     return list(
-        db.scalars(
-            select(Deal)
-            .where(Deal.deleted_at.is_(None), Deal.stage == stage)
-            .order_by(Deal.sort_order.asc(), Deal.id.desc())
-            .limit(limit)
-        )
+        db.scalars(stmt.order_by(Deal.sort_order.asc(), Deal.id.desc()).limit(limit))
     )
 
 
-def amount_by_stage(db: Session) -> dict[str, int]:
+def amount_by_stage(db: Session, only_manager_id: int | None = None) -> dict[str, int]:
     """Сумма сделок в каждом этапе — запросом, а не сложением карточек.
 
     `by_stage` отдаёт колонку с пределом, и сумма по загруженным карточкам
     занижала бы итог ровно там, где сделок много, — то есть там, где на него и
     смотрят. Ошибка при этом тихая: число есть, оно правдоподобное, и заметить
     его можно только сверив вручную.
+
+    Итог считается по тем же заявкам, которые человек видит: иначе сумма над
+    колонкой из трёх карточек оказалась бы взята из тридцати, и разошлась бы с
+    тем, что под ней, — а разошедшийся итог читается как ошибка в расчётах.
     """
-    rows = db.execute(
-        select(Deal.stage, func.coalesce(func.sum(Deal.amount), 0))
-        .where(Deal.deleted_at.is_(None))
-        .group_by(Deal.stage)
-    ).all()
+    stmt = select(Deal.stage, func.coalesce(func.sum(Deal.amount), 0)).where(
+        Deal.deleted_at.is_(None)
+    )
+    if only_manager_id is not None:
+        stmt = stmt.where(Deal.manager_id == only_manager_id)
+    rows = db.execute(stmt.group_by(Deal.stage)).all()
     return {stage: int(total or 0) for stage, total in rows}
 
 
@@ -140,14 +155,13 @@ def next_sort_order(db: Session, stage: str) -> int:
     return (current or 0) + 10
 
 
-def for_client(db: Session, client_id: int) -> list[Deal]:
-    return list(
-        db.scalars(
-            select(Deal)
-            .where(Deal.client_id == client_id, Deal.deleted_at.is_(None))
-            .order_by(Deal.created_at.desc())
-        )
-    )
+def for_client(
+    db: Session, client_id: int, only_manager_id: int | None = None
+) -> list[Deal]:
+    stmt = select(Deal).where(Deal.client_id == client_id, Deal.deleted_at.is_(None))
+    if only_manager_id is not None:
+        stmt = stmt.where(Deal.manager_id == only_manager_id)
+    return list(db.scalars(stmt.order_by(Deal.created_at.desc())))
 
 
 # --- журнал этапов ---

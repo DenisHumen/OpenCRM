@@ -14,7 +14,13 @@ from core.exceptions import DomainError
 # оставлен нарочно: опечатка в обработчике должна ронять запуск приложения, а
 # не всплывать через неделю при первом переводе заявки по воронке.
 from core import subscriptions  # noqa: F401
-from core.services import auth_service, maintenance_mode, pipeline_service, settings_service
+from core.services import (
+    auth_service,
+    maintenance_mode,
+    permissions_service,
+    pipeline_service,
+    settings_service,
+)
 from core.utils import normalize_email
 from database import models  # noqa: F401 — регистрирует модели в metadata
 from database.models.user import ROLE_ROOT
@@ -35,6 +41,7 @@ from web.api.routes import (
     clients,
     dashboard,
     reports,
+    roles,
     search,
     shares,
     site_settings,
@@ -95,6 +102,9 @@ async def lifespan(app: FastAPI):
     try:
         created = auth_service.bootstrap_root(db)
         settings_service.seed_defaults(db)
+        # Система без единой роли не может принять сотрудника: он вошёл бы в
+        # CRM без единого раздела. Кладём должность по умолчанию — как воронку.
+        permissions_service.seed_defaults(db)
         # Пустая воронка означает пустую доску сделок на первом же экране —
         # причину закрыть вкладку. Кладём универсальный набор, менять его на
         # отраслевой можно одним нажатием в настройках.
@@ -294,6 +304,7 @@ def create_app() -> FastAPI:
     app.include_router(search.router, prefix=api_prefix)
     app.include_router(auth.router, prefix=api_prefix)
     app.include_router(staff.router, prefix=api_prefix)
+    app.include_router(roles.router, prefix=api_prefix)
     app.include_router(clients.router, prefix=api_prefix)
     app.include_router(boards.router, prefix=api_prefix)
     app.include_router(deals.router, prefix=api_prefix)

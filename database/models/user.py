@@ -23,7 +23,17 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(128))
     name: Mapped[str] = mapped_column(String(120))
+    #: Root или нет. Роль в смысле «набора прав» здесь больше не хранится —
+    #: она в `role_id`. Признак остался отдельным полем намеренно: root не
+    #: описывается набором прав, у него они все и всегда, и снять их нельзя
+    #: даже случайно (см. `core/services/permissions_service.has`).
     role: Mapped[str] = mapped_column(String(16), default=ROLE_MANAGER)
+    #: Должность с набором прав. Пусто — прав нет никаких, кроме общих:
+    #: сотрудник входит в систему и видит пустую CRM, а не чужие данные.
+    #: SET NULL, а не CASCADE: удаление роли не должно уносить с собой людей.
+    role_id: Mapped[int | None] = mapped_column(
+        ForeignKey("roles.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     status: Mapped[str] = mapped_column(String(16), default=STATUS_PENDING)
     locale: Mapped[str] = mapped_column(String(8), default="en")
     must_change_password: Mapped[bool] = mapped_column(Boolean, default=False)
