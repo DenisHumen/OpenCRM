@@ -91,9 +91,12 @@ export function Reports() {
   // Ширина полосы — доля от самого населённого этапа, а не от общего числа: при
   // пяти этапах доли от целого дают пять одинаково коротких полос.
   const maxEntered = Math.max(1, ...funnel.stages.map((s: any) => s.entered));
+  // `?? 0` не украшение: месяц, в котором ни у одной сделки не названа цена,
+  // приходит с прочерком (null), а `Math.max(null, null)` дал бы 0 молча, зато
+  // `null / maxMonth` ниже — высоту столбика NaN.
   const maxMonth = Math.max(
     1,
-    ...revenue.months.map((m: any) => Math.max(m.won_amount, m.lost_amount)),
+    ...revenue.months.map((m: any) => Math.max(m.won_amount ?? 0, m.lost_amount ?? 0)),
   );
   const maxSource = Math.max(1, ...sources.items.map((row: any) => row.revenue ?? 0));
 
@@ -240,12 +243,12 @@ export function Reports() {
                     складываются в голове читателя, а не в графике. */}
                 <div
                   className="month-bar won"
-                  style={{ height: Math.max(2, Math.round((month.won_amount / maxMonth) * 96)) }}
+                  style={{ height: Math.max(2, Math.round(((month.won_amount ?? 0) / maxMonth) * 96)) }}
                   title={money(month.won_amount)}
                 />
                 <div
                   className="month-bar lost"
-                  style={{ height: Math.max(2, Math.round((month.lost_amount / maxMonth) * 96)) }}
+                  style={{ height: Math.max(2, Math.round(((month.lost_amount ?? 0) / maxMonth) * 96)) }}
                   title={money(month.lost_amount)}
                 />
               </div>

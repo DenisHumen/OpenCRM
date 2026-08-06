@@ -91,20 +91,33 @@ def month_buckets(
     Считать месяц выражением над колонкой (`strftime('%Y-%m', closed_at)`)
     нельзя дважды: оно диалектное и оно считало бы месяц по UTC.
 
+    Крайние месяцы ПОДРЕЗАЮТСЯ границами самого периода. Без подрезки отчёт за
+    5–20 июля считал бы весь июль целиком: сделка, закрытая 28-го, попадала бы в
+    выручку периода, который кончился 20-го. Воронка и источники при этом
+    считают ровно запрошенные дни — и два числа под одной подписью расходились
+    бы, а расхождение на одном экране отменяет доверие ко всему отчёту.
+    Подпись периода («с 5 по 20 июля») при этом остаётся верной.
+
     Пустые месяцы остаются в списке. Провал в середине года видно только тогда,
     когда месяц нарисован нулём, а не пропущен.
     """
     shift = timedelta(minutes=tz_offset)
+    # Те же границы, что считает `parse_period`: полуоткрытый интервал от
+    # местной полуночи первого дня до местной полуночи дня ПОСЛЕ последнего.
+    period_start = datetime.combine(start_day, datetime.min.time()) + shift
+    period_end = datetime.combine(end_day + timedelta(days=1), datetime.min.time()) + shift
     buckets: list[tuple[str, datetime, datetime]] = []
     cursor = start_day.replace(day=1)
     last = end_day.replace(day=1)
     while cursor <= last:
         following = _next_month(cursor)
+        month_start = datetime.combine(cursor, datetime.min.time()) + shift
+        month_end = datetime.combine(following, datetime.min.time()) + shift
         buckets.append(
             (
                 cursor.strftime("%Y-%m"),
-                datetime.combine(cursor, datetime.min.time()) + shift,
-                datetime.combine(following, datetime.min.time()) + shift,
+                max(month_start, period_start),
+                min(month_end, period_end),
             )
         )
         if len(buckets) > MAX_MONTHS:
@@ -204,7 +217,7 @@ def revenue(db: Session, start_day: date, end_day: date, tz_offset: int) -> dict
             cell = money.get((index, kind), {"count": 0, "priced": 0, "total": 0})
             row[f"{kind}_count"] = cell["count"]
             row[f"{kind}_priced"] = cell["priced"]
-            row[f"{kind}_amount"] = cell["total"]
+            row[f"{kind}_amount"] = _sum(cell)
             for field in ("count", "priced", "total"):
                 totals[kind][field] += cell[field]
         # Средний чек месяца — по сделкам этого месяца с названной ценой. Месяц
@@ -215,11 +228,11 @@ def revenue(db: Session, start_day: date, end_day: date, tz_offset: int) -> dict
     won, lost = totals[KIND_WON], totals[KIND_LOST]
     return {
         "months": months,
-        "won_amount": won["total"],
+        "won_amount": _sum(won),
         "won_count": won["count"],
         "won_priced": won["priced"],
         # Сколько денег ушло вместе с отказами — по сделкам с названной ценой.
-        "lost_amount": lost["total"],
+        "lost_amount": _sum(lost),
         "lost_count": lost["count"],
         "lost_priced": lost["priced"],
         "avg_check": _avg(won),
@@ -227,6 +240,23 @@ def revenue(db: Session, start_day: date, end_day: date, tz_offset: int) -> dict
         # кончились, и в знаменателе им не место.
         "conversion": share(won["count"], won["count"] + lost["count"]),
     }
+
+
+def _sum(totals: dict | None) -> int | None:
+    """Итог по деньгам: прочерк, пока ни у одной сделки цена не названа.
+
+    То же правило, что у `sources()` и у среднего чека, и по той же причине.
+    «Выиграно 1, выручка 0» читается как «сработали даром», а верный ответ —
+    «сумму не назвали». Пока эти два состояния показывались одинаково, отчёт по
+    выручке спорил с таблицей источников на том же экране: там прочерк, здесь
+    ноль, а сделка одна и та же.
+
+    Ноль остаётся там, где он настоящий: цена названа и равна нулю, — тогда
+    `priced` не ноль, и итог выводится как есть.
+    """
+    if not totals or not totals.get("priced"):
+        return None
+    return totals["total"]
 
 
 def _avg(totals: dict | None) -> int | None:

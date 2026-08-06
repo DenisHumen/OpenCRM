@@ -9,6 +9,7 @@
 import pytest
 from fastapi.testclient import TestClient
 
+from core import exceptions as errors
 from core.services import modules_service, warehouse_service
 from tests.conftest import API
 
@@ -361,6 +362,43 @@ def test_data_survives_switching_the_module_off_and_on(root_client):
     back = root_client.get(f"{WH}/products/{product['id']}").json()
     assert back["stock_milli"] == 9 * 1000
     assert back["name"] == "Пережить выключение"
+
+
+def test_absurd_quantity_is_refused_not_a_crash(root_client):
+    """Число, которое не влезает в базу, — отказ, а не пятисотка.
+
+    У количества, в отличие от денег, потолка не было вовсе. «10^30» в поле (то
+    есть обычная опечатка или вставка мимо поля) доходило до вставки и роняло
+    запрос OverflowError'ом от драйвера SQLite — пятисоткой на пользовательский
+    ввод, без единого слова о том, что не так.
+    """
+    product = new_product(root_client, name="Гвозди", unit="kg")
+    for absurd in ("9" * 30, "1e20", str(2**63)):
+        response = root_client.post(
+            f"{WH}/moves", json={"product_id": product["id"], "kind": "in", "quantity": absurd}
+        )
+        assert response.status_code == 422, f"{absurd}: {response.status_code}"
+        assert response.json()["error"]["code"] == "quantity_too_large", absurd
+    assert root_client.get(f"{WH}/products/{product['id']}").json()["stock_milli"] == 0
+
+    # тот же разбор стоит на пороге предупреждения о нехватке
+    threshold = root_client.post(
+        f"{API}/warehouse/products", json={"name": "Порог до неба", "min_stock": "9" * 30}
+    )
+    assert threshold.status_code == 422
+    assert threshold.json()["error"]["code"] == "quantity_too_large"
+
+
+def test_huge_exponent_does_not_hang_the_parser():
+    """`1e100000` не должно уходить в построение числа из ста тысяч цифр.
+
+    `int()` от такого Decimal упирается в предел разбора Python и падает
+    ValueError'ом мимо нашей обработки — то есть снова пятисоткой.
+    """
+    for absurd in ("1e1000", "1e100000", "-1e100000"):
+        with pytest.raises(errors.ValidationError) as caught:
+            warehouse_service.parse_quantity(absurd)
+        assert caught.value.code == "quantity_too_large", absurd
 
 
 def test_quantity_parsing_never_touches_float():

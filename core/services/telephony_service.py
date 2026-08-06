@@ -17,6 +17,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from core import exceptions as errors
@@ -247,12 +248,59 @@ def parse_started_at(value: Any, offset: timedelta) -> datetime:
 
 # --- приём событий ---
 
+def _insert_or_take_existing(
+    db: Session, external_id: str, direction: str, started_at
+) -> PhoneCall:
+    """Вставляет звонок, а если его только что вставил кто-то другой — берёт тот.
+
+    Идемпотентность по ``external_id`` держится проверкой «нет ли уже такого» и
+    уникальным индексом, а между проверкой и вставкой есть окно. Станции в него
+    попадают: события одного звонка (начался → ответили → завершился) уходят
+    подряд, а при разрыве связи АТС повторяет пачку. Два запроса читают «нет
+    такого» одновременно, оба вставляют — и проигравший получал 500 от
+    нарушения уникальности. Данные при этом оставались целы (индекс своё дело
+    делал), но станция видела ошибку, считала событие недоставленным и слала
+    его снова, раскручивая петлю повторов на ровном месте.
+
+    Вставка идёт под точкой отката: откатывается только она, а не весь запрос,
+    и после отката строка перечитывается — это и есть «взять чужую».
+    Проигравший вставку продолжает работать с победившей строкой и дописывает
+    в неё свои поля, как обычное повторное событие.
+
+    На SQLite до нарушения уникальности доходит редко: единственный писатель
+    успевает раньше, и второй запрос чаще упирается в блокировку («database is
+    locked») — это отдельная беда, она здесь не лечится и описана в отчёте.
+    Обработка нужна не поэтому: MySQL, на который проект рассчитан (см.
+    ``company_service.set_default`` о частичных индексах), писателей не
+    сериализует, и там эта гонка — обычное дело, а не редкость.
+    """
+    call = PhoneCall(external_id=external_id, direction=direction, started_at=started_at)
+    try:
+        with db.begin_nested():
+            db.add(call)
+            db.flush()
+        return call
+    except IntegrityError:
+        # Откат точки обычно сам выбрасывает добавленное в ней из сессии, но
+        # полагаться на это нельзя: останься объект ожидающим вставки — следующий
+        # flush повторил бы её и упал бы уже без спасения.
+        if call in db:
+            db.expunge(call)
+        existing = telephony_repo.get_by_external_id(db, external_id)
+        if existing is None:
+            # Уникальность нарушена не по external_id — значит дело не в гонке,
+            # а в чём-то другом, и прятать такую ошибку нельзя.
+            raise
+        return existing
+
+
 def ingest_event(db: Session, payload: dict) -> PhoneCall:
     """Обрабатывает одно событие звонка от АТС.
 
     По звонку событий несколько (начался → ответили → завершился), и все они
     правят одну и ту же строку, найденную по ``external_id``. Поэтому повтор
-    того же события ничего не удваивает: ни звонок, ни запись в ленте.
+    того же события ничего не удваивает: ни звонок, ни запись в ленте, — в том
+    числе когда события пришли ОДНОВРЕМЕННО (см. ``_insert_or_take_existing``).
     """
     external_id = str(payload.get("call_id") or payload.get("id") or "").strip()
     if not external_id:
@@ -269,12 +317,12 @@ def ingest_event(db: Session, payload: dict) -> PhoneCall:
             raise errors.ValidationError(
                 f"direction must be one of {CALL_DIRECTIONS}", code="bad_direction"
             )
-        call = PhoneCall(
-            external_id=external_id,
-            direction=direction,
-            started_at=parse_started_at(payload.get("started_at"), offset),
+        call = _insert_or_take_existing(
+            db, external_id, direction, parse_started_at(payload.get("started_at"), offset)
         )
-        db.add(call)
+        # Направление уже проверено выше. Проставляем его и здесь: строка могла
+        # оказаться чужой, вставленной в тот же миг соседним запросом.
+        call.direction = direction
     elif direction in CALL_DIRECTIONS:
         call.direction = direction
 

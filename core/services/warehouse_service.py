@@ -35,6 +35,15 @@ from database.repositories import warehouse as warehouse_repo
 #: сколько знаков после запятой помещается в выбранный масштаб количества
 QUANTITY_DIGITS = 3
 
+#: Потолок количества в тысячных долях: миллиард единиц товара. Смысл тот же,
+#: что у `MAX_MONEY` у денег, — это защита не от бизнеса, а от опечатки.
+#: Без потолка число вроде «10^30» доходило до вставки и роняло запрос
+#: OverflowError'ом («Python int too large to convert to SQLite INTEGER»), то
+#: есть пятисоткой на обычный пользовательский ввод. Отказ с внятным кодом
+#: лучше пятисотки, а тихо обрезать до максимума нельзя: остаток разойдётся с
+#: накладной ровно так же, как от молчаливого округления дробей.
+MAX_QUANTITY = 10**12
+
 #: Со склада ушло под заявку. Подробности: `move`, `product`, `deal`.
 #:
 #: Объявляется на движение, а не на партию: партии в этом складе нет. Движение
@@ -89,6 +98,12 @@ def parse_quantity(value: str | int | float | None) -> int | None:
     if not number.is_finite():
         raise errors.ValidationError(f"Not a number: {value!r}", code="bad_quantity")
     scaled = number * QUANTITY_SCALE
+    # Потолок проверяем ДО перевода в целое, и на Decimal, а не на int:
+    # у Decimal экспонента хранится отдельно, поэтому сравнение дёшево при любом
+    # порядке, а `int()` от 1e100000 строит число из ста тысяч цифр и падает
+    # ValueError'ом мимо нашей обработки.
+    if abs(scaled) > MAX_QUANTITY:
+        raise errors.ValidationError("Quantity is too large", code="quantity_too_large")
     if scaled != scaled.to_integral_value():
         raise errors.ValidationError(
             f"Too many decimal places (max {QUANTITY_DIGITS})", code="quantity_too_precise"
