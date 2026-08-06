@@ -122,3 +122,38 @@ def test_the_pause_is_measured_in_one_place():
                 own_timers.append(path.name)
 
     assert not own_timers, "экран отмеряет паузу сам, мимо общего крючка: " + ", ".join(own_timers)
+
+
+def test_no_translation_stays_without_a_screen_to_show_it():
+    """Каждый ключ перевода кто-то показывает.
+
+    Словарь на полторы тысячи строк переживает экраны: раздел переписали, ключ
+    остался, и следующий человек переводит на второй язык слова, которых нигде
+    нет. Двадцать таких нашлось этой проверкой при первом же запуске.
+
+    Ищем по кавычкам, а не по вызову `t(...)`: половина ключей приходит из
+    таблиц соответствия (`NOTE_LABELS`, `ACTION`, `KIND_LABEL`), где они лежат
+    значениями. Шаблонных ключей вида t(`unit${x}`) в коде нет — если появятся,
+    проверку придётся учить их видеть, и лучше узнать об этом здесь, чем
+    удалить живой перевод.
+    """
+    dictionary = (SCREENS / "lib" / "i18n.ts").read_text(encoding="utf-8")
+    assert not re.search(r"t\(\s*`", dictionary + _all_screen_code()), (
+        "появился ключ, собранный шаблоном: проверка мёртвых переводов его не видит"
+    )
+
+    keys = re.findall(r"^  ([A-Za-z][A-Za-z0-9_]*):", dictionary, flags=re.M)
+    code = _all_screen_code()
+    quoted = r"""['"`]"""
+    orphans = sorted(
+        {key for key in keys if not re.search(quoted + re.escape(key) + quoted, code)}
+    )
+
+    assert not orphans, "переводы без экрана: " + ", ".join(orphans)
+
+
+def _all_screen_code() -> str:
+    """Весь код интерфейса, кроме самого словаря."""
+    parts = [p.read_text(encoding="utf-8") for p in SCREENS.rglob("*.tsx")]
+    parts += [p.read_text(encoding="utf-8") for p in SCREENS.rglob("*.ts") if p.name != "i18n.ts"]
+    return chr(10).join(parts)
