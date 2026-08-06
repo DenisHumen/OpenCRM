@@ -1631,6 +1631,21 @@ cmd_doctor() {
         *)       probe "$(tr_ "права .env" ".env mode")" 0 "$(tr_ "$_mode — секреты видны всем; чинится ./opencrm.sh install" "$_mode — secrets readable by everyone; fixed by ./opencrm.sh install")" ;;
     esac
 
+    # Схема базы — тот самый вопрос «переживёт ли прод обновление». Спрашиваем
+    # само приложение: оно снимает сверку на старте и без неё не поднимается,
+    # поэтому ответ здесь не пересчитывается и стоит один запрос.
+    _health=$(curl -fsS --max-time 3 http://127.0.0.1/healthz 2>/dev/null || true)
+    case "$_health" in
+        *'"schema":"ok"'*)
+            probe "$(tr_ "схема базы" "database schema")" 1 "$(tr_ "сходится с моделями" "matches the models")" ;;
+        *schema*)
+            probe "$(tr_ "схема базы" "database schema")" 0 "$(tr_ "не сходится — ./opencrm.sh logs, затем alembic upgrade head" "mismatch — ./opencrm.sh logs, then alembic upgrade head")" ;;
+        *'"ok"'*)
+            probe "$(tr_ "схема базы" "database schema")" 1 "$(tr_ "приложение старой версии, сверки ещё нет" "older build, no schema check yet")" ;;
+        *)
+            probe "$(tr_ "схема базы" "database schema")" 0 "$(tr_ "приложение не отвечает — ./opencrm.sh logs" "the application is not answering — ./opencrm.sh logs")" ;;
+    esac
+
     if [ -f "$REPO_DIR/docker/nginx/maintenance/maintenance.html" ]; then
         probe "$(tr_ "заглушка" "fallback page")" 1 "$(tr_ "есть — при обновлении вместо 502 будет страница" "present — an update shows a page instead of 502")"
     else
