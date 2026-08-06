@@ -112,3 +112,33 @@ def test_time_is_stored_without_a_zone(table):
                 f"{table.name}.{column.name}: время с зоной — "
                 "в базе naive UTC, приводи на границе API"
             )
+
+
+def test_models_and_migrations_do_not_diverge():
+    """Схему умеют создавать двое, и они обязаны создавать одинаковую.
+
+    `alembic upgrade head` строит её на сервере, `Base.metadata.create_all` —
+    в lifespan. Пока эти двое расходятся, «работает локально» и «работает на
+    сервере» перестают быть одним утверждением.
+
+    Так уже было: `deals.stage` был VARCHAR(20) в миграции против String(32) в
+    модели. SQLite длину VARCHAR не проверяет, поэтому весь набор тестов
+    молчал, а на MySQL ключ этапа длиннее двадцати символов обрезался бы, и
+    заявка переставала попадать в свою колонку.
+
+    Проверка та же, что делает `alembic check`, но она стоит в наборе — а
+    значит выполняется, в отличие от команды, которую надо не забыть запустить.
+    """
+    from alembic.autogenerate import compare_metadata
+    from alembic.migration import MigrationContext
+
+    from database.session import Base, engine
+
+    with engine.connect() as connection:
+        diff = compare_metadata(MigrationContext.configure(connection), Base.metadata)
+
+    assert not diff, (
+        "модели разошлись с миграциями:\n"
+        + "\n".join(f"  {item}" for item in diff)
+        + "\n\nПочинить миграцией, а не правкой модели под базу."
+    )

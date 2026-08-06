@@ -27,6 +27,32 @@ from core.security import passwords  # noqa: E402
 
 passwords.BCRYPT_ROUNDS = 4  # быстрые хэши в тестах
 
+
+def _build_schema_with_migrations() -> None:
+    """Схему тестовой базы поднимают МИГРАЦИИ, а не `create_all`.
+
+    Схему в проекте умеют создавать двое: `alembic upgrade head` (так делает
+    docker/entrypoint.sh на сервере) и `Base.metadata.create_all` в lifespan.
+    Пока тесты шли вторым путём, они проверяли схему из моделей — а на сервер
+    уезжала схема из миграций, и разойтись они могли молча.
+
+    Так и вышло: `deals.stage` был VARCHAR(20) в миграции против String(32) в
+    модели, весь набор тестов этого не видел, а на MySQL ключ этапа длиннее
+    20 символов обрезался бы, и заявка переставала попадать в свою колонку.
+
+    Теперь каждый прогон тестов — заодно и прогон миграций: сломанная миграция
+    роняет набор здесь, а не на развёртывании. `create_all` в lifespan после
+    этого просто не находит, что создавать.
+    """
+    from alembic import command
+    from alembic.config import Config
+
+    config = Config(str(Path(__file__).resolve().parent.parent / "alembic.ini"))
+    command.upgrade(config, "head")
+
+
+_build_schema_with_migrations()
+
 from fastapi.testclient import TestClient  # noqa: E402
 
 from web.main import app  # noqa: E402
