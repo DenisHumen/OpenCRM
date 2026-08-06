@@ -40,6 +40,7 @@ import { SettingsModules } from "./screens/SettingsModules";
 import { OrderCard } from "./screens/OrderCard";
 import { Orders } from "./screens/Orders";
 import { SettingsRoles } from "./screens/SettingsRoles";
+import { Setup } from "./screens/Setup";
 import { SettingsWarehouses } from "./screens/SettingsWarehouses";
 import { Staff } from "./screens/Staff";
 import { Tasks } from "./screens/Tasks";
@@ -251,6 +252,9 @@ export default function App() {
                 там одна кнопка «Сохранить» на всю группу, а переключатель блока
                 применяется сразу — общая кнопка вводила бы в заблуждение. */}
             <Route path="/settings/modules" element={<SettingsModules />} />
+            {/* Экран первого входа. Живёт маршрутом, а не всплывающим окном:
+                на него надо уметь вернуться из настроек и дать ссылку. */}
+            <Route path="/setup" element={<Setup />} />
 
             {/* Настройки блока закрыты вместе с блоком. Раньше ящики и
                 подключение к АТС были открыты всегда — «иначе перед включением
