@@ -5,6 +5,10 @@ import json
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+# Под псевдонимом: ниже в этом же модуле есть функция `events()` — история
+# бланка для его экрана. Импорт под собственным именем она бы перекрыла, причём
+# молча и только в момент вызова.
+from core import events as event_bus
 from core import exceptions as errors
 from core.services import company_service, settings_service
 from core.utils import now_utc
@@ -29,6 +33,19 @@ from database.models.document import (
 # одной строке, 8pt) подогнана ровно под него.
 MAX_TEXT = 160
 MAX_NOTE = 200
+
+#: Бланк выпущен — бумага ушла клиенту. Подробности: `document`.
+DOCUMENT_ISSUED = "document.issued"
+
+#: Бланк дошёл до конца: вещь отдали или бумагу аннулировали. Подробности:
+#: `document`, `from_status`, `to_status`.
+#:
+#: Промежуточные состояния («в работе», «готово») событием не объявляются
+#: намеренно. Они и так лежат в `document_events` и рисуются на экране бланка,
+#: а в ленте заявки превратились бы в четыре строки об одной бумаге вместо
+#: двух. В ленту идёт то, что человек назвал бы событием ПО ЗАЯВКЕ: выдали
+#: квитанцию, закрыли квитанцию. Путь бумаги по состояниям — её собственное дело.
+DOCUMENT_CLOSED = "document.closed"
 
 # Поля снимка для приёмного бланка. Заведомо простые и отраслево-нейтральные:
 # «предмет» — это и ноутбук, и велосипед, и швейная машинка. Заводить отдельный
@@ -160,6 +177,19 @@ def create(db: Session, data: dict, author: User) -> Document:
         )
     )
     db.flush()
+    # Событие поднимается из сервиса, а не из роута: путь сюда сегодня один, но
+    # завтра бланк начнут выпускать пачкой или из скрипта, и подписчик не должен
+    # зависеть от того, каким путём пришли. Ровно как у смены этапа.
+    event_bus.emit(
+        DOCUMENT_ISSUED,
+        db=db,
+        actor=author,
+        # Причина у выпуска одна: бумагу печатают, чтобы отдать её человеку.
+        # Разнообразия здесь взять негде, и выдумывать его — значит написать в
+        # ленте что-то, чего никто не выбирал.
+        reason="handed to the client",
+        document=document,
+    )
     return document
 
 
@@ -195,16 +225,31 @@ def set_status(db: Session, document_id: int, status: str, author: User, note: s
     previous = document.status
     document.status = status
     db.flush()
+    comment = (note or "").strip()[:MAX_NOTE]
     db.add(
         DocumentEvent(
             document_id=document.id,
             from_status=previous,
             to_status=status,
-            note=(note or "").strip()[:MAX_NOTE],
+            note=comment,
             author_id=author.id,
         )
     )
     db.flush()
+    if status in (STATUS_CLOSED, STATUS_CANCELLED):
+        event_bus.emit(
+            DOCUMENT_CLOSED,
+            db=db,
+            actor=author,
+            # Приписка оператора и есть причина: «клиент забрал 12.08» объясняет
+            # закрытие лучше любой формулировки от кода. Не написал — ставим
+            # общую: пустую причину лента показывать не должна.
+            reason=comment
+            or ("voided at the desk" if status == STATUS_CANCELLED else "the item was handed over"),
+            document=document,
+            from_status=previous,
+            to_status=status,
+        )
     return document
 
 

@@ -142,6 +142,21 @@ def _scaled_to_minor(total: int) -> int:
     return -((-total + half) // QUANTITY_SCALE)
 
 
+def move_cost_minor(move: StockMove) -> int | None:
+    """Во сколько обошлось одно движение, в минорных единицах.
+
+    Здесь, а не у того, кому понадобилось, — чтобы округление было тем же, что у
+    суммы по заявке. Посчитай строку ленты отдельно — и она разошлась бы с
+    итогом во врезке на копейку, а объяснить это расхождение было бы нечем.
+
+    None означает «себестоимость не знали»: ноль сказал бы «досталось даром», а
+    это другое утверждение (см. `StockMove.cost_minor`).
+    """
+    if move.cost_minor is None:
+        return None
+    return _scaled_to_minor(-move.quantity_milli * move.cost_minor)
+
+
 def deal_cost_minor(db: Session, deal_id: int) -> int:
     """Себестоимость товаров, списанных под заявку, в минорных единицах.
 

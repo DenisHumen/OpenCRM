@@ -8,12 +8,45 @@
 
 Сами обработчики тонкие: работу делает сервис того блока, которому запись
 принадлежит. Здесь — только «когда» и «в каком качестве».
+
+--------------------------------------------------------------------------
+Запись в ленту или сборка ленты из нескольких источников при чтении
+--------------------------------------------------------------------------
+
+Выбрано первое: подписчик пишет строку в `client_notes`, а `document_events` и
+`stock_moves` остаются нетронутыми — на них держатся свои экраны и отчёты.
+
+Довод против записи известен: копия способна разойтись с оригиналом. Здесь он
+не работает, и это не удача, а свойство обоих источников. Движение склада не
+редактируется и не удаляется — ошибку исправляют обратным движением
+(`core/services/warehouse_service.py`); запись `document_events` тоже только
+дописывается. Расходиться копии не с чем: у оригинала нет второй редакции.
+
+Довод за запись весомее, и он про модули. Лента обязана пережить выключение
+склада — запись о списании принадлежит ленте, а не складу, ровно как письмо и
+звонок. Сборка при чтении означала бы, что лента лезет в `stock_moves` каждый
+раз, когда её открывают, — то есть читает хранилище выключенного блока. Это
+прямо противоречит тому, ради чего заведён реестр блоков: выключенный блок
+исчезает целиком. Записанная строка от выключения не зависит вовсе.
+
+Дальше — то, что видно глазами. Лента сортируется по «когда случилось» и
+листается страницами; при сборке из трёх источников и сортировка, и страницы
+уезжают в Python, и каждый новый источник переписывает их заново. При записи
+это один `ORDER BY` и один `LIMIT`, уже написанные.
 """
 
 from core import events
-from core.services import client_service, pipeline_service
+from core.services import client_service, pipeline_service, settings_service
 from core.services.deal_service import DEAL_STAGE_CHANGED
-from database.models.client import KIND_STAGE
+from core.services.document_service import (
+    DOCUMENT_CLOSED,
+    DOCUMENT_ISSUED,
+    payload_of,
+)
+from core.services.warehouse_service import STOCK_WRITTEN_OFF, format_quantity
+from database.models.client import KIND_DOCUMENT, KIND_STAGE, KIND_STOCK
+from database.models.document import STATUS_CANCELLED
+from database.repositories import warehouse as warehouse_repo
 
 
 @events.observer(DEAL_STAGE_CHANGED, module="clients")
@@ -51,5 +84,101 @@ def stage_change_into_feed(event: events.Event) -> None:
         event.actor,
         KIND_STAGE,
         f"{body} ({event.reason})",
+        deal_id=deal.id,
+    )
+
+
+@events.observer(DOCUMENT_ISSUED, module="clients")
+def document_issued_into_feed(event: events.Event) -> None:
+    """Выпуск бланка попадает в ленту.
+
+    До этого выданная квитанция жила только в `document_events` и в списке
+    бланков сделки. Менеджер, читающий ленту, видел звонки и письма и не видел,
+    что вчера человеку выдали бумагу, — а это ровно то событие, о котором
+    клиент завтра позвонит.
+
+    Наблюдатель: потерять строку в ленте плохо, отменить из-за неё уже
+    напечатанный и отданный бланк — хуже. Бумага у клиента на руках, и спорить
+    с этим записью в журнале бессмысленно.
+    """
+    _document_entry(event, "issued")
+
+
+@events.observer(DOCUMENT_CLOSED, module="clients")
+def document_closed_into_feed(event: events.Event) -> None:
+    """Закрытие и аннулирование бланка попадают в ленту.
+
+    Пара к выпуску: «выдали квитанцию» без «закрыли квитанцию» оставляет ленту с
+    открытым концом, и на вопрос «вещь-то отдали?» отвечать снова нечем.
+    """
+    _document_entry(event, "cancelled" if event["to_status"] == STATUS_CANCELLED else "closed")
+
+
+def _document_entry(event: events.Event, what: str) -> None:
+    """Общее тело обеих записей о бланке.
+
+    Клиента берём у бланка, а не у заявки: бланк выдают и без заявки — человек
+    стоит у стойки, и заводить работу до квитанции неудобно. А вот без клиента
+    записи не будет: запись в ленте всегда о ком-то, и «бланк на имя,
+    набранное в поле» приткнуть некуда.
+    """
+    document = event["document"]
+    if document.client_id is None:
+        return
+
+    # Номер и предмет — то, чем бланк называют вслух: «где там ноутбук по
+    # двести двадцать третьему». Снимок берём из самого бланка, а не из карточки
+    # товара: на бумаге у клиента напечатано именно это.
+    item = (payload_of(document).get("fields") or {}).get("item") or ""
+    subject = f": {item}" if item and what == "issued" else ""
+    client_service.add_system_note(
+        event.db,
+        document.client_id,
+        event.actor,
+        KIND_DOCUMENT,
+        f"Document {document.number} {what}{subject} ({event.reason})",
+        deal_id=document.deal_id,
+    )
+
+
+@events.observer(STOCK_WRITTEN_OFF, module="clients")
+def write_off_into_feed(event: events.Event) -> None:
+    """Списание со склада под заявку попадает в ленту.
+
+    Врезка себестоимости в карточке заявки показывает итог «сколько всего
+    ушло», но не отвечает на вопрос «когда»: списали деталь до разговора с
+    клиентом или после того, как он отказался. В ленте это стоит на своём месте
+    во времени, между звонком и письмом.
+
+    Наблюдатель, и здесь это особенно важно: товар уже физически ушёл с полки.
+    Отменить списание из-за не записавшейся строки в ленте значит вернуть на
+    остаток то, чего на складе нет.
+
+    `module="clients"`, а не `"warehouse"`: подписчик пишет в ленту, а лента
+    принадлежит клиентам. Выключенный склад перестанет поднимать событие сам —
+    его роутер закрыт целиком, — и уже написанные строки это никак не тронет.
+    """
+    move, product, deal = event["move"], event["product"], event["deal"]
+
+    # Количество без знака: «списали 3 шт». Минус в строке ничего не добавляет —
+    # направление уже сказано словом.
+    amount = f"{format_quantity(abs(move.quantity_milli))} {product.unit}"
+
+    # Деньги в строке не для красоты: «списали деталей на три тысячи» — это то,
+    # ради чего ленту и открывают. Себестоимости может не быть («не знали»), и
+    # тогда её нет и в строке: ноль сказал бы «досталось даром».
+    cost = warehouse_repo.move_cost_minor(move)
+    money = ""
+    if cost is not None:
+        currency = settings_service.get_all(event.db).get("currency", "USD")
+        whole, minor = divmod(abs(cost), 100)
+        money = f", {'-' if cost < 0 else ''}{whole}.{minor:02d} {currency}"
+
+    client_service.add_system_note(
+        event.db,
+        deal.client_id,
+        event.actor,
+        KIND_STOCK,
+        f"Stock: {product.name} — {amount}{money} ({event.reason})",
         deal_id=deal.id,
     )

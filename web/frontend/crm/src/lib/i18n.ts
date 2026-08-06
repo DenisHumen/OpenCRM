@@ -146,6 +146,12 @@ const en = {
   feedMeeting: "Meeting",
   feedEmail: "Email",
   feedStage: "Stage change",
+  // «Form» — то же слово, что у раздела бланков (`documents`): фильтр ленты не
+  // должен вводить третье название для той же бумаги. «Stock», а не
+  // «Write-off»: под этот вид попадает и расход, и списание, а `moveWriteoff`
+  // означает только второе — одно слово на два разных смысла уже путало.
+  feedDocument: "Form",
+  feedStock: "Stock",
   feedIn: "Incoming",
   feedOut: "Outgoing",
   feedPlaceholder: "What happened — briefly",
@@ -815,6 +821,8 @@ const ru: typeof en = {
   feedMeeting: "Встреча",
   feedEmail: "Письмо",
   feedStage: "Смена этапа",
+  feedDocument: "Бланк",
+  feedStock: "Склад",
   feedIn: "Входящий",
   feedOut: "Исходящий",
   feedPlaceholder: "Что произошло — коротко",

@@ -14,6 +14,7 @@ from decimal import Decimal, InvalidOperation
 
 from sqlalchemy.orm import Session
 
+from core import events
 from core import exceptions as errors
 from core.services.deal_service import parse_money
 from core.services.task_service import to_utc_naive
@@ -31,6 +32,22 @@ from database.repositories import warehouse as warehouse_repo
 
 #: сколько знаков после запятой помещается в выбранный масштаб количества
 QUANTITY_DIGITS = 3
+
+#: Со склада ушло под заявку. Подробности: `move`, `product`, `deal`.
+#:
+#: Объявляется на движение, а не на партию: партии в этом складе нет. Движение
+#: заводится по одному (`POST /warehouse/moves`), и одно движение — это ровно
+#: одно действие человека. Разбивать по строкам позиции тут попросту нечего, а
+#: склеивать соседние движения в одну строку ленты значило бы решать за
+#: кладовщика, что он имел в виду, — и хранить в ленте то, чего в базе нет.
+#: Появится акт на несколько позиций — событие поднимется от акта, и в ленте
+#: станет одна строка на акт; подписчик при этом не изменится.
+#:
+#: Приход и возврат под заявку событием не объявляются. Со склада под заявку
+#: ВЗЯЛИ — это работа по заявке; положили обратно — это поправка учёта, и она
+#: видна во врезке себестоимости прямо под лентой. Пускать в ленту оба
+#: направления значит превратить её в журнал склада.
+STOCK_WRITTEN_OFF = "stock.written_off"
 
 
 def parse_quantity(value: str | int | float | None) -> int | None:
@@ -233,7 +250,10 @@ def add_move(db: Session, data: dict, author: User) -> tuple[StockMove, bool]:
         quantity = -abs(quantity)
 
     deal_id = data.get("deal_id")
-    if deal_id is not None and deals_repo.get(db, deal_id) is None:
+    # Заявку держим, а не выбрасываем после проверки: она же поедет в событие, и
+    # второй раз ходить за ней в базу незачем.
+    deal = deals_repo.get(db, deal_id) if deal_id is not None else None
+    if deal_id is not None and deal is None:
         # Проверяем до вставки: внешний ключ поймал бы несуществующую заявку и
         # сам, но ответом был бы 500 про нарушение ограничения вместо «такой
         # заявки нет». Удалённая заявка тоже не годится — списывать под неё
@@ -258,6 +278,23 @@ def add_move(db: Session, data: dict, author: User) -> tuple[StockMove, bool]:
     )
     db.add(move)
     db.flush()
+
+    if deal is not None and quantity < 0:
+        events.emit(
+            STOCK_WRITTEN_OFF,
+            db=db,
+            actor=author,
+            # Приписка кладовщика и есть причина: «поставили в машину» объясняет
+            # расход лучше, чем вид движения. Не написал — берём вид: брак и
+            # выдача под работу в ленте выглядят по-разному, и путать их нельзя.
+            reason=(
+                move.comment
+                or ("written off as spoiled" if kind == MOVE_WRITEOFF else "used on the job")
+            ),
+            move=move,
+            product=product,
+            deal=deal,
+        )
 
     # Остаток спрашиваем у базы уже после flush — она и складывает движения,
     # включая только что записанное. Никакого «старый остаток плюс дельта»:

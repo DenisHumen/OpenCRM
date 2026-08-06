@@ -18,15 +18,22 @@ const KINDS = ["note", "call", "meeting", "email"] as const;
 // Виды, которые появляются сами — от подписчика на событие, а не из формы.
 // В выпадающем списке «добавить» их нет: набрать смену этапа, которой не было,
 // нельзя, иначе лента перестаёт быть свидетельством. Отфильтровать — можно.
-const SYSTEM_KINDS = ["stage"] as const;
+//
+// Списаний и бланков в этом списке не убавляется, когда склад или бланки
+// выключены: это записи ленты, а не склада, ровно как письма и звонки.
+// Выключенный блок перестаёт их порождать — уже написанные остаются.
+const SYSTEM_KINDS = ["stage", "document", "stock"] as const;
 
 const KIND_ICON: Record<string, string> = {
   note: "note",
   call: "call",
   meeting: "meeting",
   email: "email",
-  // Та же воронка, что и у раздела сделок: строка про этап узнаётся без чтения.
+  // Значки те же, что у разделов, откуда события приходят: строку узнаёшь, не
+  // читая её. Воронка — этап, квитанция — бланк, склад — списание.
   stage: "deals",
+  document: "receipt",
+  stock: "warehouse",
 };
 
 const KIND_LABEL = {
@@ -35,6 +42,8 @@ const KIND_LABEL = {
   meeting: "feedMeeting",
   email: "feedEmail",
   stage: "feedStage",
+  document: "feedDocument",
+  stock: "feedStock",
 } as const;
 
 export function Feed({ dealId, clientId }: { dealId: number; clientId: number }) {
