@@ -11,7 +11,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from core import exceptions as errors
-from database.models import Deal, PipelineStage
+from database.models import Deal, PipelineStage, User
+from database.repositories import deals as deals_repo
 from database.models.pipeline import (
     CLOSED_KINDS,
     KIND_LOST,
@@ -138,8 +139,14 @@ def seed_defaults(db: Session) -> None:
         db.rollback()
 
 
-def apply_preset(db: Session, preset: str) -> list[PipelineStage]:
+def apply_preset(
+    db: Session, preset: str, actor: User | None = None
+) -> list[PipelineStage]:
     """Заменить воронку готовым набором.
+
+    `actor` необязателен только ради посева при первом запуске: там заявок нет
+    и переселять некого. Из запроса он приходит всегда — иначе журнал этапов
+    получит переходы без исполнителя.
 
     Старые этапы не удаляем, а прячем: на них ссылаются закрытые сделки и
     журнал перемещений. Этап с тем же ключом переиспользуем — тогда смена
@@ -174,8 +181,24 @@ def apply_preset(db: Session, preset: str) -> list[PipelineStage]:
         # Без переезда сделки остались бы ссылаться на спрятанный этап:
         # формально целы, а на доске их нет и найти нельзя.
         target = first_open_key(db)
-        for deal in db.scalars(select(Deal).where(Deal.stage.in_(dropped))):
+        moved = list(db.scalars(select(Deal).where(Deal.stage.in_(dropped))))
+        for deal in moved:
+            was = deal.stage
             deal.stage = target
+            # Переезд идёт в журнал этапов наравне с обычной сменой.
+            #
+            # Правило проекта — «журнал заполняется всегда, иначе отчёт „сколько
+            # заявка простояла в этапе“ дырявый ровно там, где этап поменяли
+            # другим путём» (см. `deal_service.move_stage`). Смена пресета и была
+            # таким путём: десятки заявок меняли этап молча, и в истории каждой
+            # оставался разрыв — последний записанный переход вёл в этап,
+            # которого у заявки уже нет.
+            #
+            # Событие при этом НЕ поднимаем, и это осознанно: в ленте каждой
+            # заявки появилась бы строка «этап сменился», которой никто не
+            # делал. Перестройка воронки — не работа по заявке, а настройка
+            # системы; её место в журнале действий, а не в переписке с клиентом.
+            deals_repo.add_stage_change(db, deal.id, was, target, actor.id if actor else None)
         db.flush()
 
     return list_stages(db)

@@ -131,3 +131,42 @@ def test_unknown_preset_is_rejected(root_client):
     bad = root_client.post(f"{PIPE}/preset", json={"preset": "выдуманный"})
     assert bad.status_code == 422
     assert bad.json()["error"]["code"] == "unknown_preset"
+
+
+def test_a_preset_change_does_not_move_deals_behind_the_journal(root_client, manager_client):
+    """Переезд заявок при смене воронки виден в журнале этапов.
+
+    Правило проекта: журнал заполняется всегда, иначе отчёт «сколько заявка
+    простояла в этапе» дырявый ровно там, где этап поменяли другим путём. Смена
+    пресета и была таким путём — десятки заявок меняли этап молча, и в истории
+    каждой оставался разрыв: последний записанный переход вёл в этап, которого у
+    заявки уже нет.
+    """
+    from tests.test_deals import DEALS, make_client
+
+    root_client.post(f"{API}/pipeline/preset", json={"preset": "universal"})
+    client = make_client(manager_client, "Клиент переезда")
+    deal = manager_client.post(DEALS, json={"title": "Переедет", "client_id": client["id"]}).json()
+
+    # Ставим заявку на этап, которого в другом наборе нет.
+    stages = root_client.get(f"{API}/pipeline/stages").json()["items"]
+    doomed = next(s["key"] for s in stages if s["kind"] == "open" and s["key"] != deal["stage"])
+    assert manager_client.post(f"{DEALS}/{deal['id']}/move", json={"stage": doomed}).status_code == 200
+
+    applied = root_client.post(f"{API}/pipeline/preset", json={"preset": "services"})
+    assert applied.status_code == 200, applied.text
+
+    card = manager_client.get(f"{DEALS}/{deal['id']}").json()
+    chain = [(row["from_stage"], row["to_stage"]) for row in card["stage_history"]]
+
+    assert chain[-1][1] == card["stage"], (
+        "последний записанный переход ведёт не туда, где заявка стоит сейчас"
+    )
+    assert (doomed, card["stage"]) in chain, "переезд при смене воронки не записан"
+
+    # В ленте заявки записи о переезде быть не должно: воронку перестроил
+    # администратор, работы по заявке никто не делал.
+    feed = manager_client.get(f"{DEALS}/{deal['id']}/feed?kind=stage").json()["items"]
+    assert not any(doomed in entry["body"] for entry in feed), (
+        "перестройка воронки написала в ленту заявки то, чего никто не делал"
+    )

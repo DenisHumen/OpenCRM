@@ -53,10 +53,10 @@ def list_presets(_: User = Depends(require_perm("settings", "manage"))):
 @router.post("/preset")
 def apply_preset(
     payload: PresetIn,
-    _: User = Depends(require_perm("settings", "manage")),
+    actor: User = Depends(require_perm("settings", "manage")),
     db: Session = Depends(get_db),
 ):
-    stages = pipeline_service.apply_preset(db, payload.preset)
+    stages = pipeline_service.apply_preset(db, payload.preset, actor)
     return {"items": [schemas.stage_out(s) for s in stages]}
 
 

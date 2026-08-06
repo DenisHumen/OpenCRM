@@ -291,3 +291,48 @@ def test_two_receptionists_issuing_at_once_both_get_paper(manager_client):
     assert "number" in issued, f"выдача бланка сорвалась: {issued}"
     assert issued["number"] != taken[0], "бланк выдан под уже занятым номером"
     assert int(issued["number"].split("-")[1]) == int(taken[0].split("-")[1]) + 1
+
+
+def test_two_people_closing_one_form_do_not_tear_its_history(manager_client):
+    """Второй, кто меняет статус бланка, получает отказ, а не молчаливый перехват.
+
+    У бланка своя история переходов, и она отвечает на единственный вопрос,
+    ради которого её ведут: когда клиент забрал вещь. Двое, нажавшие «готово» и
+    «выдано» разом, оставляли в ней два перехода из одного состояния — данные
+    целы, а история перестаёт быть историей. Та же беда, что была у этапа
+    заявки, и лечится тем же условием в самом UPDATE.
+
+    Соседа изображаем отдельной сессией: она меняет статус между чтением и
+    записью. Настоящую параллельность `TestClient` не даёт — он в одном
+    процессе, — а порядок событий тот же.
+    """
+    from sqlalchemy import update
+
+    from core import exceptions as errors
+    from core.services import document_service
+    from database.models import Document, User
+    from database.session import SessionLocal
+
+    doc = make_doc(manager_client)
+
+    with SessionLocal() as mine:
+        author = mine.query(User).first()
+        held = document_service.get(mine, doc["id"])
+        assert held.status == "issued"
+
+        with SessionLocal() as neighbour:
+            neighbour.execute(
+                update(Document).where(Document.id == doc["id"]).values(status="closed")
+            )
+            neighbour.commit()
+
+        try:
+            document_service.set_status(mine, doc["id"], "ready", author)
+            raise AssertionError("перехват прошёл молча — история снова рвётся")
+        except errors.ConflictError as refused:
+            assert refused.code == "document_status_changed"
+        mine.rollback()
+
+    card = manager_client.get(f"{DOCS}/{doc['id']}").json()
+    chain = [(e["from_status"], e["to_status"]) for e in card["events"]]
+    assert ("issued", "ready") not in chain, "записан переход, которого не было"

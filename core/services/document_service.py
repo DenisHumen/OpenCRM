@@ -2,7 +2,7 @@
 
 import json
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 # Под псевдонимом: ниже в этом же модуле есть функция `events()` — история
@@ -256,8 +256,23 @@ def set_status(db: Session, document_id: int, status: str, author: User, note: s
         return document
 
     previous = document.status
-    document.status = status
-    db.flush()
+    # Статус меняем условием «пока он тот, что мы прочитали», как этап заявки, и
+    # ровно по той же причине: у бланка есть своя история переходов, и двое,
+    # нажавшие «готово» и «выдано» разом, оставили бы в ней два перехода из
+    # одного состояния. Данные целы, а история перестаёт отвечать на вопрос
+    # «когда клиент забрал» — тот единственный, ради которого её и ведут.
+    moved = db.execute(
+        update(Document)
+        .where(Document.id == document.id, Document.status == previous)
+        .values(status=status)
+    )
+    if moved.rowcount == 0:
+        raise errors.ConflictError(
+            "The document status has already been changed by someone else",
+            code="document_status_changed",
+        )
+    # Объект в памяти помнит прежний статус: писали запросом, мимо него.
+    db.refresh(document)
     comment = (note or "").strip()[:MAX_NOTE]
     db.add(
         DocumentEvent(
