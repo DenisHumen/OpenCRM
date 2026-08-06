@@ -1,14 +1,14 @@
 """Напоминания: перезвонить, отправить счёт, забрать технику."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 
-from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from core import exceptions as errors
 from core import references
 from core.utils import now_utc, to_utc_naive
 from database.models import Task, User
+from database.repositories import tasks as tasks_repo
 
 MAX_TITLE = 300
 
@@ -18,7 +18,7 @@ LIST_LIMIT = 200
 
 
 def get_task(db: Session, task_id: int) -> Task:
-    task = db.get(Task, task_id)
+    task = tasks_repo.get(db, task_id)
     if task is None:
         raise errors.NotFoundError("Task not found", code="task_not_found")
     return task
@@ -79,10 +79,6 @@ def delete(db: Session, task_id: int) -> None:
     db.flush()
 
 
-def _open_only(query):
-    return query.where(Task.done_at.is_(None))
-
-
 def search(
     db: Session,
     scope: str = "open",
@@ -99,50 +95,22 @@ def search(
     произвольное число часов из-за зоны сервера нельзя.
     """
     now = now_utc()
-    query = select(Task)
-
-    if scope == "done":
-        query = query.where(Task.done_at.is_not(None)).order_by(Task.done_at.desc())
-    else:
-        query = _open_only(query)
-        if scope == "overdue":
-            query = query.where(Task.due_at.is_not(None), Task.due_at < now)
-        elif scope == "today":
-            query = query.where(Task.due_at.is_not(None), Task.due_at < now + timedelta(days=1))
-        elif scope == "week":
-            query = query.where(Task.due_at.is_not(None), Task.due_at < now + timedelta(days=7))
-        # Сначала то, у чего есть срок, потом бессрочное: задача без срока не
-        # должна оттеснять просроченную наверх.
-        query = query.order_by(Task.due_at.is_(None), Task.due_at.asc(), Task.id.desc())
-
-    if assignee_id is not None:
-        query = query.where(Task.assignee_id == assignee_id)
-    if client_id is not None:
-        query = query.where(Task.client_id == client_id)
-    if deal_id is not None:
-        query = query.where(Task.deal_id == deal_id)
-
-    return list(db.scalars(query.limit(limit)))
+    horizon = {"today": timedelta(days=1), "week": timedelta(days=7)}.get(scope)
+    return tasks_repo.search(
+        db,
+        scope=scope,
+        now=now,
+        until=now + horizon if horizon else None,
+        assignee_id=assignee_id,
+        client_id=client_id,
+        deal_id=deal_id,
+        limit=limit,
+    )
 
 
 def summary(db: Session, user: User) -> dict:
     """Счётчики для навигации: без них в задачи заходят «на всякий случай»."""
     now = now_utc()
-
-    def count(*conditions) -> int:
-        # Считаем в базе, а не в Python. Прежний `len(list(...))` поднимал в
-        # память каждую незакрытую задачу и делал это четыре раза за один заход
-        # на любую страницу: на 13 тысячах задач счётчики в меню стоили 447 мс,
-        # тем же условием через `count(*)` — 16 мс.
-        query = _open_only(select(func.count(Task.id)))
-        for condition in conditions:
-            query = query.where(condition)
-        return db.scalar(query) or 0
-
-    mine = or_(Task.assignee_id == user.id, Task.assignee_id.is_(None))
-    return {
-        "overdue": count(Task.due_at.is_not(None), Task.due_at < now),
-        "today": count(Task.due_at.is_not(None), Task.due_at < now + timedelta(days=1)),
-        "mine": count(mine),
-        "open": count(),
-    }
+    return tasks_repo.counters(
+        db, user_id=user.id, now=now, today_until=now + timedelta(days=1)
+    )

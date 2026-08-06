@@ -1,15 +1,12 @@
 """Свои юрлица: от чьего имени работаем и что печатается в реквизитах."""
 
-# `update` переименован: у сервиса своя функция с этим именем, и без псевдонима
-# она молча закрывает собой конструктор запроса.
-from sqlalchemy import select
-from sqlalchemy import update as sql_update
 from sqlalchemy.orm import Session
 
 from core import exceptions as errors
 from core.services import audit_service, modules_service
 from core.utils import now_utc
 from database.models import Company, Deal, User
+from database.repositories import companies as companies_repo
 
 MAX_NAME = 200
 MAX_LEGAL_NAME = 300
@@ -62,35 +59,19 @@ SNAPSHOT_FIELDS = (
 
 
 def get_company(db: Session, company_id: int, include_deleted: bool = False) -> Company:
-    company = db.get(Company, company_id)
+    company = companies_repo.get(db, company_id)
     if company is None or (company.deleted_at is not None and not include_deleted):
         raise errors.NotFoundError("Company not found", code="company_not_found")
     return company
 
 
 def list_companies(db: Session) -> list[Company]:
-    """Основная — первой: её выбирают чаще всех остальных вместе взятых."""
-    return list(
-        db.scalars(
-            select(Company)
-            .where(Company.deleted_at.is_(None))
-            .order_by(Company.is_default.desc(), Company.name.asc(), Company.id.asc())
-        )
-    )
+    return companies_repo.list_alive(db)
 
 
 def default_company(db: Session) -> Company | None:
-    """Фирма, от имени которой работаем, когда её не выбрали руками.
-
-    Сортировка по id не украшение: если две записи каким-то образом окажутся
-    помеченными основными, ответ обязан остаться одним и тем же при каждом
-    вызове. Молча плавающая фирма в реквизитах хуже, чем неверная.
-    """
-    return db.scalars(
-        select(Company)
-        .where(Company.deleted_at.is_(None), Company.is_default.is_(True))
-        .order_by(Company.id.asc())
-    ).first()
+    """Фирма, от имени которой работаем, когда её не выбрали руками."""
+    return companies_repo.default_company(db)
 
 
 def _apply(company: Company, data: dict) -> None:
@@ -137,34 +118,12 @@ def update(db: Session, company_id: int, data: dict) -> Company:
 def set_default(db: Session, company_id: int) -> Company:
     """Назначить фирму основной, сняв признак со всех остальных.
 
-    Единственность держится здесь, а не частичным уникальным индексом
-    (``UNIQUE ... WHERE is_default``), по двум причинам. Первая — в проекте
-    такие индексы запрещены: система рассчитана на переезд SQLite → MySQL, а в
-    MySQL частичных индексов нет вовсе, и схема, которую нельзя перенести,
-    сломается ровно в момент переезда. Вторая — обычный UNIQUE на колонку не
-    заменяет его ничем: он запретил бы двум фирмам одновременно НЕ быть
-    основными, то есть сделал бы невозможным нормальный случай.
-
-    **Оба шага — явные UPDATE, и «своя» ставится первой.** Через присваивание
-    полю ORM второй шаг иногда не давал запроса вовсе: если в момент чтения
-    фирма уже была основной, присваивание `True` ничего не меняло, и SQLAlchemy
-    правильно не писал ничего. Стоило соседнему запросу в это время снять
-    признак — и основной не оставалось НИ ОДНОЙ. Поймано живым прогоном: пять
-    раундов по три одновременные попытки, на пятом основных стало ноль.
-
-    Ноль хуже двух. Две основные читатель разрешает сам (берёт первую), а без
-    основной бланк печатается без шапки — и виновата будет бумага, а не гонка,
-    которая случилась неделю назад.
+    Единственность держится запросами, а не частичным уникальным индексом, и
+    порядок двух шагов там принципиален — почему именно, разобрано в шапке
+    `database/repositories/companies.py` вместе с прогоном, который это поймал.
     """
     company = get_company(db, company_id)
-    db.execute(sql_update(Company).where(Company.id == company.id).values(is_default=True))
-    db.execute(
-        sql_update(Company)
-        .where(Company.id != company.id, Company.is_default.is_(True))
-        .values(is_default=False)
-    )
-    # Объект в памяти помнит прежнее значение: писали запросом, мимо него.
-    db.refresh(company)
+    companies_repo.make_default(db, company)
     return company
 
 
@@ -194,11 +153,7 @@ def delete(db: Session, company_id: int, actor: User) -> None:
     # значит вернуть бланки к печати без реквизитов, причём незаметно: ошибки
     # нет, просто в шапке пусто.
     if default_company(db) is None:
-        replacement = db.scalars(
-            select(Company)
-            .where(Company.deleted_at.is_(None))
-            .order_by(Company.id.asc())
-        ).first()
+        replacement = companies_repo.oldest_alive(db)
         if replacement is not None:
             set_default(db, replacement.id)
 
@@ -239,5 +194,5 @@ def for_document(db: Session, company_id: int | None, deal: Deal | None) -> Comp
     if company_id:
         return get_company(db, int(company_id), include_deleted=True)
     if deal is not None and deal.company_id:
-        return db.get(Company, deal.company_id)
+        return companies_repo.get(db, deal.company_id)
     return default_company(db)

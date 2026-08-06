@@ -12,10 +12,11 @@
 
 from datetime import datetime
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from database.models import AuditEvent
+from database.query import contains, page_of
 
 
 def search(
@@ -46,19 +47,14 @@ def search(
     if q:
         # По названию объекта и по имени исполнителя: в журнал приходят со
         # словами «что было с матрицей», а не с идентификатором строки.
-        like = f"%{q.strip()}%"
+        needle = q.strip()
         stmt = stmt.where(
-            or_(AuditEvent.entity_label.ilike(like), AuditEvent.actor_name.ilike(like))
+            or_(contains(AuditEvent.entity_label, needle), contains(AuditEvent.actor_name, needle))
         )
     if since is not None:
         stmt = stmt.where(AuditEvent.created_at >= since)
     if until is not None:
         stmt = stmt.where(AuditEvent.created_at <= until)
 
-    total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
-    stmt = (
-        stmt.order_by(AuditEvent.created_at.desc(), AuditEvent.id.desc())
-        .offset((page - 1) * per_page)
-        .limit(per_page)
-    )
-    return list(db.scalars(stmt)), total
+    stmt = stmt.order_by(AuditEvent.created_at.desc(), AuditEvent.id.desc())
+    return page_of(db, stmt, page=page, per_page=per_page)

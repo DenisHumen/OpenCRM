@@ -179,6 +179,16 @@ def test_the_board_list_asks_a_fixed_number_of_questions(manager_client):
 
     from database.session import engine
 
+    #: Таблицы, чтение которых оплачивает не список досок, а протухший кэш.
+    #:
+    #: Состав блоков живёт в памяти процесса две секунды (`CACHE_SECONDS`), и
+    #: попадёт ли обновление кэша в замер, решает секундомер, а не код. Раньше
+    #: это лечилось холостым заходом перед измерением — но между заходом и
+    #: замером те же две секунды могут истечь, и тест падал через раз на
+    #: загруженной машине, показывая «11 против 10». Считать надо то, о чём тест
+    #: спрашивает, а спрашивает он про число досок.
+    CACHE_TABLES = ("module_states", "site_settings")
+
     def cost_of_listing(boards_count: int) -> int:
         client = manager_client.post(
             f"{API}/clients", json={"name": f"Заказчик досок {boards_count}"}
@@ -190,12 +200,6 @@ def test_the_board_list_asks_a_fixed_number_of_questions(manager_client):
             )
             _upload_png(manager_client, created["id"])
 
-        # Холостой заход перед замером. Состав блоков и настройки сайта живут в
-        # кэше на весь процесс, и первый запрос после чужого `invalidate()`
-        # платит за их чтение — два лишних запроса, не имеющих отношения к
-        # числу досок. Тест об этом не спрашивает, а падал именно на этом.
-        manager_client.get(f"{API}/boards?per_page=200")
-
         queries = []
         listener = lambda conn, cursor, statement, *rest: queries.append(statement)
         event.listen(engine, "before_cursor_execute", listener)
@@ -204,13 +208,14 @@ def test_the_board_list_asks_a_fixed_number_of_questions(manager_client):
             assert listed.status_code == 200, listed.text
         finally:
             event.remove(engine, "before_cursor_execute", listener)
-        return len(queries)
+        return [q for q in queries if not any(table in q for table in CACHE_TABLES)]
 
     few = cost_of_listing(2)
     many = cost_of_listing(10)
 
-    assert many <= few, (
-        f"восемь лишних досок стоили лишних запросов: было {few}, стало {many}"
+    assert len(many) <= len(few), (
+        f"восемь лишних досок стоили лишних запросов: было {len(few)}, стало {len(many)}\n"
+        + "\n".join(" ".join(q.split())[:120] for q in many)
     )
 
 

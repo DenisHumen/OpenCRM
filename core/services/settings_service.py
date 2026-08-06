@@ -1,6 +1,5 @@
 from pathlib import Path
 
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from config.settings import get_settings
@@ -10,6 +9,7 @@ from core.services import media_service
 from core.utils import normalize_external_url, now_utc
 from database.models import SiteSetting
 from database.models.settings import SETTING_DEFAULTS
+from database.repositories import settings as settings_repo
 
 ALLOWED_LOGO_EXTS = {"png", "jpg", "jpeg", "webp", "svg"}
 
@@ -27,7 +27,7 @@ URL_SETTINGS = (
 
 def get_all(db: Session) -> dict[str, str]:
     values = dict(SETTING_DEFAULTS)
-    for row in db.scalars(select(SiteSetting)):
+    for row in settings_repo.all_rows(db):
         if row.key in values:
             values[row.key] = row.value
     return values
@@ -62,15 +62,7 @@ def update(db: Session, changes: dict[str, str]) -> dict[str, str]:
             changes = {**changes, key: normalize_external_url(changes[key])}
         except ValueError as exc:
             raise errors.ValidationError(str(exc), code="bad_site_url") from exc
-    existing = {row.key: row for row in db.scalars(select(SiteSetting))}
-    for key, value in changes.items():
-        value = (value or "").strip()
-        if key in existing:
-            existing[key].value = value
-            existing[key].updated_at = now_utc()
-        else:
-            db.add(SiteSetting(key=key, value=value))
-    db.flush()
+    settings_repo.write_many(db, {key: (value or "").strip() for key, value in changes.items()})
     return get_all(db)
 
 
@@ -143,14 +135,12 @@ def seed_defaults(db: Session) -> None:
     поднимает оба разом, и оба видят «ключа нет». Без этого проигравший падал
     прямо на старте, и приложение не поднималось.
     """
-    existing = {row.key for row in db.scalars(select(SiteSetting))}
+    existing = settings_repo.existing_keys(db)
     for key, value in SETTING_DEFAULTS.items():
         if key in existing:
             continue
         uniqueness.insert_or_ignore(
             db,
             SiteSetting(key=key, value=value),
-            taken=lambda row: db.scalar(
-                select(SiteSetting.id).where(SiteSetting.key == row.key)
-            ) is not None,
+            taken=lambda row: settings_repo.key_exists(db, row.key),
         )

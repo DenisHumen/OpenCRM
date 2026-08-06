@@ -19,13 +19,11 @@
 
 from datetime import timedelta
 
-from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from core.services import client_service, media_service, storage_service
 from core.utils import now_utc
-from database.models import Board, Client, ClientFile, Deal, PipelineStage, Work
-from database.models.pipeline import KIND_WON
+from database.repositories import purge as purge_repo
 from database.repositories import users as users_repo
 
 
@@ -44,24 +42,10 @@ def purge_soft_deleted(db: Session, older_than_days: int = 0, dry_run: bool = Fa
     kept_with_revenue = 0
 
     # Всё, что нужно про доски и клиентов, спрашивается наперёд — по разу на
-    # весь список, а не по разу на запись. Уборка запускается редко, но именно
-    # на той базе, где мусора накопилось много: запрос в цикле там означает
-    # тысячи запросов и минуты ожидания на операции, которая держит транзакцию.
-    #
-    # Отбор идёт подзапросом с тем же условием, а не списком id: список из
-    # тысячи чисел упёрся бы в потолок параметров SQLite ровно тогда, когда
-    # уборка нужнее всего.
-    doomed_boards = select(Board.id).where(
-        Board.deleted_at.is_not(None), Board.deleted_at <= cutoff
-    )
-    doomed_clients = select(Client.id).where(
-        Client.deleted_at.is_not(None), Client.deleted_at <= cutoff
-    )
-
-    boards = list(db.scalars(select(Board).where(Board.id.in_(doomed_boards))))
-    works_of: dict[int, list[Work]] = {}
-    for work in db.scalars(select(Work).where(Work.board_id.in_(doomed_boards))):
-        works_of.setdefault(work.board_id, []).append(work)
+    # весь список, а не по разу на запись; почему именно так, разобрано в шапке
+    # `database/repositories/purge.py`.
+    boards = purge_repo.boards_to_purge(db, cutoff)
+    works_of = purge_repo.works_of_doomed_boards(db, cutoff)
 
     for board in boards:
         for work in works_of.get(board.id, ()):
@@ -74,33 +58,11 @@ def purge_soft_deleted(db: Session, older_than_days: int = 0, dry_run: bool = Fa
         if not dry_run:
             db.delete(board)  # works и share_links уходят каскадом
 
-    clients = list(db.scalars(select(Client).where(Client.id.in_(doomed_clients))))
-    # Выигранная заявка — полученные деньги. Такого клиента не трогаем: отчёт за
-    # прошлый год не должен меняться от уборки диска.
-    with_revenue = set(
-        db.scalars(
-            select(Deal.client_id)
-            .join(PipelineStage, PipelineStage.key == Deal.stage)
-            .where(
-                Deal.client_id.in_(doomed_clients),
-                Deal.deleted_at.is_(None),
-                PipelineStage.kind == KIND_WON,
-            )
-        )
-    )
-    # Сколько заявок уйдёт вместе с клиентом — считаем и НАЗЫВАЕМ. Молчать об
-    # этом хуже, чем удалить: человек видит «удалено 3 клиента» и не знает про
-    # сорок заявок.
-    deals_of = dict(
-        db.execute(
-            select(Deal.client_id, func.count())
-            .where(Deal.client_id.in_(doomed_clients))
-            .group_by(Deal.client_id)
-        ).all()
-    )
-    files_of: dict[int, list[ClientFile]] = {}
-    for file in db.scalars(select(ClientFile).where(ClientFile.client_id.in_(doomed_clients))):
-        files_of.setdefault(file.client_id, []).append(file)
+    clients = purge_repo.clients_to_purge(db, cutoff)
+    # Выигранная заявка — полученные деньги. Такого клиента не трогаем.
+    with_revenue = purge_repo.clients_with_revenue(db, cutoff)
+    deals_of = purge_repo.deals_count_by_client(db, cutoff)
+    files_of = purge_repo.files_of_doomed_clients(db, cutoff)
 
     for client in clients:
         if client.id in with_revenue:

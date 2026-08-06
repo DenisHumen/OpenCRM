@@ -164,7 +164,7 @@ def process_work(work_id: int) -> None:
     """Фоновая задача: генерирует превью. Открывает собственную сессию БД."""
     db = get_session()
     try:
-        work = db.get(Work, work_id)
+        work = boards_repo.get_work_by_id(db, work_id)
         if work is None:
             return
         try:

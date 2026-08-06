@@ -2,7 +2,6 @@
 
 import json
 
-from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 # Под псевдонимом: ниже в этом же модуле есть функция `events()` — история
@@ -24,6 +23,9 @@ from database.models.document import (
     STATUS_CLOSED,
     STATUS_ISSUED,
 )
+from database.repositories import clients as clients_repo
+from database.repositories import deals as deals_repo
+from database.repositories import documents as documents_repo
 
 # Предел на поле бланка — не придирка к многословию, а условие того, что обе
 # половины помещаются на один A4. Замерено на живой странице: при 400 символах в
@@ -126,9 +128,7 @@ def next_number(db: Session) -> str:
     """
     year = now_utc().year
     prefix = f"{year}-"
-    last = db.scalar(
-        select(func.max(Document.number)).where(Document.number.like(f"{prefix}%"))
-    )
+    last = documents_repo.max_number(db, prefix)
     counter = int(last.split("-")[1]) + 1 if last else 1
     return f"{prefix}{counter:06d}"
 
@@ -150,9 +150,7 @@ def _insert_with_free_number(db: Session, **fields) -> Document:
     return uniqueness.insert_retrying(
         db,
         lambda: Document(number=next_number(db), status=STATUS_ISSUED, **fields),
-        taken=lambda row: db.scalar(
-            select(Document.id).where(Document.number == row.number)
-        ) is not None,
+        taken=lambda row: documents_repo.number_exists(db, row.number),
         message="Could not take a free number, try again",
         code="document_number_taken",
     )
@@ -173,10 +171,10 @@ def create(db: Session, data: dict, author: User) -> Document:
     # такому ответу невозможно: он говорит не о том, что случилось.
     client_id = references.client(db, data.get("client_id"))
     deal_id = references.deal(db, data.get("deal_id"))
-    client = db.get(Client, client_id) if client_id else None
-    deal = db.get(Deal, deal_id) if deal_id else None
+    client = clients_repo.get(db, client_id) if client_id else None
+    deal = deals_repo.get(db, deal_id) if deal_id else None
     if deal is not None and client is None:
-        client = db.get(Client, deal.client_id)
+        client = clients_repo.get(db, deal.client_id) if deal.client_id else None
     if client is None and not (data.get("client_name") or "").strip():
         # А вот это — настоящий случай «не назвали никого»: бланк прохожему без
         # карточки законен, но имя на бумаге должно стоять хоть какое-то.
@@ -203,13 +201,13 @@ def create(db: Session, data: dict, author: User) -> Document:
         payload=payload,
         created_by=author.id,
     )
-    db.add(
+    documents_repo.add_event(
+        db,
         DocumentEvent(
             document_id=document.id, from_status="", to_status=STATUS_ISSUED,
             author_id=author.id,
-        )
+        ),
     )
-    db.flush()
     # Событие поднимается из сервиса, а не из роута: путь сюда сегодня один, но
     # завтра бланк начнут выпускать пачкой или из скрипта, и подписчик не должен
     # зависеть от того, каким путём пришли. Ровно как у смены этапа.
@@ -227,7 +225,7 @@ def create(db: Session, data: dict, author: User) -> Document:
 
 
 def get(db: Session, document_id: int) -> Document:
-    document = db.get(Document, document_id)
+    document = documents_repo.get(db, document_id)
     if document is None:
         raise errors.NotFoundError("Document not found", code="document_not_found")
     return document
@@ -235,7 +233,7 @@ def get(db: Session, document_id: int) -> Document:
 
 def by_number(db: Session, number: str) -> Document:
     """Поиск сканом. Номер приходит со штрихкода или из адреса в QR."""
-    document = db.scalar(select(Document).where(Document.number == (number or "").strip()))
+    document = documents_repo.get_by_number(db, number)
     if document is None:
         raise errors.NotFoundError("Document not found", code="document_not_found")
     return document
@@ -261,29 +259,22 @@ def set_status(db: Session, document_id: int, status: str, author: User, note: s
     # нажавшие «готово» и «выдано» разом, оставили бы в ней два перехода из
     # одного состояния. Данные целы, а история перестаёт отвечать на вопрос
     # «когда клиент забрал» — тот единственный, ради которого её и ведут.
-    moved = db.execute(
-        update(Document)
-        .where(Document.id == document.id, Document.status == previous)
-        .values(status=status)
-    )
-    if moved.rowcount == 0:
+    if not documents_repo.take_status(db, document, expected=previous, status=status):
         raise errors.ConflictError(
             "The document status has already been changed by someone else",
             code="document_status_changed",
         )
-    # Объект в памяти помнит прежний статус: писали запросом, мимо него.
-    db.refresh(document)
     comment = (note or "").strip()[:MAX_NOTE]
-    db.add(
+    documents_repo.add_event(
+        db,
         DocumentEvent(
             document_id=document.id,
             from_status=previous,
             to_status=status,
             note=comment,
             author_id=author.id,
-        )
+        ),
     )
-    db.flush()
     if status in (STATUS_CLOSED, STATUS_CANCELLED):
         event_bus.emit(
             DOCUMENT_CLOSED,
@@ -302,13 +293,7 @@ def set_status(db: Session, document_id: int, status: str, author: User, note: s
 
 
 def events(db: Session, document_id: int) -> list[DocumentEvent]:
-    return list(
-        db.scalars(
-            select(DocumentEvent)
-            .where(DocumentEvent.document_id == document_id)
-            .order_by(DocumentEvent.created_at.asc(), DocumentEvent.id.asc())
-        )
-    )
+    return documents_repo.events(db, document_id)
 
 
 def search(
@@ -320,24 +305,9 @@ def search(
     page: int = 1,
     per_page: int = 50,
 ) -> tuple[list[Document], int]:
-    stmt = select(Document)
-    if q:
-        like = f"%{q.strip()}%"
-        # Ищем и по номеру, и по снимку: в мастерской спрашивают «где ноутбук
-        # Петрова», а не номер бланка.
-        stmt = stmt.where(Document.number.ilike(like) | Document.payload.ilike(like))
-    if status:
-        stmt = stmt.where(Document.status == status)
-    if client_id:
-        stmt = stmt.where(Document.client_id == client_id)
-    if deal_id:
-        # Нужен карточке сделки: выданный из неё бланк обязан быть в ней виден,
-        # иначе он уходит в общий список и связь теряется.
-        stmt = stmt.where(Document.deal_id == deal_id)
-
-    total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
-    stmt = stmt.order_by(Document.created_at.desc()).offset((page - 1) * per_page).limit(per_page)
-    return list(db.scalars(stmt)), total
+    return documents_repo.search(
+        db, q=q, status=status, client_id=client_id, deal_id=deal_id, page=page, per_page=per_page
+    )
 
 
 def payload_of(document: Document) -> dict:

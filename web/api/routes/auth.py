@@ -5,7 +5,8 @@ from sqlalchemy.orm import Session
 
 from config.settings import get_settings
 from core.services import auth_service, avatar_service, permissions_service
-from database.models import Role, User
+from database.models import User
+from database.repositories import roles as roles_repo
 from web.api import schemas
 from web.api.deps import CSRF_COOKIE, SESSION_COOKIE, get_current_user, get_db, login_limiter
 
@@ -61,7 +62,7 @@ def _me(db: Session, user: User) -> dict:
     чувство: интерфейс перечитывает `/auth/me` и перестаёт рисовать то, на что
     ему всё равно ответят отказом.
     """
-    role = db.get(Role, user.role_id) if user.role_id else None
+    role = roles_repo.get(db, user.role_id) if user.role_id else None
     return schemas.user_out(
         user, role=role, permissions=sorted(permissions_service.codes_of(db, user))
     )

@@ -6,13 +6,13 @@
 его на отраслевой можно одним нажатием.
 """
 
-from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from core import exceptions as errors
-from database.models import Deal, PipelineStage, User
+from database.models import PipelineStage, User
 from database.repositories import deals as deals_repo
+from database.repositories import pipeline as pipeline_repo
 from database.models.pipeline import (
     CLOSED_KINDS,
     KIND_LOST,
@@ -96,14 +96,11 @@ DEFAULT_PRESET = "universal"
 
 
 def list_stages(db: Session, include_archived: bool = False) -> list[PipelineStage]:
-    stmt = select(PipelineStage)
-    if not include_archived:
-        stmt = stmt.where(PipelineStage.is_archived.is_(False))
-    return list(db.scalars(stmt.order_by(PipelineStage.sort_order.asc(), PipelineStage.id.asc())))
+    return pipeline_repo.list_stages(db, include_archived=include_archived)
 
 
 def get_stage(db: Session, key: str) -> PipelineStage:
-    stage = db.scalar(select(PipelineStage).where(PipelineStage.key == key))
+    stage = pipeline_repo.get_by_key(db, key)
     if stage is None:
         raise errors.ValidationError(f"Unknown stage: {key}", code="unknown_stage")
     return stage
@@ -131,7 +128,7 @@ def seed_defaults(db: Session) -> None:
     оба видят пустую воронку. Итог нужен один и тот же, и если его достиг
     другой — падать в момент старта незачем.
     """
-    if db.scalar(select(PipelineStage).limit(1)) is not None:
+    if pipeline_repo.any_exists(db):
         return
     try:
         apply_preset(db, DEFAULT_PRESET)
@@ -181,8 +178,7 @@ def apply_preset(
         # Без переезда сделки остались бы ссылаться на спрятанный этап:
         # формально целы, а на доске их нет и найти нельзя.
         target = first_open_key(db)
-        moved = list(db.scalars(select(Deal).where(Deal.stage.in_(dropped))))
-        for deal in moved:
+        for deal in deals_repo.in_stages(db, dropped):
             was = deal.stage
             deal.stage = target
             # Переезд идёт в журнал этапов наравне с обычной сменой.
@@ -266,7 +262,7 @@ def archive_stage(db: Session, key: str) -> None:
             "Cannot archive the last open stage", code="last_open_stage"
         )
 
-    for deal in db.scalars(select(Deal).where(Deal.stage == key)):
+    for deal in deals_repo.in_stages(db, [key]):
         deal.stage = target
     stage.is_archived = True
     db.flush()

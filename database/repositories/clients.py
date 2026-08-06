@@ -1,7 +1,8 @@
-from sqlalchemy import func, or_, select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from database.models import Client, ClientFile, ClientNote
+from database.query import contains, page_of
 
 
 def get_many(db: Session, ids) -> list[Client]:
@@ -48,7 +49,6 @@ def search(
     stmt = select(Client).where(Client.deleted_at.is_(None))
     if q:
         needle = q.strip()
-        like = f"%{needle}%"
         # Телефон ищем и как набрано, и в приведённом виде. Колонка `phone_norm`
         # заведена ровно ради этого («показываем то, что ввёл менеджер, а ищем —
         # по этому»), телефония ею пользуется, а поисковая строка — нет: две
@@ -57,22 +57,21 @@ def search(
         # двух.
         digits = "".join(ch for ch in needle if ch.isdigit())
         conditions = [
-            Client.name.ilike(like),
-            Client.company.ilike(like),
-            Client.phone.ilike(like),
-            Client.email.ilike(like),
-            Client.tags.ilike(like),
+            contains(Client.name, needle),
+            contains(Client.company, needle),
+            contains(Client.phone, needle),
+            contains(Client.email, needle),
+            contains(Client.tags, needle),
         ]
         if digits:
-            conditions.append(Client.phone_norm.ilike(f"%{digits}%"))
+            conditions.append(contains(Client.phone_norm, digits))
         stmt = stmt.where(or_(*conditions))
     if tag:
-        stmt = stmt.where(Client.tags.ilike(f"%{tag.strip()}%"))
+        stmt = stmt.where(contains(Client.tags, tag.strip()))
     if manager_id:
         stmt = stmt.where(Client.manager_id == manager_id)
-    total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
-    stmt = stmt.order_by(Client.updated_at.desc()).offset((page - 1) * per_page).limit(per_page)
-    return list(db.scalars(stmt)), total
+    stmt = stmt.order_by(Client.updated_at.desc())
+    return page_of(db, stmt, page=page, per_page=per_page)
 
 
 def list_notes(
@@ -95,13 +94,18 @@ def list_notes(
         base = base.where(ClientNote.kind == kind)
     if deal_id is not None:
         base = base.where(ClientNote.deal_id == deal_id)
-    total = db.scalar(select(func.count()).select_from(base.subquery())) or 0
-    stmt = (
-        base.order_by(ClientNote.happened_at.desc(), ClientNote.id.desc())
-        .offset((page - 1) * per_page)
-        .limit(per_page)
-    )
-    return list(db.scalars(stmt)), total
+    stmt = base.order_by(ClientNote.happened_at.desc(), ClientNote.id.desc())
+    return page_of(db, stmt, page=page, per_page=per_page)
+
+
+def get_note_by_id(db: Session, note_id: int) -> ClientNote | None:
+    """Запись ленты без оглядки на клиента.
+
+    Отдельно от `get_note`: там клиент известен из адреса и сверяется, здесь
+    к записи идут от звонка, который её и породил, — своего клиента он помнит
+    сам, и спрашивать его заново значило бы сверять запись саму с собой.
+    """
+    return db.get(ClientNote, note_id)
 
 
 def get_note(db: Session, client_id: int, note_id: int) -> ClientNote | None:
@@ -119,6 +123,24 @@ def list_files(db: Session, client_id: int) -> list[ClientFile]:
             .order_by(ClientFile.created_at.desc())
         )
     )
+
+
+def deleted(db: Session) -> list[Client]:
+    """Клиенты в корзине — для отчёта о том, сколько места можно освободить."""
+    return list(db.scalars(select(Client).where(Client.deleted_at.is_not(None))))
+
+
+def files_of(db: Session, client_ids) -> list[ClientFile]:
+    """Файлы сразу нескольких клиентов — одним запросом на весь список.
+
+    Отдельно от `list_files`: там речь про одну карточку, здесь про обход всей
+    корзины, и запрос на каждого клиента превратил бы отчёт о месте в сотни
+    обращений к базе ровно на той системе, где мусора накопилось больше всего.
+    """
+    client_ids = [i for i in set(client_ids) if i]
+    if not client_ids:
+        return []
+    return list(db.scalars(select(ClientFile).where(ClientFile.client_id.in_(client_ids))))
 
 
 def get_file(db: Session, client_id: int, file_id: int) -> ClientFile | None:

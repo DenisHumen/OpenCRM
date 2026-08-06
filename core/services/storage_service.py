@@ -10,12 +10,12 @@ import shutil
 import time
 from pathlib import Path
 
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from config.settings import get_settings
 from core.services import media_service
-from database.models import Board, Client, ClientFile, Work
+from database.repositories import boards as boards_repo
+from database.repositories import clients as clients_repo
 
 LEVEL_OK = "ok"
 LEVEL_WARNING = "warning"
@@ -78,21 +78,22 @@ def level_for(free_bytes: int, percent_used: float) -> str:
 
 def reclaimable(db: Session) -> dict:
     """Сколько занимают мягко удалённые доски и клиенты — это можно освободить."""
-    boards = list(db.scalars(select(Board).where(Board.deleted_at.is_not(None))))
-    board_bytes = 0
+    # Всё спрашивается наперёд, по разу на весь список. Запрос на каждую доску и
+    # на каждого клиента давал здесь по обращению к базе на строку корзины — а
+    # заглядывают сюда ровно тогда, когда корзина большая.
+    boards = boards_repo.deleted_boards(db)
+    works = boards_repo.works_by_board(db, [board.id for board in boards])
     works_count = 0
-    for board in boards:
-        for work in db.scalars(select(Work).where(Work.board_id == board.id)):
+    board_bytes = 0
+    for board_works in works.values():
+        for work in board_works:
             works_count += 1
             board_bytes += dir_size(media_service.work_dir(work.work_uid))
 
-    clients = list(db.scalars(select(Client).where(Client.deleted_at.is_not(None))))
-    client_bytes = 0
-    files_count = 0
-    for client in clients:
-        for file in db.scalars(select(ClientFile).where(ClientFile.client_id == client.id)):
-            files_count += 1
-            client_bytes += file.size_bytes or 0
+    clients = clients_repo.deleted(db)
+    files = clients_repo.files_of(db, [client.id for client in clients])
+    files_count = len(files)
+    client_bytes = sum(file.size_bytes or 0 for file in files)
 
     return {
         "bytes": board_bytes + client_bytes,

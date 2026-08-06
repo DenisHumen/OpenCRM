@@ -1,8 +1,9 @@
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.orm import Session
 
 from database.models import Client, Deal, DealStageChange, PipelineStage
 from database.models.pipeline import CLOSED_KINDS, KIND_OPEN, KIND_WON
+from database.query import contains, page_of
 
 
 def get(db: Session, deal_id: int, include_deleted: bool = False) -> Deal | None:
@@ -36,11 +37,15 @@ def search(
     if only_manager_id is not None:
         stmt = stmt.where(Deal.manager_id == only_manager_id)
     if q:
-        like = f"%{q.strip()}%"
+        needle = q.strip()
         # Ищем и по названию клиента: в жизни спрашивают «что там по Ромашке»,
         # а не «как называлась та сделка».
         stmt = stmt.join(Client, Client.id == Deal.client_id).where(
-            or_(Deal.title.ilike(like), Deal.description.ilike(like), Client.name.ilike(like))
+            or_(
+                contains(Deal.title, needle),
+                contains(Deal.description, needle),
+                contains(Client.name, needle),
+            )
         )
     if stage:
         stmt = stmt.where(Deal.stage == stage)
@@ -54,9 +59,8 @@ def search(
         closed = select(PipelineStage.key).where(PipelineStage.kind.in_(CLOSED_KINDS))
         stmt = stmt.where(Deal.stage.notin_(closed))
 
-    total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
-    stmt = stmt.order_by(Deal.updated_at.desc()).offset((page - 1) * per_page).limit(per_page)
-    return list(db.scalars(stmt)), total
+    stmt = stmt.order_by(Deal.updated_at.desc())
+    return page_of(db, stmt, page=page, per_page=per_page)
 
 
 def by_stage(
@@ -195,6 +199,44 @@ def for_client(
     if only_manager_id is not None:
         stmt = stmt.where(Deal.manager_id == only_manager_id)
     return list(db.scalars(stmt.order_by(Deal.created_at.desc())))
+
+
+def in_stages(db: Session, keys) -> list[Deal]:
+    """Заявки, стоящие в перечисленных этапах.
+
+    Мягко удалённых берём тоже, и это намеренно: перестройка воронки убирает
+    этап целиком, и заявка из корзины, оставленная ссылаться на исчезнувший
+    ключ, при восстановлении оказалась бы нигде — ни на доске, ни в списке.
+    """
+    keys = [key for key in keys if key]
+    if not keys:
+        return []
+    return list(db.scalars(select(Deal).where(Deal.stage.in_(keys))))
+
+
+def take_stage(db: Session, deal: Deal, *, expected: str, values: dict) -> bool:
+    """Сменить этап, пока он тот, что прочитали. False — кто-то успел раньше.
+
+    Условие стоит в самом UPDATE, а не в проверке перед ним. Двое двигают одну
+    заявку разом: оба читают `new`, оба пишут по строке журнала, обоим отвечают
+    «готово». В базе остаётся последний, а в журнале две записи из одного этапа
+    — `new → in_progress` и `new → done`. Перехода `in_progress → done` не было
+    ни разу, и отчёт «сколько заявка простояла в этапе» считает по разорванной
+    цепочке. Данные при этом целы, тем и неприятно: заметить нечего, пока не
+    сверишь журнал с глазами.
+
+    Условие снимает вопрос без блокировок и колонки версии. Отказ честнее
+    молчаливой перезаписи: заявку за это время передвинул человек, и решать, что
+    делать дальше, ему.
+    """
+    changed = db.execute(
+        update(Deal).where(Deal.id == deal.id, Deal.stage == expected).values(**values)
+    )
+    if changed.rowcount == 0:
+        return False
+    # Объект в памяти помнит прежний этап: меняли строку запросом, мимо него.
+    db.refresh(deal)
+    return True
 
 
 # --- журнал этапов ---

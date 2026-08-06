@@ -97,6 +97,25 @@ def png_bytes(color=(217, 119, 87), size=(640, 480)) -> bytes:
     return buffer.getvalue()
 
 
+@pytest.fixture
+def db():
+    """Сессия БД для проверок уровнем ниже HTTP — репозитории и общий слой запросов.
+
+    Всё, что в ней сделано, откатывается: тесты в наборе гоняются в обоих
+    порядках, и записи, оставленные одним, не должны попадаться на глаза
+    другому. Отсюда же требование к самим проверкам — не считать строки во всей
+    таблице, а искать свои по приметному имени.
+    """
+    from database.session import SessionLocal
+
+    session = SessionLocal()
+    try:
+        yield session
+    finally:
+        session.rollback()
+        session.close()
+
+
 @pytest.fixture(scope="session")
 def base_client():
     """Первый клиент: прогоняет lifespan (создание схемы, bootstrap root)."""

@@ -20,14 +20,14 @@
 проверка на каждый запрос. Запрос при этом один и по индексу.
 """
 
-from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from core import exceptions as errors
 from core import permissions
 from core import uniqueness
 from core.services import audit_service
-from database.models import Role, RolePermission, User
+from database.models import Role, User
+from database.repositories import roles as roles_repo
 from database.models.audit import SOURCE_MANUAL
 from database.models.role import MAX_ROLE_NAME
 from database.models.user import ROLE_ROOT
@@ -139,7 +139,7 @@ DEFAULT_PRESET = "manager"
 
 
 def codes_of_role(db: Session, role_id: int) -> set[str]:
-    rows = db.scalars(select(RolePermission).where(RolePermission.role_id == role_id))
+    rows = roles_repo.permissions_of(db, role_id)
     # Сверяем с реестром: строка от снесённого блока не должна ничего давать.
     return {
         permissions.code(row.area, row.action)
@@ -197,27 +197,22 @@ def sees_amounts(db: Session, user: User, area: str = "deals") -> bool:
 
 
 def list_roles(db: Session) -> list[Role]:
-    return list(db.scalars(select(Role).order_by(Role.name.asc())))
+    return roles_repo.list_all(db)
 
 
 def get_role(db: Session, role_id: int) -> Role:
-    role = db.get(Role, role_id)
+    role = roles_repo.get(db, role_id)
     if role is None:
         raise errors.NotFoundError("Role not found", code="role_not_found")
     return role
 
 
 def default_role(db: Session) -> Role | None:
-    return db.scalar(select(Role).where(Role.is_default.is_(True)))
+    return roles_repo.default_role(db)
 
 
 def count_users_of(db: Session, role_id: int) -> int:
-    from sqlalchemy import func
-
-    return (
-        db.scalar(select(func.count()).select_from(User).where(User.role_id == role_id))
-        or 0
-    )
+    return roles_repo.users_count(db, role_id)
 
 
 # --- инвариант: раздавать права всегда есть кому ---
@@ -243,22 +238,13 @@ def _managers_of_roles(
     Считаем по активным: у отключённого сотрудника право есть, а войти он не
     может — управлять правами ему нечем.
     """
-    from database.models.user import STATUS_ACTIVE
-
-    granting = select(RolePermission.role_id).where(
-        RolePermission.area == "roles", RolePermission.action == permissions.MANAGE
+    return roles_repo.managers_count(
+        db,
+        manage_area="roles",
+        manage_action=permissions.MANAGE,
+        exclude_user=exclude_user,
+        exclude_role=exclude_role,
     )
-    if exclude_role is not None:
-        granting = granting.where(RolePermission.role_id != exclude_role)
-
-    stmt = select(func.count(User.id)).where(
-        User.role != ROLE_ROOT,
-        User.status == STATUS_ACTIVE,
-        User.role_id.in_(granting),
-    )
-    if exclude_user is not None:
-        stmt = stmt.where(User.id != exclude_user)
-    return db.scalar(stmt) or 0
 
 
 def _refuse_if_nobody_left_to_manage_roles(db: Session, **exclusions) -> None:
@@ -291,7 +277,7 @@ def _clean_name(db: Session, name: str, *, role_id: int | None = None) -> str:
     if not name:
         raise errors.ValidationError("Name is required", code="name_required")
     name = name[:MAX_ROLE_NAME]
-    clash = db.scalar(select(Role).where(Role.name == name))
+    clash = roles_repo.get_by_name(db, name)
     if clash is not None and clash.id != role_id:
         raise errors.ConflictError("A role with this name already exists", code="role_name_taken")
     return name
@@ -316,12 +302,7 @@ def _clean_codes(values) -> list[tuple[str, str]]:
 
 
 def _write_codes(db: Session, role: Role, pairs: list[tuple[str, str]]) -> None:
-    for row in db.scalars(select(RolePermission).where(RolePermission.role_id == role.id)):
-        db.delete(row)
-    db.flush()
-    for area, action in pairs:
-        db.add(RolePermission(role_id=role.id, area=area, action=action))
-    db.flush()
+    roles_repo.replace_permissions(db, role.id, pairs)
 
 
 def create_role(
@@ -348,7 +329,7 @@ def create_role(
     role = uniqueness.insert_unique(
         db,
         Role(name=_clean_name(db, name), preset=preset[:32], is_default=False),
-        taken=lambda row: db.scalar(select(Role.id).where(Role.name == row.name)) is not None,
+        taken=lambda row: roles_repo.name_exists(db, row.name),
         message="A role with this name already exists",
         code="role_name_taken",
     )
@@ -477,11 +458,7 @@ def set_default(db: Session, role_id: int) -> Role:
     сотрудник входит в CRM без единого раздела и без объяснения, почему.
     """
     role = get_role(db, role_id)
-    db.execute(update(Role).where(Role.id == role.id).values(is_default=True))
-    db.execute(
-        update(Role).where(Role.id != role.id, Role.is_default.is_(True)).values(is_default=False)
-    )
-    db.refresh(role)
+    roles_repo.make_default(db, role)
     return role
 
 
@@ -583,7 +560,7 @@ def seed_defaults(db: Session) -> None:
     принять ни одного сотрудника, а требовать собрать матрицу до первого найма —
     тот самый пустой конструктор, которого здесь не должно быть.
     """
-    if db.scalar(select(Role).limit(1)) is not None:
+    if roles_repo.any_exists(db):
         return
     try:
         role = create_from_preset(db, DEFAULT_PRESET)

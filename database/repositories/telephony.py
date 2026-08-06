@@ -1,13 +1,55 @@
 from datetime import datetime
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from database.models import Client, PhoneCall
+from database.query import contains, page_of
 
 
 def get(db: Session, call_id: int) -> PhoneCall | None:
     return db.get(PhoneCall, call_id)
+
+
+def insert_or_take(db: Session, call: PhoneCall) -> PhoneCall:
+    """Вставить звонок, а если его только что вставил кто-то другой — взять тот.
+
+    Четвёртый ответ на проигранную гонку, которого нет в `core/uniqueness.py`:
+    там проигравший либо узнаёт «занято», либо берёт следующее свободное, либо
+    пожимает плечами. Здесь ему нужна **именно та строка**, которую вставил
+    победитель, — и найти её можно только по своему ключу, общего вида у такого
+    поиска нет.
+
+    Зачем: события одного звонка (начался → ответили → завершился) уходят
+    подряд, а при разрыве связи АТС повторяет пачку. Два запроса читают «нет
+    такого» одновременно, оба вставляют — и проигравший получал 500. Данные при
+    этом оставались целы (уникальный индекс своё дело делал), но станция видела
+    ошибку, считала событие недоставленным и слала его снова, раскручивая петлю
+    повторов на ровном месте.
+
+    На SQLite до нарушения уникальности доходит редко: единственный писатель
+    успевает раньше, и второй запрос чаще упирается в блокировку. Обработка
+    нужна не поэтому — на MySQL, куда проект собирается, писатели не
+    сериализуются, и там эта гонка обычное дело, а не редкость.
+    """
+    try:
+        with db.begin_nested():
+            db.add(call)
+            db.flush()
+        return call
+    except IntegrityError:
+        # Откат точки обычно сам выбрасывает добавленное в ней из сессии, но
+        # полагаться на это нельзя: останься объект ожидающим вставки — следующий
+        # flush повторил бы её и упал бы уже без спасения.
+        if call in db:
+            db.expunge(call)
+        existing = get_by_external_id(db, call.external_id)
+        if existing is None:
+            # Уникальность нарушена не по external_id — значит дело не в гонке,
+            # а в чём-то другом, и прятать такую ошибку нельзя.
+            raise
+        return existing
 
 
 def get_by_external_id(db: Session, external_id: str) -> PhoneCall | None:
@@ -60,18 +102,15 @@ def list_calls(
     if number:
         # Ищем по нормализованному номеру: в поле поиска набирают как придётся,
         # а в базе лежит единый вид — сравнивать надо одинаково приведённые.
-        like = f"%{number}%"
         stmt = stmt.where(
-            or_(PhoneCall.from_number_norm.like(like), PhoneCall.to_number_norm.like(like))
+            or_(
+                contains(PhoneCall.from_number_norm, number),
+                contains(PhoneCall.to_number_norm, number),
+            )
         )
     if since is not None:
         stmt = stmt.where(PhoneCall.started_at >= since)
     if until is not None:
         stmt = stmt.where(PhoneCall.started_at <= until)
-    total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
-    stmt = (
-        stmt.order_by(PhoneCall.started_at.desc(), PhoneCall.id.desc())
-        .offset((page - 1) * per_page)
-        .limit(per_page)
-    )
-    return list(db.scalars(stmt)), total
+    stmt = stmt.order_by(PhoneCall.started_at.desc(), PhoneCall.id.desc())
+    return page_of(db, stmt, page=page, per_page=per_page)

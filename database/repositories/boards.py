@@ -2,6 +2,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from database.models import Board, Work
+from database.query import contains, page_of
 
 
 def get(db: Session, board_id: int, include_deleted: bool = False) -> Board | None:
@@ -22,13 +23,12 @@ def search(
 ) -> tuple[list[Board], int]:
     stmt = select(Board).where(Board.deleted_at.is_(None))
     if q:
-        like = f"%{q.strip()}%"
-        stmt = stmt.where(or_(Board.title.ilike(like), Board.description.ilike(like)))
+        needle = q.strip()
+        stmt = stmt.where(or_(contains(Board.title, needle), contains(Board.description, needle)))
     if client_id:
         stmt = stmt.where(Board.client_id == client_id)
-    total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
-    stmt = stmt.order_by(Board.updated_at.desc()).offset((page - 1) * per_page).limit(per_page)
-    return list(db.scalars(stmt)), total
+    stmt = stmt.order_by(Board.updated_at.desc())
+    return page_of(db, stmt, page=page, per_page=per_page)
 
 
 def works_count_by_board(db: Session, board_ids: list[int]) -> dict[int, int]:
@@ -96,3 +96,39 @@ def for_deal(db: Session, deal_id: int) -> list[Board]:
 
 def count_works(db: Session, board_id: int) -> int:
     return db.scalar(select(func.count()).where(Work.board_id == board_id).select_from(Work)) or 0
+
+
+def get_work_by_id(db: Session, work_id: int) -> Work | None:
+    """Работа без оглядки на доску — для менеджера файлов, где доски ещё не знают."""
+    return db.get(Work, work_id)
+
+
+def works_with_board_title(db: Session) -> list[tuple[Work, str]]:
+    """Все работы живых досок вместе с названием доски — одним запросом.
+
+    Название приходит соединением, а не отдельным запросом на каждую работу:
+    менеджер файлов открывают, когда на диске тесно, то есть работ там тысячи.
+    """
+    return list(
+        db.execute(
+            select(Work, Board.title)
+            .join(Board, Board.id == Work.board_id)
+            .where(Board.deleted_at.is_(None))
+            .order_by(Work.created_at.desc(), Work.id.desc())
+        ).all()
+    )
+
+
+def works_of_deleted_boards(db: Session) -> list[tuple[Board, Work]]:
+    """Работы досок, лежащих в корзине, — чтобы посчитать занятое ими место."""
+    return list(
+        db.execute(
+            select(Board, Work)
+            .join(Work, Work.board_id == Board.id)
+            .where(Board.deleted_at.is_not(None))
+        ).all()
+    )
+
+
+def deleted_boards(db: Session) -> list[Board]:
+    return list(db.scalars(select(Board).where(Board.deleted_at.is_not(None))))

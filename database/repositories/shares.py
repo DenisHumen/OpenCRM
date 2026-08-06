@@ -1,7 +1,26 @@
+from datetime import datetime
+
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from database.models import ShareLink, ShareView
+from database.query import page_of
+
+
+def last_view_by_board(db: Session) -> dict[int, datetime]:
+    """Когда витрину каждой доски смотрели в последний раз.
+
+    Одним запросом на все доски, а не по разу на доску: этим пользуется менеджер
+    файлов, где строк тысячи, и запрос в цикле превратил бы открытие экрана в
+    минуты. Доски, которую не смотрели ни разу, в ответе нет — «никогда»
+    подставляет спрашивающий.
+    """
+    rows = db.execute(
+        select(ShareLink.board_id, func.max(ShareView.viewed_at))
+        .join(ShareView, ShareView.share_link_id == ShareLink.id)
+        .group_by(ShareLink.board_id)
+    ).all()
+    return {board_id: seen for board_id, seen in rows if seen is not None}
 
 
 def get(db: Session, share_id: int) -> ShareLink | None:
@@ -54,11 +73,9 @@ def last_view(db: Session, share_id: int) -> ShareView | None:
 def list_views(
     db: Session, share_id: int, page: int = 1, per_page: int = 50
 ) -> tuple[list[ShareView], int]:
-    base = select(ShareView).where(ShareView.share_link_id == share_id)
-    total = db.scalar(select(func.count()).select_from(base.subquery())) or 0
     stmt = (
-        base.order_by(ShareView.viewed_at.desc(), ShareView.id.desc())
-        .offset((page - 1) * per_page)
-        .limit(per_page)
+        select(ShareView)
+        .where(ShareView.share_link_id == share_id)
+        .order_by(ShareView.viewed_at.desc(), ShareView.id.desc())
     )
-    return list(db.scalars(stmt)), total
+    return page_of(db, stmt, page=page, per_page=per_page)

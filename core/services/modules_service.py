@@ -9,7 +9,6 @@ uvicorn, если их несколько, и столько же ждёт root 
 из меню».
 """
 
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from core import exceptions as errors
@@ -17,6 +16,7 @@ from core import modules
 from core.services import audit_service
 from core.utils import now_utc
 from database.models import ModuleState, User
+from database.repositories import modules as modules_repo
 
 CACHE_SECONDS = 2.0
 
@@ -51,7 +51,7 @@ def state(db: Session) -> dict[str, bool]:
 
 def _read_state(db: Session) -> dict[str, bool]:
     """Состояние блоков по базе, мимо кэша. Реестр главнее строки в базе."""
-    stored = {row.key: row.enabled for row in db.scalars(select(ModuleState))}
+    stored = modules_repo.enabled_map(db)
     result: dict[str, bool] = {}
     for module in modules.MODULES:
         if module.core:
@@ -111,7 +111,7 @@ def set_enabled(db: Session, key: str, enabled: bool, user: User) -> dict[str, b
     # Состояние до переключения. `state` всегда содержит все блоки реестра,
     # поэтому ключ на месте, даже если строки в базе ещё нет.
     was = current[key]
-    row = db.get(ModuleState, key)
+    row = modules_repo.get(db, key)
     if row is None:
         db.add(ModuleState(key=key, enabled=enabled, updated_by=user.id))
     else:
@@ -150,7 +150,7 @@ def set_enabled(db: Session, key: str, enabled: bool, user: User) -> dict[str, b
 def details(db: Session) -> list[dict]:
     """Полная картина для экрана настроек: состояние плюс причины, почему нельзя."""
     current = state(db)
-    stamps = {row.key: row for row in db.scalars(select(ModuleState))}
+    stamps = {row.key: row for row in modules_repo.all_rows(db)}
     result = []
     for module in modules.MODULES:
         row = stamps.get(module.key)

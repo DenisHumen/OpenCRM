@@ -2,6 +2,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from database.models import Client, MailAccount, MailMessage
+from database.query import contains, page_of
 
 
 def list_accounts(db: Session) -> list[MailAccount]:
@@ -57,21 +58,16 @@ def search_messages(
     if unread is not None:
         stmt = stmt.where(MailMessage.is_read == (not unread))
     if q:
-        like = f"%{q.strip()}%"
+        needle = q.strip()
         stmt = stmt.where(
             or_(
-                MailMessage.subject.ilike(like),
-                MailMessage.from_addr.ilike(like),
-                MailMessage.to_addrs.ilike(like),
+                contains(MailMessage.subject, needle),
+                contains(MailMessage.from_addr, needle),
+                contains(MailMessage.to_addrs, needle),
             )
         )
-    total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
-    stmt = (
-        stmt.order_by(MailMessage.sent_at.desc(), MailMessage.id.desc())
-        .offset((page - 1) * per_page)
-        .limit(per_page)
-    )
-    return list(db.scalars(stmt)), total
+    stmt = stmt.order_by(MailMessage.sent_at.desc(), MailMessage.id.desc())
+    return page_of(db, stmt, page=page, per_page=per_page)
 
 
 def find_client_by_email(db: Session, address: str) -> Client | None:

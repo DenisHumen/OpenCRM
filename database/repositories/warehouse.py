@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from database.models import Product, StockMove
 from database.models.warehouse import QUANTITY_SCALE
+from database.query import contains, page_of
 
 
 def get_product(db: Session, product_id: int, include_deleted: bool = False) -> Product | None:
@@ -39,13 +40,12 @@ def search_products(
 ) -> tuple[list[Product], int]:
     stmt = select(Product).where(Product.deleted_at.is_(None))
     if q:
-        like = f"%{q.strip()}%"
-        stmt = stmt.where(or_(Product.name.ilike(like), Product.sku.ilike(like)))
+        needle = q.strip()
+        stmt = stmt.where(or_(contains(Product.name, needle), contains(Product.sku, needle)))
     if not include_services:
         stmt = stmt.where(Product.is_service.is_(False))
-    total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
-    stmt = stmt.order_by(Product.name).offset((page - 1) * per_page).limit(per_page)
-    return list(db.scalars(stmt)), total
+    stmt = stmt.order_by(Product.name)
+    return page_of(db, stmt, page=page, per_page=per_page)
 
 
 def names_of(db: Session, product_ids: set[int]) -> dict[int, tuple[str, str]]:
@@ -112,14 +112,10 @@ def list_moves(
     page: int = 1,
     per_page: int = 50,
 ) -> tuple[list[StockMove], int]:
-    base = _moves_base(product_id, deal_id)
-    total = db.scalar(select(func.count()).select_from(base.subquery())) or 0
-    stmt = (
-        base.order_by(StockMove.happened_at.desc(), StockMove.id.desc())
-        .offset((page - 1) * per_page)
-        .limit(per_page)
+    stmt = _moves_base(product_id, deal_id).order_by(
+        StockMove.happened_at.desc(), StockMove.id.desc()
     )
-    return list(db.scalars(stmt)), total
+    return page_of(db, stmt, page=page, per_page=per_page)
 
 
 #: количество × цена даёт «минорные единицы, умноженные на QUANTITY_SCALE» —

@@ -16,8 +16,6 @@ import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from core import exceptions as errors
@@ -28,9 +26,13 @@ from core.services import (
     telephony_providers,
 )
 from core.utils import normalize_phone, now_utc
-from database.models import ClientNote, Deal, PhoneCall, SiteSetting, User
+from database.models import ClientNote, PhoneCall, User
 from database.models.telephony import CALL_DIRECTIONS, CALL_OUTCOMES
+from database.repositories import clients as clients_repo
+from database.repositories import deals as deals_repo
+from database.repositories import settings as settings_repo
 from database.repositories import telephony as telephony_repo
+from database.repositories import users as users_repo
 
 # --- настройки подключения ---
 #
@@ -70,7 +72,7 @@ SIGNATURE_TOLERANCE_SECONDS = 300
 # --- настройки ---
 
 def get_settings_values(db: Session) -> dict[str, str]:
-    rows = db.scalars(select(SiteSetting).where(SiteSetting.key.like(f"{SETTINGS_PREFIX}%")))
+    rows = settings_repo.rows_with_prefix(db, SETTINGS_PREFIX)
     values = {
         SETTING_PROVIDER: "",
         SETTING_API_URL: "",
@@ -139,13 +141,7 @@ def regenerate_webhook_secret(db: Session) -> str:
 
 
 def _write_setting(db: Session, key: str, value: str) -> None:
-    row = db.scalar(select(SiteSetting).where(SiteSetting.key == key))
-    if row is None:
-        db.add(SiteSetting(key=key, value=value))
-    else:
-        row.value = value
-        row.updated_at = now_utc()
-    db.flush()
+    settings_repo.write(db, key, value)
 
 
 def country_code(db: Session) -> str:
@@ -305,24 +301,9 @@ def _insert_or_take_existing(
     ``company_service.set_default`` о частичных индексах), писателей не
     сериализует, и там эта гонка — обычное дело, а не редкость.
     """
-    call = PhoneCall(external_id=external_id, direction=direction, started_at=started_at)
-    try:
-        with db.begin_nested():
-            db.add(call)
-            db.flush()
-        return call
-    except IntegrityError:
-        # Откат точки обычно сам выбрасывает добавленное в ней из сессии, но
-        # полагаться на это нельзя: останься объект ожидающим вставки — следующий
-        # flush повторил бы её и упал бы уже без спасения.
-        if call in db:
-            db.expunge(call)
-        existing = telephony_repo.get_by_external_id(db, external_id)
-        if existing is None:
-            # Уникальность нарушена не по external_id — значит дело не в гонке,
-            # а в чём-то другом, и прятать такую ошибку нельзя.
-            raise
-        return existing
+    return telephony_repo.insert_or_take(
+        db, PhoneCall(external_id=external_id, direction=direction, started_at=started_at)
+    )
 
 
 def ingest_event(db: Session, payload: dict) -> PhoneCall:
@@ -387,7 +368,7 @@ def ingest_event(db: Session, payload: dict) -> PhoneCall:
     # Клиента так брать нельзя (см. ниже): про клиентов станция ничего не знает.
     operator = str(payload.get("operator_email") or "").strip().lower()
     if operator and call.user_id is None:
-        user = db.scalar(select(User).where(User.email == operator))
+        user = users_repo.get_by_email(db, operator)
         if user is not None:
             call.user_id = user.id
 
@@ -471,7 +452,7 @@ def _sync_feed_note(db: Session, call: PhoneCall) -> None:
         return
     body = feed_body(call)
     if call.note_id is not None:
-        note = db.get(ClientNote, call.note_id)
+        note = clients_repo.get_note_by_id(db, call.note_id)
         if note is not None:
             # событие может уточнить итог и длительность — правим существующую
             # запись, а не добавляем в ленту вторую
@@ -587,7 +568,7 @@ def attach_deal(db: Session, call: PhoneCall, deal_id: int | None) -> PhoneCall:
     if deal_id is None:
         call.deal_id = None
     else:
-        deal = db.get(Deal, deal_id)
+        deal = deals_repo.get(db, deal_id)
         if deal is None:
             raise errors.NotFoundError("Deal not found", code="deal_not_found")
         if call.client_id is not None and deal.client_id != call.client_id:
