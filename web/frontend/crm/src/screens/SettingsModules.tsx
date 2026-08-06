@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 
 import { Icon } from "../components/Icon";
 import { ConfirmModal, ScreenLoading, Toggle } from "../components/ui";
@@ -9,7 +10,10 @@ import { formatDateTime } from "../lib/format";
 import type { TranslationKey } from "../lib/i18n";
 
 /** Подписи блоков. Ключи приходят с сервера из реестра (core/modules.py). */
-const LABEL: Record<string, TranslationKey> = {
+/** Подписи блоков. Экспортируется, потому что тем же списком пользуется экран
+ *  первого входа: две копии одной карты разъезжаются молча — так уже разошлись
+ *  значки блоков между меню и настройками. */
+export const LABEL: Record<string, TranslationKey> = {
   clients: "clients",
   deals: "deals",
   companies: "companies",
@@ -121,6 +125,11 @@ export function SettingsModules() {
           <h1 className="page-title">{t("modules")}</h1>
           <div className="page-sub">{t("modulesSub")}</div>
         </div>
+        {/* Вернуться к вопросу «чем вы занимаетесь» можно всегда: человек
+            выбрал набор в первый день, а через месяц открыл магазин. */}
+        <Link className="btn btn-secondary btn-sm" to="/setup">
+          {t("setupTitle")}
+        </Link>
       </div>
 
       <div className="card card-pad" style={{ marginBottom: 18 }}>

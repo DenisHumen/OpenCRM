@@ -214,3 +214,49 @@ def _write_state(db: Session, key: str, enabled: bool, user: User, *, was: bool)
         before="on" if was else "off",
         after="on" if enabled else "off",
     )
+
+
+def apply_preset(db: Session, key: str, user: User) -> dict:
+    """Включить набор блоков под тип дела. Возвращает, что получилось.
+
+    **Только включает, ничего не выключает.** Забрать раздел с данными одним
+    нажатием — самый быстрый способ потерять доверие: человек выбрал «Розница»,
+    а из меню пропали доски, на которых лежит полгода работы. Поэтому блоки вне
+    набора остаются как есть, а не гасятся «для чистоты».
+
+    Идёт **тем же путём, что и переключатель руками** — через `set_enabled`, со
+    всеми зависимостями и записями в журнал. Своего пути записи у набора быть не
+    должно: он однажды включил бы заказы без бланков, и разбираться пришлось бы
+    в двух местах сразу.
+
+    Тип дела при этом **никуда не запоминается**. Набор — точка отсчёта, а не
+    режим работы: выбор это нажатие пяти переключателей за один раз, и только.
+    Заведи мы «режим розницы», и через полгода в коде будет тридцать развилок
+    `if тип == ...` (разбор — в шапке `core/modules.py`).
+    """
+    chosen = modules.preset(key)
+    if chosen is None:
+        raise errors.ValidationError(f"Unknown preset: {key}", code="unknown_preset")
+
+    before = state(db)
+    turned_on: list[str] = []
+    for module_key in chosen.modules:
+        if before.get(module_key):
+            continue
+        # `set_enabled` сам поднимет то, на чём блок стоит, и в верном порядке.
+        set_enabled(db, module_key, True, user)
+        turned_on.append(module_key)
+
+    after = _read_state(db)
+    return {
+        "preset": chosen.key,
+        # Что именно включилось — вместе с поднятым по зависимостям: человек
+        # выбрал «Розница», а появились ещё и заявки, на которых стоит склад.
+        # Не сказать об этом значит оставить в меню разделы, о которых не
+        # договаривались.
+        "enabled": sorted(k for k, on in after.items() if on and not before.get(k)),
+        "asked": list(turned_on),
+        "pipeline": chosen.pipeline,
+        "deal_term": chosen.deal_term,
+        "items": [{"key": k, "enabled": v} for k, v in after.items()],
+    }

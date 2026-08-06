@@ -670,7 +670,25 @@ const en = {
   barcodeScan: "Scan a barcode",
   barcodeScanHint: "The scanner types the digits itself — just leave the cursor here.",
   barcodeUnknown: "Code {code} is not on any item",
+  // наборы блоков под тип дела
+  setupTitle: "What do you do?",
+  setupHint:
+    "One answer switches on the sections you need, sets the pipeline and picks the word for your main record. It is a starting point, not a mode: everything can be changed one switch at a time afterwards.",
+  setupSkip: "I will pick myself",
+  setupWillEnable: "Switches on",
+  setupNothingOff: "Nothing is switched off — sections you already use stay where they are.",
+  presetServices: "Services and repair",
+  presetServicesAbout: "Workshops, on-site work, anything taken in and handed back",
+  presetRetail: "Retail",
+  presetRetailAbout: "A shop with a counter: goods, labels, orders",
+  presetWholesale: "Wholesale",
+  presetWholesaleAbout: "Shipping to businesses: invoices, legal entities, mail",
+  presetProduction: "Production",
+  presetProductionAbout: "Making things: stock, own barcodes, orders",
+  presetAgency: "Studio or agency",
+  presetAgencyAbout: "Projects and deliverables: boards, reminders, mail",
   // склады как места
+
   warehouses: "Warehouses",
   warehousesSub: "Where the goods physically are: shop floor, back room, the van",
   warehousesAbout:
@@ -1489,7 +1507,25 @@ const ru: typeof en = {
   barcodeScan: "Сканировать штрихкод",
   barcodeScanHint: "Сканер набирает цифры сам — достаточно оставить курсор здесь.",
   barcodeUnknown: "Код {code} не закреплён ни за одной позицией",
+  // наборы блоков под тип дела
+  setupTitle: "Чем вы занимаетесь?",
+  setupHint:
+    "Один ответ включит нужные разделы, поставит воронку и подберёт слово для основной записи. Это точка отсчёта, а не режим: дальше всё меняется по одному переключателю.",
+  setupSkip: "Соберу сам",
+  setupWillEnable: "Включится",
+  setupNothingOff: "Ничего не выключается — разделы, которыми уже пользуетесь, останутся на месте.",
+  presetServices: "Услуги и ремонт",
+  presetServicesAbout: "Мастерские, выездные работы — всё, что принимают и отдают обратно",
+  presetRetail: "Розничная торговля",
+  presetRetailAbout: "Магазин со стойкой: товары, наклейки, заказы",
+  presetWholesale: "Оптовая торговля",
+  presetWholesaleAbout: "Отгрузки юрлицам: счета, свои фирмы, почта",
+  presetProduction: "Производство",
+  presetProductionAbout: "Своё изделие: склад, собственные штрихкоды, заказы",
+  presetAgency: "Студия или агентство",
+  presetAgencyAbout: "Проекты и макеты: доски, напоминания, почта",
   // склады как места
+
   warehouses: "Склады",
   warehousesSub: "Где товар лежит физически: зал, подсобка, машина мастера",
   warehousesAbout:

@@ -155,3 +155,77 @@ def requirements_tree(key: str) -> tuple[str, ...]:
 
     walk(key)
     return tuple(order)
+
+
+# --- наборы блоков под тип дела ----------------------------------------------
+#
+# Человек, только что поставивший CRM, не знает, что ему нужно: он видит десяток
+# переключателей с незнакомыми словами и закрывает вкладку. Тот же довод, по
+# которому у воронки сделаны пресеты, а не пустой редактор.
+#
+# **Набор — точка отсчёта, а не режим работы.** Система НЕ запоминает тип дела и
+# ничего по нему больше не решает: выбор набора — это нажатие пяти
+# переключателей за один раз, и только. Заведи мы «режим розницы», и через
+# полгода в коде будет тридцать развилок `if тип == ...`, каждая из которых —
+# место, где система ведёт себя по-разному без очевидной причины.
+#
+# Состав лежит здесь, рядом с реестром блоков, а не во фронтенде: список ключей
+# в `.tsx` разошёлся бы с реестром на первом же новом блоке, и заметить это было
+# бы некому — ровно так однажды разошлись значки блоков между меню и настройками.
+
+
+@dataclass(frozen=True)
+class Preset:
+    """Чем занимается бизнес — и что ему для этого включить."""
+
+    key: str
+    #: Блоки сверх несущих. Порядок не важен: включает их `modules_service`, и
+    #: он же поднимает то, на чём они стоят.
+    modules: tuple[str, ...]
+    #: Пресет воронки из `pipeline_service.PRESETS`.
+    pipeline: str
+    #: Как называть заявку: `deal | order | request | booking` (см.
+    #: `database/models/settings.py`). У розницы это «заказ», у мастерской —
+    #: «заявка», и подписи по всей системе меняются вслед за словом.
+    deal_term: str
+
+
+#: Порядок — как показывать карточки при первом входе: от самого частого.
+PRESETS: tuple[Preset, ...] = (
+    Preset(
+        key="services",
+        modules=("documents", "warehouse", "tasks", "telephony"),
+        pipeline="services",
+        deal_term="request",
+    ),
+    Preset(
+        key="retail",
+        modules=("warehouse", "labels", "orders", "documents"),
+        pipeline="shop",
+        deal_term="order",
+    ),
+    Preset(
+        key="wholesale",
+        modules=("warehouse", "labels", "orders", "documents", "companies", "mail"),
+        pipeline="shop",
+        deal_term="order",
+    ),
+    Preset(
+        key="production",
+        modules=("warehouse", "labels", "orders", "documents", "companies"),
+        pipeline="universal",
+        deal_term="order",
+    ),
+    Preset(
+        key="agency",
+        modules=("boards", "tasks", "mail"),
+        pipeline="agency",
+        deal_term="deal",
+    ),
+)
+
+PRESETS_BY_KEY: dict[str, Preset] = {preset.key: preset for preset in PRESETS}
+
+
+def preset(key: str) -> Preset | None:
+    return PRESETS_BY_KEY.get(key)
