@@ -187,6 +187,14 @@ def test_showcase_renders_case_button_only_with_url(manager_client):
 
 
 def test_showcase_return_button_with_and_without_logo(manager_client, root_client):
+    # Надпись проверяем английскую — значит и язык витрины называем сами.
+    # Он общая настройка сайта: соседний тест переключил её на русский, и этот
+    # падал, читая «Вернуться на сайт» вместо «Return to the site». Молчаливое
+    # «по умолчанию английский» держалось только на порядке файлов.
+    root_client.patch(
+        f"{API}/settings",
+        json={"values": {"showcase_locale": "en", "studio_site_label": ""}},
+    )
     board, _work_id = _board_with_work(manager_client, title="Витрина шапки")
     manager_client.patch(f"{API}/boards/{board['id']}", json={"is_published": True})
     share = manager_client.post(f"{API}/boards/{board['id']}/shares", json={}).json()

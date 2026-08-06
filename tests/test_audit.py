@@ -395,12 +395,23 @@ def test_deletion_remembers_what_was_deleted(root_client, manager_client):
 
 
 def test_switching_a_module_records_both_states(root_client):
-    """Вопрос «куда делся раздел» задают на следующий день после выключения."""
-    before = len(entries(root_client, entity_type="module"))
+    """Вопрос «куда делся раздел» задают на следующий день после выключения.
+
+    Смотрим записи про **этот** блок, а не общий счётчик по всем: страница
+    журнала отдаёт полсотни строк, и как только соседние тесты нащёлкали столько
+    же переключений, «стало на две больше» перестаёт наступать вовсе. Тест
+    падал не от поломки, а от собственного соседства — проверено обратным
+    порядком файлов.
+    """
+    # У блока нет числового идентификатора — его имя лежит в снимке названия.
+    about_tasks = lambda: [
+        e for e in entries(root_client, action="module.switched") if e["entity_label"] == "tasks"
+    ]
+    before = len(about_tasks())
     assert root_client.post(f"{API}/modules/tasks", json={"enabled": False}).status_code == 200
     assert root_client.post(f"{API}/modules/tasks", json={"enabled": True}).status_code == 200
 
-    logged = entries(root_client, entity_type="module")
+    logged = about_tasks()
     assert len(logged) == before + 2
     assert (logged[1]["value_before"], logged[1]["value_after"]) == ("on", "off")
     assert (logged[0]["value_before"], logged[0]["value_after"]) == ("off", "on")

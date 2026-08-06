@@ -39,6 +39,11 @@ def test_update_settings_and_showcase_branding(root_client, manager_client):
     bad = root_client.patch(f"{API}/settings", json={"values": {"hacker_key": "x"}})
     assert bad.status_code == 422
 
+    # Язык витрины — настройка на весь сайт, и база у тестов общая. Оставить её
+    # переключённой значит передать соседям русскую витрину и падение на первой
+    # же английской надписи.
+    root_client.patch(f"{API}/settings", json={"values": {"showcase_locale": "en"}})
+
 
 def test_return_button_label_is_optional_and_bounded(root_client, manager_client):
     """Подпись кнопки возврата: своя, по умолчанию английская, с потолком длины.
@@ -74,6 +79,11 @@ def test_return_button_label_is_optional_and_bounded(root_client, manager_client
     assert root_client.patch(
         f"{API}/settings", json={"values": {"studio_site_label": "я" * 40}}
     ).status_code == 200
+
+    # Подпись кнопки — тоже настройка на весь сайт. Оставленная своя вытесняет
+    # значение по умолчанию у соседей, и тест про кнопку падает, не найдя
+    # английской надписи, — при этом сама кнопка работает.
+    root_client.patch(f"{API}/settings", json={"values": {"studio_site_label": ""}})
 
 
 def test_logo_upload(root_client):
