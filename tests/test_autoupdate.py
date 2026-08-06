@@ -789,7 +789,8 @@ def test_a_deploy_walks_the_steps_in_order(tmp_path):
 
     assert outcome.status == STATUS_DEPLOYED
     assert step_names(outcome) == [
-        "preflight", "fetch", "checkout", "tests", "backup", "deploy", "health", "prune",
+        "preflight", "fetch", "checkout", "tests", "backup", "deploy",
+        "nginx-reload", "health", "prune",
     ]
     assert all(step.ok for step in outcome.steps)
 
@@ -1264,3 +1265,44 @@ def test_the_daemon_outlives_an_unexpected_error(tmp_path):
     updater.watch(rounds=2)
 
     assert github.calls == 2
+
+
+def test_nginx_is_asked_to_reread_its_config_after_a_deploy(tmp_path):
+    """Без этого правки конфига nginx не применяются вовсе.
+
+    Файлы nginx примонтированы из чекаута, а не лежат в его образе: `git
+    checkout` меняет их на диске мгновенно. Но `docker compose up -d --build`
+    пересоздаёт только те службы, у которых изменилось описание или образ, — у
+    nginx не меняется ни то, ни другое. Он остаётся работать с конфигом,
+    прочитанным при своём запуске, и сам за файлами не следит.
+
+    Поймано репетицией обновления на живом стенде: compose тронул только `app`,
+    и nginx продолжал раздавать `/media/` прямо с диска, хотя новый конфиг на
+    диске уже проксировал этот путь в приложение. Починка, закрывшая файлы
+    витрины после отзыва ссылки, молча не действовала.
+    """
+    updater = make_updater(tmp_path)
+
+    outcome = updater.run_once()
+
+    assert outcome.status == STATUS_DEPLOYED
+    assert updater.shell.ran("exec -T nginx nginx -s reload")
+    assert step_names(outcome).index("deploy") < step_names(outcome).index("nginx-reload")
+    assert step_names(outcome).index("nginx-reload") < step_names(outcome).index("health")
+
+
+def test_a_missing_nginx_does_not_fail_the_update(tmp_path):
+    """У кого-то свой nginx снаружи, и внутреннего нет вовсе.
+
+    Перезагрузка тогда не удастся, и валить из-за этого удавшееся обновление
+    незачем: приложение обновилось, сайт живой.
+    """
+    shell = FakeShell()
+    shell.fail("exec -T nginx nginx -s reload")
+    updater = make_updater(tmp_path, shell=shell)
+
+    outcome = updater.run_once()
+
+    assert outcome.status == STATUS_DEPLOYED
+    reload_step = next(s for s in outcome.steps if s.name == "nginx-reload")
+    assert reload_step.ok is False
