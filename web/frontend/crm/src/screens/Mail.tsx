@@ -109,15 +109,17 @@ export function Mail() {
         </button>
       </div>
 
-      <div style={{ display: "flex", gap: 10, alignItems: "center", margin: "18px 0" }}>
+      {/* Переносится по строкам: на узком экране поиск и четыре фильтра в одну
+          строку не помещаются и утаскивают вбок всю страницу. */}
+      <div style={{ display: "flex", gap: 10, alignItems: "center", margin: "18px 0", flexWrap: "wrap" }}>
         <input
           className="input"
-          style={{ flex: 1 }}
+          style={{ flex: 1, minWidth: 160 }}
           placeholder={t("searchMail")}
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
-        <div style={{ display: "flex", gap: 6 }}>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
           {filters.map((item) => (
             <button
               key={item.id}

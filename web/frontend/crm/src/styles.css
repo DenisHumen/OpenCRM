@@ -323,7 +323,9 @@ button { font-family: var(--sans); }
 }
 .scan-hint { color: var(--faint); font-size: 11.5px; flex: none; max-width: 320px; }
 
-.doc-toolbar { display: flex; gap: 10px; margin-bottom: 16px; }
+/* Перенос по строкам: поиск и выбор статуса в одну строку помещаются не
+   всегда, а без переноса они уносили вбок всю страницу списка бланков. */
+.doc-toolbar { display: flex; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
 .doc-toolbar .input { width: 190px; flex: none; }
 /* Поиск с иконкой — та же коробка, что и на клиентах, но одним классом:
    повторять её восемью строчками inline-стилей на каждом экране незачем. */
@@ -531,11 +533,25 @@ button { font-family: var(--sans); }
 .avatar-dot.on { background: var(--success); }
 .avatar-wrap-lg .avatar-dot { width: 12px; height: 12px; }
 
-/* Вкладки */
-.tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--border); margin-bottom: 20px; }
+/* Вкладки.
+   Ряд прокручивается сам, когда вкладки не помещаются. Без этого они вылезали
+   за правый край и утаскивали за собой всю страницу: на узком экране (390px)
+   «Напоминания» и карточка клиента ехали вбок целиком, вместе с шапкой и
+   лентой. Резать вкладки нельзя — по названию их и выбирают, — поэтому здесь
+   тот же приём, что у доски сделок: не «влезть», а остаться пригодным. */
+.tabs {
+  display: flex; gap: 2px; border-bottom: 1px solid var(--border); margin-bottom: 20px;
+  overflow-x: auto;
+}
+.tabs::-webkit-scrollbar { height: 6px; }
+.tabs::-webkit-scrollbar-track { background: transparent; }
+.tabs::-webkit-scrollbar-thumb { background: var(--line); border-radius: 3px; }
+.tabs { scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
 .tab {
   padding: 9px 14px; font-size: 13px; color: var(--muted); cursor: pointer;
   border: none; background: none; border-bottom: 2px solid transparent; margin-bottom: -1px; font-weight: 450;
+  /* сжиматься нечему: ужатая вкладка обрывает название на середине слова */
+  flex-shrink: 0; white-space: nowrap;
 }
 .tab.active { color: var(--text); border-bottom-color: var(--text); font-weight: 500; }
 .tab .count { margin-left: 6px; color: var(--faint); font-size: 12px; }
@@ -928,6 +944,17 @@ button { font-family: var(--sans); }
   /* Заголовок и главная кнопка перестают помещаться в строку раньше всего
      остального — переносим, а не сжимаем название до многоточия. */
   .page-head { flex-wrap: wrap; gap: 12px; }
+}
+
+/* Телефон. Строка бланка держит четыре колонки — номер, предмет с клиентом,
+   дату и статус, — и вчетвером в 390px они не помещаются: строка вылезала за
+   край и уносила вбок всю страницу. Дата уходит первой: номер называют вслух,
+   предмет ищут глазами, статус решает, о чём разговор, — а дата выдачи есть в
+   самой карточке. Ширина статуса перестаёт быть жёсткой: 130px отводились под
+   самую длинную подпись, здесь этой роскоши нет. */
+@media (max-width: 560px) {
+  .doc-row-date { display: none; }
+  .doc-row-status { width: auto; }
 }
 
 @media (prefers-reduced-motion: reduce) { .sidebar { transition: none; } }
