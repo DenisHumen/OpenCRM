@@ -483,9 +483,21 @@ class Updater:
                 except ValueError:
                     last = f"{self.config.health_url}: ответ не JSON"
                 else:
-                    if payload.get("status") == "ok":
+                    # Схема базы — отдельный вопрос от «живо ли приложение», и
+                    # спрашиваем мы его явно. Само приложение с несошедшейся
+                    # схемой не поднимается вовсе, то есть до сюда дело обычно не
+                    # доходит; но если однажды дойдёт — обновление обязано
+                    # откатиться, а не объявить успех. Незамеченное расхождение
+                    # стоит рабочего дня, в течение которого раздел отвечает 500.
+                    if payload.get("schema") not in (None, "ok"):
+                        last = (
+                            f"{self.config.health_url}: база не соответствует моделям "
+                            f"(schema={payload.get('schema')})"
+                        )
+                    elif payload.get("status") == "ok":
                         break
-                    last = f"{self.config.health_url}: {payload}"
+                    else:
+                        last = f"{self.config.health_url}: {payload}"
             else:
                 last = f"{self.config.health_url}: {response.status or response.body[:120]}"
             if attempt + 1 < self.config.health_attempts:

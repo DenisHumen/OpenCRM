@@ -57,3 +57,27 @@ def delete_media_file(work_id: int, _: User = Depends(require_perm("settings", "
     """Удалить одну работу вместе с файлами (root)."""
     files_service.delete_media_file(db, work_id)
     return {"message": "File deleted", "storage": storage_service.status(db)}
+
+
+@router.get("/schema")
+def schema_status(_: User = Depends(require_perm("settings", "manage"))):
+    """Сходится ли база с моделями — подробно, для разбора.
+
+    Коротко об этом же говорит `/healthz`, но там нарочно нет деталей: он
+    открыт наружу. Здесь — что именно не сходится, чтобы не лезть в контейнер
+    за `alembic current`.
+
+    Сверка не пересчитывается: схема не меняется, пока процесс живёт, а отчёт
+    снят на старте (web/main.py).
+    """
+    from web.main import app
+
+    report = getattr(app.state, "schema_report", None)
+    if report is None:
+        # Приложение поднято мимо lifespan (так бывает только в проверках):
+        # считаем на месте, это дешевле, чем отвечать «не знаю».
+        from database import schema_check
+        from database.session import engine
+
+        report = schema_check.check(engine)
+    return report.as_dict()

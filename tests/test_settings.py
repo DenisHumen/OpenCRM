@@ -228,4 +228,7 @@ def test_showcase_font_is_cached_forever():
 
 
 def test_healthz():
-    assert TestClient(app).get("/healthz").json() == {"status": "ok"}
+    # `schema` появился, когда обновление на сервере стало опираться на этот
+    # ответ: не дождавшись 200, обновлятор откатывает и код, и базу. Подробностей
+    # здесь нет намеренно — адрес открыт наружу (см. tests/test_schema_check.py).
+    assert TestClient(app).get("/healthz").json() == {"status": "ok", "schema": "ok"}

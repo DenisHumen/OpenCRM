@@ -24,6 +24,7 @@ from core.services import (
 )
 from core.utils import normalize_email
 from database import models  # noqa: F401 — регистрирует модели в metadata
+from database import schema_check
 from database.models import User
 from database.repositories import users as users_repo
 from database.session import Base, SessionLocal, engine
@@ -58,27 +59,75 @@ from web import middleware
 from web.public import routes as public_routes
 
 def _ensure_schema() -> None:
-    """Схема на месте — создать недостающее, если её строит не alembic.
+    """Схема на месте: пустую базу строим, населённую — проводим миграциями.
 
-    В контейнере схему делает `alembic upgrade head` из entrypoint, и здесь
-    остаётся проверкой на пустом месте. Нужна она для запуска без контейнера
-    (`uvicorn web.main:app`) — иначе первый же такой запуск встречает пустую базу.
+    **Различать эти два случая обязательно, и раньше это не делалось.** Прежде
+    здесь стоял безусловный `create_all`, и на населённой базе он вёл себя тихо и
+    неправильно: новые ТАБЛИЦЫ создавал (не отмечаясь при этом в
+    `alembic_version`), а новых КОЛОНОК не добавлял вовсе. Получалось расхождение
+    двух видов сразу — база «на старой миграции», но с новой таблицей, отчего
+    следующее `alembic upgrade` падало с «table already exists»; и база без новой
+    колонки, отчего падал первый же запрос к ней. Оба случая ловились не тестом,
+    а живым отказом, и второй — с потерей рабочего времени.
 
-    Терпит соседа. `create_all` смотрит, каких таблиц нет, и создаёт их — то есть
-    внутри у него та же «проверил и сделал», что и у посева. При
-    `OPENCRM_WORKERS=2` два процесса поднимаются разом, оба видят пустую базу,
-    и проигравший падает с «table users already exists», не поднявшись вовсе.
+    Теперь путь один и тот же, что на сервере: **миграции**. `create_all`
+    остаётся ровно для пустой базы — первый запуск без контейнера, — и сразу
+    отмечается `stamp head`, чтобы дальше она шла миграциями, как все.
 
-    Молча глотать ошибку нельзя: так же выглядела бы и настоящая поломка схемы.
-    Поэтому после отказа смотрим, на месте ли таблицы: есть — сосед успел
-    раньше, и это ровно тот итог, который нам нужен; нет — беда наша, и она
-    должна быть видна.
+    В контейнере всё это уже сделал entrypoint (`alembic upgrade head` до
+    старта); здесь остаётся быстрая проверка «нечего делать».
+
+    Терпит соседа. При `OPENCRM_WORKERS>1` процессы поднимаются разом, оба видят
+    пустую базу, и проигравший падает на создании таблиц. Молча глотать ошибку
+    нельзя — так же выглядела бы настоящая поломка, — поэтому после отказа
+    смотрим, на месте ли таблицы: есть, значит сосед успел первым, и это тот
+    итог, который нужен.
     """
-    try:
-        Base.metadata.create_all(engine)
-    except (OperationalError, ProgrammingError):
-        if not inspect(engine).has_table(User.__tablename__):
-            raise
+    from alembic import command
+    from alembic.config import Config
+
+    config = Config(str(Path(__file__).parent.parent / "alembic.ini"))
+
+    if schema_check.is_empty(engine):
+        try:
+            Base.metadata.create_all(engine)
+            command.stamp(config, "head")
+        except (OperationalError, ProgrammingError):
+            if not inspect(engine).has_table(User.__tablename__):
+                raise
+        return
+
+    # База населена — только миграции. `create_all` здесь запрещён: он не умеет
+    # добавлять колонки и потому оставляет расхождение вместо того, чтобы его
+    # закрыть.
+    command.upgrade(config, "head")
+
+
+def _assert_schema_matches():
+    """Схема сходится с моделями — или приложение не поднимается.
+
+    Отказ подняться выглядит сурово и является самым мягким из возможных
+    исходов. Обновление на сервере устроено так: контейнер пересобирается,
+    ждётся `/healthz`, и **не дождавшись — откатывается вместе с базой**
+    (deploy/updater.py). Значит несхождение схемы, замеченное здесь, стоит
+    минуты простоя и возврата на прошлую версию — а незамеченное стоит рабочего
+    дня, в течение которого раздел отвечает 500, и никто не знает почему.
+
+    Ругаемся только на нехватку. Лишняя таблица или колонка (след отката) ничему
+    не мешает: запретить откат значит отобрать главный способ починки.
+    """
+    report = schema_check.check(engine)
+    if report.ok:
+        if report.extra_tables or report.extra_columns:
+            print(f"[opencrm] {report.summary()}")
+        return report
+    raise RuntimeError(
+        "База не соответствует моделям, запуск остановлен:\n"
+        f"  {report.summary()}\n\n"
+        "Обычная причина — миграции не доехали. Проверить и починить:\n"
+        "  docker compose exec app python -m alembic current\n"
+        "  docker compose exec app python -m alembic upgrade head"
+    )
 
 
 @asynccontextmanager
@@ -103,6 +152,12 @@ async def lifespan(app: FastAPI):
     ):
         directory.mkdir(parents=True, exist_ok=True)
     _ensure_schema()
+    # Сверку делаем ПОСЛЕ миграций и ДО посева: сеять в базу, которой не
+    # хватает колонок, значит получить непонятный отказ вместо понятного.
+    # Отчёт держим в состоянии приложения, а не пересчитываем на каждый запрос:
+    # схема не меняется, пока процесс живёт (миграции проходят до старта), а
+    # `/healthz` опрашивает докер каждые несколько секунд.
+    app.state.schema_report = _assert_schema_matches()
     db = SessionLocal()
     try:
         created = auth_service.bootstrap_root(db)
@@ -242,12 +297,21 @@ def create_app() -> FastAPI:
     # HEAD — мониторинг и прокси часто проверяют доступность именно им
     @app.api_route("/healthz", methods=["GET", "HEAD"])
     def healthz():
+        """Живо ли приложение. Отвечает 200 — значит и схема в порядке.
+
+        Схему здесь не пересчитываем и подробностей не раскрываем: несхождение
+        не даёт приложению подняться вовсе (`_assert_schema_matches`), поэтому
+        сам факт ответа 200 уже означает, что база сошлась с моделями. Именно на
+        это опирается откат при обновлении: не дождавшись 200, обновлятор
+        возвращает прошлую версию вместе с базой.
+        """
         db = SessionLocal()
         try:
             db.execute(text("SELECT 1"))
         finally:
             db.close()
-        return {"status": "ok"}
+        report = getattr(app.state, "schema_report", None)
+        return {"status": "ok", "schema": "ok" if report is None or report.ok else "mismatch"}
 
     # CRM SPA: собранный фронтенд (web/frontend/crm/dist).
     # Catch-all регистрируется последним — все API/публичные роуты имеют приоритет.
