@@ -11,7 +11,7 @@ import pytest
 from core.services import modules_service
 from core.services.document_service import DOCUMENT_ISSUED
 from core.services.warehouse_service import STOCK_WRITTEN_OFF
-from tests.conftest import API
+from tests.conftest import API, make_manager
 from tests.test_deals import DEALS, make_client
 
 # Фикстура подписки живёт вместе с механизмом; здесь она нужна, чтобы проверить
@@ -247,10 +247,14 @@ def test_intermediate_form_statuses_stay_out_of_the_feed(manager_client, deal):
 
 
 def test_write_off_lands_in_the_deal_feed_as_one_entry(manager_client, deal, warehouse_on):
-    """Списали деталей — это видно в ленте, вместе с тем, на сколько.
+    """Списали деталей — это видно в ленте: что, сколько и почему.
 
-    Именно ради этой строки лента и открывается: «вчера выдали квитанцию, сегодня
-    списали деталей на три тысячи» — один поток, а не три журнала.
+    Именно ради этой строки лента и открывается: «вчера выдали квитанцию,
+    сегодня списали две матрицы» — один поток, а не три журнала.
+
+    Себестоимости в строке нет, и это не упущение — см. соседний тест: тело
+    записи ленты вычёркиванию не поддаётся, и деньги в нём проносились мимо
+    права `warehouse.view_amounts`.
     """
     product = new_product(manager_client, name="Матрица 15.6", cost=120000)
     assert move(manager_client, product["id"], "2", deal_id=deal["id"]).status_code == 201
@@ -260,8 +264,60 @@ def test_write_off_lands_in_the_deal_feed_as_one_entry(manager_client, deal, war
     body = entries[0]["body"]
     assert "Матрица 15.6" in body, body
     assert "2 pcs" in body, body
-    # 2 шт × 1200.00 — та же арифметика, что во врезке себестоимости
-    assert "2400.00" in body, body
+
+
+def test_the_feed_does_not_carry_the_write_off_cost_past_the_money_right(
+    root_client, manager_client, deal, warehouse_on
+):
+    """Автоматика не проносит деньги мимо права, которым они закрыты.
+
+    Подписчик вписывал себестоимость списания прямо в тело записи ленты
+    («Stock: Матрица — 2 pcs, 2400.00 USD»). Тело — обычная строка, и ни
+    `GET /deals/{id}/feed`, ни `GET /clients/{id}/notes` не умеют вычёркивать
+    из неё числа. Получалось, что `GET /warehouse/moves` честно отдавал
+    `cost: null` тому, кому суммы не положены, а лента показывала ту же сумму
+    словами: право обходилось соседним экраном.
+
+    Проверяется на живом сотруднике, а не чтением строки: важно не то, как
+    подписчик её собрал, а то, что видно на другом конце.
+    """
+    product = new_product(manager_client, name="Матрица для проверки прав", cost=120000)
+    assert move(manager_client, product["id"], "2", deal_id=deal["id"]).status_code == 201
+
+    role = root_client.post(
+        f"{API}/roles",
+        json={
+            "name": "Лента без сумм",
+            "permissions": ["clients.view", "deals.view", "deals.view_others", "warehouse.view"],
+        },
+    )
+    assert role.status_code == 201, role.text
+    role_id = role.json()["id"]
+    poor = make_manager(root_client, "feedmoney@test.local")
+    user_id = next(
+        u["id"] for u in root_client.get(f"{API}/staff").json()["items"]
+        if u["email"] == "feedmoney@test.local"
+    )
+    assert root_client.post(
+        f"{API}/roles/assign/{user_id}", json={"role_id": role_id}
+    ).status_code == 200
+    try:
+        entries = deal_feed(poor, deal["id"], kind="stock")
+        assert entries, "лента пуста — проверять нечего"
+        body = entries[0]["body"]
+        assert "2400.00" not in body, body
+        assert "1200.00" not in body, body
+        # Соседний экран, где право проверяется, ведёт себя как раньше.
+        moves = poor.get(f"{WAREHOUSE}/moves", params={"deal_id": deal["id"]}).json()
+        assert all(row["cost"] is None for row in moves["items"]), moves
+        assert moves["cost"] is None
+        # А тому, кому суммы положены, себестоимость по-прежнему видна — иначе
+        # проверка проходила бы и на складе, разучившемся считать деньги.
+        rich = manager_client.get(f"{WAREHOUSE}/moves", params={"deal_id": deal["id"]}).json()
+        assert rich["cost"] == 240000, rich
+    finally:
+        root_client.delete(f"{API}/staff/{user_id}")
+        root_client.delete(f"{API}/roles/{role_id}")
 
 
 def test_a_second_write_off_is_a_second_event_not_a_doubled_one(

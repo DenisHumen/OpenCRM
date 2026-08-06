@@ -82,14 +82,22 @@ def list_products(
     return data
 
 
+# Ответ пишущей ручки — такая же карточка товара, как у GET, и суммы в ней
+# закрываются тем же правом. Умолчание `amounts=True` в сериализаторе делало
+# из PATCH обход: кладовщик без `warehouse.view_amounts` не видел закупочную
+# цену в списке и в карточке, но получал её в ответ на переименование товара.
 @router.post("/products", status_code=201)
 def create_product(
     payload: schemas.ProductIn,
-    _: User = Depends(require_perm("warehouse", "create")),
+    user: User = Depends(require_perm("warehouse", "create")),
     db: Session = Depends(get_db),
 ):
     product = warehouse_service.create_product(db, payload.model_dump())
-    return schemas.product_out(product, None if product.is_service else 0)
+    return schemas.product_out(
+        product,
+        None if product.is_service else 0,
+        amounts=permissions_service.sees_amounts(db, user, "warehouse"),
+    )
 
 
 @router.get("/products/{product_id}")
@@ -112,13 +120,17 @@ def get_product(
 def update_product(
     product_id: int,
     payload: schemas.ProductPatchIn,
-    _: User = Depends(require_perm("warehouse", "edit")),
+    user: User = Depends(require_perm("warehouse", "edit")),
     db: Session = Depends(get_db),
 ):
     product = warehouse_service.update_product(
         db, product_id, payload.model_dump(exclude_unset=True)
     )
-    return schemas.product_out(product, warehouse_service.stock_of(db, product))
+    return schemas.product_out(
+        product,
+        warehouse_service.stock_of(db, product),
+        amounts=permissions_service.sees_amounts(db, user, "warehouse"),
+    )
 
 
 @router.delete("/products/{product_id}")
@@ -134,11 +146,15 @@ def delete_product(
 @router.post("/products/{product_id}/restore")
 def restore_product(
     product_id: int,
-    _: User = Depends(require_perm("warehouse", "restore")),
+    user: User = Depends(require_perm("warehouse", "restore")),
     db: Session = Depends(get_db),
 ):
     product = warehouse_service.restore_product(db, product_id)
-    return schemas.product_out(product, warehouse_service.stock_of(db, product))
+    return schemas.product_out(
+        product,
+        warehouse_service.stock_of(db, product),
+        amounts=permissions_service.sees_amounts(db, user, "warehouse"),
+    )
 
 
 @router.get("/products/{product_id}/moves")

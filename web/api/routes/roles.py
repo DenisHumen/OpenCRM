@@ -101,9 +101,22 @@ def create_from_preset(payload: RoleFromPresetIn, db: Session = Depends(get_db))
     return schemas.role_out(role, codes=sorted(permissions_service.codes_of_role(db, role.id)))
 
 
-@router.patch("/{role_id}", dependencies=[manage])
-def update_role(role_id: int, payload: RolePatchIn, db: Session = Depends(get_db)):
-    role = permissions_service.update_role(db, role_id, payload.name, payload.permissions)
+@router.patch("/{role_id}")
+def update_role(
+    role_id: int,
+    payload: RolePatchIn,
+    actor: User = Depends(require_perm("roles", "manage")),
+    db: Session = Depends(get_db),
+):
+    """Переписать должность.
+
+    Исполнитель берётся по имени, а не просто проверяется: своей роли новых
+    прав не выписывают — иначе запрет «нельзя назначить роль себе» обходится
+    тем, что назначать ничего и не нужно.
+    """
+    role = permissions_service.update_role(
+        db, role_id, payload.name, payload.permissions, actor=actor
+    )
     return schemas.role_out(role, codes=sorted(permissions_service.codes_of_role(db, role.id)))
 
 

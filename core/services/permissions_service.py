@@ -265,6 +265,11 @@ def _refuse_if_nobody_left_to_manage_roles(db: Session, **exclusions) -> None:
     отдал ему управление доступами и потерял пароль root. Снять последнее такое
     право значит запереть систему — восстановить её после этого можно только с
     доступом к файлу базы.
+
+    Стоит на четырёх путях из шести: отключение и удаление сотрудника
+    (`auth_service.disable`, `auth_service.delete_user`) приводят к тому же
+    состоянию и этой проверки не делают. Это известное расхождение, а не
+    недосмотр, — почему оно не закрывается здесь, написано в `disable`.
     """
     if _managers_of_roles(db, **exclusions) > 0:
         return
@@ -337,12 +342,48 @@ def create_from_preset(db: Session, preset: str, name: str | None = None) -> Rol
     )
 
 
-def update_role(db: Session, role_id: int, name: str | None, codes) -> Role:
+def _refuse_self_promotion(db: Session, actor: User, role: Role, pairs: list[tuple[str, str]]) -> None:
+    """Своей должности новых прав не выписывают.
+
+    Это вторая половина запрета из `assign`, без которой первая ничего не
+    стоила. Там сказано: нельзя назначить себе другую роль, потому что иначе
+    «управляет правами» становится «имеет все права». Ровно то же самое
+    получалось одним запросом с другой стороны — не менять роль, а дописать
+    права в ту, которая уже своя. Сотрудник с одним лишь `roles.manage`
+    отправлял `PATCH /roles/{своя}` со всем реестром и получал журнал,
+    настройки, сотрудников и суммы; проверялось это на стенде и работало.
+
+    Убавлять — можно. Снять с себя лишнее не escalation, а обычная уборка, и
+    запрещать её значило бы требовать второго человека ради того, чтобы отдать
+    доступ. Переименовать роль — тем более можно: `codes=None` сюда не доходит.
+
+    Root сюда не попадает: у него прав весь реестр и добавить к ним нечего.
+    Проверка всё равно общая, а не «если не root»: исключение, написанное
+    руками, однажды окажется единственным местом, где новую роль забыли учесть.
+    """
+    if actor.role_id != role.id:
+        return
+    have = codes_of(db, actor)
+    added = sorted(permissions.code(area, action) for area, action in pairs)
+    new = [code for code in added if code not in have]
+    if not new:
+        return
+    raise errors.ForbiddenError(
+        "Cannot grant yourself permissions you do not have: " + ", ".join(new),
+        code="cannot_grant_to_own_role",
+    )
+
+
+def update_role(db: Session, role_id: int, name: str | None, codes, *, actor: User) -> Role:
+    """`actor` обязателен и без значения по умолчанию нарочно: проверка на
+    самоповышение опирается только на него, а необязательный аргумент однажды
+    забудут передать — и запрет исчезнет молча, оставив подпись на месте."""
     role = get_role(db, role_id)
     if name is not None:
         role.name = _clean_name(db, name, role_id=role.id)
     if codes is not None:
         pairs = _clean_codes(codes)
+        _refuse_self_promotion(db, actor, role, pairs)
         loses_manage = _grants_manage(db, role.id) and (
             ("roles", permissions.MANAGE) not in pairs
         )

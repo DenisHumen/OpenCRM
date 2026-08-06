@@ -783,3 +783,232 @@ def test_a_new_employee_gets_the_default_role(root_client):
         assert fresh.get(f"{API}/auth/me").json()["role_name"]
     finally:
         root_client.delete(f"{STAFF}/{user_id}")
+
+
+# --- то, что нашлось перебором по живому стенду ---
+#
+# Каждая проверка ниже написана на дыру, которая работала: сначала запрос,
+# который проходил, и только потом правка. Порядок именно этот — тест,
+# написанный после починки «по памяти», проверяет починку, а не дыру.
+
+
+def test_editing_your_own_role_cannot_add_permissions(root_client, role_maker, staff_maker):
+    """Своей должности новых прав не выписывают.
+
+    Запрет «нельзя назначить роль себе» обходился одним запросом с другой
+    стороны: не менять роль, а дописать права в ту, которая уже своя.
+    Сотрудник с одним лишь `roles.manage` отправлял `PATCH /roles/{своя}` со
+    всем реестром и получал журнал, настройки, сотрудников и суммы.
+    """
+    role = role_maker("Только доступы", ["roles.view", "roles.manage"])
+    gate = staff_maker("gate@test.local", role["id"])
+
+    assert gate.get(f"{API}/audit").status_code == 403
+    assert gate.get(f"{API}/clients").status_code == 403
+
+    denied = gate.patch(
+        f"{ROLES}/{role['id']}", json={"permissions": list(permissions.all_codes())}
+    )
+    assert denied.status_code == 403, denied.text
+    assert denied.json()["error"]["code"] == "cannot_grant_to_own_role"
+    # Отказ называет, чего именно нельзя выдать: иначе настройка доступов
+    # превращается в гадание — ровно как у остальных отказов здесь.
+    assert "audit.view" in denied.json()["error"]["message"]
+
+    # Права не изменились ни на строку, и закрытые разделы остались закрытыми.
+    assert set(root_client.get(f"{ROLES}/{role['id']}").json()["permissions"]) == {
+        "roles.view",
+        "roles.manage",
+    }
+    assert gate.get(f"{API}/audit").status_code == 403
+    assert gate.get(f"{API}/clients").status_code == 403
+
+
+def test_your_own_role_may_still_be_renamed_and_narrowed(role_maker, staff_maker):
+    """Обратная сторона: запрет на самоповышение не запрещает уборку.
+
+    Без этой половины предыдущий тест проходил бы и на правке, которая просто
+    запретила трогать свою роль вовсе, — а тогда отдать лишний доступ стало бы
+    нельзя без второго человека.
+    """
+    role = role_maker(
+        "Уборка у себя", ["roles.view", "roles.manage", "clients.view", "clients.create"]
+    )
+    # Второй управляющий: без него уборка упрётся в «последнего», а проверяем
+    # здесь не его.
+    spare = role_maker("Запасной управляющий", ["roles.view", "roles.manage"])
+    staff_maker("spare@test.local", spare["id"])
+    owner = staff_maker("tidy@test.local", role["id"])
+
+    narrowed = owner.patch(
+        f"{ROLES}/{role['id']}",
+        json={
+            "name": "Уборка у себя, новое имя",
+            "permissions": ["roles.view", "roles.manage", "clients.view"],
+        },
+    )
+    assert narrowed.status_code == 200, narrowed.text
+    assert set(narrowed.json()["permissions"]) == {"roles.view", "roles.manage", "clients.view"}
+    # Убранное право перестало работать сразу, той же сессией.
+    assert owner.post(f"{API}/clients", json={"name": "Уже нельзя"}).status_code == 403
+
+
+def test_disabling_the_last_permissions_manager_still_works_and_that_is_the_open_question(
+    root_client, role_maker, staff_maker
+):
+    """Здесь зафиксировано НЕ желаемое поведение, а известное расхождение.
+
+    Инвариант «раздавать права всегда есть кому» стоит на четырёх путях из
+    шести: снять `roles.manage` с последней роли нельзя, перевести её
+    единственного носителя на другую должность нельзя, — а отключить или
+    удалить его самого можно, и система остаётся без управляющего доступами.
+
+    Просто дописать проверку в `auth_service.disable` нельзя: инвариант не
+    считает root'а нарочно, и тогда назначение первого «гендиректора» стало бы
+    необратимым — снять право уже нельзя, перевести нельзя, уволить нельзя, а
+    «только root и никаких управляющих» есть законное состояние, с которого
+    начинается любая установка. Развязка — решение о модели прав (считать ли
+    root'а при снятии человека, или заводить явную передачу полномочий), и
+    принимать его правкой на месте не следует.
+
+    Тест стоит здесь, чтобы это расхождение не закрылось и не разъехалось
+    молча: поменяется поведение — придётся прочитать этот текст.
+    """
+    role = role_maker("Единственный управляющий", ["roles.view", "roles.manage"])
+    staff_maker("lastone@test.local", role["id"])
+    user_id = _user_id(root_client, "lastone@test.local")
+
+    # Через роль — закрыто, и это работает.
+    denied = root_client.patch(f"{ROLES}/{role['id']}", json={"permissions": ["roles.view"]})
+    assert denied.status_code == 403
+    assert denied.json()["error"]["code"] == "last_roles_manager"
+
+    # Через человека — открыто. Ровно то же итоговое состояние.
+    assert root_client.post(f"{STAFF}/{user_id}/disable").status_code == 200
+    assert root_client.post(f"{STAFF}/{user_id}/enable").status_code == 200
+
+
+def test_the_sources_report_hides_revenue_in_every_row_not_just_the_total(
+    root_client, role_maker, staff_maker, manager_client
+):
+    """Выгрузка обязана совпадать с экраном, а экран — с правом.
+
+    Сужение писалось по ключу `rows`, которого в ответе нет: отчёт отдаёт
+    `items`. Зануляться успевал только итог — «выручка —» в шапке и настоящие
+    деньги в каждой строке и в CSV. Самый незаметный вид отказа: выглядит
+    работающим.
+    """
+    assert root_client.post(f"{API}/modules/reports", json={"enabled": True}).status_code == 200
+    client = manager_client.post(
+        f"{API}/clients", json={"name": "Источник денег", "source": "ads"}
+    ).json()
+    deal = manager_client.post(
+        f"{API}/deals",
+        json={"title": "Оплаченная", "client_id": client["id"], "amount": 1234500},
+    ).json()
+    stages = manager_client.get(f"{API}/pipeline/stages").json()["items"]
+    won = next(s["key"] for s in stages if s["kind"] == "won")
+    assert (
+        manager_client.post(f"{API}/deals/{deal['id']}/move", json={"stage": won}).status_code
+        == 200
+    )
+
+    role = role_maker("Источники без денег", ["reports.view"])
+    poor = staff_maker("sources@test.local", role["id"])
+
+    body = poor.get(f"{API}/reports/sources").json()
+    assert body["revenue_total"] is None
+    assert body["items"], "строк нет — проверять нечего"
+    assert all(row["revenue"] is None for row in body["items"]), body["items"]
+    # Ключа-призрака, по которому писалось сужение, в ответе быть не должно:
+    # пустой `rows` рядом с наполненным `items` — след ровно той ошибки.
+    assert "rows" not in body
+
+    export = poor.get(f"{API}/reports/sources.csv")
+    assert export.status_code == 200
+    assert "12345" not in export.text, export.text
+    # А у того, кому положено, деньги в выгрузке есть — иначе тест проходил бы
+    # и на сломанном отчёте, который не отдаёт их никому.
+    assert "12345" in root_client.get(f"{API}/reports/sources.csv").text
+
+
+def test_the_warehouse_card_hides_prices_in_write_responses_too(
+    root_client, role_maker, staff_maker
+):
+    """Ответ пишущей ручки — такая же карточка товара, как у GET.
+
+    `amounts` в сериализаторе по умолчанию `True`, и PATCH становился обходом:
+    кладовщик без `warehouse.view_amounts` не видел закупочную цену ни в
+    списке, ни в карточке, но получал её в ответ на переименование товара.
+    """
+    assert root_client.post(f"{API}/modules/warehouse", json={"enabled": True}).status_code == 200
+    product = root_client.post(
+        f"{API}/warehouse/products",
+        json={"name": "Матрица без цен", "unit": "pcs", "price": 677700, "cost": 250000},
+    )
+    assert product.status_code == 201, product.text
+    product_id = product.json()["id"]
+
+    role = role_maker(
+        "Склад без сумм",
+        [
+            "warehouse.view",
+            "warehouse.create",
+            "warehouse.edit",
+            "warehouse.delete",
+            "warehouse.restore",
+        ],
+    )
+    keeper = staff_maker("keeper@test.local", role["id"])
+    try:
+        # Чтение уже было закрыто — с него и сверяемся.
+        assert keeper.get(f"{API}/warehouse/products/{product_id}").json()["cost"] is None
+
+        patched = keeper.patch(
+            f"{API}/warehouse/products/{product_id}", json={"note": "только заметка"}
+        )
+        assert patched.status_code == 200, patched.text
+        assert patched.json()["price"] is None, patched.text
+        assert patched.json()["cost"] is None, patched.text
+
+        assert keeper.delete(f"{API}/warehouse/products/{product_id}").status_code == 200
+        restored = keeper.post(f"{API}/warehouse/products/{product_id}/restore")
+        assert restored.status_code == 200, restored.text
+        assert restored.json()["price"] is None
+        assert restored.json()["cost"] is None
+        # Остаток при этом на месте: закрыты деньги, а не склад.
+        assert restored.json()["stock_milli"] is not None
+    finally:
+        root_client.delete(f"{API}/warehouse/products/{product_id}")
+
+
+def test_naming_a_sum_needs_the_same_right_as_seeing_one(
+    role_maker, staff_maker, manager_client
+):
+    """Проверка стояла только на правке, и запрет получался половинчатым.
+
+    Сумму нельзя было переписать, но можно было завести заявку сразу с ней:
+    число уходило в выручку и в отчёты, а тот, кто его вписал, не видел его
+    больше никогда — даже чтобы исправить опечатку.
+    """
+    client = manager_client.post(f"{API}/clients", json={"name": "Заказчик без сумм"}).json()
+    role = role_maker(
+        "Заявки без сумм", ["clients.view", "deals.view", "deals.create", "deals.edit"]
+    )
+    poor = staff_maker("nosum@test.local", role["id"])
+
+    denied = poor.post(
+        f"{API}/deals", json={"title": "С суммой", "client_id": client["id"], "amount": 999999}
+    )
+    assert denied.status_code == 403, denied.text
+    assert "deals.view_amounts" in denied.json()["error"]["message"]
+
+    denied_prepaid = poor.post(
+        f"{API}/deals", json={"title": "С предоплатой", "client_id": client["id"], "prepaid": 1}
+    )
+    assert denied_prepaid.status_code == 403, denied_prepaid.text
+
+    # Заявка без денег заводится как заводилась: сузилось поле, а не раздел.
+    created = poor.post(f"{API}/deals", json={"title": "Без суммы", "client_id": client["id"]})
+    assert created.status_code == 201, created.text
+    assert created.json()["amount"] is None

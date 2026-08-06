@@ -20,6 +20,12 @@ from web.api.deps import get_db, require_perm
 
 router = APIRouter(prefix="/deals", tags=["deals"])
 
+#: Поля запроса, в которых приезжают деньги. Перечислены здесь, а не выводятся
+#: из `schemas.DEAL_MONEY_KEYS`: там ключи ОТВЕТА, и в них есть считаемые
+#: (`remainder`, `is_paid`), которых во входящем теле не бывает. Списки разной
+#: длины и по разному поводу — сведённые в один, они разъедутся молча.
+DEAL_MONEY_FIELDS = ("amount", "prepaid")
+
 
 def _lookup(db: Session, deals: list) -> tuple[dict, dict]:
     """Имена клиентов и ответственных — двумя запросами на всю выдачу.
@@ -172,8 +178,26 @@ def create_deal(
 ):
     # exclude_unset, чтобы отличить «поле не прислали» от «прислали пустым»:
     # первое означает «поставь по умолчанию», второе — «оставь пустым».
-    deal = deal_service.create_deal(db, payload.model_dump(exclude_unset=True), user)
+    data = payload.model_dump(exclude_unset=True)
+    _refuse_money_without_the_right(db, data, user)
+    deal = deal_service.create_deal(db, data, user)
     return _card(db, deal, user)
+
+
+def _refuse_money_without_the_right(db: Session, data: dict, user: User) -> None:
+    """Не видит сумм — не называет их. И при заведении заявки тоже.
+
+    Проверка стояла только на правке, и запрет получался половинчатым: сумму
+    нельзя было переписать, но можно было завести заявку сразу с ней. Число при
+    этом уходило в выручку и в отчёты, а тот, кто его вписал, не видел его
+    больше никогда — даже чтобы исправить опечатку. Право на суммы означает и
+    «называть их», иначе оно закрывает экран, а не деньги.
+    """
+    touched = [key for key in DEAL_MONEY_FIELDS if key in data]
+    if touched and not permissions_service.sees_amounts(db, user):
+        raise errors.ForbiddenError(
+            "Permission required: deals.view_amounts", code="permission_denied"
+        )
 
 
 def _visible(db: Session, deal_id: int, user: User):
@@ -208,11 +232,7 @@ def update_deal(
     # Не видит сумм — не правит их. Иначе право оказывалось бы наполовину
     # декоративным: сумму не показали, но её можно перезаписать вслепую, а
     # прежнее значение при этом теряется без следа.
-    touched_money = [key for key in ("amount", "prepaid") if key in data]
-    if touched_money and not permissions_service.sees_amounts(db, user):
-        raise errors.ForbiddenError(
-            "Permission required: deals.view_amounts", code="permission_denied"
-        )
+    _refuse_money_without_the_right(db, data, user)
     deal = deal_service.update_deal(db, deal_id, data, user)
     return _card(db, deal, user)
 

@@ -36,7 +36,7 @@
 """
 
 from core import events
-from core.services import client_service, pipeline_service, settings_service
+from core.services import client_service, pipeline_service
 from core.services.deal_service import DEAL_STAGE_CHANGED
 from core.services.document_service import (
     DOCUMENT_CLOSED,
@@ -46,7 +46,6 @@ from core.services.document_service import (
 from core.services.warehouse_service import STOCK_WRITTEN_OFF, format_quantity
 from database.models.client import KIND_DOCUMENT, KIND_STAGE, KIND_STOCK
 from database.models.document import STATUS_CANCELLED
-from database.repositories import warehouse as warehouse_repo
 
 
 @events.observer(DEAL_STAGE_CHANGED, module="clients")
@@ -163,6 +162,21 @@ def write_off_into_feed(event: events.Event) -> None:
     `module="clients"`, а не `"warehouse"`: подписчик пишет в ленту, а лента
     принадлежит клиентам. Выключенный склад перестанет поднимать событие сам —
     его роутер закрыт целиком, — и уже написанные строки это никак не тронет.
+
+    **Денег в строке нет, и это не забывчивость.** Себестоимость списания
+    просилась сюда («списали деталей на три тысячи» — то, ради чего ленту и
+    открывают), и какое-то время она здесь была. Стоила она права
+    `warehouse.view_amounts`: тело записи ленты — обычная строка, и ни
+    `GET /clients/{id}/notes`, ни `GET /deals/{id}/feed` не умеют вычёркивать из
+    неё числа. Получалось, что `GET /warehouse/moves` честно отдавал
+    `cost: null` тому, кому суммы не положены, а лента показывала ту же сумму
+    словами — то есть автоматика проносила деньги мимо права, которым они
+    закрыты. Право, обходимое соседним экраном, не право.
+
+    Вернуть сумму в ленту можно, но не строкой: нужна отдельная колонка у
+    `client_notes` и вычёркивание при выдаче, как у сделок и товаров, — то есть
+    миграция. Пока её нет, деньги живут там, где на них есть охранник: в
+    движениях склада и во врезке себестоимости в карточке заявки.
     """
     move, product, deal = event["move"], event["product"], event["deal"]
 
@@ -170,21 +184,11 @@ def write_off_into_feed(event: events.Event) -> None:
     # направление уже сказано словом.
     amount = f"{format_quantity(abs(move.quantity_milli))} {product.unit}"
 
-    # Деньги в строке не для красоты: «списали деталей на три тысячи» — это то,
-    # ради чего ленту и открывают. Себестоимости может не быть («не знали»), и
-    # тогда её нет и в строке: ноль сказал бы «досталось даром».
-    cost = warehouse_repo.move_cost_minor(move)
-    money = ""
-    if cost is not None:
-        currency = settings_service.get_all(event.db).get("currency", "USD")
-        whole, minor = divmod(abs(cost), 100)
-        money = f", {'-' if cost < 0 else ''}{whole}.{minor:02d} {currency}"
-
     client_service.add_system_note(
         event.db,
         deal.client_id,
         event.actor,
         KIND_STOCK,
-        f"Stock: {product.name} — {amount}{money} ({event.reason})",
+        f"Stock: {product.name} — {amount} ({event.reason})",
         deal_id=deal.id,
     )
