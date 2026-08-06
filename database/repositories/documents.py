@@ -19,7 +19,7 @@
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
-from database.models import Document, DocumentEvent
+from database.models import Document, DocumentEvent, DocumentLine
 from database.query import contains, page_of
 
 
@@ -94,10 +94,16 @@ def search(
     status: str | None = None,
     client_id: int | None = None,
     deal_id: int | None = None,
+    kinds: tuple[str, ...] | None = None,
     page: int = 1,
     per_page: int = 50,
 ) -> tuple[list[Document], int]:
     stmt = select(Document)
+    if kinds is not None:
+        # Заказы и квитанции живут в одной таблице, но на разных экранах: список
+        # бланков, куда затесались заказы, отвечает не на тот вопрос, с которым
+        # туда пришли.
+        stmt = stmt.where(Document.kind.in_(kinds))
     if q:
         needle = q.strip()
         # Ищем и по номеру, и по снимку: в мастерской спрашивают «где ноутбук
@@ -114,3 +120,108 @@ def search(
 
     stmt = stmt.order_by(Document.created_at.desc())
     return page_of(db, stmt, page=page, per_page=per_page)
+
+
+# --- строки перечня ---
+#
+# Таблица общая для заказа и акта выполненных работ: две параллельные системы
+# строк — это два места, где считаются деньги, и они разъедутся (см. докстроку
+# модели `DocumentLine`).
+
+
+def lines_of(db: Session, document_id: int) -> list[DocumentLine]:
+    return list(
+        db.scalars(
+            select(DocumentLine)
+            .where(DocumentLine.document_id == document_id)
+            .order_by(DocumentLine.sort_order.asc(), DocumentLine.id.asc())
+        )
+    )
+
+
+def get_line(db: Session, document_id: int, line_id: int) -> DocumentLine | None:
+    """Строка вместе с проверкой принадлежности: номер в адресе — не пропуск к
+    чужому бланку."""
+    return db.scalars(
+        select(DocumentLine).where(
+            DocumentLine.id == line_id, DocumentLine.document_id == document_id
+        )
+    ).first()
+
+
+def line_by_product(db: Session, document_id: int, product_id: int) -> DocumentLine | None:
+    """Строка этого товара в этом бланке — для сборки сканером: второй писк по
+    той же коробке обязан увеличить количество, а не завести вторую строку."""
+    return db.scalars(
+        select(DocumentLine).where(
+            DocumentLine.document_id == document_id, DocumentLine.product_id == product_id
+        )
+    ).first()
+
+
+def next_sort_order(db: Session, document_id: int) -> int:
+    """Куда встанет следующая позиция. Порядок задаёт человек, и менять его
+    сортировкой по имени значит переставлять строки под руками."""
+    last = db.scalar(
+        select(func.max(DocumentLine.sort_order)).where(
+            DocumentLine.document_id == document_id
+        )
+    )
+    return (last or 0) + 1
+
+
+def lines_by_documents(db: Session, document_ids) -> dict[int, list[DocumentLine]]:
+    """Строки сразу нескольких бланков — одним запросом на страницу списка."""
+    document_ids = [i for i in set(document_ids) if i]
+    if not document_ids:
+        return {}
+    grouped: dict[int, list[DocumentLine]] = {}
+    rows = db.scalars(
+        select(DocumentLine)
+        .where(DocumentLine.document_id.in_(document_ids))
+        .order_by(DocumentLine.sort_order.asc(), DocumentLine.id.asc())
+    )
+    for row in rows:
+        grouped.setdefault(row.document_id, []).append(row)
+    return grouped
+
+
+def promised(db: Session, kind: str, statuses, product_ids=None) -> dict[int, int]:
+    """Сколько товара обещано незакрытыми бланками этого вида: {product_id: тысячные}.
+
+    Это резерв (для заказа покупателя) и «ожидается» (для заказа поставщику), и
+    **считается это запросом, а не хранится числом**. Довод тот же, что у
+    остатка склада: хранимое число рассинхронизируется в первый же откат
+    транзакции, и узнать потом, какая из двух цифр верна, будет неоткуда. Отсюда
+    же берётся и правило «резерв не переживает заказ»: отменили — обещание
+    исчезло само, без единой строки кода на уборку.
+
+    Один запрос на весь список товаров, как `stock_by_product`: запрос на строку
+    превратил бы экран склада из 500 позиций в 500 обращений к базе.
+    """
+    stmt = (
+        select(DocumentLine.product_id, func.coalesce(func.sum(DocumentLine.quantity_milli), 0))
+        .join(Document, Document.id == DocumentLine.document_id)
+        .where(
+            Document.kind == kind,
+            Document.status.in_(tuple(statuses)),
+            DocumentLine.product_id.is_not(None),
+        )
+        .group_by(DocumentLine.product_id)
+    )
+    if product_ids is not None:
+        if not product_ids:
+            return {}
+        stmt = stmt.where(DocumentLine.product_id.in_(product_ids))
+    return {product_id: total for product_id, total in db.execute(stmt).all()}
+
+
+def add_line(db: Session, line: DocumentLine) -> DocumentLine:
+    db.add(line)
+    db.flush()
+    return line
+
+
+def drop_line(db: Session, line: DocumentLine) -> None:
+    db.delete(line)
+    db.flush()

@@ -763,6 +763,10 @@ def stock_move_out(move: StockMove, amounts: bool = True) -> dict:
         "kind": move.kind,
         "deal_id": move.deal_id,
         "warehouse_id": move.warehouse_id,
+        # Каким бланком вызвано: отгрузкой заказа, приёмкой, проведением акта.
+        # Без этого экран не отличит списание по заказу от ручного, а отмена не
+        # покажет, что именно откатывала.
+        "document_id": move.document_id,
         # Не NULL — значит это половина переезда, а не самостоятельное движение.
         # Экран рисует такие строки стрелкой между складами, а не «приход/расход».
         "transfer_id": move.transfer_id,
@@ -855,4 +859,48 @@ def transfer_out(
         "happened_at": _iso(header.happened_at),
         "author_id": header.author_id,
         "items": rows,
+    }
+
+
+def order_line_out(line, amounts: bool = True) -> dict:
+    """Строка заказа. Деньги закрываются тем же правом, что и в списке товаров."""
+    return {
+        "id": line.id,
+        "document_id": line.document_id,
+        "product_id": line.product_id,
+        # Название — снимок на момент добавления: товар переименуют, а в заказе
+        # клиента должно остаться то, что он заказывал.
+        "name": line.name_snapshot,
+        "quantity_milli": line.quantity_milli,
+        # Собранное отдельно от заказанного: расхождение видно построчно ДО
+        # отгрузки, а не на выдаче.
+        "picked_milli": line.picked_milli,
+        "price": line.price_minor if amounts else None,
+        "cost": line.cost_minor if amounts else None,
+        "sort_order": line.sort_order,
+    }
+
+
+def order_out(order, lines: list | None = None, amounts: bool = True) -> dict:
+    """Заказ вместе со строками.
+
+    Строки приходят готовыми, а не догружаются здесь: список показывает их
+    пачкой, и запрос на строку превратил бы страницу из пятидесяти заказов в
+    пятьдесят обращений к базе.
+    """
+    from core.services import order_service
+
+    rows = lines or []
+    return {
+        "id": order.id,
+        "number": order.number,
+        "kind": order.kind,
+        "status": order.status,
+        "client_id": order.client_id,
+        "deal_id": order.deal_id,
+        "locale": order.locale,
+        "lines": [order_line_out(line, amounts=amounts) for line in rows],
+        "total": order_service.total_minor(rows) if amounts else None,
+        "created_at": _iso(order.created_at),
+        "updated_at": _iso(order.updated_at),
     }

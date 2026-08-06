@@ -241,6 +241,15 @@ class StockMove(Base):
     transfer_id: Mapped[int | None] = mapped_column(
         ForeignKey("stock_transfers.id", ondelete="SET NULL"), nullable=True, index=True
     )
+    # Каким бланком вызвано движение: отгрузкой заказа, приёмкой поставки,
+    # проведением акта. SET NULL по той же причине, что у заявки: товар
+    # физически ушёл со склада, и удаление бумаги не возвращает его на полку.
+    #
+    # Ссылка нужна не для отчётности, а для отмены: без неё нельзя ни сказать,
+    # какие именно движения сделала эта отгрузка, ни откатить их точно.
+    document_id: Mapped[int | None] = mapped_column(
+        ForeignKey("documents.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     # Знаковое: приход +, расход −. Остаток = SUM(quantity_milli) по товару,
     # поэтому вычитать при чтении ничего не нужно и перепутать знак негде.
     quantity_milli: Mapped[int] = mapped_column(Integer)
