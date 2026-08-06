@@ -15,10 +15,18 @@
 resolver 127.0.0.11 valid=10s ipv6=off;
 
 # медиа витрин — напрямую с диска, файлы неизменяемые
+#
+# CSP здесь обязателен и не дублирует приложение: в бою эти файлы отдаёт nginx,
+# минуя uvicorn, — то есть заголовки, которые ставит `web/middleware.py`, до
+# клиента не доходят вовсе. Среди файлов бывает SVG, а SVG, открытый прямой
+# ссылкой, — это документ со скриптом на нашем домене. Санитайзер при загрузке
+# ловит известные ему обёртки, но полагаться на список запрещённого в SVG
+# нельзя: он всегда неполон. `sandbox` закрывает вопрос независимо от него.
 location /media/ {
     alias /srv/storage/media/;
     add_header Cache-Control "public, max-age=31536000, immutable";
     add_header X-Content-Type-Options nosniff always;
+    add_header Content-Security-Policy "default-src 'none'; img-src 'self'; media-src 'self'; style-src 'unsafe-inline'; sandbox" always;
 
     # оригиналы наружу не отдаются — только производные (large/card/thumb/poster/video)
     location ~ /original\.[a-z0-9]+$ {
@@ -26,15 +34,21 @@ location /media/ {
     }
 }
 
+# Логотип и картинка для соцсетей. Тот же разговор про SVG, что и у медиа, плюс
+# `nosniff`, которого здесь не было вовсе: без него браузер вправе решить, что
+# «logo.png» на самом деле документ, и обойтись с ним соответственно.
 location /branding/ {
     alias /srv/storage/branding/;
     add_header Cache-Control "public, max-age=3600";
+    add_header X-Content-Type-Options nosniff always;
+    add_header Content-Security-Policy "default-src 'none'; img-src 'self'; media-src 'self'; style-src 'unsafe-inline'; sandbox" always;
 }
 
 location /avatars/ {
     alias /srv/storage/avatars/;
     add_header Cache-Control "public, max-age=86400";
-    add_header X-Content-Type-Options "nosniff";
+    add_header X-Content-Type-Options nosniff always;
+    add_header Content-Security-Policy "default-src 'none'; img-src 'self'; media-src 'self'; style-src 'unsafe-inline'; sandbox" always;
 }
 
 # Шрифты витрины лежат внутри образа, их отдаёт приложение — оно же ставит

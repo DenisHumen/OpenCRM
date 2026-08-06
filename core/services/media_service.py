@@ -86,15 +86,61 @@ def delete_work_files(work_uid: str) -> None:
 
 
 _SVG_SCRIPT_RE = re.compile(rb"<script\b.*?</script\s*>", re.IGNORECASE | re.DOTALL)
-_SVG_EVENT_RE = re.compile(rb"\son\w+\s*=\s*(\"[^\"]*\"|'[^']*')", re.IGNORECASE)
-_SVG_JSHREF_RE = re.compile(rb"(href|xlink:href)\s*=\s*([\"'])\s*javascript:[^\"']*\2", re.IGNORECASE)
+#: Обработчик события. Значение бывает в кавычках и без них — без кавычек
+#: (`onload=alert(1)`) прежнее выражение его не видело и пропускало целиком.
+_SVG_EVENT_RE = re.compile(rb"\son\w+\s*=\s*(\"[^\"]*\"|'[^']*'|[^\s>]+)", re.IGNORECASE)
+#: Ссылка. Режем не по схеме внутри кавычек, а весь атрибут, если значение
+#: похоже на скрипт: схему пишут и без кавычек, и числовыми ссылками
+#: (`javas&#99;ript:`), и с пробелами — перечислить все написания нельзя.
+_SVG_HREF_RE = re.compile(rb"(?:xlink:)?href\s*=\s*(\"[^\"]*\"|'[^']*'|[^\s>]+)", re.IGNORECASE)
+_SVG_BAD_VALUE_RE = re.compile(rb"(javascript|vbscript)\s*:", re.IGNORECASE)
+#: `data:` бывает и безобидным: встроенная картинка внутри SVG — обычное дело и
+#: выполнить ничего не может. Опасен `data:text/html` и подобное, поэтому режем
+#: не схему целиком, а всё, что объявляет себя не картинкой.
+_SVG_BAD_DATA_RE = re.compile(rb"data\s*:\s*(?!image/)", re.IGNORECASE)
+#: Числовая ссылка на символ: `&#99;` и `&#x63;` — оба вида «c».
+_CHAR_REF_RE = re.compile(rb"&#(x?)([0-9a-fA-F]+);?")
+
+
+def _unescape(value: bytes) -> bytes:
+    """Развернуть числовые ссылки на символы: `&#99;` → `c`, `&#x63;` → `c`."""
+
+    def one(match: "re.Match[bytes]") -> bytes:
+        digits = match.group(2)
+        try:
+            code = int(digits, 16 if match.group(1) else 10)
+        except ValueError:
+            return match.group(0)
+        return bytes([code]) if 0 < code < 128 else b""
+
+    return _CHAR_REF_RE.sub(one, value)
 
 
 def sanitize_svg(content: bytes) -> bytes:
+    """Убрать из SVG то, что делает его документом со скриптом.
+
+    **Это второй рубеж, а не первый.** Первый — заголовки: и приложение, и nginx
+    отдают такие файлы с `sandbox` в CSP, потому что список запрещённого в SVG
+    всегда неполон. Проверка ниже ловит известные обёртки; полагаться на неё как
+    на единственную защиту нельзя — а раньше именно так и было: в бою файлы
+    отдаёт nginx, и до этой правки он не ставил CSP вовсе.
+
+    Что чинилось здесь после разбора: обработчик события без кавычек
+    (`onload=alert(1)`) прежнее выражение не видело вовсе, как и ссылку со
+    схемой, записанной числовой ссылкой (`javas&#99;ript:`).
+    """
     content = _SVG_SCRIPT_RE.sub(b"", content)
     content = _SVG_EVENT_RE.sub(b"", content)
-    content = _SVG_JSHREF_RE.sub(b"", content)
-    return content
+
+    def drop_if_script(match):
+        # Значение сначала разворачиваем: `javas&#99;ript:` — это «javascript:»,
+        # и написать так можно любую букву. Сравнивать сырую строку бессмысленно,
+        # вариантов написания больше, чем можно перечислить.
+        value = _unescape(match.group(1))
+        bad = _SVG_BAD_VALUE_RE.search(value) or _SVG_BAD_DATA_RE.search(value)
+        return b"" if bad else match.group(0)
+
+    return _SVG_HREF_RE.sub(drop_if_script, content)
 
 
 # --- обработка (фоновая задача после загрузки) ---

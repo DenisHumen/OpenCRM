@@ -185,11 +185,23 @@ def verify_signature(secret: str, timestamp: str, signature: str, body: bytes) -
         return False
     try:
         sent_at = datetime.fromtimestamp(int(timestamp), tz=timezone.utc).replace(tzinfo=None)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError, OSError):
+        # `OverflowError` и `OSError` — не выдумка: метка «1000000000000» даёт
+        # именно их, а не ValueError, и пропущенные они превращались в 500 на
+        # запросе, для которого не нужно ни секрета, ни правильного тела.
+        # Любой из интернета одной строкой в заголовке делал ошибку сервера.
         return False
     if abs((now_utc() - sent_at).total_seconds()) > SIGNATURE_TOLERANCE_SECONDS:
         return False
-    return hmac.compare_digest(signature_for(secret, timestamp, body), signature.strip().lower())
+
+    # Подпись — это шестнадцатеричная строка. Всё остальное — не «неверная
+    # подпись», а мусор, и `compare_digest` на не-ASCII бросает TypeError:
+    # заголовки Starlette декодирует как latin-1, поэтому один байт 0xFF в
+    # заголовке тоже давал неаутентифицированную 500.
+    candidate = signature.strip().lower()
+    if not candidate.isascii():
+        return False
+    return hmac.compare_digest(signature_for(secret, timestamp, body), candidate)
 
 
 # --- время АТС ---
@@ -233,17 +245,26 @@ def parse_started_at(value: Any, offset: timedelta) -> datetime:
     """
     if value in (None, ""):
         return now_utc()
-    if isinstance(value, (int, float)):
-        # unix-время всегда в UTC по определению — смещение к нему не применяем
-        return datetime.fromtimestamp(float(value), tz=timezone.utc).replace(tzinfo=None)
-    text = str(value).strip().replace("Z", "+00:00")
+    # Любая беда разбора — это отказ с объяснением, а не ошибка сервера. Станция
+    # на 500 считает событие недоставленным и шлёт его снова, раскручивая петлю
+    # повторов на ровном месте; на 422 она хотя бы запишет отказ и остановится.
+    #
+    # Ловим шире, чем ValueError: `Infinity` (json допускает его по умолчанию),
+    # `1e20` и метка у края календаря дают OverflowError и OSError, а вычитание
+    # смещения у даты рядом с `datetime.max` — снова OverflowError.
     try:
+        if isinstance(value, (int, float)):
+            # unix-время всегда в UTC по определению — смещение не применяем
+            return datetime.fromtimestamp(float(value), tz=timezone.utc).replace(tzinfo=None)
+        text = str(value).strip().replace("Z", "+00:00")
         parsed = datetime.fromisoformat(text)
-    except ValueError as exc:
-        raise errors.ValidationError("started_at is not a valid datetime", code="bad_started_at") from exc
-    if parsed.tzinfo is not None:
-        return parsed.astimezone(timezone.utc).replace(tzinfo=None)
-    return parsed - offset
+        if parsed.tzinfo is not None:
+            return parsed.astimezone(timezone.utc).replace(tzinfo=None)
+        return parsed - offset
+    except (TypeError, ValueError, OverflowError, OSError) as exc:
+        raise errors.ValidationError(
+            "started_at is not a valid datetime", code="bad_started_at"
+        ) from exc
 
 
 # --- приём событий ---

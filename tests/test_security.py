@@ -144,3 +144,80 @@ def test_the_cap_does_not_touch_file_uploads(manager_client):
     )
 
     assert uploaded.status_code == 202, uploaded.text
+
+
+def test_public_links_from_settings_cannot_carry_a_script(root_client):
+    """Ссылки соцсетей и сайта проверяются так же, как адрес студии.
+
+    `javascript:alert(1)` в поле «Телеграм» доезжал до атрибута href публичной
+    витрины и страницы закрытой ссылки. Экранирование Jinja2 схему не трогает, а
+    CSP витрины разрешает inline-скрипты — получался хранимый XSS по клиентам
+    студии, на том же домене, что и CRM, от любой учётки с правом на настройки.
+    """
+    from core.services.settings_service import URL_SETTINGS
+
+    for key in URL_SETTINGS:
+        refused = root_client.patch(
+            f"{API}/settings", json={"values": {key: "javascript:alert(document.domain)"}}
+        )
+        assert refused.status_code == 422, f"{key}: {refused.text}"
+        assert refused.json()["error"]["code"] == "bad_site_url", key
+
+        # Обычный адрес по-прежнему принимается — проверка не мешает работе.
+        fine = root_client.patch(
+            f"{API}/settings", json={"values": {key: "https://example.com/studio"}}
+        )
+        assert fine.status_code == 200, f"{key}: {fine.text}"
+
+    root_client.patch(
+        f"{API}/settings",
+        json={"values": {key: "" for key in URL_SETTINGS}},
+    )
+
+
+def test_a_picture_cannot_smuggle_a_script(root_client):
+    """SVG чистится, и чистится не по одному написанию.
+
+    Проверка на образцах, которые прежний вариант пропускал: обработчик без
+    кавычек, обработчик у вложенного тега, схема, записанная числовой ссылкой.
+    Это второй рубеж — первый заголовки (`sandbox` в CSP и у приложения, и у
+    nginx), — но рубеж, который обещан комментарием, обязан работать.
+    """
+    from core.services.media_service import sanitize_svg
+
+    dangerous = [
+        b"<svg onload=alert(1)></svg>",
+        b"<svg><animate onbegin=alert(1) /></svg>",
+        b'<svg><a xlink:href="javas&#99;ript:alert(1)">x</a></svg>',
+        b'<svg><a xlink:href="javas&#x63;ript:alert(1)">x</a></svg>',
+        b"<svg><a href=javascript:alert(1)>x</a></svg>",
+        b'<svg><a href=" javascript:alert(1)">x</a></svg>',
+        b'<svg onload="alert(1)"></svg>',
+        b"<svg><script>alert(1)</script></svg>",
+        b'<svg><a href="data:text/html,<script>alert(1)</script>">x</a></svg>',
+    ]
+    for raw in dangerous:
+        assert b"alert" not in sanitize_svg(raw), raw
+
+    # И обратная сторона: безобидное не портим.
+    keep = b'<svg><image href="data:image/png;base64,AAA"/><a href="https://example.com">ok</a></svg>'
+    cleaned = sanitize_svg(keep)
+    assert b"https://example.com" in cleaned
+    assert b"data:image/png" in cleaned
+
+
+def test_the_uploaded_logo_is_cleaned_too(root_client):
+    """Логотип чистится наравне с работами: /branding/logo.svg открывают прямо."""
+    import pathlib
+
+    from config.settings import get_settings
+
+    poisoned = b'<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>'
+    uploaded = root_client.post(
+        f"{API}/settings/logo", files={"file": ("logo.svg", poisoned, "image/svg+xml")}
+    )
+    assert uploaded.status_code == 201, uploaded.text
+
+    saved = pathlib.Path(get_settings().branding_dir) / "logo.svg"
+    assert saved.exists(), "логотип не сохранился"
+    assert b"<script" not in saved.read_bytes(), "скрипт остался в логотипе на диске"

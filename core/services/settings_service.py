@@ -6,11 +6,23 @@ from sqlalchemy.orm import Session
 from config.settings import get_settings
 from core import exceptions as errors
 from core import uniqueness
+from core.services import media_service
 from core.utils import normalize_external_url, now_utc
 from database.models import SiteSetting
 from database.models.settings import SETTING_DEFAULTS
 
 ALLOWED_LOGO_EXTS = {"png", "jpg", "jpeg", "webp", "svg"}
+
+#: Настройки, значение которых становится ссылкой на публичной странице.
+#:
+#: Список закрытый и проверяется целиком: добавить сюда поле легко забыть, а
+#: цена забывчивости — работающий `javascript:` в href у клиентов студии.
+URL_SETTINGS = (
+    "studio_site_url",
+    "social_telegram",
+    "social_instagram",
+    "social_website",
+)
 
 
 def get_all(db: Session) -> dict[str, str]:
@@ -35,9 +47,19 @@ def update(db: Session, changes: dict[str, str]) -> dict[str, str]:
         raise errors.ValidationError(
             "Button text is too long (max 40 characters)", code="site_label_too_long"
         )
-    if "studio_site_url" in changes:
+    # Все ссылки, уходящие в href публичных страниц, проходят одну проверку.
+    #
+    # Раньше её проходил только адрес сайта студии, а соцсети и «сайт» из
+    # контактов — нет. `javascript:alert(1)` в поле «Телеграм» доезжал до
+    # атрибута href витрины и страницы закрытой ссылки: экранирование Jinja2
+    # схему не трогает, а CSP витрины разрешает inline-скрипты. Получался
+    # хранимый XSS по клиентам студии, на том же домене, что и CRM, — от любой
+    # учётки с правом на настройки.
+    for key in URL_SETTINGS:
+        if key not in changes:
+            continue
         try:
-            changes = {**changes, "studio_site_url": normalize_external_url(changes["studio_site_url"])}
+            changes = {**changes, key: normalize_external_url(changes[key])}
         except ValueError as exc:
             raise errors.ValidationError(str(exc), code="bad_site_url") from exc
     existing = {row.key: row for row in db.scalars(select(SiteSetting))}
@@ -65,6 +87,11 @@ def _save_branding_image(
     # убираем старые версии с другим расширением, чтобы не отдать устаревший файл
     for old in directory.glob(f"{base_name}.*"):
         old.unlink(missing_ok=True)
+    if ext == "svg":
+        # Логотип чистится тем же способом, что и работы на досках. Раньше не
+        # чистился вовсе: `<script>` в загруженном логотипе доезжал до
+        # `/branding/logo.svg` дословно, а этот адрес открывают напрямую.
+        content = media_service.sanitize_svg(content)
     filename = f"{base_name}.{ext}"
     (directory / filename).write_bytes(content)
     # имя файла постоянное, а отдаётся он с длинным кэшем — без метки версии
