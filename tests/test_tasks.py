@@ -121,6 +121,28 @@ def test_summary_counts_what_the_navigation_shows(manager_client):
     assert after["open"] == before["open"] + 1
 
 
+def test_summary_counts_past_the_length_of_the_list(manager_client):
+    """Счётчик считает все напоминания, а не первую страницу.
+
+    Список отдаётся с потолком в 200 строк, и счётчик легко сделать его
+    заложником — тогда на большой базе в меню навсегда застынет «200». Проверка
+    заводит больше задач, чем помещается в список, и сверяет число с тем, что
+    насчитал сервер до и после.
+    """
+    from core.services.task_service import LIST_LIMIT
+
+    before = manager_client.get(f"{TASKS}/summary").json()["open"]
+    added = LIST_LIMIT + 5
+    for i in range(added):
+        assert manager_client.post(TASKS, json={"title": f"Напоминание {i}"}).status_code == 201
+
+    listed = manager_client.get(f"{TASKS}?scope=open").json()["items"]
+    counted = manager_client.get(f"{TASKS}/summary").json()["open"]
+
+    assert len(listed) == LIST_LIMIT, "список отдал больше своего потолка"
+    assert counted == before + added, "счётчик остановился на длине списка"
+
+
 def test_task_is_linked_to_a_deal_and_found_by_it(manager_client):
     client = make_client(manager_client, "Клиент задачи")
     deal = manager_client.post(DEALS, json={"title": "Заказ", "client_id": client["id"]}).json()

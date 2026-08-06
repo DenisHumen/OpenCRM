@@ -20,7 +20,7 @@
 проверка на каждый запрос. Запрос при этом один и по индексу.
 """
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from core import exceptions as errors
@@ -248,14 +248,14 @@ def _managers_of_roles(
     if exclude_role is not None:
         granting = granting.where(RolePermission.role_id != exclude_role)
 
-    stmt = select(User).where(
+    stmt = select(func.count(User.id)).where(
         User.role != ROLE_ROOT,
         User.status == STATUS_ACTIVE,
         User.role_id.in_(granting),
     )
     if exclude_user is not None:
         stmt = stmt.where(User.id != exclude_user)
-    return len(list(db.scalars(stmt)))
+    return db.scalar(stmt) or 0
 
 
 def _refuse_if_nobody_left_to_manage_roles(db: Session, **exclusions) -> None:
