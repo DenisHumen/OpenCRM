@@ -26,7 +26,9 @@ from sqlalchemy.orm import Session
 from core import exceptions as errors
 from core import permissions
 from core import uniqueness
+from core.services import audit_service
 from database.models import Role, RolePermission, User
+from database.models.audit import SOURCE_MANUAL
 from database.models.role import MAX_ROLE_NAME
 from database.models.user import ROLE_ROOT
 
@@ -353,6 +355,21 @@ def create_role(
     _write_codes(db, role, pairs)
     if is_default:
         set_default(db, role.id)
+    if actor is not None:
+        # При посеве исполнителя нет и записи быть не должно: система создаёт
+        # роли сама, и «Root завёл роль» в этот момент было бы выдумкой.
+        audit_service.record(
+            db,
+            action=audit_service.ACTION_ROLE_CREATED,
+            actor=actor,
+            source=SOURCE_MANUAL,
+            entity_type=audit_service.ENTITY_ROLE,
+            entity_id=role.id,
+            entity_label=role.name,
+            after=audit_service.permissions_text(
+                permissions.code(area, action) for area, action in pairs
+            ),
+        )
     return role
 
 
@@ -425,7 +442,23 @@ def update_role(db: Session, role_id: int, name: str | None, codes, *, actor: Us
         )
         if loses_manage:
             _refuse_if_nobody_left_to_manage_roles(db, exclude_role=role.id)
+        was = codes_of_role(db, role.id)
         _write_codes(db, role, pairs)
+        if added != was:
+            # Только настоящая правка. Экран присылает набор целиком при каждом
+            # сохранении, и запись «изменил права» там, где не изменилось ничего,
+            # утопила бы настоящие правки в шуме — ровно как у сумм заявки.
+            audit_service.record(
+                db,
+                action=audit_service.ACTION_ROLE_PERMISSIONS_CHANGED,
+                actor=actor,
+                source=SOURCE_MANUAL,
+                entity_type=audit_service.ENTITY_ROLE,
+                entity_id=role.id,
+                entity_label=role.name,
+                before=audit_service.permissions_text(was),
+                after=audit_service.permissions_text(added),
+            )
     db.flush()
     return role
 
@@ -452,7 +485,7 @@ def set_default(db: Session, role_id: int) -> Role:
     return role
 
 
-def delete_role(db: Session, role_id: int) -> None:
+def delete_role(db: Session, role_id: int, actor: User) -> None:
     role = get_role(db, role_id)
     if role.is_default:
         raise errors.ValidationError(
@@ -467,8 +500,16 @@ def delete_role(db: Session, role_id: int) -> None:
             f"The role is assigned to {busy} employee(s) — reassign them first",
             code="role_in_use",
         )
+    label, role_id_before_delete = role.name, role.id
     db.delete(role)
     db.flush()
+    audit_service.record_deletion(
+        db,
+        actor=actor,
+        entity_type=audit_service.ENTITY_ROLE,
+        entity_id=role_id_before_delete,
+        entity_label=label,
+    )
 
 
 def assign(db: Session, actor: User, user_id: int, role_id: int | None) -> User:
@@ -506,8 +547,23 @@ def assign(db: Session, actor: User, user_id: int, role_id: int | None) -> User:
     if _grants_manage(db, user.role_id) and not (role and _grants_manage(db, role.id)):
         _refuse_if_nobody_left_to_manage_roles(db, exclude_user=user.id)
 
+    was = get_role(db, user.role_id).name if user.role_id else ""
     user.role_id = role.id if role else None
     db.flush()
+    # Запись на СОТРУДНИКА, а не на роль: спрашивают «почему у Иванова появился
+    # доступ к деньгам», а не «кому раздавали эту должность». Ответ на второй
+    # вопрос собирается из тех же записей поиском по значению.
+    audit_service.record(
+        db,
+        action=audit_service.ACTION_ROLE_ASSIGNED,
+        actor=actor,
+        source=SOURCE_MANUAL,
+        entity_type=audit_service.ENTITY_USER,
+        entity_id=user.id,
+        entity_label=user.name,
+        before=was or None,
+        after=role.name if role else None,
+    )
     return user
 
 

@@ -40,6 +40,7 @@ __all__ = [
     "record",
     "record_deletion",
     "record_restore",
+    "permissions_text",
     "money_text",
 ]
 
@@ -58,6 +59,16 @@ ACTION_MODULE_SWITCHED = "module.switched"
 #: стирает данные безвозвратно, — и потому обязано быть в журнале даже
 #: тогда, когда стирать оказалось нечего.
 ACTION_STORAGE_PURGED = "storage.purged"
+#: Должность собрана, переписана или отдана человеку.
+#:
+#: Права — это и есть то, ради чего журнал заведён: вопрос «кто дал бухгалтеру
+#: доступ к отчётам» задают ровно тогда, когда отвечать уже некому. До этих
+#: трёх записей конструктор доступов не оставлял следа вообще: в журнале была
+#: только смена «root ↔ менеджер», то есть единственная дверь из двух десятков.
+ACTION_ROLE_CREATED = "role.created"
+ACTION_ROLE_PERMISSIONS_CHANGED = "role.permissions_changed"
+ACTION_ROLE_ASSIGNED = "role.assigned"
+
 ACTION_STAFF_ROLE_CHANGED = "staff.role_changed"
 ACTION_STAFF_APPROVED = "staff.approved"
 ACTION_STAFF_REJECTED = "staff.rejected"
@@ -74,6 +85,8 @@ ENTITY_CLIENT = "client"
 ENTITY_PRODUCT = "product"
 ENTITY_USER = "user"
 ENTITY_MODULE = "module"
+#: Должность из конструктора доступов (не «root/менеджер» — тот у ENTITY_USER).
+ENTITY_ROLE = "role"
 ENTITY_NOTE = "note"
 ENTITY_FILE = "file"
 
@@ -210,6 +223,20 @@ def record_restore(
         entity_id=entity_id,
         entity_label=entity_label,
     )
+
+
+def permissions_text(codes) -> str:
+    """Набор прав в журнал — списком кодов через запятую.
+
+    Именно коды, а не подписи: подписи живут в словаре интерфейса и меняются, а
+    `deals.view_amounts` через год читается так же, как сегодня. По той же
+    причине здесь не форматируются и деньги (см. `money_text`).
+
+    Порядок задан сортировкой: две записи об одном и том же наборе обязаны
+    выглядеть одинаково, иначе «изменил права» покажется правкой там, где просто
+    другой порядок в запросе.
+    """
+    return ", ".join(sorted(codes))
 
 
 def money_text(minor: int | None) -> str | None:

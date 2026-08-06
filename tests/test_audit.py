@@ -28,10 +28,11 @@ from database.models.audit import (
 )
 from database.models.client import KIND_STAGE
 from database.session import SessionLocal
-from tests.conftest import API
+from tests.conftest import API, make_manager
 from tests.test_deals import DEALS, make_client
 
 AUDIT = f"{API}/audit"
+ROLES = f"{API}/roles"
 
 
 @pytest.fixture
@@ -629,3 +630,72 @@ def test_restoring_what_was_not_deleted_does_not_invent_a_record(root_client, ma
     assert root_client.post(f"{API}/clients/{client['id']}/restore").status_code == 200
 
     assert len(about(root_client, "client", client["id"])) == before, "записан возврат без удаления"
+
+
+def test_the_permission_constructor_leaves_a_trail(root_client):
+    """Кто собрал должность, кто переписал права, кому её отдали.
+
+    Вопрос «кто дал бухгалтеру доступ к отчётам» задают ровно тогда, когда
+    отвечать уже некому. До этих записей конструктор доступов не оставлял следа
+    вообще: в журнале была только смена «root ↔ менеджер» — одна дверь из двух
+    десятков, и не главная.
+    """
+    made = root_client.post(
+        f"{API}/roles", json={"name": "Бухгалтер для журнала", "permissions": ["reports.view"]}
+    )
+    assert made.status_code == 201, made.text
+    role = made.json()
+
+    try:
+        born = entries(root_client, action="role.created")[0]
+        assert born["entity_label"] == "Бухгалтер для журнала"
+        assert born["value_after"] == "reports.view"
+        assert born["actor_name"], "роль заведена без исполнителя"
+
+        # Правка прав: видно, что было и что стало.
+        changed = root_client.patch(
+            f"{ROLES}/{role['id']}",
+            json={"permissions": ["reports.view", "reports.view_amounts"]},
+        )
+        assert changed.status_code == 200, changed.text
+
+        edit = entries(root_client, action="role.permissions_changed")[0]
+        assert edit["value_before"] == "reports.view"
+        assert edit["value_after"] == "reports.view, reports.view_amounts"
+
+        # Сохранение без изменений в журнал не идёт: экран присылает набор
+        # целиком при каждом нажатии, и шум утопил бы настоящие правки.
+        quiet = len(entries(root_client, action="role.permissions_changed"))
+        root_client.patch(
+            f"{ROLES}/{role['id']}",
+            json={"permissions": ["reports.view_amounts", "reports.view"]},
+        )
+        assert len(entries(root_client, action="role.permissions_changed")) == quiet
+
+        # Назначение — запись на СОТРУДНИКА: спрашивают про человека.
+        from tests.test_roles import _user_id
+
+        make_manager(root_client, "trail@test.local")
+        user_id = _user_id(root_client, "trail@test.local")
+        assert root_client.post(f"{ROLES}/assign/{user_id}", json={"role_id": role["id"]}).status_code == 200
+
+        given = about(root_client, "user", user_id)[0]
+        assert given["action"] == "role.assigned"
+        assert given["value_after"] == "Бухгалтер для журнала"
+    finally:
+        from tests.test_roles import _user_id as _uid
+
+        root_client.post(f"{ROLES}/assign/{_uid(root_client, 'trail@test.local')}", json={"role_id": None})
+        root_client.delete(f"{ROLES}/{role['id']}")
+
+
+def test_deleting_a_role_is_recorded_too(root_client):
+    """Исчезнувшая должность — тоже событие: права пропали у всех, кто её носил."""
+    role = root_client.post(
+        f"{API}/roles", json={"name": "Временная должность", "permissions": ["clients.view"]}
+    ).json()
+    assert root_client.delete(f"{ROLES}/{role['id']}").status_code == 200
+
+    gone = entries(root_client, entity_type="role")[0]
+    assert gone["action"] == "role.deleted"
+    assert gone["entity_label"] == "Временная должность"

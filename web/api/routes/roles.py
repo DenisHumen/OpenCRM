@@ -135,9 +135,13 @@ def make_default(role_id: int, db: Session = Depends(get_db)):
     return schemas.role_out(role, codes=sorted(permissions_service.codes_of_role(db, role.id)))
 
 
-@router.delete("/{role_id}", dependencies=[manage])
-def delete_role(role_id: int, db: Session = Depends(get_db)):
-    permissions_service.delete_role(db, role_id)
+@router.delete("/{role_id}")
+def delete_role(
+    role_id: int,
+    actor: User = Depends(require_perm("roles", "manage")),
+    db: Session = Depends(get_db),
+):
+    permissions_service.delete_role(db, role_id, actor)
     return {"message": "Role deleted"}
 
 

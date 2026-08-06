@@ -28,6 +28,9 @@ const ACTION: Record<string, TranslationKey> = {
   "deal.prepaid_changed": "auditActPrepaidChanged",
   "stock.move_added": "auditActStockMoveAdded",
   "module.switched": "auditActModuleSwitched",
+  "role.created": "auditActRoleCreated",
+  "role.permissions_changed": "auditActRolePermissions",
+  "role.assigned": "auditActRoleAssigned",
   "staff.role_changed": "auditActRoleChanged",
   "staff.approved": "auditActApproved",
   "staff.rejected": "auditActRejected",
@@ -37,6 +40,7 @@ const ACTION: Record<string, TranslationKey> = {
 };
 
 const ENTITY: Record<string, TranslationKey> = {
+  role: "auditEntRole",
   client: "auditEntClient",
   product: "auditEntProduct",
   user: "auditEntUser",
