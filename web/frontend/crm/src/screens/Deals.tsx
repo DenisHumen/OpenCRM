@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 
 import { Icon } from "../components/Icon";
 import { Avatar, EmptyState, Modal, ScreenLoading } from "../components/ui";
-import { api } from "../lib/api";
+import { api, ApiError } from "../lib/api";
 import { useApp } from "../lib/app";
 import { useFailure } from "../lib/failure";
 import { formatDate, formatMoney, initials } from "../lib/format";
@@ -168,8 +168,12 @@ export function Deals() {
       await api.post(`/deals/${id}/move`, { stage });
       void load();
     } catch (e) {
-      setColumns(before);
       toastError(e);
+      // Заявку передвинул кто-то другой, пока карточка была у нас на экране.
+      // Возвращать её на прежнее место нельзя: это позапрошлое положение, и
+      // человек снова потянет её из колонки, где её уже нет. Спрашиваем доску.
+      if (e instanceof ApiError && e.code === "stage_moved_meanwhile") void load();
+      else setColumns(before);
     }
   };
 

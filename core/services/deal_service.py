@@ -1,5 +1,6 @@
 """Сделки: работа для клиента от заявки до закрытия."""
 
+from sqlalchemy import update
 from sqlalchemy.orm import Session
 
 from core import events
@@ -245,20 +246,45 @@ def move_stage(
         return deal
 
     previous = deal.stage
-    deal.stage = stage
-    deal.sort_order = (
-        sort_order if sort_order is not None else deals_repo.next_sort_order(db, stage)
-    )
+
+    values: dict = {
+        "stage": stage,
+        "sort_order": (
+            sort_order if sort_order is not None else deals_repo.next_sort_order(db, stage)
+        ),
+    }
     if target.kind in CLOSED_KINDS:
-        deal.closed_at = now_utc()
+        values["closed_at"] = now_utc()
         if target.kind == KIND_LOST and lost_reason is not None:
-            deal.lost_reason = lost_reason.strip()[:MAX_LOST_REASON]
+            values["lost_reason"] = lost_reason.strip()[:MAX_LOST_REASON]
     else:
         # Вернули из закрытых в работу — дата закрытия и причина больше не верны.
-        deal.closed_at = None
-        deal.lost_reason = ""
+        values["closed_at"] = None
+        values["lost_reason"] = ""
 
-    db.flush()
+    # Этап меняем условием «пока он тот, что мы прочитали», а не присваиванием.
+    #
+    # Двое двигают одну заявку разом — оба читают `new`, оба пишут по строке
+    # журнала, обоим отвечают «готово». В базе остаётся последний, а в журнале
+    # две записи из одного этапа: `new → in_progress` и `new → done`. Перехода
+    # `in_progress → done` не было ни разу, и отчёт «сколько заявка простояла
+    # в этапе» считает по разорванной цепочке. Данные при этом целы — тем
+    # неприятнее: заметить нечего, пока не сверишь журнал с глазами.
+    #
+    # Условие в самом UPDATE снимает вопрос без блокировок и колонки версии:
+    # второй не находит строку в ожидаемом этапе и получает отказ. Отказ
+    # честнее молчаливой перезаписи — заявку за это время передвинул человек,
+    # и решать, что делать дальше, ему, а не нам.
+    moved = db.execute(
+        update(Deal).where(Deal.id == deal.id, Deal.stage == previous).values(**values)
+    )
+    if moved.rowcount == 0:
+        raise errors.ConflictError(
+            "The deal has already been moved by someone else — refresh and try again",
+            code="stage_moved_meanwhile",
+        )
+    # Объект в памяти помнит прежний этап: меняли строку запросом, мимо него.
+    db.refresh(deal)
     deals_repo.add_stage_change(db, deal.id, previous, stage, author.id)
     # Журнал пишем здесь, а не подписчиком на это же событие. Наблюдатель
     # работает под точкой отката и своё падение проглатывает — то есть смена

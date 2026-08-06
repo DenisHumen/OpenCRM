@@ -149,6 +149,9 @@ export function DealCard() {
       setDeal(await api.post(`/deals/${id}/move`, { stage: key }));
     } catch (e) {
       toastError(e);
+      // Этап уже сменил кто-то другой — показываем, каким он стал на самом
+      // деле, а не тот, что был открыт у нас на экране.
+      if (e instanceof ApiError && e.code === "stage_moved_meanwhile") void load();
     }
   };
 
@@ -158,6 +161,10 @@ export function DealCard() {
       setAskReason(null);
     } catch (e) {
       toastError(e);
+      if (e instanceof ApiError && e.code === "stage_moved_meanwhile") {
+        setAskReason(null);
+        void load();
+      }
     }
   };
 

@@ -199,3 +199,56 @@ def test_every_single_deal_response_has_the_same_shape(manager_client):
 def test_deals_require_login(base_client):
     assert base_client.get(DEALS).status_code == 401
     assert base_client.get(f"{DEALS}/board").status_code == 401
+
+
+def test_two_people_moving_one_deal_do_not_tear_the_journal(manager_client):
+    """Второй, кто двигает ту же заявку, получает отказ, а не молчаливый перехват.
+
+    Гонка, ради которой это написано: двое открыли доску, оба видят заявку в
+    «Новой», оба тянут её — один в «В работе», другой в «Готово». Раньше обоим
+    отвечали «готово», и в журнале оставались две записи из одного этапа:
+
+        ('', 'new') → ('new', 'in_progress') → ('new', 'done')
+
+    Перехода `in_progress → done` не было ни разу. Данные при этом целы — тем
+    неприятнее: заметить нечего, пока не сверишь журнал глазами, а отчёт
+    «сколько заявка простояла в этапе» уже считает по разорванной цепочке.
+
+    Второго участника изображаем отдельной сессией: она меняет этап в базе
+    ровно между чтением и записью первого. Настоящую параллельность здесь
+    воспроизвести нечем — `TestClient` работает в одном процессе и запросы
+    выстраивает в очередь, — а порядок событий тот же самый.
+    """
+    from sqlalchemy import update
+
+    from core import exceptions as errors
+    from core.services import deal_service
+    from database.models import Deal, User
+    from database.session import SessionLocal
+
+    client = make_client(manager_client, "Клиент гонки")
+    deal = manager_client.post(DEALS, json={"title": "Заявка", "client_id": client["id"]}).json()
+
+    with SessionLocal() as first:
+        author = first.query(User).first()
+        # Первый прочитал заявку и держит её в руках — в «Новой».
+        held = deal_service.get_deal(first, deal["id"])
+        assert held.stage == "new"
+
+        # Второй тем временем успел передвинуть её и зафиксировать.
+        with SessionLocal() as second:
+            second.execute(update(Deal).where(Deal.id == deal["id"]).values(stage="done"))
+            second.commit()
+
+        try:
+            deal_service.move_stage(first, deal["id"], "in_progress", author)
+            raise AssertionError("перехват прошёл молча — журнал снова рвётся")
+        except errors.ConflictError as refused:
+            assert refused.code == "stage_moved_meanwhile"
+        first.rollback()
+
+    # В журнале — только состоявшиеся переходы, цепочка не разорвана.
+    card = manager_client.get(f"{DEALS}/{deal['id']}").json()
+    chain = [(row["from_stage"], row["to_stage"]) for row in card["stage_history"]]
+    assert ("new", "in_progress") not in chain, "запись о непроизошедшем переходе всё же появилась"
+    assert card["stage"] == "done"
