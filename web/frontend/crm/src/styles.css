@@ -52,6 +52,22 @@ button { font-family: var(--sans); }
 .page-wide { max-width: 1120px; }
 .page-narrow { max-width: 760px; }
 .page-tight { max-width: 640px; }
+/* Доска сделок — единственный экран, который выходит из общей колонки.
+   Остальные страницы читают, а доску обозревают: её польза прямо пропорциональна
+   числу видимых этапов, и 1120px на мониторе в 2560px означали бы три видимых
+   этапа из семи при пустом поле справа.
+
+   2500px — не круглое число, а расчёт: столько занимают семь колонок в своей
+   МАКСИМАЛЬНОЙ ширине (7×340 + 6×12 + 2×24 полей). Семь — самый длинный из
+   отраслевых наборов («Услуги и ремонт»). Дальше растягивать нечего: лишняя
+   ширина не пойдёт ни колонкам (у них свой предел), ни чему-либо ещё — только
+   растянет строку «заголовок … кнопка» так, что кнопку придётся искать глазами.
+
+   Боковые поля уже общих 40px: воздух по краям текстовой колонки помогает
+   читать, а рядом с прокручиваемой доской он не даёт ничего — только отнимает
+   ширину у колонок. На ноутбуке в 1280px эти 32px решают, видно четыре этапа
+   из семи или три. */
+.page-board { max-width: 2500px; padding-left: 24px; padding-right: 24px; }
 
 /* Заголовок страницы — санс вместо серифа, компактнее */
 .page-title {
@@ -92,17 +108,25 @@ button { font-family: var(--sans); }
 .share-action-hint { color: var(--faint); font-size: 11.5px; line-height: 1.4; text-align: right; margin-left: auto; }
 
 /* Канбан сделок.
-   Колонки одинаковой ширины с горизонтальной прокруткой: этапов шесть, и на
-   ноутбуке они в экран не помещаются. Схлопывать их в узкие полоски хуже —
-   названия сделок перестают читаться, а именно по ним доску и просматривают. */
+   Колонки растягиваются по свободной ширине и прокручиваются, когда её не
+   хватает. Схлопывать их до «влезло» нельзя: названия сделок перестают
+   читаться, а именно по ним доску и просматривают. Этапов бывает до
+   двенадцати — все они не поместятся никогда, и задача не «влезть», а
+   остаться пригодным. */
 .kanban {
   display: flex; gap: 12px; align-items: flex-start;
   overflow-x: auto; padding-bottom: 12px;
   /* прокрутка «доводит» колонку до края, а не оставляет её наполовину видимой */
   scroll-snap-type: x proximity;
 }
+/* flex: расти можно, сжиматься нельзя.
+   grow=1 — свободная ширина делится между колонками, и на широком мониторе
+   справа не остаётся пустого поля; shrink=0 — ниже 232px колонка не опускается
+   ни при каком числе этапов, вместо этого включается прокрутка. Верхний предел
+   тоже нужен: при двух-трёх этапах колонка иначе разъезжается на полэкрана,
+   и карточка в 700px читается хуже, чем в 300. */
 .kanban-col {
-  flex: 0 0 248px; scroll-snap-align: start;
+  flex: 1 0 232px; max-width: 340px; scroll-snap-align: start;
   background: var(--surface-2); border: 1px solid transparent; border-radius: 12px;
   padding: 10px; min-height: 120px;
   transition: border-color 160ms ease, background 160ms ease;
@@ -172,6 +196,44 @@ button { font-family: var(--sans); }
 .kanban::-webkit-scrollbar-thumb { background: var(--line); border-radius: 4px; }
 .kanban::-webkit-scrollbar-thumb:hover { background: var(--border-hover); }
 .kanban { scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
+
+/* --- сделки на узком экране: список вместо доски ---
+
+   Переключение делает Deals.tsx по ширине этой обёртки (ResizeObserver), а не
+   медиазапросом: сайдбар и окно на половину монитора дают те же условия, что
+   телефон, а окно об этом ничего не знает. Ширина обёртки от режима не
+   зависит — доска прокручивается внутри себя, — поэтому переключение не может
+   сдвинуть то, по чему оно принимается. */
+.deals-frame { min-width: 0; }
+.stage-filter { margin-bottom: 12px; }
+.stage-filter .input { width: 100%; }
+.deal-list { display: flex; flex-direction: column; gap: 18px; }
+.deal-group { display: flex; flex-direction: column; gap: 8px; }
+/* Заголовок этапа несёт то же, что шапка колонки на доске, плюс сумму:
+   деньги по этапу видны в обоих режимах, иначе узкий экран молча теряет
+   единственное число, ради которого доску и открывают. */
+.deal-group-head { padding: 0 2px 2px; }
+.deal-group-money {
+  margin-left: auto; color: var(--muted); font-size: 12px;
+  font-variant-numeric: tabular-nums; text-transform: none; letter-spacing: 0;
+}
+/* Строка списка — карточка и выбор этапа под ней, одной рамкой. Перетаскивания
+   здесь нет: горизонтальный жест пальцем спорит с прокруткой страницы. */
+.deal-row {
+  display: flex; flex-direction: column;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 9px;
+  transition: border-color 160ms ease;
+}
+.deal-row:hover { border-color: var(--border-hover); }
+.deal-row > .deal-card {
+  border: none; background: none; border-radius: 0; cursor: pointer;
+}
+.deal-row-stage {
+  height: 34px; margin: 2px 10px 10px; padding: 0 8px; width: calc(100% - 20px);
+  background: var(--well); border: 1px solid var(--border); border-radius: 7px;
+  color: var(--text); font-family: var(--sans); font-size: 12.5px;
+}
+.deal-row-stage:focus { outline: none; border-color: var(--accent); }
 
 /* --- карточка сделки --- */
 
@@ -817,3 +879,53 @@ button { font-family: var(--sans); }
 .src-name { position: relative; flex: 1; min-width: 0; }
 .src-num { position: relative; width: 76px; text-align: right; flex: none; color: var(--muted); font-variant-numeric: tabular-nums; }
 .src-money { position: relative; width: 120px; text-align: right; flex: none; font-variant-numeric: tabular-nums; }
+
+/* ============================================================
+   Узкое окно: сайдбар уезжает, содержимое получает весь экран.
+
+   Здесь медиазапрос по ОКНУ уместен, в отличие от доски сделок: «сколько всего
+   экрана есть» — свойство окна, а не какого-либо контейнера. Постоянный сайдбар
+   в 240px на телефоне оставлял содержимому 150px, и вбок уезжала вся страница,
+   а не только доска.
+
+   Порог 900px, а не 700: за ним содержимому остаётся 900−240−80 = 580px, чуть
+   больше порога, на котором доска сделок превращается в список. Возьми порог
+   ниже — и нашлась бы полоса ширин, где окно УЖЕ показывает доску (сайдбар уже
+   уехал, места стало больше), а окно шире — список. Читалось бы как поломка.
+   ============================================================ */
+.app-topbar { display: none; }
+
+@media (max-width: 900px) {
+  .app-topbar {
+    display: flex; align-items: center; gap: 10px;
+    position: sticky; top: 0; z-index: 30;
+    padding: 8px 12px;
+    background: var(--bg-sidebar); border-bottom: 1px solid var(--border);
+  }
+  .topbar-btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 34px; height: 34px; flex: none;
+    background: none; border: 1px solid var(--border); border-radius: 8px;
+    color: var(--text); cursor: pointer;
+  }
+  .topbar-btn:hover { background: var(--surface); border-color: var(--border-hover); }
+  .topbar-title { font-size: 14px; font-weight: 600; color: var(--text); }
+
+  .sidebar {
+    position: fixed; top: 0; left: 0; z-index: 46;
+    transform: translateX(-100%); transition: transform 180ms ease;
+  }
+  .sidebar.open { transform: none; }
+  .side-scrim {
+    position: fixed; inset: 0; z-index: 45;
+    background: rgba(12, 12, 11, 0.62); border: none; padding: 0;
+  }
+
+  /* Поля страницы в 40px на телефоне съедали пятую часть ширины. */
+  .page, .page-board { padding: 16px 14px 48px; }
+  /* Заголовок и главная кнопка перестают помещаться в строку раньше всего
+     остального — переносим, а не сжимаем название до многоточия. */
+  .page-head { flex-wrap: wrap; gap: 12px; }
+}
+
+@media (prefers-reduced-motion: reduce) { .sidebar { transition: none; } }

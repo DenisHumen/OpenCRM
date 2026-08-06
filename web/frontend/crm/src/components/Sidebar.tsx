@@ -168,7 +168,15 @@ function NavSection({
   );
 }
 
-export function Sidebar({ onOpenSearch }: { onOpenSearch: () => void }) {
+export function Sidebar({
+  onOpenSearch,
+  open = false,
+}: {
+  onOpenSearch: () => void;
+  /** Выехало ли меню поверх содержимого. Смысл имеет только на узком окне —
+   *  на широком сайдбар и так стоит на месте (см. медиазапрос в styles.css). */
+  open?: boolean;
+}) {
   const {
     user, t, locale, settings, storage, modules, workspace, overdueTasks,
     setUser, logout, toastError,
@@ -267,7 +275,7 @@ export function Sidebar({ onOpenSearch }: { onOpenSearch: () => void }) {
   }
 
   return (
-    <aside className="sidebar">
+    <aside className={"sidebar" + (open ? " open" : "")}>
       <div className="side-top">
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <NavLink to="/" className="side-brand">

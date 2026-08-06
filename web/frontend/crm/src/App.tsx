@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, Navigate, Outlet, Route, Routes, useLocation } from "react-router-dom";
 
 import { CommandPalette } from "./components/CommandPalette";
+import { Icon } from "./components/Icon";
 import { Sidebar } from "./components/Sidebar";
 import { ScreenLoading, Toasts } from "./components/ui";
 import { useApp } from "./lib/app";
@@ -40,9 +41,13 @@ import { SettingsTelephony } from "./screens/TelephonySettings";
 import { Warehouse } from "./screens/Warehouse";
 
 function Protected() {
-  const { user, ready } = useApp();
+  const { user, ready, t } = useApp();
   const location = useLocation();
   const [searchOpen, setSearchOpen] = useState(false);
+  // Меню выезжает поверх содержимого только на узком окне (см. медиазапрос в
+  // styles.css). На широком класс `open` ни на что не влияет — сайдбар и так
+  // стоит на месте, и второе состояние ему не нужно.
+  const [navOpen, setNavOpen] = useState(false);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -55,6 +60,10 @@ function Protected() {
     return () => document.removeEventListener("keydown", onKey);
   }, []);
 
+  // Переход по пункту меню закрывает само меню: иначе на телефоне открытый
+  // экран остаётся под шторкой, и кажется, что нажатие не сработало.
+  useEffect(() => setNavOpen(false), [location.pathname]);
+
   if (!ready) return <ScreenLoading />;
   if (!user) return <Navigate to="/login" state={{ from: location }} replace />;
   if (user.must_change_password) return <ForcePasswordChange />;
@@ -64,8 +73,29 @@ function Protected() {
     <>
       <MaintenanceBar />
       <div className="app-shell">
-        <Sidebar onOpenSearch={() => setSearchOpen(true)} />
+        <Sidebar open={navOpen} onOpenSearch={() => setSearchOpen(true)} />
+        {navOpen && (
+          <button
+            type="button"
+            className="side-scrim"
+            aria-label={t("closeMenu")}
+            onClick={() => setNavOpen(false)}
+          />
+        )}
         <main className="app-main">
+          {/* Полоса с кнопкой меню видна только на узком окне: там сайдбар
+              уехал за край, и попасть в навигацию больше неоткуда. */}
+          <div className="app-topbar">
+            <button
+              type="button"
+              className="topbar-btn"
+              aria-label={t("menu")}
+              onClick={() => setNavOpen(true)}
+            >
+              <Icon name="menu" size={18} />
+            </button>
+            <span className="topbar-title">OpenCRM</span>
+          </div>
           <Outlet />
         </main>
         {searchOpen && <CommandPalette onClose={() => setSearchOpen(false)} />}
