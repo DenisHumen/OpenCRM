@@ -2,13 +2,16 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { Icon } from "../components/Icon";
+import { useLabelsOn } from "../components/ProductBarcodes";
 import { Chip, ConfirmModal, ScreenLoading } from "../components/ui";
 import { WarehousePicker, useWarehouses } from "../components/Warehouses";
 import { api, ApiError } from "../lib/api";
 import { useApp } from "../lib/app";
+import { useDebounced } from "../lib/debounce";
 import { useFailure } from "../lib/failure";
 import { formatMoney, formatQuantity } from "../lib/format";
 import { ORDER_STATUS_LABEL, type Order } from "./Orders";
+import type { Product } from "./Warehouse";
 
 /** Карточка заказа: позиции, сборка сканером, проведение.
  *
@@ -86,7 +89,7 @@ export function OrderCard() {
       </Link>
 
       <div className="page-head" style={{ alignItems: "flex-start", marginBottom: 20 }}>
-        <div>
+        <div style={{ flex: 1, minWidth: 0 }}>
           <h1 className="page-title" style={{ fontSize: 22 }}>
             {order.number}
           </h1>
@@ -96,6 +99,34 @@ export function OrderCard() {
               {t(ORDER_STATUS_LABEL[order.status as keyof typeof ORDER_STATUS_LABEL] ?? "docIssued")}
             </Chip>
           </div>
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          {order.status === "issued" && order.lines.length > 0 && (
+            <button
+              className="btn btn-secondary btn-sm"
+              onClick={async () => {
+                try {
+                  await api.post(`/orders/${order.id}/ready`);
+                  await load();
+                } catch (err) {
+                  toastError(err);
+                }
+              }}
+            >
+              {t("orderReady")}
+            </button>
+          )}
+          {/* Печать — обычная ссылка в новую вкладку: это window.print() на
+              настоящей странице со своим @page, и выборкой её не получить. */}
+          <a
+            className="btn btn-secondary btn-sm"
+            href={`/api/v1/orders/${order.id}/print`}
+            target="_blank"
+            rel="noreferrer"
+          >
+            <Icon name="printer" size={14} />
+            {t("orderPrint")}
+          </a>
         </div>
       </div>
 
@@ -116,14 +147,22 @@ export function OrderCard() {
               {/* Собранное показываем только когда оно есть и не сходится:
                   «собрано 3 из 3» на каждой строке — шум, прячущий те строки,
                   где расхождение настоящее. */}
-              {line.picked_milli > 0 && line.picked_milli !== line.quantity_milli && (
-                <span style={{ color: "var(--warning)", fontSize: 12, marginLeft: 6 }}>
-                  {t("orderPicked", {
-                    done: formatQuantity(line.picked_milli),
-                    all: formatQuantity(line.quantity_milli),
-                  })}
-                </span>
-              )}
+              {line.picked_milli > 0 &&
+                (line.picked_milli === line.quantity_milli ? (
+                  // Сошлось — короткая пометка вместо «собрано 3 из 3»: на
+                  // каждой строке она была бы шумом, прячущим те строки, где
+                  // расхождение настоящее.
+                  <span style={{ color: "var(--success)", fontSize: 12, marginLeft: 6 }}>
+                    ✓ {t("orderPickedAll")}
+                  </span>
+                ) : (
+                  <span style={{ color: "var(--warning)", fontSize: 12, marginLeft: 6 }}>
+                    {t("orderPicked", {
+                      done: formatQuantity(line.picked_milli),
+                      all: formatQuantity(line.quantity_milli),
+                    })}
+                  </span>
+                ))}
             </span>
             <span style={{ width: 110, textAlign: "right", color: "var(--muted)", fontSize: 12.5 }}>
               {formatMoney(line.price, workspace.currency, locale)}
@@ -155,6 +194,7 @@ export function OrderCard() {
       </div>
 
       {open && <AddLine orderId={order.id} onAdded={load} />}
+      {open && <PickScanner orderId={order.id} onPicked={load} />}
 
       {open && (
         <div className="card card-pad" style={{ marginTop: 16, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
@@ -208,22 +248,59 @@ export function OrderCard() {
   );
 }
 
+/** Добавление позиции: из справочника или разовой строкой.
+ *
+ * Два способа рядом, а не два экрана. **Из справочника** — для товара: только
+ * такая строка попадает в резерв и списывается при отгрузке. **Разовая** — для
+ * «доставки» и «упаковки», которых в справочнике нет и заводить их туда значит
+ * замусорить его одноразовыми записями.
+ */
 function AddLine({ orderId, onAdded }: { orderId: number; onAdded: () => Promise<void> }) {
   const { t, toastError } = useApp();
+  const [fromCatalogue, setFromCatalogue] = useState(true);
   const [name, setName] = useState("");
+  const [picked, setPicked] = useState<Product | null>(null);
   const [quantity, setQuantity] = useState("1");
   const [busy, setBusy] = useState(false);
+  const [found, setFound] = useState<Product[]>([]);
+
+  const search = useDebounced(name);
+  useEffect(() => {
+    if (!fromCatalogue || !search.trim() || picked) {
+      setFound([]);
+      return;
+    }
+    let alive = true;
+    api
+      .get<{ items: Product[] }>(
+        `/warehouse/products?search=${encodeURIComponent(search)}&per_page=8`,
+      )
+      .then((data) => {
+        if (alive) setFound(data.items);
+      })
+      // Склад может быть выключен — тогда справочника просто нет, и остаётся
+      // разовая позиция. Это не ошибка человека, и говорить о ней нечего.
+      .catch(() => {
+        if (alive) setFound([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [search, fromCatalogue, picked]);
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    if (!name.trim() || busy) return;
+    if (busy) return;
+    if (fromCatalogue ? !picked : !name.trim()) return;
     setBusy(true);
     try {
-      // Разовая позиция без карточки товара: «доставка», «упаковка». Выбор из
-      // справочника добавится отдельно — сначала должно работать то, без чего
-      // заказ вообще нельзя набрать.
-      await api.post(`/orders/${orderId}/lines`, { name: name.trim(), quantity: quantity.trim() });
+      await api.post(`/orders/${orderId}/lines`, {
+        product_id: picked?.id ?? null,
+        name: picked ? null : name.trim(),
+        quantity: quantity.trim(),
+      });
       setName("");
+      setPicked(null);
       setQuantity("1");
       await onAdded();
     } catch (err) {
@@ -234,18 +311,136 @@ function AddLine({ orderId, onAdded }: { orderId: number; onAdded: () => Promise
   };
 
   return (
-    <form className="card card-pad" onSubmit={submit} style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "end" }}>
-      <div className="field" style={{ marginBottom: 0, flex: "1 1 180px", minWidth: 0 }}>
-        <label className="label">{t("orderLineName")}</label>
-        <input className="input" value={name} onChange={(e) => setName(e.target.value)} />
+    <form className="card card-pad" onSubmit={submit} style={{ marginTop: 12 }}>
+      <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
+        {([[true, t("orderLinePick")], [false, t("orderLineOnce")]] as const).map(
+          ([value, label]) => (
+            <button
+              key={String(value)}
+              type="button"
+              className={"option-chip" + (fromCatalogue === value ? " active" : "")}
+              onClick={() => {
+                setFromCatalogue(value);
+                setPicked(null);
+                setName("");
+              }}
+            >
+              {label}
+            </button>
+          ),
+        )}
       </div>
-      <div className="field" style={{ marginBottom: 0, flex: "0 1 120px" }}>
-        <label className="label">{t("quantity")}</label>
-        <input className="input" value={quantity} onChange={(e) => setQuantity(e.target.value)} />
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "end" }}>
+        <div
+          className="field"
+          style={{ marginBottom: 0, flex: "1 1 180px", minWidth: 0, position: "relative" }}
+        >
+          <label className="label">{fromCatalogue ? t("orderLinePick") : t("orderLineName")}</label>
+          <input
+            className="input"
+            value={name}
+            onChange={(e) => {
+              setName(e.target.value);
+              // Начали править — выбор сброшен: иначе в заказ уехал бы товар,
+              // которого человек уже не видит в поле.
+              setPicked(null);
+            }}
+          />
+          {found.length > 0 && (
+            <div
+              className="card"
+              style={{ position: "absolute", top: "100%", left: 0, right: 0, zIndex: 20, marginTop: 4, overflow: "hidden" }}
+            >
+              {found.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  className="list-row hoverable"
+                  style={{ width: "100%", textAlign: "left", background: "none", border: "none", cursor: "pointer" }}
+                  onClick={() => {
+                    setPicked(item);
+                    setName(item.name);
+                    setFound([]);
+                  }}
+                >
+                  <span style={{ flex: 1, color: "var(--text)", fontSize: 13 }}>{item.name}</span>
+                  <span style={{ color: "var(--faint)", fontSize: 12 }}>{item.sku ?? ""}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+        <div className="field" style={{ marginBottom: 0, flex: "0 1 120px" }}>
+          <label className="label">{t("quantity")}</label>
+          <input className="input" value={quantity} onChange={(e) => setQuantity(e.target.value)} />
+        </div>
+        <button className="btn btn-primary" disabled={busy}>
+          {t("orderAddLine")}
+        </button>
       </div>
-      <button className="btn btn-primary" disabled={busy}>
-        {t("orderAddLine")}
-      </button>
+    </form>
+  );
+}
+
+/** Поле сборки сканером.
+ *
+ * Появляется вместе с блоком наклеек: без штрихкодов сканировать нечего, и
+ * пустое поле означало бы обещание, которого система не выполнит. Собранное
+ * растёт по строке заказа, а не по остатку: склад двигается только отгрузкой.
+ */
+function PickScanner({ orderId, onPicked }: { orderId: number; onPicked: () => Promise<void> }) {
+  const { t, toast, toastError } = useApp();
+  const [code, setCode] = useState("");
+  const [busy, setBusy] = useState(false);
+  const scanning = useLabelsOn();
+
+  const lookup = async () => {
+    const scanned = code.trim();
+    if (!scanned || busy) return;
+    setBusy(true);
+    try {
+      const line = await api.post<{ name: string }>(`/orders/${orderId}/pick`, { code: scanned });
+      setCode("");
+      toast(line.name);
+      await onPicked();
+    } catch (err) {
+      // Отказ называет товар: «этого нет в заказе» с именем читается, а пустой
+      // ответ после писка сканера — как «сканер сломался».
+      toastError(err);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!scanning) return null;
+
+  return (
+    <form
+      className="card card-pad"
+      style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 10 }}
+      title={t("orderScanHint")}
+      onSubmit={(e) => {
+        e.preventDefault();
+        void lookup();
+      }}
+    >
+      <Icon name="scan" size={16} className="" />
+      <input
+        className="input"
+        style={{ flex: 1, minWidth: 0, fontFamily: "ui-monospace, monospace" }}
+        placeholder={t("orderScan")}
+        value={code}
+        onChange={(e) => setCode(e.target.value)}
+        // Enter ловим сами: форма без кнопки отправки не порождает submit —
+        // проверено на живой странице, — а сканер заканчивает ввод именно им.
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            void lookup();
+          }
+        }}
+        autoComplete="off"
+      />
     </form>
   );
 }

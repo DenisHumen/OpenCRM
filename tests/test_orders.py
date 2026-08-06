@@ -420,3 +420,41 @@ def test_zakaz_postavshchiku_bez_klienta(root_client):
         ORDERS, json={"kind": "purchase_order", "client_name": "ООО «Поставщик»"}
     )
     assert named.status_code == 201, named.text
+
+
+def test_pechat_zakaza_daet_tablitsu_pozitsiy(root_client, client_row):
+    """Форма отличается от квитанции по существу, а не оформлением.
+
+    Квитанция отвечает на вопрос «что вы у меня взяли», заказ — «что и почём мне
+    отдадут»: значит таблица с количествами и суммами, а не описание одной вещи.
+    """
+    item = product(root_client, stock="10", price=50000)
+    order = order_with(root_client, client_row, item, quantity="2")
+    root_client.post(
+        f"{ORDERS}/{order['id']}/lines", json={"name": "Доставка", "quantity": "1", "price": 30000}
+    )
+
+    page = root_client.get(f"{ORDERS}/{order['id']}/print")
+    assert page.status_code == 200, page.text
+    assert order["number"] in page.text
+    assert item["name"] in page.text
+    assert "Доставка" in page.text
+    # Итог считается сервером и печатается один раз: 2 × 500 + 300 = 1300.
+    assert "1300.00" in page.text
+    # Номер уходит в штрихкод: заказ находят сканером так же, как квитанцию.
+    assert "<svg" in page.text
+
+
+def test_sobran_otdelnyy_shag(root_client, client_row):
+    """Между «принят» и «отгружен» есть состояние, которое видит сборщик."""
+    item = product(root_client, stock="5")
+    order = order_with(root_client, client_row, item, quantity="1")
+
+    ready = root_client.post(f"{ORDERS}/{order['id']}/ready")
+    assert ready.status_code == 200, ready.text
+    assert ready.json()["status"] == "ready"
+    # Резерв держится: товар ещё наш, отгрузки не было.
+    assert promises(root_client, item["id"])["reserved_milli"] == 1000
+
+    again = root_client.post(f"{ORDERS}/{order['id']}/ready")
+    assert again.status_code == 422, "собранный заказ собрали второй раз"

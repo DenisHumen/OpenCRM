@@ -9,15 +9,18 @@
 """
 
 from fastapi import APIRouter, Depends, Query
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from core.services import order_service, permissions_service
+from core.services import codes, document_service, order_service, permissions_service
+from core.services import settings_service
 from database.models import User
-from database.models.document import ORDER_KINDS
+from database.models.document import DOCUMENT_LOCALES, ORDER_KINDS
 from database.repositories import documents as documents_repo
 from web.api import schemas
 from web.api.deps import MAX_SEARCH, get_db, require_module, require_perm
+from web.public import routes as public_routes
 
 router = APIRouter(
     prefix="/orders",
@@ -217,3 +220,94 @@ def cancel_order(
     """Отменить непроведённый заказ. Резерв снимется сам — он не хранится."""
     order = order_service.cancel(db, order_id, user)
     return schemas.order_out(order, order_service.lines(db, order.id), amounts=True)
+
+
+#: Подписи печатной формы. Отдельно от квитанции: у заказа таблица позиций и
+#: итог, у квитанции — описание одной вещи, и общий словарь пришлось бы делить
+#: на две половины прямо в шаблоне.
+PRINT_STRINGS = {
+    "ru": {
+        "title": "Заказ", "party": "Кому", "item": "Позиция", "qty": "Кол-во",
+        "price": "Цена", "sum": "Сумма", "total": "Итого",
+        "gave": "Отпустил", "took": "Получил", "print": "Печать",
+    },
+    "en": {
+        "title": "Order", "party": "To", "item": "Item", "qty": "Qty",
+        "price": "Price", "sum": "Amount", "total": "Total",
+        "gave": "Issued by", "took": "Received by", "print": "Print",
+    },
+    "uk": {
+        "title": "Замовлення", "party": "Кому", "item": "Позиція", "qty": "К-сть",
+        "price": "Ціна", "sum": "Сума", "total": "Разом",
+        "gave": "Відпустив", "took": "Отримав", "print": "Друк",
+    },
+}
+
+
+@router.get("/{order_id}/print", response_class=HTMLResponse)
+def print_order(
+    order_id: int,
+    locale: str | None = None,
+    user: User = Depends(require_perm("orders", "view")),
+    db: Session = Depends(get_db),
+):
+    """Печатная форма заказа: таблица позиций и итог.
+
+    Форма отличается от квитанции по существу: квитанция отвечает на вопрос
+    «что вы у меня взяли», заказ — «что и почём мне отдадут». Печатает браузер,
+    как и всё остальное: сервер на VPS, принтер на столе.
+
+    Суммы показываем всегда: тот, кто печатает заказ клиенту, обязан видеть
+    цены — иначе бумага уйдёт с пустым столбцом. Право `orders.view_amounts`
+    закрывает закупочную цену в интерфейсе, а не отпускную в бумаге.
+    """
+    order = order_service.get(db, order_id)
+    rows = order_service.lines(db, order.id)
+    lang = locale if locale in DOCUMENT_LOCALES else order.locale
+
+    currency = settings_service.get_all(db).get("currency", "USD")
+    payload = document_service.payload_of(order)
+    lines = [
+        {
+            "name": line.name_snapshot,
+            "quantity": _quantity(line.quantity_milli),
+            "price": _money(line.price_minor, currency),
+            "sum": _money(_line_sum(line), currency),
+        }
+        for line in rows
+    ]
+
+    html = public_routes.templates.get_template("order_print.html").render(
+        doc=order,
+        locale=lang,
+        t=PRINT_STRINGS[lang],
+        company=payload.get("company"),
+        # Кому адресован заказ. У покупателя это клиент, у поставщика — имя,
+        # подставленное при заведении: поставщик отдельной сущностью в системе
+        # не заведён, и оба случая читаются из одного и того же снимка.
+        party=(payload.get("client") or {}).get("name"),
+        created=order.created_at.strftime("%d.%m.%Y %H:%M") if order.created_at else "",
+        lines=lines,
+        total=_money(order_service.total_minor(rows), currency),
+        barcode=codes.barcode_svg(order.number),
+    )
+    return HTMLResponse(html)
+
+
+def _line_sum(line) -> int:
+    """Сумма строки в минорных единицах. Делим на тысячу один раз, целыми."""
+    scaled = line.quantity_milli * (line.price_minor or 0)
+    return (scaled + 500) // 1000
+
+
+def _money(minor: int | None, currency: str) -> str:
+    if minor is None:
+        return ""
+    whole, cents = divmod(abs(int(minor)), 100)
+    return f"{'-' if minor < 0 else ''}{whole}.{cents:02d} {currency}"
+
+
+def _quantity(milli: int) -> str:
+    from core.services import warehouse_service
+
+    return warehouse_service.format_quantity(milli)
