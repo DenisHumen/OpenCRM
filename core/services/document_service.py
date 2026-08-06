@@ -3,6 +3,7 @@
 import json
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 # Под псевдонимом: ниже в этом же модуле есть функция `events()` — история
@@ -131,6 +132,49 @@ def next_number(db: Session) -> str:
     return f"{prefix}{counter:06d}"
 
 
+#: Сколько раз пробуем занять номер, если его перехватили.
+#:
+#: Три, а не «пока не выйдет»: если номер не даётся трижды подряд, дело не в
+#: соседе у стойки, а в чём-то другом, и крутить цикл дальше — прятать это.
+NUMBER_ATTEMPTS = 3
+
+
+def _insert_with_free_number(db: Session, **fields) -> Document:
+    """Вставить бланк, заняв следующий свободный номер.
+
+    Номер считается как «максимум по году плюс один», и между счётом и вставкой
+    есть окно. У стойки в него попадают: двое приёмщиков выдают бумагу
+    одновременно, оба видят один и тот же максимум. Уникальный индекс данные
+    спасал — обоим номер один не доставался, — но проигравший получал 500.
+    Проверено живым прогоном: из двадцати одновременных выдач тринадцать
+    отвечали ошибкой сервера. Приёмщик при этом жмёт «выдать» снова, попадает в
+    ту же гонку и решает, что сломалась программа.
+
+    Вставка идёт под точкой отката: откатывается только она, и номер считается
+    заново — уже с учётом того, кто успел раньше. Тот же приём, что у звонков от
+    АТС (`telephony_service._insert_or_take_existing`), и по той же причине.
+    Разница одна: там проигравший берёт чужую строку (событие про один и тот же
+    звонок), здесь — берёт следующий номер, потому что бланки разные.
+    """
+    for _ in range(NUMBER_ATTEMPTS):
+        document = Document(number=next_number(db), status=STATUS_ISSUED, **fields)
+        try:
+            with db.begin_nested():
+                db.add(document)
+                db.flush()
+            return document
+        except IntegrityError:
+            # Откат точки обычно сам выбрасывает добавленное в ней из сессии, но
+            # полагаться на это нельзя: останься объект ожидающим вставки —
+            # следующий flush повторил бы её и упал уже без спасения.
+            if document in db:
+                db.expunge(document)
+
+    raise errors.ConflictError(
+        "Could not take a free number, try again", code="document_number_taken"
+    )
+
+
 def create(db: Session, data: dict, author: User) -> Document:
     kind = data.get("kind") or KIND_INTAKE
     if kind not in DOCUMENT_KINDS:
@@ -155,21 +199,19 @@ def create(db: Session, data: dict, author: User) -> Document:
     # печатают у стойки, и там иногда виднее, чем при заведении заявки.
     company = company_service.for_document(db, data.get("company_id"), deal)
 
-    document = Document(
-        number=next_number(db),
+    payload = json.dumps(
+        _payload(data, client, deal, settings_service.get_all(db), company),
+        ensure_ascii=False,
+    )
+    document = _insert_with_free_number(
+        db,
         kind=kind,
         locale=locale,
-        status=STATUS_ISSUED,
         client_id=client.id if client else None,
         deal_id=deal.id if deal else None,
-        payload=json.dumps(
-            _payload(data, client, deal, settings_service.get_all(db), company),
-            ensure_ascii=False,
-        ),
+        payload=payload,
         created_by=author.id,
     )
-    db.add(document)
-    db.flush()
     db.add(
         DocumentEvent(
             document_id=document.id, from_status="", to_status=STATUS_ISSUED,

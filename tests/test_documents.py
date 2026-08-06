@@ -245,3 +245,49 @@ def test_empty_code_is_rejected_instead_of_printing_a_blank():
             pass
         else:
             raise AssertionError("пустой штрихкод молча напечатался")
+
+
+def test_two_receptionists_issuing_at_once_both_get_paper(manager_client):
+    """Номер, занятый соседом, не превращается в ошибку сервера.
+
+    Номер считается как «максимум по году плюс один», и между счётом и вставкой
+    есть окно. У стойки в него попадают: двое выдают бумагу одновременно, оба
+    видят один и тот же максимум. Уникальный индекс данные спасал — двух бланков
+    с одним номером не появлялось, — но проигравший получал 500. Живым прогоном
+    на настоящем сервере: из двадцати одновременных выдач тринадцать отвечали
+    ошибкой. Приёмщик жмёт «выдать» снова, попадает в ту же гонку и решает, что
+    сломалась программа.
+
+    Настоящую параллельность здесь воспроизвести нечем — `TestClient` работает в
+    одном процессе, — поэтому проигравшего изображаем: соседняя сессия занимает
+    номер ровно между тем, как его посчитали, и тем, как записали.
+    """
+    from core.services import document_service
+    from database.models import Document
+    from database.session import SessionLocal
+
+    real_next_number = document_service.next_number
+    taken: list[str] = []
+
+    def steal_the_number(db):
+        """Посчитать номер — и отдать его соседу первым."""
+        number = real_next_number(db)
+        if not taken:            # перехватываем только первую попытку
+            taken.append(number)
+            with SessionLocal() as thief:
+                thief.add(Document(
+                    number=number, kind="intake", locale="ru", status="issued",
+                    payload="{}",
+                ))
+                thief.commit()
+        return number
+
+    document_service.next_number = steal_the_number
+    try:
+        issued = make_doc(manager_client)
+    finally:
+        document_service.next_number = real_next_number
+
+    assert "number" in issued, f"выдача бланка сорвалась: {issued}"
+    assert issued["number"] != taken[0], "бланк выдан под уже занятым номером"
+    assert int(issued["number"].split("-")[1]) == int(taken[0].split("-")[1]) + 1
