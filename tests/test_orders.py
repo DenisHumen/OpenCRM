@@ -404,17 +404,22 @@ def test_provesti_zakaz_pravo_otdelnoye(manager_client, root_client, client_row)
     assert stock_of(root_client, item["id"]) == 5000
 
 
-def test_zakaz_postavshchiku_bez_klienta(root_client):
-    """У заказа поставщику клиента нет и быть не может.
+def test_zakaz_bez_klienta_sozdayotsya(root_client):
+    """Заказ без клиента законен, и это не поблажка.
 
-    Бланк требует хоть какое-то имя на бумаге, и без подстановки заказ
-    поставщику не создавался вовсе: система отвечала «укажите клиента» на
-    запрос, где клиента не бывает по устройству. Поймано живым прогоном на
-    стенде, а не рассуждением.
+    У заказа поставщику клиента нет по устройству. У заказа покупателя он
+    бывает не сразу: у стойки сначала набивают позиции, а карточку заводят,
+    когда покупатель назвал телефон, — и часто не заводят вовсе.
+
+    Без подстановки имени не создавался НИ ОДИН заказ: система отвечала
+    «укажите клиента» на запрос, где клиента может не быть по существу. Поймано
+    живым прогоном на стенде дважды — второй раз кнопкой на экране, которая
+    создаёт ровно такой запрос.
     """
-    created = root_client.post(ORDERS, json={"kind": "purchase_order"})
-    assert created.status_code == 201, created.text
-    assert created.json()["client_id"] is None
+    for kind in ("purchase_order", "sales_order"):
+        created = root_client.post(ORDERS, json={"kind": kind})
+        assert created.status_code == 201, f"{kind}: {created.text}"
+        assert created.json()["client_id"] is None
 
     named = root_client.post(
         ORDERS, json={"kind": "purchase_order", "client_name": "ООО «Поставщик»"}
