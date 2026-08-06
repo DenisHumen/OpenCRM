@@ -295,23 +295,32 @@ def set_role(db: Session, actor: User, user_id: int, new_role: str) -> User:
         )
     if user.role == new_role:
         return user
-    if user.role == ROLE_ROOT and users_repo.count_by_role(db, ROLE_ROOT) <= 1:
-        raise errors.ForbiddenError("At least one root must remain", code="last_root")
     was = user.role
-    user.role = new_role
-    if new_role == ROLE_ROOT:
-        # Root не описывается должностью: права у него все и всегда. Ссылку
-        # снимаем, иначе роль висела бы у него мёртвым грузом и всплыла бы при
-        # понижении обратно — уже, возможно, с другим набором прав.
-        user.role_id = None
-    elif user.role_id is None:
-        # Понизили бывшего root'а: без должности он остался бы в системе, но
-        # без единого раздела. Кладём основную — как новому сотруднику.
-        from core.services import permissions_service
 
-        default_role = permissions_service.default_role(db)
-        user.role_id = default_role.id if default_role else None
-    db.flush()
+    if user.role == ROLE_ROOT:
+        # Понижение владельца идёт одной записью с условием «владельцев больше
+        # одного»: проверка перед записью пропускала двоих разом, и после гонки
+        # владельцев не оставалось вовсе. Подробности и цена — в
+        # `users_repo.demote_last_root_guard`.
+        #
+        # Понизили бывшего владельца: без должности он остался бы в системе, но
+        # без единого раздела. Кладём основную — как новому сотруднику.
+        extra = {}
+        if user.role_id is None:
+            from core.services import permissions_service
+
+            default_role = permissions_service.default_role(db)
+            extra["role_id"] = default_role.id if default_role else None
+        if not users_repo.demote_last_root_guard(db, user, new_role, extra):
+            raise errors.ForbiddenError("At least one root must remain", code="last_root")
+    else:
+        user.role = new_role
+        if new_role == ROLE_ROOT:
+            # Root не описывается должностью: права у него все и всегда. Ссылку
+            # снимаем, иначе роль висела бы у него мёртвым грузом и всплыла бы
+            # при понижении обратно — уже, возможно, с другим набором прав.
+            user.role_id = None
+        db.flush()
     _record_access(
         db, actor, user, audit_service.ACTION_STAFF_ROLE_CHANGED, was, new_role
     )
@@ -331,11 +340,19 @@ def delete_user(db: Session, actor: User, user_id: int) -> None:
         raise errors.NotFoundError("User not found", code="user_not_found")
     if user.id == actor.id:
         raise errors.ForbiddenError("Cannot delete your own account", code="cannot_delete_self")
-    if user.role == ROLE_ROOT and users_repo.count_by_role(db, ROLE_ROOT) <= 1:
-        raise errors.ForbiddenError("At least one root must remain", code="last_root")
     # Про инвариант «раздавать права всегда есть кому» — см. `disable`: здесь
     # он тоже не проверяется, и по той же неразрешённой причине.
+    #
+    # Снимок берём до удаления: после него от аккаунта не остаётся ничего, а
+    # «удалил сотрудника №17» не отвечает на вопрос, какого именно.
+    label, removed_id = user.name, user.id
     avatar_service.clear_avatar(db, user)  # стираем файл аватара с диска
+    # Условие «владельцев больше одного» стоит внутри самого удаления, а не
+    # проверкой перед ним: двое, удаляющие друг друга разом, проходили обе
+    # проверки и оставляли систему без владельца. См.
+    # `users_repo.delete_guarding_last_root`.
+    if not users_repo.delete_guarding_last_root(db, user):
+        raise errors.ForbiddenError("At least one root must remain", code="last_root")
     # Запись об удалении переживает удалённого: `audit_events.actor_id` уходит
     # в NULL вместе с ним, если удаляют самого исполнителя, но имена обоих
     # остались снимками.
@@ -343,10 +360,9 @@ def delete_user(db: Session, actor: User, user_id: int) -> None:
         db,
         actor=actor,
         entity_type=audit_service.ENTITY_USER,
-        entity_id=user.id,
-        entity_label=user.name,
+        entity_id=removed_id,
+        entity_label=label,
     )
-    db.delete(user)
 
 
 # --- bootstrap ---

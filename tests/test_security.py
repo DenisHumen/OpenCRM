@@ -5,7 +5,7 @@
 """
 from starlette.requests import Request
 
-from tests.conftest import API, login, make_manager, png_bytes
+from tests.conftest import API, ROOT_EMAIL, login, make_manager, png_bytes
 from web.api import deps
 from web.main import app
 from fastapi.testclient import TestClient
@@ -221,3 +221,136 @@ def test_the_uploaded_logo_is_cleaned_too(root_client):
     saved = pathlib.Path(get_settings().branding_dir) / "logo.svg"
     assert saved.exists(), "логотип не сохранился"
     assert b"<script" not in saved.read_bytes(), "скрипт остался в логотипе на диске"
+
+
+# --- инвариант «владелец в системе есть всегда» ---
+#
+# Проверка «владельцев больше одного» стояла ПЕРЕД записью, а не внутри неё:
+# обе транзакции читали «двое», обе разрешали себе действие, и владельцев
+# оставалось ноль. Воспроизводилось стабильно, и на понижении, и на удалении.
+#
+# Цена такого исхода — не неудобство. Без владельца `roles.manage` нет ни у
+# кого, `staff.manage` нет ни у кого, поднять никого нельзя: систему после этого
+# открывают только правкой файла базы. А двое совладельцев в ссоре — обычный
+# конфликт двух хозяев мастерской, не выдуманный сценарий.
+#
+# Чтобы проверять именно это, дуэлянты должны остаться ПОСЛЕДНИМИ владельцами:
+# при живом третьем оба понижения законны, и гонки не видно. Поэтому владельца
+# из фикстуры на время дуэли снимают — и возвращают при любом исходе, иначе
+# сломался бы весь набор, а не один тест.
+
+
+def _root_ids() -> set[int]:
+    from database.repositories import users as users_repo
+    from database.session import SessionLocal
+
+    with SessionLocal() as db:
+        return {user.id for user in users_repo.list_staff(db) if user.role == "root"}
+
+
+def _make_owner(root_client, email: str):
+    """Заводит сотрудника, поднимает до владельца, возвращает (id, его клиент)."""
+    from database.repositories import users as users_repo
+    from database.session import SessionLocal
+
+    client = make_manager(root_client, email)
+    with SessionLocal() as db:
+        user_id = users_repo.get_by_email(db, email).id
+    promoted = root_client.post(f"{API}/staff/{user_id}/role", json={"role": "root"})
+    assert promoted.status_code == 200, promoted.text
+    return user_id, client
+
+
+def _duel(strike, first, second):
+    """Оба удара одновременно. Возвращает {имя: код ответа}."""
+    import threading
+
+    codes: dict[str, int] = {}
+    at_once = threading.Barrier(2)
+
+    def go(name, client, target):
+        at_once.wait()
+        codes[name] = strike(client, target)
+
+    threads = [
+        threading.Thread(target=go, args=("first", first[1], second[0])),
+        threading.Thread(target=go, args=("second", second[1], first[0])),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    return codes
+
+
+def _last_two_owners(root_client, prefix: str):
+    """Двое владельцев и никого больше. Владельца фикстуры снимает первый из них."""
+    from database.repositories import users as users_repo
+    from database.session import SessionLocal
+
+    first = _make_owner(root_client, f"{prefix}-one@test.local")
+    second = _make_owner(root_client, f"{prefix}-two@test.local")
+    with SessionLocal() as db:
+        fixture_root_id = users_repo.get_by_email(db, ROOT_EMAIL).id
+    stepped_down = first[1].post(
+        f"{API}/staff/{fixture_root_id}/role", json={"role": "manager"}
+    )
+    assert stepped_down.status_code == 200, stepped_down.text
+    assert _root_ids() == {first[0], second[0]}
+    return first, second, fixture_root_id
+
+
+def _restore_fixture_root(root_client, fixture_root_id, first, second):
+    """Вернуть владельца фикстуры и убрать за собой дуэлянтов.
+
+    Владельца возвращает уцелевший дуэлянт — больше некому. Снимает себя он не
+    сам: `set_role` не даёт менять собственную роль, и попытка молча ничего бы
+    не сделала, оставив лишнего владельца следующему тесту. Снимает вернувшийся.
+    """
+    by_id = {first[0]: first[1], second[0]: second[1]}
+    survivors = _root_ids()
+    for user_id in survivors:
+        client = by_id.get(user_id)
+        if client is None:
+            continue
+        client.post(f"{API}/staff/{fixture_root_id}/role", json={"role": "root"})
+        break
+    assert fixture_root_id in _root_ids(), "владелец из фикстуры не вернулся"
+    for user_id in survivors:
+        if user_id in by_id:
+            root_client.post(f"{API}/staff/{user_id}/role", json={"role": "manager"})
+    assert _root_ids() == {fixture_root_id}, "после уборки владелец должен остаться один"
+
+
+def test_two_owners_demoting_each_other_leave_one_standing(root_client):
+    """Двое последних владельцев снимают root друг с друга разом."""
+    first, second, fixture_root_id = _last_two_owners(root_client, "duel")
+    try:
+        codes = _duel(
+            lambda client, target: client.post(
+                f"{API}/staff/{target}/role", json={"role": "manager"}
+            ).status_code,
+            first,
+            second,
+        )
+        survivors = _root_ids()
+        assert len(survivors) == 1, f"владельцев осталось {len(survivors)}, ответы: {codes}"
+        assert sorted(codes.values()) == [200, 403], f"ответы не сошлись: {codes}"
+    finally:
+        _restore_fixture_root(root_client, fixture_root_id, first, second)
+
+
+def test_two_owners_deleting_each_other_leave_one_standing(root_client):
+    """То же на удалении: строку сносим условием, а не после проверки."""
+    first, second, fixture_root_id = _last_two_owners(root_client, "duel-del")
+    try:
+        codes = _duel(
+            lambda client, target: client.delete(f"{API}/staff/{target}").status_code,
+            first,
+            second,
+        )
+        survivors = _root_ids()
+        assert len(survivors) == 1, f"владельцев осталось {len(survivors)}, ответы: {codes}"
+        assert sorted(codes.values()) == [200, 403], f"ответы не сошлись: {codes}"
+    finally:
+        _restore_fixture_root(root_client, fixture_root_id, first, second)
