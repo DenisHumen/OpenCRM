@@ -336,7 +336,10 @@ def _add_feed_entry(db: Session, message: MailMessage, author_id: int | None) ->
         # Указана — письмо видно и в ленте заявки, а не только клиента.
         deal_id=message.deal_id,
         # Входящее письмо автора не имеет: его никто из сотрудников не писал.
-        # NULL здесь честнее, чем «автор — тот, кто нажал синхронизацию».
+        # NULL здесь честнее, чем «автор — тот, кто нажал синхронизацию». Это
+        # один из двух законных случаев пустого автора во всей системе
+        # (``SOURCE_MAIL_SYNC`` в ``database/models/audit.py``); у исходящего
+        # письма автор есть всегда — его писал живой человек.
         author_id=author_id,
         kind="email",
         direction=message.direction,

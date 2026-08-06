@@ -72,10 +72,10 @@ def update_client(
 @router.delete("/{client_id}")
 def delete_client(
     client_id: int,
-    _: User = Depends(require_staff),
+    user: User = Depends(require_staff),
     db: Session = Depends(get_db),
 ):
-    client_service.delete_client(db, client_id)
+    client_service.delete_client(db, client_id, user)
     return {"message": "Client deleted"}
 
 
@@ -187,8 +187,8 @@ def download_file(
 def delete_file(
     client_id: int,
     file_id: int,
-    _: User = Depends(require_staff),
+    user: User = Depends(require_staff),
     db: Session = Depends(get_db),
 ):
-    client_service.delete_file(db, client_id, file_id)
+    client_service.delete_file(db, client_id, file_id, user)
     return {"message": "File deleted"}

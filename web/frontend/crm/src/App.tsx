@@ -7,6 +7,7 @@ import { Sidebar } from "./components/Sidebar";
 import { ScreenLoading, Toasts } from "./components/ui";
 import { useApp } from "./lib/app";
 import { moduleOn } from "./lib/modules";
+import { Audit } from "./screens/Audit";
 import { AuthScreen, ForcePasswordChange } from "./screens/Auth";
 import { BoardEditor } from "./screens/BoardEditor";
 import { Boards } from "./screens/Boards";
@@ -184,6 +185,9 @@ export default function App() {
           <Route path="/profile" element={<Profile />} />
           <Route element={<RootOnly />}>
             <Route path="/staff" element={<Staff />} />
+            {/* Журнал видит только root. Ролей ещё нет; когда появятся, право
+                «видеть журнал» станет отдельным, и эта строка переедет. */}
+            <Route path="/audit" element={<Audit />} />
             <Route element={<ModuleRoute module="boards" />}>
               <Route path="/files" element={<Files />} />
             </Route>

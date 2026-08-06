@@ -5,9 +5,10 @@ from sqlalchemy.orm import Session
 from config.settings import get_settings
 from core import exceptions as errors
 from core.security import tokens
-from core.services import settings_service, storage_service
+from core.services import audit_service, settings_service, storage_service
 from core.utils import normalize_phone, now_utc
 from database.models import Client, ClientFile, ClientNote, User
+from database.models.audit import SOURCE_MANUAL
 from database.models.client import MAX_SOURCE, NOTE_KINDS, SYSTEM_NOTE_KINDS
 from database.models.user import ROLE_ROOT
 from database.repositories import clients as clients_repo
@@ -71,9 +72,25 @@ def update_client(db: Session, client_id: int, data: dict) -> Client:
     return client
 
 
-def delete_client(db: Session, client_id: int) -> None:
+def delete_client(
+    db: Session,
+    client_id: int,
+    actor: User,
+    source: str = SOURCE_MANUAL,
+    source_ref: str = "",
+) -> None:
     client = get_client(db, client_id)
     client.deleted_at = now_utc()
+    db.flush()
+    audit_service.record_deletion(
+        db,
+        actor=actor,
+        source=source,
+        source_ref=source_ref,
+        entity_type=audit_service.ENTITY_CLIENT,
+        entity_id=client.id,
+        entity_label=client.name,
+    )
 
 
 def restore_client(db: Session, client_id: int) -> Client:
@@ -154,10 +171,11 @@ def add_note(
 def add_system_note(
     db: Session,
     client_id: int,
-    actor: User,
+    actor: User | None,
     kind: str,
     body: str,
     deal_id: int | None = None,
+    source: str = SOURCE_MANUAL,
 ) -> ClientNote:
     """Запись в ленте, порождённая действием, а не набранная в форме.
 
@@ -168,15 +186,18 @@ def add_system_note(
 
     Исполнитель — тот же живой человек, чьё действие всё это запустило, а не
     «система»: лента отвечает на вопрос «кто», и ничьих строк в ней быть не
-    должно.
+    должно. Пусто допускается ровно там же, где и в журнале, — у вебхука АТС и
+    синхронизации почты, — и проверяет это `assert_actor`, а не внимательность
+    того, кто добавит следующего подписчика.
     """
     if kind not in SYSTEM_NOTE_KINDS:
         raise errors.ValidationError(
             f"kind must be one of {SYSTEM_NOTE_KINDS}", code="bad_note_kind"
         )
+    audit_service.assert_actor(actor, source, f"Feed entry {kind!r}")
     note = ClientNote(
         client_id=client_id,
-        author_id=actor.id,
+        author_id=actor.id if actor else None,
         kind=kind,
         deal_id=deal_id,
         body=body.strip(),
@@ -205,6 +226,15 @@ def delete_note(db: Session, client_id: int, note_id: int, actor: User) -> None:
         )
     if actor.role != ROLE_ROOT and note.author_id != actor.id:
         raise errors.ForbiddenError("Only the author or root can delete a note", code="not_note_author")
+    # Снимок тела берём до удаления: после него от записи не останется ничего,
+    # а «удалил заметку №17» не отвечает на вопрос, какую именно.
+    audit_service.record_deletion(
+        db,
+        actor=actor,
+        entity_type=audit_service.ENTITY_NOTE,
+        entity_id=note.id,
+        entity_label=note.body,
+    )
     db.delete(note)
 
 
@@ -256,9 +286,16 @@ def get_file(db: Session, client_id: int, file_id: int) -> ClientFile:
     return file
 
 
-def delete_file(db: Session, client_id: int, file_id: int) -> None:
+def delete_file(db: Session, client_id: int, file_id: int, actor: User) -> None:
     file = get_file(db, client_id, file_id)
     path = file_path_on_disk(file)
+    audit_service.record_deletion(
+        db,
+        actor=actor,
+        entity_type=audit_service.ENTITY_FILE,
+        entity_id=file.id,
+        entity_label=file.original_name,
+    )
     db.delete(file)
     db.flush()
     if path.exists():

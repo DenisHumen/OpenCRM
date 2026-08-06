@@ -16,10 +16,12 @@ from sqlalchemy.orm import Session
 
 from core import events
 from core import exceptions as errors
+from core.services import audit_service
 from core.services.deal_service import parse_money
 from core.services.task_service import to_utc_naive
 from core.utils import now_utc
 from database.models import Product, StockMove, User
+from database.models.audit import SOURCE_MANUAL
 from database.models.warehouse import (
     MOVE_KINDS,
     MOVE_OUT,
@@ -170,9 +172,26 @@ def update_product(db: Session, product_id: int, data: dict) -> Product:
     return product
 
 
-def delete_product(db: Session, product_id: int) -> None:
+def delete_product(
+    db: Session,
+    product_id: int,
+    actor: User,
+    source: str = SOURCE_MANUAL,
+    source_ref: str = "",
+) -> None:
     """Мягкое удаление: карточка уходит из списков, движения остаются на месте."""
-    get_product(db, product_id).deleted_at = now_utc()
+    product = get_product(db, product_id)
+    product.deleted_at = now_utc()
+    db.flush()
+    audit_service.record_deletion(
+        db,
+        actor=actor,
+        source=source,
+        source_ref=source_ref,
+        entity_type=audit_service.ENTITY_PRODUCT,
+        entity_id=product.id,
+        entity_label=product.name,
+    )
 
 
 def restore_product(db: Session, product_id: int) -> Product:
@@ -214,7 +233,13 @@ def is_low(product: Product, stock_milli: int | None) -> bool:
     return stock_milli <= product.min_stock_milli
 
 
-def add_move(db: Session, data: dict, author: User) -> tuple[StockMove, bool]:
+def add_move(
+    db: Session,
+    data: dict,
+    author: User,
+    source: str = SOURCE_MANUAL,
+    source_ref: str = "",
+) -> tuple[StockMove, bool]:
     """Записывает движение. Возвращает (движение, ушёл ли остаток в минус).
 
     **Уход в минус разрешён, но помечается.** Запрет выглядит правильнее, но
@@ -266,6 +291,11 @@ def add_move(db: Session, data: dict, author: User) -> tuple[StockMove, bool]:
         # себестоимость этой заявки должна остаться прежней.
         cost = product.cost_minor
 
+    # Остаток до движения — та самая «старая величина рядом с новой». Спросить
+    # его после вставки уже нельзя: он считается суммой движений, и только что
+    # записанное в неё войдёт.
+    stock_before = warehouse_repo.stock_of(db, product.id)
+
     move = StockMove(
         product_id=product.id,
         quantity_milli=quantity,
@@ -299,5 +329,23 @@ def add_move(db: Session, data: dict, author: User) -> tuple[StockMove, bool]:
     # Остаток спрашиваем у базы уже после flush — она и складывает движения,
     # включая только что записанное. Никакого «старый остаток плюс дельта»:
     # именно так расходятся хранимые остатки.
-    went_negative = quantity < 0 and warehouse_repo.stock_of(db, product.id) < 0
+    stock_after = warehouse_repo.stock_of(db, product.id)
+    went_negative = quantity < 0 and stock_after < 0
+
+    # «Кто списал две матрицы» — тот самый вопрос, ради которого журнал заведён.
+    # Исполнитель у движения есть и без журнала (`stock_moves.author_id`), но
+    # ответа он не даёт: по нему не отличить «списал руками» от «списалось,
+    # потому что провёл акт», а разбираться будут именно в этом.
+    audit_service.record(
+        db,
+        action=audit_service.ACTION_STOCK_MOVE_ADDED,
+        actor=author,
+        source=source,
+        source_ref=source_ref,
+        entity_type=audit_service.ENTITY_PRODUCT,
+        entity_id=product.id,
+        entity_label=product.name,
+        before=format_quantity(stock_before),
+        after=format_quantity(stock_after),
+    )
     return move, went_negative

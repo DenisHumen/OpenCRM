@@ -262,6 +262,10 @@ export function Sidebar({
         { module: "companies", to: "/companies", label: t("companies"), icon: "building" },
         // Файлы — это медиа досок, отдельного смысла без них не имеют.
         { module: "boards", to: "/files", label: t("files"), icon: "folder" },
+        // Журнал последним: за ним приходят не работать, а разбираться, когда
+        // что-то не сошлось. Замок — потому что это единственный раздел, где
+        // ничего нельзя изменить, и это его главное свойство.
+        { to: "/audit", label: t("auditLog"), icon: "lock" },
       ])
     : [];
 

@@ -132,6 +132,21 @@ erDiagram
         text value
         datetime updated_at
     }
+
+    audit_events {
+        int id PK
+        string action "объект.действие: deal.stage_changed, client.deleted"
+        int actor_id FK "nullable — только вебхук АТС и синхронизация почты"
+        string actor_name "снимок имени на момент действия"
+        string source "чем вызвано: manual, telephony_webhook, mail_sync"
+        string source_ref "чем именно: номер акта, id события АТС"
+        string entity_type "deal, client, product, user, module, note, file"
+        int entity_id "nullable, НЕ внешний ключ"
+        string entity_label "снимок названия объекта"
+        text value_before "nullable: NULL — величины не было"
+        text value_after "nullable"
+        datetime created_at
+    }
 ```
 
 ## Пояснения к решениям
@@ -257,6 +272,29 @@ erDiagram
 промахивался бы на каждом варианте записи номера, и звонки не находили бы
 карточку. Заполняется сервисом клиентов при сохранении и разово — в миграции.
 
+### audit_events (журнал действий)
+
+| Колонка | Смысл |
+|---|---|
+| `action` | «объект.действие»: `deal.stage_changed`, `deal.amount_changed`, `stock.move_added`, `client.deleted`, `staff.role_changed`, `module.switched` |
+| `actor_id` | кто. `ON DELETE SET NULL`, как всякое авторство в проекте |
+| `actor_name` | **снимок** имени. Внешний ключ обнуляется при увольнении, а имя правится в профиле — и то и другое случается ровно к тому моменту, когда в журнал приходят: за прошлый год и про уволившегося |
+| `source` | чем вызвано: `manual` (рука), `telephony_webhook`, `mail_sync`. Без него не отличить «списал руками» от «списалось, потому что провёл акт» |
+| `source_ref` | чем именно: номер акта, идентификатор события АТС |
+| `entity_type`, `entity_id` | над чем. `entity_id` — **не** внешний ключ: журнал обязан пережить удаление того, о чём он написан, а именно удаление он и записывает. CASCADE снёс бы запись вместе с объектом, RESTRICT запретил бы удалять вовсе |
+| `entity_label` | снимок названия. «client 5 удалён» не отвечает на вопрос «кого» — карточки уже нет |
+| `value_before`, `value_after` | было и стало. `NULL` («величины не было») отличается от пустой строки («величина была пустой»); у действий без величины оба `NULL` |
+
+Записи **только дописываются**: правка и удаление запрещены на уровне мэппера
+(`database/models/audit.py`), ручек записи в API нет. Пишет журнал единственная
+точка — `core/services/audit_service.record`, в той же транзакции, что и само
+изменение. Что пишется и что намеренно не пишется — в [07-security.md](07-security.md).
+
+Существующие поля исполнителя (`deal_stage_changes.changed_by`,
+`stock_moves.author_id`, `client_notes.author_id`, `module_states.updated_by`)
+журнал **не заменяет**: это рабочие данные своих блоков, по ним считаются отчёт
+по этапам и остаток склада, и `source` там взяться неоткуда.
+
 ### site_settings
 - Ключ-значение: `brand_name`, `brand_logo_path`, `contact_email`, `contact_phone`, `social_telegram`, `showcase_locale`, `og_default_image` и т.п.
 - Тумблеры витрины хранятся строкой `"1"`/`"0"` (таблица строковая): `showcase_show_meta` — строка «7 works · updated …» под названием доски, `showcase_show_footer` — футер с контактами. Оба по умолчанию `"0"`.
@@ -301,6 +339,14 @@ erDiagram
 | phone_calls | `external_id` (unique) | склейка событий АТС в один звонок (идемпотентность) |
 | phone_calls | `from_number_norm`, `to_number_norm` | поиск звонков по номеру |
 | phone_calls | `started_at`, `outcome`, `client_id`, `deal_id`, `user_id` | журнал с фильтрами и врезки в карточках |
+| audit_events | `(entity_type, entity_id, created_at)` | «что делали с этой заявкой» |
+| audit_events | `(actor_id, created_at)` | «что делал этот сотрудник» — он же закрывает внешний ключ на `users` |
+| audit_events | `created_at` | лента журнала целиком, свежее сверху |
+
+Индексов у `audit_events` ровно три, и это осознанно: журнал растёт быстрее всех
+остальных таблиц — он пополняется на каждое значимое действие в каждом блоке, —
+и каждый лишний индекс платится записью. По `action` и `source` индекса нет:
+фильтр по ним всегда идёт вместе с окном по времени, а по времени индекс есть.
 
 ## Миграция SQLite → MySQL
 
