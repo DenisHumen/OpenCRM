@@ -8,7 +8,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 
@@ -75,3 +75,8 @@ class PhoneCall(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()
     )
+
+    # История звонков в карточке клиента: отобрать по клиенту и показать
+    # свежие сверху. По одному `client_id` вторая половина работы делается
+    # сортировкой всей выборки.
+    __table_args__ = (Index("ix_phone_calls_client_started", "client_id", "started_at"),)

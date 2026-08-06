@@ -12,7 +12,7 @@
 """
 
 import pytest
-from sqlalchemy import DateTime, Float, Numeric
+from sqlalchemy import DateTime, Float, Numeric, String
 
 from database.session import Base
 
@@ -28,6 +28,16 @@ MONEY_HINTS = ("amount", "price", "cost", "sum", "total", "paid", "prepaid", "ba
 
 # Внешние ключи, которым индекс не нужен, и почему.
 INDEX_EXEMPT: dict[str, str] = {}
+
+# Колонки, хранящие ключ этапа воронки. Внешним ключом он не является намеренно
+# (этап можно заархивировать, а сделка обязана остаться читаемой), поэтому
+# согласованность этих колонок СУБД не проверяет — её приходится проверять здесь.
+STAGE_KEY_HOME = ("pipeline_stages", "key")
+STAGE_KEY_COLUMNS = (
+    ("deals", "stage"),
+    ("deal_stage_changes", "from_stage"),
+    ("deal_stage_changes", "to_stage"),
+)
 
 
 def columns_with(table, hints):
@@ -112,6 +122,36 @@ def test_time_is_stored_without_a_zone(table):
                 f"{table.name}.{column.name}: время с зоной — "
                 "в базе naive UTC, приводи на границе API"
             )
+
+
+@pytest.mark.parametrize("table_name,column_name", STAGE_KEY_COLUMNS, ids=lambda v: str(v))
+def test_stage_key_columns_are_as_wide_as_the_reference(table_name, column_name):
+    """Одна величина — одна ширина, иначе часть значений хранится обрезанной.
+
+    Ключ этапа генерируется `pipeline_service._free_key`: имя обрезается до 24
+    символов, при совпадении добавляется суффикс — до 27. Лежит он в трёх местах,
+    и внешнего ключа между ними нет, так что рассинхрон СУБД не поймает.
+
+    Так уже было: `deals.stage` был VARCHAR(20) против String(32) в справочнике,
+    это чинила миграция b2c48f7a91d5 — и не заметила ровно ту же пару колонок в
+    соседней таблице `deal_stage_changes`. Проверка написана потому, что нашла
+    вторую половину той же ошибки, а не про запас.
+
+    Цена расхождения не в падении: SQLite длину не проверяет, MySQL в нестрогом
+    режиме молча обрежет. Отчёт по воронке склеивает `to_stage` с
+    `pipeline_stages.key`; обрезанный ключ не склеится ни с чем, и этап покажет
+    ноль входов, ничем себя не выдав.
+    """
+    tables = Base.metadata.tables
+    reference = tables[STAGE_KEY_HOME[0]].columns[STAGE_KEY_HOME[1]]
+    column = tables[table_name].columns[column_name]
+
+    assert isinstance(column.type, String) and isinstance(reference.type, String)
+    assert column.type.length == reference.type.length, (
+        f"{table_name}.{column_name}: ширина {column.type.length} против "
+        f"{reference.type.length} у {STAGE_KEY_HOME[0]}.{STAGE_KEY_HOME[1]} — "
+        "длинный ключ этапа обрежется молча, и заявка выпадет из отчётов"
+    )
 
 
 def test_models_and_migrations_do_not_diverge():

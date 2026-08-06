@@ -10,7 +10,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 
@@ -106,4 +106,14 @@ class StockMove(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     author_id: Mapped[int | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+
+    __table_args__ = (
+        # Остаток — это `SUM(quantity_milli) GROUP BY product_id`, и количество
+        # обязано лежать в самом индексе. Иначе база проходит движения по индексу
+        # товара, но за каждым числом лезет в таблицу: двести тысяч случайных
+        # чтений ради одной цифры на строку списка.
+        Index("ix_stock_moves_product_qty", "product_id", "quantity_milli"),
+        # История движений в карточке товара — по времени операции, а не записи.
+        Index("ix_stock_moves_product_happened", "product_id", "happened_at"),
     )

@@ -83,6 +83,14 @@ class Deal(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()
     )
+    # Индекса «живые, свежие сверху» здесь намеренно нет, хотя список заявок
+    # просит именно его и на тридцати тысячах строк сортирует всю выборку во
+    # временном дереве (12–17 мс на страницу). Составной `(deleted_at,
+    # updated_at)` этот запрос ускоряет в шестьдесят раз и ровно во столько же
+    # замедляет сводку и отчёты: `sqlite_stat1` считает `deleted_at IS NULL`
+    # избирательным условием (среднее 60 строк на значение при настоящих
+    # 29 500), и планировщик тащит такой индекс в каждый запрос про живые
+    # записи. Разбор вариантов и замеры — в миграции f9b41c7e2d08.
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
 
 
@@ -100,9 +108,14 @@ class DealStageChange(Base):
     deal_id: Mapped[int] = mapped_column(
         ForeignKey("deals.id", ondelete="CASCADE"), index=True
     )
+    # Ключи этапов, а не свободный текст: та же величина, что в
+    # `pipeline_stages.key` и `deals.stage`, и той же ширины (32). Ширина здесь
+    # не украшение — `pipeline_service._free_key` выдаёт до 27 символов, а
+    # воронка отчёта склеивает `to_stage` с `pipeline_stages.key`. Обрежься ключ
+    # при записи — и этап покажет ноль входов, не сказав об этом ни слова.
     # Пусто у самой первой записи: до создания этапа не было.
-    from_stage: Mapped[str] = mapped_column(String(20), default="")
-    to_stage: Mapped[str] = mapped_column(String(20))
+    from_stage: Mapped[str] = mapped_column(String(32), default="")
+    to_stage: Mapped[str] = mapped_column(String(32))
     changed_by: Mapped[int | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )

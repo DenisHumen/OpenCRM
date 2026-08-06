@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 
@@ -76,6 +76,10 @@ class Client(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()
     )
+    # Пары «живые + свежие сверху» здесь нет по той же причине, что и у заявок:
+    # она ускоряет список и замедляет сводку с отчётами, потому что планировщик
+    # SQLite переоценивает избирательность `deleted_at IS NULL`. Замеры — в
+    # миграции f9b41c7e2d08.
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
 
 
@@ -105,8 +109,22 @@ class ClientNote(Base):
         ForeignKey("deals.id", ondelete="SET NULL"), nullable=True, index=True
     )
     body: Mapped[str] = mapped_column(Text)
-    happened_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    # Индекс — потому что лента сортируется именно по этому полю, а не по
+    # `created_at`: звонок вчерашний, а занесли его сегодня. Без индекса общая
+    # лента читала таблицу целиком и строила временное дерево на всю сотню
+    # тысяч записей ради полусотни строк на экране.
+    happened_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), index=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    # Лента почти всегда чья-то: карточки клиента и заявки открывают её с
+    # фильтром. Пары «по кому + когда» превращают «найти и отсортировать» в
+    # «прочитать полсотни подряд».
+    __table_args__ = (
+        Index("ix_client_notes_client_happened", "client_id", "happened_at"),
+        Index("ix_client_notes_deal_happened", "deal_id", "happened_at"),
+    )
 
 
 class ClientFile(Base):
