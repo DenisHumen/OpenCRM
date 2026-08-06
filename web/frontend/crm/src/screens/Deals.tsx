@@ -280,7 +280,7 @@ export function Deals() {
               <div className="stage-filter">
                 <select
                   className="input"
-                  aria-label={t("stage")}
+                  aria-label={t("stagePick")}
                   value={stageFilter}
                   onChange={(e) => setStageFilter(e.target.value)}
                 >
@@ -322,7 +322,7 @@ export function Deals() {
                             страницы, и перетаскивание там просто не работает. */}
                         <select
                           className="deal-row-stage"
-                          aria-label={t("stage")}
+                          aria-label={t("stagePick")}
                           value={deal.stage}
                           onChange={(e) => void move(deal.id, e.target.value)}
                         >

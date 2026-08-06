@@ -52,7 +52,7 @@ const en = {
   dealDetailsHint: "What the client asked for, what was agreed, anything worth remembering",
   dragHere: "Drag deals here",
   // Узкий экран: доска превращается в список с фильтром по этапу
-  stage: "Stage",
+  stagePick: "Stage",
   allStages: "All stages",
   noDealsInStage: "Nothing at this stage",
   menu: "Menu",
@@ -721,7 +721,7 @@ const ru: typeof en = {
   dealDetails: "Что нужно сделать",
   dealDetailsHint: "О чём просил клиент, о чём договорились, что важно не забыть",
   dragHere: "Перетащите сделки сюда",
-  stage: "Этап",
+  stagePick: "Этап",
   allStages: "Все этапы",
   noDealsInStage: "На этом этапе пусто",
   menu: "Меню",
