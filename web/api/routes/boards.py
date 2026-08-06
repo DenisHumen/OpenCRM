@@ -78,10 +78,10 @@ def update_board(
 @router.delete("/{board_id}")
 def delete_board(
     board_id: int,
-    _: User = Depends(require_perm("boards", "delete")),
+    actor: User = Depends(require_perm("boards", "delete")),
     db: Session = Depends(get_db),
 ):
-    board_service.delete_board(db, board_id)
+    board_service.delete_board(db, board_id, actor)
     return {"message": "Board deleted"}
 
 

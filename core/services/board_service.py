@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from config.settings import get_settings
 from core import exceptions as errors
 from core import references
-from core.services import media_service, storage_service
+from core.services import audit_service, media_service, storage_service
 from core.utils import normalize_external_url, now_utc
 from database.models import Board, User, Work
 from database.models.board import WORK_FAILED, WORK_PROCESSING, WORK_READY
@@ -71,7 +71,7 @@ def update_board(db: Session, board_id: int, data: dict) -> Board:
     return board
 
 
-def delete_board(db: Session, board_id: int) -> None:
+def delete_board(db: Session, board_id: int, actor: User) -> None:
     """Удаляет доску вместе с файлами работ.
 
     Раньше доска только помечалась удалённой (deleted_at), а медиа висело на
@@ -81,8 +81,21 @@ def delete_board(db: Session, board_id: int) -> None:
     """
     board = get_board(db, board_id)
     work_uids = [w.work_uid for w in boards_repo.list_works(db, board_id)]
+    # Снимок названия до удаления: спросить его потом будет не у кого, а
+    # «доска 17 удалена» не отвечает на вопрос «какая».
+    label, board_id_before = board.title, board.id
     db.delete(board)
     db.flush()
+    # В журнал: удаление доски снимает у клиента и саму витрину, и файлы с
+    # диска — навсегда. Это единственное здесь удаление без корзины, и вопрос
+    # «куда делись работы по тому заказу» задают именно про него.
+    audit_service.record_deletion(
+        db,
+        actor=actor,
+        entity_type=audit_service.ENTITY_BOARD,
+        entity_id=board_id_before,
+        entity_label=label,
+    )
     for uid in work_uids:
         media_service.delete_work_files(uid)
     storage_service.invalidate_size_cache()

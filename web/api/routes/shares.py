@@ -34,10 +34,10 @@ def update_share(
 @router.delete("/{share_id}")
 def delete_share(
     share_id: int,
-    _: User = Depends(require_perm("boards", "delete")),
+    actor: User = Depends(require_perm("boards", "delete")),
     db: Session = Depends(get_db),
 ):
-    share_service.delete_share(db, share_id)
+    share_service.delete_share(db, share_id, actor)
     return {"message": "Share link deleted"}
 
 

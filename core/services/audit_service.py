@@ -87,6 +87,13 @@ ENTITY_USER = "user"
 ENTITY_MODULE = "module"
 #: Должность из конструктора доступов (не «root/менеджер» — тот у ENTITY_USER).
 ENTITY_ROLE = "role"
+#: Своё юрлицо: реквизиты, печать, подпись — то, что стоит на бумаге у клиента.
+ENTITY_COMPANY = "company"
+#: Доска работ и ссылка на неё: то, что видит клиент студии снаружи.
+ENTITY_BOARD = "board"
+ENTITY_SHARE = "share"
+#: Почтовый ящик: чужой сервер, логин и пароль.
+ENTITY_MAILBOX = "mailbox"
 ENTITY_NOTE = "note"
 ENTITY_FILE = "file"
 

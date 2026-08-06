@@ -11,6 +11,7 @@ import logging
 from sqlalchemy.orm import Session
 
 from core import exceptions as errors
+from core.services import audit_service
 from core.security import secretbox
 from core.services.mail_transport import (
     FetchedMessage,
@@ -88,8 +89,24 @@ def update_account(db: Session, account_id: int, data: dict) -> MailAccount:
     return account
 
 
-def delete_account(db: Session, account_id: int) -> None:
-    db.delete(get_account(db, account_id))
+def delete_account(db: Session, account_id: int, actor: User) -> None:
+    """Убрать ящик. В журнал — как удаление чего угодно другого.
+
+    Ящик — это чужой сервер, логин и пароль; его исчезновение означает, что
+    почта перестала забираться и уходить. Молчание журнала здесь превращает
+    «письма не доходят» в загадку на неделю.
+    """
+    account = get_account(db, account_id)
+    label, account_id_before = account.address or account.title, account.id
+    db.delete(account)
+    db.flush()
+    audit_service.record_deletion(
+        db,
+        actor=actor,
+        entity_type=audit_service.ENTITY_MAILBOX,
+        entity_id=account_id_before,
+        entity_label=label,
+    )
 
 
 def _set_password(account: MailAccount, password: str | None) -> None:

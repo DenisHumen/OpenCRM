@@ -7,9 +7,9 @@ from sqlalchemy import update as sql_update
 from sqlalchemy.orm import Session
 
 from core import exceptions as errors
-from core.services import modules_service
+from core.services import audit_service, modules_service
 from core.utils import now_utc
-from database.models import Company, Deal
+from database.models import Company, Deal, User
 
 MAX_NAME = 200
 MAX_LEGAL_NAME = 300
@@ -168,7 +168,7 @@ def set_default(db: Session, company_id: int) -> Company:
     return company
 
 
-def delete(db: Session, company_id: int) -> None:
+def delete(db: Session, company_id: int, actor: User) -> None:
     """Мягкое удаление: на фирму ссылаются заявки и уже выданные бумаги.
 
     Ссылку в заявках не чистим. Заявка помнит, от чьего имени её вели, и после
@@ -179,6 +179,16 @@ def delete(db: Session, company_id: int) -> None:
     company.deleted_at = now_utc()
     company.is_default = False
     db.flush()
+    # В журнал наравне с клиентом и товаром: фирма — это реквизиты, печать и
+    # подпись на бумаге у клиента. Вопрос «куда делось наше второе юрлицо»
+    # задают через месяц, и отвечать на него должен журнал, а не память.
+    audit_service.record_deletion(
+        db,
+        actor=actor,
+        entity_type=audit_service.ENTITY_COMPANY,
+        entity_id=company.id,
+        entity_label=company.name,
+    )
 
     # Основную удалили — назначаем следующую. Оставить систему без основной
     # значит вернуть бланки к печати без реквизитов, причём незаметно: ошибки

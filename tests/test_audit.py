@@ -699,3 +699,61 @@ def test_deleting_a_role_is_recorded_too(root_client):
     gone = entries(root_client, entity_type="role")[0]
     assert gone["action"] == "role.deleted"
     assert gone["entity_label"] == "Временная должность"
+
+
+def test_everything_that_disappears_leaves_a_trace(root_client, manager_client):
+    """Удаление любого несущего объекта видно в журнале.
+
+    Правило простое: если исчезновение объекта однажды заставит спросить «а куда
+    оно делось» — запись обязана быть. Клиент, заявка, товар и роль это умели, а
+    фирма, доска, ссылка на неё и почтовый ящик исчезали молча.
+
+    Про каждый из них спрашивают, и вопросы разные: фирма — это реквизиты на
+    бумаге у клиента; доска — витрина и файлы, снесённые с диска навсегда;
+    ссылка — «почему у клиента перестало открываться»; ящик — «почему письма
+    перестали ходить».
+    """
+    for block in ("companies", "boards", "mail"):
+        root_client.post(f"{API}/modules/{block}", json={"enabled": True})
+
+    company = root_client.post(f"{API}/companies", json={"name": "Юрлицо на снос"}).json()
+    board = manager_client.post(f"{API}/boards", json={"title": "Доска на снос"}).json()
+    share = manager_client.post(f"{API}/boards/{board['id']}/shares", json={}).json()
+    mailbox = root_client.post(
+        f"{API}/mail/accounts", json={"address": "gone@example.com", "title": "Ящик на снос"}
+    ).json()
+
+    assert manager_client.delete(f"{API}/shares/{share['id']}").status_code == 200
+    assert manager_client.delete(f"{API}/boards/{board['id']}").status_code == 200
+    assert root_client.delete(f"{API}/companies/{company['id']}").status_code == 200
+    assert root_client.delete(f"{API}/mail/accounts/{mailbox['id']}").status_code == 200
+
+    for kind, label in (
+        ("company", "Юрлицо на снос"),
+        ("board", "Доска на снос"),
+        ("share", "Доска на снос"),
+        ("mailbox", "gone@example.com"),
+    ):
+        recorded = entries(root_client, entity_type=kind)
+        assert recorded, f"удаление {kind} прошло молча"
+        assert recorded[0]["action"] == f"{kind}.deleted"
+        assert recorded[0]["entity_label"] == label, kind
+        assert recorded[0]["actor_name"], f"{kind}: удаление записано без исполнителя"
+
+
+def test_the_share_token_never_reaches_the_journal(root_client, manager_client):
+    """Токен ссылки в журнал не пишется: он и есть ключ к витрине.
+
+    Журнал читают шире, чем настройки доски, и строка с токеном в нём была бы
+    работающей ссылкой, разложенной по чужим экранам.
+    """
+    root_client.post(f"{API}/modules/boards", json={"enabled": True})
+    board = manager_client.post(f"{API}/boards", json={"title": "Доска с токеном"}).json()
+    share = manager_client.post(f"{API}/boards/{board['id']}/shares", json={}).json()
+    token = share["token"]
+    assert manager_client.delete(f"{API}/shares/{share['id']}").status_code == 200
+
+    everything = " ".join(
+        str(entry) for entry in entries(root_client, entity_type="share")
+    )
+    assert token not in everything, "токен ссылки утёк в журнал"

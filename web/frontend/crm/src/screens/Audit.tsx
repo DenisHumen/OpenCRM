@@ -41,6 +41,10 @@ const ACTION: Record<string, TranslationKey> = {
 
 const ENTITY: Record<string, TranslationKey> = {
   role: "auditEntRole",
+  company: "auditEntCompany",
+  board: "auditEntBoard",
+  share: "auditEntShare",
+  mailbox: "auditEntMailbox",
   client: "auditEntClient",
   product: "auditEntProduct",
   user: "auditEntUser",

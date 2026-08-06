@@ -78,8 +78,8 @@ def make_default(
 @router.delete("/{company_id}")
 def delete_company(
     company_id: int,
-    _: User = Depends(require_perm("companies", "delete")),
+    actor: User = Depends(require_perm("companies", "delete")),
     db: Session = Depends(get_db),
 ):
-    company_service.delete(db, company_id)
+    company_service.delete(db, company_id, actor)
     return {"message": "Company deleted"}

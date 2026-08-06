@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 
 from config.settings import get_settings
 from core import exceptions as errors
+from core.services import audit_service
 from core.security import passwords, tokens
 from core.utils import now_utc
 from database.models import Board, ShareLink, ShareView, User
@@ -61,7 +62,7 @@ def update_share(
     return link
 
 
-def delete_share(db: Session, share_id: int) -> None:
+def delete_share(db: Session, share_id: int, actor: User) -> None:
     """Удаляет ссылку вместе с журналом её просмотров.
 
     Файлы работ при этом НЕ трогаются: они принадлежат доске, а не ссылке —
@@ -70,7 +71,21 @@ def delete_share(db: Session, share_id: int) -> None:
     доски + очистка корзины (core/services/maintenance_service.py).
     """
     link = get_share(db, share_id)
+    # Снимок до удаления: у ссылки нет названия, зато есть доска, ради которой
+    # её выдавали, — по ней вопрос и задают («почему у клиента перестало
+    # открываться»). Токен в журнал не пишем: он и есть ключ к витрине.
+    board = db.get(Board, link.board_id)
+    label = board.title if board is not None else f"доска {link.board_id}"
+    link_id = link.id
     db.delete(link)  # share_views уходят каскадом (ondelete=CASCADE)
+    db.flush()
+    audit_service.record_deletion(
+        db,
+        actor=actor,
+        entity_type=audit_service.ENTITY_SHARE,
+        entity_id=link_id,
+        entity_label=label,
+    )
 
 
 def regenerate(db: Session, share_id: int, author: User) -> ShareLink:

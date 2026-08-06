@@ -105,10 +105,10 @@ def update_account(
 @router.delete("/accounts/{account_id}")
 def delete_account(
     account_id: int,
-    _: User = Depends(require_perm("settings", "manage")),
+    actor: User = Depends(require_perm("settings", "manage")),
     db: Session = Depends(get_db),
 ):
-    mail_service.delete_account(db, account_id)
+    mail_service.delete_account(db, account_id, actor)
     return {"message": "Mail account deleted"}
 
 
