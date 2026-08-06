@@ -395,8 +395,11 @@ export function DealCard() {
       <DealStock dealId={deal.id} />
 
       {/* Доски, сделанные по этой заявке. Раньше доска знала только клиента,
-          и у клиента с пятью заказами за год все они лежали одной кучей. */}
-      {(deal.boards ?? []).length > 0 && (
+          и у клиента с пятью заказами за год все они лежали одной кучей.
+          Условие на блок не лишнее рядом с проверкой длины: сервер перестаёт
+          класть доски в ответ сразу, а уже загруженная карточка держит их в
+          состоянии до следующего запроса. */}
+      {moduleOn(modules, "boards") && (deal.boards ?? []).length > 0 && (
         <div className="card card-pad" style={{ marginBottom: 20 }}>
           <div className="metric-title" style={{ marginBottom: 12 }}>{t("boards")}</div>
           <div className="doc-mini-list">

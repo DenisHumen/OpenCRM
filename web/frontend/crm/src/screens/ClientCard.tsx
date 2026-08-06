@@ -17,11 +17,13 @@ import {
   initials,
   relativeDay,
 } from "../lib/format";
-import { moduleOn } from "../lib/modules";
+import { type Gated, moduleOn, shown } from "../lib/modules";
 import { term } from "../lib/terms";
 import { MailCompose, type MailAccount } from "./Mail";
 
 const NOTE_ICONS: Record<string, string> = { note: "note", call: "call", meeting: "meeting", email: "email" };
+
+type TabKey = "history" | "calls" | "files" | "boards" | "deals";
 
 /** Иконка записи ленты. У звонка она заодно показывает направление. */
 function noteIcon(note: { kind: string; direction?: string | null }): string {
@@ -38,7 +40,7 @@ export function ClientCard() {
   const [files, setFiles] = useState<any[]>([]);
   const [boards, setBoards] = useState<any[]>([]);
   const [deals, setDeals] = useState<any[]>([]);
-  const [tab, setTab] = useState<"history" | "calls" | "files" | "boards" | "deals">("history");
+  const [tab, setTab] = useState<TabKey>("history");
   const [draft, setDraft] = useState("");
   const [draftKind, setDraftKind] = useState("note");
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -47,6 +49,7 @@ export function ClientCard() {
   const [mailAccounts, setMailAccounts] = useState<MailAccount[]>([]);
   const fileInput = useRef<HTMLInputElement>(null);
   const hasMail = moduleOn(modules, "mail");
+  const hasBoards = moduleOn(modules, "boards");
 
   const load = useCallback(async () => {
     try {
@@ -55,8 +58,6 @@ export function ClientCard() {
       setFiles(data.files);
       const notesData = await api.get(`/clients/${id}/notes?per_page=100`);
       setNotes(notesData.items);
-      const boardsData = await api.get(`/boards?client_id=${id}`);
-      setBoards(boardsData.items);
       // Заявки приходят вместе с карточкой — отдельный запрос не нужен.
       setDeals(data.deals ?? []);
     } catch (e) {
@@ -64,6 +65,21 @@ export function ClientCard() {
       navigate("/clients");
     }
   }, [id, toastError, navigate]);
+
+  // Доски — отдельным запросом и вне общего try. Пока они грузились вместе с
+  // карточкой, выключенный блок досок отвечал 403 на середине загрузки, и
+  // карточка клиента целиком уезжала обратно в список: выключение одного блока
+  // закрывало соседний, несущий раздел.
+  useEffect(() => {
+    if (!hasBoards) {
+      setBoards([]);
+      return;
+    }
+    api
+      .get(`/boards?client_id=${id}`)
+      .then((data) => setBoards(data.items))
+      .catch(() => setBoards([]));
+  }, [id, hasBoards]);
 
   useEffect(() => {
     void load();
@@ -131,6 +147,27 @@ export function ClientCard() {
     { field: "company", label: t("company"), value: client.company },
   ];
 
+  // Вкладки — списком, тем же правилом, что и меню: вкладка выключенного блока
+  // исчезает целиком, а не остаётся заголовком над пустотой.
+  const tabs = shown<Gated & { key: TabKey; label: string; count?: number }>(modules, [
+    { key: "history", label: t("history") },
+    // Звонки отдельной вкладкой, а не вместо ленты: сам разговор в ленту уже
+    // попал записью, здесь — длительность, итог и запись разговора.
+    { module: "telephony", key: "calls", label: t("calls") },
+    { key: "files", label: t("files"), count: files.length },
+    { module: "boards", key: "boards", label: t("boards"), count: boards.length },
+    // Заявки клиента: за год их бывает пять, и «что мы для него делали»
+    // должно быть вопросом к системе, а не к памяти.
+    {
+      key: "deals",
+      label: term(workspace.deal_term, locale, "many"),
+      count: deals.length,
+    },
+  ]);
+  // Блок могли выключить, пока карточка открыта на его вкладке — тогда
+  // показываем ленту, а не пустой экран под исчезнувшим заголовком.
+  const activeTab = tabs.some((item) => item.key === tab) ? tab : "history";
+
   return (
     <div className="page">
       <Link to="/clients" style={{ display: "inline-flex", alignItems: "center", gap: 6, color: "var(--muted)", fontSize: 13, marginBottom: 20 }}>
@@ -165,20 +202,24 @@ export function ClientCard() {
             </button>
           )}
           <CallButton number={client.phone} />
-          <button
-            className="btn btn-primary"
-            onClick={async () => {
-              try {
-                const board = await api.post("/boards", { title: t("newBoard"), client_id: client.id });
-                navigate(`/boards/${board.id}`);
-              } catch (e) {
-                toastError(e);
-              }
-            }}
-          >
-            <Icon name="plus" stroke={2} />
-            {t("newBoard")}
-          </button>
+          {/* Кнопка уходит вместе с блоком: предлагать создать доску там, где
+              раздела досок нет, — обещание, ведущее в отказ сервера. */}
+          {hasBoards && (
+            <button
+              className="btn btn-primary"
+              onClick={async () => {
+                try {
+                  const board = await api.post("/boards", { title: t("newBoard"), client_id: client.id });
+                  navigate(`/boards/${board.id}`);
+                } catch (e) {
+                  toastError(e);
+                }
+              }}
+            >
+              <Icon name="plus" stroke={2} />
+              {t("newBoard")}
+            </button>
+          )}
           <button className="btn-icon" onClick={() => setMenuOpen((open) => !open)}>
             <Icon name="dots" />
           </button>
@@ -217,33 +258,19 @@ export function ClientCard() {
       </div>
 
       <div className="tabs">
-        <button className={"tab" + (tab === "history" ? " active" : "")} onClick={() => setTab("history")}>
-          {t("history")}
-        </button>
-        {/* Звонки отдельной вкладкой, а не вместо ленты: сам разговор в ленту
-            уже попал записью, здесь — длительность, итог и запись разговора. */}
-        {moduleOn(modules, "telephony") && (
-          <button className={"tab" + (tab === "calls" ? " active" : "")} onClick={() => setTab("calls")}>
-            {t("calls")}
+        {tabs.map((item) => (
+          <button
+            key={item.key}
+            className={"tab" + (activeTab === item.key ? " active" : "")}
+            onClick={() => setTab(item.key)}
+          >
+            {item.label}
+            {!!item.count && <span className="count">{item.count}</span>}
           </button>
-        )}
-        <button className={"tab" + (tab === "files" ? " active" : "")} onClick={() => setTab("files")}>
-          {t("files")}
-          {files.length > 0 && <span className="count">{files.length}</span>}
-        </button>
-        <button className={"tab" + (tab === "boards" ? " active" : "")} onClick={() => setTab("boards")}>
-          {t("boards")}
-          {boards.length > 0 && <span className="count">{boards.length}</span>}
-        </button>
-        {/* Заявки клиента: за год их бывает пять, и «что мы для него делали»
-            должно быть вопросом к системе, а не к памяти. */}
-        <button className={"tab" + (tab === "deals" ? " active" : "")} onClick={() => setTab("deals")}>
-          {term(workspace.deal_term, locale, "many")}
-          {deals.length > 0 && <span className="count">{deals.length}</span>}
-        </button>
+        ))}
       </div>
 
-      {tab === "history" && (
+      {activeTab === "history" && (
         <>
           <div className="card" style={{ padding: "14px 16px", marginBottom: 20 }}>
             <input
@@ -302,9 +329,9 @@ export function ClientCard() {
 
       {/* Заявки клиента передаём сюда: у звонка с незнакомого номера заявки
           нет, и привязать его к заказу удобнее там же, где он виден. */}
-      {tab === "calls" && <CallsPanel clientId={client.id} deals={deals} limit={50} />}
+      {activeTab === "calls" && <CallsPanel clientId={client.id} deals={deals} limit={50} />}
 
-      {tab === "files" && (
+      {activeTab === "files" && (
         <>
           <div
             className="dropzone"
@@ -359,7 +386,7 @@ export function ClientCard() {
         </>
       )}
 
-      {tab === "boards" && (
+      {activeTab === "boards" && (
         <div className="board-grid">
           {boards.map((board) => (
             <BoardCard key={board.id} board={board} />
@@ -372,7 +399,7 @@ export function ClientCard() {
         </div>
       )}
 
-      {tab === "deals" && (
+      {activeTab === "deals" && (
         <div className="list-card">
           {deals.map((deal) => (
             <Link to={`/deals/${deal.id}`} key={deal.id} className="list-row hoverable">

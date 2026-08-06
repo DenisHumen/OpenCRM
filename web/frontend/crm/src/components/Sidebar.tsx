@@ -4,7 +4,7 @@ import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
 import { formatBytes, initials } from "../lib/format";
-import { moduleOn } from "../lib/modules";
+import { type Gated, shown } from "../lib/modules";
 import { term } from "../lib/terms";
 import { Icon } from "./Icon";
 import { Avatar } from "./ui";
@@ -16,6 +16,9 @@ import { Avatar } from "./ui";
  * пять и будет больше, и «главного» среди них нет. Открытое состояние живёт в
  * localStorage — иначе список схлопывался бы на каждом переходе; при заходе на
  * любой вложенный маршрут группа раскрывается сама.
+ *
+ * Пустая группа не рисуется, как и пустая категория: заголовок без пунктов —
+ * обещание раздела, которого нет.
  */
 function NavGroup({
   icon,
@@ -43,6 +46,8 @@ function NavGroup({
     setOpen(next);
     localStorage.setItem(`nav:${base}`, next ? "1" : "0");
   };
+
+  if (items.length === 0) return null;
 
   return (
     <div className={"nav-group" + (open ? " open" : "")}>
@@ -78,7 +83,7 @@ function NavGroup({
  * с подписью: голое число рядом с «Сотрудники» читается как их количество, а
  * не как «столько ждут решения».
  */
-type NavItem = {
+type NavItem = Gated & {
   to: string;
   label: string;
   icon: string;
@@ -203,68 +208,72 @@ export function Sidebar({ onOpenSearch }: { onOpenSearch: () => void }) {
 
   // Меню собирается списком, а не разметкой: так «выключенный модуль не
   // показываем» и «пустую категорию не показываем» — одно и то же правило,
-  // а не два разных условия в разных местах.
-  const daily: NavItem[] = [
+  // а не два разных условия в разных местах. Принадлежность блоку — поле
+  // `module` у пункта; отбирает их `shown`, один раз на весь файл.
+  const daily = shown<NavItem>(modules, [
     { to: "/", label: t("dashboard"), icon: "dashboard", end: true },
-  ];
-  if (moduleOn(modules, "tasks")) {
-    daily.push({
+    {
+      module: "tasks",
       to: "/tasks",
       label: t("tasks"),
       icon: "clock",
       badge: overdueTasks,
       badgeTitle: t("tasksOverdue"),
-    });
-  }
+    },
+  ]);
 
-  const work: NavItem[] = [
+  const work = shown<NavItem>(modules, [
     { to: "/clients", label: t("clients"), icon: "clients" },
     { to: "/deals", label: term(workspace.deal_term, locale, "many"), icon: "deals" },
-  ];
-  if (moduleOn(modules, "documents")) {
-    work.push({ to: "/documents", label: t("documents"), icon: "receipt" });
-  }
-  if (moduleOn(modules, "mail")) {
-    work.push({ to: "/mail", label: t("mail"), icon: "email" });
-  }
-  if (moduleOn(modules, "boards")) {
-    work.push({ to: "/boards", label: t("boards"), icon: "boards" });
-  }
-  // Склад по умолчанию выключен: он нужен магазину и мастерской, а студии нет.
-  if (moduleOn(modules, "warehouse")) {
-    work.push({ to: "/warehouse", label: t("warehouse"), icon: "warehouse" });
-  }
-  // Отчёты последними в «Работе»: за ними приходят не каждый день, а когда
-  // сводят месяц, — и они читают то, что накопили разделы выше.
-  if (moduleOn(modules, "reports")) {
-    work.push({ to: "/reports", label: t("reports"), icon: "analytics" });
-  }
-  // Журнал звонков — рядом с почтой: и то и другое про разговоры с клиентом,
-  // а подробности каждого разговора всё равно живут в ленте заявки.
-  if (moduleOn(modules, "telephony")) {
-    work.push({ to: "/calls", label: t("calls"), icon: "callIn" });
-  }
+    { module: "documents", to: "/documents", label: t("documents"), icon: "receipt" },
+    { module: "mail", to: "/mail", label: t("mail"), icon: "email" },
+    { module: "boards", to: "/boards", label: t("boards"), icon: "boards" },
+    // Склад по умолчанию выключен: он нужен магазину и мастерской, а студии нет.
+    { module: "warehouse", to: "/warehouse", label: t("warehouse"), icon: "warehouse" },
+    // Отчёты последними в «Работе»: за ними приходят не каждый день, а когда
+    // сводят месяц, — и они читают то, что накопили разделы выше.
+    { module: "reports", to: "/reports", label: t("reports"), icon: "analytics" },
+    // Журнал звонков — рядом с почтой: и то и другое про разговоры с клиентом,
+    // а подробности каждого разговора всё равно живут в ленте заявки.
+    { module: "telephony", to: "/calls", label: t("calls"), icon: "callIn" },
+  ]);
 
-  const admin: NavItem[] = [];
-  if (isRoot) {
-    admin.push({
-      to: "/staff",
-      label: t("staff"),
-      icon: "staff",
-      badge: pendingCount,
-      badgeTitle: t("signupRequests"),
-    });
-    // Фирмы — в «Админ», а не в «Работу»: реквизиты правят раз в несколько лет
-    // и только root. Менеджер читает их через выбор фирмы в заявке, и отдельный
-    // пункт меню, где ему всё равно ничего не поддаётся, был бы шумом.
-    if (moduleOn(modules, "companies")) {
-      admin.push({ to: "/companies", label: t("companies"), icon: "building" });
-    }
-    // Файлы — это медиа досок, отдельного смысла без них не имеют.
-    if (moduleOn(modules, "boards")) {
-      admin.push({ to: "/files", label: t("files"), icon: "folder" });
-    }
-  }
+  const admin = isRoot
+    ? shown<NavItem>(modules, [
+        {
+          to: "/staff",
+          label: t("staff"),
+          icon: "staff",
+          badge: pendingCount,
+          badgeTitle: t("signupRequests"),
+        },
+        // Фирмы — в «Админ», а не в «Работу»: реквизиты правят раз в несколько
+        // лет и только root. Менеджер читает их через выбор фирмы в заявке, и
+        // отдельный пункт меню, где ему всё равно ничего не поддаётся, был бы
+        // шумом.
+        { module: "companies", to: "/companies", label: t("companies"), icon: "building" },
+        // Файлы — это медиа досок, отдельного смысла без них не имеют.
+        { module: "boards", to: "/files", label: t("files"), icon: "folder" },
+      ])
+    : [];
+
+  // Настройки блока видны только когда блок включён. Раньше ящики и подключение
+  // к АТС показывались всегда — «иначе перед включением нечего настраивать», — и
+  // это противоречило правилу «выключено значит не видно»: у того, кто почтой не
+  // пользуется, в настройках всё равно висел раздел про ящики. Порядок для
+  // пользователя обратный: включить блок → настроить его.
+  const settingsItems = shown<Gated & { to: string; label: string }>(modules, [
+    { to: "/settings/modules", label: t("modules") },
+    // Ящики стоят в настройках, а не в «Работе»: это конфигурация фирмы, а не
+    // то, чем пользуются каждый день.
+    { module: "mail", to: "/settings/mailboxes", label: t("mailboxes") },
+    { module: "telephony", to: "/settings/telephony", label: t("telephony") },
+    { to: "/settings/brand", label: t("brand") },
+    { to: "/settings/contacts", label: t("contacts") },
+    { to: "/settings/showcase", label: t("showcase") },
+    { to: "/settings/return-button", label: t("returnButtonShort") },
+    { to: "/settings/maintenance", label: t("maintenance") },
+  ]);
 
   return (
     <aside className="sidebar">
@@ -325,21 +334,7 @@ export function Sidebar({ onOpenSearch }: { onOpenSearch: () => void }) {
               icon="settings"
               label={t("siteSettings")}
               base="/settings"
-              items={[
-                { to: "/settings/modules", label: t("modules") },
-                // Ящики стоят в настройках, а не в «Работе»: это конфигурация
-                // фирмы, а не то, чем пользуются каждый день.
-                { to: "/settings/mailboxes", label: t("mailboxes") },
-                // Подключение к АТС показываем всегда: без него блок телефонии
-                // включать бессмысленно, а вход в настройку должен быть виден
-                // до того, как блок включили.
-                { to: "/settings/telephony", label: t("telephony") },
-                { to: "/settings/brand", label: t("brand") },
-                { to: "/settings/contacts", label: t("contacts") },
-                { to: "/settings/showcase", label: t("showcase") },
-                { to: "/settings/return-button", label: t("returnButtonShort") },
-                { to: "/settings/maintenance", label: t("maintenance") },
-              ]}
+              items={settingsItems}
             />
           )}
         </NavSection>

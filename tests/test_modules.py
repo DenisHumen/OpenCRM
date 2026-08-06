@@ -11,7 +11,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from core import modules
-from core.services import modules_service
+from core.services import mail_service, modules_service
+from core.utils import now_utc
 from tests.conftest import API
 from web.main import app
 
@@ -234,3 +235,379 @@ def test_switchable_modules_round_trip(root_client):
         assert states(root_client)[key] is False, key
         assert switch(root_client, key, True).status_code == 200, key
         assert states(root_client)[key] is True, key
+
+
+# --- инвариант: выключенный блок не ломает систему никогда ---
+#
+# Обещание дано без оговорок, а проверять такое выборочно бессмысленно:
+# ломается всегда та комбинация, которую не перебирали. Поэтому ниже не список
+# разделов, написанный руками, а перебор — блоков по реестру, адресов по самому
+# приложению. Новый блок и новый адрес попадают под проверку сами.
+
+
+def api_get_paths() -> list[str]:
+    """Все GET-адреса API без параметров пути — из схемы приложения.
+
+    Список нельзя писать руками: забытый в нём раздел — ровно тот, который
+    потом и падает. Схему строит FastAPI по зарегистрированным роутерам, так
+    что новый роутер попадает в перебор в день своего появления.
+
+    Адреса с параметрами (`/deals/{id}`) сюда не входят: у них нет осмысленного
+    значения без подготовленных записей. Их проверяет
+    `test_data_referenced_across_modules_survives_switching_off`, где записи
+    настоящие.
+    """
+    paths = app.openapi()["paths"]
+    return sorted(
+        path
+        for path, methods in paths.items()
+        if "get" in methods and path.startswith(API) and "{" not in path
+    )
+
+
+def switch_all(client, enabled: bool) -> None:
+    """Все необязательные блоки разом.
+
+    При выключении порядок обратный: в реестре блоки идут от несущих к
+    надстройкам, и выбить основание из-под включённой надстройки система
+    откажется — правильно откажется (`module_required_by`).
+    """
+    for key in SWITCHABLE if enabled else list(reversed(SWITCHABLE)):
+        response = switch(client, key, enabled)
+        assert response.status_code == 200, f"{key}: {response.text}"
+
+
+def sweep(client, note: str) -> set[str]:
+    """Пройтись по всем адресам API. Возвращает закрытые выключенным блоком.
+
+    Проверяется главное: ни одной пятисотки. 403 допустим ровно с одним кодом —
+    `module_disabled`; любой другой означает, что закрылся не выключенный блок,
+    а пострадавший сосед, то есть ровно то, чего быть не должно.
+    """
+    closed = set()
+    for path in api_get_paths():
+        response = client.get(path)
+        assert response.status_code < 500, f"{path} упал {note}: {response.text}"
+        if response.status_code == 403:
+            code = response.json()["error"]["code"]
+            assert code == "module_disabled", f"{path} закрылся кодом {code} {note}"
+            closed.add(path)
+        else:
+            assert response.status_code == 200, f"{path} ответил {response.status_code} {note}"
+    return closed
+
+
+@pytest.mark.parametrize("key", SWITCHABLE)
+def test_each_optional_module_off_alone_breaks_nothing(key, root_client):
+    """Каждый необязательный блок по одному: выключен — остальное работает.
+
+    Проверка в две стороны. Пока блок выключен, его адреса закрыты, а чужие
+    отвечают. Включили обратно — закрытые открылись: это и доказывает, что
+    закрывал их именно он, а не задетый по дороге сосед.
+    """
+    switch_all(root_client, True)
+    assert switch(root_client, key, False).status_code == 200
+
+    closed = sweep(root_client, f"при выключенном блоке «{key}»")
+    assert closed, f"выключили «{key}», а ни один адрес не закрылся"
+
+    assert switch(root_client, key, True).status_code == 200
+    for path in sorted(closed):
+        response = root_client.get(path)
+        assert response.status_code == 200, f"{path} не открылся обратно: {response.text}"
+
+
+def test_system_works_with_every_optional_module_off(root_client, manager_client):
+    """Все необязательные разом: остаются клиенты и заявки — этого достаточно.
+
+    Несущее выключить нельзя, поэтому «голая» система — это ровно клиенты и
+    заявки. Если в таком виде нельзя завести клиента и работу по нему, значит
+    необязательные блоки на самом деле обязательны, и модульность мнимая.
+    """
+    switch_all(root_client, False)
+    closed = sweep(root_client, "при всех выключенных необязательных блоках")
+
+    assert f"{API}/clients" not in closed
+    assert f"{API}/deals" not in closed
+    assert f"{API}/dashboard" not in closed
+
+    created = manager_client.post(f"{API}/clients", json={"name": "Без единого блока"})
+    assert created.status_code == 201, created.text
+    client_id = created.json()["id"]
+    deal = manager_client.post(
+        f"{API}/deals", json={"title": "Работа без блоков", "client_id": client_id}
+    )
+    assert deal.status_code == 201, deal.text
+
+    for path in (f"/clients/{client_id}", f"/deals/{deal.json()['id']}", "/dashboard"):
+        alive = manager_client.get(f"{API}{path}")
+        assert alive.status_code == 200, f"{path}: {alive.text}"
+
+
+@pytest.fixture(scope="module")
+def wired(root_client, manager_client) -> dict:
+    """Заявка, на которой сошлись все блоки сразу.
+
+    Одна подготовка на весь раздел: списание со склада под заявку, письмо и
+    звонок в ленте клиента, бланк с реквизитами фирмы. Дальше каждая проверка
+    выключает тот блок, на который эти данные ссылаются, и смотрит, что от них
+    осталось.
+    """
+    from tests.test_mail import FakeTransport, incoming
+    from tests.test_telephony import send_event
+
+    switch_all(root_client, True)
+    root_client.patch(f"{API}/settings", json={"values": {"default_country_code": "380"}})
+
+    email = "invariant@client.test"
+    phone = "+380671110000"
+    client = manager_client.post(
+        f"{API}/clients", json={"name": "Связанный Клиент", "email": email, "phone": phone}
+    ).json()
+    deal = manager_client.post(
+        f"{API}/deals", json={"title": "Работа со всеми блоками", "client_id": client["id"]}
+    ).json()
+
+    # склад: списание под заявку
+    product = root_client.post(
+        f"{API}/warehouse/products",
+        json={"name": "Профиль алюминиевый", "unit": "m", "cost": 5000, "price": 9000},
+    ).json()
+    root_client.post(
+        f"{API}/warehouse/moves", json={"product_id": product["id"], "kind": "in", "quantity": 10}
+    )
+    root_client.post(
+        f"{API}/warehouse/moves",
+        json={
+            "product_id": product["id"],
+            "kind": "out",
+            "quantity": 4,
+            "deal_id": deal["id"],
+        },
+    )
+
+    # фирма и бланк с её реквизитами
+    company = root_client.post(
+        f"{API}/companies",
+        json={
+            "name": "Инвариант-Фирма",
+            "legal_name": "ООО «Инвариант-Фирма»",
+            "bank_name": "Банк Инварианта",
+            "bank_account": "UA000000000000000000777",
+        },
+    ).json()
+    document = manager_client.post(
+        f"{API}/documents",
+        json={
+            "client_id": client["id"],
+            "deal_id": deal["id"],
+            "item": "Витрина",
+            "company_id": company["id"],
+        },
+    ).json()
+
+    # почта: входящее письмо ложится в ленту клиента
+    FakeTransport.inbox = [
+        incoming(
+            uid=1,
+            message_id="<invariant-letter@client.test>",
+            from_addr=email,
+            sent_at=now_utc(),
+            subject="Письмо, которое переживёт выключение",
+        )
+    ]
+    FakeTransport.sent = []
+    FakeTransport.fail_with = None
+    mail_service.set_transport_factory(FakeTransport)
+    account = root_client.post(
+        f"{API}/mail/accounts",
+        json={
+            "title": "Ящик инварианта",
+            "address": "invariant@studio.test",
+            "imap_host": "imap.studio.test",
+            "smtp_host": "smtp.studio.test",
+            "password": "invariant-mailbox-pw",
+        },
+    ).json()
+    synced = root_client.post(f"{API}/mail/accounts/{account['id']}/sync")
+    assert synced.status_code == 200, synced.text
+    mail_service.reset_transport_factory()
+
+    # телефония: завершённый звонок ложится в ту же ленту
+    secret = root_client.post(f"{API}/telephony/settings/secret").json()["secret"]
+    call = send_event(
+        secret,
+        {
+            "call_id": "invariant-call",
+            "direction": "in",
+            "from": phone,
+            "to": "0442000000",
+            "started_at": "2026-08-05T11:00:00+00:00",
+            "outcome": "answered",
+            "duration": 42,
+        },
+    )
+    assert call.status_code == 200, call.text
+
+    yield {
+        "client_id": client["id"],
+        "deal_id": deal["id"],
+        "product_id": product["id"],
+        "company_id": company["id"],
+        "document_id": document["id"],
+        "document_number": document["number"],
+    }
+
+    root_client.patch(f"{API}/settings", json={"values": {"default_country_code": ""}})
+
+
+def feed_kinds(client, client_id: int) -> list[str]:
+    notes = client.get(f"{API}/clients/{client_id}/notes?per_page=200").json()["items"]
+    return [note["kind"] for note in notes]
+
+
+def test_data_referenced_across_modules_survives_switching_off(root_client, manager_client, wired):
+    """Выключение — «убрать с глаз», а не «стереть», в том числе для чужих ссылок.
+
+    Каждый случай здесь про одно и то же: запись в ленте от письма — это запись
+    ленты, а не письма. Выключили почту — история осталась; выключили телефонию
+    — звонок в ленте остался; выключили фирмы — реквизиты в уже выданном бланке
+    остались, потому что они снимок, а не ссылка.
+    """
+    switch_all(root_client, True)
+    kinds_before = feed_kinds(manager_client, wired["client_id"])
+    assert "email" in kinds_before and "call" in kinds_before
+
+    # почта и телефония выключены — лента не потеряла ни строки
+    assert switch(root_client, "mail", False).status_code == 200
+    assert switch(root_client, "telephony", False).status_code == 200
+    assert feed_kinds(manager_client, wired["client_id"]) == kinds_before
+    card = manager_client.get(f"{API}/clients/{wired['client_id']}")
+    assert card.status_code == 200, card.text
+    deal = manager_client.get(f"{API}/deals/{wired['deal_id']}")
+    assert deal.status_code == 200, deal.text
+
+    # фирмы выключены — бланк по-прежнему печатается с теми же реквизитами
+    assert switch(root_client, "companies", False).status_code == 200
+    issued = manager_client.get(f"{API}/documents/{wired['document_id']}")
+    assert issued.status_code == 200, issued.text
+    assert issued.json()["payload"]["company"]["bank_account"] == "UA000000000000000000777"
+    printed = manager_client.get(f"{API}/documents/{wired['document_id']}/print")
+    assert printed.status_code == 200
+    assert "UA000000000000000000777" in printed.text
+
+    # склад выключен — заявка открывается, ссылка на движение не разыменована
+    assert switch(root_client, "warehouse", False).status_code == 200
+    assert manager_client.get(f"{API}/deals/{wired['deal_id']}").status_code == 200
+    assert manager_client.get(f"{API}/warehouse/moves?deal_id={wired['deal_id']}").status_code == 403
+
+
+def test_everything_is_in_place_after_switching_the_modules_back_on(
+    root_client, manager_client, wired
+):
+    """Передумали — всё на месте: и записи, и связи между ними."""
+    switch_all(root_client, False)
+    switch_all(root_client, True)
+
+    moves = manager_client.get(f"{API}/warehouse/moves?deal_id={wired['deal_id']}")
+    assert moves.status_code == 200, moves.text
+    assert [m["quantity_milli"] for m in moves.json()["items"]] == [-4000]
+
+    product = manager_client.get(f"{API}/warehouse/products/{wired['product_id']}").json()
+    assert product["stock_milli"] == 6000
+
+    company = manager_client.get(f"{API}/companies/{wired['company_id']}")
+    assert company.status_code == 200
+    assert company.json()["bank_account"] == "UA000000000000000000777"
+
+    document = manager_client.get(f"{API}/documents/by-number/{wired['document_number']}")
+    assert document.status_code == 200, document.text
+    assert document.json()["payload"]["fields"]["item"] == "Витрина"
+
+    kinds = feed_kinds(manager_client, wired["client_id"])
+    assert "email" in kinds and "call" in kinds
+
+
+# --- агрегаты сужаются, а не падают ---
+
+
+def test_dashboard_without_boards_narrows_instead_of_failing(root_client, manager_client):
+    """Сводка без досок считает деньги и воронку, а не отказывает.
+
+    Слагаемое про витрины исчезает, ось графика остаётся: сузился отчёт, а не
+    его форма — читателю ответа не приходится знать, какие ключи сегодня бывают.
+    """
+    switch_all(root_client, True)
+    # Доска нужна своя: без неё «досок ноль» получилось бы само собой, и тест
+    # проходил бы, ничего не проверяя.
+    created = manager_client.post(f"{API}/boards", json={"title": "Доска для сводки"})
+    assert created.status_code == 201, created.text
+
+    full = manager_client.get(f"{API}/dashboard").json()
+    assert full["boards_total"] > 0
+    assert full["recent_boards"], "доска не попала в сводку — проверять нечего"
+
+    assert switch(root_client, "boards", False).status_code == 200
+    response = manager_client.get(f"{API}/dashboard")
+    assert response.status_code == 200, response.text
+    narrow = response.json()
+
+    assert narrow["boards_total"] == 0
+    assert narrow["boards_published"] == 0
+    assert narrow["recent_boards"] == []
+    assert narrow["views_7d"] == 0
+    assert narrow["unique_viewers_7d"] == 0
+    assert narrow["last_view_at"] is None
+    assert [day["date"] for day in narrow["views_by_day"]] == [
+        day["date"] for day in full["views_by_day"]
+    ]
+
+    # всё, что не про доски, посчиталось ровно так же
+    for key in ("money_in_work", "money_won_this_month", "clients_total", "deals_by_stage"):
+        assert narrow[key] == full[key], key
+
+
+def test_reports_do_not_depend_on_the_modules_around_them(root_client, manager_client):
+    """Отчёты считаются по заявкам и этапам — и больше ни по чему.
+
+    Равенство «до» и «после» здесь сильнее, чем «ответ 200»: оно показывает, что
+    выключение соседних блоков не убавило отчёту ни строки, а значит он их и не
+    складывал.
+    """
+    switch_all(root_client, True)
+    names = ("funnel", "revenue", "sources")
+    before = {name: manager_client.get(f"{API}/reports/{name}").json() for name in names}
+
+    for key in SWITCHABLE:
+        if key == "reports":
+            continue
+        assert switch(root_client, key, False).status_code == 200, key
+
+    for name in names:
+        response = manager_client.get(f"{API}/reports/{name}")
+        assert response.status_code == 200, f"{name}: {response.text}"
+        assert response.json() == before[name], f"отчёт «{name}» изменился от чужих блоков"
+
+
+def test_search_drops_the_results_of_a_switched_off_module(root_client, manager_client):
+    """Командная строка ищет только по включённым блокам.
+
+    Пункт меню спрятать мало: доска находилась поиском и открывалась по Enter —
+    в разделе, которого нет ни в меню, ни в маршрутах, ни в API.
+    """
+    switch_all(root_client, True)
+    client = manager_client.post(f"{API}/clients", json={"name": "Искомый Заказчик"}).json()
+    manager_client.post(
+        f"{API}/boards", json={"title": "Искомая доска", "client_id": client["id"]}
+    )
+
+    found = manager_client.get(f"{API}/search", params={"q": "Иском"}).json()
+    assert found["boards"]["items"], "доска не нашлась при включённом блоке"
+
+    assert switch(root_client, "boards", False).status_code == 200
+    without = manager_client.get(f"{API}/search", params={"q": "Иском"})
+    assert without.status_code == 200, without.text
+    # Группа остаётся пустой, а не исчезает: форма ответа одна при любом наборе
+    # блоков, и клиенту не нужно знать, какие ключи сегодня бывают.
+    assert without.json()["boards"] == {"items": [], "total": 0}
+    assert without.json()["clients"]["items"], "клиенты — несущий блок, они обязаны находиться"
