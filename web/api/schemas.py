@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 from core.services import deal_service, media_service, warehouse_service
 from core.utils import is_online
 from database.models import (
+    AuditEvent,
     Board,
     Client,
     ClientFile,
@@ -406,6 +407,32 @@ def note_out(note: ClientNote) -> dict:
         "body": note.body,
         "happened_at": _iso(note.happened_at),
         "created_at": _iso(note.created_at),
+    }
+
+
+def audit_event_out(entry: AuditEvent) -> dict:
+    """Запись журнала наружу.
+
+    Имя исполнителя отдаём снимком из самой записи, а не подставляем текущее из
+    `users`: сотрудник переименовался или уволился — журнал обязан читаться так
+    же, как читался в день записи. `actor_id` рядом нужен только чтобы нажать на
+    имя и посмотреть, что ещё делал этот человек.
+    """
+    return {
+        "id": entry.id,
+        "action": entry.action,
+        "actor_id": entry.actor_id,
+        "actor_name": entry.actor_name,
+        "source": entry.source,
+        "source_ref": entry.source_ref,
+        "entity_type": entry.entity_type,
+        "entity_id": entry.entity_id,
+        "entity_label": entry.entity_label,
+        # Было и стало отдаём порознь и как есть: склеенная на сервере строка
+        # «5000 → 500» не переводится и не выравнивается в колонку.
+        "value_before": entry.value_before,
+        "value_after": entry.value_after,
+        "created_at": _iso(entry.created_at),
     }
 
 

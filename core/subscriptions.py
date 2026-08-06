@@ -35,6 +35,11 @@ def stage_change_into_feed(event: events.Event) -> None:
     Блок `clients` сегодня несущий и выключенным не бывает; указан он не для
     красоты, а потому что лента принадлежит именно ему — и если она когда-нибудь
     переедет в необязательный блок, эта строка уже верна.
+
+    Исполнитель и источник берутся из события и уезжают в запись как есть.
+    Подставить здесь «систему» — значит сделать половину истории заявки ничьей;
+    подставить «руку» вместо настоящего источника — значит стереть разницу между
+    «перетащил на доске» и «переехало, потому что провели акт».
     """
     deal = event["deal"]
     stages = {s.key: s for s in pipeline_service.list_stages(event.db, include_archived=True)}
@@ -52,4 +57,5 @@ def stage_change_into_feed(event: events.Event) -> None:
         KIND_STAGE,
         f"{body} ({event.reason})",
         deal_id=deal.id,
+        source=event.source,
     )

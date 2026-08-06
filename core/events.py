@@ -29,6 +29,7 @@ from sqlalchemy.orm import Session
 
 from core.services import modules_service
 from database.models import User
+from database.models.audit import SOURCE_MANUAL
 
 logger = logging.getLogger("opencrm.events")
 
@@ -41,20 +42,31 @@ DEFAULT_ORDER = 100
 class Event:
     """Что произошло, у кого и почему.
 
-    `actor` и `reason` — часть контракта события, а не забота каждого
-    подписчика по отдельности. Подписчик, создавая запись, ставит того же
-    живого человека, а не «систему»: иначе половина истории заявки оказывается
-    ничьей, и на вопрос «кто это списал» отвечать нечем.
+    `actor`, `source` и `source_ref` — часть контракта события, а не забота
+    каждого подписчика по отдельности. Подписчик, создавая запись, ставит того
+    же живого человека, а не «систему»: иначе половина истории заявки
+    оказывается ничьей, и на вопрос «кто это списал» отвечать нечем.
+
+    Все трое протаскиваются вниз без изменений. `source` называет то, чем
+    цепочка началась, а не то звено, на котором находимся: движение по складу,
+    порождённое проведением акта, обязано остаться «проведением акта» и в
+    журнале, и в ленте, — иначе «Иванов списал руками» и «списалось, потому что
+    Иванов провёл акт» станут одной записью.
     """
 
     name: str
     db: Session
-    #: Живой человек, чьё действие всё это запустило.
-    actor: User
+    #: Живой человек, чьё действие всё это запустило. Пусто бывает только у
+    #: источников из `FACELESS_SOURCES` — вебхука АТС и синхронизации почты.
+    actor: User | None
     #: Короткая фраза о том, что именно он сделал. Уезжает в порождённые
     #: записи, а тело записи хранится строкой и переводу задним числом не
     #: подлежит — поэтому по-английски, как и остальной текст продукта.
     reason: str
+    #: Чем вызвано (`database/models/audit.py`): рука, вебхук АТС, почта.
+    source: str = SOURCE_MANUAL
+    #: Чем именно: номер акта, идентификатор события АТС.
+    source_ref: str = ""
     #: Подробности события. Состав объявляет тот, кто событие поднимает, и
     #: описывает его рядом с вызовом `emit` — подписчику больше спросить негде.
     data: Mapping[str, Any] = field(default_factory=dict)
@@ -189,13 +201,35 @@ def subscribers_of(event: str) -> tuple[Subscriber, ...]:
     return _order_cache[event]
 
 
-def emit(name: str, *, db: Session, actor: User, reason: str, **data: Any) -> None:
+def emit(
+    name: str,
+    *,
+    db: Session,
+    actor: User | None,
+    reason: str,
+    source: str = SOURCE_MANUAL,
+    source_ref: str = "",
+    **data: Any,
+) -> None:
     """Объявить событие и дать подписчикам отработать.
 
     Подписчиков может не быть вовсе — это норма, а не повод для тревоги: блок,
     выключенный у этого бизнеса, снял свою подписку вместе с собой.
+
+    `source` по умолчанию «рука»: событие поднимает сервис, а до сервиса
+    добираются через API, то есть через человека. Автоматика, вызывающая сервис
+    сама, обязана сказать об этом явно — и говорит, потому что иначе исполнитель
+    у неё пуст, а `audit_service.record` пустого исполнителя у руки не примет.
     """
-    event = Event(name=name, db=db, actor=actor, reason=reason, data=data)
+    event = Event(
+        name=name,
+        db=db,
+        actor=actor,
+        reason=reason,
+        source=source,
+        source_ref=source_ref,
+        data=data,
+    )
     for sub in subscribers_of(name):
         if sub.module is not None and not modules_service.is_enabled(db, sub.module):
             continue

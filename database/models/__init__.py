@@ -13,6 +13,7 @@ from database.models.task import Task
 from database.models.mail import MailAccount, MailMessage
 from database.models.warehouse import Product, StockMove
 from database.models.telephony import PhoneCall
+from database.models.audit import AuditEvent
 
 __all__ = [
     "User",
@@ -39,4 +40,5 @@ __all__ = [
     "Product",
     "StockMove",
     "PhoneCall",
+    "AuditEvent",
 ]

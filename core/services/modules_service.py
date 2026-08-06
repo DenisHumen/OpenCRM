@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from core import exceptions as errors
 from core import modules
+from core.services import audit_service
 from core.utils import now_utc
 from database.models import ModuleState, User
 
@@ -100,6 +101,9 @@ def set_enabled(db: Session, key: str, enabled: bool, user: User) -> dict[str, b
                 code="module_required_by",
             )
 
+    # Состояние до переключения. `state` всегда содержит все блоки реестра,
+    # поэтому ключ на месте, даже если строки в базе ещё нет.
+    was = current[key]
     row = db.get(ModuleState, key)
     if row is None:
         db.add(ModuleState(key=key, enabled=enabled, updated_by=user.id))
@@ -108,6 +112,21 @@ def set_enabled(db: Session, key: str, enabled: bool, user: User) -> dict[str, b
         row.updated_by = user.id
         row.updated_at = now_utc()
     db.flush()
+    # Выключенный блок исчезает из меню, из API и из отчётов целиком. Вопрос
+    # «куда делся раздел» задают на следующий день после того, как его выключили,
+    # и `module_states.updated_by` отвечает только про последнее переключение —
+    # предыдущие он затирает собой.
+    audit_service.record(
+        db,
+        action=audit_service.ACTION_MODULE_SWITCHED,
+        actor=user,
+        source=audit_service.SOURCE_MANUAL,
+        entity_type=audit_service.ENTITY_MODULE,
+        # У блока нет числового идентификатора — ключ и есть его имя.
+        entity_label=key,
+        before="on" if was else "off",
+        after="on" if enabled else "off",
+    )
     invalidate()
     return state(db)
 

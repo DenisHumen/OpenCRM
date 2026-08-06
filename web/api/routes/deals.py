@@ -200,10 +200,10 @@ def move_deal(
 @router.delete("/{deal_id}")
 def delete_deal(
     deal_id: int,
-    _: User = Depends(require_staff),
+    user: User = Depends(require_staff),
     db: Session = Depends(get_db),
 ):
-    deal_service.delete_deal(db, deal_id)
+    deal_service.delete_deal(db, deal_id, user)
     return {"message": "Deal deleted"}
 
 

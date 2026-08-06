@@ -73,6 +73,26 @@ export interface PhoneCall {
   created_at: string | null;
 }
 
+/** Запись журнала действий. Только читается — писать её умеет лишь сервер. */
+export interface AuditEvent {
+  id: number;
+  /** «объект.действие»: deal.stage_changed, client.deleted, module.switched. */
+  action: string;
+  /** null бывает только у вебхука АТС и синхронизации почты. */
+  actor_id: number | null;
+  /** Имя на момент действия: снимок, а не текущее имя из справочника. */
+  actor_name: string;
+  source: string;
+  source_ref: string;
+  entity_type: string;
+  entity_id: number | null;
+  entity_label: string;
+  /** null — величины не было; пустая строка — величина была пустой. */
+  value_before: string | null;
+  value_after: string | null;
+  created_at: string | null;
+}
+
 export interface User {
   id: number;
   email: string;

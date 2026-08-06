@@ -4,9 +4,10 @@ from sqlalchemy.orm import Session
 
 from core import events
 from core import exceptions as errors
-from core.services import company_service, pipeline_service
+from core.services import audit_service, company_service, pipeline_service
 from core.utils import now_utc
 from database.models import Deal, User
+from database.models.audit import SOURCE_MANUAL
 from database.models.pipeline import CLOSED_KINDS, KIND_LOST
 from database.repositories import clients as clients_repo
 from database.repositories import deals as deals_repo
@@ -129,7 +130,14 @@ def create_deal(db: Session, data: dict, author: User) -> Deal:
     return deal
 
 
-def update_deal(db: Session, deal_id: int, data: dict, author: User) -> Deal:
+def update_deal(
+    db: Session,
+    deal_id: int,
+    data: dict,
+    author: User,
+    source: str = SOURCE_MANUAL,
+    source_ref: str = "",
+) -> Deal:
     deal = get_deal(db, deal_id)
 
     if "title" in data and data["title"] is not None:
@@ -154,10 +162,38 @@ def update_deal(db: Session, deal_id: int, data: dict, author: User) -> Deal:
     if "lost_reason" in data and data["lost_reason"] is not None:
         deal.lost_reason = data["lost_reason"].strip()[:MAX_LOST_REASON]
     # Сумму можно и снять: прислали null — вернулись к «ещё не назвали».
-    if "amount" in data:
-        deal.amount = parse_money(data["amount"], "amount")
-    if "prepaid" in data:
-        deal.prepaid = parse_money(data["prepaid"], "prepaid") or 0
+    # Старое значение забираем ДО присваивания: после него спросить уже не у
+    # кого, а «сумма изменена» без «было 5 000, стало 500» не отвечает ни на
+    # один вопрос, ради которого в журнал заходят.
+    for field, action in (
+        ("amount", audit_service.ACTION_DEAL_AMOUNT_CHANGED),
+        ("prepaid", audit_service.ACTION_DEAL_PREPAID_CHANGED),
+    ):
+        if field not in data:
+            continue
+        was = getattr(deal, field)
+        now = parse_money(data[field], field)
+        if field == "prepaid":
+            now = now or 0
+        setattr(deal, field, now)
+        if now == was:
+            # Форма присылает поле целиком при каждом сохранении. Записывать
+            # «изменил сумму с 5000 на 5000» значит утопить настоящие правки в
+            # шуме — а искать их будут именно в этом журнале.
+            continue
+        db.flush()
+        audit_service.record(
+            db,
+            action=action,
+            actor=author,
+            source=source,
+            source_ref=source_ref,
+            entity_type=audit_service.ENTITY_DEAL,
+            entity_id=deal.id,
+            entity_label=deal.title,
+            before=audit_service.money_text(was),
+            after=audit_service.money_text(now),
+        )
 
     # Этап меняем через общий путь, чтобы журнал заполнялся и здесь тоже.
     if "stage" in data and data["stage"] and data["stage"] != deal.stage:
@@ -170,6 +206,8 @@ def update_deal(db: Session, deal_id: int, data: dict, author: User) -> Deal:
             # Причина у двух путей разная, и разница видна в ленте: карточку
             # правят осознанно, карточку на доске перетаскивают мимоходом.
             reason="edited on the deal card",
+            source=source,
+            source_ref=source_ref,
         )
         return get_deal(db, deal_id)
 
@@ -185,6 +223,8 @@ def move_stage(
     sort_order: int | None = None,
     lost_reason: str | None = None,
     reason: str = "moved on the board",
+    source: str = SOURCE_MANUAL,
+    source_ref: str = "",
 ) -> Deal:
     """Передвинуть сделку по воронке.
 
@@ -220,11 +260,30 @@ def move_stage(
 
     db.flush()
     deals_repo.add_stage_change(db, deal.id, previous, stage, author.id)
+    # Журнал пишем здесь, а не подписчиком на это же событие. Наблюдатель
+    # работает под точкой отката и своё падение проглатывает — то есть смена
+    # этапа могла бы состояться без записи о ней, молча и незаметно. Участник
+    # не проглатывает, но участников зовут до того, как операция признана
+    # состоявшейся, и запись появлялась бы раньше самого перехода.
+    audit_service.record(
+        db,
+        action=audit_service.ACTION_DEAL_STAGE_CHANGED,
+        actor=author,
+        source=source,
+        source_ref=source_ref,
+        entity_type=audit_service.ENTITY_DEAL,
+        entity_id=deal.id,
+        entity_label=deal.title,
+        before=previous,
+        after=stage,
+    )
     events.emit(
         DEAL_STAGE_CHANGED,
         db=db,
         actor=author,
         reason=reason,
+        source=source,
+        source_ref=source_ref,
         deal=deal,
         from_stage=previous,
         to_stage=stage,
@@ -232,10 +291,25 @@ def move_stage(
     return deal
 
 
-def delete_deal(db: Session, deal_id: int) -> None:
+def delete_deal(
+    db: Session,
+    deal_id: int,
+    actor: User,
+    source: str = SOURCE_MANUAL,
+    source_ref: str = "",
+) -> None:
     deal = get_deal(db, deal_id)
     deal.deleted_at = now_utc()
     db.flush()
+    audit_service.record_deletion(
+        db,
+        actor=actor,
+        source=source,
+        source_ref=source_ref,
+        entity_type=audit_service.ENTITY_DEAL,
+        entity_id=deal.id,
+        entity_label=deal.title,
+    )
 
 
 def board(db: Session) -> list[dict]:

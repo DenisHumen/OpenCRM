@@ -118,10 +118,10 @@ def update_product(
 @router.delete("/products/{product_id}")
 def delete_product(
     product_id: int,
-    _: User = Depends(require_staff),
+    user: User = Depends(require_staff),
     db: Session = Depends(get_db),
 ):
-    warehouse_service.delete_product(db, product_id)
+    warehouse_service.delete_product(db, product_id, user)
     return {"message": "Product deleted"}
 
 

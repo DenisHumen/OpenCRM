@@ -23,6 +23,7 @@ from database.session import Base, SessionLocal, engine
 from web.api.deps import CSRF_COOKIE, CSRF_HEADER, SESSION_COOKIE
 from web.api.routes import (
     arcade,
+    audit,
     auth,
     boards,
     companies,
@@ -305,6 +306,7 @@ def create_app() -> FastAPI:
     app.include_router(mail.router, prefix=api_prefix)
     app.include_router(shares.router, prefix=api_prefix)
     app.include_router(modules.router, prefix=api_prefix)
+    app.include_router(audit.router, prefix=api_prefix)
     app.include_router(site_settings.router, prefix=api_prefix)
     app.include_router(tasks.router, prefix=api_prefix)
     app.include_router(warehouse.router, prefix=api_prefix)

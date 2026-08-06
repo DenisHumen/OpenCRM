@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from config.settings import get_settings
 from core import exceptions as errors
 from core.security import passwords, tokens
+from core.services import audit_service
 from core.utils import PRESENCE_TOUCH_SECONDS, is_valid_email, normalize_email, now_utc
 from database.models import User
 from database.models.user import (
@@ -130,43 +131,96 @@ def _get_manager(db: Session, user_id: int) -> User:
     return user
 
 
-def approve(db: Session, user_id: int) -> User:
+def _record_access(
+    db: Session, actor: User, user: User, action: str, before: str, after: str
+) -> None:
+    """Выдача и снятие доступа — в журнал, одной формой.
+
+    Доступ — единственное, что человек не может вернуть себе сам, и
+    единственное, чего у сотрудника не спросишь задним числом: отключённый в
+    систему не войдёт. Поэтому «кто и когда открыл/закрыл» пишется отдельно от
+    самого поля статуса, которое каждое следующее изменение затирает.
+    """
+    audit_service.record(
+        db,
+        action=action,
+        actor=actor,
+        source=audit_service.SOURCE_MANUAL,
+        entity_type=audit_service.ENTITY_USER,
+        entity_id=user.id,
+        entity_label=user.name,
+        before=before,
+        after=after,
+    )
+
+
+def approve(db: Session, actor: User, user_id: int) -> User:
     user = _get_manager(db, user_id)
     if user.status != STATUS_PENDING:
         raise errors.ConflictError("Account is not pending", code="not_pending")
     user.status = STATUS_ACTIVE
     user.approved_at = now_utc()
+    db.flush()
+    _record_access(
+        db, actor, user, audit_service.ACTION_STAFF_APPROVED, STATUS_PENDING, STATUS_ACTIVE
+    )
     return user
 
 
-def reject(db: Session, user_id: int) -> None:
+def reject(db: Session, actor: User, user_id: int) -> None:
     user = _get_manager(db, user_id)
     if user.status != STATUS_PENDING:
         raise errors.ConflictError("Account is not pending", code="not_pending")
+    # Снимок имени — до удаления: спросить его потом будет не у кого.
+    _record_access(
+        db, actor, user, audit_service.ACTION_STAFF_REJECTED, STATUS_PENDING, "deleted"
+    )
     db.delete(user)
 
 
-def disable(db: Session, user_id: int) -> User:
+def disable(db: Session, actor: User, user_id: int) -> User:
     user = _get_manager(db, user_id)
+    was = user.status
     user.status = STATUS_DISABLED
     users_repo.delete_sessions_for_user(db, user.id)
+    db.flush()
+    _record_access(
+        db, actor, user, audit_service.ACTION_STAFF_DISABLED, was, STATUS_DISABLED
+    )
     return user
 
 
-def enable(db: Session, user_id: int) -> User:
+def enable(db: Session, actor: User, user_id: int) -> User:
     user = _get_manager(db, user_id)
     if user.status != STATUS_DISABLED:
         raise errors.ConflictError("Account is not disabled", code="not_disabled")
     user.status = STATUS_ACTIVE
+    db.flush()
+    _record_access(
+        db, actor, user, audit_service.ACTION_STAFF_ENABLED, STATUS_DISABLED, STATUS_ACTIVE
+    )
     return user
 
 
-def reset_password(db: Session, user_id: int) -> tuple[User, str]:
+def reset_password(db: Session, actor: User, user_id: int) -> tuple[User, str]:
     user = _get_manager(db, user_id)
     temp_password = secrets.token_urlsafe(9)
     user.password_hash = passwords.hash_password(temp_password)
     user.must_change_password = True
     users_repo.delete_sessions_for_user(db, user.id)
+    db.flush()
+    # Величин у этого действия нет, и выдумывать их нельзя: пароль в журнал не
+    # попадает ни в каком виде. Записываем сам факт — он и есть ответ на вопрос
+    # «почему я вдруг разлогинился и кто выдал мне временный пароль».
+    audit_service.record(
+        db,
+        action=audit_service.ACTION_STAFF_PASSWORD_RESET,
+        actor=actor,
+        source=audit_service.SOURCE_MANUAL,
+        entity_type=audit_service.ENTITY_USER,
+        entity_id=user.id,
+        entity_label=user.name,
+    )
     return user, temp_password
 
 
@@ -190,7 +244,12 @@ def set_role(db: Session, actor: User, user_id: int, new_role: str) -> User:
         return user
     if user.role == ROLE_ROOT and users_repo.count_by_role(db, ROLE_ROOT) <= 1:
         raise errors.ForbiddenError("At least one root must remain", code="last_root")
+    was = user.role
     user.role = new_role
+    db.flush()
+    _record_access(
+        db, actor, user, audit_service.ACTION_STAFF_ROLE_CHANGED, was, new_role
+    )
     return user
 
 
@@ -210,6 +269,16 @@ def delete_user(db: Session, actor: User, user_id: int) -> None:
     if user.role == ROLE_ROOT and users_repo.count_by_role(db, ROLE_ROOT) <= 1:
         raise errors.ForbiddenError("At least one root must remain", code="last_root")
     avatar_service.clear_avatar(db, user)  # стираем файл аватара с диска
+    # Запись об удалении переживает удалённого: `audit_events.actor_id` уходит
+    # в NULL вместе с ним, если удаляют самого исполнителя, но имена обоих
+    # остались снимками.
+    audit_service.record_deletion(
+        db,
+        actor=actor,
+        entity_type=audit_service.ENTITY_USER,
+        entity_id=user.id,
+        entity_label=user.name,
+    )
     db.delete(user)
 
 
