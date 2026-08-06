@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
 import { Icon } from "../components/Icon";
+import { BarcodeScanner, useLabelsOn } from "../components/ProductBarcodes";
 import { Chip, EmptyState, Modal, ScreenLoading } from "../components/ui";
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
@@ -48,6 +49,8 @@ export function Warehouse() {
     null,
   );
   const [showNew, setShowNew] = useState(false);
+  // Есть ли на экране поле сканера — от этого зависит, кто забирает фокус.
+  const scanning = useLabelsOn();
 
   const { failure, fail, clear } = useFailure();
 
@@ -85,10 +88,13 @@ export function Warehouse() {
         </button>
       </div>
 
-      <div style={{ display: "flex", gap: 10, marginBottom: 16, alignItems: "center" }}>
+      {/* Переносим на новую строку, а не сжимаем до нечитаемого: на телефоне
+          поиск, сканер и фильтр в один ряд не встают. */}
+      <div style={{ display: "flex", gap: 10, marginBottom: 16, alignItems: "center", flexWrap: "wrap" }}>
         <div
           style={{
-            flex: 1,
+            flex: "2 1 180px",
+            minWidth: 0,
             display: "flex",
             alignItems: "center",
             gap: 8,
@@ -105,9 +111,13 @@ export function Warehouse() {
             placeholder={t("searchProducts")}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            autoFocus
+            // Фокус отдаём сканеру, когда он есть: два поля с autoFocus дерутся
+            // за курсор, и выигрывает то, которое смонтировалось последним, —
+            // то есть случайное.
+            autoFocus={!scanning}
           />
         </div>
+        <BarcodeScanner />
         <button
           className={"filter-chip" + (lowOnly ? " active" : "")}
           onClick={() => setLowOnly((on) => !on)}

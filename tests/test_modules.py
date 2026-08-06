@@ -335,9 +335,51 @@ def sweep(client, note: str) -> set[str]:
             code = response.json()["error"]["code"]
             assert code == "module_disabled", f"{path} закрылся кодом {code} {note}"
             closed.add(path)
+        elif response.status_code == 422:
+            # Адрес без параметров пути, но с обязательным параметром запроса:
+            # `/labels/print` без списка товаров — это «нечего печатать», а не
+            # поломка. Обход зовёт всё голым, и такой отказ здесь ожидаем.
+            #
+            # Спрятать за 422 выключенный блок нельзя: гейт блока стоит в
+            # зависимостях роутера и срабатывает раньше разбора параметров —
+            # выключенный отвечает 403, и это проверено отдельно
+            # (`test_zakrytyy_blok_otvechaet_403_a_ne_422`). Конверт ошибки
+            # требуем: без него 422 мог бы оказаться падением разбора запроса.
+            assert response.json()["error"]["code"], f"{path} ответил 422 без кода {note}"
         else:
             assert response.status_code == 200, f"{path} ответил {response.status_code} {note}"
     return closed
+
+
+def test_zakrytyy_blok_otvechaet_403_a_ne_422(root_client):
+    """Гейт блока срабатывает раньше разбора параметров запроса.
+
+    Порядок здесь не косметика. Ответь выключенный блок «не хватает параметра»
+    вместо «блок выключен» — и он выдал бы своё существование тому, для кого его
+    нет, а обход в `sweep` перестал бы отличать закрытый раздел от работающего.
+    Порядок задаёт FastAPI (зависимости роутера решаются раньше параметров
+    обработчика), то есть держится не нашим кодом, — тем более его нужно
+    проверять, а не предполагать.
+
+    Список адресов набираем перебором, а не руками: сегодня параметр требует
+    один `/labels/print`, а забытым окажется тот, который допишут завтра.
+    """
+    switch_all(root_client, True)
+    demanding = [path for path in api_get_paths() if root_client.get(path).status_code == 422]
+    assert demanding, "ни один адрес не требует параметров — проверке нечего сторожить"
+
+    switch_all(root_client, False)
+    answers = {path: root_client.get(path) for path in demanding}
+    switch_all(root_client, True)
+
+    for path, response in answers.items():
+        # Если однажды такой адрес появится в несущем блоке, который не
+        # выключается, проверка упадёт здесь — и список придётся сузить. Молча
+        # этого не произойдёт, что и требуется.
+        assert response.status_code == 403, (
+            f"{path} при выключенных блоках ответил {response.status_code}, а не 403"
+        )
+        assert response.json()["error"]["code"] == "module_disabled"
 
 
 @pytest.mark.parametrize("key", SWITCHABLE)
@@ -367,7 +409,16 @@ def test_each_optional_module_off_alone_breaks_nothing(key, root_client):
         assert switch(root_client, dependent, True).status_code == 200
     for path in sorted(closed):
         response = root_client.get(path)
-        assert response.status_code == 200, f"{path} не открылся обратно: {response.text}"
+        # «Открылся обратно» — значит блок его больше не запирает. Ровно 200
+        # требовать нельзя: `/labels/print`, позванный голым, отвечает «нечего
+        # печатать», и это уже разговор по существу, а не запрет блока.
+        assert response.status_code in (200, 422), (
+            f"{path} не открылся обратно: {response.text}"
+        )
+        if response.status_code == 422:
+            assert response.json()["error"]["code"] != "module_disabled", (
+                f"{path} остался закрытым блоком: {response.text}"
+            )
 
 
 def test_system_works_with_every_optional_module_off(root_client, manager_client):

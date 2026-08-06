@@ -222,21 +222,111 @@ LABEL_SETTINGS = (
 )
 
 
+#: Границы размера наклейки в миллиметрах.
+#:
+#: Снизу — самый мелкий рулон, который вообще бывает (ювелирные «хвостики»
+#: 20×10); сверху — лист A4 в ландшафте, дальше начинается уже не наклейка.
+MIN_LABEL_MM = 10
+MAX_LABEL_MM = 300
+
+
 def label_settings(db: Session) -> dict:
     """Размер наклейки и состав полей.
 
-    Размер в миллиметрах строкой — он уезжает прямо в `@page { size }` печатной
-    страницы, и приводить его туда-обратно незачем. Печатает браузер, а не
-    сервер: термопринтер стоит на столе в мастерской, и с VPS до него дороги
-    нет и не будет.
+    Размер приводим к числу здесь, а не в шаблоне, и вот почему. Он уезжает
+    прямо в `@page { size: ...mm }` печатной страницы, то есть **внутрь тега
+    style**, а Jinja экранирует HTML, но не CSS: строка вида `58mm } body {`
+    закрыла бы правило и дописала своё. Настройки правит только root, так что
+    это не дыра наружу, — но одно неверное значение (пустая строка, «58 мм» с
+    буквами, случайный перевод строки) ломало бы печать у всех, и виновника в
+    отпечатанной ленте было бы не видно.
+
+    Печатает браузер, а не сервер: термопринтер стоит на столе в мастерской, и
+    с VPS до него дороги нет и не будет.
     """
     from core.services import settings_service
 
     values = settings_service.get_all(db)
     return {
-        "width_mm": values.get("label_width_mm", "58"),
-        "height_mm": values.get("label_height_mm", "40"),
+        "width_mm": _mm(values.get("label_width_mm"), 58),
+        "height_mm": _mm(values.get("label_height_mm"), 40),
         "show_price": values.get("label_show_price", "0") == "1",
         "show_name": values.get("label_show_name", "1") == "1",
         "show_sku": values.get("label_show_sku", "1") == "1",
     }
+
+
+def _mm(value, fallback: int) -> int:
+    """Миллиметры из настроек: целое в границах рулона, иначе — значение по умолчанию.
+
+    Молча подставить умолчание правильнее, чем отказать: печать не должна
+    падать из-за строки в настройках. Неверный размер человек увидит на первой
+    же наклейке, а несработавшая кнопка «печать» не объяснит ничего.
+    """
+    try:
+        number = int(float(str(value).strip()))
+    except (TypeError, ValueError):
+        return fallback
+    if not MIN_LABEL_MM <= number <= MAX_LABEL_MM:
+        return fallback
+    return number
+
+
+#: Сколько наклеек можно напечатать за раз.
+#:
+#: Не защита от дурака, а защита рулона: опечатка в поле «сколько копий» стоит
+#: намотанной впустую термобумаги, и заметить её человек успевает не всегда.
+#: Двести — это коробка товара с запасом; больше за один раз не печатают.
+MAX_COPIES = 200
+
+
+def print_items(db: Session, product_ids: list[int], copies: int = 1) -> list[dict]:
+    """Наклейки к печати: по `copies` штук на каждый товар, в заданном порядке.
+
+    Порядок именно тот, в котором пришли идентификаторы: человек выделил строки
+    на экране и ждёт их в том же виде. Сортировать по-своему значит заставить
+    его искать, где что, уже на отпечатанной ленте.
+
+    Товар без штрихкода из печати НЕ выбрасывается: наклейка выйдет с пометкой
+    «кода нет». Молча пропустить его значит отдать пачку, в которой на две
+    наклейки меньше, и обнаружить это на коробках.
+    """
+    from core.services import settings_service
+    from core.services import codes as code_render
+    from database.repositories import warehouse as warehouse_repo
+
+    copies = max(1, min(int(copies), MAX_COPIES))
+    settings = label_settings(db)
+    currency = settings_service.get_all(db).get("currency", "USD")
+
+    products = {p.id: p for p in warehouse_repo.products_by_ids(db, product_ids)}
+    barcodes = warehouse_repo.barcodes_by_products(db, product_ids)
+
+    items: list[dict] = []
+    for product_id in product_ids:
+        product = products.get(product_id)
+        if product is None:
+            continue
+        primary = next(iter(barcodes.get(product_id, [])), None)
+        row = {
+            "name": product.name,
+            "sku": product.sku or "",
+            "price": _money(product.price_minor, currency),
+            "code": primary.code if primary else "",
+            "barcode": code_render.barcode_svg(primary.code, label=True) if primary else "",
+        }
+        items.extend([row] * copies)
+    return items
+
+
+def _money(minor: int | None, currency: str) -> str:
+    """Цена для печати. Пусто — цену не назвали, и это не ноль.
+
+    Считаем целыми: делить на 100 через float нельзя, деньги в этом проекте
+    через float не считаются нигде.
+    """
+    if minor is None:
+        return ""
+    whole, cents = divmod(abs(int(minor)), 100)
+    sign = "-" if minor < 0 else ""
+    return f"{sign}{whole}.{cents:02d} {currency}".strip()

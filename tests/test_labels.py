@@ -258,3 +258,167 @@ def test_sklad_uvodit_naklejki_za_soboy(root_client):
     assert state["labels"] is False, "наклейки остались включёнными без склада"
 
     root_client.post(f"{API}/modules/warehouse", json={"enabled": True})
+
+
+# --- печать ------------------------------------------------------------------
+
+
+def test_pachka_pechataetsya_v_prislannom_poryadke(root_client):
+    """Человек выделил строки на экране и ждёт их в том же виде.
+
+    Отсортировать по-своему значит заставить его искать, где что, уже на
+    отпечатанной ленте — а наклейки с ленты снимают по одной.
+    """
+    codes = []
+    ids = []
+    for number in range(3):
+        item = root_client.post(
+            f"{API}/warehouse/products",
+            json={"name": f"Позиция {number}", "sku": f"LBL-{uniq()}"},
+        ).json()
+        ids.append(item["id"])
+        code = f"46{uniq()}"
+        codes.append(code)
+        root_client.post(f"{LABELS}/products/{item['id']}/barcodes", json={"code": code})
+
+    order = [ids[2], ids[0], ids[1]]
+    page = root_client.get(f"{LABELS}/print", params={"product_id": order})
+    assert page.status_code == 200, page.text
+
+    # Порядок — по тому, где каждый код встретился в странице: коды уникальны,
+    # поэтому позиция в тексте и есть позиция наклейки в ленте.
+    positions = [page.text.index(codes[i]) for i in (2, 0, 1)]
+    assert positions == sorted(positions), "наклейки вышли не в том порядке"
+
+
+def test_kopiy_stolko_skolko_poprosili(root_client, product):
+    """Пришло десять коробок — печатаем десять одинаковых наклеек."""
+    code = f"46{uniq()}"
+    root_client.post(f"{LABELS}/products/{product['id']}/barcodes", json={"code": code})
+
+    page = root_client.get(
+        f"{LABELS}/print", params={"product_id": [product["id"]], "copies": 4}
+    )
+    assert page.status_code == 200
+    assert page.text.count('class="label"') == 4
+
+
+def test_tovar_bez_koda_ne_propadaet_iz_pachki(root_client):
+    """Молча пропустить его значит отдать пачку, в которой на одну наклейку меньше.
+
+    Обнаружится это на коробках, когда печатать будет уже поздно.
+    """
+    without = root_client.post(
+        f"{API}/warehouse/products", json={"name": "Без кода", "sku": f"LBL-{uniq()}"}
+    ).json()
+    page = root_client.get(f"{LABELS}/print", params={"product_id": [without["id"]]})
+
+    assert page.status_code == 200
+    assert page.text.count('class="label"') == 1
+    assert "код не задан" in page.text
+
+
+def test_pustaya_pachka_eto_otkaz_a_ne_pustoy_list(root_client):
+    """Нажал «печать», ничего не выделив, — надо сказать об этом, а не молчать."""
+    denied = root_client.get(f"{LABELS}/print")
+    assert denied.status_code == 422, denied.text
+    assert denied.json()["error"]["code"] == "nothing_to_print"
+
+
+def test_razmer_rulona_uezzhaet_v_stranitsu(root_client, product):
+    """Рулоны бывают 58×40, 40×30, 30×20 — один зашитый размер печатал бы мимо."""
+    root_client.patch(
+        f"{API}/settings", json={"values": {"label_width_mm": "40", "label_height_mm": "30"}}
+    )
+    page = root_client.get(f"{LABELS}/print", params={"product_id": [product["id"]]})
+    assert "size: 40mm 30mm" in page.text
+
+    root_client.patch(
+        f"{API}/settings", json={"values": {"label_width_mm": "58", "label_height_mm": "40"}}
+    )
+
+
+def test_musor_v_nastroykakh_ne_lomaet_pechat(root_client, product):
+    """Размер уезжает внутрь тега style, а Jinja экранирует HTML, но не CSS.
+
+    Строка `58mm } body {` закрыла бы правило и дописала своё. Настройки правит
+    только root, так что наружу это не дыра, — но одно неверное значение ломало
+    бы печать у всех, и виновника в отпечатанной ленте было бы не видно.
+    """
+    root_client.patch(
+        f"{API}/settings",
+        json={"values": {"label_width_mm": "58mm } body { display:none", "label_height_mm": ""}},
+    )
+    page = root_client.get(f"{LABELS}/print", params={"product_id": [product["id"]]})
+
+    assert page.status_code == 200
+    assert "display:none" not in page.text
+    assert "size: 58mm 40mm" in page.text, "размер не откатился к умолчанию"
+
+    root_client.patch(
+        f"{API}/settings", json={"values": {"label_width_mm": "58", "label_height_mm": "40"}}
+    )
+
+
+def test_udalyonnyy_tovar_ne_pechataetsya(root_client):
+    """Наклейка на то, чего нет в справочнике, приклеится к коробке навсегда."""
+    item = root_client.post(
+        f"{API}/warehouse/products", json={"name": "Уйдёт в корзину", "sku": f"LBL-{uniq()}"}
+    ).json()
+    root_client.post(f"{LABELS}/products/{item['id']}/barcodes", json={"code": f"46{uniq()}"})
+    root_client.delete(f"{API}/warehouse/products/{item['id']}")
+
+    page = root_client.get(f"{LABELS}/print", params={"product_id": [item["id"]]})
+    assert page.status_code == 200
+    assert page.text.count('class="label"') == 0
+
+
+def test_vyklyuchennyy_blok_ne_pechataet(root_client, product):
+    root_client.post(f"{API}/modules/labels", json={"enabled": False})
+    denied = root_client.get(f"{LABELS}/print", params={"product_id": [product["id"]]})
+    assert denied.status_code == 403
+
+
+def test_naklejka_szhimaetsya_pod_svoy_rulon(root_client, product):
+    """Геометрия считается от высоты рулона, а не задана числом.
+
+    Зашитая высота полосок разумна ровно для одного размера. На 58×40 всё
+    помещалось, а на 30×20 подпись с цифрами уезжала за край и **молча
+    обрезалась** `overflow: hidden`: штрихкод печатался, номер под ним
+    пропадал, и увидеть это можно было только на отпечатанной ленте.
+
+    Замеры в живом браузере после правки: на 58×40 цифры кончаются на 38,5 мм,
+    на 30×20 — на 18,5 мм, то есть внутри наклейки в обоих случаях.
+    """
+    root_client.post(f"{LABELS}/products/{product['id']}/barcodes", json={"code": f"46{uniq()}"})
+
+    for height, bar_mm, lines in ((40, "14.0mm", "2"), (30, "10.5mm", "2"), (20, "7.0mm", "1")):
+        root_client.patch(
+            f"{API}/settings",
+            json={"values": {"label_width_mm": "58", "label_height_mm": str(height)}},
+        )
+        page = root_client.get(f"{LABELS}/print", params={"product_id": [product["id"]]}).text
+        assert f"height: {bar_mm}" in page, f"на рулоне {height} мм полоски не подстроились"
+        assert f"line-clamp: {lines}" in page, f"на рулоне {height} мм название не ужалось"
+
+    root_client.patch(
+        f"{API}/settings", json={"values": {"label_width_mm": "58", "label_height_mm": "40"}}
+    )
+
+
+def test_v_rezhime_prosmotra_pechat_ne_zapuskaetsya(root_client, product):
+    """Подбирая размер под свой рулон, на страницу надо смотреть.
+
+    Без этого каждая примерка стоит намотанной ленты: термобумага не
+    переиспользуется, а диалог принтера открывается сам.
+    """
+    root_client.post(f"{LABELS}/products/{product['id']}/barcodes", json={"code": f"46{uniq()}"})
+    args = {"product_id": [product["id"]]}
+
+    printing = root_client.get(f"{LABELS}/print", params=args).text
+    assert "window.print()" in printing
+
+    watching = root_client.get(f"{LABELS}/print", params={**args, "preview": 1}).text
+    assert "addEventListener" not in watching, "режим просмотра всё равно печатает"
+    # Кнопка остаётся: посмотрели, размер подошёл — печатаем отсюда же.
+    assert "window.print()" in watching

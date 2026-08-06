@@ -310,3 +310,21 @@ def test_vsyakiy_znachok_sushchestvuet():
         used.update(re.findall(r"icon:\s*\"([^\"]+)\"", text))
     unknown = sorted(used - known)
     assert not unknown, f"значков нет в Icon.PATHS: {unknown}"
+
+
+def test_pole_skanera_lovit_enter_samo():
+    """Сканер заканчивает ввод нажатием Enter — и это должно сработать.
+
+    Проверено на живой странице: доверенный Enter долетает до поля, а событие
+    `submit` у формы без кнопки отправки НЕ возникает. То есть на одном
+    `onSubmit` поле молчало бы ровно там, ради чего блок и заводился: сканер
+    пикает, а на экране ничего.
+
+    Сторож стоит потому, что убрать `onKeyDown` при чистке кода легко —
+    выглядит он как дубль обработчика формы, — а обнаружится пропажа только со
+    сканером в руках.
+    """
+    source = (SCREENS / "components" / "ProductBarcodes.tsx").read_text(encoding="utf-8")
+    scanner = source[source.index("export function BarcodeScanner"):]
+    assert "onKeyDown" in scanner, "поле сканера полагается на отправку формы"
+    assert 'e.key === "Enter"' in scanner

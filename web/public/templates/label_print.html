@@ -1,0 +1,137 @@
+{# Наклейка со штрихкодом — лист ровно по размеру рулона.
+
+   **Печатает браузер, а не сервер.** Термопринтер стоит на столе у приёмщика, в
+   локальной сети мастерской, а приложение — на VPS: дороги от одного к другому
+   нет и не будет. Значит сервер отдаёт страницу точного размера, а печатает её
+   тот принтер, который выбран в системе, — его драйвер уже стоит у того, кто
+   принтер купил. Заодно это работает и с обычным лазерным на листах самоклейки.
+
+   Размер приходит из настроек, потому что рулоны бывают 58×40, 58×30, 40×30,
+   30×20 мм и другие. Один зашитый размер означает, что половина купивших
+   термопринтер напечатает мимо.
+
+   Ни тёмной темы, ни шрифтов со стороны, ни картинок: только чёрное по белому и
+   миллиметры. Термопечать — это нагрев, полутонов у неё нет. #}
+{# Геометрия считается от высоты рулона, а не задаётся числом.
+
+   Зашитая высота полосок разумна ровно для одного размера. На 58×40 всё
+   помещалось, а на 30×20 подпись с цифрами уезжала за край и молча обрезалась
+   `overflow: hidden` — штрихкод печатался, а номер под ним пропадал, и заметить
+   это можно было только на отпечатанной ленте.
+
+   Высоту полосок ужимаем, а ширину нет: сканеру важна ШИРИНА штриха, высота
+   отвечает лишь за то, насколько легко навести луч. Укороченный штрихкод —
+   обычная практика, а узкий не читается вовсе. #}
+{% set bar_mm = [[(height_mm * 0.35) | round(1), 6] | max, 14] | min %}
+{% set name_lines = 2 if height_mm >= 30 else 1 %}
+<!doctype html>
+<html lang="{{ locale }}">
+<head>
+<meta charset="utf-8">
+<meta name="robots" content="noindex">
+<title>{{ t.title }}</title>
+<style>
+  /* Размер листа = размер наклейки, поля нулевые. Иначе принтер добавит свои,
+     и штрихкод уедет за край — а обрезанный штрихкод не читается вовсе. */
+  @page { size: {{ width_mm }}mm {{ height_mm }}mm; margin: 0; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { background: #fff; color: #000; }
+  body {
+    font: 7pt/1.15 "Segoe UI", system-ui, -apple-system, Arial, sans-serif;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
+  }
+  .label {
+    width: {{ width_mm }}mm;
+    height: {{ height_mm }}mm;
+    /* Внутренний отступ маленький: на наклейке 58×40 каждый миллиметр поля —
+       это минус миллиметр высоты полосок, а низкий штрихкод сканер берёт хуже. */
+    padding: 1.5mm 2mm;
+    display: flex; flex-direction: column; justify-content: space-between;
+    overflow: hidden;
+    /* Разрыв страницы после каждой — иначе пачка уедет на один лист. */
+    page-break-after: always;
+  }
+  .label:last-child { page-break-after: auto; }
+  .name {
+    font-size: 8pt; font-weight: 600; line-height: 1.15;
+    /* Сколько строк названия влезает — считает `name_lines` от высоты рулона:
+       на 58×40 две, на 30×20 одна. Лишнее обрезаем многоточием: неполное
+       название лучше, чем вытолкнутый за край штрихкод. */
+    display: -webkit-box; -webkit-line-clamp: {{ name_lines }}; -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .row { display: flex; justify-content: space-between; align-items: baseline; gap: 2mm; }
+  .sku { font-size: 6.5pt; color: #333; }
+  .price { font-size: 10pt; font-weight: 700; white-space: nowrap; }
+  .code { text-align: center; }
+  /* Ширина — во всю наклейку: узкие полоски сканер берёт хуже, а свободное
+     место здесь всё равно ничем не занять. Высота — заданная, от размера
+     рулона (см. `bar_mm` вверху), а не производная от ширины: производная
+     растёт вместе с шириной и на низком рулоне выталкивает цифры за край. */
+  .code svg { width: 100%; height: {{ bar_mm }}mm; display: block; }
+  /* Цифры печатает шаблон, а не библиотека штрихкода: SVG растягивается по
+     ширине наклейки, и подпись внутри него растянулась бы вместе с ним — на
+     узком рулоне мелко, на широком несоразмерно крупно. Здесь размер задан
+     в пунктах и от ширины не зависит.
+
+     Нужны они обязательно: сканер не берёт мятую или залитую наклейку, и тогда
+     код набирают руками — а набрать его неоткуда, если под полосками пусто. */
+  .digits {
+    font: 7pt/1 "Courier New", monospace; letter-spacing: 0.1em;
+    text-align: center; margin-top: 0.6mm;
+  }
+  .empty { font-size: 7pt; color: #666; text-align: center; margin-top: 2mm; }
+  /* Полоска с кнопкой — только на экране. В печать она не уходит: на наклейке
+     58 мм шириной ей попросту нет места, да и печатать кнопку незачем.
+     Нужна она на случай, когда диалог принтера закрыли, а печать всё же
+     требуется: без неё пришлось бы перезагружать страницу. */
+  .bar { padding: 4mm 2mm; text-align: center; }
+  .bar button {
+    font: 500 13px/1 system-ui, sans-serif; padding: 8px 16px;
+    border: 1px solid #000; border-radius: 6px; background: #fff; cursor: pointer;
+  }
+  .bar small { display: block; margin-top: 6px; color: #666; font: 11px/1.4 system-ui, sans-serif; }
+  @media print { .bar { display: none; } }
+</style>
+</head>
+<body>
+{% for item in items %}
+  <div class="label">
+    <div>
+      {% if show_name %}<div class="name">{{ item.name }}</div>{% endif %}
+      <div class="row">
+        {% if show_sku and item.sku %}<span class="sku">{{ item.sku }}</span>{% endif %}
+        {# Цена печатается по выбору и по умолчанию выключена: напечатанная цена
+           устаревает в день смены прайса, а наклейка живёт на коробке месяцами.
+           На ценнике она нужна, на складской наклейке — врёт. #}
+        {% if show_price and item.price %}<span class="price">{{ item.price }}</span>{% endif %}
+      </div>
+    </div>
+    {% if item.barcode %}
+      <div class="code">{{ item.barcode|safe }}</div>
+      <div class="digits">{{ item.code }}</div>
+    {% else %}
+      {# Без кода наклейка бессмысленна, но печать не роняем: человек увидит,
+         какой именно позиции кода не хватает, и заведёт его. #}
+      <div class="empty">{{ t.no_code }}</div>
+    {% endif %}
+  </div>
+{% endfor %}
+<div class="bar">
+  <button onclick="window.print()">{{ t.print }}</button>
+  <small>{{ width_mm }}×{{ height_mm }} мм · {{ items|length }}</small>
+</div>
+{% if not preview %}
+<script>
+  // Печать сама: страницу открывают ради неё одной, и лишнее нажатие тут
+  // ничего не решает. Диалог принтера при этом остаётся — человек видит, что
+  // и на чём печатает, и может отменить.
+  //
+  // Кроме режима просмотра (`?preview=1`): подбирая размер под свой рулон,
+  // на страницу надо СМОТРЕТЬ, а не печатать её. Иначе каждая примерка стоит
+  // намотанной ленты, а термобумага не переиспользуется.
+  window.addEventListener("load", function () { window.print(); });
+</script>
+{% endif %}
+</body>
+</html>

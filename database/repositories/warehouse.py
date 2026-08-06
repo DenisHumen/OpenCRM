@@ -271,3 +271,16 @@ def make_primary(db: Session, row: ProductBarcode) -> None:
         .values(is_primary=False)
     )
     db.refresh(row)
+
+
+def products_by_ids(db: Session, product_ids) -> list[Product]:
+    """Товары пачкой. Удалённых не отдаём: печатать наклейку на то, чего нет в
+    справочнике, значит наклеить на коробку код, который потом никого не найдёт."""
+    product_ids = [i for i in set(product_ids) if i]
+    if not product_ids:
+        return []
+    return list(
+        db.scalars(
+            select(Product).where(Product.id.in_(product_ids), Product.deleted_at.is_(None))
+        )
+    )

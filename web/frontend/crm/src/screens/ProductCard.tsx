@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { Icon } from "../components/Icon";
+import { ProductBarcodes } from "../components/ProductBarcodes";
 import { ConfirmModal, EmptyState, ScreenLoading } from "../components/ui";
 import { api, ApiError } from "../lib/api";
 import { useApp } from "../lib/app";
@@ -136,6 +137,10 @@ export function ProductCard() {
       </div>
 
       {!product.is_service && <MoveForm product={product} onSaved={() => void load()} />}
+
+      {/* Раздел сам решает, показываться ли: выключен блок или нет права —
+          возвращает null. Услуге штрихкод не нужен, её не сканируют с полки. */}
+      {!product.is_service && <ProductBarcodes productId={product.id} />}
 
       <div className="section-head" style={{ marginTop: 28 }}>
         <h2 className="section-title">{t("moves")}</h2>

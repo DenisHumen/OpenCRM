@@ -35,12 +35,33 @@ _BARCODE_OPTIONS = {
 }
 
 
-def barcode_svg(text: str) -> str:
-    """Code128 в виде фрагмента SVG, готового к вставке в HTML."""
+#: Штрихкод для наклейки — другая геометрия, чем у бланка.
+#:
+#: Бланк это лист A4, наклейка — лоскут 58×40 мм, и настройки у них разойтись
+#: обязаны. Полоски ниже (на наклейке высота на вес золота), тихая зона уже,
+#: цифры библиотека НЕ рисует: их печатает сам шаблон наклейки, потому что там
+#: они должны быть заданного размера, а не отмасштабированного вместе с картинкой.
+_LABEL_OPTIONS = {
+    "module_height": 10.0,
+    "module_width": 0.28,
+    "quiet_zone": 1.5,
+    "write_text": False,
+}
+
+
+def barcode_svg(text: str, *, label: bool = False) -> str:
+    """Code128 в виде фрагмента SVG, готового к вставке в HTML.
+
+    `label=True` — вариант для наклейки: ниже, уже поля, без подписи цифрами.
+    Флагом, а не свободным словарём настроек: вариантов ровно два (бланк и
+    наклейка), и пусть они оба лежат здесь, рядом, чем расползаются по вызовам,
+    где однажды разойдутся в мелочах.
+    """
     if not text:
         raise ValueError("Barcode text is empty")
     buffer = io.BytesIO()
-    barcode.get("code128", text, writer=SVGWriter()).write(buffer, _BARCODE_OPTIONS)
+    options = _LABEL_OPTIONS if label else _BARCODE_OPTIONS
+    barcode.get("code128", text, writer=SVGWriter()).write(buffer, options)
     return _inline(buffer.getvalue().decode("utf-8"))
 
 
