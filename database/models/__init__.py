@@ -1,4 +1,5 @@
 from database.models.user import User, UserSession
+from database.models.role import Role, RolePermission
 from database.models.client import Client, ClientFile, ClientNote
 from database.models.board import Board, Work
 from database.models.share import ShareLink, ShareView
@@ -18,6 +19,8 @@ from database.models.audit import AuditEvent
 __all__ = [
     "User",
     "UserSession",
+    "Role",
+    "RolePermission",
     "Client",
     "ClientNote",
     "ClientFile",

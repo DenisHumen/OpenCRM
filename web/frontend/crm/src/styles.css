@@ -484,6 +484,8 @@ button { font-family: var(--sans); }
 .input:focus, .textarea:focus, .select:focus { border-color: var(--accent); }
 .input:disabled { background: #191817; border-color: var(--surface-2); color: var(--faint); }
 .textarea { height: 72px; padding: 8px 10px; resize: none; line-height: 1.5; }
+/* Поле внутри строки списка: полная высота разгоняет строку и ломает ритм. */
+.input-sm { height: 28px; font-size: 12px; padding: 0 8px; }
 .field { margin-bottom: 14px; }
 .form-error { color: var(--danger); font-size: 12px; margin-top: 8px; }
 
@@ -929,3 +931,49 @@ button { font-family: var(--sans); }
 }
 
 @media (prefers-reduced-motion: reduce) { .sidebar { transition: none; } }
+
+/* --- Роли и конструктор доступов --- */
+
+/* Готовые наборы под должность: то же решение, что пресеты воронки. */
+.preset-row { display: flex; flex-wrap: wrap; gap: 10px; }
+.preset-card {
+  flex: 1 1 200px; min-width: 0; max-width: 280px;
+  display: flex; flex-direction: column; gap: 4px; text-align: left;
+  padding: 12px 14px; cursor: pointer;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+  transition: background 150ms, border-color 150ms;
+}
+.preset-card:hover { background: var(--surface-2); border-color: var(--border-hover); }
+.preset-name { color: var(--text); font-size: 13px; font-weight: 500; }
+.preset-hint { color: var(--faint); font-size: 11.5px; line-height: 1.45; }
+
+/* Матрица «раздел × действие». Столбцов десять, и на узком окне они не
+   помещаются ни при каком кегле — поэтому таблица прокручивается внутри своей
+   рамки, а не растягивает страницу. */
+.perm-matrix-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 10px; }
+.perm-matrix { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+.perm-matrix th, .perm-matrix td {
+  padding: 8px 10px; border-bottom: 1px solid var(--border); text-align: center;
+}
+.perm-matrix thead th {
+  position: sticky; top: 0; z-index: 1;
+  background: var(--surface-2); color: var(--muted);
+  font-weight: 500; font-size: 11.5px; line-height: 1.3; white-space: nowrap;
+}
+/* Первый столбец — названия разделов: он остаётся на месте при прокрутке,
+   иначе на середине таблицы непонятно, к какой строке относится галочка. */
+.perm-matrix tbody th[scope="row"] {
+  position: sticky; left: 0; z-index: 1;
+  background: var(--surface); text-align: left; min-width: 150px;
+  display: table-cell;
+}
+.perm-matrix tbody tr:last-child th, .perm-matrix tbody tr:last-child td { border-bottom: none; }
+.perm-area { color: var(--text); font-size: 13px; font-weight: 500; }
+.perm-why { display: block; color: var(--faint); font-size: 11px; margin-top: 3px; font-weight: 400; }
+/* Выключенный блок: строка приглушена, но остаётся — право на него выдать
+   можно, просто оно ничего не даёт, пока блок не включат. */
+.perm-row-off .perm-area { color: var(--muted); }
+.perm-row-off td { opacity: 0.6; }
+/* «Такого действия здесь не бывает» и «не выдано» обязаны выглядеть по-разному. */
+.perm-na { color: var(--surface-2); user-select: none; }
+.perm-matrix input[type="checkbox"] { cursor: pointer; accent-color: var(--brand); }

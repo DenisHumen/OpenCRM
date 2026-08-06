@@ -476,11 +476,18 @@ def test_reading_screens_is_not_recorded(root_client, manager_client, deal):
 # --- кто видит журнал ---
 
 
-def test_only_root_reads_the_log(manager_client):
-    """Пока ролей нет — только root. Право «видеть журнал» появится отдельно."""
+def test_reading_the_log_needs_its_own_permission(manager_client):
+    """Журнал закрыт своим правом, а не должностью.
+
+    Раньше здесь стояло «только root»: ролей не было, и другого способа
+    закрыть раздел тоже. Теперь право `audit.view` выдаётся отдельно от всего
+    остального — и его нет ни у менеджера, ни у бухгалтера, ни у проджекта.
+    Пускать туда всех, кто видит список сотрудников, незачем: за журналом
+    приходят не работать, а разбираться, когда что-то не сошлось.
+    """
     denied = manager_client.get(AUDIT)
     assert denied.status_code == 403
-    assert denied.json()["error"]["code"] == "root_required"
+    assert denied.json()["error"]["code"] == "permission_denied"
 
 
 def test_the_log_can_be_read_by_person(root_client, manager_client, deal):

@@ -18,7 +18,7 @@ from core.utils import normalize_phone
 from database.models import PhoneCall, User
 from database.repositories import telephony as telephony_repo
 from web.api import schemas
-from web.api.deps import client_ip, get_db, require_module, require_root, require_staff
+from web.api.deps import client_ip, get_db, require_module, require_perm
 
 # Рабочие ручки: сотрудник + включённый блок.
 router = APIRouter(
@@ -68,7 +68,7 @@ def list_calls(
     until: datetime | None = None,
     page: int = Query(default=1, ge=1),
     per_page: int = Query(default=50, ge=1, le=200),
-    _: User = Depends(require_staff),
+    _: User = Depends(require_perm("telephony", "view")),
     db: Session = Depends(get_db),
 ):
     # номер из поля поиска приводим так же, как хранимый, — иначе «+380 67»
@@ -94,7 +94,7 @@ def list_calls(
 @router.get("/calls/{call_id}")
 def get_call(
     call_id: int,
-    _: User = Depends(require_staff),
+    _: User = Depends(require_perm("telephony", "view")),
     db: Session = Depends(get_db),
 ):
     return schemas.call_out(_call(db, call_id))
@@ -104,7 +104,7 @@ def get_call(
 def update_call(
     call_id: int,
     payload: CallPatchIn,
-    _: User = Depends(require_staff),
+    _: User = Depends(require_perm("telephony", "edit")),
     db: Session = Depends(get_db),
 ):
     """Привязать разговор к заявке или отвязать. Больше в звонке править нечего:
@@ -120,7 +120,7 @@ def update_call(
 @router.post("/calls/{call_id}/callback-task", status_code=201)
 def create_callback_task(
     call_id: int,
-    user: User = Depends(require_staff),
+    user: User = Depends(require_perm("telephony", "create")),
     db: Session = Depends(get_db),
 ):
     """Напоминание перезвонить по пропущенному звонку (блок ``tasks``)."""
@@ -131,7 +131,7 @@ def create_callback_task(
 @router.post("/click-to-call", status_code=201)
 def click_to_call(
     payload: ClickToCallIn,
-    user: User = Depends(require_staff),
+    user: User = Depends(require_perm("telephony", "create")),
     db: Session = Depends(get_db),
 ):
     call = telephony_service.click_to_call(
@@ -143,21 +143,21 @@ def click_to_call(
 # --- настройки подключения (root) ---
 
 @router.get("/settings")
-def get_telephony_settings(_: User = Depends(require_root), db: Session = Depends(get_db)):
+def get_telephony_settings(_: User = Depends(require_perm("settings", "manage")), db: Session = Depends(get_db)):
     return telephony_service.public_settings(db)
 
 
 @router.patch("/settings")
 def update_telephony_settings(
     payload: TelephonySettingsIn,
-    _: User = Depends(require_root),
+    _: User = Depends(require_perm("settings", "manage")),
     db: Session = Depends(get_db),
 ):
     return telephony_service.update_settings(db, payload.values)
 
 
 @router.post("/settings/secret", status_code=201)
-def regenerate_secret(_: User = Depends(require_root), db: Session = Depends(get_db)):
+def regenerate_secret(_: User = Depends(require_perm("settings", "manage")), db: Session = Depends(get_db)):
     """Новый секрет подписи. Возвращается один раз — записать и вставить в АТС."""
     return {"secret": telephony_service.regenerate_webhook_secret(db)}
 

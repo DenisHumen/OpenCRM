@@ -9,7 +9,7 @@ from database.repositories import clients as clients_repo
 from database.repositories import shares as shares_repo
 from database.repositories import stats as stats_repo
 from web.api import schemas
-from web.api.deps import get_db, require_module, require_staff
+from web.api.deps import get_db, require_module, require_perm
 from web.public import layout
 
 router = APIRouter(
@@ -23,7 +23,7 @@ def list_boards(
     client_id: int | None = None,
     page: int = Query(default=1, ge=1),
     per_page: int = Query(default=50, ge=1, le=200),
-    _: User = Depends(require_staff),
+    _: User = Depends(require_perm("boards", "view")),
     db: Session = Depends(get_db),
 ):
     boards, total = boards_repo.search(db, q=search, client_id=client_id, page=page, per_page=per_page)
@@ -46,7 +46,7 @@ def list_boards(
 @router.post("", status_code=201)
 def create_board(
     payload: schemas.BoardIn,
-    user: User = Depends(require_staff),
+    user: User = Depends(require_perm("boards", "create")),
     db: Session = Depends(get_db),
 ):
     board = board_service.create_board(
@@ -58,7 +58,7 @@ def create_board(
 @router.get("/{board_id}")
 def get_board(
     board_id: int,
-    _: User = Depends(require_staff),
+    _: User = Depends(require_perm("boards", "view")),
     db: Session = Depends(get_db),
 ):
     board = board_service.get_board(db, board_id)
@@ -82,7 +82,7 @@ def get_board(
 def update_board(
     board_id: int,
     payload: schemas.BoardPatchIn,
-    _: User = Depends(require_staff),
+    _: User = Depends(require_perm("boards", "edit")),
     db: Session = Depends(get_db),
 ):
     board = board_service.update_board(db, board_id, payload.model_dump(exclude_unset=True))
@@ -92,7 +92,7 @@ def update_board(
 @router.delete("/{board_id}")
 def delete_board(
     board_id: int,
-    _: User = Depends(require_staff),
+    _: User = Depends(require_perm("boards", "delete")),
     db: Session = Depends(get_db),
 ):
     board_service.delete_board(db, board_id)
@@ -106,7 +106,7 @@ async def upload_work(
     board_id: int,
     file: UploadFile,
     background: BackgroundTasks,
-    _: User = Depends(require_staff),
+    _: User = Depends(require_perm("boards", "create")),
     db: Session = Depends(get_db),
 ):
     content = await file.read()
@@ -121,7 +121,7 @@ async def upload_work(
 def get_work(
     board_id: int,
     work_id: int,
-    _: User = Depends(require_staff),
+    _: User = Depends(require_perm("boards", "view")),
     db: Session = Depends(get_db),
 ):
     work = boards_repo.get_work(db, board_id, work_id)
@@ -135,7 +135,7 @@ def update_work(
     board_id: int,
     work_id: int,
     payload: schemas.WorkPatchIn,
-    _: User = Depends(require_staff),
+    _: User = Depends(require_perm("boards", "edit")),
     db: Session = Depends(get_db),
 ):
     work = board_service.update_work(db, board_id, work_id, payload.model_dump(exclude_unset=True))
@@ -146,7 +146,7 @@ def update_work(
 def reorder_works(
     board_id: int,
     payload: schemas.WorkOrderIn,
-    _: User = Depends(require_staff),
+    _: User = Depends(require_perm("boards", "edit")),
     db: Session = Depends(get_db),
 ):
     works = board_service.reorder_works(db, board_id, payload.work_ids)
@@ -157,7 +157,7 @@ def reorder_works(
 def delete_work(
     board_id: int,
     work_id: int,
-    _: User = Depends(require_staff),
+    _: User = Depends(require_perm("boards", "delete")),
     db: Session = Depends(get_db),
 ):
     board_service.delete_work(db, board_id, work_id)
@@ -169,7 +169,7 @@ def delete_work(
 @router.get("/{board_id}/shares")
 def list_shares(
     board_id: int,
-    _: User = Depends(require_staff),
+    _: User = Depends(require_perm("boards", "view")),
     db: Session = Depends(get_db),
 ):
     board_service.get_board(db, board_id)
@@ -183,7 +183,7 @@ def list_shares(
 def create_share(
     board_id: int,
     payload: schemas.ShareIn,
-    user: User = Depends(require_staff),
+    user: User = Depends(require_perm("boards", "edit")),
     db: Session = Depends(get_db),
 ):
     board = board_service.get_board(db, board_id)

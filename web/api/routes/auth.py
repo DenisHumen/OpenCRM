@@ -4,16 +4,10 @@ from fastapi import APIRouter, Depends, Request, Response, UploadFile
 from sqlalchemy.orm import Session
 
 from config.settings import get_settings
-from core.services import auth_service, avatar_service
-from database.models import User
+from core.services import auth_service, avatar_service, permissions_service
+from database.models import Role, User
 from web.api import schemas
-from web.api.deps import (
-    CSRF_COOKIE,
-    SESSION_COOKIE,
-    get_current_user,
-    get_db,
-    login_limiter,
-)
+from web.api.deps import CSRF_COOKIE, SESSION_COOKIE, get_current_user, get_db, login_limiter
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -46,7 +40,7 @@ def register(payload: schemas.RegisterIn, db: Session = Depends(get_db)):
 def login(payload: schemas.LoginIn, response: Response, db: Session = Depends(get_db)):
     user, token = auth_service.login(db, payload.email, payload.password, login_limiter)
     _set_auth_cookies(response, token)
-    return schemas.user_out(user)
+    return _me(db, user)
 
 
 @router.post("/logout")
@@ -59,9 +53,23 @@ def logout(request: Request, response: Response, db: Session = Depends(get_db)):
     return {"message": "Logged out"}
 
 
+def _me(db: Session, user: User) -> dict:
+    """Ответ о себе — вместе с текущим набором прав.
+
+    Права читаются здесь, а не запоминаются при входе. У человека может быть
+    открыта вкладка со вчерашними правами, и именно этот ответ приводит её в
+    чувство: интерфейс перечитывает `/auth/me` и перестаёт рисовать то, на что
+    ему всё равно ответят отказом.
+    """
+    role = db.get(Role, user.role_id) if user.role_id else None
+    return schemas.user_out(
+        user, role=role, permissions=sorted(permissions_service.codes_of(db, user))
+    )
+
+
 @router.get("/me")
-def me(user: User = Depends(get_current_user)):
-    return schemas.user_out(user)
+def me(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    return _me(db, user)
 
 
 @router.get("/heartbeat")
@@ -78,13 +86,13 @@ async def upload_avatar(
 ):
     content = await file.read()
     avatar_service.save_avatar(db, user, content)
-    return schemas.user_out(user)
+    return _me(db, user)
 
 
 @router.delete("/me/avatar")
 def delete_avatar(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     avatar_service.clear_avatar(db, user)
-    return schemas.user_out(user)
+    return _me(db, user)
 
 
 @router.patch("/me")
@@ -94,7 +102,7 @@ def update_me(
     db: Session = Depends(get_db),
 ):
     updated = auth_service.update_profile(db, user, name=payload.name, locale=payload.locale)
-    return schemas.user_out(updated)
+    return _me(db, updated)
 
 
 @router.post("/me/password")

@@ -33,11 +33,18 @@ def register(db: Session, name: str, email: str, password: str) -> User:
         raise errors.ValidationError("Name is required", code="name_required")
     if users_repo.get_by_email(db, email) is not None:
         raise errors.ConflictError("Email already registered", code="email_taken")
+    # Должность по умолчанию — та, что помечена основной. Без неё одобренный
+    # сотрудник входил бы в CRM без единого раздела и без объяснения, почему.
+    # Роль при этом обычная: её можно переделать или заменить другой.
+    from core.services import permissions_service
+
+    default_role = permissions_service.default_role(db)
     user = User(
         email=email,
         name=name.strip(),
         password_hash=passwords.hash_password(password),
         role=ROLE_MANAGER,
+        role_id=default_role.id if default_role else None,
         status=STATUS_PENDING,
     )
     db.add(user)
@@ -246,6 +253,18 @@ def set_role(db: Session, actor: User, user_id: int, new_role: str) -> User:
         raise errors.ForbiddenError("At least one root must remain", code="last_root")
     was = user.role
     user.role = new_role
+    if new_role == ROLE_ROOT:
+        # Root не описывается должностью: права у него все и всегда. Ссылку
+        # снимаем, иначе роль висела бы у него мёртвым грузом и всплыла бы при
+        # понижении обратно — уже, возможно, с другим набором прав.
+        user.role_id = None
+    elif user.role_id is None:
+        # Понизили бывшего root'а: без должности он остался бы в системе, но
+        # без единого раздела. Кладём основную — как новому сотруднику.
+        from core.services import permissions_service
+
+        default_role = permissions_service.default_role(db)
+        user.role_id = default_role.id if default_role else None
     db.flush()
     _record_access(
         db, actor, user, audit_service.ACTION_STAFF_ROLE_CHANGED, was, new_role

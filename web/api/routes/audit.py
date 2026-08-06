@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 from database.models import User
 from database.repositories import audit as audit_repo
 from web.api import schemas
-from web.api.deps import get_db, require_root
+from web.api.deps import get_db, require_perm
 
 router = APIRouter(prefix="/audit", tags=["audit"])
 
@@ -38,7 +38,7 @@ def list_events(
     # Потолок ниже обычного: страница журнала — это таблица со «стало» и «было»
     # в каждой строке, и двести таких строк никто глазами не читает.
     per_page: int = Query(default=50, ge=1, le=100),
-    _: User = Depends(require_root),
+    _: User = Depends(require_perm("audit", "view")),
     db: Session = Depends(get_db),
 ):
     items, total = audit_repo.search(

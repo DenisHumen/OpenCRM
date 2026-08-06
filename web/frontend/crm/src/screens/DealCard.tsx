@@ -11,6 +11,7 @@ import { useApp } from "../lib/app";
 import { statusLabel, statusVariant } from "../lib/documents";
 import { formatDate, formatDateTime, formatMoney } from "../lib/format";
 import { moduleOn } from "../lib/modules";
+import { can } from "../lib/permissions";
 import { term } from "../lib/terms";
 import { NewDocumentModal } from "./Documents";
 import { MailCompose, type MailAccount } from "./Mail";
@@ -37,7 +38,8 @@ function toMinor(value: string): number | null {
 
 export function DealCard() {
   const { id } = useParams();
-  const { t, locale, modules, workspace, toast, toastError } = useApp();
+  const { t, locale, user, modules, workspace, toast, toastError } = useApp();
+  const seesMoney = can(user, "deals.view_amounts");
   const navigate = useNavigate();
   const [deal, setDeal] = useState<any>(null);
   const [stages, setStages] = useState<Stage[]>([]);
@@ -62,25 +64,27 @@ export function DealCard() {
     }
   }, [id, toastError, navigate]);
 
-  // Блок бланков могли выключить — тогда и не спрашиваем: запрос всё равно
-  // вернёт отказ, а раздел в карточке показывать нечему.
-  const hasDocuments = moduleOn(modules, "documents");
+  // Врезка живёт по двум условиям сразу: блок включён И право есть. Порядок тот
+  // же, что на сервере. Без права раздел не просто пуст — его не показываем
+  // вовсе: врезка «Бланки» с кнопкой, которая отвечает отказом, хуже её
+  // отсутствия, а лишний запрос на каждой карточке заявки — ещё и шум в журнале.
+  const hasDocuments = moduleOn(modules, "documents") && can(user, "documents.view");
 
   const loadDocs = useCallback(() => {
     if (!hasDocuments) return;
     api.get(`/documents?deal_id=${id}`).then((d) => setDocs(d.items)).catch(() => undefined);
   }, [id, hasDocuments]);
 
-  const hasCompanies = moduleOn(modules, "companies");
+  const hasCompanies = moduleOn(modules, "companies") && can(user, "companies.view");
 
-  const hasTasks = moduleOn(modules, "tasks");
+  const hasTasks = moduleOn(modules, "tasks") && can(user, "tasks.view");
 
   const loadTasks = useCallback(() => {
     if (!hasTasks) return;
     api.get(`/tasks?deal_id=${id}`).then((d) => setTasks(d.items)).catch(() => undefined);
   }, [id, hasTasks]);
 
-  const hasMail = moduleOn(modules, "mail");
+  const hasMail = moduleOn(modules, "mail") && can(user, "mail.create");
 
   // Ящики нужны только выбору отправителя и доступны только root. Не ответило —
   // форма работает: сервер возьмёт первый активный ящик сам.
@@ -294,7 +298,13 @@ export function DealCard() {
           </div>
         </div>
         {/* Деньги. Вводятся в обычных единицах, хранятся в минимальных —
-            перевод делаем здесь, на краю, а не в базе. */}
+            перевод делаем здесь, на краю, а не в базе.
+
+            Без права `deals.view_amounts` блока нет вовсе. Показать пустые поля
+            было бы хуже прочерка: человек вписал бы туда сумму, получил отказ
+            сервера и решил, что карточка сломана. Заявка при этом ведётся как
+            обычно — в этом и смысл отдельного права на деньги. */}
+        {seesMoney && (
         <div className="deal-fields" style={{ marginTop: 4 }}>
           <div className="field">
             <label className="label">{t("dealAmount")}</label>
@@ -338,6 +348,7 @@ export function DealCard() {
             )}
           </div>
         </div>
+        )}
 
         <div className="field" style={{ marginTop: 4 }}>
           <label className="label">{t("dealDetails")}</label>
@@ -359,7 +370,7 @@ export function DealCard() {
 
       {/* Звонки по этой заявке. Сам разговор уже стоит в ленте выше — здесь
           то, что в строку ленты не влезает: длительность, итог, запись. */}
-      {moduleOn(modules, "telephony") && (
+      {moduleOn(modules, "telephony") && can(user, "telephony.view") && (
         <div className="card card-pad" style={{ marginBottom: 20 }}>
           <div className="metric-title" style={{ marginBottom: 12 }}>{t("calls")}</div>
           <CallsPanel dealId={deal.id} />
@@ -368,7 +379,7 @@ export function DealCard() {
 
       {/* Напоминание прямо отсюда: «перезвонить в четверг» придумывается во
           время разговора о заявке, а не потом на отдельном экране. */}
-      {moduleOn(modules, "tasks") && (
+      {hasTasks && (
         <div className="card card-pad" style={{ marginBottom: 20 }}>
           <div className="metric-title" style={{ marginBottom: 12 }}>{t("tasks")}</div>
           {tasks.map((task: any) => (
@@ -395,7 +406,7 @@ export function DealCard() {
           Условие на блок не лишнее рядом с проверкой длины: сервер перестаёт
           класть доски в ответ сразу, а уже загруженная карточка держит их в
           состоянии до следующего запроса. */}
-      {moduleOn(modules, "boards") && (deal.boards ?? []).length > 0 && (
+      {moduleOn(modules, "boards") && can(user, "boards.view") && (deal.boards ?? []).length > 0 && (
         <div className="card card-pad" style={{ marginBottom: 20 }}>
           <div className="metric-title" style={{ marginBottom: 12 }}>{t("boards")}</div>
           <div className="doc-mini-list">

@@ -18,6 +18,7 @@ import {
   relativeDay,
 } from "../lib/format";
 import { type Gated, moduleOn, shown } from "../lib/modules";
+import { can } from "../lib/permissions";
 import { term } from "../lib/terms";
 import { MailCompose, type MailAccount } from "./Mail";
 
@@ -54,8 +55,8 @@ export function ClientCard() {
   const [composing, setComposing] = useState(false);
   const [mailAccounts, setMailAccounts] = useState<MailAccount[]>([]);
   const fileInput = useRef<HTMLInputElement>(null);
-  const hasMail = moduleOn(modules, "mail");
-  const hasBoards = moduleOn(modules, "boards");
+  const hasMail = moduleOn(modules, "mail") && can(user, "mail.create");
+  const hasBoards = moduleOn(modules, "boards") && can(user, "boards.view");
 
   const load = useCallback(async () => {
     try {

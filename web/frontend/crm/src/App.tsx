@@ -7,6 +7,7 @@ import { Sidebar } from "./components/Sidebar";
 import { ScreenLoading, Toasts } from "./components/ui";
 import { useApp } from "./lib/app";
 import { moduleOn } from "./lib/modules";
+import { can } from "./lib/permissions";
 import { Audit } from "./screens/Audit";
 import { AuthScreen, ForcePasswordChange } from "./screens/Auth";
 import { BoardEditor } from "./screens/BoardEditor";
@@ -36,6 +37,7 @@ import {
   SettingsShowcase,
 } from "./screens/Settings";
 import { SettingsModules } from "./screens/SettingsModules";
+import { SettingsRoles } from "./screens/SettingsRoles";
 import { Staff } from "./screens/Staff";
 import { Tasks } from "./screens/Tasks";
 import { SettingsTelephony } from "./screens/TelephonySettings";
@@ -122,12 +124,6 @@ function MaintenanceBar() {
   );
 }
 
-function RootOnly() {
-  const { user } = useApp();
-  if (user?.role !== "root") return <Navigate to="/" replace />;
-  return <Outlet />;
-}
-
 /** Маршруты выключенного блока.
  *
  * Сервер такой раздел всё равно закроет, но упереться в пустой экран с ошибкой —
@@ -139,6 +135,18 @@ function ModuleRoute({ module }: { module: string }) {
   return <Outlet />;
 }
 
+/** Маршруты, на которые не хватает прав.
+ *
+ * Ровно как `ModuleRoute` и ровно с тем же весом: это удобство, а не защита.
+ * Сервер откажет и без этого (`require_perm`), но человек, перешедший по старой
+ * закладке, упёрся бы в экран с ошибкой вместо того раздела, куда шёл. Уводим
+ * на главную — раздела для него просто нет, как нет его и в меню. */
+function PermRoute({ perm }: { perm: string }) {
+  const { user } = useApp();
+  if (!can(user, perm)) return <Navigate to="/" replace />;
+  return <Outlet />;
+}
+
 export default function App() {
   return (
     <>
@@ -146,48 +154,81 @@ export default function App() {
         <Route path="/login" element={<AuthScreen />} />
         <Route element={<Protected />}>
           <Route path="/" element={<Dashboard />} />
-          <Route path="/clients" element={<Clients />} />
-          <Route path="/clients/:id" element={<ClientCard />} />
-          <Route path="/deals" element={<Deals />} />
-          <Route path="/deals/:id" element={<DealCard />} />
-          <Route element={<ModuleRoute module="tasks" />}>
-            <Route path="/tasks" element={<Tasks />} />
+          {/* Порядок обёрток тот же, что порядок проверок на сервере: сначала
+              блок, потом право. Выключенный блок исчезает для всех, включая
+              того, у кого право на него есть. */}
+          <Route element={<PermRoute perm="clients.view" />}>
+            <Route path="/clients" element={<Clients />} />
+            <Route path="/clients/:id" element={<ClientCard />} />
           </Route>
-          {/* Фирмы не под RootOnly: читать реквизиты должен любой сотрудник —
-              менеджеру надо видеть, от кого ведётся заявка. Правка закрыта на
-              сервере, а карточка показывает менеджеру поля недоступными. */}
+          <Route element={<PermRoute perm="deals.view" />}>
+            <Route path="/deals" element={<Deals />} />
+            <Route path="/deals/:id" element={<DealCard />} />
+          </Route>
+          <Route element={<ModuleRoute module="tasks" />}>
+            <Route element={<PermRoute perm="tasks.view" />}>
+              <Route path="/tasks" element={<Tasks />} />
+            </Route>
+          </Route>
+          {/* Фирмы открыты не только тому, кто их правит: читать реквизиты
+              должен любой, кому надо видеть, от кого ведётся заявка. Правка
+              закрыта на сервере, а карточка показывает поля недоступными. */}
           <Route element={<ModuleRoute module="companies" />}>
-            <Route path="/companies" element={<Companies />} />
-            <Route path="/companies/:id" element={<CompanyCard />} />
+            <Route element={<PermRoute perm="companies.view" />}>
+              <Route path="/companies" element={<Companies />} />
+              <Route path="/companies/:id" element={<CompanyCard />} />
+            </Route>
           </Route>
           <Route element={<ModuleRoute module="documents" />}>
-            <Route path="/documents" element={<Documents />} />
-            <Route path="/documents/:id" element={<DocumentCard />} />
+            <Route element={<PermRoute perm="documents.view" />}>
+              <Route path="/documents" element={<Documents />} />
+              <Route path="/documents/:id" element={<DocumentCard />} />
+            </Route>
           </Route>
           <Route element={<ModuleRoute module="boards" />}>
-            <Route path="/boards" element={<Boards />} />
-            <Route path="/boards/:id" element={<BoardEditor />} />
+            <Route element={<PermRoute perm="boards.view" />}>
+              <Route path="/boards" element={<Boards />} />
+              <Route path="/boards/:id" element={<BoardEditor />} />
+            </Route>
           </Route>
 
           <Route element={<ModuleRoute module="warehouse" />}>
-            <Route path="/warehouse" element={<Warehouse />} />
-            <Route path="/warehouse/:id" element={<ProductCard />} />
+            <Route element={<PermRoute perm="warehouse.view" />}>
+              <Route path="/warehouse" element={<Warehouse />} />
+              <Route path="/warehouse/:id" element={<ProductCard />} />
+            </Route>
           </Route>
           <Route element={<ModuleRoute module="reports" />}>
-            <Route path="/reports" element={<Reports />} />
+            <Route element={<PermRoute perm="reports.view" />}>
+              <Route path="/reports" element={<Reports />} />
+            </Route>
           </Route>
           <Route element={<ModuleRoute module="mail" />}>
-            <Route path="/mail" element={<Mail />} />
+            <Route element={<PermRoute perm="mail.view" />}>
+              <Route path="/mail" element={<Mail />} />
+            </Route>
           </Route>
           <Route element={<ModuleRoute module="telephony" />}>
-            <Route path="/calls" element={<Calls />} />
+            <Route element={<PermRoute perm="telephony.view" />}>
+              <Route path="/calls" element={<Calls />} />
+            </Route>
           </Route>
           <Route path="/profile" element={<Profile />} />
-          <Route element={<RootOnly />}>
+          <Route element={<PermRoute perm="staff.view" />}>
             <Route path="/staff" element={<Staff />} />
-            {/* Журнал видит только root. Ролей ещё нет; когда появятся, право
-                «видеть журнал» станет отдельным, и эта строка переедет. */}
+          </Route>
+          {/* Журнал — своё право: за ним приходят не работать, а разбираться,
+              когда что-то не сошлось, и пускать туда всех, кто видит список
+              сотрудников, незачем. */}
+          <Route element={<PermRoute perm="audit.view" />}>
             <Route path="/audit" element={<Audit />} />
+          </Route>
+          {/* Роли — своё право, а не часть настроек: решать, кому что можно,
+              и менять логотип сайта — разные по весу решения. */}
+          <Route element={<PermRoute perm="roles.view" />}>
+            <Route path="/settings/roles" element={<SettingsRoles />} />
+          </Route>
+          <Route element={<PermRoute perm="settings.manage" />}>
             <Route element={<ModuleRoute module="boards" />}>
               <Route path="/files" element={<Files />} />
             </Route>

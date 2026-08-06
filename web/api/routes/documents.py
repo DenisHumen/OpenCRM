@@ -10,7 +10,7 @@ from database.models import User
 from database.models.document import DOCUMENT_LOCALES
 from database.repositories import users as users_repo
 from web.api import schemas
-from web.api.deps import get_db, require_module, require_staff
+from web.api.deps import get_db, require_module, require_perm
 from web.public import routes as public_routes
 from web.public.document_strings import strings_for
 
@@ -56,7 +56,7 @@ def list_documents(
     deal_id: int | None = None,
     page: int = Query(default=1, ge=1),
     per_page: int = Query(default=50, ge=1, le=200),
-    _: User = Depends(require_staff),
+    _: User = Depends(require_perm("documents", "view")),
     db: Session = Depends(get_db),
 ):
     items, total = document_service.search(
@@ -74,7 +74,7 @@ def list_documents(
 @router.post("", status_code=201)
 def create_document(
     payload: DocumentIn,
-    user: User = Depends(require_staff),
+    user: User = Depends(require_perm("documents", "create")),
     db: Session = Depends(get_db),
 ):
     document = document_service.create(db, payload.model_dump(), user)
@@ -84,7 +84,7 @@ def create_document(
 @router.get("/by-number/{number}")
 def find_by_number(
     number: str,
-    _: User = Depends(require_staff),
+    _: User = Depends(require_perm("documents", "view")),
     db: Session = Depends(get_db),
 ):
     """Поиск сканом: сюда приходит то, что прочитал сканер штрихкода."""
@@ -94,7 +94,7 @@ def find_by_number(
 @router.get("/{document_id}")
 def get_document(
     document_id: int,
-    _: User = Depends(require_staff),
+    _: User = Depends(require_perm("documents", "view")),
     db: Session = Depends(get_db),
 ):
     document = document_service.get(db, document_id)
@@ -122,7 +122,7 @@ def get_document(
 def change_status(
     document_id: int,
     payload: StatusIn,
-    user: User = Depends(require_staff),
+    user: User = Depends(require_perm("documents", "issue")),
     db: Session = Depends(get_db),
 ):
     document = document_service.set_status(db, document_id, payload.status, user, payload.note)
@@ -133,7 +133,7 @@ def change_status(
 def print_document(
     document_id: int,
     locale: str | None = None,
-    _: User = Depends(require_staff),
+    _: User = Depends(require_perm("documents", "view")),
     db: Session = Depends(get_db),
 ):
     """Готовый к печати бланк: две одинаковые половины с линией отреза.

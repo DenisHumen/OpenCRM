@@ -5,6 +5,7 @@ import { api } from "../lib/api";
 import { useApp } from "../lib/app";
 import { formatMoney, formatQuantity } from "../lib/format";
 import { moduleOn } from "../lib/modules";
+import { can } from "../lib/permissions";
 import { KIND_LABEL, type StockMove } from "../screens/ProductCard";
 import { unitKey } from "../screens/Warehouse";
 
@@ -21,14 +22,17 @@ import { unitKey } from "../screens/Warehouse";
  * ровно там, где на него и смотрят.
  */
 export function DealStock({ dealId }: { dealId: number }) {
-  const { t, locale, modules, workspace, toastError } = useApp();
+  const { t, locale, user, modules, workspace, toastError } = useApp();
   const [data, setData] = useState<{
     items: StockMove[];
     cost: number;
     currency: string;
   } | null>(null);
 
-  const enabled = moduleOn(modules, "warehouse");
+  // Право на склад — вместе с блоком: без него врезка всё равно
+  // получит отказ, а пустая рамка «Списано со склада» выглядит
+  // как поломка, а не как запрет.
+  const enabled = moduleOn(modules, "warehouse") && can(user, "warehouse.view");
 
   useEffect(() => {
     if (!enabled) return;

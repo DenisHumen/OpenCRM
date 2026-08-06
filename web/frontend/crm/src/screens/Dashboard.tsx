@@ -9,9 +9,11 @@ import { api } from "../lib/api";
 import { useApp } from "../lib/app";
 import { formatDateTime, formatMoney, initials, parseDate, relativeDay } from "../lib/format";
 import { moduleOn } from "../lib/modules";
+import { can } from "../lib/permissions";
 
 export function Dashboard() {
   const { user, t, locale, storage, modules, refreshStorage, toastError } = useApp();
+  const seesMoney = can(user, "deals.view_amounts");
   const navigate = useNavigate();
   const [data, setData] = useState<any>(null);
 
@@ -71,38 +73,49 @@ export function Dashboard() {
       <div className="metric-grid">
         {/* Деньги первыми: владелец открывает сводку ради них, а не ради
             количества карточек. «Закрыто» считаем с начала месяца, а не за
-            последние 30 дней — иначе число не сходится с месячной отчётностью. */}
-        <div className="card card-pad">
-          <div className="metric-title" style={{ marginBottom: 14 }}>
-            {t("moneyInWork")}
-          </div>
-          <div className="metric-value money-value">
-            {formatMoney(data.money_in_work, data.currency, locale)}
-          </div>
-          <div className="metric-sub">{t("dealsOpenNow", { n: openDeals })}</div>
-        </div>
-        <div className="card card-pad">
-          <div className="metric-title" style={{ marginBottom: 14 }}>
-            {t("moneyWonThisMonth")}
-          </div>
-          <div className="metric-value money-value">
-            {formatMoney(data.money_won_this_month, data.currency, locale)}
-          </div>
-          <div className="metric-sub">{t("dealsWonThisMonth", { n: data.won_count_this_month })}</div>
-        </div>
-        <div className="card card-pad">
-          <div className="metric-title" style={{ marginBottom: 14 }}>
-            {t("avgCheck")}
-          </div>
-          {/* Без единой сделки с ценой средний чек — прочерк, а не ноль: ноль
-              прочитают как «работаем даром». */}
-          <div className="metric-value money-value">
-            {data.avg_check === null ? "—" : formatMoney(data.avg_check, data.currency, locale)}
-          </div>
-          <div className="metric-sub">
-            {data.avg_check === null ? t("avgCheckNone") : t("avgCheckHint")}
-          </div>
-        </div>
+            последние 30 дней — иначе число не сходится с месячной отчётностью.
+
+            Без права на суммы плиток нет вовсе, а не три прочерка подряд:
+            прочерк читается как «данных нет», и человек пойдёт искать, почему
+            не считается, вместо того чтобы понять, что ему это не показывают.
+            Сервер их всё равно не отдаст (`deals.view_amounts`). */}
+        {seesMoney && (
+          <>
+            <div className="card card-pad">
+              <div className="metric-title" style={{ marginBottom: 14 }}>
+                {t("moneyInWork")}
+              </div>
+              <div className="metric-value money-value">
+                {formatMoney(data.money_in_work, data.currency, locale)}
+              </div>
+              <div className="metric-sub">{t("dealsOpenNow", { n: openDeals })}</div>
+            </div>
+            <div className="card card-pad">
+              <div className="metric-title" style={{ marginBottom: 14 }}>
+                {t("moneyWonThisMonth")}
+              </div>
+              <div className="metric-value money-value">
+                {formatMoney(data.money_won_this_month, data.currency, locale)}
+              </div>
+              <div className="metric-sub">
+                {t("dealsWonThisMonth", { n: data.won_count_this_month })}
+              </div>
+            </div>
+            <div className="card card-pad">
+              <div className="metric-title" style={{ marginBottom: 14 }}>
+                {t("avgCheck")}
+              </div>
+              {/* Без единой сделки с ценой средний чек — прочерк, а не ноль: ноль
+                  прочитают как «работаем даром». */}
+              <div className="metric-value money-value">
+                {data.avg_check === null ? "—" : formatMoney(data.avg_check, data.currency, locale)}
+              </div>
+              <div className="metric-sub">
+                {data.avg_check === null ? t("avgCheckNone") : t("avgCheckHint")}
+              </div>
+            </div>
+          </>
+        )}
         <div className="card card-pad">
           <div className="metric-title" style={{ marginBottom: 14 }}>
             {t("metricClients")}

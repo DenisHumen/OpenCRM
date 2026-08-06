@@ -3,12 +3,12 @@ from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from core import exceptions as errors
-from core.services import client_service, settings_service
+from core.services import client_service, permissions_service, settings_service
 from database.models import User
 from database.repositories import clients as clients_repo
 from database.repositories import deals as deals_repo
 from web.api import schemas
-from web.api.deps import get_db, require_root, require_staff
+from web.api.deps import get_db, require_perm
 
 router = APIRouter(prefix="/clients", tags=["clients"])
 
@@ -20,7 +20,7 @@ def list_clients(
     manager_id: int | None = None,
     page: int = Query(default=1, ge=1),
     per_page: int = Query(default=50, ge=1, le=200),
-    _: User = Depends(require_staff),
+    _: User = Depends(require_perm("clients", "view")),
     db: Session = Depends(get_db),
 ):
     items, total = clients_repo.search(
@@ -32,7 +32,7 @@ def list_clients(
 @router.post("", status_code=201)
 def create_client(
     payload: schemas.ClientIn,
-    user: User = Depends(require_staff),
+    user: User = Depends(require_perm("clients", "create")),
     db: Session = Depends(get_db),
 ):
     client = client_service.create_client(db, payload.model_dump(), user)
@@ -42,7 +42,7 @@ def create_client(
 @router.get("/{client_id}")
 def get_client(
     client_id: int,
-    _: User = Depends(require_staff),
+    user: User = Depends(require_perm("clients", "view")),
     db: Session = Depends(get_db),
 ):
     client = client_service.get_client(db, client_id)
@@ -52,8 +52,16 @@ def get_client(
     data["recent_notes"] = [schemas.note_out(n) for n in notes]
     data["files"] = [schemas.file_out(f) for f in files]
     # Заявки клиента прямо в карточке: без них «что мы для него делали» —
-    # вопрос к памяти, а не к системе.
-    data["deals"] = [schemas.deal_out(d) for d in deals_repo.for_client(db, client_id)]
+    # вопрос к памяти, а не к системе. Врезка подчиняется тем же правилам, что
+    # и раздел заявок: чужие сюда не попадают, суммы прячутся вместе с ними.
+    # Иначе ограничение обходилось бы через карточку клиента.
+    amounts = permissions_service.sees_amounts(db, user)
+    data["deals"] = [
+        schemas.deal_out(d, amounts=amounts)
+        for d in deals_repo.for_client(
+            db, client_id, only_manager_id=permissions_service.deals_scope(db, user)
+        )
+    ]
     data["currency"] = settings_service.get_all(db).get("currency", "USD")
     return data
 
@@ -62,7 +70,7 @@ def get_client(
 def update_client(
     client_id: int,
     payload: schemas.ClientPatchIn,
-    _: User = Depends(require_staff),
+    _: User = Depends(require_perm("clients", "edit")),
     db: Session = Depends(get_db),
 ):
     data = payload.model_dump(exclude_unset=True)
@@ -72,7 +80,7 @@ def update_client(
 @router.delete("/{client_id}")
 def delete_client(
     client_id: int,
-    user: User = Depends(require_staff),
+    user: User = Depends(require_perm("clients", "delete")),
     db: Session = Depends(get_db),
 ):
     client_service.delete_client(db, client_id, user)
@@ -82,7 +90,7 @@ def delete_client(
 @router.post("/{client_id}/restore")
 def restore_client(
     client_id: int,
-    _: User = Depends(require_root),
+    _: User = Depends(require_perm("clients", "restore")),
     db: Session = Depends(get_db),
 ):
     return schemas.client_out(client_service.restore_client(db, client_id))
@@ -97,7 +105,7 @@ def list_notes(
     deal_id: int | None = None,
     page: int = Query(default=1, ge=1),
     per_page: int = Query(default=50, ge=1, le=200),
-    _: User = Depends(require_staff),
+    _: User = Depends(require_perm("clients", "view")),
     db: Session = Depends(get_db),
 ):
     client_service.get_client(db, client_id)
@@ -111,7 +119,7 @@ def list_notes(
 def add_note(
     client_id: int,
     payload: schemas.NoteIn,
-    user: User = Depends(require_staff),
+    user: User = Depends(require_perm("clients", "edit")),
     db: Session = Depends(get_db),
 ):
     note = client_service.add_note(
@@ -131,7 +139,7 @@ def add_note(
 def delete_note(
     client_id: int,
     note_id: int,
-    user: User = Depends(require_staff),
+    user: User = Depends(require_perm("clients", "edit")),
     db: Session = Depends(get_db),
 ):
     client_service.delete_note(db, client_id, note_id, user)
@@ -143,7 +151,7 @@ def delete_note(
 @router.get("/{client_id}/files")
 def list_files(
     client_id: int,
-    _: User = Depends(require_staff),
+    _: User = Depends(require_perm("clients", "view")),
     db: Session = Depends(get_db),
 ):
     client_service.get_client(db, client_id)
@@ -154,7 +162,7 @@ def list_files(
 async def upload_file(
     client_id: int,
     file: UploadFile,
-    user: User = Depends(require_staff),
+    user: User = Depends(require_perm("clients", "edit")),
     db: Session = Depends(get_db),
 ):
     content = await file.read()
@@ -168,7 +176,7 @@ async def upload_file(
 def download_file(
     client_id: int,
     file_id: int,
-    _: User = Depends(require_staff),
+    _: User = Depends(require_perm("clients", "view")),
     db: Session = Depends(get_db),
 ):
     record = client_service.get_file(db, client_id, file_id)
@@ -187,7 +195,7 @@ def download_file(
 def delete_file(
     client_id: int,
     file_id: int,
-    user: User = Depends(require_staff),
+    user: User = Depends(require_perm("clients", "edit")),
     db: Session = Depends(get_db),
 ):
     client_service.delete_file(db, client_id, file_id, user)

@@ -12,9 +12,9 @@
 from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy.orm import Session
 
-from core.services import report_service, settings_service
+from core.services import permissions_service, report_service, settings_service
 from database.models import User
-from web.api.deps import get_db, require_module, require_staff
+from web.api.deps import get_db, require_module, require_perm
 
 router = APIRouter(
     prefix="/reports",
@@ -76,7 +76,7 @@ def _csv_response(content: bytes, name: str, period: Period) -> Response:
 @router.get("/funnel")
 def funnel_report(
     period: Period = Depends(),
-    _: User = Depends(require_staff),
+    _: User = Depends(require_perm("reports", "view")),
     db: Session = Depends(get_db),
 ):
     return {**period.envelope(db), **report_service.funnel(db, period.start, period.end)}
@@ -85,17 +85,20 @@ def funnel_report(
 @router.get("/funnel.csv")
 def funnel_export(
     period: Period = Depends(),
-    user: User = Depends(require_staff),
+    user: User = Depends(require_perm("reports", "view")),
     db: Session = Depends(get_db),
 ):
     data = report_service.funnel(db, period.start, period.end)
     return _csv_response(report_service.funnel_csv(data, user.locale), "funnel", period)
 
 
+# Отчёт по выручке — это деньги целиком, а не отчёт, в котором среди прочего
+# есть суммы. Прятать в нём числа значило бы отдавать пустую таблицу; честнее
+# закрыть его целиком тем же правом, что и суммы.
 @router.get("/revenue")
 def revenue_report(
     period: Period = Depends(),
-    _: User = Depends(require_staff),
+    _: User = Depends(require_perm("reports", "view_amounts")),
     db: Session = Depends(get_db),
 ):
     data = report_service.revenue(db, period.start_day, period.end_day, period.tz_offset)
@@ -105,27 +108,49 @@ def revenue_report(
 @router.get("/revenue.csv")
 def revenue_export(
     period: Period = Depends(),
-    user: User = Depends(require_staff),
+    user: User = Depends(require_perm("reports", "view_amounts")),
     db: Session = Depends(get_db),
 ):
     data = report_service.revenue(db, period.start_day, period.end_day, period.tz_offset)
     return _csv_response(report_service.revenue_csv(data, user.locale), "revenue", period)
 
 
+def _without_money(data: dict) -> dict:
+    """Источники без выручки: сколько заявок пришло — видно, почём — нет.
+
+    Отчёт по источникам отвечает на два вопроса сразу: откуда приходят и сколько
+    приносят. Первый нужен и тому, у кого нет права на суммы, поэтому здесь
+    именно сужение, а не отказ, — в отличие от выручки, где без сумм не осталось
+    бы ничего.
+    """
+    return {
+        **data,
+        "rows": [{**row, "revenue": None} for row in data.get("rows", [])],
+        "revenue_total": None,
+    }
+
+
 @router.get("/sources")
 def sources_report(
     period: Period = Depends(),
-    _: User = Depends(require_staff),
+    user: User = Depends(require_perm("reports", "view")),
     db: Session = Depends(get_db),
 ):
-    return {**period.envelope(db), **report_service.sources(db, period.start, period.end)}
+    data = report_service.sources(db, period.start, period.end)
+    if not permissions_service.sees_amounts(db, user, "reports"):
+        data = _without_money(data)
+    return {**period.envelope(db), **data}
 
 
 @router.get("/sources.csv")
 def sources_export(
     period: Period = Depends(),
-    user: User = Depends(require_staff),
+    user: User = Depends(require_perm("reports", "view")),
     db: Session = Depends(get_db),
 ):
     data = report_service.sources(db, period.start, period.end)
+    if not permissions_service.sees_amounts(db, user, "reports"):
+        # Выгрузка обязана совпадать с экраном: иначе право обходится кнопкой
+        # «скачать», и это самый вероятный обход из всех.
+        data = _without_money(data)
     return _csv_response(report_service.sources_csv(data, user.locale), "sources", period)

@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
-from core.services import board_service, modules_service
+from core.services import board_service, modules_service, permissions_service
 from database.models import User
 from database.repositories import boards as boards_repo
 from database.repositories import clients as clients_repo
@@ -32,35 +32,40 @@ def _boards_group(db: Session, query: str | None) -> dict:
     return {"items": items, "total": total}
 
 
+EMPTY = {"items": [], "total": 0}
+
+
 @router.get("")
 def global_search(
     q: str = Query(default="", max_length=200),
-    _: User = Depends(require_staff),
+    user: User = Depends(require_staff),
     db: Session = Depends(get_db),
 ):
     """Общий поиск для командной палитры (Ctrl+K).
 
     Пустой запрос — недавние записи, чтобы палитра открывалась не пустой.
 
-    Группа выключенного блока приходит пустой, а не отсутствует: форма ответа
-    одна при любом наборе блоков, и клиенту не приходится знать, какие ключи
-    сегодня бывают. Само выключение здесь обязательно — иначе выключенные доски
-    продолжали бы находиться поиском и уводить в раздел, которого нет ни в меню,
-    ни в маршрутах, а на сервере закрыт `require_module`.
+    Группа приходит пустой, а не отсутствует: форма ответа одна при любом наборе
+    блоков и прав, и клиенту не приходится знать, какие ключи сегодня бывают.
+
+    Пустеет она по двум причинам, и обе обязательны. Выключенный блок — иначе
+    доски продолжали бы находиться поиском и уводить в раздел, которого нет ни в
+    меню, ни в маршрутах. Отсутствие права — по той же причине и с добавкой:
+    поиск иначе стал бы обходом доступов, через который видно имена и названия
+    записей из закрытого раздела. Порядок проверок тот же, что везде: блок, потом
+    право.
     """
     query = q.strip() or None
 
-    clients, clients_total = clients_repo.search(db, q=query, page=1, per_page=GROUP_LIMIT)
+    clients = EMPTY
+    if permissions_service.has(db, user, "clients", "view"):
+        found, total = clients_repo.search(db, q=query, page=1, per_page=GROUP_LIMIT)
+        clients = {"items": [schemas.client_out(c) for c in found], "total": total}
 
-    return {
-        "query": q,
-        "clients": {
-            "items": [schemas.client_out(c) for c in clients],
-            "total": clients_total,
-        },
-        "boards": (
-            _boards_group(db, query)
-            if modules_service.is_enabled(db, "boards")
-            else {"items": [], "total": 0}
-        ),
-    }
+    boards = EMPTY
+    if modules_service.is_enabled(db, "boards") and permissions_service.has(
+        db, user, "boards", "view"
+    ):
+        boards = _boards_group(db, query)
+
+    return {"query": q, "clients": clients, "boards": boards}

@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from core.services import (
     board_service,
     modules_service,
+    permissions_service,
     pipeline_service,
     settings_service,
     task_service,
@@ -67,6 +68,16 @@ def dashboard(user: User = Depends(require_staff), db: Session = Depends(get_db)
     # которое ни с чем не сходится.
     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     money = deals_repo.money_summary(db, month_start)
+    # Плитки с деньгами пустеют вместе с правом на суммы. Пустые значения, а не
+    # отсутствующие ключи — то же правило, что у выключенных блоков выше.
+    #
+    # Счётчики по этапам при этом остаются общими по фирме, а не «моими». Это
+    # осознанное сужение первой версии: сводка отвечает на вопрос «как идут дела
+    # у нас», и два человека, видящие в ней разные числа без объяснения, доверять
+    # ей перестанут оба. Утечка здесь — количество, а не содержимое: имён, сумм и
+    # клиентов в этих числах нет.
+    if not permissions_service.sees_amounts(db, user):
+        money = {key: None for key in money}
 
     # Воронка целиком, включая пустые этапы: «в согласовании ноль» — это тоже
     # ответ, и чаще всего именно он и нужен. Показывай только непустые — и

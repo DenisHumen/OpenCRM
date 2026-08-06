@@ -5,12 +5,19 @@ import { Icon } from "./Icon";
 
 export function Chip({
   variant,
+  title,
   children,
 }: {
   variant?: "success" | "warning" | "accent" | "brand";
+  /** Подсказка при наведении: почему метка именно такая. */
+  title?: string;
   children: ReactNode;
 }) {
-  return <span className={"chip" + (variant ? ` chip-${variant}` : "")}>{children}</span>;
+  return (
+    <span className={"chip" + (variant ? ` chip-${variant}` : "")} title={title}>
+      {children}
+    </span>
+  );
 }
 
 export function Toggle({ on, onToggle }: { on: boolean; onToggle: () => void }) {

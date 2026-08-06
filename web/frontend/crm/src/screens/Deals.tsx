@@ -89,7 +89,8 @@ type Column = {
   color: string;
   /** Сумма по всем сделкам этапа — считает сервер: колонка отдаётся с
    *  пределом, и сложение показанных карточек занижало бы итог. */
-  amount_total: number;
+  /** null — у смотрящего нет права `deals.view_amounts`. */
+  amount_total: number | null;
   deals: Deal[];
 };
 
@@ -303,7 +304,7 @@ export function Deals() {
                       <span className="kanban-count">{column.deals.length}</span>
                       {/* Сумма по этапу остаётся на виду и в списке: на
                           телефоне смотрят те же деньги, что и на мониторе. */}
-                      {column.amount_total > 0 && (
+                      {!!column.amount_total && column.amount_total > 0 && (
                         <span className="deal-group-money">
                           {formatMoney(column.amount_total, currency, locale)}
                         </span>
@@ -363,7 +364,7 @@ export function Deals() {
                   {/* Сумма по колонке: малый бизнес смотрит на деньги, а не на
                       количество карточек. Ноль не показываем — пустая строка
                       честнее нуля, которого никто не называл. */}
-                  {column.amount_total > 0 && (
+                  {!!column.amount_total && column.amount_total > 0 && (
                     <div className="kanban-money">
                       {formatMoney(column.amount_total, currency, locale)}
                     </div>

@@ -19,8 +19,15 @@
 | Обозначение | Кто |
 |---|---|
 | 🔓 | без аутентификации |
-| 👤 | любой активный сотрудник (root или менеджер) |
-| 👑 | только root |
+| 👤 | любой активный сотрудник |
+| 🔑 | нужно право «раздел.действие» из матрицы доступов |
+| 👑 | только root (владелец системы; у него все права всегда) |
+
+Права раздаются ролями, роли создаёт пользователь — разбор в
+[07-security.md](07-security.md), реестр в `core/permissions.py`. Отказ —
+`403 permission_denied` с именем недостающего права в сообщении. Порядок
+проверок: **блок включён → есть право**, поэтому у выключенного блока ответ
+`403 module_disabled`, даже если права нет тоже.
 
 ## Аутентификация и аккаунт
 
@@ -29,7 +36,7 @@
 | POST | `/auth/register` | 🔓 | Заявка на аккаунт менеджера: `name, email, password`. Ответ — «ожидайте одобрения» |
 | POST | `/auth/login` | 🔓 | Вход. `403 account_pending` — не одобрен, `403 account_disabled` — деактивирован |
 | POST | `/auth/logout` | 👤 | Выход |
-| GET | `/auth/me` | 👤 | Текущий пользователь: имя, роль, `locale`, `must_change_password`, `avatar_url`, `is_online`, `last_seen_at` |
+| GET | `/auth/me` | 👤 | Текущий пользователь: имя, `role` (root или нет), `role_id`/`role_name` (должность), `permissions` — текущий набор прав, `locale`, `must_change_password`, `avatar_url`, `is_online`, `last_seen_at`. Права читаются на каждый запрос, а не запоминаются при входе |
 | PATCH | `/auth/me` | 👤 | Смена имени, `locale` (en/ru — сохраняется в БД) |
 | POST | `/auth/me/password` | 👤 | Смена пароля (старый + новый); сбрасывает `must_change_password` |
 | GET | `/auth/heartbeat` | 👤 | Пинг присутствия: обновляет `last_seen` (фронт шлёт раз в ~45 c, пока вкладка активна) |
@@ -40,17 +47,31 @@
 переживает logout (остаётся «последний раз в сети»); `is_online` = активность за последние 150 c.
 Аватары отдаёт `GET /avatars/{uuid}.webp` (публичный путь, как `/branding`).
 
-## Сотрудники (root)
+## Сотрудники
 
 | Метод | Путь | Права | Описание |
 |---|---|---|---|
-| GET | `/staff` | 👑 | Список сотрудников с фильтром `?status=pending` |
-| POST | `/staff/{id}/approve` | 👑 | Одобрить заявку |
-| POST | `/staff/{id}/reject` | 👑 | Отклонить заявку (запись удаляется) |
-| POST | `/staff/{id}/disable` | 👑 | Деактивировать; `/enable` — вернуть |
-| POST | `/staff/{id}/reset-password` | 👑 | Выдать временный пароль с принудительной сменой |
-| POST | `/staff/{id}/role` | 👑 | Сменить роль (`{"role": "root"\|"manager"}`). Только активным; свою роль нельзя (`403 cannot_change_own_role`), последнего root не снять (`403 last_root`), `409 not_active` |
-| DELETE | `/staff/{id}` | 👑 | Удалить аккаунт безвозвратно. Себя нельзя (`403 cannot_delete_self`), последнего root нельзя (`403 last_root`). Авторство сохраняется, но обнуляется |
+| GET | `/staff` | 🔑 `staff.view` | Список сотрудников с фильтром `?status=pending`; у каждого `role_id` и `role_name` |
+| POST | `/staff/{id}/approve` | 🔑 `staff.manage` | Одобрить заявку |
+| POST | `/staff/{id}/reject` | 🔑 `staff.manage` | Отклонить заявку (запись удаляется) |
+| POST | `/staff/{id}/disable` | 🔑 `staff.manage` | Деактивировать; `/enable` — вернуть |
+| POST | `/staff/{id}/reset-password` | 🔑 `staff.manage` | Выдать временный пароль с принудительной сменой |
+| POST | `/staff/{id}/role` | 🔑 `roles.manage` | Сделать root'ом или вернуть обратно (`{"role": "root"\|"manager"}`) — это признак владельца системы, а не должность. Только активным; свою нельзя (`403 cannot_change_own_role`), последнего root не снять (`403 last_root`), `409 not_active` |
+| DELETE | `/staff/{id}` | 🔑 `staff.manage` | Удалить аккаунт безвозвратно. Себя нельзя (`403 cannot_delete_self`), последнего root нельзя (`403 last_root`). Авторство сохраняется, но обнуляется |
+
+## Роли и доступы
+
+| Метод | Путь | Права | Описание |
+|---|---|---|---|
+| GET | `/roles/matrix` | 👤 | Из чего собирается роль: строки по реестру блоков плюс системные области, столбцы-действия, пресеты. Открыт всем — интерфейс по нему решает, что показывать |
+| GET | `/roles` | 🔑 `roles.view` | Роли с их правами и числом сотрудников |
+| GET | `/roles/{id}` | 🔑 `roles.view` | Одна роль |
+| POST | `/roles` | 🔑 `roles.manage` | Создать: `{name, permissions: ["deals.view", …]}`. Несуществующее право — `422 unknown_permission`, занятое имя — `409 role_name_taken` |
+| POST | `/roles/from-preset` | 🔑 `roles.manage` | Создать из готового набора: `{preset, name?}`. `422 unknown_preset` |
+| PATCH | `/roles/{id}` | 🔑 `roles.manage` | Переименовать и/или заменить набор прав. Снять `roles.manage` с последней такой роли нельзя — `403 last_roles_manager` |
+| POST | `/roles/{id}/default` | 🔑 `roles.manage` | Какую роль получает новый сотрудник при регистрации |
+| DELETE | `/roles/{id}` | 🔑 `roles.manage` | Удалить. Занятую нельзя (`409 role_in_use`), роль по умолчанию нельзя (`422 role_is_default`) |
+| POST | `/roles/assign/{user_id}` | 🔑 `roles.manage` | Назначить должность (`{"role_id": 3}`; `null` — снять). Себе нельзя (`403 cannot_change_own_role`), root'у нельзя (`403 cannot_assign_role_to_root`), последнего управляющего правами не снять (`403 last_roles_manager`) |
 
 ## Поиск и дашборд
 

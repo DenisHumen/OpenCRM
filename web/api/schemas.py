@@ -245,12 +245,21 @@ class StockMoveIn(BaseModel):
 
 # --- сериализация ---
 
-def user_out(user: User) -> dict:
-    return {
+def user_out(user: User, role=None, permissions: list[str] | None = None) -> dict:
+    """Сотрудник для ответа API.
+
+    `permissions` кладём только там, где они нужны самому владельцу сессии
+    (`/auth/me`): интерфейс по ним решает, что показывать. В списке сотрудников
+    их нет намеренно — чужой набор прав это чужое дело, а на экране он всё равно
+    показывается названием должности.
+    """
+    data = {
         "id": user.id,
         "email": user.email,
         "name": user.name,
         "role": user.role,
+        "role_id": user.role_id,
+        "role_name": role.name if role is not None else None,
         "status": user.status,
         "locale": user.locale,
         "must_change_password": user.must_change_password,
@@ -260,6 +269,25 @@ def user_out(user: User) -> dict:
         "created_at": _iso(user.created_at),
         "approved_at": _iso(user.approved_at),
     }
+    if permissions is not None:
+        data["permissions"] = permissions
+    return data
+
+
+def role_out(role, codes: list[str] | None = None, users_count: int | None = None) -> dict:
+    data = {
+        "id": role.id,
+        "name": role.name,
+        "preset": role.preset or "",
+        "is_default": role.is_default,
+        "created_at": _iso(role.created_at),
+        "updated_at": _iso(role.updated_at),
+    }
+    if codes is not None:
+        data["permissions"] = codes
+    if users_count is not None:
+        data["users_count"] = users_count
+    return data
 
 
 def client_out(client: Client) -> dict:
@@ -357,7 +385,34 @@ def stage_out(stage: PipelineStage) -> dict:
     }
 
 
-def deal_out(deal: Deal, client_name: str | None = None, manager: User | None = None) -> dict:
+#: Ключи ответа, в которых лежат деньги заявки. Списком, а не перебором по
+#: имени: `money_of` считает ещё и `is_paid`, а «оплачено ли» — это тот же ответ
+#: про деньги, просто в булевом виде. Скрывать сумму, оставив признак оплаты,
+#: значит скрыть её наполовину.
+DEAL_MONEY_KEYS = ("amount", "prepaid", "remainder", "is_paid")
+
+
+def deal_out(
+    deal: Deal,
+    client_name: str | None = None,
+    manager: User | None = None,
+    amounts: bool = True,
+) -> dict:
+    """`amounts=False` — у смотрящего нет права `deals.view_amounts`.
+
+    Ключи остаются на месте и приходят пустыми, а не исчезают: форма ответа не
+    должна зависеть от того, кто спрашивает, — иначе клиенту API придётся
+    угадывать, какие поля сегодня бывают. Ровно то же правило, что у выключенных
+    блоков в сводке.
+    """
+    data = _deal_fields(deal, client_name, manager)
+    if not amounts:
+        for key in DEAL_MONEY_KEYS:
+            data[key] = None
+    return data
+
+
+def _deal_fields(deal: Deal, client_name: str | None, manager: User | None) -> dict:
     return {
         "id": deal.id,
         "title": deal.title,
@@ -596,13 +651,25 @@ def mail_message_out(message: MailMessage, with_body: bool = False) -> dict:
         data["body_text"] = message.body_text
         data["body_html"] = message.body_html
     return data
-def product_out(product: Product, stock_milli: int | None) -> dict:
+def product_out(product: Product, stock_milli: int | None, amounts: bool = True) -> dict:
     """Карточка товара. Остаток приходит аргументом — его считает репозиторий запросом.
 
     Сериализатор не ходит за остатком сам не из принципа: в списке товаров это
     означало бы отдельный запрос на каждую строку, и склад на 500 позиций
     открывался бы секундами.
+
+    `amounts=False` — нет права `warehouse.view_amounts`: закупочная и продажная
+    цены уходят, остаток остаётся. Это и есть смысл отдельного права на деньги:
+    кладовщик обязан видеть, сколько на полке, и не обязан знать, почём брали.
     """
+    data = _product_fields(product, stock_milli)
+    if not amounts:
+        data["price"] = None
+        data["cost"] = None
+    return data
+
+
+def _product_fields(product: Product, stock_milli: int | None) -> dict:
     return {
         "id": product.id,
         "sku": product.sku,
@@ -623,7 +690,7 @@ def product_out(product: Product, stock_milli: int | None) -> dict:
     }
 
 
-def stock_move_out(move: StockMove) -> dict:
+def stock_move_out(move: StockMove, amounts: bool = True) -> dict:
     return {
         "id": move.id,
         "product_id": move.product_id,
@@ -632,7 +699,7 @@ def stock_move_out(move: StockMove) -> dict:
         "quantity_milli": move.quantity_milli,
         "kind": move.kind,
         "deal_id": move.deal_id,
-        "cost": move.cost_minor,
+        "cost": move.cost_minor if amounts else None,
         "comment": move.comment,
         "happened_at": _iso(move.happened_at),
         "created_at": _iso(move.created_at),
