@@ -17,7 +17,7 @@ from database.models import User
 from database.models.mail import MAIL_DIRECTIONS
 from database.repositories import mail as mail_repo
 from web.api import schemas
-from web.api.deps import get_db, require_module, require_perm
+from web.api.deps import MAX_SEARCH, get_db, require_module, require_perm
 
 # Блок — первым: выключённая почта отвечает «блок выключен», а не «нет права».
 # `require_perm` проверяет то же самое и сам, но порядок в списке — это то, что
@@ -141,7 +141,7 @@ def list_messages(
     deal_id: int | None = None,
     direction: str | None = Query(default=None, pattern="^(in|out)$"),
     unread: bool | None = None,
-    search: str | None = None,
+    search: str | None = Query(default=None, max_length=MAX_SEARCH),
     page: int = Query(default=1, ge=1),
     per_page: int = Query(default=50, ge=1, le=200),
     db: Session = Depends(get_db),

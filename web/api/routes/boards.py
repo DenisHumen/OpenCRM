@@ -7,7 +7,7 @@ from database.models import User
 from database.repositories import boards as boards_repo
 from database.repositories import shares as shares_repo
 from web.api import cards, schemas
-from web.api.deps import get_db, require_module, require_perm
+from web.api.deps import MAX_SEARCH, get_db, require_module, require_perm
 from web.public import layout
 
 router = APIRouter(
@@ -17,7 +17,7 @@ router = APIRouter(
 
 @router.get("")
 def list_boards(
-    search: str | None = None,
+    search: str | None = Query(default=None, max_length=MAX_SEARCH),
     client_id: int | None = None,
     page: int = Query(default=1, ge=1),
     per_page: int = Query(default=50, ge=1, le=200),

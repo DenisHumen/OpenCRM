@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 from database.models import User
 from database.repositories import audit as audit_repo
 from web.api import schemas
-from web.api.deps import get_db, require_perm
+from web.api.deps import MAX_SEARCH, get_db, require_perm
 
 router = APIRouter(prefix="/audit", tags=["audit"])
 
@@ -31,7 +31,7 @@ def list_events(
     entity_id: int | None = None,
     source: str | None = None,
     action: str | None = None,
-    search: str | None = None,
+    search: str | None = Query(default=None, max_length=MAX_SEARCH),
     since: datetime | None = None,
     until: datetime | None = None,
     page: int = Query(default=1, ge=1),

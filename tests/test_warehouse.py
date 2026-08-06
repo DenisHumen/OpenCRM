@@ -451,3 +451,45 @@ def test_cost_of_many_deals_matches_the_cost_of_each(root_client, warehouse_on):
 
         # Пустой список не должен превращаться в «спроси про все».
         assert warehouse_repo.deal_cost_by_deal(db, []) == {}
+
+
+def test_the_kind_of_move_decides_the_sign_not_the_typed_number(root_client, warehouse_on):
+    """Приход всегда прибавляет, расход всегда убавляет — как ни набери.
+
+    Приход с минусом раньше проходил как есть и уменьшал остаток. В сумме
+    движений это то же самое, что расход, а в журнале склада — строка
+    «приход −5», то есть запись, врущая о том, что произошло. Разбираться в
+    такой истории через полгода нечем: цифры сходятся, слова не те.
+
+    Свободный знак остаётся у корректировки: она и существует ради «по факту на
+    полке меньше, чем в базе».
+    """
+    product = new_product(root_client, name="Знаковый товар", unit="pcs")
+    stock = lambda: root_client.get(f"{WH}/products/{product['id']}").json()["stock_milli"]
+
+    move(root_client, product["id"], "in", "-5")          # набрали с минусом
+    assert stock() == 5_000, "приход с минусом убавил остаток"
+
+    move(root_client, product["id"], "out", "2")
+    assert stock() == 3_000
+
+    move(root_client, product["id"], "out", "-1")         # расход с минусом
+    assert stock() == 2_000, "расход с минусом прибавил остаток"
+
+    move(root_client, product["id"], "return", "-3")      # возврат с минусом
+    assert stock() == 5_000, "возврат с минусом убавил остаток"
+
+    # А корректировка минус принимает: ради неё исключение и сделано.
+    move(root_client, product["id"], "adjust", "-1")
+    assert stock() == 4_000
+
+
+def test_a_search_string_longer_than_the_cap_is_refused(root_client, warehouse_on):
+    """Двести знаков — потолок поиска, дальше это не поиск, а вставленный абзац."""
+    from web.api.deps import MAX_SEARCH
+
+    fine = root_client.get(f"{WH}/products", params={"search": "я" * MAX_SEARCH})
+    assert fine.status_code == 200, fine.text
+
+    too_long = root_client.get(f"{WH}/products", params={"search": "я" * (MAX_SEARCH + 1)})
+    assert too_long.status_code == 422, too_long.text

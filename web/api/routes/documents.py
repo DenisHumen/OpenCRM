@@ -10,7 +10,7 @@ from database.models import User
 from database.models.document import DOCUMENT_LOCALES
 from database.repositories import users as users_repo
 from web.api import schemas
-from web.api.deps import get_db, require_module, require_perm
+from web.api.deps import MAX_SEARCH, get_db, require_module, require_perm
 from web.public import routes as public_routes
 from web.public.document_strings import strings_for
 
@@ -50,7 +50,7 @@ class StatusIn(BaseModel):
 
 @router.get("")
 def list_documents(
-    search: str | None = None,
+    search: str | None = Query(default=None, max_length=MAX_SEARCH),
     status: str | None = None,
     client_id: int | None = None,
     deal_id: int | None = None,

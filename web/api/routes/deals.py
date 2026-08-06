@@ -16,7 +16,7 @@ from database.repositories import clients as clients_repo
 from database.repositories import deals as deals_repo
 from database.repositories import users as users_repo
 from web.api import schemas
-from web.api.deps import get_db, require_perm
+from web.api.deps import MAX_SEARCH, get_db, require_perm
 
 
 def _note_authors(db, notes) -> dict[int, str]:
@@ -142,7 +142,7 @@ def kanban(
 
 @router.get("")
 def list_deals(
-    search: str | None = None,
+    search: str | None = Query(default=None, max_length=MAX_SEARCH),
     stage: str | None = None,
     client_id: int | None = None,
     manager_id: int | None = None,
