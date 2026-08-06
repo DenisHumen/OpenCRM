@@ -208,3 +208,105 @@ def test_the_profile_calls_the_job_by_its_name():
     """
     text = (SCREENS / "screens" / "Profile.tsx").read_text(encoding="utf-8")
     assert "role_name" in text, "профиль по-прежнему называет должность словом из словаря"
+
+
+# --- новый блок не должен потеряться в интерфейсе ---------------------------
+#
+# Реестр блоков (`core/modules.py`) и реестр прав (`core/permissions.py`) —
+# источники правды на сервере. Фронтенд хранит рядом с ними свои карты: подпись,
+# описание, значок, строку матрицы доступов. Карты эти ничем не связаны с
+# реестром, и забытая строка **не ломает ничего видимого** — она подставляет
+# запасное значение:
+#
+#     SettingsModules:  {t(LABEL[key] ?? "modules")}      → раздел «Модули»
+#                       {t(ABOUT[key] ?? "modulesSub")}   → «Какие части системы…»
+#                       <Icon name={ICON[key] ?? "docs"}> → общий значок
+#     SettingsRoles:    {t(AREA_LABEL[key] ?? "roles")}   → строка «Роли»
+#
+# Так и вышло: строка журнала действий в конструкторе доступов называлась
+# «Роли», рядом со строкой «Роли и доступы». Владелец, раздающий доступ к
+# журналу, жал галочку не в той строке. Заметить это глазами нельзя — надо
+# знать, что искать.
+#
+# Приём тот же, что в `test_feed.py`: читаем `.tsx` и сверяем со списком с
+# сервера. Хрупко к переформатированию — и это осознанный размен, уже принятый в
+# этом файле.
+
+MODULE_MAPS = (
+    ("SettingsModules.tsx", "LABEL", "подпись блока"),
+    ("SettingsModules.tsx", "ABOUT", "описание блока"),
+    ("SettingsModules.tsx", "ICON", "значок блока"),
+)
+
+
+def _map_keys(filename: str, name: str) -> set[str]:
+    text = (SCREENS / "screens" / filename).read_text(encoding="utf-8")
+    block = re.search(rf"const {name}[^=]*=\s*\{{(.*?)\n\}};", text, re.S)
+    assert block, f"в {filename} не нашлась карта {name} — проверка смотрит не туда"
+    return set(re.findall(r"^\s*(\w+):", block.group(1), re.M))
+
+
+def test_kazhdyy_blok_nazvan_v_nastroykakh():
+    """Забытый блок показывается как «Модули» с общим значком и работает."""
+    from core import modules
+
+    for filename, name, what in MODULE_MAPS:
+        missing = sorted(set(modules.KEYS) - _map_keys(filename, name))
+        assert not missing, f"{what}: в {filename}.{name} нет блоков {missing}"
+
+
+def test_kazhdaya_oblast_prav_nazvana_v_matritse():
+    """Забытая область показывается строкой «Роли» — рядом с настоящими «Ролями»."""
+    from core import permissions
+
+    have = _map_keys("SettingsRoles.tsx", "AREA_LABEL")
+    missing = sorted({area.key for area in permissions.AREAS} - have)
+    assert not missing, f"в SettingsRoles.AREA_LABEL нет областей {missing}"
+
+
+def test_znachok_bloka_odin_i_tot_zhe_v_menyu_i_v_nastroykakh():
+    """Две карты значков разъехались молча: заметить их некому, они в разных файлах.
+
+    Поймано перебором: у склада в меню стоял «warehouse», а в настройках
+    «database»; у телефонии — «callIn» против «call».
+    """
+    sidebar = (SCREENS / "components" / "Sidebar.tsx").read_text(encoding="utf-8")
+    settings_icons = {}
+    text = (SCREENS / "screens" / "SettingsModules.tsx").read_text(encoding="utf-8")
+    block = re.search(r"const ICON[^=]*=\s*\{(.*?)\n\};", text, re.S)
+    for key, icon in re.findall(r"^\s*(\w+):\s*\"([^\"]+)\"", block.group(1), re.M):
+        settings_icons[key] = icon
+
+    # В меню значок и ключ блока стоят рядом внутри одного объекта пункта.
+    #
+    # Сверяем только СОБСТВЕННЫЙ пункт блока — тот, где право начинается с его
+    # же ключа. Соседний пункт бывает закрыт чужим выключателем: «Файлы» стоят
+    # на блоке досок, но правом `settings.manage`, и значок у них свой по делу.
+    guilty = []
+    for match in re.finditer(r"\{([^{}]*module:\s*\"(\w+)\"[^{}]*)\}", sidebar):
+        body, key = match.group(1), match.group(2)
+        perm = re.search(r"perm:\s*\"([^\"]+)\"", body)
+        icon = re.search(r"icon:\s*\"([^\"]+)\"", body)
+        if not icon or key not in settings_icons:
+            continue
+        if not perm or not perm.group(1).startswith(f"{key}."):
+            continue
+        if icon.group(1) != settings_icons[key]:
+            guilty.append(f"{key}: меню «{icon.group(1)}», настройки «{settings_icons[key]}»")
+    assert not guilty, "значки блоков разошлись:\n" + "\n".join(guilty)
+
+
+def test_vsyakiy_znachok_sushchestvuet():
+    """`Icon` типизирован как `keyof typeof PATHS | string`, то есть опечатка
+    даёт пустой `<svg>` — ни ошибки, ни предупреждения сборки."""
+    icons = (SCREENS / "components" / "Icon.tsx").read_text(encoding="utf-8")
+    block = re.search(r"const PATHS[^=]*=\s*\{(.*?)\n\};", icons, re.S)
+    known = set(re.findall(r"^\s*(\w+):", block.group(1), re.M))
+
+    used = set()
+    for path in sorted(SCREENS.rglob("*.tsx")):
+        text = path.read_text(encoding="utf-8")
+        used.update(re.findall(r"<Icon\s+name=\"([^\"]+)\"", text))
+        used.update(re.findall(r"icon:\s*\"([^\"]+)\"", text))
+    unknown = sorted(used - known)
+    assert not unknown, f"значков нет в Icon.PATHS: {unknown}"

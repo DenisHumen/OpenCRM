@@ -36,12 +36,14 @@ const AREA_LABEL: Record<string, TranslationKey> = {
   tasks: "tasks",
   boards: "boards",
   warehouse: "modWarehouse",
+  labels: "modLabels",
   reports: "modReports",
   mail: "modMail",
   telephony: "modTelephony",
   staff: "areaStaff",
   roles: "areaRoles",
   settings: "areaSettings",
+  audit: "areaAudit",
 };
 
 interface Matrix {

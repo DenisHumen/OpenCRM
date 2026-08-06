@@ -252,7 +252,7 @@ export function Sidebar({
     { module: "reports", perm: "reports.view", to: "/reports", label: t("reports"), icon: "analytics" },
     // Журнал звонков — рядом с почтой: и то и другое про разговоры с клиентом,
     // а подробности каждого разговора всё равно живут в ленте заявки.
-    { module: "telephony", perm: "telephony.view", to: "/calls", label: t("calls"), icon: "callIn" },
+    { module: "telephony", perm: "telephony.view", to: "/calls", label: t("calls"), icon: "call" },
   ]);
 
   const admin = allowed<NavItem>(user, modules, [
