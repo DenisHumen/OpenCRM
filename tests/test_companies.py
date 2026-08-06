@@ -350,3 +350,46 @@ def test_companies_is_in_the_registry_and_depends_on_nothing():
     assert module.ready is True
     assert module.core is False
     assert module.requires == ()
+
+
+def test_a_lost_race_never_leaves_the_firm_without_a_default(root_client):
+    """Одновременная перестановка основной не оставляет систему без основной.
+
+    Второй шаг — «поставить свою» — раньше шёл присваиванием полю ORM. Если в
+    момент чтения фирма УЖЕ была основной, присваивание ничего не меняло, и
+    запроса не выходило вовсе. Стоило соседу в это время снять признак — и
+    основной не оставалось ни одной. Живой прогон: пять раундов по три
+    одновременные попытки, на пятом основных стало ноль.
+
+    Ноль хуже двух: две основные читатель разрешает сам, а без основной бланк
+    печатается без шапки — и виноватой окажется бумага, а не гонка недельной
+    давности.
+
+    Соседа изображаем: он снимает признак ровно между чтением и записью.
+    """
+    from sqlalchemy import update
+
+    from core.services import company_service
+    from database.models import Company
+    from database.session import SessionLocal
+
+    first = root_client.post(f"{API}/companies", json={"name": "Основная в гонке"}).json()
+    second = root_client.post(f"{API}/companies", json={"name": "Соперница в гонке"}).json()
+    assert root_client.post(f"{API}/companies/{first['id']}/default").status_code == 200
+
+    with SessionLocal() as mine:
+        held = company_service.get_company(mine, first["id"])
+        assert held.is_default, "готовим гонку с уже основной фирмы"
+
+        with SessionLocal() as neighbour:   # сосед переставил основную на себя
+            neighbour.execute(update(Company).where(Company.id == second["id"]).values(is_default=True))
+            neighbour.execute(
+                update(Company).where(Company.id != second["id"]).values(is_default=False)
+            )
+            neighbour.commit()
+
+        company_service.set_default(mine, first["id"])
+        mine.commit()
+
+    defaults = [c["id"] for c in root_client.get(f"{API}/companies").json()["items"] if c["is_default"]]
+    assert defaults == [first["id"]], f"основных стало {len(defaults)}, а должна быть одна"

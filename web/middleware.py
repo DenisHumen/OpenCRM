@@ -23,6 +23,22 @@ from web.public import routes as public_routes
 
 MUTATING_METHODS = {"POST", "PATCH", "PUT", "DELETE"}
 
+#: Потолок на тело запроса в JSON — один мегабайт.
+#:
+#: Загрузку файлов он не трогает: та идёт multipart и меряется своей меркой
+#: (`max_upload_mb`, по умолчанию 200). Здесь речь про обычные запросы, у
+#: которых самое большое тело — матрица прав или настройки сайта, то есть
+#: десятки килобайт. Мегабайт для них с запасом.
+#:
+#: Зачем потолок вообще: nginx пропускает 220 МБ (иначе не загрузить файл), и
+#: до этой правки столько же принимала **форма запроса доступа** — открытая в
+#: интернет и не требующая входа. Замер на стенде: одно тело в 38 МБ стоило
+#: процессу 76 МБ памяти (сырое тело, разобранная строка, объекты pydantic), и
+#: Python возвращает её операционной системе неохотно. Десяток таких запросов
+#: подряд — и на VPS с гигабайтом приложение убивает ядро. Ни одной ошибки в
+#: логе при этом нет: процесс просто исчезает.
+MAX_JSON_BODY = 1024 * 1024
+
 # Витрина рендерится сервером и намеренно содержит инлайновые <style>/<script>
 # (лайтбокс, декодер blurhash) — им нужен 'unsafe-inline'. Пользовательские данные
 # в шаблонах экранируются Jinja2, внешних скриптов нет. CRM (SPA) грузит скрипты
@@ -117,6 +133,22 @@ def register(app: FastAPI) -> None:
 
     @app.middleware("http")
     async def security_middleware(request: Request, call_next):
+        # Тело не по размеру отсекаем ДО чтения: разбирать 200 МБ, чтобы затем
+        # ответить «слишком длинное имя», — уже проигранная память.
+        if request.method in MUTATING_METHODS:
+            declared = request.headers.get("content-length")
+            content_type = request.headers.get("content-type", "")
+            if declared and "json" in content_type and int(declared) > MAX_JSON_BODY:
+                return JSONResponse(
+                    status_code=413,
+                    content={
+                        "error": {
+                            "code": "body_too_large",
+                            "message": "Request body is too large",
+                        }
+                    },
+                )
+
         # CSRF (double-submit cookie): только для cookie-аутентифицированных
         # изменяющих запросов к API
         if (

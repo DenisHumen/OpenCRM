@@ -100,3 +100,47 @@ def test_password_change_revokes_other_sessions(root_client):
     # старая (чужая) сессия отозвана, текущая жива
     assert session_b.get(f"{API}/auth/me").status_code == 401
     assert session_a.get(f"{API}/auth/me").status_code == 200
+
+
+def test_a_huge_json_body_is_refused_before_it_is_read(manager_client):
+    """Толстое тело отсекается по объявленному размеру, а не после разбора.
+
+    nginx пропускает 220 МБ — иначе не загрузить файл, — и ровно столько же
+    принимала форма запроса доступа: открытая в интернет и не требующая входа.
+    Замер на стенде: одно тело в 38 МБ стоило процессу 76 МБ памяти, и Python
+    возвращает её системе неохотно. Десяток запросов подряд — и на VPS с
+    гигабайтом приложение убивает ядро, не оставив в логе ни одной ошибки.
+
+    Проверяем именно отказ до чтения: сервер обязан ответить по заголовку
+    `Content-Length`, а не разбирать присланное, чтобы затем сказать «слишком
+    длинное имя».
+    """
+    from web.middleware import MAX_JSON_BODY
+
+    fat = "ы" * (MAX_JSON_BODY + 1024)
+    refused = manager_client.post(f"{API}/clients", json={"name": fat})
+
+    assert refused.status_code == 413, refused.text
+    assert refused.json()["error"]["code"] == "body_too_large"
+
+    # Обычный запрос той же формы проходит: потолок про размер, а не про форму.
+    fine = manager_client.post(f"{API}/clients", json={"name": "Обычный клиент"})
+    assert fine.status_code == 201, fine.text
+
+
+def test_the_cap_does_not_touch_file_uploads(manager_client):
+    """Загрузка файла меряется своей меркой, а не потолком JSON.
+
+    Потолок в мегабайт стоит только на `application/json`. Спутай его с
+    загрузкой — и разом отвалится всё, ради чего в nginx стоит 220 МБ.
+    """
+    from web.middleware import MAX_JSON_BODY
+
+    board = manager_client.post(f"{API}/boards", json={"title": "Для тяжёлого файла"}).json()
+    heavy = png_bytes() + b"\x00" * (MAX_JSON_BODY + 4096)
+    uploaded = manager_client.post(
+        f"{API}/boards/{board['id']}/works",
+        files={"file": ("big.png", heavy, "image/png")},
+    )
+
+    assert uploaded.status_code == 202, uploaded.text

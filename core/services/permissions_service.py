@@ -20,7 +20,7 @@
 проверка на каждый запрос. Запрос при этом один и по индексу.
 """
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from core import exceptions as errors
@@ -424,15 +424,22 @@ def update_role(db: Session, role_id: int, name: str | None, codes, *, actor: Us
 def set_default(db: Session, role_id: int) -> Role:
     """Роль по умолчанию ровно одна: её получает новый сотрудник.
 
-    Переставляется одним проходом, как основная фирма: без этого система тихо
-    осталась бы без роли по умолчанию, и зарегистрировавшийся сотрудник входил
-    бы в пустую CRM без единого раздела.
+    Оба шага — явные UPDATE, «своя» ставится первой; подробности и цена ошибки
+    описаны у основной фирмы (`company_service.set_default`), правило здесь
+    ровно то же. Раньше признак снимался перебором объектов, хотя комментарий
+    обещал «одним проходом, как основная фирма»: текст говорил одно, код делал
+    другое. Комментарий, разошедшийся с кодом, хуже отсутствующего — следующий
+    читатель поверит ему и проверять не полезет.
+
+    Роль по умолчанию потерять особенно неприятно: без неё зарегистрировавшийся
+    сотрудник входит в CRM без единого раздела и без объяснения, почему.
     """
     role = get_role(db, role_id)
-    for other in db.scalars(select(Role).where(Role.is_default.is_(True))):
-        other.is_default = False
-    role.is_default = True
-    db.flush()
+    db.execute(update(Role).where(Role.id == role.id).values(is_default=True))
+    db.execute(
+        update(Role).where(Role.id != role.id, Role.is_default.is_(True)).values(is_default=False)
+    )
+    db.refresh(role)
     return role
 
 
