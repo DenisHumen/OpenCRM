@@ -126,3 +126,25 @@ def test_client_files_upload_download_delete(manager_client):
         == 200
     )
     assert manager_client.get(file["download_url"]).status_code == 404
+
+
+def test_a_phone_is_found_however_it_was_typed(manager_client):
+    """Один номер, записанный по-разному, находится одинаково.
+
+    Колонка `phone_norm` заведена ровно ради этого — «показываем то, что ввёл
+    менеджер, а ищем по этому», — и телефония ею пользуется. Поисковая строка не
+    пользовалась: две карточки с одним номером находились по-разному в
+    зависимости от того, ставил ли менеджер пробелы.
+    """
+    tight = manager_client.post(
+        f"{API}/clients", json={"name": "Слитно", "phone": "+380671112233"}
+    ).json()
+    spaced = manager_client.post(
+        f"{API}/clients", json={"name": "С пробелами", "phone": "+380 67 111 22 33"}
+    ).json()
+
+    for needle in ("0671112233", "380671112233", "+380 67 111 22 33"):
+        found = manager_client.get(f"{API}/clients", params={"search": needle}).json()["items"]
+        names = {c["id"] for c in found}
+        assert tight["id"] in names, f"«{needle}»: не нашёлся записанный слитно"
+        assert spaced["id"] in names, f"«{needle}»: не нашёлся записанный с пробелами"

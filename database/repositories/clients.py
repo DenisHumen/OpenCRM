@@ -47,16 +47,25 @@ def search(
 ) -> tuple[list[Client], int]:
     stmt = select(Client).where(Client.deleted_at.is_(None))
     if q:
-        like = f"%{q.strip()}%"
-        stmt = stmt.where(
-            or_(
-                Client.name.ilike(like),
-                Client.company.ilike(like),
-                Client.phone.ilike(like),
-                Client.email.ilike(like),
-                Client.tags.ilike(like),
-            )
-        )
+        needle = q.strip()
+        like = f"%{needle}%"
+        # Телефон ищем и как набрано, и в приведённом виде. Колонка `phone_norm`
+        # заведена ровно ради этого («показываем то, что ввёл менеджер, а ищем —
+        # по этому»), телефония ею пользуется, а поисковая строка — нет: две
+        # карточки с одним номером находились по-разному в зависимости от того,
+        # ставил ли менеджер пробелы. Искали «0671112233» — находили одну из
+        # двух.
+        digits = "".join(ch for ch in needle if ch.isdigit())
+        conditions = [
+            Client.name.ilike(like),
+            Client.company.ilike(like),
+            Client.phone.ilike(like),
+            Client.email.ilike(like),
+            Client.tags.ilike(like),
+        ]
+        if digits:
+            conditions.append(Client.phone_norm.ilike(f"%{digits}%"))
+        stmt = stmt.where(or_(*conditions))
     if tag:
         stmt = stmt.where(Client.tags.ilike(f"%{tag.strip()}%"))
     if manager_id:

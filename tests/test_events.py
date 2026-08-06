@@ -400,3 +400,49 @@ def test_the_two_decorators_subscribe_the_two_different_ways(manager_client, dea
         for sub in list(events._subscribers):
             if sub.handler in (watches, takes_part):
                 events.unsubscribe(sub)
+
+
+def test_an_unknown_source_is_refused_at_the_door(manager_client, deal):
+    """Незнакомый источник — отказ сразу, а не потерянная запись потом.
+
+    Неизвестное значение доходило до `assert_actor` внутри наблюдателя, там
+    превращалось в ошибку, наблюдатель падал под точкой отката — запись в ленте
+    исчезала молча, а основная операция состоялась.
+    """
+    from database.session import SessionLocal
+
+    with SessionLocal() as db:
+        with pytest.raises(ValueError, match="Unknown event source"):
+            events.emit(
+                DEAL_STAGE_CHANGED,
+                db=db,
+                actor=None,
+                reason="проба",
+                source="cron",
+                deal=None,
+                from_stage="new",
+                to_stage="ready",
+            )
+
+
+def test_every_subscription_passes_the_source_down():
+    """Источник протаскивается вниз без изменений — во всех подписках.
+
+    Обещание записано в докстроке `Event`: «все трое протаскиваются вниз без
+    изменений». Держалось оно только у смены этапа; бланк и списание источник
+    теряли, и у безликого источника (вебхук АТС, забор почты) запись в ленте
+    исчезала молча — исполнителя там нет по определению, `assert_actor`
+    отказывал, наблюдатель падал под точкой отката.
+
+    Проверка по исходнику: подписок мало, они рядом, а поймать потерю поведением
+    можно только подняв событие от вебхука — то есть написав ту самую связку,
+    которой сегодня ещё нет.
+    """
+    import pathlib
+    import re
+
+    source = pathlib.Path("core/subscriptions.py").read_text(encoding="utf-8")
+    calls = re.findall(r"add_system_note\((.*?)^    \)", source, flags=re.S | re.M)
+    assert len(calls) >= 3, f"подписок найдено {len(calls)} — проверка смотрит не туда"
+    for call in calls:
+        assert "source=event.source" in call, "подписка пишет в ленту, не передав источник"

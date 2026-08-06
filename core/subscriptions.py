@@ -143,6 +143,12 @@ def _document_entry(event: events.Event, what: str) -> None:
         KIND_DOCUMENT,
         f"Document {document.number} {what}{subject} ({event.reason})",
         deal_id=document.deal_id,
+        # Источник протаскивается вниз без изменений — как обещает докстрока
+        # `Event`. Без него запись бралась за «сделал человек», а у безликого
+        # источника (вебхук АТС, забор почты) исполнителя нет: проверка
+        # `assert_actor` отказывала, наблюдатель падал под точкой отката, и
+        # **запись в ленте исчезала молча** при состоявшейся операции.
+        source=event.source,
     )
 
 
@@ -191,4 +197,5 @@ def write_off_into_feed(event: events.Event) -> None:
         KIND_STOCK,
         f"Stock: {product.name} — {amount} ({event.reason})",
         deal_id=deal.id,
+        source=event.source,   # см. объяснение у бланков выше
     )

@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from sqlalchemy import event as sa_event
 from sqlalchemy.orm import Session
 
 from config.settings import get_settings
@@ -324,5 +325,10 @@ def delete_file(db: Session, client_id: int, file_id: int, actor: User) -> None:
     )
     db.delete(file)
     db.flush()
-    if path.exists():
+    # Файл снимаем с диска ПОСЛЕ коммита, а не сразу. Откат транзакции вернул бы
+    # строку в базу, а файла уже нет: карточка клиента обещает договор, которого
+    # физически не существует, и скачивание падает. Сирота на диске (обратный
+    # случай) стоит места, а не правды.
+    @sa_event.listens_for(db, "after_commit", once=True)
+    def _remove_from_disk(_session) -> None:
         path.unlink(missing_ok=True)

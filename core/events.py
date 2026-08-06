@@ -29,7 +29,7 @@ from sqlalchemy.orm import Session
 
 from core.services import modules_service
 from database.models import User
-from database.models.audit import SOURCE_MANUAL
+from database.models.audit import SOURCES, SOURCE_MANUAL
 
 logger = logging.getLogger("opencrm.events")
 
@@ -221,6 +221,13 @@ def emit(
     сама, обязана сказать об этом явно — и говорит, потому что иначе исполнитель
     у неё пуст, а `audit_service.record` пустого исполнителя у руки не примет.
     """
+    # Источник проверяем на входе, а не там, куда он доедет. Незнакомое значение
+    # доходило до `assert_actor` внутри наблюдателя, там превращалось в ошибку,
+    # наблюдатель падал под точкой отката — и запись в ленте исчезала молча, а
+    # основная операция состоялась. Отказ на входе называет виноватого сразу.
+    if source not in SOURCES:
+        raise ValueError(f"Unknown event source: {source!r} (см. database/models/audit.py)")
+
     event = Event(
         name=name,
         db=db,

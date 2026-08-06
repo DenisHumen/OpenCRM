@@ -39,8 +39,18 @@ def state(db: Session) -> dict[str, bool]:
     """Ключ блока → включён ли он. Ответ всегда содержит все блоки реестра."""
     global _cache, _cached_at
     if _cache is not None and _now() - _cached_at < CACHE_SECONDS:
-        return _cache
+        # Копия, а не сам кэш: возвращённый словарь правят вызывающие (дашборд
+        # так и делает), и правка уходила бы в состояние блоков всего процесса.
+        return dict(_cache)
 
+    result = _read_state(db)
+    _cache = result
+    _cached_at = _now()
+    return dict(result)
+
+
+def _read_state(db: Session) -> dict[str, bool]:
+    """Состояние блоков по базе, мимо кэша. Реестр главнее строки в базе."""
     stored = {row.key: row.enabled for row in db.scalars(select(ModuleState))}
     result: dict[str, bool] = {}
     for module in modules.MODULES:
@@ -54,9 +64,6 @@ def state(db: Session) -> dict[str, bool]:
             result[module.key] = False
         else:
             result[module.key] = stored.get(module.key, module.default)
-
-    _cache = result
-    _cached_at = _now()
     return result
 
 
@@ -128,7 +135,16 @@ def set_enabled(db: Session, key: str, enabled: bool, user: User) -> dict[str, b
         after="on" if enabled else "off",
     )
     invalidate()
-    return state(db)
+    # Кэш НЕ набиваем здесь. `state(db)` внутри незакоммиченной транзакции
+    # положил бы в глобальный кэш то, что видит только эта сессия: откатись она
+    # (упавший commit, «database is locked», ошибка дальше по запросу) — и весь
+    # процесс до двух секунд ведёт себя так, будто блок выключен, хотя в базе
+    # ничего не менялось. Меню, гварды маршрутов и гейт подписчиков читают
+    # именно этот кэш.
+    #
+    # Ответ собираем из реестра и текущей сессии, ничего не запоминая: он верен
+    # для этого запроса, а следующий прочитает базу заново — уже после коммита.
+    return _read_state(db)
 
 
 def details(db: Session) -> list[dict]:
