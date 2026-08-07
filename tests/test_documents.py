@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 from core.services import codes
 from tests.conftest import API
+from web.api.deps import DOCUMENT_STATUS_MAX_LOOKUPS, document_limiter
 from web.main import app
 
 DOCS = f"{API}/documents"
@@ -207,8 +208,46 @@ def test_public_page_does_not_leak_anything_extra(manager_client):
     assert "Потёртости" not in page, "внутренние заметки видны посторонним"
 
 
-def test_unknown_number_looks_the_same_as_a_hidden_one(manager_client):
-    """Иначе перебором номеров узнают, сколько у мастерской заказов."""
+def test_perebor_nomerov_uporaetsya_v_ogranichitel(manager_client):
+    """Перебор номеров возможен в принципе — и обязан быть дорогим.
+
+    Здесь стояла проверка с докстрокой «перебором номеров не узнать, сколько у
+    мастерской заказов». Она была неправдой: существующий номер отдаёт страницу,
+    несуществующий — 404, и различить их можно ровно по коду ответа. Проверка
+    при этом была зелёной, потому что сверяла ровно то, что и так верно (404 у
+    чужого номера), а не то, что обещала докстрока.
+
+    Неугадываемым номер сделать нельзя: он напечатан на квитанции и зашит в QR.
+    Поэтому проверяем не невозможность перебора, а его цену — что двадцать
+    первое обращение с того же адреса не отвечает ничем.
+    """
+    doc = make_doc(manager_client)
+    anon = TestClient(app)
+    # Ключ ограничителя — адрес посетителя; у TestClient он один на всех, и
+    # оставленный след испортил бы соседние проверки в том же прогоне.
+    document_limiter.reset("testclient")
+    try:
+        for nomer in range(DOCUMENT_STATUS_MAX_LOOKUPS):
+            otvet = anon.get(f"/d/{doc['number']}")
+            assert otvet.status_code == 200, f"живой человек отсечён на {nomer + 1}-м обращении"
+
+        upyorsya = anon.get(f"/d/{doc['number']}")
+        assert upyorsya.status_code == 429
+        # Слова важнее кода: «доступ закрыт, свяжитесь с нами» отправило бы
+        # человека звонить в мастерскую из-за того, что он обновил страницу.
+        # Язык витрины — настройка сайта, по умолчанию английский.
+        assert "Too many requests" in upyorsya.text
+        assert "not available" not in upyorsya.text, "человеку сказали «закрыто» вместо «подождите»"
+
+        # Отсекается адрес, а не страница целиком: сосед по улице открывает её
+        # как ни в чём не бывало.
+        sosed = anon.get(f"/d/{doc['number']}", headers={"x-real-ip": "203.0.113.7"})
+        assert sosed.status_code == 429, "заголовок из запроса не должен обходить ограничитель"
+    finally:
+        document_limiter.reset("testclient")
+
+
+def test_neizvestnyy_nomer_otvechaet_404(manager_client):
     anon = TestClient(app)
     assert anon.get("/d/2000-000999").status_code == 404
 
