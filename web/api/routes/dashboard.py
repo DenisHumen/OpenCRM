@@ -25,8 +25,16 @@ router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 @router.get("")
 def dashboard(user: User = Depends(require_staff), db: Session = Depends(get_db)):
     now = now_utc()
-    week_ago = now - timedelta(days=7)
-    two_weeks_ago = now - timedelta(days=14)
+
+    # Окно просмотров считается ОДИН раз и раздаётся всем запросам блока:
+    # плитке «за 7 дней», уникальным посетителям и столбикам графика. Пока
+    # плитка брала скользящие 168 часов, а график — семь календарных суток,
+    # число над графиком не совпадало с суммой столбиков под ним, и сходились
+    # они только в полночь. Подробности — в `stats_repo.views_window`.
+    views_start, views_end = stats_repo.views_window(7, now)
+    # Прошлая неделя — те же семь календарных суток, только сдвинутые: сравнивать
+    # календарную неделю со скользящей значило бы считать рост от разной длины.
+    prev_start = views_start - timedelta(days=7)
 
     clients_total, clients_this_month = stats_repo.clients_totals(db)
 
@@ -36,13 +44,13 @@ def dashboard(user: User = Depends(require_staff), db: Session = Depends(get_db)
     # при любом наборе блоков.
     boards_total = boards_published = views_7d = views_prev_7d = unique_7d = 0
     last_view = None
-    views_by_day: list[dict] = stats_repo.views_by_day(db, 7)
+    views_by_day: list[dict] = stats_repo.views_by_day(db, views_start, views_end)
     boards_payload: list[dict] = []
     if modules_service.is_enabled(db, "boards"):
         boards_total, boards_published = stats_repo.boards_totals(db)
-        views_7d = stats_repo.views_in_range(db, week_ago, now)
-        views_prev_7d = stats_repo.views_in_range(db, two_weeks_ago, week_ago)
-        unique_7d = stats_repo.unique_viewers_in_range(db, week_ago, now)
+        views_7d = stats_repo.views_in_range(db, views_start, views_end)
+        views_prev_7d = stats_repo.views_in_range(db, prev_start, views_start)
+        unique_7d = stats_repo.unique_viewers_in_range(db, views_start, views_end)
         last_view = stats_repo.last_view_at(db)
 
         recent_boards, _total = boards_repo.search(db, page=1, per_page=4)

@@ -34,6 +34,23 @@ def _mine(only_manager_id: int | None):
     return () if only_manager_id is None else (Deal.manager_id == only_manager_id,)
 
 
+def _my_clients(only_manager_id: int | None):
+    """То же сужение, но по колонке клиента.
+
+    Строка отчёта по источникам складывается из клиентов и из заявок. Пока
+    сужались только заявки, в одной строке стояли числа с разным охватом:
+    «клиентов» — по всей фирме, «выиграно» — по своим. Поделить одно на другое
+    было нельзя, а выглядела строка обычной.
+
+    Это про АРИФМЕТИКУ строки, а не про доступ к карточкам клиентов: «видит
+    только своих клиентов» в систему не входит осознанно, и почему — написано в
+    `permissions_service.deals_scope`. Здесь мы не прячем клиента, а считаем ту
+    же совокупность, по которой посчитаны соседние колонки; иначе строку нельзя
+    прочитать целиком.
+    """
+    return () if only_manager_id is None else (Client.manager_id == only_manager_id,)
+
+
 def stage_entries(
     db: Session, start: datetime, end: datetime, only_manager_id: int | None = None
 ) -> dict[str, int]:
@@ -62,24 +79,36 @@ def stage_entries(
     return {stage: int(count or 0) for stage, count in rows}
 
 
-def entries_by_kind(
+def closed_by_kind(
     db: Session, start: datetime, end: datetime, only_manager_id: int | None = None
 ) -> dict[str, int]:
-    """То же самое, но свёрнутое до вида этапа.
+    """Сколько сделок ЗАКРЫТО за период, по видам этапов.
 
-    Нужно отдельным запросом, а не суммой по `stage_entries`: одна сделка может
-    побывать в двух разных выигранных этапах, и сложение колонок посчитало бы её
-    дважды. «Дошло до конца» — это число сделок, а не число попаданий.
+    Ось та же, что у выручки и у таблицы источников: дата закрытия сделки плюс
+    вид этапа, в котором она стоит. Одно «Выиграно» на весь экран получается
+    только так.
+
+    Считать журналом перемещений («сколько раз входили в выигранный этап») здесь
+    нельзя, хотя соблазн есть — рядом стоит `stage_entries`, и он именно такой.
+    Сделку возвращают из выигранного этапа в работу, и дата закрытия при этом
+    обнуляется (`deal_service.move`): по журналу она навсегда остаётся
+    выигранной, по факту — снова в работе. Два числа на одном экране начинали
+    расходиться ровно с этого возврата, причём молча.
+
+    `stage_entries` при этом остаётся журнальным, и это не противоречие:
+    воронка отвечает на «сколько прошло через шаг», а плитка «Выиграно» — на
+    «сколько выиграли». Разные вопросы, и подписи у них обязаны быть разные.
     """
     rows = db.execute(
-        select(PipelineStage.kind, func.count(func.distinct(DealStageChange.deal_id)))
-        .join(Deal, Deal.id == DealStageChange.deal_id)
-        .join(PipelineStage, PipelineStage.key == DealStageChange.to_stage)
+        select(PipelineStage.kind, func.count())
+        .select_from(Deal)
+        .join(PipelineStage, PipelineStage.key == Deal.stage)
         .where(
             Deal.deleted_at.is_(None),
             *_mine(only_manager_id),
-            DealStageChange.changed_at >= start,
-            DealStageChange.changed_at < end,
+            PipelineStage.kind.in_(CLOSED_KINDS),
+            Deal.closed_at >= start,
+            Deal.closed_at < end,
         )
         .group_by(PipelineStage.kind)
     ).all()
@@ -147,16 +176,24 @@ def money_by_month(
     return result
 
 
-def clients_by_source(db: Session, start: datetime, end: datetime) -> dict[str | None, int]:
+def clients_by_source(
+    db: Session, start: datetime, end: datetime, only_manager_id: int | None = None
+) -> dict[str | None, int]:
     """Сколько клиентов пришло с каждого источника за период.
 
     Мягко удалённые не считаются — как и в сводке на дашборде: клиент в корзине
     ещё не удалён окончательно, но клиентом уже не является.
+
+    Сужается тем же правом, что и заявки в соседних колонках той же строки. Без
+    этого «клиентов» считалось по всей фирме, а «выиграно» рядом — по своим:
+    делимое и делитель из разных множеств, и строка отчёта переставала быть
+    строкой.
     """
     rows = db.execute(
         select(Client.source, func.count())
         .where(
             Client.deleted_at.is_(None),
+            *_my_clients(only_manager_id),
             Client.created_at >= start,
             Client.created_at < end,
         )
@@ -203,19 +240,6 @@ def closed_deals_by_source(
         }
         for source, kind, count, priced, total in rows
     }
-
-
-def known_sources(db: Session) -> list[str]:
-    """Источники, которые реально встречаются у клиентов.
-
-    Нужны, чтобы в отчёте появились и свои значения, а не только пресет.
-    Отсортированы — иначе порядок строк в выгрузке менялся бы от запроса к
-    запросу и файлы переставали бы сравниваться между собой.
-    """
-    rows = db.scalars(
-        select(Client.source).where(Client.source.is_not(None)).distinct()
-    ).all()
-    return sorted(row for row in rows if row)
 
 
 def lost_reasons(
