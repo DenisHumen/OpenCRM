@@ -16,6 +16,7 @@ from core.security import tokens
 from core.services import modules_service, telephony_service
 from core.utils import normalize_phone, to_utc_naive
 from database.models import PhoneCall, User
+from database.models.telephony import CALL_DIRECTIONS, CALL_OUTCOMES
 from database.repositories import telephony as telephony_repo
 from web.api import schemas
 from web.api.deps import MAX_SEARCH, client_ip, get_db, require_module, require_perm
@@ -35,6 +36,15 @@ webhook_router = APIRouter(prefix="/telephony", tags=["telephony"])
 # сломавшейся станции, либо чужой перебор подписи; и то и другое лучше
 # притормозить, чем разбирать по логам.
 webhook_limiter = SlidingWindowLimiter(600, 60)
+
+# Значения фильтров журнала проверяются списком, как в почте
+# (`web/api/routes/mail.py`), но список берётся из модели, а не переписывается
+# здесь: переписанный он разъедется с `CALL_OUTCOMES` на первом же новом итоге,
+# и разойдётся молча. Незнакомое значение — отказ 422, а не пустая выдача:
+# пустой список неотличим от «звонков нет», и опечатку в фильтре («outcome=miss»,
+# «direction=incoming») ищут потом в данных, которых там и не было.
+DIRECTION_FILTER = f"^({'|'.join(CALL_DIRECTIONS)})$"
+OUTCOME_FILTER = f"^({'|'.join(CALL_OUTCOMES)})$"
 
 
 class ClickToCallIn(BaseModel):
@@ -58,8 +68,8 @@ class TelephonySettingsIn(BaseModel):
 
 @router.get("/calls")
 def list_calls(
-    direction: str | None = None,
-    outcome: str | None = None,
+    direction: str | None = Query(default=None, pattern=DIRECTION_FILTER),
+    outcome: str | None = Query(default=None, pattern=OUTCOME_FILTER),
     client_id: int | None = None,
     deal_id: int | None = None,
     user_id: int | None = None,

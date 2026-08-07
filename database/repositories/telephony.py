@@ -52,6 +52,37 @@ def insert_or_take(db: Session, call: PhoneCall) -> PhoneCall:
         return existing
 
 
+def insert_new(db: Session, call: PhoneCall) -> PhoneCall | None:
+    """Вставить звонок или вернуть None, если такой ``external_id`` уже занят.
+
+    Противоположность `insert_or_take` — и разница между ними не техническая, а
+    смысловая. Там строку победителя берут потому, что это **тот же самый
+    звонок**: события одного разговора приходят от одной станции с одним ключом.
+    Здесь звонок только что родился по нажатию кнопки, и строка с таким же
+    ключом в базе — заведомо **другой**, более старый разговор: свой ключ мы
+    видим впервые. Присвоить её значит переписать чужие номера и оператора,
+    оставив звонок висеть в карточке чужого клиента.
+
+    Поэтому «уже занято» здесь не гонка, а отказ, и решает, что с ним делать,
+    вызывающий.
+    """
+    try:
+        with db.begin_nested():
+            db.add(call)
+            db.flush()
+        return call
+    except IntegrityError:
+        # Как и в `insert_or_take`: объект надо выбросить из сессии руками,
+        # иначе следующий flush повторит вставку уже без точки отката.
+        if call in db:
+            db.expunge(call)
+        if get_by_external_id(db, call.external_id) is None:
+            # Уникальность нарушена не по external_id — дело не в занятом ключе,
+            # и прятать такую ошибку нельзя.
+            raise
+        return None
+
+
 def get_by_external_id(db: Session, external_id: str) -> PhoneCall | None:
     """Звонок по идентификатору АТС — точка склейки повторных событий."""
     return db.scalar(select(PhoneCall).where(PhoneCall.external_id == external_id))

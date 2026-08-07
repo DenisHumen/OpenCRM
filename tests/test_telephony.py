@@ -9,10 +9,12 @@ import hashlib
 import hmac
 import json
 import time
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
 
+from core import exceptions as errors
 from core.services import telephony_providers
 from core.utils import normalize_phone
 from tests.conftest import API
@@ -620,3 +622,243 @@ def test_a_long_number_filter_is_refused_not_crashed(root_client, telephony):
 
     too_long = root_client.get(CALLS, params={"number": "7" * (MAX_SEARCH + 1)})
     assert too_long.status_code == 422, too_long.text
+
+
+# --- кнопка звонка не забирает чужую строку ---
+
+class RepeatingStation:
+    """Станция, назвавшая уже занятый идентификатор звонка.
+
+    Так ведёт себя и демо-провайдер после перезапуска процесса (счётчик
+    начинается заново, а база — нет), и настоящая АТС после своего перезапуска
+    или смены нумерации.
+    """
+
+    def __init__(self, external_id: str) -> None:
+        self.external_id = external_id
+
+    def originate(self, from_ext: str, to_number: str):
+        return telephony_providers.OriginateResult(external_id=self.external_id)
+
+
+def test_click_to_call_does_not_take_over_a_foreign_call(
+    root_client, telephony, client_record, monkeypatch
+):
+    """Занятый ключ от станции — отказ, а не запись поверх чужого разговора.
+
+    Кнопка «позвонить» заводила строку так же, как вебхук: искала звонок с тем
+    же ``external_id`` и, найдя, дописывала в него свои поля. У входящих
+    событий это законно — они описывают один разговор. Здесь разговор родился
+    секунду назад, и строка с таким же ключом — заведомо другая: чужие номера
+    и оператор переписывались, а клиент, заявка и запись в ленте оставались от
+    прежнего звонка. Исходящий звонок оказывался в карточке чужого клиента, и
+    следующее событие переписывало его же запись в чужой ленте.
+    """
+    taken = "reused-by-pbx"
+    old = send_event(telephony, {
+        "call_id": taken, "direction": "in", "from": "+380671234567", "to": "0442000000",
+        "started_at": "2026-08-05T09:45:00+00:00", "outcome": "answered", "duration": 30,
+    })
+    assert old.status_code == 200, old.text
+    before = old.json()["call"]
+    assert before["client_id"] == client_record["id"]
+
+    monkeypatch.setattr(
+        telephony_providers, "build", lambda *args, **kwargs: RepeatingStation(taken)
+    )
+    response = root_client.post(
+        f"{API}/telephony/click-to-call",
+        json={"number": "+380991112233", "from_ext": "101"},
+    )
+    assert response.status_code == 409, response.text
+    assert response.json()["error"]["code"] == "pbx_call_id_taken"
+
+    after = root_client.get(f"{CALLS}/{before['id']}").json()
+    assert after["direction"] == "in", "чужой звонок стал исходящим"
+    assert after["from_number"] == before["from_number"], "чужой номер переписан"
+    assert after["to_number"] == before["to_number"], "чужой номер переписан"
+    assert after["user_id"] is None, "чужому звонку приписан оператор"
+    assert after["client_id"] == client_record["id"]
+    # и второй строки на тот же ключ тоже не появилось
+    stored = root_client.get(f"{CALLS}?per_page=200").json()["items"]
+    assert len([c for c in stored if c["external_id"] == taken]) == 1
+
+
+def test_the_demo_station_does_not_reissue_call_ids():
+    """Перезапуск процесса не возвращает станцию к уже выданным ключам.
+
+    Счётчик подделки живёт в памяти, а журнал звонков — в базе, которая
+    перезапуск переживает. Пока ключ был просто «fake-N», второй запуск
+    демо-стенда выдавал идентификаторы, уже лежащие в журнале.
+    """
+    before_restart = telephony_providers.FakeProvider()
+    after_restart = telephony_providers.FakeProvider()
+    first = {before_restart.originate("101", "+380671234567").external_id for _ in range(3)}
+    second = {after_restart.originate("101", "+380671234567").external_id for _ in range(3)}
+    assert len(first) == 3, "ключи повторяются внутри одного запуска"
+    assert not (first & second), "после перезапуска станция выдаёт те же ключи"
+
+
+# --- адрес станции не должен уводить сервер куда попало ---
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "file:///etc/passwd",
+        "gopher://127.0.0.1:11211/_stats",
+        "javascript:alert(1)",
+        "//169.254.169.254/latest/meta-data/",
+        "https://pbx.example/" + "a" * 600,
+    ],
+)
+def test_the_pbx_address_must_be_an_http_url(root_client, telephony, bad):
+    """Адрес станции — единственная настройка, по которой сервер ходит сам.
+
+    Непроверенным он делал из CRM ходока по чужим адресам: право на настройки
+    телефонии превращалось в «попроси сервер сходить куда угодно и покажи, что
+    ответили».
+    """
+    response = root_client.patch(
+        f"{API}/telephony/settings", json={"values": {"telephony_api_url": bad}}
+    )
+    assert response.status_code == 422, response.text
+    assert response.json()["error"]["code"] == "bad_telephony_url"
+    assert root_client.get(f"{API}/telephony/settings").json()["api_url"] != bad
+
+
+def test_a_stored_bad_pbx_address_never_becomes_a_request():
+    """Значение могло лечь в базу до проверки — наружу оно всё равно не уйдёт."""
+    with pytest.raises(errors.ValidationError):
+        telephony_providers.build("http", "file:///etc/passwd", "")
+
+
+def test_a_pbx_inside_the_local_network_stays_allowed(root_client, telephony):
+    """Asterisk обычно стоит в той же локальной сети — это законный адрес."""
+    try:
+        saved = root_client.patch(
+            f"{API}/telephony/settings",
+            json={"values": {"telephony_api_url": "http://10.0.0.5:8088/originate"}},
+        )
+        assert saved.status_code == 200, saved.text
+        assert saved.json()["api_url"] == "http://10.0.0.5:8088/originate"
+    finally:
+        root_client.patch(
+            f"{API}/telephony/settings", json={"values": {"telephony_api_url": ""}}
+        )
+
+
+# --- фильтры журнала ---
+
+@pytest.mark.parametrize(
+    "params", [{"direction": "incoming"}, {"direction": "IN"}, {"outcome": "miss"}]
+)
+def test_an_unknown_filter_value_is_refused_not_silently_empty(root_client, telephony, params):
+    """Опечатка в фильтре — отказ, а не пустая выдача.
+
+    Пустой список неотличим от «звонков нет»: человек ищет пропавшие звонки в
+    данных, которых по такому фильтру и не было.
+    """
+    response = root_client.get(CALLS, params=params)
+    assert response.status_code == 422, f"{params}: {response.text}"
+
+
+def test_known_filter_values_still_work(root_client, telephony):
+    assert root_client.get(CALLS, params={"direction": "in"}).status_code == 200
+    assert root_client.get(CALLS, params={"outcome": "missed"}).status_code == 200
+
+
+# --- время события ---
+
+def test_a_call_from_the_year_9999_does_not_stick_on_top_of_the_feed(
+    root_client, telephony, client_record
+):
+    """Время события приходит от станции, и потолок у него обязан быть.
+
+    `9999-01-01` вставал первой строкой в карточке клиента и оставался там
+    навсегда: времени у звонка не правят, а удалять факт разговора ради
+    починки сортировки нечестно.
+    """
+    sent = send_event(telephony, {
+        "call_id": "far-future", "direction": "in", "from": "+380671234567",
+        "to": "0442000000", "started_at": "9999-01-01T00:00:00+00:00",
+        "outcome": "answered", "duration": 5,
+    })
+    assert sent.status_code == 422, sent.text
+    assert sent.json()["error"]["code"] == "started_at_in_future"
+
+    stored = root_client.get(f"{CALLS}?per_page=200").json()["items"]
+    assert all(c["external_id"] != "far-future" for c in stored)
+    notes = root_client.get(
+        f"{API}/clients/{client_record['id']}/notes?per_page=200"
+    ).json()["items"]
+    assert all(not n["happened_at"].startswith("9999") for n in notes)
+
+
+def test_a_station_clock_a_minute_ahead_does_not_lose_the_call(telephony):
+    """Часы станции нам не подчиняются: небольшой уход вперёд — не повод отказывать."""
+    ahead = (datetime.now(timezone.utc) + timedelta(minutes=1)).replace(microsecond=0)
+    sent = send_event(telephony, {
+        "call_id": "clock-skew", "direction": "in", "from": "+380671234567",
+        "to": "0442000000", "started_at": ahead.isoformat(), "outcome": "answered",
+    })
+    assert sent.status_code == 200, sent.text
+
+
+# --- типы полей вебхука ---
+
+def test_a_nested_object_instead_of_a_number_is_refused(root_client, telephony):
+    """`str(...)` над телом вебхука был согласием на что угодно.
+
+    `{"from": {"nested": "html"}}` ложился в номер репрезентацией словаря и
+    ехал дальше как настоящий номер: в карточку клиента, в текст записи ленты
+    («Incoming call from {'nested': 'html'}») и в заголовок задачи
+    «перезвонить». Ни одна проверка ниже такое не ловит — это уже строка.
+    """
+    sent = send_event(telephony, {
+        "call_id": "nested-from", "direction": "in", "from": {"nested": "html"},
+        "to": "0442000000", "started_at": "2026-08-05T09:50:00+00:00",
+        "outcome": "answered", "duration": 5,
+    })
+    assert sent.status_code == 422, sent.text
+    assert sent.json()["error"]["code"] == "bad_field_type"
+
+
+@pytest.mark.parametrize(
+    "call_id, broken",
+    [
+        ("half-written-number", {"from": {"nested": "html"}}),
+        ("half-written-duration", {"from": "+380671234567", "duration": 10**19}),
+    ],
+)
+def test_a_refused_event_does_not_leave_half_a_call(root_client, telephony, call_id, broken):
+    """Отказ на полпути не оставляет в журнале полузаполненный звонок.
+
+    Ошибку ловит `@app.exception_handler(DomainError)`, а он срабатывает
+    раньше, чем `get_db` увидит исключение: сессия закрывается обычным
+    `commit`, и всё записанное до отказа остаётся в базе. Событие с
+    длительностью 10^19 так оставляло звонок без длительности и без итога — а
+    повторить его станция уже не могла: ключ занят, и в журнале навсегда
+    висел обрубок разговора.
+    """
+    sent = send_event(telephony, {
+        "call_id": call_id, "direction": "in", "to": "0442000000",
+        "started_at": "2026-08-05T09:52:00+00:00", "outcome": "answered", **broken,
+    })
+    assert sent.status_code == 422, sent.text
+
+    stored = root_client.get(f"{CALLS}?per_page=200").json()["items"]
+    assert all(c["external_id"] != call_id for c in stored), "в журнале осталась половина звонка"
+
+
+def test_numbers_from_the_station_are_still_accepted(root_client, telephony, client_record):
+    """Станция вправе прислать идентификатор и номер числом — это не мусор."""
+    sent = send_event(telephony, {
+        "call_id": 770077, "direction": "in", "from": 380671234567,
+        "to": "0442000000", "started_at": "2026-08-05T09:55:00+00:00",
+        "outcome": "answered", "duration": 5,
+    })
+    assert sent.status_code == 200, sent.text
+    call = sent.json()["call"]
+    assert call["external_id"] == "770077"
+    assert call["from_number"] == "380671234567"
+    assert call["client_id"] == client_record["id"]
