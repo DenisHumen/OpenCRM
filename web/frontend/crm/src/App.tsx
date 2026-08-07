@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { Link, Navigate, Outlet, Route, Routes, useLocation } from "react-router-dom";
+import { Fragment, useEffect, useState, type ReactNode } from "react";
+import { Link, Navigate, Outlet, Route, Routes, useLocation, useParams } from "react-router-dom";
 
 import { CommandPalette } from "./components/CommandPalette";
 import { Icon } from "./components/Icon";
@@ -139,6 +139,28 @@ function ModuleRoute({ module }: { module: string }) {
   return <Outlet />;
 }
 
+/**
+ * Карточка записи, собираемая заново при смене номера в адресе.
+ *
+ * Переход с клиента А на клиента Б — это тот же маршрут, и React оставляет
+ * карточку смонтированной со всем её состоянием. Полсекунды до ответа сервера
+ * на экране висят имя, телефон и лента предыдущего клиента — то есть данные А
+ * под адресом Б.
+ *
+ * Хуже с полями, которые держат содержимое сами: у уже смонтированного поля
+ * `defaultValue` ничего не меняет, и название заявки А оставалось в поле над
+ * заявкой Б — а по потере фокуса уезжало на сервер как правка Б. Ровно так же
+ * вёл себя черновик названия доски в редакторе.
+ *
+ * Ключ по номеру рвёт эту связь в одном месте на все карточки: у другой записи
+ * другая карточка, а не та же с другими данными. Пока новая грузится, экран
+ * показывает вертушку — честный ответ вместо чужих данных.
+ */
+function ById({ children }: { children: ReactNode }) {
+  const { id } = useParams();
+  return <Fragment key={id}>{children}</Fragment>;
+}
+
 /** Маршруты, на которые не хватает прав.
  *
  * Ровно как `ModuleRoute` и ровно с тем же весом: это удобство, а не защита.
@@ -163,11 +185,11 @@ export default function App() {
               того, у кого право на него есть. */}
           <Route element={<PermRoute perm="clients.view" />}>
             <Route path="/clients" element={<Clients />} />
-            <Route path="/clients/:id" element={<ClientCard />} />
+            <Route path="/clients/:id" element={<ById><ClientCard /></ById>} />
           </Route>
           <Route element={<PermRoute perm="deals.view" />}>
             <Route path="/deals" element={<Deals />} />
-            <Route path="/deals/:id" element={<DealCard />} />
+            <Route path="/deals/:id" element={<ById><DealCard /></ById>} />
           </Route>
           <Route element={<ModuleRoute module="tasks" />}>
             <Route element={<PermRoute perm="tasks.view" />}>
@@ -180,30 +202,30 @@ export default function App() {
           <Route element={<ModuleRoute module="companies" />}>
             <Route element={<PermRoute perm="companies.view" />}>
               <Route path="/companies" element={<Companies />} />
-              <Route path="/companies/:id" element={<CompanyCard />} />
+              <Route path="/companies/:id" element={<ById><CompanyCard /></ById>} />
             </Route>
           </Route>
           <Route element={<ModuleRoute module="documents" />}>
             <Route element={<PermRoute perm="documents.view" />}>
               <Route path="/documents" element={<Documents />} />
-              <Route path="/documents/:id" element={<DocumentCard />} />
+              <Route path="/documents/:id" element={<ById><DocumentCard /></ById>} />
             </Route>
           </Route>
           <Route element={<ModuleRoute module="boards" />}>
             <Route element={<PermRoute perm="boards.view" />}>
               <Route path="/boards" element={<Boards />} />
-              <Route path="/boards/:id" element={<BoardEditor />} />
+              <Route path="/boards/:id" element={<ById><BoardEditor /></ById>} />
             </Route>
           </Route>
 
           <Route element={<ModuleRoute module="warehouse" />}>
             <Route element={<PermRoute perm="warehouse.view" />}>
               <Route path="/warehouse" element={<Warehouse />} />
-              <Route path="/warehouse/:id" element={<ProductCard />} />
+              <Route path="/warehouse/:id" element={<ById><ProductCard /></ById>} />
             </Route>
             <Route element={<ModuleRoute module="orders" />}>
               <Route path="/orders" element={<Orders />} />
-              <Route path="/orders/:id" element={<OrderCard />} />
+              <Route path="/orders/:id" element={<ById><OrderCard /></ById>} />
             </Route>
           </Route>
           <Route element={<ModuleRoute module="reports" />}>

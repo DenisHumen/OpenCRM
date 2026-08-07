@@ -6,6 +6,7 @@ import { EmptyState, ScreenLoading } from "../components/ui";
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
 import { useFailure } from "../lib/failure";
+import { useGuard } from "../lib/guard";
 import { formatDateTime, parseDate } from "../lib/format";
 
 /** Списки, которыми пользуются каждый день. Порядок — от срочного к общему. */
@@ -49,49 +50,62 @@ export function Tasks() {
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [title, setTitle] = useState("");
   const [due, setDue] = useState("");
+  const [attempt, setAttempt] = useState(0);
+  const guard = useGuard();
 
   const { failure, fail, clear } = useFailure();
 
-  const load = useCallback(async () => {
-    clear();
-    try {
-      const [list, summary] = await Promise.all([
-        api.get(`/tasks?scope=${scope}`),
-        api.get("/tasks/summary"),
-      ]);
-      setItems(list.items);
-      setCounts(summary);
-      // Счётчик в меню читает то же число из общего состояния — обновляем
-      // вместе со списком, иначе он отстаёт до следующего перехода.
-      void refreshTasks();
-    } catch (e) {
-      fail(e);
-    }
-  }, [scope, refreshTasks, fail, clear]);
+  // Повтор после отказа и обновление после правки идут одним путём: два разных
+  // способа перезагрузить один список расходятся в поведении с первой правкой.
+  const reload = useCallback(() => setAttempt((n) => n + 1), []);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    // Списки переключают быстрее, чем отвечает сервер: без счётчика ответ по
+    // «просроченным» ложился поверх «на неделю», и человек видел не тот
+    // список, на который нажал. Приём тот же, что в отчётах и палитре команд.
+    let current = true;
+    clear();
+    Promise.all([api.get(`/tasks?scope=${scope}`), api.get("/tasks/summary")])
+      .then(([list, summary]) => {
+        if (!current) return;
+        setItems(list.items);
+        setCounts(summary);
+        // Счётчик в меню читает то же число из общего состояния — обновляем
+        // вместе со списком, иначе он отстаёт до следующего перехода.
+        void refreshTasks();
+      })
+      .catch((e) => {
+        if (current) fail(e);
+      });
+    return () => {
+      current = false;
+    };
+  }, [scope, attempt, refreshTasks, fail, clear]);
 
-  if (!items) return <ScreenLoading error={failure} onRetry={() => void load()} />;
+  if (!items) return <ScreenLoading error={failure} onRetry={reload} />;
 
   const add = async () => {
     const text = title.trim();
-    if (!text) return;
+    // Напоминание заводят с клавиатуры и Enter нажимают дважды — от нетерпения
+    // и просто с руки. Без засова в списке появлялись два одинаковых, и
+    // выяснялось это только когда оба напоминали.
+    if (!text || !guard.take()) return;
     try {
       await api.post("/tasks", { title: text, due_at: toInstant(due) });
       setTitle("");
       setDue("");
-      void load();
+      reload();
     } catch (e) {
       toastError(e);
+    } finally {
+      guard.free();
     }
   };
 
   const toggle = async (task: any) => {
     try {
       await api.patch(`/tasks/${task.id}`, { is_done: !task.is_done });
-      void load();
+      reload();
     } catch (e) {
       toastError(e);
     }
@@ -100,7 +114,7 @@ export function Tasks() {
   const remove = async (task: any) => {
     try {
       await api.del(`/tasks/${task.id}`);
-      void load();
+      reload();
     } catch (e) {
       toastError(e);
     }
@@ -136,7 +150,11 @@ export function Tasks() {
           value={due}
           onChange={(e) => setDue(e.target.value)}
         />
-        <button className="btn btn-primary" onClick={() => void add()} disabled={!title.trim()}>
+        <button
+          className="btn btn-primary"
+          onClick={() => void add()}
+          disabled={guard.busy || !title.trim()}
+        >
           <Icon name="plus" stroke={2} />
           {t("add")}
         </button>
@@ -222,10 +240,13 @@ export function QuickTask({
   const { t, toastError } = useApp();
   const [title, setTitle] = useState("");
   const [due, setDue] = useState("");
+  const guard = useGuard();
 
   const add = async () => {
     const text = title.trim();
-    if (!text) return;
+    // Тот же засов, что в списке напоминаний: Enter здесь нажимают так же и с
+    // тем же результатом — два одинаковых напоминания по одной заявке.
+    if (!text || !guard.take()) return;
     try {
       await api.post("/tasks", {
         title: text,
@@ -238,6 +259,8 @@ export function QuickTask({
       onCreated?.();
     } catch (e) {
       toastError(e);
+    } finally {
+      guard.free();
     }
   };
 
@@ -258,7 +281,11 @@ export function QuickTask({
         value={due}
         onChange={(e) => setDue(e.target.value)}
       />
-      <button className="btn btn-secondary" onClick={() => void add()} disabled={!title.trim()}>
+      <button
+        className="btn btn-secondary"
+        onClick={() => void add()}
+        disabled={guard.busy || !title.trim()}
+      >
         {t("add")}
       </button>
     </div>

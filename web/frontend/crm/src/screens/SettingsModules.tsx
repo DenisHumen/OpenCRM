@@ -192,7 +192,16 @@ export function SettingsModules() {
                   </span>
                 )}
               </span>
-              <Toggle on={item.enabled} onToggle={() => undefined} />
+              {/* Строка целиком ловит нажатие мышью — так попасть проще, чем
+                  в переключатель 34×20. Но у самого переключателя обработчик
+                  свой и настоящий: `div` под Tab не попадает, и без него ни
+                  один блок нельзя было включить без мыши. */}
+              <Toggle
+                on={item.enabled}
+                label={t(LABEL[item.key] ?? "modules")}
+                disabled={locked}
+                onToggle={() => askThenSwitch(item)}
+              />
             </div>
           );
         })}

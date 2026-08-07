@@ -34,7 +34,7 @@ export function useSettings() {
  * Значения при этом общие: сохранение одно на всю группу, как и было.
  */
 export function SettingsLayout() {
-  const { t, refreshSettings, toastError } = useApp();
+  const { t, refreshSettings, refreshWorkspace, toastError } = useApp();
   const [values, setValues] = useState<Values | null>(null);
   const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -58,6 +58,12 @@ export function SettingsLayout() {
     try {
       setValues(await api.patch("/settings", { values }));
       await refreshSettings();
+      // Название заявок и валюта живут не в настройках сайта, а в рабочем
+      // пространстве: настройки читает только root, а подписи в меню и суммы
+      // на карточках видят все. Обновляем именно ПОСЛЕ сохранения — прежняя
+      // попытка стояла на изменении поля, то есть спрашивала сервер о том, что
+      // ему ещё не отправили, и в меню оставалось старое слово до перезагрузки.
+      await refreshWorkspace();
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     } catch (e) {
@@ -83,7 +89,13 @@ export function SettingsLayout() {
       style={{ display: "flex", alignItems: "flex-start", gap: 11, cursor: "pointer" }}
       onClick={() => patch({ [key]: values[key] === "1" ? "0" : "1" })}
     >
-      <Toggle on={values[key] === "1"} onToggle={() => undefined} />
+      {/* Обёртка расширяет область нажатия мышью на подпись; у самого
+          переключателя обработчик свой — иначе с клавиатуры он мёртв. */}
+      <Toggle
+        on={values[key] === "1"}
+        label={label}
+        onToggle={() => patch({ [key]: values[key] === "1" ? "0" : "1" })}
+      />
       <div style={{ marginTop: -2 }}>
         <div style={{ fontSize: 13, fontWeight: 500 }}>{label}</div>
         <div style={{ color: "var(--faint)", fontSize: 11.5, marginTop: 2, lineHeight: 1.5 }}>{hint}</div>
@@ -108,7 +120,7 @@ export function SettingsLayout() {
 }
 
 export function SettingsBrand() {
-  const { t, locale, refreshSettings, refreshWorkspace, toastError } = useApp();
+  const { t, locale, refreshSettings, toastError } = useApp();
   const { values, patch, input } = useSettings();
   const logoInput = useRef<HTMLInputElement>(null);
 
@@ -178,13 +190,7 @@ export function SettingsBrand() {
           <select
             className="input"
             value={values.deal_term ?? "deal"}
-            onChange={(e) => {
-              patch({ deal_term: e.target.value });
-              // Меню и экраны читают название из общего состояния — обновляем
-              // сразу после сохранения, иначе оно поменяется только после
-              // перезагрузки страницы.
-              setTimeout(() => void refreshWorkspace(), 0);
-            }}
+            onChange={(e) => patch({ deal_term: e.target.value })}
           >
             {DEAL_TERMS.map((name) => (
               <option key={name} value={name}>
@@ -456,7 +462,11 @@ export function SettingsMaintenance() {
       <div className="card" style={{ padding: "20px 22px", marginBottom: 20 }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, marginBottom: 4 }}>
           <div style={{ fontSize: 14, fontWeight: 600 }}>{t("closedMode")}</div>
-          <Toggle on={!!maintenance?.enabled} onToggle={() => { if (!busy) void toggle(!maintenance?.enabled); }} />
+          <Toggle
+            on={!!maintenance?.enabled}
+            label={t("closedMode")}
+            onToggle={() => { if (!busy) void toggle(!maintenance?.enabled); }}
+          />
         </div>
         <div style={{ color: "var(--faint)", fontSize: 12.5, marginBottom: 14, lineHeight: 1.5 }}>
           {t("closedModeSub")}

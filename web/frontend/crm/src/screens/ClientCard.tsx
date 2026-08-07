@@ -7,11 +7,12 @@ import { CallButton, CallsPanel } from "../components/CallsPanel";
 import { Icon } from "../components/Icon";
 import { NewBoardButton } from "../components/NewBoardButton";
 import { SourcePicker } from "../components/SourcePicker";
-import { Avatar, Chip, ConfirmModal, EmptyState, ScreenLoading } from "../components/ui";
+import { Avatar, Chip, ConfirmModal, EmptyState, LoadFailed, ScreenLoading } from "../components/ui";
 import { api, ApiError } from "../lib/api";
 import { dropTarget } from "../lib/dnd";
 import { useApp } from "../lib/app";
 import { useFailure } from "../lib/failure";
+import { useGuard } from "../lib/guard";
 import type { TranslationKey } from "../lib/i18n";
 import {
   fileExt,
@@ -24,6 +25,7 @@ import {
 } from "../lib/format";
 import { type Gated, moduleOn, shown } from "../lib/modules";
 import { can } from "../lib/permissions";
+import { useReference } from "../lib/reference";
 import { term } from "../lib/terms";
 import { MailCompose, type MailAccount } from "./Mail";
 
@@ -87,7 +89,6 @@ export function ClientCard() {
   const [client, setClient] = useState<any>(null);
   const [notes, setNotes] = useState<any[]>([]);
   const [files, setFiles] = useState<any[]>([]);
-  const [boards, setBoards] = useState<any[]>([]);
   const [deals, setDeals] = useState<any[]>([]);
   const [tab, setTab] = useState<TabKey>("history");
   const [draft, setDraft] = useState("");
@@ -95,10 +96,22 @@ export function ClientCard() {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [composing, setComposing] = useState(false);
-  const [mailAccounts, setMailAccounts] = useState<MailAccount[]>([]);
+  const guard = useGuard();
   const fileInput = useRef<HTMLInputElement>(null);
   const hasMail = moduleOn(modules, "mail") && can(user, "mail.create");
   const hasBoards = moduleOn(modules, "boards") && can(user, "boards.view");
+
+  // Доски — отдельным запросом и вне общего try. Пока они грузились вместе с
+  // карточкой, выключенный блок досок отвечал 403 на середине загрузки, и
+  // карточка клиента целиком уезжала обратно в список: выключение одного блока
+  // закрывало соседний, несущий раздел.
+  //
+  // Отказ здесь больше не сводится к пустому списку: «Досок пока нет» — это
+  // ответ, за которым идут заводить новую, и заводили бы вторую поверх первой.
+  const boards = useReference<any>(hasBoards ? `/boards?client_id=${id}` : null);
+  // Список ящиков нужен только выбору отправителя и доступен только root.
+  // Не ответило — форма всё равно работает: сервер возьмёт первый активный.
+  const mailAccounts = useReference<MailAccount>(hasMail ? "/mail/accounts" : null);
 
   const { failure, fail, clear } = useFailure();
 
@@ -126,46 +139,26 @@ export function ClientCard() {
     }
   }, [id, toastError, navigate, fail, clear]);
 
-  // Доски — отдельным запросом и вне общего try. Пока они грузились вместе с
-  // карточкой, выключенный блок досок отвечал 403 на середине загрузки, и
-  // карточка клиента целиком уезжала обратно в список: выключение одного блока
-  // закрывало соседний, несущий раздел.
-  useEffect(() => {
-    if (!hasBoards) {
-      setBoards([]);
-      return;
-    }
-    api
-      .get(`/boards?client_id=${id}`)
-      .then((data) => setBoards(data.items))
-      .catch(() => setBoards([]));
-  }, [id, hasBoards]);
-
   useEffect(() => {
     void load();
   }, [load]);
-
-  // Список ящиков нужен только выбору отправителя и доступен только root.
-  // Не ответило — форма всё равно работает: сервер возьмёт первый активный ящик.
-  useEffect(() => {
-    if (!hasMail) return;
-    api
-      .get("/mail/accounts")
-      .then((data) => setMailAccounts(data.items))
-      .catch(() => setMailAccounts([]));
-  }, [hasMail]);
 
   if (!client) return <ScreenLoading error={failure} onRetry={() => void load()} />;
 
   const addNote = async () => {
     const body = draft.trim();
-    if (!body) return;
+    // Enter в этом поле нажимают дважды — от нетерпения и просто с руки. Без
+    // засова в ленте клиента появлялись две одинаковые записи, и убирать
+    // вторую приходилось вручную.
+    if (!body || !guard.take()) return;
     try {
       const note = await api.post(`/clients/${id}/notes`, { kind: draftKind, body });
       setNotes((prev) => [note, ...prev]);
       setDraft("");
     } catch (e) {
       toastError(e);
+    } finally {
+      guard.free();
     }
   };
 
@@ -215,7 +208,7 @@ export function ClientCard() {
     // попал записью, здесь — длительность, итог и запись разговора.
     { module: "telephony", key: "calls", label: t("calls") },
     { key: "files", label: t("files"), count: files.length },
-    { module: "boards", key: "boards", label: t("boards"), count: boards.length },
+    { module: "boards", key: "boards", label: t("boards"), count: boards.items?.length ?? 0 },
     // Заявки клиента: за год их бывает пять, и «что мы для него делали»
     // должно быть вопросом к системе, а не к памяти.
     {
@@ -265,7 +258,12 @@ export function ClientCard() {
           {/* Кнопка уходит вместе с блоком: предлагать создать доску там, где
               раздела досок нет, — обещание, ведущее в отказ сервера. */}
           {hasBoards && <NewBoardButton clientId={client.id} />}
-          <button className="btn-icon" onClick={() => setMenuOpen((open) => !open)}>
+          <button
+            className="btn-icon"
+            aria-label={t("actions")}
+            aria-expanded={menuOpen}
+            onClick={() => setMenuOpen((open) => !open)}
+          >
             <Icon name="dots" />
           </button>
           {menuOpen && (
@@ -347,7 +345,7 @@ export function ClientCard() {
                   </button>
                 ))}
               </div>
-              <button className="btn btn-primary" style={{ height: 28, padding: "0 12px", fontSize: 12.5 }} onClick={() => void addNote()}>
+              <button className="btn btn-primary" style={{ height: 28, padding: "0 12px", fontSize: 12.5 }} disabled={guard.busy} onClick={() => void addNote()}>
                 {t("add")}
               </button>
             </div>
@@ -416,12 +414,17 @@ export function ClientCard() {
                     {fileSize(file.size_bytes)} · {formatDate(file.created_at, locale)}
                   </div>
                 </div>
-                <a href={file.download_url} style={{ color: "var(--muted)", display: "flex" }}>
+                <a
+                  href={file.download_url}
+                  aria-label={t("download")}
+                  style={{ color: "var(--muted)", display: "flex" }}
+                >
                   <Icon name="download" />
                 </a>
                 <button
                   className="text-link"
                   style={{ display: "flex", color: "var(--faint)" }}
+                  aria-label={t("delete")}
                   onClick={async () => {
                     try {
                       await api.del(`/clients/${id}/files/${file.id}`);
@@ -442,13 +445,19 @@ export function ClientCard() {
 
       {activeTab === "boards" && (
         <div className="board-grid">
-          {boards.map((board) => (
+          {(boards.items ?? []).map((board) => (
             <BoardCard key={board.id} board={board} />
           ))}
-          {boards.length === 0 && (
-            <div className="card" style={{ gridColumn: "1 / -1" }}>
-              <EmptyState title={t("noBoardsYet")} />
+          {boards.failure !== null ? (
+            <div className="card card-pad" style={{ gridColumn: "1 / -1" }}>
+              <LoadFailed error={boards.failure} onRetry={boards.reload} />
             </div>
+          ) : (
+            boards.items?.length === 0 && (
+              <div className="card" style={{ gridColumn: "1 / -1" }}>
+                <EmptyState title={t("noBoardsYet")} />
+              </div>
+            )
           )}
         </div>
       )}
@@ -481,7 +490,7 @@ export function ClientCard() {
 
       {composing && (
         <MailCompose
-          accounts={mailAccounts}
+          accounts={mailAccounts.items ?? []}
           to={client.email}
           clientId={client.id}
           onClose={() => setComposing(false)}

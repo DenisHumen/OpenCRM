@@ -4,6 +4,7 @@ name: opencrm
 # (переопределяется переменной OPENCRM_HOME):
 #
 #   ~/opencrm/data/         SQLite-база
+#   ~/opencrm/mysql/        каталог данных MySQL (только при установке на MySQL)
 #   ~/opencrm/storage/      медиа досок, файлы клиентов, брендинг, аватары
 #   ~/opencrm/letsencrypt/  сертификаты и приватные ключи
 #   ~/opencrm/acme/         webroot для http-01-проверки Let's Encrypt
@@ -40,7 +41,14 @@ services:
       - path: ../config/.env
         required: false
     environment:
-      OPENCRM_DB_URL: sqlite:////app/data/opencrm.db
+      # OPENCRM_DB_URL здесь НЕ задаётся, и это осознанно. `environment`
+      # перекрывает `env_file`, поэтому строка тут делала бы выбор базы в
+      # config/.env бессмысленным: `./opencrm.sh install` пишет туда либо
+      # SQLite, либо MySQL с паролем, и перебить это compose'ом значит молча
+      # вернуть всех на SQLite. Старые установки без этой строки не ломаются:
+      # относительный `sqlite:///data/opencrm.db` из шаблона считается от
+      # рабочего каталога образа (/app) и указывает на тот же файл, что и
+      # прежний абсолютный URL.
       OPENCRM_STORAGE_DIR: /app/storage
       # За приложением стоит один nginx: реальный IP клиента — последний элемент
       # X-Forwarded-For, добавленный им. Без этого лимит подбора PIN обходится
@@ -60,6 +68,22 @@ services:
       - ${OPENCRM_HOME:-${HOME}/opencrm}/data:/app/data
       - ${OPENCRM_HOME:-${HOME}/opencrm}/storage:/app/storage
     expose: ["8000"]
+    # На SQLite службы `db` в стеке нет вовсе (она под профилем), поэтому
+    # `required: false`: без него compose отказался бы поднимать приложение,
+    # сославшись на невыполнимую зависимость. С ним условие работает ровно
+    # тогда, когда база в стеке есть, — а тогда ждать её обязательно:
+    # `alembic upgrade head` из entrypoint.sh стартует первым делом и без
+    # живой базы падает, унося контейнер в цикл перезапуска.
+    #
+    # Цена `required: false` проверена живьём и принята сознательно: если база
+    # не поднимается совсем (испорченный каталог данных), compose не ждёт её до
+    # упора, а пишет предупреждение и стартует приложение. Сайт при этом всё
+    # равно не работает, но причина видна в логе приложения, а не в вечном
+    # «Waiting» без объяснений.
+    depends_on:
+      db:
+        condition: service_healthy
+        required: false
     restart: unless-stopped
     logging: *logging
     healthcheck:
@@ -76,6 +100,64 @@ services:
       interval: 10s
       timeout: 5s
       retries: 3
+
+  # База, когда её выбрали при установке.
+  #
+  # Под профилем: на SQLite служба не описана «выключенной», её в стеке НЕТ.
+  # Это не украшение — иначе `compose up -d` тянул бы образ MySQL, поднимал
+  # лишний сервер и съедал под него полгигабайта памяти на машине, где база
+  # лежит одним файлом. Профиль включается строкой COMPOSE_PROFILES=mysql в
+  # docker/.env, которую пишет `./opencrm.sh install`; compose читает её сам,
+  # поэтому все вызовы вида `compose up`, `compose ps`, `compose exec` видят
+  # службу без единого дополнительного флага.
+  db:
+    image: mysql:8.0
+    profiles: ["mysql"]
+    # utf8mb4, а не utf8. В MySQL «utf8» — это три байта на символ, и эмодзи в
+    # заметке клиента обрывают вставку на полуслове. Кодировка задаётся сервером,
+    # а не только клиентом: база создаётся при первом старте контейнера, и
+    # созданная в latin1 останется такой навсегда.
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+    environment:
+      # Пароли генерирует `./opencrm.sh install` и кладёт сюда через docker/.env
+      # (файл с правами 600). Пустое значение здесь означает «профиль включили
+      # руками, а паролей не завели» — образ MySQL в этом случае откажется
+      # стартовать с внятным сообщением, и это лучше, чем база без пароля.
+      MYSQL_ROOT_PASSWORD: ${OPENCRM_DB_ROOT_PASSWORD:-}
+      MYSQL_DATABASE: ${OPENCRM_DB_NAME:-opencrm}
+      MYSQL_USER: ${OPENCRM_DB_USER:-opencrm}
+      MYSQL_PASSWORD: ${OPENCRM_DB_PASSWORD:-}
+    volumes:
+      # Обычный каталог, а не именованный том, — по той же причине, что и всё
+      # остальное состояние: том лежит в /var/lib/docker, его не видно обычными
+      # средствами и он уезжает вместе с `docker system prune --volumes`. База,
+      # снесённая уборкой мусора, — не та цена за экономию одной строки.
+      #
+      # Каталог отдаётся контейнеру как есть: mysqld стартует от root, сам
+      # выставляет владельца и уходит под своего пользователя. Поэтому здесь
+      # НЕ повторяется `user:` из службы app — с чужим UID сервер не поднимется.
+      - ${OPENCRM_HOME:-${HOME}/opencrm}/mysql:/var/lib/mysql
+    # Проверка идёт по TCP, и это главное в ней.
+    #
+    # `mysqladmin ping` без --protocol ходит через unix-сокет, а сокет отвечает
+    # РАНЬШЕ, чем сервер начинает слушать порт: при первом запуске образ поднимает
+    # временный сервер с выключенной сетью, чтобы создать базу и пользователя.
+    # Проверено живьём: с проверкой по сокету контейнер объявлялся healthy на
+    # седьмой секунде, а TCP-подключение в этот момент ещё отвергалось. Приложение
+    # по такому сигналу стартует раньше базы и падает на `alembic upgrade head`.
+    healthcheck:
+      test: ["CMD-SHELL", "MYSQL_PWD=\"$$MYSQL_ROOT_PASSWORD\" mysqladmin ping -h 127.0.0.1 -P 3306 --protocol=TCP --silent"]
+      # Первый запуск создаёт каталог данных с нуля: на медленном диске VPS это
+      # минуты. В окне запуска неудачи не считаются — иначе стек объявят
+      # сломанным ровно тогда, когда он просто ещё не готов.
+      start_period: 180s
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    logging: *logging
 
   nginx:
     image: nginx:alpine

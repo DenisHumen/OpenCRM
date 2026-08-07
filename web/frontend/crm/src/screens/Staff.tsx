@@ -1,17 +1,25 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { Icon } from "../components/Icon";
-import { Avatar, Chip, ConfirmModal, EmptyState, Modal, ScreenLoading } from "../components/ui";
+import {
+  Avatar,
+  Chip,
+  ConfirmModal,
+  EmptyState,
+  LoadFailed,
+  Modal,
+  ScreenLoading,
+} from "../components/ui";
 import { api, type Role } from "../lib/api";
 import { useApp } from "../lib/app";
 import { useFailure } from "../lib/failure";
 import { formatDateTime, initials } from "../lib/format";
 import { can } from "../lib/permissions";
+import { useReference } from "../lib/reference";
 
 export function Staff() {
   const { t, locale, user, toast, toastError } = useApp();
   const [items, setItems] = useState<any[] | null>(null);
-  const [roles, setRoles] = useState<Role[]>([]);
   const [tempPassword, setTempPassword] = useState<{ name: string; password: string } | null>(null);
   const [confirmDisable, setConfirmDisable] = useState<number | null>(null);
   const [confirmRole, setConfirmRole] = useState<{ id: number; name: string; role: "root" | "manager" } | null>(null);
@@ -27,6 +35,13 @@ export function Staff() {
   // кнопок, включая «Удалить навсегда», и каждая отвечала отказом.
   const managesStaff = can(user, "staff.manage");
 
+  // Список должностей. `null` тут не мелочь, а защита от порчи данных: пока
+  // отказ сводился к пустому массиву, выпадающий список рисовался из одного
+  // пункта «Без роли», выглядел исправным — и выбор этого единственного пункта
+  // СНИМАЛ должность по-настоящему. Не знаем набора — не показываем то, чем
+  // назначают: показываем должность как есть и даём повторить загрузку.
+  const roles = useReference<Role>(managesRoles ? "/roles" : null);
+
   const { failure, fail, clear } = useFailure();
 
   const load = useCallback(() => {
@@ -40,14 +55,6 @@ export function Staff() {
     const timer = window.setInterval(load, 60_000);
     return () => window.clearInterval(timer);
   }, [load]);
-
-  useEffect(() => {
-    if (!managesRoles) return;
-    api
-      .get<{ items: Role[] }>("/roles")
-      .then((d) => setRoles(d.items))
-      .catch(() => undefined);
-  }, [managesRoles]);
 
   if (!items) return <ScreenLoading error={failure} onRetry={load} />;
 
@@ -149,6 +156,11 @@ export function Staff() {
       <h2 className="section-title" style={{ marginBottom: 14 }}>
         {t("active")}
       </h2>
+      {/* Строка стоит над списком, а не в каждой строке сотрудника: беда одна
+          на весь экран, и повторять её двадцать раз значит спрятать. */}
+      {roles.failure !== null && (
+        <LoadFailed error={roles.failure} onRetry={roles.reload} />
+      )}
       <div className="list-card" style={{ marginBottom: 32 }}>
         {active.map((person) => {
           const isSelf = person.id === user?.id;
@@ -179,7 +191,7 @@ export function Staff() {
                   себе показываем название, а не список. */}
               {isRoot ? (
                 <Chip variant="brand" title={t("rootHasEverything")}>{t("root")}</Chip>
-              ) : managesRoles && !isSelf ? (
+              ) : managesRoles && !isSelf && roles.items ? (
                 <select
                   className="input input-sm"
                   style={{ width: 168, flexShrink: 0 }}
@@ -190,7 +202,7 @@ export function Staff() {
                   }
                 >
                   <option value="">{t("noRole")}</option>
-                  {roles.map((role) => (
+                  {roles.items.map((role) => (
                     <option key={role.id} value={role.id}>
                       {role.name}
                     </option>

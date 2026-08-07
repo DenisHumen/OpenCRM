@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useLayoutEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 
 import { Icon } from "../components/Icon";
-import { Avatar, EmptyState, Modal, ScreenLoading } from "../components/ui";
+import { Avatar, EmptyState, LoadFailed, Modal, ScreenLoading } from "../components/ui";
 import { api, ApiError } from "../lib/api";
 import { useApp } from "../lib/app";
 import { useFailure } from "../lib/failure";
+import { useGuard } from "../lib/guard";
 import { formatDate, formatMoney, initials } from "../lib/format";
+import { useReference } from "../lib/reference";
 import { term } from "../lib/terms";
 
 /** Ширина, ниже которой доска перестаёт быть доской.
@@ -98,18 +100,19 @@ type Column = {
 export function Deals() {
   const { t, locale, workspace, toastError } = useApp();
   const navigate = useNavigate();
+  const [params, setParams] = useSearchParams();
   const [columns, setColumns] = useState<Column[] | null>(null);
-  const [clients, setClients] = useState<any[]>([]);
+  // Незакрытые заявки — числом с сервера, а не сложением карточек. Подробности
+  // у запроса ниже.
+  const [openTotal, setOpenTotal] = useState(0);
   const [dragId, setDragId] = useState<number | null>(null);
   const [overStage, setOverStage] = useState<string | null>(null);
-  const [people, setPeople] = useState<any[]>([]);
   const [creating, setCreating] = useState(false);
+  const guard = useGuard();
   // Элемент, по ширине которого выбирается режим. Ref через состояние, а не
   // useRef: наблюдатель должен подключиться в тот момент, когда узел появился.
   const [frame, setFrame] = useState<HTMLDivElement | null>(null);
   const narrow = useNarrowBoard(frame);
-  // Фильтр по этапу в узком режиме. "all" — показать все этапы подряд.
-  const [stageFilter, setStageFilter] = useState("all");
   // Валюта одна на систему и приходит вместе с доской: настройки читает
   // только root, а суммы видят все.
   const [currency, setCurrency] = useState("USD");
@@ -121,14 +124,31 @@ export function Deals() {
     description: "",
   });
 
+  // Справочники окна «новая заявка». Через общий крючок, а не своим `catch`:
+  // пустой список клиентов означал бы «клиентов не завели» и подсовывал бы
+  // подсказку «сначала заведите клиента» ровно там, где их двести, а не
+  // ответил сервер.
+  const clients = useReference<any>("/clients?per_page=200");
+  const people = useReference<any>("/people");
+
   const { failure, fail, clear } = useFailure();
 
   const load = useCallback(async () => {
     clear();
     try {
-      const board = await api.get("/deals/board");
+      const [board, open] = await Promise.all([
+        api.get("/deals/board"),
+        // «В работе» считает сервер тем же отбором, что и воронка: закрытые
+        // этапы в счёт не идут (`include_closed=false`). Складывать карточки
+        // на экране нельзя дважды: колонка приходит с пределом в 200, а
+        // выигранные и проигранные к работе не относятся вовсе. Ошибка была
+        // тихая — число есть, оно правдоподобное, и разойтись с ним можно
+        // только вручную пересчитав.
+        api.get("/deals?include_closed=false&per_page=1"),
+      ]);
       setColumns(board.columns);
       setCurrency(board.currency);
+      setOpenTotal(open.total);
     } catch (e) {
       fail(e);
     }
@@ -136,13 +156,26 @@ export function Deals() {
 
   useEffect(() => {
     void load();
-    api.get("/clients?per_page=200").then((d) => setClients(d.items)).catch(() => undefined);
-    api.get("/people").then((d) => setPeople(d.items)).catch(() => undefined);
   }, [load]);
 
   if (!columns) return <ScreenLoading error={failure} onRetry={() => void load()} />;
 
-  const total = columns.reduce((sum, c) => sum + c.deals.length, 0);
+  // Этап из адреса: по ссылке с дашборда и из отчёта приходят в конкретный
+  // столбец воронки, а не «куда-то на доску». Экран этих параметров не читал
+  // вовсе, и обе ссылки открывали доску целиком — то есть молча делали не то,
+  // что обещали.
+  //
+  // Этап мог с тех пор исчезнуть из воронки: тогда показываем всё, а не пустую
+  // доску — пустая читается как «заявок нет», а их отобрали не тем ключом.
+  const wanted = params.get("stage") ?? "all";
+  const stageFilter = columns.some((c) => c.key === wanted) ? wanted : "all";
+  const setStageFilter = (key: string) => {
+    if (key === "all") params.delete("stage");
+    else params.set("stage", key);
+    setParams(params, { replace: true });
+  };
+
+  const anyDeals = columns.some((c) => c.deals.length > 0);
 
   // Смена этапа — одна на оба режима: на широком экране её вызывает
   // перетаскивание, на узком — выбор из списка. Сервер и откат при ошибке
@@ -185,7 +218,10 @@ export function Deals() {
   };
 
   const create = async () => {
-    if (!draft.title.trim() || !draft.client_id) return;
+    // Кнопка не отвечает мгновенно — сервер заводит запись и отдаёт номер. Без
+    // засова второе нажатие по «неответившей» кнопке заводило вторую заявку, и
+    // человек попадал в одну из двух, не зная о существовании другой.
+    if (!draft.title.trim() || !draft.client_id || !guard.take()) return;
     try {
       const deal = await api.post("/deals", {
         title: draft.title.trim(),
@@ -199,6 +235,9 @@ export function Deals() {
       navigate(`/deals/${deal.id}`);
     } catch (e) {
       toastError(e);
+      // Засов снимаем только на отказе: при успехе экран уже уезжает в
+      // карточку, и трогать состояние закрывающегося окна незачем.
+      guard.free();
     }
   };
 
@@ -266,7 +305,7 @@ export function Deals() {
       <div className="page-head">
         <div>
           <h1 className="page-title">{term(workspace.deal_term, locale, "many")}</h1>
-          <div className="page-sub">{t("dealsSub", { total })}</div>
+          <div className="page-sub">{t("dealsSub", { total: openTotal })}</div>
         </div>
         <button className="btn btn-primary" onClick={() => setCreating(true)}>
           <Icon name="plus" stroke={2} />
@@ -274,7 +313,7 @@ export function Deals() {
         </button>
       </div>
 
-      {total === 0 ? (
+      {!anyDeals ? (
         <EmptyState
           title={term(workspace.deal_term, locale, "none")}
           sub={term(workspace.deal_term, locale, "noneHint")}
@@ -348,8 +387,25 @@ export function Deals() {
               </div>
             </>
           ) : (
-            <div className="kanban">
-              {columns.map((column) => (
+            <>
+              {/* На широком экране фильтра нет — доску смотрят целиком. Но
+                  пришедшего по ссылке с дашборда надо и вернуть обратно ко
+                  всем этапам, иначе отобранная доска выглядит как поломка. */}
+              {stageFilter !== "all" && (
+                <div className="stage-filter">
+                  <button className="filter-chip" onClick={() => setStageFilter("all")}>
+                    {t("allStages")}
+                  </button>
+                  <span className="filter-chip active">
+                    {columns.find((c) => c.key === stageFilter)?.name}
+                  </span>
+                </div>
+              )}
+              <div className="kanban">
+              {(stageFilter === "all"
+                ? columns
+                : columns.filter((c) => c.key === stageFilter)
+              ).map((column) => (
                 <div
                   key={column.key}
                   className={
@@ -396,7 +452,8 @@ export function Deals() {
                   </div>
                 </div>
               ))}
-            </div>
+              </div>
+            </>
           )}
         </div>
       )}
@@ -421,13 +478,21 @@ export function Deals() {
                 onChange={(e) => setDraft({ ...draft, client_id: e.target.value })}
               >
                 <option value="">—</option>
-                {clients.map((c) => (
+                {(clients.items ?? []).map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.name}
                   </option>
                 ))}
               </select>
-              {clients.length === 0 && <div className="field-desc">{t("noClientsForDeal")}</div>}
+              {/* «Заведите клиента» — только когда клиентов действительно нет.
+                  Отказ сервера говорит о себе сам и предлагает повторить. */}
+              {clients.failure !== null ? (
+                <LoadFailed error={clients.failure} onRetry={clients.reload} />
+              ) : (
+                clients.items?.length === 0 && (
+                  <div className="field-desc">{t("noClientsForDeal")}</div>
+                )
+              )}
             </div>
             {/* Ответственный и срок — прямо при заведении. Проставлять их потом
                 по одной сделке никто не будет, и доска зарастает ничейными. */}
@@ -439,12 +504,17 @@ export function Deals() {
                 onChange={(e) => setDraft({ ...draft, manager_id: e.target.value })}
               >
                 <option value="">{t("nobody")}</option>
-                {people.map((p) => (
+                {(people.items ?? []).map((p) => (
                   <option key={p.id} value={p.id}>
                     {p.name}
                   </option>
                 ))}
               </select>
+              {/* Список сотрудников не приехал — заявка заведётся ничейной и
+                  никто об этом не узнает. Говорим и даём повторить. */}
+              {people.failure !== null && (
+                <LoadFailed error={people.failure} onRetry={people.reload} />
+              )}
             </div>
             <div className="field">
               <label className="label">{t("dueDate")}</label>
@@ -469,7 +539,7 @@ export function Deals() {
           <button
             className="btn btn-primary"
             style={{ width: "100%" }}
-            disabled={!draft.title.trim() || !draft.client_id}
+            disabled={guard.busy || !draft.title.trim() || !draft.client_id}
             onClick={() => void create()}
           >
             {t("create")}

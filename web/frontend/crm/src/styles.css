@@ -205,7 +205,10 @@ button { font-family: var(--sans); }
    зависит — доска прокручивается внутри себя, — поэтому переключение не может
    сдвинуть то, по чему оно принимается. */
 .deals-frame { min-width: 0; }
-.stage-filter { margin-bottom: 12px; }
+/* Ряд отбора по этапу. На узком экране это выбор из списка во всю ширину, на
+   широком — пара чипов, которая появляется, только когда этап пришёл ссылкой с
+   дашборда или из отчёта. */
+.stage-filter { margin-bottom: 12px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .stage-filter .input { width: 100%; }
 .deal-list { display: flex; flex-direction: column; gap: 18px; }
 .deal-group { display: flex; flex-direction: column; gap: 8px; }
@@ -572,8 +575,11 @@ button { font-family: var(--sans); }
 .lang-chip { height: 30px; padding: 0 14px; border-radius: 8px; font-size: 12px; }
 
 /* Переключатель */
-.toggle-track { width: 34px; height: 20px; border-radius: 10px; padding: 2px; transition: background 150ms; background: var(--border); cursor: pointer; flex-shrink: 0; }
+/* Переключатель — настоящая кнопка (см. Toggle в components/ui.tsx), поэтому
+   гасим рамку и поля от браузера; display:block держит бегунок на месте. */
+.toggle-track { width: 34px; height: 20px; border-radius: 10px; padding: 2px; transition: background 150ms; background: var(--border); cursor: pointer; flex-shrink: 0; border: none; display: block; }
 .toggle-track.on { background: var(--success); }
+.toggle-track:disabled { cursor: default; }
 .toggle-knob { width: 16px; height: 16px; border-radius: 50%; background: var(--btn-bg); transition: transform 150ms; }
 .toggle-track.on .toggle-knob { transform: translateX(14px); }
 
@@ -741,6 +747,17 @@ button { font-family: var(--sans); }
 .toast { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; font-size: 13px; color: var(--text); display: flex; gap: 8px; align-items: center; animation: toast-in 200ms ease-out; }
 .toast.error { border-color: rgba(229, 105, 94, 0.5); }
 @keyframes toast-in { from { opacity: 0; transform: translateY(8px); } }
+
+/* Строка «не загрузилось» внутри карточки. Не по центру и не на пол-экрана,
+   в отличие от .screen-loading: врезка — сосед среди других, и её беда не
+   должна выглядеть крупнее того, рядом с чем она стоит. */
+.load-failed {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin-top: 10px; padding: 9px 11px; border-radius: 8px;
+  background: var(--surface-2); color: var(--muted); font-size: 12.5px;
+  border: 1px solid rgba(229, 105, 94, 0.35);
+}
+.load-failed-text { flex: 1; min-width: 120px; }
 
 .empty-state { padding: 44px 24px; text-align: center; }
 .empty-title { color: var(--muted); font-size: 14px; margin-bottom: 4px; }

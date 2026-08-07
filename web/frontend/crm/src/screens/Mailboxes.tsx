@@ -171,10 +171,18 @@ export function Mailboxes() {
                 <Icon name="refresh" size={13} />
                 {t("syncNow")}
               </button>
-              <button className="btn-icon" onClick={() => setDraft({ ...account, password: "" })}>
+              <button
+                className="btn-icon"
+                aria-label={t("edit")}
+                onClick={() => setDraft({ ...account, password: "" })}
+              >
                 <Icon name="note" size={14} />
               </button>
-              <button className="btn-icon" onClick={() => setConfirmDelete(account)}>
+              <button
+                className="btn-icon"
+                aria-label={t("delete")}
+                onClick={() => setConfirmDelete(account)}
+              >
                 <Icon name="trash" size={14} />
               </button>
             </div>

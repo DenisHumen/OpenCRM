@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
 import { Icon } from "../components/Icon";
@@ -58,29 +58,39 @@ export function Warehouse() {
   // Остаток одного склада вместо суммы по всем — «а на точке-то оно есть?».
   const [place, setPlace] = useState<number | null>(null);
 
-  const { failure, fail, clear } = useFailure();
+  const [attempt, setAttempt] = useState(0);
 
-  const load = useCallback(
-    (q: string, low: boolean, where: number | null) => {
-      clear();
-      api
-        .get(
-          `/warehouse/products?search=${encodeURIComponent(q)}&low_only=${low}&per_page=200` +
-            (where ? `&warehouse_id=${where}` : ""),
-        )
-        .then(setData)
-        .catch(fail);
-    },
-    [fail, clear],
-  );
+  const { failure, fail, clear } = useFailure();
 
   const search = useDebounced(query);
 
-  useEffect(() => {
-    load(search, lowOnly, place);
-  }, [search, lowOnly, place, load]);
+  const path =
+    `/warehouse/products?search=${encodeURIComponent(search)}&low_only=${lowOnly}&per_page=200` +
+    (place ? `&warehouse_id=${place}` : "");
 
-  if (!data) return <ScreenLoading error={failure} onRetry={() => load(query, lowOnly, place)} />;
+  useEffect(() => {
+    // Склад и «только мало» переключают быстрее, чем отвечает сервер: без
+    // счётчика остаток по прошлому складу ложился поверх текущего — и это
+    // худший из возможных обманов, потому что число правдоподобное. Приём тот
+    // же, что в отчётах и палитре команд.
+    let current = true;
+    clear();
+    api
+      .get(path)
+      .then((found) => {
+        if (current) setData(found);
+      })
+      .catch((e) => {
+        if (current) fail(e);
+      });
+    return () => {
+      current = false;
+    };
+  }, [path, attempt, fail, clear]);
+
+  if (!data) {
+    return <ScreenLoading error={failure} onRetry={() => setAttempt((n) => n + 1)} />;
+  }
 
   const currency = data.currency || workspace.currency;
 

@@ -10,6 +10,11 @@
      грузить с сайта, сейчас недоступно по определению. Стили и скрипт — только
      встроенные, страница обязана открыться одним файлом.
 
+     Свой же сайт спрашивать можно и нужно: /healthz говорит, что приложение
+     поднялось, а /branding/update-state.json — на каком шаге обновление. Оба
+     адреса отдаёт nginx, который сейчас как раз и показывает эту страницу;
+     оба необязательны — не ответили, и страница просто ждёт дальше.
+
      Перезагрузка раз в 15 секунд возвращает посетителя на сайт сама, как только
      приложение поднялось.
 
@@ -61,6 +66,32 @@
   }
   p { color: var(--muted); font-size: 14.5px; }
   .foot { color: var(--faint); font-size: 12.5px; margin-top: 40px; }
+
+  /* Ход обновления. Список рисуется целиком и один раз, а шаг к шагу меняются
+     только пометки: перерисовка на каждый опрос двигала бы всё, что ниже, —
+     то есть поле змейки, прямо под рукой у играющего. */
+  .progress[hidden] { display: none; }
+  .progress { max-width: 320px; margin: 26px auto 0; text-align: left; }
+  .progress ol { list-style: none; }
+  .progress li {
+    display: flex; gap: 10px; align-items: baseline;
+    padding: 4px 0; font-size: 13px; color: var(--faint);
+  }
+  .progress .mark { flex: none; width: 14px; text-align: center; }
+  .progress li.done { color: var(--muted); }
+  .progress li.done .mark { color: var(--good); }
+  .progress li.now { color: var(--text); }
+  .progress li.now .mark { color: var(--accent); animation: pulse 1.8s ease-in-out infinite; }
+  .progress li.bad { color: var(--text); }
+  .progress li.bad .mark { color: var(--accent); }
+  /* Причина приезжает с сервера как есть — в ней бывают и переводы строк, и
+     длинные пути без пробелов. Оба ломали бы вёрстку на телефоне. */
+  .why {
+    margin-top: 10px; padding: 8px 10px; font-size: 12px; color: var(--muted);
+    background: var(--surface); border: 1px solid var(--line); border-radius: 8px;
+    white-space: pre-wrap; overflow-wrap: anywhere;
+  }
+  .since { color: var(--faint); font-size: 11.5px; margin-top: 10px; }
   /* Кнопка игры намеренно незаметная: она развлечение на минуту ожидания, а не
      то, ради чего человек пришёл. Проявляется при наведении и по табу. */
   .play {
@@ -136,6 +167,17 @@
     <div class="dot"></div>
     <h1>We&rsquo;ll be right back</h1>
     <p>The site is being updated. This page refreshes itself &mdash; no need to do anything.</p>
+
+    <!-- Скрыт по умолчанию и остаётся скрытым, если рассказывать нечего: файла
+         с ходом может не быть вовсе (сайт лёг не из-за обновления, стек подняли
+         руками, каталог storage смонтирован по-своему). Тогда страница ведёт
+         себя ровно так, как вела до появления этого блока. -->
+    <div class="progress" id="progress" hidden>
+      <ol id="stepList"></ol>
+      <div class="why" id="why" hidden></div>
+      <div class="since" id="since"></div>
+    </div>
+
     <div class="foot">Идёт обновление. Страница обновится сама.</div>
     <button class="play" id="play" type="button" hidden>Скучно ждать? Сыграйте в змейку</button>
 
@@ -181,6 +223,8 @@
   var canvas = $("board"), scoreEl = $("score"), bestEl = $("best");
   var hintEl = $("hint"), queuedEl = $("queued"), whoInput = $("who");
   var lb = $("lb"), lbList = $("lbList"), lbNote = $("lbNote");
+  var progress = $("progress"), stepList = $("stepList");
+  var why = $("why"), since = $("since");
   var ctx = canvas.getContext("2d");
 
   // localStorage может быть недоступен (приватный режим, запрет третьих сторон).
@@ -386,6 +430,105 @@
     else turn(0, dy > 0 ? 1 : -1);
   }, { passive: true });
 
+  // --- ход обновления ------------------------------------------------------
+  // Приложения сейчас нет, спрашивать некого — состояние лежит файлом, который
+  // nginx раздаёт статикой. Пишут его два места: deploy/updater.py с хоста
+  // (снимок базы, сборка, проверка здоровья) и docker/entrypoint.sh изнутри
+  // контейнера (миграции, старт). Адрес — уже существующий /branding/: своего
+  // location под этот файл нет нарочно, иначе он заработал бы только со
+  // следующего обновления, а не с того, которое сейчас и идёт. Причины целиком
+  // — в комментарии у PROGRESS_NAME в deploy/updater.py.
+  var STATE_URL = "/branding/update-state.json";
+
+  // Подписи живут здесь, а не в файле: писателей двое (питон на хосте и sh в
+  // контейнере), и таскать строки через обоих значило бы завести третье место,
+  // где они разъезжаются. Файл называет только ключ шага.
+  var STEP_LABELS = {
+    backup: "Backing up the database",
+    build: "Building the new version",
+    migrate: "Applying database migrations",
+    start: "Starting the application",
+    health: "Checking that everything works"
+  };
+  // Обновление показывает весь путь; обычный перезапуск контейнера — только те
+  // шаги, которые в нём вправду есть. Отметить у перезапуска «образ собран» и
+  // «копия базы снята» значило бы соврать о том, чего не было.
+  var STEP_ORDER = {
+    update: ["backup", "build", "migrate", "start", "health"],
+    restart: ["migrate", "start"]
+  };
+  // Дальше этого возраста запись — след прошлого раза, а не рассказ о
+  // происходящем: удачное обновление файл не стирает, и «идёт сборка» при
+  // постороннем падении сайта было бы враньём с чужой датой.
+  var STATE_MAX_AGE_MS = 2 * 60 * 60 * 1000;
+  var shownState = "";
+
+  function stepsFor(state) {
+    return STEP_ORDER[state.scope] || STEP_ORDER.update;
+  }
+
+  function usableState(state) {
+    if (!state || typeof state.step !== "string") return null;
+    // Обновление удалось — рисовать шаги незачем: опрос /healthz вот-вот уведёт
+    // человека на сайт, и мигать перед этим готовым списком некрасиво.
+    if (state.phase === "done") return null;
+    if (stepsFor(state).indexOf(state.step) < 0) return null;
+    var started = Date.parse(state.started_at || "");
+    if (started) {
+      // Часы браузера бывают сбиты в обе стороны, поэтому и допуск в обе: без
+      // нижней границы запись «из будущего» считалась бы свежей вечно.
+      var age = Date.now() - started;
+      if (age > STATE_MAX_AGE_MS || age < -5 * 60 * 1000) return null;
+    }
+    return state;
+  }
+
+  function renderProgress(raw) {
+    var state = usableState(raw);
+    if (!state) { progress.hidden = true; shownState = ""; return; }
+
+    // Без изменений DOM не трогаем вовсе: перерисовка каждые три секунды
+    // сбрасывала бы пульсацию текущего шага в начало.
+    var signature = state.scope + "|" + state.phase + "|" + state.step + "|" + (state.error || "");
+    if (signature === shownState) return;
+    shownState = signature;
+
+    var order = stepsFor(state);
+    var at = order.indexOf(state.step);
+    stepList.innerHTML = "";
+    order.forEach(function (key, index) {
+      var row = document.createElement("li");
+      var mark = document.createElement("span");
+      mark.className = "mark";
+      if (index < at) { row.className = "done"; mark.textContent = "✓"; }
+      else if (index > at) { mark.textContent = "·"; }
+      else if (state.phase === "failed") { row.className = "bad"; mark.textContent = "✕"; }
+      else { row.className = "now"; mark.textContent = "●"; }
+      var label = document.createElement("span");
+      label.textContent = STEP_LABELS[key] || key;   // textContent: ключ пришёл из файла
+      row.appendChild(mark); row.appendChild(label);
+      stepList.appendChild(row);
+    });
+
+    why.hidden = !(state.phase === "failed" && state.error);
+    why.textContent = state.error || "";
+
+    var started = Date.parse(state.started_at || "");
+    since.textContent = started
+      ? (state.phase === "failed" ? "Stopped " : "Started ") + new Date(started).toLocaleTimeString()
+      : "";
+    progress.hidden = false;
+  }
+
+  function askProgress() {
+    // no-store и метка времени: /branding/ отдаётся с Cache-Control на час (там
+    // лежат логотипы), и без этого опрос читал бы один и тот же первый ответ.
+    fetch(STATE_URL + "?t=" + Date.now(), { cache: "no-store" })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(renderProgress)
+      .catch(function () { /* файла нет — страница ведёт себя как раньше */ });
+  }
+
   // --- возврат на сайт -----------------------------------------------------
   var backAvailable = false;
 
@@ -410,6 +553,9 @@
   }
 
   function poll() {
+    // Ход спрашиваем в том же круге, что и здоровье: второй таймер жил бы
+    // своей жизнью и продолжал бы стучаться уже после возвращения на сайт.
+    askProgress();
     fetch("/healthz", { cache: "no-store" })
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (data) { if (data && data.status === "ok") siteIsBack(); })

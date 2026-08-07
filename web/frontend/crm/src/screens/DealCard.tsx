@@ -5,14 +5,16 @@ import { DealStock } from "../components/DealStock";
 import { CallButton, CallsPanel } from "../components/CallsPanel";
 import { Feed } from "../components/Feed";
 import { Icon } from "../components/Icon";
-import { Chip, ConfirmModal, Modal, ScreenLoading } from "../components/ui";
+import { Chip, ConfirmModal, LoadFailed, Modal, ScreenLoading } from "../components/ui";
 import { api, ApiError } from "../lib/api";
 import { useApp } from "../lib/app";
 import { useFailure } from "../lib/failure";
+import { useGuard } from "../lib/guard";
 import { statusLabel, statusVariant } from "../lib/documents";
 import { formatDate, formatDateTime, formatMoney } from "../lib/format";
 import { moduleOn } from "../lib/modules";
 import { can } from "../lib/permissions";
+import { useReference } from "../lib/reference";
 import { term } from "../lib/terms";
 import { OrdersOfCard } from "../components/OrdersOfCard";
 import { NewDocumentModal } from "./Documents";
@@ -44,18 +46,12 @@ export function DealCard() {
   const seesMoney = can(user, "deals.view_amounts");
   const navigate = useNavigate();
   const [deal, setDeal] = useState<any>(null);
-  const [stages, setStages] = useState<Stage[]>([]);
-  const [people, setPeople] = useState<any[]>([]);
-  const [clients, setClients] = useState<any[]>([]);
-  const [companies, setCompanies] = useState<any[]>([]);
-  const [docs, setDocs] = useState<any[]>([]);
-  const [tasks, setTasks] = useState<any[]>([]);
   const [issuing, setIssuing] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [askReason, setAskReason] = useState<string | null>(null);
   const [reason, setReason] = useState("");
+  const guard = useGuard();
   const [composing, setComposing] = useState(false);
-  const [mailAccounts, setMailAccounts] = useState<MailAccount[]>([]);
 
   const { failure, fail, clear } = useFailure();
 
@@ -82,49 +78,38 @@ export function DealCard() {
   // вовсе: врезка «Бланки» с кнопкой, которая отвечает отказом, хуже её
   // отсутствия, а лишний запрос на каждой карточке заявки — ещё и шум в журнале.
   const hasDocuments = moduleOn(modules, "documents") && can(user, "documents.view");
-
-  const loadDocs = useCallback(() => {
-    if (!hasDocuments) return;
-    api.get(`/documents?deal_id=${id}`).then((d) => setDocs(d.items)).catch(() => undefined);
-  }, [id, hasDocuments]);
-
   const hasCompanies = moduleOn(modules, "companies") && can(user, "companies.view");
-
   const hasTasks = moduleOn(modules, "tasks") && can(user, "tasks.view");
-
-  const loadTasks = useCallback(() => {
-    if (!hasTasks) return;
-    api.get(`/tasks?deal_id=${id}`).then((d) => setTasks(d.items)).catch(() => undefined);
-  }, [id, hasTasks]);
-
   const hasMail = moduleOn(modules, "mail") && can(user, "mail.create");
 
+  // Справочники карточки — через общий крючок, а не своим `catch(() => [])` на
+  // каждый. Пустой массив вместо отказа врал по-разному, но всегда молча:
+  // «что дальше» оставалось без единой кнопки этапа, ответственный и клиент
+  // исчезали из своих списков вместе с текущим значением, а во врезке бланков
+  // стояло «Бланков нет». `null` в пути — «спрашивать нечего»: блок выключен
+  // или права нет, и это не отказ.
+  const stages = useReference<Stage>("/pipeline/stages");
+  const people = useReference<any>("/people");
+  const clients = useReference<any>("/clients?per_page=200");
+  const companies = useReference<any>(hasCompanies ? "/companies" : null);
+  const docs = useReference<any>(hasDocuments ? `/documents?deal_id=${id}` : null);
+  const tasks = useReference<any>(hasTasks ? `/tasks?deal_id=${id}` : null);
   // Ящики нужны только выбору отправителя и доступны только root. Не ответило —
   // форма работает: сервер возьмёт первый активный ящик сам.
-  useEffect(() => {
-    if (!hasMail) return;
-    api.get("/mail/accounts").then((d) => setMailAccounts(d.items)).catch(() => undefined);
-  }, [hasMail]);
+  const mailAccounts = useReference<MailAccount>(hasMail ? "/mail/accounts" : null);
 
   useEffect(() => {
     void load();
-    loadDocs();
-    loadTasks();
-    api.get("/pipeline/stages").then((d) => setStages(d.items)).catch(() => undefined);
-    api.get("/people").then((d) => setPeople(d.items)).catch(() => undefined);
-    api.get("/clients?per_page=200").then((d) => setClients(d.items)).catch(() => undefined);
-    if (hasCompanies) {
-      api.get("/companies").then((d) => setCompanies(d.items)).catch(() => undefined);
-    }
-  }, [load, loadDocs, loadTasks, hasCompanies]);
+  }, [load]);
 
   if (!deal) return <ScreenLoading error={failure} onRetry={() => void load()} />;
 
   const currency: string = deal.currency || "USD";
   // Адрес берём из уже загруженного списка клиентов: отдельный запрос ради
   // одной строки в форме отправки — лишний круг к серверу на каждой карточке.
-  const dealClientEmail: string = clients.find((c) => c.id === deal.client_id)?.email || "";
-  const stage: Stage | undefined = stages.find((s) => s.key === deal.stage);
+  const dealClientEmail: string =
+    (clients.items ?? []).find((c) => c.id === deal.client_id)?.email || "";
+  const stage: Stage | undefined = (stages.items ?? []).find((s) => s.key === deal.stage);
   const overdue =
     deal.due_at && !deal.closed_at && new Date(deal.due_at) < new Date();
 
@@ -138,7 +123,7 @@ export function DealCard() {
   };
 
   const moveTo = async (key: string) => {
-    const target = stages.find((s) => s.key === key);
+    const target = (stages.items ?? []).find((s) => s.key === key);
     // У проигранного этапа спрашиваем причину: без неё отчёт по потерям
     // показывает число и ничем не помогает.
     if (target?.kind === "lost") {
@@ -157,6 +142,9 @@ export function DealCard() {
   };
 
   const confirmLost = async () => {
+    // Причину подтверждают Enter'ом и кнопкой сразу — два перехода этапа
+    // подряд оставляли бы в истории заявки две одинаковые записи.
+    if (!guard.take()) return;
     try {
       setDeal(await api.post(`/deals/${id}/move`, { stage: askReason, lost_reason: reason }));
       setAskReason(null);
@@ -166,11 +154,13 @@ export function DealCard() {
         setAskReason(null);
         void load();
       }
+    } finally {
+      guard.free();
     }
   };
 
-  const nextOpen = stages.filter((s) => s.kind === "open");
-  const closers = stages.filter((s) => s.kind !== "open");
+  const nextOpen = (stages.items ?? []).filter((s) => s.kind === "open");
+  const closers = (stages.items ?? []).filter((s) => s.kind !== "open");
 
   return (
     <div className="page page-narrow">
@@ -252,6 +242,11 @@ export function DealCard() {
             </button>
           ))}
         </div>
+        {/* Без воронки кнопок этапа нет вовсе — а «что дальше» без единой
+            кнопки читается как «дальше ничего», то есть как ответ. */}
+        {stages.failure !== null && (
+          <LoadFailed error={stages.failure} onRetry={stages.reload} />
+        )}
         {deal.lost_reason && (
           <div style={{ color: "var(--danger)", fontSize: 12.5, marginTop: 10 }}>
             {t("lostReason")}: {deal.lost_reason}
@@ -269,10 +264,15 @@ export function DealCard() {
               onChange={(e) => void patch({ manager_id: e.target.value ? Number(e.target.value) : null })}
             >
               <option value="">{t("nobody")}</option>
-              {people.map((p) => (
+              {(people.items ?? []).map((p) => (
                 <option key={p.id} value={p.id}>{p.name}</option>
               ))}
             </select>
+            {/* Список не приехал — в нём нет и текущего ответственного, то есть
+                выбор молча показывает «Никто» у заявки, у которой он есть. */}
+            {people.failure !== null && (
+              <LoadFailed error={people.failure} onRetry={people.reload} />
+            )}
           </div>
           <div className="field">
             <label className="label">{t("client")}</label>
@@ -281,15 +281,18 @@ export function DealCard() {
               value={deal.client_id}
               onChange={(e) => void patch({ client_id: Number(e.target.value) })}
             >
-              {clients.map((c) => (
+              {(clients.items ?? []).map((c) => (
                 <option key={c.id} value={c.id}>{c.name}</option>
               ))}
             </select>
+            {clients.failure !== null && (
+              <LoadFailed error={clients.failure} onRetry={clients.reload} />
+            )}
           </div>
           {/* Спрашиваем, только когда есть из чего выбирать. У большинства
               фирма одна, и поле с единственным вариантом — вопрос ради ответа,
               который всегда один и тот же. Пусто означает «от основной». */}
-          {hasCompanies && companies.length > 1 && (
+          {hasCompanies && (companies.items?.length ?? 0) > 1 && (
             <div className="field">
               <label className="label">{t("companyOfDeal")}</label>
               <select
@@ -300,7 +303,7 @@ export function DealCard() {
                 }
               >
                 <option value="">{t("companyOfDealDefault")}</option>
-                {companies.map((c: any) => (
+                {(companies.items ?? []).map((c: any) => (
                   <option key={c.id} value={c.id}>{c.name}</option>
                 ))}
               </select>
@@ -402,7 +405,7 @@ export function DealCard() {
       {hasTasks && (
         <div className="card card-pad" style={{ marginBottom: 20 }}>
           <div className="metric-title" style={{ marginBottom: 12 }}>{t("tasks")}</div>
-          {tasks.map((task: any) => (
+          {(tasks.items ?? []).map((task: any) => (
             <div key={task.id} className="doc-mini">
               <span className="truncate" style={{ flex: 1, minWidth: 0 }}>{task.title}</span>
               {task.due_at && (
@@ -412,7 +415,10 @@ export function DealCard() {
               )}
             </div>
           ))}
-          <QuickTask dealId={deal.id} clientId={deal.client_id} onCreated={loadTasks} />
+          {tasks.failure !== null && (
+            <LoadFailed error={tasks.failure} onRetry={tasks.reload} />
+          )}
+          <QuickTask dealId={deal.id} clientId={deal.client_id} onCreated={tasks.reload} />
         </div>
       )}
 
@@ -457,11 +463,15 @@ export function DealCard() {
             {t("issueDocument")}
           </button>
         </div>
-        {docs.length === 0 ? (
+        {/* «Бланков нет» — только когда их действительно нет: выданную бумагу
+            легко выдать второй раз, поверив пустой врезке. */}
+        {docs.failure !== null ? (
+          <LoadFailed error={docs.failure} onRetry={docs.reload} />
+        ) : (docs.items?.length ?? 0) === 0 ? (
           <div className="field-desc" style={{ marginTop: 0 }}>{t("noDocuments")}</div>
         ) : (
           <div className="doc-mini-list">
-            {docs.map((doc) => (
+            {(docs.items ?? []).map((doc) => (
               <Link key={doc.id} to={`/documents/${doc.id}`} className="doc-mini">
                 <span className="doc-number">{doc.number}</span>
                 <span className="truncate" style={{ flex: 1, minWidth: 0 }}>
@@ -514,7 +524,12 @@ export function DealCard() {
             />
             <div className="field-desc">{t("whyLostHint")}</div>
           </div>
-          <button className="btn btn-primary" style={{ width: "100%" }} onClick={() => void confirmLost()}>
+          <button
+            className="btn btn-primary"
+            style={{ width: "100%" }}
+            disabled={guard.busy}
+            onClick={() => void confirmLost()}
+          >
             {t("confirm")}
           </button>
         </Modal>
@@ -531,7 +546,7 @@ export function DealCard() {
 
       {composing && (
         <MailCompose
-          accounts={mailAccounts}
+          accounts={mailAccounts.items ?? []}
           to={dealClientEmail}
           clientId={deal.client_id}
           dealId={deal.id}
