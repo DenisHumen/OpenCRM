@@ -6,6 +6,7 @@ import { useApp } from "../lib/app";
 import { PALETTE_DELAY, useDebounced } from "../lib/debounce";
 import { initials, relativeDay } from "../lib/format";
 import { type Gated, shown } from "../lib/modules";
+import { term } from "../lib/terms";
 import { Icon } from "./Icon";
 import { Avatar, Chip } from "./ui";
 
@@ -30,7 +31,7 @@ type Action = Gated & {
 };
 
 export function CommandPalette({ onClose }: { onClose: () => void }) {
-  const { t, locale, modules, toastError } = useApp();
+  const { t, locale, modules, workspace, toastError } = useApp();
   const navigate = useNavigate();
   const [query, setQuery] = useState("");
   const [data, setData] = useState<any>(null);
@@ -81,7 +82,10 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
   }, [typed, toastError]);
 
   const rows = useMemo<Row[]>(() => {
-    const term = query.trim().toLowerCase();
+    // `needle`, а не `term`: словом `term` называется общий подбор названия для
+    // основной записи (`lib/terms.ts`), и заголовок группы заявок берётся
+    // оттуда же — двум разным вещам одно имя здесь уже стоило сборки.
+    const needle = query.trim().toLowerCase();
 
     // Группы выдачи — списком, как пункты меню: у группы есть необязательный
     // `module`, и выключенный блок уходит из поиска тем же правилом, каким
@@ -100,6 +104,30 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
           subtitle: client.company || client.email || client.phone,
           meta: <span className="cp-meta">{relativeDay(client.updated_at, locale)}</span>,
           run: () => go(`/clients/${client.id}`),
+        })),
+      },
+      {
+        // Заявка — стержень системы, и в палитре её ищут чаще прочего: группа
+        // стоит сразу за клиентами, как и пункт в левой колонке.
+        module: "deals",
+        rows: (data?.deals?.items ?? []).map((deal: any) => ({
+          key: `deal-${deal.id}`,
+          // Слово берём то же, каким подписан раздел: у мастерской это
+          // «Заявки», у магазина «Заказы», и заголовок группы обязан совпадать
+          // с меню, иначе человек ищет заказы и находит заголовок «Сделки».
+          group: term(workspace.deal_term, locale, "many"),
+          icon: (
+            <div className="cp-action-icon">
+              <Icon name="deals" size={15} />
+            </div>
+          ),
+          title: deal.title,
+          subtitle: deal.client_name ?? undefined,
+          // Сумму не показываем: без права её всё равно нет в ответе, а с
+          // правом она ничего не добавляет к выбору строки — от палитры ждут
+          // «открой вот эту», а не сводку.
+          meta: <span className="cp-meta">{relativeDay(deal.updated_at, locale)}</span>,
+          run: () => go(`/deals/${deal.id}`),
         })),
       },
       {
@@ -170,7 +198,7 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
     return [
       ...groups.flatMap((group) => group.rows),
       ...actions
-        .filter((action) => !term || action.match.some((m) => m.toLowerCase().includes(term)))
+        .filter((action) => !needle || action.match.some((m) => m.toLowerCase().includes(needle)))
         .map((action) => ({
           key: action.key,
           group: t("actions"),
@@ -179,7 +207,7 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
           run: action.run,
         })),
     ];
-  }, [data, query, t, locale, modules, go, toastError]);
+  }, [data, query, t, locale, modules, workspace, go, toastError]);
 
   useEffect(() => {
     setActive(0);

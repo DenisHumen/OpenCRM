@@ -37,7 +37,17 @@ def test_deadline_with_an_offset_is_stored_as_utc(manager_client):
 def test_a_deadline_without_an_offset_is_taken_as_utc(manager_client):
     """Гадать о зоне отправителя хуже, чем принять соглашение и держать его."""
     task = manager_client.post(
-        TASKS, json={"title": "Без зоны", "due_at": "2026-08-10T09:30:00"}
+        # Дата от «сейчас», а не зашитая: проверяется РАЗБОР строки без смещения,
+        # и день тут безразличен. А вот оставленная в прошлом задача становится
+        # просроченной и меняет порядок в общем для всех тестов списке — этим
+        # уже уронило соседний файл, см. `skoro` в test_dashboard_deals.py.
+        TASKS,
+        json={
+            "title": "Без зоны",
+            "due_at": (datetime.now(timezone.utc) + timedelta(days=3)).strftime(
+                "%Y-%m-%dT09:30:00"
+            ),
+        },
     ).json()
     stored = datetime.fromisoformat(task["due_at"])
     assert (stored.hour, stored.minute) == (9, 30)

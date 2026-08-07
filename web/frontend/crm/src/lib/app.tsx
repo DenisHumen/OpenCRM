@@ -4,14 +4,17 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
+import { useNavigate } from "react-router-dom";
 
 import type { StorageStatus } from "../components/StorageCard";
 import { api, ApiError, type User } from "./api";
 import { makeT, type Locale, type TFunc } from "./i18n";
 import { cachedModules, moduleOn, rememberModules } from "./modules";
+import { can } from "./permissions";
 
 // проверка места дешёвая, но не бесплатная: обновляем раз в пару минут
 const STORAGE_POLL_MS = 120_000;
@@ -100,6 +103,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // выключенные по умолчанию, успевают мелькнуть в меню до ответа сервера
   // (обоснование — в lib/modules.ts).
   const [modules, setModules] = useState<Record<string, boolean> | null>(cachedModules);
+  // Настраивали ли в этой системе состав блоков. null — ещё не знаем; про
+  // выбор признака и цену ошибки — у эффекта с мастером первого запуска.
+  const [modulesUntouched, setModulesUntouched] = useState<boolean | null>(null);
   const [workspace, setWorkspace] = useState<Workspace>({
     brand_name: "",
     currency: "USD",
@@ -152,6 +158,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const data = await api.get<{ items: ModuleInfo[] }>("/modules");
       const map = Object.fromEntries(data.items.map((m) => [m.key, m.enabled]));
       setModules(map);
+      // Ни у одного блока нет отметки о переключении — состав системы не
+      // трогали ни разу.
+      setModulesUntouched(data.items.every((m) => !m.updated_at));
       // Запоминаем только настоящий ответ: заглушка ниже не должна остаться в
       // кэше как «у этого бизнеса включено всё».
       rememberModules(map);
@@ -161,6 +170,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
       // оставляет решение серверу: выключенный блок всё равно ответит отказом.
       // Обратный порядок оставил бы человека перед CRM без единого пункта меню.
       setModules({});
+      // А вот про «настраивали или нет» ответа не было вовсе, и `null` здесь
+      // остаётся `null`: гадать нельзя ни в одну сторону — мастер на не
+      // отвечающем сервере всё равно не соберётся.
     }
   }, []);
 
@@ -211,6 +223,45 @@ export function AppProvider({ children }: { children: ReactNode }) {
     void refreshWorkspace();
     void refreshTasks();
   }, [user, refreshModules, refreshWorkspace, refreshTasks]);
+
+  /**
+   * Мастер первого запуска открывается сам.
+   *
+   * Иначе он не мастер первого запуска, а ссылка в настройках: до неё доходит
+   * тот, кто и так знает, чего хочет, — то есть ровно не тот, ради кого экран
+   * писался. Человек, только что поставивший систему, видел дашборд с нулями и
+   * оставался на наборе блоков по умолчанию навсегда.
+   *
+   * **Признак свежести — «состав блоков не трогали ни разу»** (`updated_at`
+   * пуст у всех блоков сразу). Он не врёт в ту сторону, которая дорого стоит:
+   * и набор из мастера, и переключатель руками пишут строку в `module_states`,
+   * поэтому настроенная система второй раз не спросит. Считать свежесть по
+   * пустоте справочников нельзя — клиентов заводят и не настроив ничего, а
+   * заведённый клиент не означает, что вопрос «чем вы занимаетесь» задавали.
+   *
+   * **Сторона размена выбрана осознанно.** Показать мастер второй раз — потеря
+   * десяти секунд: он ничего не выключает и уходит по «Пропустить». Не показать
+   * тому, кто его не проходил, — оставить систему ненастроенной, и починить это
+   * будет некому. Поэтому спрашиваем, пока не появится доказательство обратного.
+   *
+   * Один раз на загрузку страницы: ушедшему по «Пропустить» мастер не должен
+   * возвращаться на каждый переход по меню. Следующий вход спросит снова — это
+   * и есть та самая раздражающая, но безопасная половина размена.
+   */
+  const navigate = useNavigate();
+  const setupOffered = useRef(false);
+
+  useEffect(() => {
+    if (setupOffered.current) return;
+    if (!user || user.must_change_password) return;
+    // Мастер закрыт правом `settings.manage` — тем же, что и маршрут `/setup`.
+    // Уводить туда менеджера значило бы показать ему отказ вместо экрана, на
+    // который он не просился.
+    if (!can(user, "settings.manage")) return;
+    if (modulesUntouched !== true) return;
+    setupOffered.current = true;
+    navigate("/setup", { replace: true });
+  }, [user, modulesUntouched, navigate]);
 
   useEffect(() => {
     if (!user || user.must_change_password) return;
