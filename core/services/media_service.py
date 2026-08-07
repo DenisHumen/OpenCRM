@@ -64,6 +64,39 @@ def work_dir(work_uid: str) -> Path:
     return get_settings().media_dir / work_uid
 
 
+def public_file(work_uid: str, filename: str) -> Path | None:
+    """Путь к публичному файлу работы — или `None`, если он ведёт наружу.
+
+    **Проверяется итоговый путь, а не имя по частям.** Раньше на входе стоял
+    чёрный список разделителей (`"/" in work_uid or "\\" in work_uid`), и он
+    пропускал `..`: `media_dir/../large.webp` — уже не каталог работ. Список
+    запрещённых кусочков всегда неполон, потому что перечисляет то, о чём
+    вспомнили; а каталог назначения один, и «лежит ли файл внутри него» —
+    вопрос с однозначным ответом.
+
+    `resolve()` заодно разворачивает символические ссылки: файл внутри каталога
+    работ, указывающий наружу, тоже наружу не выпустит.
+    """
+    if filename not in PUBLIC_FILENAMES:
+        return None
+    # `work_uid` обязан быть ОДНИМ обычным именем каталога.
+    #
+    # Это не про выход наружу — про то, что доступ спрашивают по одной строке, а
+    # файл читают по другой. Вызывающий передаёт `work_uid` в
+    # `share_service.media_is_public`, и тот отвечает про работу с таким
+    # опознавателем. Но `rabota-1/..` как путь схлопывается в корень каталога
+    # работ, а как опознаватель остаётся отдельной строкой, которой ни одна
+    # работа не соответствует. Разрешение выдаётся на одно, чтение идёт из
+    # другого — и однажды эти двое разойдутся так, что совпадут.
+    if "/" in work_uid or "\\" in work_uid or work_uid in {"", ".", ".."}:
+        return None
+    root = get_settings().media_dir.resolve()
+    candidate = (root / work_uid / filename).resolve()
+    if not candidate.is_relative_to(root):
+        return None
+    return candidate
+
+
 def save_original(work_uid: str, kind: str, ext: str, content: bytes) -> Path:
     """Кладёт исходник на диск. SVG предварительно санитайзится."""
     directory = work_dir(work_uid)

@@ -265,10 +265,11 @@ def _is_staff(request: Request, db: Session) -> bool:
 
 @router.get("/media/{work_uid}/{filename}")
 def media_file(work_uid: str, filename: str, request: Request, db: Session = Depends(get_db)):
-    if filename not in media_service.PUBLIC_FILENAMES or "/" in work_uid or "\\" in work_uid:
-        return JSONResponse({"error": {"code": "not_found", "message": "Not found"}}, status_code=404)
-    path = media_service.work_dir(work_uid) / filename
-    if not path.is_file():
+    # Путь собирает и проверяет `media_service.public_file`: он сверяет
+    # ИТОГОВЫЙ путь с каталогом работ, а не перебирает запрещённые кусочки
+    # имени. Разбор — в докстроке той функции.
+    path = media_service.public_file(work_uid, filename)
+    if path is None or not path.is_file():
         return JSONResponse({"error": {"code": "not_found", "message": "Not found"}}, status_code=404)
 
     # Доступ к файлу — тот же, что к витрине; разбор правила в
