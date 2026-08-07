@@ -11,7 +11,7 @@ from core.security import tokens
 from core.services import board_service, media_service, settings_service, share_service
 from database.repositories import boards as boards_repo
 from web.api import schemas
-from web.api.deps import client_ip, get_db, pin_limiter
+from web.api.deps import client_ip, document_limiter, get_db, pin_limiter
 from web.public import layout
 
 router = APIRouter(tags=["public"])
@@ -48,6 +48,11 @@ STRINGS = {
         "pin_rate_limited": "Too many attempts. Please try again in a few minutes",
         "closed_title": "This collection is not available",
         "closed_text": "The link may have been closed or replaced. Contact us and we will send you a fresh one.",
+        # Слишком частые обращения к странице заказа. Текст объясняет, что делать
+        # (подождать), а не в чём провинился: человек за общим адресом оператора
+        # сюда попадает не по своей вине.
+        "busy_title": "Too many requests",
+        "busy_text": "Please open this page again in a few minutes.",
         "empty_board": "Works are coming soon",
         "made_by": "Curated by",
         "video": "video",
@@ -71,6 +76,8 @@ STRINGS = {
         "pin_rate_limited": "Слишком много попыток. Попробуйте через несколько минут",
         "closed_title": "Доступ к этой подборке закрыт",
         "closed_text": "Возможно, ссылка устарела или была заменена. Свяжитесь с нами — пришлём актуальную.",
+        "busy_title": "Слишком много запросов",
+        "busy_text": "Откройте страницу ещё раз через несколько минут.",
         "empty_board": "Работы скоро появятся",
         "made_by": "Собрано в",
         "video": "видео",
@@ -102,10 +109,18 @@ def _has_pin_access(request: Request, link) -> bool:
     return bool(value and tokens.check_pin_access_cookie(value, link.id, link.pin_hash or ""))
 
 
-def _closed_page(request: Request, db: Session):
+def _closed_page(request: Request, db: Session, *, status_code: int = 404, busy: bool = False):
+    """Страница «сюда нельзя». `busy` — не «нельзя», а «слишком часто».
+
+    Разные слова здесь важнее, чем кажется. «Доступ закрыт, свяжитесь с нами»
+    отправит человека звонить в мастерскую из-за того, что он трижды обновил
+    страницу; а «попробуйте через несколько минут» он поймёт и подождёт.
+    """
     site, strings = _ctx(db)
+    if busy:
+        strings = {**strings, "closed_title": strings["busy_title"], "closed_text": strings["busy_text"]}
     return templates.TemplateResponse(
-        request, "closed.html", {"site": site, "t": strings}, status_code=404
+        request, "closed.html", {"site": site, "t": strings}, status_code=status_code
     )
 
 
@@ -327,6 +342,24 @@ def document_status(number: str, request: Request, db: Session = Depends(get_db)
     Ссылку могут переслать или подобрать, поэтому здесь ровно то, что и так
     напечатано у клиента на руках: номер, что приняли и текущее состояние.
     Ни цены, ни телефона клиента, ни имён сотрудников.
+
+    **Перебор номеров этим закрыт не до конца, и обещать обратное нельзя.**
+    Раньше здесь стояло утверждение, что по ответу нельзя отличить «нет такого
+    номера» от «есть, но не показываем». Отличить можно — ровно по коду ответа:
+    существующий номер отдаёт страницу, несуществующий — 404. А номера сквозные
+    («2026-000001» и дальше по порядку), потому что тот же номер напечатан на
+    квитанции и зашит в QR; сделать его неугадываемым, не сменив бумагу на
+    руках у людей, невозможно.
+
+    Значит вопрос не в том, возможен ли перебор, а сколько он стоит. Без
+    ограничения — нисколько: тысяча запросов подряд отдаёт, сколько у мастерской
+    заказов, что приняли по каждому и в каком он состоянии. Ограничитель по
+    адресу поднимает эту цену с полуминуты до часов и оставляет живому человеку
+    запас в двадцать обращений за десять минут (`web/api/deps.py`).
+
+    Полностью закрыть можно только ключом в самой ссылке — и это осознанно НЕ
+    сделано: ключ обесценит все уже напечатанные квитанции, а решать, менять ли
+    бумагу на руках у клиентов, не программисту.
     """
     from core.services import document_service, modules_service
     from web.public.document_strings import strings_for
@@ -337,12 +370,21 @@ def document_status(number: str, request: Request, db: Session = Depends(get_db)
     if not modules_service.is_enabled(db, "documents"):
         return _closed_page(request, db)
 
+    # Считаем ВСЕ обращения, а не одни промахи. Перебор с первого номера идёт по
+    # существующим заказам, то есть по удачным ответам: ограничитель, считающий
+    # промахи, не сработал бы ни разу за всю выгрузку.
+    #
+    # Порядок «сначала спросить, потом отметить» даёт ровно `max_attempts`
+    # пропущенных обращений; отметка перед проверкой отняла бы у человека одно
+    # из них ни за что.
+    visitor = client_ip(request)
+    if document_limiter.is_blocked(visitor):
+        return _closed_page(request, db, status_code=429, busy=True)
+    document_limiter.record_failure(visitor)
+
     try:
         doc = document_service.by_number(db, number)
     except errors.NotFoundError:
-        # Та же страница, что у закрытой витрины: по ответу нельзя отличить
-        # «нет такого номера» от «есть, но не показываем», а значит перебором
-        # номеров не узнать, сколько у мастерской заказов.
         return _closed_page(request, db)
 
     return templates.TemplateResponse(
