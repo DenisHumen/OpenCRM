@@ -83,6 +83,9 @@ def test_kazhdyy_blok_nazvan_hotya_by_v_odnom_nabore():
         # Отчёты включены у всех по умолчанию: считать выручку хочет любой, и
         # спрашивать об этом отдельно незачем.
         "reports",
+        # Шаблоны — тоже: типовой ответ нужен всякому, кто пишет клиентам,
+        # и спрашивать об этом отдельным вопросом незачем.
+        "templates",
     }
     named = {key for preset in modules.PRESETS for key in preset.modules}
     optional = {m.key for m in modules.MODULES if not m.core and m.ready}

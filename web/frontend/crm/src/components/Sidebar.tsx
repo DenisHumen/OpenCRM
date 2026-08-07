@@ -249,6 +249,9 @@ export function Sidebar({
     },
     { module: "documents", perm: "documents.view", to: "/documents", label: t("documents"), icon: "receipt" },
     { module: "mail", perm: "mail.view", to: "/mail", label: t("mail"), icon: "email" },
+    // Шаблоны — рядом с почтой: за ними приходят в тот момент, когда пишут
+    // клиенту, а не отдельным делом.
+    { module: "templates", perm: "templates.view", to: "/templates", label: t("templates"), icon: "note" },
     { module: "boards", perm: "boards.view", to: "/boards", label: t("boards"), icon: "boards" },
     // Склад по умолчанию выключен: он нужен магазину и мастерской, а студии нет.
     { module: "orders", perm: "orders.view", to: "/orders", label: t("orders"), icon: "receipt" },

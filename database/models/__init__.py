@@ -11,6 +11,7 @@ from database.models.pipeline import PipelineStage
 from database.models.document import Document, DocumentEvent, DocumentLine
 from database.models.module import ModuleState
 from database.models.task import Task
+from database.models.template import MessageTemplate
 from database.models.mail import MailAccount, MailMessage
 from database.models.warehouse import (
     Product,
@@ -50,6 +51,7 @@ __all__ = [
     "DocumentLine",
     "ModuleState",
     "Task",
+    "MessageTemplate",
     "MailAccount",
     "MailMessage",
     "Product",

@@ -54,6 +54,7 @@ from web.api.routes import (
     staff,
     system,
     tasks,
+    templates,
     warehouse,
     telephony,
     workspace,
@@ -305,6 +306,7 @@ def create_app() -> FastAPI:
     app.include_router(audit.router, prefix=api_prefix)
     app.include_router(site_settings.router, prefix=api_prefix)
     app.include_router(tasks.router, prefix=api_prefix)
+    app.include_router(templates.router, prefix=api_prefix)
     app.include_router(orders.router, prefix=api_prefix)
     app.include_router(warehouse.router, prefix=api_prefix)
     app.include_router(warehouse.places_router, prefix=api_prefix)
