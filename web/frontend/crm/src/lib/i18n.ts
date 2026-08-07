@@ -6,6 +6,9 @@ const en = {
   saved: "Saved",
   cancel: "Cancel",
   delete: "Delete",
+  edit: "Edit",
+  close: "Close",
+  download: "Download",
   confirm: "Confirm",
   loading: "Loading…",
   search: "Search",
@@ -19,6 +22,10 @@ const en = {
   loadFailed: "Could not load this screen",
   loadFailedHint: "The server did not answer. The data is safe — this is only the screen.",
   retry: "Try again",
+  // Копирование могло и не выйти: без HTTPS буфер обмена браузеру недоступен,
+  // и запасной путь тоже срабатывает не везде. Молчать здесь нельзя — адрес
+  // копируют, чтобы вставить в другое место, и проверяют это уже там.
+  copyFailed: "Could not copy — select the text and copy it by hand",
   // навигация
   dashboard: "Dashboard",
   clients: "Clients",
@@ -860,6 +867,9 @@ const ru: typeof en = {
   saved: "Сохранено",
   cancel: "Отмена",
   delete: "Удалить",
+  edit: "Изменить",
+  close: "Закрыть",
+  download: "Скачать",
   confirm: "Подтвердить",
   loading: "Загрузка…",
   search: "Поиск",
@@ -873,6 +883,7 @@ const ru: typeof en = {
   loadFailed: "Не удалось загрузить экран",
   loadFailedHint: "Сервер не ответил. С данными ничего не случилось — не открылся только экран.",
   retry: "Попробовать ещё раз",
+  copyFailed: "Скопировать не вышло — выделите адрес и скопируйте вручную",
   dashboard: "Дашборд",
   clients: "Клиенты",
   boards: "Доски",

@@ -38,6 +38,11 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
   const [loading, setLoading] = useState(true);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  // Засов «Новой доски». Ref, а не состояние: строки палитры пересобираются на
+  // каждую набранную букву, и всё, что живёт в замыкании строки, к следующему
+  // нажатию уже другое. Без засова Enter, нажатый дважды (а его нажимают
+  // дважды), заводил два черновика — человек уходил в один, второй оставался.
+  const creatingBoard = useRef(false);
 
   const go = useCallback(
     (path: string) => {
@@ -148,11 +153,15 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
         icon: <Icon name="plus" size={15} stroke={2} />,
         match: [t("newBoard"), "board", "доск"],
         run: async () => {
+          if (creatingBoard.current) return;
+          creatingBoard.current = true;
           try {
             const board = await api.post("/boards", { title: t("newBoard") });
             go(`/boards/${board.id}`);
           } catch (e) {
             toastError(e);
+            // Засов снимаем только на отказе: при успехе палитра уже закрыта.
+            creatingBoard.current = false;
           }
         },
       },

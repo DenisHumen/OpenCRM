@@ -1,13 +1,14 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 
 import { Icon } from "../components/Icon";
-import { Chip, EmptyState, Modal, ScreenLoading } from "../components/ui";
-import { api } from "../lib/api";
+import { Chip, EmptyState, LoadFailed, Modal, ScreenLoading } from "../components/ui";
+import { api, ApiError } from "../lib/api";
 import { useApp } from "../lib/app";
 import { useDebounced } from "../lib/debounce";
 import { useFailure } from "../lib/failure";
 import { formatDate } from "../lib/format";
+import { useReference } from "../lib/reference";
 import { DOC_STATUSES, statusLabel, statusVariant } from "../lib/documents";
 
 export function Documents() {
@@ -19,33 +20,43 @@ export function Documents() {
   const [query, setQuery] = useState("");
   const [scan, setScan] = useState("");
   const [showNew, setShowNew] = useState(params.get("new") === "1");
+  const [attempt, setAttempt] = useState(0);
   const scanInput = useRef<HTMLInputElement | null>(null);
   const focused = useRef(false);
 
   const { failure, fail, clear } = useFailure();
 
-  const load = useCallback(
-    async (q: string, only: string) => {
-      const search = new URLSearchParams({ per_page: "100" });
-      if (q.trim()) search.set("search", q.trim());
-      if (only) search.set("status", only);
-      clear();
-      try {
-        setData(await api.get(`/documents?${search}`));
-      } catch (e) {
-        fail(e);
-      }
-    },
-    [fail, clear],
-  );
-
   const search = useDebounced(query);
 
-  useEffect(() => {
-    void load(search, status);
-  }, [search, status, load]);
+  const path = useMemo(() => {
+    const args = new URLSearchParams({ per_page: "100" });
+    if (search.trim()) args.set("search", search.trim());
+    if (status) args.set("status", status);
+    return `/documents?${args}`;
+  }, [search, status]);
 
-  if (!data) return <ScreenLoading error={failure} onRetry={() => void load(query, status)} />;
+  useEffect(() => {
+    // Отбор переключают быстрее, чем отвечает сервер: без этого счётчика ответ
+    // на прошлый набор мог бы лечь поверх текущего, и на экране оказался бы
+    // список позапрошлого фильтра. Приём тот же, что в отчётах и палитре.
+    let current = true;
+    clear();
+    api
+      .get(path)
+      .then((found) => {
+        if (current) setData(found);
+      })
+      .catch((e) => {
+        if (current) fail(e);
+      });
+    return () => {
+      current = false;
+    };
+  }, [path, attempt, fail, clear]);
+
+  if (!data) {
+    return <ScreenLoading error={failure} onRetry={() => setAttempt((n) => n + 1)} />;
+  }
 
   // Сканер работает как клавиатура: набирает номер и жмёт Enter. Поле должно
   // ждать его сразу — иначе первый скан уходит в пустоту, и приёмщик решает,
@@ -71,8 +82,16 @@ export function Documents() {
     try {
       const doc = await api.get(`/documents/by-number/${encodeURIComponent(number)}`);
       navigate(`/documents/${doc.id}`);
-    } catch {
-      toast(t("docNotFound", { code: number }), true);
+    } catch (e) {
+      // «Такого бланка нет» и «сервер не ответил» — разные беды, и решения у
+      // приёмщика разные. Пока любой отказ читался как первое, упавший сервер
+      // отправлял человека искать бумагу, которая у него в руках. Различаем по
+      // ответу сервера — ровно как сканер штрихкодов.
+      if (e instanceof ApiError && e.status === 404) {
+        toast(t("docNotFound", { code: number }), true);
+      } else {
+        toastError(e);
+      }
       scanInput.current?.focus();
     }
   };
@@ -188,7 +207,9 @@ export function NewDocumentModal({
   onCreated: (doc: any) => void;
 }) {
   const { t, user, toastError } = useApp();
-  const [clients, setClients] = useState<any[]>([]);
+  // Список клиентов формы: `null` — не приехал. Пустой выпадающий список молча
+  // превращал бы бланк для клиента из справочника в бланк «для прохожего».
+  const clients = useReference<any>(clientId ? null : "/clients?per_page=200");
   const [busy, setBusy] = useState(false);
   const [form, setForm] = useState<Record<string, string>>({
     client_id: clientId ? String(clientId) : "",
@@ -205,11 +226,6 @@ export function NewDocumentModal({
     // но менять его можно на любой из трёх.
     locale: user?.locale === "en" ? "en" : "ru",
   });
-
-  useEffect(() => {
-    if (clientId) return;
-    api.get("/clients?per_page=200").then((d) => setClients(d.items)).catch(() => undefined);
-  }, [clientId]);
 
   const set = (key: string) => (e: any) => setForm((f) => ({ ...f, [key]: e.target.value }));
 
@@ -243,12 +259,15 @@ export function NewDocumentModal({
               <label className="label">{t("client")}</label>
               <select className="input" value={form.client_id} onChange={set("client_id")}>
                 <option value="">—</option>
-                {clients.map((c) => (
+                {(clients.items ?? []).map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.name}
                   </option>
                 ))}
               </select>
+              {clients.failure !== null && (
+                <LoadFailed error={clients.failure} onRetry={clients.reload} />
+              )}
             </div>
           )}
           {walkIn && (

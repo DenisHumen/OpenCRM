@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { EmptyState, ScreenLoading } from "../components/ui";
 import { api, type AuditEvent } from "../lib/api";
@@ -73,29 +73,43 @@ export function Audit() {
   const [search, setSearch] = useState("");
   const [source, setSource] = useState("");
 
+  const [attempt, setAttempt] = useState(0);
+
   const { failure, fail, clear } = useFailure();
 
   const typed = useDebounced(search);
 
-  const load = useCallback(async () => {
+  const path = useMemo(() => {
     const params = new URLSearchParams({ per_page: "100" });
     if (typed.trim()) params.set("search", typed.trim());
     if (source) params.set("source", source);
-    clear();
-    try {
-      const data = await api.get<{ items: AuditEvent[]; total: number }>(`/audit?${params}`);
-      setItems(data.items);
-      setTotal(data.total);
-    } catch (e) {
-      fail(e);
-    }
-  }, [typed, source, fail, clear]);
+    return `/audit?${params}`;
+  }, [typed, source]);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    // Источник переключают быстрее, чем отвечает сервер: без счётчика записи
+    // по прошлому отбору ложились поверх текущего, и журнал показывал не то,
+    // что в фильтре. Приём тот же, что в отчётах и палитре команд.
+    let current = true;
+    clear();
+    api
+      .get<{ items: AuditEvent[]; total: number }>(path)
+      .then((data) => {
+        if (!current) return;
+        setItems(data.items);
+        setTotal(data.total);
+      })
+      .catch((e) => {
+        if (current) fail(e);
+      });
+    return () => {
+      current = false;
+    };
+  }, [path, attempt, fail, clear]);
 
-  if (!items) return <ScreenLoading error={failure} onRetry={() => void load()} />;
+  if (!items) {
+    return <ScreenLoading error={failure} onRetry={() => setAttempt((n) => n + 1)} />;
+  }
 
   // Заявку каждый бизнес называет по-своему, и журнал не исключение: «Удалил
   // deal» в мастерской, где всё зовут заказами, читается как чужая запись.

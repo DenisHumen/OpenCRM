@@ -1,11 +1,14 @@
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
+import { useGuard } from "../lib/guard";
 import { formatDateTime } from "../lib/format";
 import { moduleOn } from "../lib/modules";
 import { can } from "../lib/permissions";
+import { useReference } from "../lib/reference";
 import { Icon } from "./Icon";
+import { LoadFailed } from "./ui";
 
 /**
  * Лента общения: письма, звонки, встречи и заметки одним потоком.
@@ -49,21 +52,18 @@ const KIND_LABEL = {
 
 export function Feed({ dealId, clientId }: { dealId: number; clientId: number }) {
   const { t, locale, user, modules, toast, toastError, refreshTasks } = useApp();
-  const [items, setItems] = useState<any[]>([]);
   const [filter, setFilter] = useState<string>("");
   const [kind, setKind] = useState<(typeof KINDS)[number]>("note");
   const [direction, setDirection] = useState("");
   const [body, setBody] = useState("");
+  const guard = useGuard();
 
-  const load = useCallback(() => {
-    const query = filter ? `?kind=${filter}` : "";
-    api
-      .get(`/deals/${dealId}/feed${query}`)
-      .then((d) => setItems(d.items))
-      .catch(() => undefined);
-  }, [dealId, filter]);
-
-  useEffect(load, [load]);
+  // Лента через общий крючок справочников: отказ здесь не должен превращаться в
+  // «Пока ничего не записано». Пустая лента — это ответ («по заявке ещё не
+  // разговаривали»), а отказ — его отсутствие, и решения человек принимает
+  // разные: первое он закроет, второе повторит.
+  const feed = useReference<any>(`/deals/${dealId}/feed${filter ? `?kind=${filter}` : ""}`);
+  const { items, reload } = feed;
 
   // Направление есть у звонка и письма; у заметки и встречи его нет, и
   // подставлять «входящее» по умолчанию нельзя — это разные вещи.
@@ -71,7 +71,10 @@ export function Feed({ dealId, clientId }: { dealId: number; clientId: number })
 
   const add = async () => {
     const text = body.trim();
-    if (!text) return;
+    // Enter в поле ленты нажимают дважды — от нетерпения и просто с руки. Пока
+    // отправка не завершилась, вторая запись была бы копией первой, и удалять
+    // её пришлось бы вручную.
+    if (!text || !guard.take()) return;
     try {
       await api.post(`/deals/${dealId}/feed`, {
         kind,
@@ -79,9 +82,11 @@ export function Feed({ dealId, clientId }: { dealId: number; clientId: number })
         direction: needsDirection ? direction || "in" : "",
       });
       setBody("");
-      load();
+      reload();
     } catch (e) {
       toastError(e);
+    } finally {
+      guard.free();
     }
   };
 
@@ -134,12 +139,18 @@ export function Feed({ dealId, clientId }: { dealId: number; clientId: number })
             if (e.key === "Enter") void add();
           }}
         />
-        <button className="btn btn-secondary" onClick={() => void add()} disabled={!body.trim()}>
+        <button
+          className="btn btn-secondary"
+          onClick={() => void add()}
+          disabled={guard.busy || !body.trim()}
+        >
           {t("add")}
         </button>
       </div>
 
-      {items.length === 0 ? (
+      {feed.failure !== null ? (
+        <LoadFailed error={feed.failure} onRetry={reload} />
+      ) : items === null ? null : items.length === 0 ? (
         <div className="field-desc" style={{ marginTop: 12 }}>{t("feedEmpty")}</div>
       ) : (
         <div className="feed-list">

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 
 import { Icon } from "../components/Icon";
@@ -17,27 +17,34 @@ export function Clients() {
   const [query, setQuery] = useState("");
   const [data, setData] = useState<any>(null);
   const [showNew, setShowNew] = useState(params.get("new") === "1");
+  const [attempt, setAttempt] = useState(0);
 
   const { failure, fail, clear } = useFailure();
-
-  const load = useCallback(
-    (q: string) => {
-      clear();
-      api
-        .get(`/clients?search=${encodeURIComponent(q)}&per_page=100`)
-        .then(setData)
-        .catch(fail);
-    },
-    [fail, clear],
-  );
 
   const search = useDebounced(query);
 
   useEffect(() => {
-    load(search);
-  }, [search, load]);
+    // Набирают быстрее, чем отвечает сервер: без этого счётчика ответ на
+    // «Ив» ложился поверх ответа на «Иванов», и человек видел выдачу
+    // позапрошлого запроса. Приём тот же, что в отчётах и палитре команд.
+    let current = true;
+    clear();
+    api
+      .get(`/clients?search=${encodeURIComponent(search)}&per_page=100`)
+      .then((found) => {
+        if (current) setData(found);
+      })
+      .catch((e) => {
+        if (current) fail(e);
+      });
+    return () => {
+      current = false;
+    };
+  }, [search, attempt, fail, clear]);
 
-  if (!data) return <ScreenLoading error={failure} onRetry={() => load(query)} />;
+  if (!data) {
+    return <ScreenLoading error={failure} onRetry={() => setAttempt((n) => n + 1)} />;
+  }
 
   return (
     <div className="page">

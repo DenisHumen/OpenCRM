@@ -341,6 +341,7 @@ export function SettingsRoles() {
               )}
               <button
                 className="btn btn-secondary btn-sm"
+                aria-label={t("delete")}
                 onClick={(e) => {
                   e.stopPropagation();
                   setRemoving(role);

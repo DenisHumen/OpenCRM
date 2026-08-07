@@ -2,25 +2,24 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { Icon } from "../components/Icon";
-import { Chip, ConfirmModal, EmptyState, Modal, ScreenLoading, Toggle } from "../components/ui";
+import { Chip, ConfirmModal, LoadFailed, Modal, ScreenLoading, Toggle } from "../components/ui";
 import { api, ApiError } from "../lib/api";
 import { dropTarget } from "../lib/dnd";
 import { useApp } from "../lib/app";
 import { useFailure } from "../lib/failure";
+import { useGuard } from "../lib/guard";
 import { copyText } from "../lib/clipboard";
 import { formatDateTime, formatDuration } from "../lib/format";
+import { useReference } from "../lib/reference";
 
 export function BoardEditor() {
   const { id } = useParams();
   const { t, locale, toast, toastError } = useApp();
   const navigate = useNavigate();
   const [board, setBoard] = useState<any>(null);
-  const [clients, setClients] = useState<any[]>([]);
-  // Заявки выбранного клиента. Показывать чужие в этом окне незачем:
-  // доска делается по конкретному заказу конкретного человека.
-  const [clientDeals, setClientDeals] = useState<any[]>([]);
   const [confirm, setConfirm] = useState<null | "regenerate" | "deleteBoard" | "deleteShare" | number>(null);
   const [copied, setCopied] = useState(false);
+  const guard = useGuard();
   const [expiryOpen, setExpiryOpen] = useState(false);
   const [pinOpen, setPinOpen] = useState(false);
   const [pinDraft, setPinDraft] = useState("");
@@ -52,21 +51,18 @@ export function BoardEditor() {
 
   useEffect(() => {
     void load();
-    api.get("/clients?per_page=200").then((d) => setClients(d.items)).catch(() => undefined);
   }, [load]);
 
-  // Заявки перезапрашиваем при смене клиента: список в селекторе обязан
-  // относиться к тому, кто сейчас выбран, иначе доску привяжут к чужому заказу.
-  useEffect(() => {
-    if (!board?.client_id) {
-      setClientDeals([]);
-      return;
-    }
-    api
-      .get(`/deals?client_id=${board.client_id}&per_page=100`)
-      .then((d) => setClientDeals(d.items))
-      .catch(() => undefined);
-  }, [board?.client_id]);
+  // Справочники правой колонки — через общий крючок. Отказ здесь не должен
+  // сводиться к пустому списку: выбор клиента без клиентов выглядит как
+  // «клиентов нет», а подпись «для клиента» над доской просто исчезает.
+  const clients = useReference<any>("/clients?per_page=200");
+  // Заявки выбранного клиента. Показывать чужие в этом окне незачем: доска
+  // делается по конкретному заказу конкретного человека. Список
+  // перезапрашивается при смене клиента — иначе доску привяжут к чужому заказу.
+  const clientDeals = useReference<any>(
+    board?.client_id ? `/deals?client_id=${board.client_id}&per_page=100` : null,
+  );
 
   // поллинг обрабатывающихся работ
   useEffect(() => {
@@ -117,11 +113,17 @@ export function BoardEditor() {
   };
 
   const createShare = async () => {
+    // Второе нажатие по неответившей кнопке заводило вторую ссылку на ту же
+    // доску: клиенту уходила одна, а отзывали потом другую — и доска
+    // оставалась открытой по забытому адресу.
+    if (!guard.take()) return;
     try {
       const link = await api.post(`/boards/${id}/shares`, {});
       setBoard((prev: any) => ({ ...prev, shares: [link, ...prev.shares] }));
     } catch (e) {
       toastError(e);
+    } finally {
+      guard.free();
     }
   };
 
@@ -221,11 +223,11 @@ export function BoardEditor() {
             )}
           </div>
           <div className="page-sub">
-            {board.client_id && clients.length > 0 && (
+            {board.client_id && (clients.items?.length ?? 0) > 0 && (
               <>
                 {t("forClient")}{" "}
                 <Link to={`/clients/${board.client_id}`} style={{ color: "var(--muted)", textDecoration: "underline", textUnderlineOffset: 2 }}>
-                  {clients.find((c) => c.id === board.client_id)?.name ?? "…"}
+                  {(clients.items ?? []).find((c) => c.id === board.client_id)?.name ?? "…"}
                 </Link>
                 {" · "}
               </>
@@ -233,11 +235,17 @@ export function BoardEditor() {
             {board.works.length} {t("works")} · {t("updated")} {formatDateTime(board.updated_at, locale)}
           </div>
         </div>
+        {/* Обёртка расширяет область нажатия мышью на подпись рядом; сам
+            переключатель — настоящая кнопка и работает с клавиатуры. */}
         <div
           style={{ display: "flex", alignItems: "center", gap: 9, cursor: "pointer", padding: "8px 12px", border: "1px solid var(--border)", borderRadius: 8 }}
           onClick={() => void patchBoard({ is_published: !board.is_published })}
         >
-          <Toggle on={board.is_published} onToggle={() => undefined} />
+          <Toggle
+            on={board.is_published}
+            label={t("published")}
+            onToggle={() => void patchBoard({ is_published: !board.is_published })}
+          />
           <span style={{ fontSize: 13, fontWeight: 500 }}>{t("published")}</span>
         </div>
       </div>
@@ -323,7 +331,12 @@ export function BoardEditor() {
                   >
                     <Icon name="link" size={13} />
                   </button>
-                  <button className="text-link" style={{ display: "flex", color: "var(--faint)" }} onClick={() => setConfirm(work.id)}>
+                  <button
+                    className="text-link"
+                    style={{ display: "flex", color: "var(--faint)" }}
+                    aria-label={t("delete")}
+                    onClick={() => setConfirm(work.id)}
+                  >
                     <Icon name="trash" size={13} />
                   </button>
                 </div>
@@ -367,12 +380,15 @@ export function BoardEditor() {
               onChange={(e) => void patchBoard({ client_id: e.target.value ? Number(e.target.value) : null })}
             >
               <option value="">{t("noClient")}</option>
-              {clients.map((client) => (
+              {(clients.items ?? []).map((client) => (
                 <option key={client.id} value={client.id}>
                   {client.name}
                 </option>
               ))}
             </select>
+            {clients.failure !== null && (
+              <LoadFailed error={clients.failure} onRetry={clients.reload} />
+            )}
             {/* Заявка, ради которой доска сделана. Список — только заявки
                 выбранного клиента: чужие в этом окне лишь мешают. */}
             <label className="label" style={{ marginTop: 12 }}>{t("deal")}</label>
@@ -383,12 +399,15 @@ export function BoardEditor() {
               onChange={(e) => void patchBoard({ deal_id: e.target.value ? Number(e.target.value) : null })}
             >
               <option value="">{t("noDealLink")}</option>
-              {clientDeals.map((deal) => (
+              {(clientDeals.items ?? []).map((deal) => (
                 <option key={deal.id} value={deal.id}>
                   {deal.title}
                 </option>
               ))}
             </select>
+            {clientDeals.failure !== null && (
+              <LoadFailed error={clientDeals.failure} onRetry={clientDeals.reload} />
+            )}
             <div style={{ color: "var(--faint)", fontSize: 11.5, marginTop: 10, lineHeight: 1.5 }}>{t("coverHint")}</div>
           </div>
 
@@ -400,12 +419,16 @@ export function BoardEditor() {
                   <span style={{ color: "var(--muted)", fontSize: 12 }}>
                     {share.is_active ? t("linkActive") : t("linkOff")}
                   </span>
-                  <Toggle on={share.is_active} onToggle={() => void patchShare({ is_active: !share.is_active })} />
+                  <Toggle
+                    on={share.is_active}
+                    label={t("share")}
+                    onToggle={() => void patchShare({ is_active: !share.is_active })}
+                  />
                 </div>
               )}
             </div>
             {!share ? (
-              <button className="copy-btn" onClick={() => void createShare()}>
+              <button className="copy-btn" disabled={guard.busy} onClick={() => void createShare()}>
                 <Icon name="link" size={15} />
                 {t("createLink")}
               </button>

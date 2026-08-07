@@ -6,11 +6,19 @@
 понадобилась. Проверка стоит секунду и превращает «надеюсь, есть копия» в
 «копия открывается, в ней столько-то клиентов».
 
+Копия бывает двух видов, и вид определяется расширением: `.db` — файл SQLite,
+`.sql` — дамп MySQL. Проверки у них разные по устройству и **одинаковые по
+смыслу**: система, переехавшая на MySQL, не имеет права молча остаться с
+копиями, о годности которых никто не спрашивал.
+
 Проверяем ровно то, из-за чего копия оказывается негодной:
 
-1. **База открывается и цела** — `PRAGMA integrity_check`. Оборванный на
-   середине `.backup` даёт файл, который выглядит как база, а читается до
-   первой битой страницы.
+1. **Копия дописана до конца.** У SQLite это `PRAGMA integrity_check`:
+   оборванный на середине `.backup` даёт файл, который выглядит как база, а
+   читается до первой битой страницы. У дампа MySQL признак другой и хуже
+   заметный — это обычный текст, и оборванный дамп ничем не отличается от
+   целого, кроме отсутствующего хвоста `-- Dump completed`. Залитый до места
+   обрыва, он оставит половину таблиц.
 2. **Схема отмечена миграцией.** База без `alembic_version` не поднимется
    новым кодом: приложение не знает, чем её доводить (см.
    `database/schema_check.py`).
@@ -32,6 +40,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import subprocess
 import sys
@@ -59,30 +68,170 @@ COUNT_TABLES = tuple(dict.fromkeys(
     )
 ))
 
+#: Хвост, которым mysqldump заканчивает работу. Его отсутствие — единственный
+#: признак оборванного дампа: текстовый файл, обрезанный на полуслове, читается
+#: и выглядит совершенно обычно.
+#:
+#: Строка появляется, пока дамп снимается с комментариями (по умолчанию);
+#: `--skip-comments` её убирает, поэтому в scripts/backup.sh этого флага нет и
+#: быть не должно.
+KHVOST_DUMPA = "-- Dump completed"
 
-def verify(db_path: Path, storage_path: Path | None, secret_path: Path | None) -> dict:
-    report: dict = {
-        "checked_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "database": str(db_path),
-        "ok": True,
-        "problems": [],
-        "counts": {},
-    }
+#: `CREATE TABLE \`users\` (` — имя таблицы в дампе всегда в обратных кавычках.
+_SOZDANIE_TABLICY = re.compile(r"^CREATE TABLE `([^`]+)`", re.IGNORECASE)
+#: `INSERT INTO \`users\` VALUES (...),(...);` — а с `--complete-insert` между
+#: именем таблицы и словом VALUES стоит ещё и список столбцов.
+_VSTAVKA = re.compile(r"^INSERT INTO `([^`]+)`.*?\bVALUES\b", re.IGNORECASE)
 
-    def fail(message: str) -> None:
-        report["ok"] = False
-        report["problems"].append(message)
 
-    if not db_path.is_file():
-        fail(f"файла базы нет: {db_path}")
-        return report
-    report["size"] = db_path.stat().st_size
+class _SchyotchikVstavki:
+    """Считает строки в одном операторе `INSERT ... VALUES (..),(..);`.
 
+    Считаем скобки, а не запятые: значения — это текст заметок и адресов, и
+    `),(` внутри такого текста встречается ровно тогда, когда меньше всего
+    ждёшь. Внутри строкового литерала скобки не считаются вовсе, экранирование
+    `\\'` учитывается — mysqldump экранирует кавычки именно так.
+
+    Кормить можно по кусочку, и это не про удобство. **Оператор INSERT не
+    обязан помещаться в одну строку файла.** mysqldump от Oracle пишет его
+    одной строкой, а mariadb-dump (именно он ставится на Debian и Ubuntu под
+    именем `mysqldump`) переносит значения на следующие строки. Поймано живьём:
+    построчный разбор насчитал ноль строк во всех таблицах и объявил заведомо
+    годную копию негодной — а ложная тревога про копии почти так же вредна, как
+    молчание, потому что после неё проверке перестают верить.
+    """
+
+    def __init__(self) -> None:
+        self.stroki = 0
+        self.zakonchen = False
+        self._glubina = 0
+        self._v_stroke = False
+        self._ekran = False
+
+    def dobavit(self, kusok: str) -> None:
+        for znak in kusok:
+            if self._ekran:
+                self._ekran = False
+            elif self._v_stroke:
+                if znak == "\\":
+                    self._ekran = True
+                elif znak == "'":
+                    self._v_stroke = False
+            elif znak == "'":
+                self._v_stroke = True
+            elif znak == "(":
+                self._glubina += 1
+            elif znak == ")":
+                self._glubina -= 1
+                if self._glubina == 0:
+                    self.stroki += 1
+            elif znak == ";" and self._glubina == 0:
+                # Точка с запятой вне строки и вне кортежа — конец оператора.
+                self.zakonchen = True
+                return
+
+
+def _prochitat_dump(path: Path) -> tuple[set[str], dict[str, int], str | None, str]:
+    """Разбирает дамп: какие таблицы есть, сколько в них строк, ревизия, хвост.
+
+    Читаем построчно, а не целиком: дамп рабочей базы — это сотни мегабайт, и
+    проверка копии не имеет права требовать под себя столько же памяти.
+    """
+    tablicy: set[str] = set()
+    stroki: dict[str, int] = {}
+    revizia: str | None = None
+    poslednyaya = ""
+
+    # Оператор INSERT, который сейчас разбираем: его имя, счётчик и — только для
+    # alembic_version — накопленный текст. Копить текст всех вставок подряд
+    # значило бы прочитать дамп в память целиком, ради чего всё это и не делается.
+    imya: str | None = None
+    schyotchik: _SchyotchikVstavki | None = None
+    otmetka_revizii: list[str] = []
+
+    with path.open("r", encoding="utf-8", errors="replace") as fayl:
+        for stroka in fayl:
+            stroka = stroka.rstrip("\n")
+            if stroka.strip():
+                poslednyaya = stroka
+
+            if imya is None:
+                sozdanie = _SOZDANIE_TABLICY.match(stroka)
+                if sozdanie:
+                    tablicy.add(sozdanie.group(1))
+                    continue
+                vstavka = _VSTAVKA.match(stroka)
+                if not vstavka:
+                    continue
+                imya = vstavka.group(1)
+                # Вставка бывает и в таблицу, чьего CREATE TABLE в дампе нет
+                # (частичный дамп); тогда таблица всё равно считается имеющейся.
+                tablicy.add(imya)
+                schyotchik = _SchyotchikVstavki()
+                kusok = stroka[vstavka.end():]
+            else:
+                kusok = stroka
+
+            assert schyotchik is not None
+            schyotchik.dobavit(kusok)
+            if imya == "alembic_version":
+                otmetka_revizii.append(kusok)
+
+            if schyotchik.zakonchen:
+                stroki[imya] = stroki.get(imya, 0) + schyotchik.stroki
+                if imya == "alembic_version" and revizia is None:
+                    nayden = re.search(r"\('([^']+)'\)", "".join(otmetka_revizii))
+                    if nayden:
+                        revizia = nayden.group(1)
+                imya = None
+                schyotchik = None
+
+    # Оператор, оборвавшийся на середине файла, до сюда не досчитан — и это
+    # верно: строки, которых в файле нет, восстановлению не помогут.
+    if imya is not None and schyotchik is not None:
+        stroki[imya] = stroki.get(imya, 0) + schyotchik.stroki
+
+    return tablicy, stroki, revizia, poslednyaya
+
+
+def _proverit_dump(db_path: Path, report: dict, fail) -> None:
+    """Дамп MySQL. Смысл проверок тот же, что и у файла SQLite."""
+    tablicy, stroki, revizia, poslednyaya = _prochitat_dump(db_path)
+
+    if KHVOST_DUMPA not in poslednyaya:
+        # Оборванный дамп — обычный текстовый файл: он открывается, читается и
+        # выглядит целым. Единственное, чем он себя выдаёт, — отсутствие хвоста,
+        # который mysqldump дописывает последним действием.
+        fail("дамп не дописан до конца — снятие копии оборвалось")
+
+    if "alembic_version" not in tablicy:
+        fail("копия не отмечена миграцией — новый код не будет знать, чем её доводить")
+    elif revizia is None:
+        fail("таблица alembic_version в дампе есть, а ревизии в ней нет")
+    else:
+        report["revision"] = revizia
+
+    for table in COUNT_TABLES:
+        if table in tablicy:
+            report["counts"][table] = stroki.get(table, 0)
+
+    for table in MUST_HAVE_ROWS:
+        if table not in tablicy:
+            fail(f"в копии нет таблицы {table}")
+        elif not report["counts"].get(table):
+            # Дамп со схемой, но без данных — ровно то, что получается при
+            # `--no-data` или при дампе не той базы. Восстанавливают такую копию
+            # и обнаруживают, что войти в систему некому.
+            fail(f"таблица {table} пуста — копия бесполезна")
+
+
+def _proverit_sqlite(db_path: Path, report: dict, fail) -> None:
+    """Файл SQLite."""
     try:
         db = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     except sqlite3.Error as error:
         fail(f"база не открывается: {error}")
-        return report
+        return
 
     try:
         # Оборванная копия роняет не `connect`, а первый же запрос: SQLite
@@ -119,6 +268,34 @@ def verify(db_path: Path, storage_path: Path | None, secret_path: Path | None) -
     finally:
         db.close()
 
+
+def verify(db_path: Path, storage_path: Path | None, secret_path: Path | None) -> dict:
+    report: dict = {
+        "checked_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "database": str(db_path),
+        "ok": True,
+        "problems": [],
+        "counts": {},
+    }
+
+    def fail(message: str) -> None:
+        report["ok"] = False
+        report["problems"].append(message)
+
+    if not db_path.is_file():
+        fail(f"файла базы нет: {db_path}")
+        return report
+    report["size"] = db_path.stat().st_size
+
+    # Вид копии — по расширению, которое ставит scripts/backup.sh. Заглядывать
+    # внутрь незачем: имя файла здесь и есть решение, принятое при снятии.
+    if db_path.suffix.lower() == ".sql":
+        report["engine"] = "mysql"
+        _proverit_dump(db_path, report, fail)
+    else:
+        report["engine"] = "sqlite"
+        _proverit_sqlite(db_path, report, fail)
+
     if storage_path is not None:
         report["storage"] = str(storage_path)
         if not storage_path.is_file():
@@ -152,7 +329,7 @@ def verify(db_path: Path, storage_path: Path | None, secret_path: Path | None) -
 
 def main(argv: list[str]) -> int:
     if not argv:
-        print("использование: verify_backup.py <db> [storage.tar.gz] [secret.env]")
+        print("использование: verify_backup.py <db|dump.sql> [storage.tar.gz] [secret.env]")
         return 2
 
     db_path = Path(argv[0])
@@ -174,7 +351,7 @@ def main(argv: list[str]) -> int:
 
     counts = ", ".join(f"{k}: {v}" for k, v in report["counts"].items() if v)
     if report["ok"]:
-        print(f"копия годна · {counts or 'пусто'}")
+        print(f"копия годна · {report.get('engine', '?')} · {counts or 'пусто'}")
         return 0
     print("КОПИЯ НЕГОДНА:")
     for problem in report["problems"]:

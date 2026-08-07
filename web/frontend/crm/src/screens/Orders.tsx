@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
 import { Icon } from "../components/Icon";
@@ -7,6 +7,7 @@ import { api } from "../lib/api";
 import { useApp } from "../lib/app";
 import { useDebounced } from "../lib/debounce";
 import { useFailure } from "../lib/failure";
+import { useGuard } from "../lib/guard";
 import { formatMoney } from "../lib/format";
 
 /** Список заказов: покупателей и поставщикам.
@@ -49,38 +50,61 @@ export const ORDER_STATUS_LABEL = {
 } as const;
 
 export function Orders() {
-  const { t, locale, workspace } = useApp();
+  const { t, locale, workspace, toastError } = useApp();
   const navigate = useNavigate();
   const [query, setQuery] = useState("");
   const [kind, setKind] = useState<string>("");
   const [data, setData] = useState<{ items: Order[]; total: number } | null>(null);
+  const [attempt, setAttempt] = useState(0);
+  const guard = useGuard();
   const { failure, fail, clear } = useFailure();
 
-  const load = useCallback(
-    (q: string, which: string) => {
-      clear();
-      const params = new URLSearchParams({ per_page: "100" });
-      if (q) params.set("search", q);
-      if (which) params.set("kind", which);
-      api
-        .get(`/orders?${params}`)
-        .then(setData)
-        .catch(fail);
-    },
-    [fail, clear],
-  );
-
   const search = useDebounced(query);
+
+  const path = useMemo(() => {
+    const params = new URLSearchParams({ per_page: "100" });
+    if (search) params.set("search", search);
+    if (kind) params.set("kind", kind);
+    return `/orders?${params}`;
+  }, [search, kind]);
+
   useEffect(() => {
-    load(search, kind);
-  }, [search, kind, load]);
+    // Вид заказа переключают быстрее, чем отвечает сервер: без счётчика ответ
+    // по прошлому виду ложился поверх текущего, и на экране оказывался список
+    // позапрошлого отбора. Приём тот же, что в отчётах и палитре команд.
+    let current = true;
+    clear();
+    api
+      .get(path)
+      .then((found) => {
+        if (current) setData(found);
+      })
+      .catch((e) => {
+        if (current) fail(e);
+      });
+    return () => {
+      current = false;
+    };
+  }, [path, attempt, fail, clear]);
 
   const create = async (which: string) => {
-    const order = await api.post<Order>("/orders", { kind: which });
-    navigate(`/orders/${order.id}`);
+    // Заказ заводится пустым и сразу открывается: пока сервер отдаёт номер,
+    // кнопка выглядит неотвеченной, и второе нажатие заводило второй заказ —
+    // человек уходил в один, а второй оставался висеть без строк.
+    if (!guard.take()) return;
+    try {
+      const order = await api.post<Order>("/orders", { kind: which });
+      navigate(`/orders/${order.id}`);
+    } catch (e) {
+      // Отказ здесь был не пойман вовсе: нажатие просто ничего не делало.
+      toastError(e);
+      guard.free();
+    }
   };
 
-  if (!data) return <ScreenLoading error={failure} onRetry={() => load(query, kind)} />;
+  if (!data) {
+    return <ScreenLoading error={failure} onRetry={() => setAttempt((n) => n + 1)} />;
+  }
 
   return (
     <div className="page">
@@ -90,11 +114,19 @@ export function Orders() {
           <div className="page-sub">{t("ordersSub", { total: data.total })}</div>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
-          <button className="btn btn-primary" onClick={() => void create("sales_order")}>
+          <button
+            className="btn btn-primary"
+            disabled={guard.busy}
+            onClick={() => void create("sales_order")}
+          >
             <Icon name="plus" stroke={2} />
             {t("newSalesOrder")}
           </button>
-          <button className="btn btn-secondary" onClick={() => void create("purchase_order")}>
+          <button
+            className="btn btn-secondary"
+            disabled={guard.busy}
+            onClick={() => void create("purchase_order")}
+          >
             {t("newPurchaseOrder")}
           </button>
         </div>

@@ -4,6 +4,7 @@ import { Icon } from "../components/Icon";
 import { ConfirmModal, ScreenLoading } from "../components/ui";
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
+import { copyText } from "../lib/clipboard";
 import { useFailure } from "../lib/failure";
 import type { TranslationKey } from "../lib/i18n";
 
@@ -199,12 +200,19 @@ export function SettingsTelephony() {
 
       <div className="card card-pad">
         <label className="label" style={{ marginBottom: 6 }}>{t("telephonyWebhook")}</label>
-        <div
+        {/* Адрес вебхука копируют, чтобы вставить в настройки АТС, — и делают
+            это ровно один раз, не проверяя. `navigator.clipboard` живёт только
+            в защищённом контексте, а CRM у большинства открыта по HTTP на
+            адресе вида 10.0.0.130: объекта там нет вовсе, `?.` тихо возвращает
+            undefined — и подсказка «Скопировано» появлялась над пустым буфером.
+            `copyText` пробует запасной путь и честно говорит, вышло или нет. */}
+        <button
+          type="button"
           className="input"
-          style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}
-          onClick={() => {
-            void navigator.clipboard?.writeText(webhookUrl);
-            toast(t("copied"));
+          style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", width: "100%", textAlign: "left" }}
+          onClick={async () => {
+            if (await copyText(webhookUrl)) toast(t("copied"));
+            else toast(t("copyFailed"), true);
           }}
         >
           <Icon name="link" size={13} />
@@ -214,7 +222,7 @@ export function SettingsTelephony() {
             {webhookUrl}
           </span>
           <Icon name="copy" size={13} />
-        </div>
+        </button>
         <div className="field-desc">{t("telephonyWebhookDesc")}</div>
 
         <div style={{ marginTop: 16, display: "flex", alignItems: "center", gap: 12 }}>

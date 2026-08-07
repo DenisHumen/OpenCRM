@@ -27,6 +27,10 @@
 необнаружима, тогда как противоположная ошибка (старый код против новой схемы)
 шумит и ловится тем же health-check'ом, а снимок остаётся лежать на диске.
 
+Пока всё это идёт, посетитель видит страницу обслуживания, и ход обновления ей
+рассказывают файлом: шаги 4–6 отмечает этот модуль, миграции и старт —
+`docker/entrypoint.sh` уже изнутри контейнера. Подробности — у `PROGRESS_NAME`.
+
 Коммит, который не встал, запоминается (`failed_sha`) и сам собой больше не
 пробуется: иначе демон каждые пять минут пересобирал бы заведомо сломанную
 версию и слал бы об этом сообщения. Повтор — только `force-update` или
@@ -51,7 +55,10 @@ from pathlib import Path
 from deploy import notify
 from deploy.config import UpdateConfig
 from deploy.github import CHECKS_FAILURE, CHECKS_PENDING, GitHub, GitHubError
-from deploy.journal import Journal
+# _atomic_write, а не своя запись: гарантия ровно та же, что у состояния демона —
+# недописанного JSON на диске не бывает. Ход обновления читают в произвольный
+# момент, и половина файла разобралась бы у страницы как порча.
+from deploy.journal import Journal, _atomic_write
 from deploy.runner import HttpProbe, Result, Shell
 
 STATUS_DISABLED = "disabled"
@@ -67,6 +74,38 @@ QUIET = {STATUS_DISABLED, STATUS_UP_TO_DATE}
 # Файлы, из которых работает сам демон обновления. Изменились — процессу нужен
 # перезапуск: Python загрузил их при старте и правку на диске не заметит.
 SELF_PATHS = ("deploy/", "scripts/autoupdate.py")
+
+# --- ход обновления для страницы обслуживания ---
+#
+# Пока идёт обновление, приложения нет по определению: заглушку отдаёт nginx, и
+# спросить «на каком мы шаге» ему не у кого. Значит шаги надо положить в файл,
+# который nginx отдаст сам, статикой.
+#
+# Файл кладётся в `storage/branding` — тот самый каталог, который любой уже
+# развёрнутый nginx раздаёт по адресу `/branding/` (docker/nginx/templates/
+# locations.inc). Своего `location` под это не заводим, и не из аккуратности:
+# конфиг nginx примонтирован из чекаута, а работающий nginx держит в памяти тот,
+# что прочитал при своём запуске (об этом же — `_reload_nginx` ниже). Новый
+# location начал бы действовать только со СЛЕДУЮЩЕГО обновления, то есть ровно
+# на том обновлении, которое эту страницу привозит, ход был бы не виден. То же и
+# с новым томом: docker-compose.yml перечитывается только на `up`, а каталог
+# данных в nginx не примонтирован вовсе.
+#
+# Файл по устройству публичен: его читает страница, за которой нет ни сессии, ни
+# приложения. Поэтому в нём только то, что не жалко показать постороннему — имя
+# шага и короткий хвост причины; подробности уходят в историю и в Telegram.
+PROGRESS_NAME = "update-state.json"
+
+# Шаги, которые видит посетитель. Порядок настоящий, а не «по здравому смыслу»:
+# мигрировать базу до того, как собран образ с новым кодом, нечем. `migrate` и
+# `start` пишет не этот файл, а docker/entrypoint.sh изнутри контейнера — он
+# один и знает, когда миграции пошли и когда приложение отправилось на старт.
+PROGRESS_STEPS = ("backup", "build", "migrate", "start", "health")
+
+# Длиннее в файл не пишем: он публичен, а простыня из лога сборки не помогает
+# ни посетителю, ни отладке — для отладки есть история и уведомление. Столько же
+# отрезает docker/entrypoint.sh, чтобы правило было одно на обоих писателей.
+PROGRESS_ERROR_LIMIT = 200
 
 
 class _Stop(Exception):
@@ -122,6 +161,11 @@ class Updater:
         self.notifier = notifier if notifier is not None else notify.from_config(config)
         self._sleep = sleep
         self._clock = clock
+        # Последний объявленный посетителю шаг и время начала обновления.
+        # Пустые до первого объявления — по этому и видно, что показывать пока
+        # нечего (см. `_progress_finish`).
+        self._progress_step = ""
+        self._progress_started = ""
 
     # --- то, что вызывают снаружи ---
 
@@ -303,6 +347,10 @@ class Updater:
         snapshot: Path | None = None
         touched = False  # тронули ли живой сайт
         migrated = False  # заменили ли контейнер, то есть могли ли пойти миграции
+        # Новая попытка — новый отсчёт: время начала прошлой на странице
+        # выглядело бы как «обновляемся уже четвёртый час».
+        self._progress_step = ""
+        self._progress_started = ""
         self.log(f"обновление {previous[:12]} → {target[:12]} {summary}")
 
         try:
@@ -310,9 +358,13 @@ class Updater:
             self._step(steps, "fetch", self._git("fetch", "--quiet", "origin", self.config.branch))
             self._step(steps, "checkout", self._git("checkout", "--detach", "--quiet", target))
             self._checks(steps)
+            # Шаги объявляются ДО работы, а не после: страницу читают ровно в ту
+            # минуту, когда шаг идёт, а «сделано» посетителю уже неинтересно.
+            self._progress("backup")
             snapshot = self._snapshot(steps, target)
 
             touched = True
+            self._progress("build")
             self._step(
                 steps,
                 "deploy",
@@ -320,6 +372,7 @@ class Updater:
             )
             migrated = True
             self._reload_nginx(steps)
+            self._progress("health")
             self._health(steps, "health")
 
             # Каждая сборка оставляет предыдущий образ висеть без тега. Демон
@@ -350,6 +403,7 @@ class Updater:
             self.journal.write(failed_sha=target)
 
         outcome.seconds = self._clock() - started
+        self._progress_finish(outcome, touched)
         self.journal.append(outcome.as_record())
         self._notify(outcome)
         return outcome
@@ -572,6 +626,63 @@ class Updater:
             return str(failure)
         return ""
 
+    # --- ход обновления для страницы обслуживания ---
+
+    def _progress_path(self) -> Path:
+        # `data/` и `storage/` compose кладёт рядом, под одним `OPENCRM_HOME`
+        # (docker/docker-compose.yml), а в UpdateConfig из этой пары назван
+        # только первый. Отсюда `parent`: заводить вторую переменную окружения
+        # ради того же каталога значило бы создать способ развести их между
+        # собой — и в тот же день обновление начало бы писать ход туда, откуда
+        # nginx ничего не отдаёт.
+        return self.config.data_dir.parent / "storage" / "branding" / PROGRESS_NAME
+
+    def _progress(self, step: str, phase: str = "running", error: str = "") -> None:
+        """Сообщить странице обслуживания, на каком мы шаге.
+
+        Ход — удобство для посетителя, а не часть обновления: любая беда с
+        записью гасится здесь же. Уронить деплой из-за файла, который нужен
+        только чтобы нарисовать список, было бы обменом наоборот.
+        """
+        if phase == "running":
+            self._progress_step = step
+            self._progress_started = self._progress_started or _utc_now()
+        payload = {
+            "scope": "update",
+            "phase": phase,
+            "step": step,
+            "started_at": self._progress_started or _utc_now(),
+            "error": error.strip()[:PROGRESS_ERROR_LIMIT],
+        }
+        try:
+            _atomic_write(
+                self._progress_path(),
+                json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+            )
+        except OSError as failure:
+            self.log(f"не удалось записать ход обновления: {failure}")
+
+    def _progress_finish(self, outcome: Outcome, touched: bool) -> None:
+        """Итог на ту же страницу — или чистый лист, если показывать нечего.
+
+        Пока обновление не тронуло живой сайт, страницы обслуживания никто не
+        видел: приложение работало и отвечало само. Оставить там «не удалось»
+        значило бы положить на диск испуг, который всплывёт при следующем — уже
+        постороннем — падении сайта и соврёт про его причину. Поэтому такой
+        след стирается, а не переписывается.
+        """
+        if not self._progress_step:
+            return
+        if not touched:
+            try:
+                self._progress_path().unlink(missing_ok=True)
+            except OSError as failure:
+                self.log(f"не удалось убрать ход обновления: {failure}")
+        elif outcome.status == STATUS_DEPLOYED:
+            self._progress(self._progress_step, phase="done")
+        else:
+            self._progress(self._progress_step, phase="failed", error=outcome.reason)
+
     # --- мелочь ---
 
     def _git(self, *args: str, config: tuple[str, ...] = ()) -> Result:
@@ -623,6 +734,16 @@ class Updater:
         lines.append("")
         lines.append(f"{outcome.seconds:.0f} c")
         self.notifier.send("\n".join(lines))
+
+
+def _utc_now() -> str:
+    """Время начала — в UTC и с явной `Z`.
+
+    Часовой пояс сервера странице неизвестен, а показать надо местное время
+    посетителя: без пометки зоны браузер разобрал бы строку как своё локальное
+    время и «начало» уехало бы на несколько часов.
+    """
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
 def build(config: UpdateConfig, log=None) -> Updater:

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { CallButton, callIcon, useOutcomeLabel } from "../components/CallsPanel";
@@ -28,31 +28,45 @@ export function Calls() {
   const outcomeLabel = useOutcomeLabel();
   const tasksOn = moduleOn(modules, "tasks");
 
+  const [attempt, setAttempt] = useState(0);
+
   const { failure, fail, clear } = useFailure();
 
   const typed = useDebounced(search);
 
-  const load = useCallback(async () => {
+  const path = useMemo(() => {
     const params = new URLSearchParams({ per_page: "100" });
     if (typed.trim()) params.set("number", typed.trim());
     if (missedOnly) params.set("outcome", "missed");
-    clear();
-    try {
-      const data = await api.get<{ items: PhoneCall[]; total: number }>(
-        `/telephony/calls?${params}`,
-      );
-      setItems(data.items);
-      setTotal(data.total);
-    } catch (e) {
-      fail(e);
-    }
-  }, [typed, missedOnly, fail, clear]);
+    return `/telephony/calls?${params}`;
+  }, [typed, missedOnly]);
+
+  // Повтор и обновление после звонка идут одним путём — счётчиком попыток:
+  // так «нажали ещё раз» и «позвонили и вернулись» не расходятся в поведении.
+  const reload = useCallback(() => setAttempt((n) => n + 1), []);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    // «Только пропущенные» переключают быстрее, чем отвечает сервер: без
+    // счётчика ответ по прошлому отбору ложился поверх текущего. Приём тот же,
+    // что в отчётах и палитре команд.
+    let current = true;
+    clear();
+    api
+      .get<{ items: PhoneCall[]; total: number }>(path)
+      .then((data) => {
+        if (!current) return;
+        setItems(data.items);
+        setTotal(data.total);
+      })
+      .catch((e) => {
+        if (current) fail(e);
+      });
+    return () => {
+      current = false;
+    };
+  }, [path, attempt, fail, clear]);
 
-  if (!items) return <ScreenLoading error={failure} onRetry={() => void load()} />;
+  if (!items) return <ScreenLoading error={failure} onRetry={reload} />;
 
   // Напоминание перезвонить живёт в блоке напоминаний: он выключен — кнопки
   // просто нет, а журнал работает как работал.
@@ -165,7 +179,7 @@ export function Calls() {
                     {t("callbackTask")}
                   </button>
                 )}
-                <CallButton number={call.counterparty} onCalled={() => void load()} />
+                <CallButton number={call.counterparty} onCalled={reload} />
               </span>
             </div>
           ))}

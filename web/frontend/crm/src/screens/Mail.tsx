@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { Icon } from "../components/Icon";
@@ -8,6 +8,7 @@ import { useApp } from "../lib/app";
 import { useDebounced } from "../lib/debounce";
 import { useFailure } from "../lib/failure";
 import { formatDateTime } from "../lib/format";
+import { useReference } from "../lib/reference";
 
 export interface MailMessage {
   id: number;
@@ -40,46 +41,56 @@ export function Mail() {
   const { t, locale, toastError } = useApp();
   const [messages, setMessages] = useState<MailMessage[] | null>(null);
   const [total, setTotal] = useState(0);
-  const [accounts, setAccounts] = useState<MailAccount[]>([]);
   const [filter, setFilter] = useState<Filter>("all");
   const [search, setSearch] = useState("");
   const [open, setOpen] = useState<MailMessage | null>(null);
   const [composing, setComposing] = useState(false);
 
+  const [attempt, setAttempt] = useState(0);
+
   const { failure, fail, clear } = useFailure();
 
   const typed = useDebounced(search);
 
-  const load = useCallback(async () => {
+  const path = useMemo(() => {
     const params = new URLSearchParams({ per_page: "100" });
     if (filter === "in" || filter === "out") params.set("direction", filter);
     if (filter === "unread") params.set("unread", "true");
     if (typed.trim()) params.set("search", typed.trim());
+    return `/mail/messages?${params}`;
+  }, [filter, typed]);
+
+  const reload = useCallback(() => setAttempt((n) => n + 1), []);
+
+  useEffect(() => {
+    // Фильтры переключают быстрее, чем отвечает сервер: без счётчика ответ по
+    // прошлому отбору ложился поверх текущего, и во «входящих» оказывались
+    // исходящие. Приём тот же, что в отчётах и палитре команд.
+    let current = true;
     clear();
-    try {
-      const data = await api.get(`/mail/messages?${params}`);
-      setMessages(data.items);
-      setTotal(data.total);
-    } catch (e) {
+    api
+      .get(path)
+      .then((data) => {
+        if (!current) return;
+        setMessages(data.items);
+        setTotal(data.total);
+      })
       // Раньше здесь стоял пустой список — и экран показывал «писем нет» там,
       // где на деле не ответил сервер. Пустая почта и недоступная почта для
       // человека решения принимают разные: первую он закроет, вторую повторит.
-      fail(e);
-    }
-  }, [filter, typed, fail, clear]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
+      .catch((e) => {
+        if (current) fail(e);
+      });
+    return () => {
+      current = false;
+    };
+  }, [path, attempt, fail, clear]);
 
   // Список ящиков нужен форме отправки: с какого адреса уходит письмо.
-  // Менеджеру он недоступен (это настройка root), поэтому молча пропускаем.
-  useEffect(() => {
-    api
-      .get("/mail/accounts")
-      .then((data) => setAccounts(data.items))
-      .catch(() => setAccounts([]));
-  }, []);
+  // Менеджеру он недоступен (это настройка root), поэтому отказ здесь не беда:
+  // сервер возьмёт первый активный ящик сам. Важно только не выдать «ящиков
+  // нет» за ответ — на это и `null` в крючке справочника.
+  const accounts = useReference<MailAccount>("/mail/accounts");
 
   const openMessage = async (message: MailMessage) => {
     try {
@@ -96,7 +107,7 @@ export function Mail() {
     }
   };
 
-  if (!messages) return <ScreenLoading error={failure} onRetry={() => void load()} />;
+  if (!messages) return <ScreenLoading error={failure} onRetry={reload} />;
 
   const filters: { id: Filter; label: string }[] = [
     { id: "all", label: t("all") },
@@ -204,9 +215,9 @@ export function Mail() {
 
       {composing && (
         <MailCompose
-          accounts={accounts}
+          accounts={accounts.items ?? []}
           onClose={() => setComposing(false)}
-          onSent={() => void load()}
+          onSent={reload}
         />
       )}
     </div>
