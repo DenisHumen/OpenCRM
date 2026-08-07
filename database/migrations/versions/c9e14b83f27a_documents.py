@@ -14,6 +14,9 @@ Create Date: 2026-08-05 14:00:00.000000
 from typing import Sequence, Union
 
 from alembic import op
+# У TEXT значение по умолчанию записано выражением — `DEFAULT ('')`, не `DEFAULT ''`:
+# обычную форму MySQL отвергает (ошибка 1101), и миграция обрывается на середине.
+# Скобки понимают оба движка. Подробности — database/types.text_default.
 import sqlalchemy as sa
 
 
@@ -33,7 +36,7 @@ def upgrade() -> None:
         sa.Column('status', sa.String(length=16), nullable=False, server_default='issued'),
         sa.Column('client_id', sa.Integer(), nullable=True),
         sa.Column('deal_id', sa.Integer(), nullable=True),
-        sa.Column('payload', sa.Text(), nullable=False, server_default='{}'),
+        sa.Column('payload', sa.Text(), nullable=False, server_default=sa.text("('{}')")),
         sa.Column('created_by', sa.Integer(), nullable=True),
         sa.Column('created_at', sa.DateTime(), server_default=sa.func.now(), nullable=False),
         sa.Column('updated_at', sa.DateTime(), server_default=sa.func.now(), nullable=False),

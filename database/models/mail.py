@@ -1,6 +1,8 @@
 from datetime import datetime
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text
+
+from database.types import ExactString, LongText
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 
@@ -81,8 +83,10 @@ class MailMessage(Base):
     # Уникален: на нём держится идемпотентность синхронизации. Побочный эффект —
     # письмо, пришедшее сразу на два наших ящика, сохранится один раз. Для ленты
     # клиента это правильно: разговор был один.
+    # Сравнение побайтное: Message-ID регистрозависим по RFC 5322, и в MySQL
+    # с обычным сравнением два разных письма слиплись бы в одно.
     message_id: Mapped[str] = mapped_column(
-        String(MESSAGE_ID_LENGTH), unique=True, index=True
+        ExactString(MESSAGE_ID_LENGTH), unique=True, index=True
     )
     direction: Mapped[str] = mapped_column(String(3))
 
@@ -90,8 +94,8 @@ class MailMessage(Base):
     # Тела писем большие (html легко на сотни килобайт), а в списке они не нужны.
     # `deferred` — чтобы выборка списка не тянула их с диска: иначе страница
     # писем читала бы мегабайты ради заголовков.
-    body_text: Mapped[str] = mapped_column(Text, default="", deferred=True)
-    body_html: Mapped[str] = mapped_column(Text, default="", deferred=True)
+    body_text: Mapped[str] = mapped_column(LongText, default="", deferred=True)
+    body_html: Mapped[str] = mapped_column(LongText, default="", deferred=True)
 
     from_addr: Mapped[str] = mapped_column(String(320), default="", index=True)
     # Получателей может быть несколько; отдельная таблица адресатов здесь не

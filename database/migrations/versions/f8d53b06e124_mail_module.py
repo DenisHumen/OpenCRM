@@ -18,7 +18,16 @@ b81f6a2d40c7 ленту и обобщила. Поэтому здесь толь�
 from typing import Sequence, Union
 
 from alembic import op
+# У TEXT значение по умолчанию записано выражением — `DEFAULT ('')`, не `DEFAULT ''`:
+# обычную форму MySQL отвергает (ошибка 1101), и миграция обрывается на середине.
+# Скобки понимают оба движка. Подробности — database/types.text_default.
+# Сравнение строк в MySQL по умолчанию регистронезависимо. Для колонок ниже
+# это меняет смысл: `UNIQUE` начинает считать одним значением то, что в
+# SQLite было разным, а поиск по токену находит чужую запись, отличающуюся
+# регистром. Поэтому у них сравнение побайтное — как было и остаётся в
+# SQLite. Разбор — database/types.ExactString.
 import sqlalchemy as sa
+from sqlalchemy.dialects import mysql
 
 
 revision: str = "f8d53b06e124"
@@ -59,13 +68,16 @@ def upgrade() -> None:
         sa.Column("account_id", sa.Integer(), nullable=False),
         # NULL у исходящих: их UID на сервере входящей почты не существует.
         sa.Column("uid", sa.Integer(), nullable=True),
-        sa.Column("message_id", sa.String(length=320), nullable=False),
+        sa.Column("message_id", sa.String(length=320).with_variant(mysql.VARCHAR(320, collation="utf8mb4_bin"), "mysql"), nullable=False),
         sa.Column("direction", sa.String(length=3), nullable=False),
         sa.Column("subject", sa.String(length=500), nullable=False, server_default=""),
-        sa.Column("body_text", sa.Text(), nullable=False, server_default=""),
-        sa.Column("body_html", sa.Text(), nullable=False, server_default=""),
+        # TEXT в MySQL — 65 535 БАЙТ, а не символов: письмо на 40 тысяч знаков
+        # кириллицы туда уже не влезает, и в строгом режиме вставка падает.
+        # MEDIUMTEXT даёт 16 МБ. Разбор — database/types.LongText.
+        sa.Column("body_text", sa.Text().with_variant(mysql.MEDIUMTEXT(), "mysql"), nullable=False, server_default=sa.text("('')")),
+        sa.Column("body_html", sa.Text().with_variant(mysql.MEDIUMTEXT(), "mysql"), nullable=False, server_default=sa.text("('')")),
         sa.Column("from_addr", sa.String(length=320), nullable=False, server_default=""),
-        sa.Column("to_addrs", sa.Text(), nullable=False, server_default=""),
+        sa.Column("to_addrs", sa.Text(), nullable=False, server_default=sa.text("('')")),
         # Момент отправки письма (UTC), а не синхронизации — по нему письмо встаёт
         # в ленту рядом со звонками и встречами того же дня.
         sa.Column("sent_at", sa.DateTime(), nullable=False),

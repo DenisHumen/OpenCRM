@@ -8,7 +8,13 @@ Create Date: 2026-07-22 22:12:32.106160
 from typing import Sequence, Union
 
 from alembic import op
+# Сравнение строк в MySQL по умолчанию регистронезависимо. Для колонок ниже
+# это меняет смысл: `UNIQUE` начинает считать одним значением то, что в
+# SQLite было разным, а поиск по токену находит чужую запись, отличающуюся
+# регистром. Поэтому у них сравнение побайтное — как было и остаётся в
+# SQLite. Разбор — database/types.ExactString.
 import sqlalchemy as sa
+from sqlalchemy.dialects import mysql
 
 
 revision: str = 'e4451c527c34'
@@ -65,7 +71,7 @@ def upgrade() -> None:
 
     op.create_table('user_sessions',
     sa.Column('id', sa.Integer(), nullable=False),
-    sa.Column('token_hash', sa.String(length=64), nullable=False),
+    sa.Column('token_hash', sa.String(length=64).with_variant(mysql.VARCHAR(64, collation="utf8mb4_bin"), "mysql"), nullable=False),
     sa.Column('user_id', sa.Integer(), nullable=False),
     sa.Column('created_at', sa.DateTime(), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
     sa.Column('last_seen_at', sa.DateTime(), nullable=True),
@@ -131,7 +137,7 @@ def upgrade() -> None:
     op.create_table('share_links',
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('board_id', sa.Integer(), nullable=False),
-    sa.Column('token', sa.String(length=64), nullable=False),
+    sa.Column('token', sa.String(length=64).with_variant(mysql.VARCHAR(64, collation="utf8mb4_bin"), "mysql"), nullable=False),
     sa.Column('is_active', sa.Boolean(), nullable=False),
     sa.Column('expires_at', sa.DateTime(), nullable=True),
     sa.Column('pin_hash', sa.String(length=128), nullable=True),
