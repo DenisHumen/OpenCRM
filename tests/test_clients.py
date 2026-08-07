@@ -148,3 +148,29 @@ def test_a_phone_is_found_however_it_was_typed(manager_client):
         names = {c["id"] for c in found}
         assert tight["id"] in names, f"«{needle}»: не нашёлся записанный слитно"
         assert spaced["id"] in names, f"«{needle}»: не нашёлся записанный с пробелами"
+
+
+def test_filtr_po_metke_ne_nakhodit_chuzhie_metki(manager_client):
+    """Метка совпадает целиком, а не подстрокой.
+
+    Метки лежат одной строкой через запятую, и подстрочный поиск по ней
+    находил чужие: фильтр `ip` возвращал всех, у кого стоит `vip`. Беда тихая —
+    выдача не пустая, она просто не та, и заметить это можно лишь пересчитав
+    карточки руками.
+    """
+    svoy = _create(manager_client, name="Метка своя", tags=["ip"])
+    chuzhoy = _create(manager_client, name="Метка чужая", tags=["vip"])
+    eshchyo = _create(manager_client, name="Метка внутри слова", tags=["equipment"])
+
+    naydeno = manager_client.get(f"{API}/clients", params={"tag": "ip"}).json()["items"]
+    nomera = {c["id"] for c in naydeno}
+
+    assert svoy["id"] in nomera
+    assert chuzhoy["id"] not in nomera, "фильтр «ip» вернул карточку с меткой «vip»"
+    assert eshchyo["id"] not in nomera, "фильтр «ip» вернул карточку с меткой «equipment»"
+
+    # Метка не первая и не последняя в списке — обрамление запятыми обязано
+    # работать и в середине строки.
+    seredina = _create(manager_client, name="Метка в середине", tags=["опт", "ip", "срочно"])
+    v_seredine = manager_client.get(f"{API}/clients", params={"tag": "ip"}).json()["items"]
+    assert seredina["id"] in {c["id"] for c in v_seredine}
