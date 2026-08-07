@@ -24,6 +24,7 @@ import { DocumentCard } from "./screens/DocumentCard";
 import { Documents } from "./screens/Documents";
 import { Files } from "./screens/Files";
 import { Mail } from "./screens/Mail";
+import { Templates } from "./screens/Templates";
 import { Mailboxes } from "./screens/Mailboxes";
 import { ProductCard } from "./screens/ProductCard";
 import { Profile } from "./screens/Profile";
@@ -241,6 +242,11 @@ export default function App() {
           <Route element={<ModuleRoute module="reports" />}>
             <Route element={<PermRoute perm="reports.view" />}>
               <Route path="/reports" element={<Reports />} />
+            </Route>
+          </Route>
+          <Route element={<ModuleRoute module="templates" />}>
+            <Route element={<PermRoute perm="templates.view" />}>
+              <Route path="/templates" element={<Templates />} />
             </Route>
           </Route>
           <Route element={<ModuleRoute module="mail" />}>

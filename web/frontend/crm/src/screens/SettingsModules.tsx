@@ -25,6 +25,7 @@ export const LABEL: Record<string, TranslationKey> = {
   orders: "modOrders",
   reports: "modReports",
   mail: "modMail",
+  templates: "templates",
   telephony: "modTelephony",
   finance: "modFinance",
 };
@@ -41,6 +42,7 @@ const ABOUT: Record<string, TranslationKey> = {
   orders: "modOrdersAbout",
   reports: "modReportsAbout",
   mail: "modMailAbout",
+  templates: "modTemplatesAbout",
   telephony: "modTelephonyAbout",
   finance: "modFinanceAbout",
 };
@@ -57,6 +59,7 @@ const ICON: Record<string, string> = {
   orders: "receipt",
   reports: "analytics",
   mail: "email",
+  templates: "note",
   telephony: "call",
   // «receipt» — тот же значок, что у бланков и заказов, и это не оплошность:
   // ближе к деньгам в наборе ничего нет, а свой значок ради одного блока
