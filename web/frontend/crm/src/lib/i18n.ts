@@ -524,6 +524,11 @@ const en = {
   emailHint: "(sign-in, cannot be changed)",
   interfaceLanguage: "Interface language",
   langSaved: "Saved to your account — applies on every device.",
+  interfaceTheme: "Interface theme",
+  themeLight: "Light",
+  themeDark: "Dark",
+  themeSystem: "Match system",
+  themeHint: "Kept on this device, not in your account — a bright office and a dark room are different rooms.",
   joined: "joined",
   // фото + присутствие
   changePhoto: "Change photo",
@@ -1437,6 +1442,11 @@ const ru: typeof en = {
   emailHint: "(для входа, изменить нельзя)",
   interfaceLanguage: "Язык интерфейса",
   langSaved: "Сохраняется в аккаунте — действует на любом устройстве.",
+  interfaceTheme: "Тема интерфейса",
+  themeLight: "Светлая",
+  themeDark: "Тёмная",
+  themeSystem: "Как в системе",
+  themeHint: "Запоминается на этом устройстве, а не в аккаунте: светлый кабинет и тёмная комната — разные комнаты.",
   joined: "в студии с",
   // фото + присутствие
   changePhoto: "Изменить фото",

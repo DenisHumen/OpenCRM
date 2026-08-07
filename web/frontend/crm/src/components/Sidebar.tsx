@@ -331,7 +331,7 @@ export function Sidebar({
               width: 22,
               height: 22,
               borderRadius: 5,
-              background: "rgba(217,119,87,0.18)",
+              background: "var(--tint-brand)",
               color: "var(--brand)",
               display: "flex",
               alignItems: "center",

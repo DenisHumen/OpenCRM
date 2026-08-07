@@ -4,9 +4,17 @@ import { Avatar } from "../components/ui";
 import { api, ApiError, type User } from "../lib/api";
 import { useApp } from "../lib/app";
 import { formatDate, initials } from "../lib/format";
+import { THEMES, type Theme } from "../lib/theme";
+
+/** Подпись под каждым положением переключателя тем. */
+const THEME_LABEL: Record<Theme, "themeLight" | "themeDark" | "themeSystem"> = {
+  light: "themeLight",
+  dark: "themeDark",
+  system: "themeSystem",
+};
 
 export function Profile() {
-  const { user, t, locale, setUser, toast, toastError } = useApp();
+  const { user, t, locale, theme, setTheme, setUser, toast, toastError } = useApp();
   const [name, setName] = useState(user?.name ?? "");
   const [saved, setSaved] = useState(false);
   const [oldPassword, setOldPassword] = useState("");
@@ -145,6 +153,33 @@ export function Profile() {
           ))}
         </div>
         <div style={{ color: "var(--faint)", fontSize: 11.5 }}>{t("langSaved")}</div>
+      </div>
+
+      {/* Тема. Три положения, а не переключатель «светлая/тёмная»: «как в
+          системе» — не среднее между ними, а отказ решать за человека, у
+          которого ноутбук сам темнеет к вечеру.
+
+          Кнопки, а не `div`: по ним ходит Tab и на них отвечает пробел — тем же
+          нажатием, что мышью. `aria-pressed` вместо `role="radio"` намеренно:
+          настоящая радиогруппа обязана водить стрелками и держать один Tab-стоп
+          на всю группу, и объявить её, не сделав этого, хуже, чем не объявлять.
+          Проверка — tests/test_screens.py. */}
+      <div className="card" style={{ padding: "20px 22px", marginBottom: 16 }}>
+        <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 16 }}>{t("interfaceTheme")}</div>
+        <div className="theme-pick" role="group" aria-label={t("interfaceTheme")} style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap" }}>
+          {THEMES.map((id) => (
+            <button
+              key={id}
+              type="button"
+              className={"option-chip pick-chip" + (theme === id ? " active" : "")}
+              aria-pressed={theme === id}
+              onClick={() => setTheme(id)}
+            >
+              {t(THEME_LABEL[id])}
+            </button>
+          ))}
+        </div>
+        <div style={{ color: "var(--faint)", fontSize: 11.5 }}>{t("themeHint")}</div>
       </div>
 
       <form className="card" style={{ padding: "20px 22px" }} onSubmit={changePassword}>

@@ -619,6 +619,75 @@ def test_a_switch_is_a_button_and_it_actually_switches():
     )
 
 
+def test_pereklyuchatel_temy_rabotaet_s_klaviatury():
+    """Тема выбирается кнопками, и по ним ходит Tab.
+
+    Соседняя проверка (`Toggle`) написана на беду с `div`-переключателем: под
+    Tab он не попадает, на пробел не отвечает, и настройку нельзя было тронуть
+    без мыши. Ряд «светлая / тёмная / как в системе» — та же ловушка: три
+    подсвеченных прямоугольника выглядят кнопками ровно до попытки дойти до них
+    с клавиатуры.
+
+    Состояние обязано читаться вслух: без `aria-pressed` читалка объявляет три
+    одинаковые кнопки и ни слова о том, какая из них сейчас выбрана, — то есть
+    ровно то, ради чего переключатель и открывают. У ряда есть имя: «группа» без
+    подписи не говорит, к чему относятся «Светлая» и «Тёмная».
+    """
+    profile = (SCREENS / "screens" / "Profile.tsx").read_text(encoding="utf-8")
+    picker = re.search(r'<div className="theme-pick".*?</div>', profile, re.S)
+    assert picker, "ряд выбора темы исчез из профиля — проверка смотрит не туда"
+    row = picker.group(0)
+
+    assert 'role="group"' in row and "aria-label={t(" in row, (
+        "у ряда выбора темы нет имени: читалка объявит три кнопки ни о чём"
+    )
+    assert "<button" in row, "тема выбирается не кнопкой — с клавиатуры до неё не дойти"
+    assert "aria-pressed=" in row, (
+        "выбранная тема не объявляется: вслух три кнопки звучат одинаково"
+    )
+    assert "onClick={() => setTheme(" in row, "кнопка темы ничего не переключает"
+
+    # Все три положения на месте. Переключатель «светлая/тёмная» без «как в
+    # системе» — это отказ следовать за системой, которая сама темнеет к вечеру.
+    theme_lib = (SCREENS / "lib" / "theme.ts").read_text(encoding="utf-8")
+    assert re.search(r'THEMES[^=]*=\s*\["light", "dark", "system"\]', theme_lib), (
+        "положений темы стало не три"
+    )
+
+
+def test_tema_do_otrisovki_chitaet_tot_zhe_klyuch():
+    """Скрипт, ставящий тему до первой отрисовки, и приложение сходятся в ключе.
+
+    Скрипт лежит отдельным файлом и о `lib/theme.ts` ничего не знает — иначе он
+    не мог бы выполниться раньше бандла. Разойдись они в ключе или в имени
+    атрибута — приложение сохраняло бы выбор в одно место, а страница читала
+    другое, и светлая тема возвращалась бы к тёмной на каждой перезагрузке.
+    Молча: ошибки нет, просто выбор «не запоминается».
+
+    Инлайновым скрипт сделать нельзя (`script-src 'self'` без `'unsafe-inline'`
+    в `web/middleware.py`), а `type="module"` — это `defer`, то есть уже после
+    первого кадра. Поэтому и обычный `<script src>`, и эта проверка.
+    """
+    boot = (SCREENS.parent / "public" / "assets" / "theme-boot.js").read_text(encoding="utf-8")
+    theme_lib = (SCREENS / "lib" / "theme.ts").read_text(encoding="utf-8")
+    index = (SCREENS.parent / "index.html").read_text(encoding="utf-8")
+
+    key = re.search(r'THEME_KEY = "([^"]+)"', theme_lib)
+    attr = re.search(r'THEME_ATTR = "([^"]+)"', theme_lib)
+    assert key and attr, "в lib/theme.ts не нашлись ключ и атрибут — проверка смотрит не туда"
+    assert f'"{key.group(1)}"' in boot, f"boot-скрипт читает не {key.group(1)}"
+    assert f'"{attr.group(1)}"' in boot, f"boot-скрипт ставит не {attr.group(1)}"
+
+    # Скрипт обязан стоять в <head> и БЕЗ type="module": module — это defer.
+    tag = re.search(r'<script[^>]*theme-boot\.js[^>]*>', index)
+    assert tag, "boot-скрипт не подключён — вернулась вспышка тёмного при загрузке"
+    assert "type=" not in tag.group(0), (
+        "boot-скрипт стал модулем, то есть defer: он выполнится уже после первого кадра"
+    )
+    head = index[: index.index("</head>")]
+    assert "theme-boot.js" in head, "boot-скрипт уехал из <head> — отрисовка его не дождётся"
+
+
 def test_a_modal_is_a_dialog_and_keeps_the_focus():
     """Окно объявлено окном и не выпускает Tab на страницу под собой.
 
@@ -747,6 +816,99 @@ def test_copying_goes_through_the_one_place_that_has_a_fallback():
     assert not direct, (
         "буфер обмена мимо copyText — по HTTP это молчаливый отказ: " + ", ".join(direct)
     )
+
+
+# --- цвет живёт только в токене ---------------------------------------------
+#
+# Перебор, а не список подозрительных мест: цветов в интерфейсе под сотню, и
+# разложить их по темам руками нельзя — забытый останется тем же и на светлой.
+# Беда у этого правила ровно одна и повторяемая: зашитый цвет светлую тему не
+# переживает, а находится он не в коде, а глазами и не сразу. Так превью кнопки
+# возврата на светлой теме стало чёрным с белой надписью, а под курсором — белым
+# по белому; так плашка «Обложка» поверх работы получила чёрный текст на чёрном.
+#
+# Правило простое: в `styles.css` цвет стоит только в объявлении токена
+# (`--что-то: цвет`), в коде экранов — только `var(--…)`. Всё остальное —
+# именованное исключение с объяснением, почему это значение от темы не зависит.
+
+COLOR = re.compile(r"#[0-9a-fA-F]{3,8}\b|rgba?\(")
+
+# Цвет мимо токена — с причиной у каждого. Ключ — файл и имя, рядом с которым
+# он стоит.
+COLOR_OUTSIDE_A_TOKEN: dict[tuple[str, str], str] = {
+    # Не цвета интерфейса, а значения: их выбирают владельцу в настройках, они
+    # уезжают в базу и оттуда на витрину клиента. Тема CRM к ним отношения не
+    # имеет — как и к «синему» в поле выбора цвета.
+    ("Settings.tsx", "SWATCHES"): "палитра акцента витрины, а не цвета интерфейса",
+}
+
+
+def _color_owner(lines: list[str], at: int) -> str:
+    """Чему принадлежит цвет: ближайшее объявление на строке или выше."""
+    for j in range(at, -1, -1):
+        named = re.search(r"(?:const|function|class)\s+(\w+)", lines[j])
+        if named:
+            return named.group(1)
+    return "?"
+
+
+def test_tsvet_zhivyot_tolko_v_tokene():
+    """Ни одного цвета мимо `--токен` — иначе светлая тема неполна.
+
+    Комментарии не в счёт: объяснение, почему токен именно такой, называет
+    старое значение прямо рядом с ним.
+    """
+    styles = _without_comments((SCREENS / "styles.css").read_text(encoding="utf-8"))
+    lines = styles.splitlines()
+    assert sum(bool(COLOR.search(line)) for line in lines) > 40, (
+        "цветов в styles.css не нашлось — проверка смотрит не туда"
+    )
+
+    hardcoded = []
+    for number, line in enumerate(lines, 1):
+        if COLOR.search(line) and not re.match(r"\s*--[\w-]+\s*:", line):
+            hardcoded.append(f"styles.css:{number} — {line.strip()[:70]}")
+
+    for path in sorted(SCREENS.rglob("*.ts*")):
+        text = _without_comments(path.read_text(encoding="utf-8"))
+        code = text.splitlines()
+        for match in COLOR.finditer(text):
+            at = text[: match.start()].count("\n")
+            owner = _color_owner(code, at)
+            if (path.name, owner) in COLOR_OUTSIDE_A_TOKEN:
+                continue
+            hardcoded.append(f"{path.name}:{at + 1} ({owner}) — {match.group(0)}")
+
+    assert not hardcoded, (
+        "цвет зашит мимо токена и не переживёт смену темы:\n"
+        + "\n".join(hardcoded)
+        + "\n\nЛибо заведи токен в обеих палитрах styles.css, либо внеси в "
+        "COLOR_OUTSIDE_A_TOKEN с объяснением, почему цвет от темы не зависит."
+    )
+
+
+def test_obe_palitry_nazyvayut_odni_i_te_zhe_tokeny():
+    """Тёмная и светлая объявляют один набор имён.
+
+    Токен, забытый в светлой, не остаётся пустым — он наследует значение из
+    блока по умолчанию, то есть ТЁМНОЕ. Получается тёмная плашка посреди светлой
+    страницы, и виновата в ней не разметка, а пропущенная строка палитры.
+    Обратная сторона так же тиха: токен, заведённый только в светлой, на тёмной
+    теме просто не существует, и свойство молча откатывается к начальному.
+    """
+    styles = _without_comments((SCREENS / "styles.css").read_text(encoding="utf-8"))
+
+    def names(selector: str) -> set[str]:
+        block = re.search(re.escape(selector) + r"\s*\{(.*?)\n\}", styles, re.S)
+        assert block, f"в styles.css не нашёлся блок {selector} — проверка смотрит не туда"
+        return set(re.findall(r"^\s*(--[\w-]+)\s*:", block.group(1), re.M))
+
+    dark = names(':root,\n:root[data-theme="dark"]')
+    light = names(':root[data-theme="light"]')
+    assert len(dark) > 30, f"токенов в тёмной палитре {len(dark)} — проверка смотрит не туда"
+
+    assert not dark - light, f"в светлой палитре нет токенов: {sorted(dark - light)}"
+    assert not light - dark, f"в тёмной палитре нет токенов: {sorted(light - dark)}"
 
 
 # Справочники, чей отказ показывать негде и незачем, — с причиной у каждого.

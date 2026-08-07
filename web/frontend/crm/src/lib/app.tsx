@@ -15,6 +15,7 @@ import { api, ApiError, type User } from "./api";
 import { makeT, type Locale, type TFunc } from "./i18n";
 import { cachedModules, moduleOn, rememberModules } from "./modules";
 import { can } from "./permissions";
+import { applyTheme, readTheme, storeTheme, watchSystemTheme, type Theme } from "./theme";
 
 // проверка места дешёвая, но не бесплатная: обновляем раз в пару минут
 const STORAGE_POLL_MS = 120_000;
@@ -60,6 +61,9 @@ interface AppContextValue {
   user: User | null;
   ready: boolean;
   locale: Locale;
+  /** Светлая, тёмная или «как в системе». Живёт в браузере — почему, в lib/theme.ts. */
+  theme: Theme;
+  setTheme: (theme: Theme) => void;
   t: TFunc;
   settings: Record<string, string>;
   storage: StorageStatus | null;
@@ -116,6 +120,23 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const locale: Locale = user?.locale === "ru" ? "ru" : "en";
   const t = useMemo(() => makeT(locale), [locale]);
+
+  // Тема. Начальное значение читаем из того же хранилища, что и скрипт,
+  // поставивший её до отрисовки, — здесь только держим состояние для профиля.
+  const [theme, setThemeState] = useState<Theme>(readTheme);
+
+  const setTheme = useCallback((next: Theme) => {
+    storeTheme(next);
+    setThemeState(next);
+  }, []);
+
+  useEffect(() => {
+    applyTheme(theme);
+    // «Как в системе» — не разовое решение: система переключается по расписанию,
+    // и открытая с утра вкладка обязана потемнеть вечером вместе с ней.
+    if (theme !== "system") return;
+    return watchSystemTheme(() => applyTheme(theme));
+  }, [theme]);
 
   const refreshSettings = useCallback(async () => {
     // настройки сайта доступны только root; менеджерам не критично
@@ -308,11 +329,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo(
     () => ({
-      user, ready, locale, t, settings, storage, maintenance, modules, refreshModules,
+      user, ready, locale, theme, setTheme, t, settings, storage, maintenance, modules, refreshModules,
       workspace, refreshWorkspace, overdueTasks, refreshTasks,
       setUser, setMaintenance, refreshSettings, refreshStorage, logout, toast, toastError, toasts,
     }),
-    [user, ready, locale, t, settings, storage, maintenance, modules, refreshModules,
+    [user, ready, locale, theme, setTheme, t, settings, storage, maintenance, modules, refreshModules,
      workspace, refreshWorkspace, overdueTasks, refreshTasks,
      setMaintenance, refreshSettings, refreshStorage, logout, toast, toastError, toasts],
   );

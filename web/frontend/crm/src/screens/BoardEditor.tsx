@@ -295,7 +295,7 @@ export function BoardEditor() {
                   {work.status === "processing" && (
                     <div className="work-overlay">
                       <div className="spinner" />
-                      <span style={{ color: "var(--muted)", fontSize: 11.5 }}>{t("processing")}</span>
+                      <span style={{ color: "var(--on-media-dim)", fontSize: 11.5 }}>{t("processing")}</span>
                     </div>
                   )}
                   {work.status === "ready" && board.cover_work_id !== work.id && work.kind === "image" && (

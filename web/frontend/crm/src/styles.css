@@ -5,7 +5,78 @@
    чтобы все страницы разом стали компактнее и «презентабельнее».
    ============================================================ */
 
+/* ============================================================
+   ТОКЕНЫ И ТЕМЫ
+
+   Цвет в этом файле задаётся ТОЛЬКО в объявлении токена — ниже по файлу
+   встречается лишь `var(--…)`. Правило механическое, его держит
+   `tests/test_screens.py::test_tsvet_zhivyot_tolko_v_tokene`: зашитый мимо
+   токена цвет светлую тему не переживает, а обнаруживается он не в коде, а
+   глазами и не сразу — чёрная плашка посреди белой страницы.
+
+   Три блока, и делятся они не по красоте, а по вопросу «зависит ли от темы»:
+
+   1. `:root` — то, что от темы НЕ зависит: шрифты и цвета «поверх картинки».
+      Плашка над фотографией тёмная при любой теме — фотография-то не
+      светлеет. Отступы, радиусы и размеры токенами вообще не заведены, они
+      стоят по месту, и трогать их незачем.
+   2. `:root, :root[data-theme="dark"]` — тёмная палитра. Она же значение по
+      умолчанию: если скрипт темы почему-то не выполнился, интерфейс остаётся
+      тем, чем был до появления светлой темы.
+   3. `:root[data-theme="light"]` — светлая палитра.
+
+   Медиазапроса `prefers-color-scheme` здесь нет намеренно. Системное
+   предпочтение разворачивает в конкретное значение
+   `public/assets/theme-boot.js` — до отрисовки, — а CSS видит уже готовое
+   `light`/`dark`. Иначе светлую палитру пришлось бы писать дважды (под запрос
+   и под атрибут), и две копии разъехались бы на первой же правке цвета.
+
+   Тёмная палитра ниже — ровно та, что была; светлая подобрана к ней по
+   контрасту, а не «инверсией».
+   ============================================================ */
+
 :root {
+  /* «…Variable» — имена из пакетов @fontsource-variable, которые грузит main.tsx.
+     Следом невариативные тёзки: вдруг шрифт стоит в системе. Дальше системные. */
+  --serif: "Source Serif 4 Variable", "Source Serif 4", Georgia, serif;
+  --sans: "Inter Variable", Inter, "Segoe UI", system-ui, sans-serif;
+
+  /* --- Поверх картинки: от темы CRM не зависит ---------------------------
+     Затемнение лежит на фотографии, а не на странице. Светлая тема не делает
+     фотографию светлее, поэтому и плашка, и текст на ней остаются такими же.
+     Без этих токенов «Обрезать» и «Обложка» на светлой теме превращались бы в
+     чёрный текст на чёрной плашке. */
+  --media-scrim: rgba(26, 26, 25, 0.72);       /* обработка работы, отозванная доска */
+  --media-veil: rgba(12, 12, 11, 0.66);        /* что не попало в окно обрезки */
+  --media-chip: rgba(22, 21, 20, 0.85);        /* кнопка и метка поверх работы */
+  --media-chip-strong: rgba(22, 21, 20, 0.96); /* она же под курсором */
+  --on-media: #eceae4;
+  --on-media-dim: #9a968b;
+  --on-media-line: rgba(236, 234, 228, 0.22);
+  --on-media-warning: #d99a4e;
+
+  /* --- Витрина внутри CRM ------------------------------------------------
+     Витрина тёмная всегда — это её дизайн, а не тема CRM. Логотип студии
+     обычно светлый по прозрачному фону: на белой карточке настроек он пропал
+     бы целиком, а превью кнопки возврата показывало бы не то, что увидит
+     клиент. Поэтому такие места стоят на собственной подложке витрины. */
+  --showcase-plate: #1a1a19;
+  --showcase-plate-hover: #232220;
+  --seg-line: rgba(26, 26, 25, 0.18);   /* разделитель на белой пилюле витрины */
+
+  /* --- Полоса «сайт закрыт на работы» ------------------------------------
+     Тоже вне тем: это тревожная лента, и янтарное с почти-чёрным читается
+     (7.2:1) на любом фоне. Возьми она `--warning`, на светлой теме получилось
+     бы тёмно-коричневое на тёмно-коричневом. */
+  --warn-bar: #d99a4e;
+  --on-warn-bar: #1a1a19;
+}
+
+/* --- Тёмная. Она же по умолчанию ---------------------------------------- */
+:root,
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
   --bg: #1a1a19;            /* было #262624 — почти-чёрный, холоднее */
   --bg-sidebar: #161514;    /* было #1f1e1c */
   --surface: #1e1d1b;       /* было #2b2a27 — карточка чуть выше фона */
@@ -14,6 +85,7 @@
   --border-hover: #43403a;  /* было #4a4844 */
   --line: #242320;          /* разделители строк списков */
   --well: #141313;          /* фон полей ввода — темнее карточки */
+  --well-off: #191817;      /* поле, которое не правится */
   --text: #eceae4;          /* было #f5f4ef */
   --num: #ffffff;           /* большие числа — чистый белый */
   --muted: #9a968b;         /* было #9c998f */
@@ -25,11 +97,100 @@
   --warning: #d99a4e;       /* было #e8a23d — спокойнее */
   --danger: #e5695e;
   --btn-bg: #f5f4ef;
+  --btn-bg-hover: #ffffff;
   --btn-text: #1a1a19;
-  /* «…Variable» — имена из пакетов @fontsource-variable, которые грузит main.tsx.
-     Следом невариативные тёзки: вдруг шрифт стоит в системе. Дальше системные. */
-  --serif: "Source Serif 4 Variable", "Source Serif 4", Georgia, serif;
-  --sans: "Inter Variable", Inter, "Segoe UI", system-ui, sans-serif;
+  --on-brand: #ffffff;      /* текст на заливке брендом */
+  --on-danger: #ffffff;     /* текст на красной заливке */
+  --overlay: rgba(12, 12, 11, 0.62);  /* затемнение под окном и под шторкой */
+  --scroll-thumb: #242320;
+  --toggle-off: #322f2b;
+  --toggle-knob: #f5f4ef;
+  --tick: rgba(255, 255, 255, 0.16);  /* засечки на полосе диска */
+
+  /* Полупрозрачные заливки под цветным текстом (чипы, баннеры, врезки).
+     Держатся токенами, а не «тем же цветом с alpha»: на светлой теме и цвет
+     другой, и доля другая — 15% тёмного на белом даёт совсем не то, что 15%
+     светлого на чёрном. */
+  --tint-neutral: rgba(255, 255, 255, 0.06);
+  --tint-accent: rgba(108, 142, 239, 0.15);
+  --tint-brand: rgba(217, 119, 87, 0.16);
+  --tint-success: rgba(88, 180, 124, 0.15);
+  --tint-warning: rgba(217, 154, 78, 0.14);
+  --tint-danger: rgba(229, 105, 94, 0.15);
+  --danger-line: rgba(229, 105, 94, 0.45);
+
+  /* Полосы диаграмм: заливка без текста поверх, поэтому доли крупнее. */
+  --chart-brand: rgba(217, 119, 87, 0.13);
+  --chart-success: rgba(88, 180, 124, 0.42);
+  --chart-success-dim: rgba(88, 180, 124, 0.28);
+  --chart-danger: rgba(229, 105, 94, 0.32);
+}
+
+/* --- Светлая -------------------------------------------------------------
+   Не инверсия тёмной, а свой набор. Инверсия ломается на двух местах сразу.
+
+   Первое — поверхности. В тёмной теме «выше» значит светлее: карточка светлее
+   фона, наведение светлее карточки. В светлой карточка — белая, выше белого
+   ничего нет, поэтому наведение уходит ВНИЗ, в серое. Порядок тонов здесь не
+   зеркальный, а свой.
+
+   Второе — цветной текст. `--success` #58b47c на белом даёт 2.6:1, `--warning`
+   и вовсе 2:1 — то есть подпись «Оплачено» читалась бы на просвет. Все шесть
+   цветных токенов взяты темнее своих тёмных тёзок, оттенок сохранён.
+   Проверенные пары — в docs/05-crm-design.md. */
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --bg: #faf9f6;            /* тёплая бумага, а не белое: белым остаются карточки */
+  --bg-sidebar: #f2f0ea;
+  --surface: #ffffff;
+  --surface-2: #eceae2;     /* наведение и выделенная строка — ВНИЗ от белого */
+  --border: #e4e0d8;
+  --border-hover: #cdc7bb;
+  --line: #edeae3;
+  --well: #f4f2ed;          /* поле ввода темнее карточки — как и в тёмной */
+  --well-off: #eeece6;
+  --text: #211f1a;          /* 16.5:1 на карточке */
+  --num: #131210;
+  /* Приглушённый текст на светлом темнее, чем «зеркало» тёмной темы, и это не
+     вкусовщина. В тёмной `--faint` даёт 3.1:1 — ниже AA; на светлом фоне такая
+     же бледность читается ещё хуже, потому что рядом нет тёмного поля, на
+     котором глаз отдыхает. Мерено на живой странице (сводка — в
+     docs/05-crm-design.md): подпись под заголовком 5.3:1, шапка колонки 6.0:1,
+     заголовок раздела меню 4.9:1 — самое тесное место, там `--faint` лежит на
+     фоне сайдбара. Лестница «muted → sub → faint» сохранена, просто вся
+     сдвинута темнее. */
+  --muted: #5c574d;         /* 6.9:1 на фоне */
+  --sub: #655f53;           /* 6.0:1 */
+  --faint: #6d6759;         /* 5.3:1 на фоне, 4.7:1 на surface-2 — нижняя граница */
+  --accent: #3a5ccc;        /* 5.6:1 — ссылки и рамка фокуса */
+  --brand: #a94a26;         /* 5.4:1 */
+  --success: #1b6e3e;       /* 6.0:1 */
+  --warning: #845413;       /* 6.1:1 */
+  --danger: #b32d23;        /* 6.0:1 */
+  --btn-bg: #26241f;        /* главная кнопка меняется местами: тёмная на светлом */
+  --btn-bg-hover: #12110e;
+  --btn-text: #faf9f6;
+  --on-brand: #ffffff;
+  --on-danger: #ffffff;
+  --overlay: rgba(38, 36, 31, 0.36);  /* задник окна светлее: 62% читались бы ночью */
+  --scroll-thumb: #d8d3c8;
+  --toggle-off: #cdc7bb;    /* не --border: белый бегунок на нём теряется */
+  --toggle-knob: #ffffff;
+  --tick: rgba(38, 36, 31, 0.22);
+
+  --tint-neutral: rgba(38, 36, 31, 0.07);
+  --tint-accent: rgba(58, 92, 204, 0.11);
+  --tint-brand: rgba(169, 74, 38, 0.13);
+  --tint-success: rgba(27, 110, 62, 0.13);
+  --tint-warning: rgba(132, 84, 19, 0.13);
+  --tint-danger: rgba(179, 45, 35, 0.11);
+  --danger-line: rgba(179, 45, 35, 0.38);
+
+  --chart-brand: rgba(169, 74, 38, 0.16);
+  --chart-success: rgba(27, 110, 62, 0.34);
+  --chart-success-dim: rgba(27, 110, 62, 0.20);
+  --chart-danger: rgba(179, 45, 35, 0.26);
 }
 
 * { box-sizing: border-box; }
@@ -93,7 +254,7 @@ button { font-family: var(--sans); }
   transition: background 150ms, border-color 150ms;
 }
 .btn-primary { background: var(--btn-bg); color: var(--btn-text); }
-.btn-primary:hover { background: #ffffff; }
+.btn-primary:hover { background: var(--btn-bg-hover); }
 .btn-primary:disabled { opacity: 0.55; cursor: default; }
 .btn-secondary { background: none; border: 1px solid var(--border); color: var(--text); font-weight: 500; }
 .btn-secondary:hover { background: var(--surface-2); border-color: var(--border-hover); }
@@ -193,9 +354,9 @@ button { font-family: var(--sans); }
    плашкой — подгоняем под интерфейс. */
 .kanban::-webkit-scrollbar { height: 8px; }
 .kanban::-webkit-scrollbar-track { background: transparent; }
-.kanban::-webkit-scrollbar-thumb { background: var(--line); border-radius: 4px; }
+.kanban::-webkit-scrollbar-thumb { background: var(--scroll-thumb); border-radius: 4px; }
 .kanban::-webkit-scrollbar-thumb:hover { background: var(--border-hover); }
-.kanban { scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
+.kanban { scrollbar-width: thin; scrollbar-color: var(--scroll-thumb) transparent; }
 
 /* --- сделки на узком экране: список вместо доски ---
 
@@ -270,7 +431,7 @@ button { font-family: var(--sans); }
   transition: border-color 160ms ease, background 160ms ease;
 }
 .stage-btn:hover:not(:disabled) { border-color: var(--border-hover); background: var(--surface); }
-.stage-btn.current { background: var(--brand); border-color: var(--brand); color: #fff; cursor: default; }
+.stage-btn.current { background: var(--brand); border-color: var(--brand); color: var(--on-brand); cursor: default; }
 .stage-btn:disabled:not(.current) { opacity: 0.5; cursor: default; }
 .stage-btn.stage-won { color: var(--success); }
 .stage-btn.stage-lost { color: var(--danger); }
@@ -386,7 +547,7 @@ button { font-family: var(--sans); }
   color: var(--faint); font-size: 10.5px; font-weight: 500;
   letter-spacing: 0.03em; text-transform: uppercase;
 }
-.module-tag.soon { background: rgba(108, 142, 239, 0.15); color: var(--accent); }
+.module-tag.soon { background: var(--tint-accent); color: var(--accent); }
 .module-about { color: var(--muted); font-size: 12.5px; line-height: 1.5; }
 .module-why { color: var(--faint); font-size: 11.5px; line-height: 1.5; }
 
@@ -407,11 +568,11 @@ button { font-family: var(--sans); }
   position: sticky; top: 0; z-index: 40;
   display: flex; align-items: center; justify-content: center; gap: 10px;
   padding: 9px 16px;
-  background: var(--warning, #E8A23D); color: #1A1A19;
+  background: var(--warn-bar); color: var(--on-warn-bar);
   font-size: 13px; font-weight: 600; text-decoration: none;
 }
 .maintenance-bar .dot {
-  width: 8px; height: 8px; border-radius: 50%; background: #1A1A19;
+  width: 8px; height: 8px; border-radius: 50%; background: var(--on-warn-bar);
   animation: maintenance-pulse 1.8s ease-in-out infinite;
 }
 @keyframes maintenance-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
@@ -421,27 +582,36 @@ button { font-family: var(--sans); }
    Повторяет .btn-site из web/public/templates/showcase.html: покой — белая
    пилюля, наведение «переливает» её волной слева направо. Тайминги те же
    (620ms, cubic-bezier(0.19, 1, 0.22, 1)) — иначе превью показывает не то, что
-   увидит клиент. Ширина не задана: пилюля растёт под длину надписи, как там. */
+   увидит клиент. Ширина не задана: пилюля растёт под длину надписи, как там.
+
+   Цвета — витрины, а не темы CRM, и стоят на её же подложке (.preview-plate).
+   Пока пилюля брала `--text` и `--bg`, на светлой теме она становилась чёрной
+   с белой надписью, а под курсором — белым по белому: превью показывало ровно
+   наоборот. Витрина тёмная всегда, значит и превью тёмное всегда. */
+.preview-plate {
+  display: inline-flex; padding: 16px 20px; border-radius: 10px;
+  background: var(--showcase-plate); border: 1px solid var(--border);
+}
 .site-btn-preview {
   position: relative; overflow: hidden;
   display: inline-flex; align-items: center; height: 36px; padding: 0;
-  border: 1px solid var(--text); border-radius: 999px;
-  color: var(--bg); font-size: 12.5px; font-weight: 500; white-space: nowrap;
+  border: 1px solid var(--on-media); border-radius: 999px;
+  color: var(--showcase-plate); font-size: 12.5px; font-weight: 500; white-space: nowrap;
   transition: color 620ms cubic-bezier(0.19, 1, 0.22, 1);
 }
 .site-btn-preview::before {
   content: ""; position: absolute; inset: 0;
-  background: var(--text);
+  background: var(--on-media);
   transform: scaleX(1); transform-origin: left;
   transition: transform 620ms cubic-bezier(0.19, 1, 0.22, 1);
 }
-.site-btn-preview:hover { color: var(--text); }
+.site-btn-preview:hover { color: var(--on-media); }
 .site-btn-preview:hover::before { transform: scaleX(0); }
 /* содержимое поверх заливки — иначе волна закрашивает надпись и лого */
 .site-btn-preview > * { position: relative; }
 .site-btn-preview .seg {
   display: flex; align-items: center; height: 100%; padding: 0 12px;
-  border-right: 1px solid rgba(26, 26, 25, 0.18);
+  border-right: 1px solid var(--seg-line);
 }
 @media (prefers-reduced-motion: reduce) {
   .site-btn-preview, .site-btn-preview::before { transition: none; }
@@ -453,7 +623,7 @@ button { font-family: var(--sans); }
   background: none; color: var(--muted); cursor: pointer;
 }
 .btn-icon:hover { background: var(--surface-2); color: var(--text); }
-.btn-success { background: rgba(88, 180, 124, 0.15); color: var(--success); }
+.btn-success { background: var(--tint-success); color: var(--success); }
 
 .text-link { color: var(--muted); font-size: 12px; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; background: none; border: none; padding: 0; }
 .text-link:hover { color: var(--text); }
@@ -468,13 +638,13 @@ button { font-family: var(--sans); }
 /* Чипы — компактнее, по умолчанию нейтральные */
 .chip {
   height: 20px; display: inline-flex; align-items: center; gap: 4px; padding: 0 7px;
-  border-radius: 6px; background: rgba(255, 255, 255, 0.06); color: var(--muted);
+  border-radius: 6px; background: var(--tint-neutral); color: var(--muted);
   font-size: 11px; font-weight: 500; white-space: nowrap;
 }
-.chip-success { background: rgba(88, 180, 124, 0.15); color: var(--success); }
-.chip-warning { background: rgba(217, 154, 78, 0.15); color: var(--warning); }
-.chip-accent { background: rgba(108, 142, 239, 0.15); color: var(--accent); }
-.chip-brand { background: rgba(217, 119, 87, 0.15); color: var(--brand); }
+.chip-success { background: var(--tint-success); color: var(--success); }
+.chip-warning { background: var(--tint-warning); color: var(--warning); }
+.chip-accent { background: var(--tint-accent); color: var(--accent); }
+.chip-brand { background: var(--tint-brand); color: var(--brand); }
 /* Точка-индикатор для нейтрального статуса (напр. черновик) */
 .chip .dot { width: 5px; height: 5px; border-radius: 50%; background: var(--warning); }
 
@@ -487,7 +657,7 @@ button { font-family: var(--sans); }
   outline: none; font-family: var(--sans);
 }
 .input:focus, .textarea:focus, .select:focus { border-color: var(--accent); }
-.input:disabled { background: #191817; border-color: var(--surface-2); color: var(--faint); }
+.input:disabled { background: var(--well-off); border-color: var(--surface-2); color: var(--faint); }
 .textarea { height: 72px; padding: 8px 10px; resize: none; line-height: 1.5; }
 /* Поле внутри строки списка: полная высота разгоняет строку и ломает ритм. */
 .input-sm { height: 28px; font-size: 12px; padding: 0 8px; }
@@ -548,8 +718,8 @@ button { font-family: var(--sans); }
 }
 .tabs::-webkit-scrollbar { height: 6px; }
 .tabs::-webkit-scrollbar-track { background: transparent; }
-.tabs::-webkit-scrollbar-thumb { background: var(--line); border-radius: 3px; }
-.tabs { scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
+.tabs::-webkit-scrollbar-thumb { background: var(--scroll-thumb); border-radius: 3px; }
+.tabs { scrollbar-width: thin; scrollbar-color: var(--scroll-thumb) transparent; }
 .tab {
   padding: 9px 14px; font-size: 13px; color: var(--muted); cursor: pointer;
   border: none; background: none; border-bottom: 2px solid transparent; margin-bottom: -1px; font-weight: 450;
@@ -572,15 +742,22 @@ button { font-family: var(--sans); }
   font-size: 12px; cursor: pointer; background: none;
 }
 .option-chip.active { background: var(--surface-2); color: var(--text); }
-.lang-chip { height: 30px; padding: 0 14px; border-radius: 8px; font-size: 12px; }
+/* Ряд «выбери одно из нескольких» в профиле: язык, тема. */
+.lang-chip, .pick-chip { height: 30px; padding: 0 14px; border-radius: 8px; font-size: 12px; }
+/* Выбранный вариант обязан отличаться не только фоном: на светлой теме разница
+   между `--surface-2` и белой карточкой — полтона, и «какая тема сейчас» на
+   скриншоте не прочитывается вовсе. */
+.option-chip.pick-chip[aria-pressed="true"] { border-color: var(--border-hover); font-weight: 600; }
 
 /* Переключатель */
 /* Переключатель — настоящая кнопка (см. Toggle в components/ui.tsx), поэтому
    гасим рамку и поля от браузера; display:block держит бегунок на месте. */
-.toggle-track { width: 34px; height: 20px; border-radius: 10px; padding: 2px; transition: background 150ms; background: var(--border); cursor: pointer; flex-shrink: 0; border: none; display: block; }
+.toggle-track { width: 34px; height: 20px; border-radius: 10px; padding: 2px; transition: background 150ms; background: var(--toggle-off); cursor: pointer; flex-shrink: 0; border: none; display: block; }
 .toggle-track.on { background: var(--success); }
 .toggle-track:disabled { cursor: default; }
-.toggle-knob { width: 16px; height: 16px; border-radius: 50%; background: var(--btn-bg); transition: transform 150ms; }
+/* Бегунок светлый в обеих темах, а не `--btn-bg`: на светлой главная кнопка
+   тёмная, и бегунок стал бы тёмным пятном на тёмно-зелёном включённом. */
+.toggle-knob { width: 16px; height: 16px; border-radius: 50%; background: var(--toggle-knob); transition: transform 150ms; }
 .toggle-track.on .toggle-knob { transform: translateX(14px); }
 
 /* Дропзона */
@@ -589,6 +766,11 @@ button { font-family: var(--sans); }
   color: var(--faint); font-size: 12.5px; cursor: pointer;
 }
 .dropzone:hover, .dropzone.drag-over { background: var(--surface); color: var(--muted); border-color: var(--border-hover); }
+/* Дропзона под картинку, которую увидит клиент на витрине. Подложка — витрины,
+   при любой теме CRM: логотип студии почти всегда светлый по прозрачному фону,
+   и на белой карточке настроек от него оставалась бы пустая рамка. */
+.dropzone.media-plate { background: var(--showcase-plate); border-color: var(--border-hover); color: var(--on-media-dim); }
+.dropzone.media-plate:hover, .dropzone.media-plate.drag-over { background: var(--showcase-plate-hover); color: var(--on-media); }
 
 /* Сайдбар — уже на 20px, темнее */
 .sidebar {
@@ -604,7 +786,7 @@ button { font-family: var(--sans); }
 .side-workspace { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 8px; cursor: default; background: var(--bg); }
 .side-search { display: flex; align-items: center; gap: 8px; padding: 0 10px; height: 32px; width: 100%; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); cursor: pointer; color: var(--muted); font-family: var(--sans); }
 .side-search:hover { background: var(--surface); border-color: var(--border-hover); }
-.kbd { font-size: 10px; color: var(--muted); background: rgba(255, 255, 255, 0.06); border-radius: 4px; padding: 2px 5px; font-weight: 500; }
+.kbd { font-size: 10px; color: var(--muted); background: var(--tint-neutral); border-radius: 4px; padding: 2px 5px; font-weight: 500; }
 .side-nav { padding: 8px; display: flex; flex-direction: column; gap: 2px; flex: 1; overflow-y: auto; }
 .nav-item { display: flex; align-items: center; gap: 9px; padding: 7px 10px; border-radius: 8px; font-size: 13px; text-decoration: none; color: var(--muted); font-weight: 450; }
 .nav-item:hover { background: var(--surface); color: var(--text); }
@@ -630,8 +812,8 @@ button { font-family: var(--sans); }
 .nav-sub::before { content: ""; position: absolute; left: 17px; top: 3px; bottom: 3px; width: 1px; background: var(--border); }
 .nav-sub .nav-item { padding: 6px 10px; font-size: 12.5px; }
 .side-bottom { padding: 12px; display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--surface); }
-.side-banner { display: block; background: rgba(217, 154, 78, 0.13); border-radius: 8px; padding: 10px 12px; font-size: 12px; line-height: 1.5; color: var(--warning); text-decoration: none; }
-.side-banner.critical { background: rgba(229, 105, 94, 0.14); color: var(--danger); }
+.side-banner { display: block; background: var(--tint-warning); border-radius: 8px; padding: 10px 12px; font-size: 12px; line-height: 1.5; color: var(--warning); text-decoration: none; }
+.side-banner.critical { background: var(--tint-danger); color: var(--danger); }
 .side-user { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 10px; cursor: pointer; position: relative; }
 .side-user:hover { background: var(--surface); }
 .user-menu { position: absolute; bottom: 52px; left: 12px; right: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 6px; display: flex; flex-direction: column; gap: 2px; z-index: 20; }
@@ -652,10 +834,10 @@ button { font-family: var(--sans); }
 /* Хранилище */
 .disk-bar { position: relative; height: 5px; border-radius: 3px; background: var(--surface-2); margin-top: 13px; overflow: hidden; }
 .disk-bar-fill { height: 100%; border-radius: 3px; transition: width 300ms ease-out; }
-.disk-bar-tick { position: absolute; top: 0; bottom: 0; width: 1px; background: rgba(255, 255, 255, 0.16); }
+.disk-bar-tick { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--tick); }
 .disk-legend { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 10px; color: var(--faint); font-size: 12px; }
 .disk-legend strong { color: var(--muted); font-weight: 500; }
-.disk-blocked { display: flex; align-items: center; gap: 7px; margin-top: 12px; padding: 8px 12px; border-radius: 8px; background: rgba(229, 105, 94, 0.13); color: var(--danger); font-size: 12.5px; }
+.disk-blocked { display: flex; align-items: center; gap: 7px; margin-top: 12px; padding: 8px 12px; border-radius: 8px; background: var(--tint-danger); color: var(--danger); font-size: 12.5px; }
 
 /* Метрики дашборда */
 /* Карточек стало четыре (деньги в работе, закрыто, средний чек, клиенты).
@@ -670,9 +852,9 @@ button { font-family: var(--sans); }
 .funnel-count { position: relative; min-width: 34px; font-size: 14px; font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; }
 .funnel-name { position: relative; flex: 1; min-width: 0; font-size: 13px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* полоса под текстом, а не рядом: так длина читается, не отнимая места у названия */
-.funnel-bar { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 7px; background: rgba(217, 119, 87, 0.14); }
-.funnel-step.kind-won .funnel-bar { background: rgba(88, 180, 124, 0.16); }
-.funnel-step.kind-lost .funnel-bar { background: rgba(229, 105, 94, 0.13); }
+.funnel-bar { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 7px; background: var(--chart-brand); }
+.funnel-step.kind-won .funnel-bar { background: var(--tint-success); }
+.funnel-step.kind-lost .funnel-bar { background: var(--tint-danger); }
 
 /* Мои задачи на сегодня */
 .dash-tasks { display: flex; flex-direction: column; gap: 1px; }
@@ -700,19 +882,22 @@ button { font-family: var(--sans); }
 .work-media img { width: 100%; height: auto; display: block; min-height: 120px; object-fit: cover; }
 .work-foot { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-top: 1px solid var(--line); color: var(--faint); }
 .work-name { flex: 1; color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; background: none; border: none; text-align: left; padding: 0; font-family: var(--sans); cursor: text; }
-.work-overlay { position: absolute; inset: 0; background: rgba(26, 26, 25, 0.72); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; }
+.work-overlay { position: absolute; inset: 0; background: var(--media-scrim); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; }
 .spinner { width: 20px; height: 20px; border: 2px solid var(--border); border-top-color: var(--muted); border-radius: 50%; animation: spin 0.9s linear infinite; }
+/* Вертушка поверх работы стоит на затемнении, а не на карточке: обычные
+   `--border`/`--muted` на светлой теме темнее самого затемнения и пропадают. */
+.work-overlay .spinner { border-color: var(--on-media-line); border-top-color: var(--on-media); }
 @keyframes spin { to { transform: rotate(360deg); } }
-.badge-floating { position: absolute; top: 8px; left: 8px; height: 20px; display: flex; align-items: center; gap: 4px; padding: 0 8px; border-radius: 6px; background: rgba(22, 21, 20, 0.85); color: var(--warning); font-size: 11px; font-weight: 600; }
-.cover-btn { position: absolute; top: 8px; right: 8px; width: 26px; height: 26px; border-radius: 6px; background: rgba(22, 21, 20, 0.85); border: none; color: var(--muted); cursor: pointer; display: none; align-items: center; justify-content: center; }
+.badge-floating { position: absolute; top: 8px; left: 8px; height: 20px; display: flex; align-items: center; gap: 4px; padding: 0 8px; border-radius: 6px; background: var(--media-chip); color: var(--on-media-warning); font-size: 11px; font-weight: 600; }
+.cover-btn { position: absolute; top: 8px; right: 8px; width: 26px; height: 26px; border-radius: 6px; background: var(--media-chip); border: none; color: var(--on-media-dim); cursor: pointer; display: none; align-items: center; justify-content: center; }
 .work-card:hover .cover-btn { display: flex; }
-.cover-btn:hover { color: var(--warning); }
+.cover-btn:hover { color: var(--on-media-warning); }
 /* превью длинной работы обрезано так же, как будет на витрине */
 .work-media img.is-cropped { height: auto; min-height: 0; object-fit: cover; }
 /* по центру карточки: обрезка — действие над всей картинкой, а не над её углом */
-.crop-btn { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); display: none; align-items: center; gap: 6px; height: 30px; padding: 0 13px; border-radius: 999px; background: rgba(22, 21, 20, 0.88); border: 1px solid var(--border-hover); color: var(--text); font-family: var(--sans); font-size: 12px; font-weight: 500; cursor: pointer; white-space: nowrap; }
+.crop-btn { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); display: none; align-items: center; gap: 6px; height: 30px; padding: 0 13px; border-radius: 999px; background: var(--media-chip); border: 1px solid var(--on-media-line); color: var(--on-media); font-family: var(--sans); font-size: 12px; font-weight: 500; cursor: pointer; white-space: nowrap; }
 .work-card:hover .crop-btn { display: flex; }
-.crop-btn:hover { background: rgba(22, 21, 20, 0.96); border-color: var(--accent); }
+.crop-btn:hover { background: var(--media-chip-strong); border-color: var(--accent); }
 
 /* Редактор обрезки превью.
    `.modal.modal-wide`, а не просто `.modal-wide`: у обоих правил одинаковая
@@ -724,7 +909,7 @@ button { font-family: var(--sans); }
 .crop-map { position: relative; flex-shrink: 0; overflow: hidden; border-radius: 6px; background: var(--surface-2); cursor: grab; }
 .crop-map img { display: block; width: 100%; height: 100%; object-fit: fill; user-select: none; }
 /* всё, что не попало в окно, гасим — так видно границы будущего превью */
-.crop-map-veil { position: absolute; left: 0; right: 0; top: 0; background: rgba(12, 12, 11, 0.66); pointer-events: none; }
+.crop-map-veil { position: absolute; left: 0; right: 0; top: 0; background: var(--media-veil); pointer-events: none; }
 /* форму окна задаёт место работы на витрине, менять её нельзя — только возить
    рамку вдоль работы, поэтому ручек по краям нет */
 .crop-window { position: absolute; left: 0; right: 0; box-shadow: inset 0 0 0 2px var(--accent); cursor: grab; }
@@ -738,14 +923,14 @@ button { font-family: var(--sans); }
 .share-row { display: flex; align-items: center; justify-content: space-between; padding: 11px 2px; cursor: pointer; border-top: 1px solid var(--line); }
 .share-row-label { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; }
 .copy-btn { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; height: 34px; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; border: none; transition: background 150ms; background: var(--btn-bg); color: var(--btn-text); }
-.copy-btn.copied { background: rgba(88, 180, 124, 0.15); color: var(--success); }
+.copy-btn.copied { background: var(--tint-success); color: var(--success); }
 
 /* Модалки и тосты */
-.modal-backdrop { position: fixed; inset: 0; background: rgba(12, 12, 11, 0.62); z-index: 40; display: flex; align-items: center; justify-content: center; padding: 24px; }
+.modal-backdrop { position: fixed; inset: 0; background: var(--overlay); z-index: 40; display: flex; align-items: center; justify-content: center; padding: 24px; }
 .modal { width: 100%; max-width: 420px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 22px; }
 .toast-wrap { position: fixed; right: 20px; bottom: 20px; display: flex; flex-direction: column; gap: 8px; z-index: 60; }
 .toast { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; font-size: 13px; color: var(--text); display: flex; gap: 8px; align-items: center; animation: toast-in 200ms ease-out; }
-.toast.error { border-color: rgba(229, 105, 94, 0.5); }
+.toast.error { border-color: var(--danger-line); }
 @keyframes toast-in { from { opacity: 0; transform: translateY(8px); } }
 
 /* Строка «не загрузилось» внутри карточки. Не по центру и не на пол-экрана,
@@ -755,7 +940,7 @@ button { font-family: var(--sans); }
   display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
   margin-top: 10px; padding: 9px 11px; border-radius: 8px;
   background: var(--surface-2); color: var(--muted); font-size: 12.5px;
-  border: 1px solid rgba(229, 105, 94, 0.35);
+  border: 1px solid var(--danger-line);
 }
 .load-failed-text { flex: 1; min-width: 120px; }
 
@@ -780,19 +965,19 @@ button { font-family: var(--sans); }
 
 .bars { display: flex; align-items: flex-end; gap: 7px; height: 60px; padding-bottom: 1px; }
 .bar-col { display: flex; flex-direction: column; align-items: center; gap: 6px; }
-.bar { width: 12px; border-radius: 3px 3px 0 0; background: rgba(88, 180, 124, 0.30); }
+.bar { width: 12px; border-radius: 3px 3px 0 0; background: var(--chart-success-dim); }
 .bar.top { background: var(--success); }
 .bar-label { font-size: 10px; color: var(--faint); }
 
-.file-ext { width: 30px; height: 30px; border-radius: 8px; background: rgba(108, 142, 239, 0.13); color: var(--accent); display: flex; align-items: center; justify-content: center; font-size: 9.5px; font-weight: 700; flex-shrink: 0; }
+.file-ext { width: 30px; height: 30px; border-radius: 8px; background: var(--tint-accent); color: var(--accent); display: flex; align-items: center; justify-content: center; font-size: 9.5px; font-weight: 700; flex-shrink: 0; }
 .swatch { width: 30px; height: 30px; border-radius: 8px; cursor: pointer; border: 2px solid transparent; }
 .swatch.active { border-color: var(--text); }
 .screen-loading { display: flex; align-items: center; justify-content: center; min-height: 40vh; }
 .screen-failed { display: flex; flex-direction: column; align-items: center; text-align: center; max-width: 380px; padding: 0 16px; }
-.screen-failed-icon { display: flex; align-items: center; justify-content: center; width: 44px; height: 44px; margin-bottom: 12px; border-radius: 12px; background: rgba(229, 105, 94, 0.14); color: var(--danger); }
+.screen-failed-icon { display: flex; align-items: center; justify-content: center; width: 44px; height: 44px; margin-bottom: 12px; border-radius: 12px; background: var(--tint-danger); color: var(--danger); }
 
 /* Командная палитра (Ctrl+K) */
-.cp-backdrop { position: fixed; inset: 0; z-index: 80; background: rgba(12, 12, 11, 0.62); display: flex; justify-content: center; align-items: flex-start; padding: 12vh 24px 24px; animation: cp-fade 120ms ease-out; }
+.cp-backdrop { position: fixed; inset: 0; z-index: 80; background: var(--overlay); display: flex; justify-content: center; align-items: flex-start; padding: 12vh 24px 24px; animation: cp-fade 120ms ease-out; }
 @keyframes cp-fade { from { opacity: 0; } }
 .cp-panel { width: 100%; max-width: 560px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; max-height: 70vh; animation: cp-rise 140ms ease-out; }
 @keyframes cp-rise { from { opacity: 0; transform: translateY(-8px); } }
@@ -847,11 +1032,11 @@ button { font-family: var(--sans); }
    статистика: серое число рядом с названием читается как «всего». */
 .nav-badge {
   min-width: 18px; padding: 0 5px; border-radius: 999px;
-  background: var(--danger); color: #fff;
+  background: var(--danger); color: var(--on-danger);
   font-size: 10.5px; font-weight: 700; line-height: 18px; text-align: center;
   font-variant-numeric: tabular-nums;
 }
-.count.danger { background: rgba(229, 105, 94, 0.16); color: var(--danger); }
+.count.danger { background: var(--tint-danger); color: var(--danger); }
 
 /* Лента общения. Звонки, письма и заметки одним потоком — вид отличается
    значком, а не отдельным списком. */
@@ -901,8 +1086,8 @@ button { font-family: var(--sans); }
 .month-col { display: flex; flex-direction: column; align-items: center; gap: 6px; flex: none; }
 .month-stack { display: flex; align-items: flex-end; gap: 2px; height: 96px; }
 .month-bar { width: 12px; border-radius: 3px 3px 0 0; }
-.month-bar.won { background: rgba(88, 180, 124, 0.42); }
-.month-bar.lost { background: rgba(229, 105, 94, 0.32); }
+.month-bar.won { background: var(--chart-success); }
+.month-bar.lost { background: var(--chart-danger); }
 .month-label { font-size: 10px; color: var(--faint); white-space: nowrap; }
 
 /* Источники: таблица, у которой полоса выручки лежит под строкой. */
@@ -912,7 +1097,7 @@ button { font-family: var(--sans); }
   padding: 7px 10px; border-radius: 7px; overflow: hidden; font-size: 13px; color: var(--text);
 }
 .src-head { color: var(--faint); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
-.src-bar { position: absolute; left: 0; top: 0; bottom: 0; background: rgba(217, 119, 87, 0.12); border-radius: 7px; }
+.src-bar { position: absolute; left: 0; top: 0; bottom: 0; background: var(--chart-brand); border-radius: 7px; }
 .src-name { position: relative; flex: 1; min-width: 0; }
 .src-num { position: relative; width: 76px; text-align: right; flex: none; color: var(--muted); font-variant-numeric: tabular-nums; }
 .src-money { position: relative; width: 120px; text-align: right; flex: none; font-variant-numeric: tabular-nums; }
@@ -955,7 +1140,7 @@ button { font-family: var(--sans); }
   .sidebar.open { transform: none; }
   .side-scrim {
     position: fixed; inset: 0; z-index: 45;
-    background: rgba(12, 12, 11, 0.62); border: none; padding: 0;
+    background: var(--overlay); border: none; padding: 0;
   }
 
   /* Поля страницы в 40px на телефоне съедали пятую часть ширины. */
