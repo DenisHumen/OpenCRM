@@ -7,6 +7,7 @@ import { api } from "../lib/api";
 import { useApp } from "../lib/app";
 import { can } from "../lib/permissions";
 import { useFailure } from "../lib/failure";
+import { useGuard } from "../lib/guard";
 
 export interface Company {
   id: number;
@@ -125,16 +126,20 @@ function NewCompanyModal({
 }) {
   const { t, toastError } = useApp();
   const [name, setName] = useState("");
-  const [busy, setBusy] = useState(false);
+  // Засов, а не флаг: форма из одного поля отправляется Enter'ом, и вторая
+  // фирма с тем же названием — это вторые реквизиты, которые однажды уедут на
+  // бумагу вместо настоящих. Отпускаем только на отказе: при успехе уходим в
+  // созданную карточку.
+  const guard = useGuard();
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    setBusy(true);
+    if (!guard.take()) return;
     try {
       onCreated(await api.post<Company>("/companies", { name: name.trim() }));
     } catch (err) {
       toastError(err);
-      setBusy(false);
+      guard.free();
     }
   };
 
@@ -152,7 +157,7 @@ function NewCompanyModal({
           />
           <div className="field-desc">{t("companyShortNameHint")}</div>
         </div>
-        <button className="btn btn-primary" style={{ width: "100%" }} disabled={busy}>
+        <button className="btn btn-primary" style={{ width: "100%" }} disabled={guard.busy}>
           {t("create")}
         </button>
       </form>

@@ -5,6 +5,7 @@ import { Chip, ConfirmModal, EmptyState, Modal, ScreenLoading } from "../compone
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
 import { useFailure } from "../lib/failure";
+import { useGuard } from "../lib/guard";
 import { formatMoney } from "../lib/format";
 import type { FinanceCategory } from "./Finance";
 
@@ -275,13 +276,16 @@ function CategoryModal({
     purpose: category?.purpose ?? "general",
     note: category?.note ?? "",
   });
-  const [busy, setBusy] = useState(false);
+  // Засов, а не флаг состояния: вторая статья с тем же названием разводит
+  // расходы по двум строкам отчёта, и половина трат исчезает из той, на
+  // которую смотрят. Отпускаем только на отказе: при успехе окно закрывается.
+  const guard = useGuard();
 
   const set = (key: string) => (e: any) => setForm((f) => ({ ...f, [key]: e.target.value }));
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    setBusy(true);
+    if (!guard.take()) return;
     try {
       if (category) {
         // Направление не отправляем вовсе: сервер откажет, а поле на экране
@@ -298,7 +302,7 @@ function CategoryModal({
       onSaved();
     } catch (err) {
       onFailed(err);
-      setBusy(false);
+      guard.free();
     }
   };
 
@@ -338,7 +342,7 @@ function CategoryModal({
           <label className="label">{t("note")}</label>
           <textarea className="textarea" value={form.note} onChange={set("note")} />
         </div>
-        <button className="btn btn-primary" style={{ width: "100%" }} disabled={busy}>
+        <button className="btn btn-primary" style={{ width: "100%" }} disabled={guard.busy}>
           {category ? t("save") : t("create")}
         </button>
       </form>
@@ -365,13 +369,15 @@ function BudgetModal({
     planned: "",
     note: "",
   });
-  const [busy, setBusy] = useState(false);
+  // Тот же засов, что у статьи: два одинаковых плана на один период — это
+  // две строки «план/факт» по одной и той же статье.
+  const guard = useGuard();
 
   const set = (key: string) => (e: any) => setForm((f) => ({ ...f, [key]: e.target.value }));
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    setBusy(true);
+    if (!guard.take()) return;
     try {
       await api.post("/finance/budgets", {
         category_id: Number(form.category_id),
@@ -385,7 +391,7 @@ function BudgetModal({
       onSaved();
     } catch (err) {
       onFailed(err);
-      setBusy(false);
+      guard.free();
     }
   };
 
@@ -434,7 +440,7 @@ function BudgetModal({
           <label className="label">{t("note")}</label>
           <textarea className="textarea" value={form.note} onChange={set("note")} />
         </div>
-        <button className="btn btn-primary" style={{ width: "100%" }} disabled={busy}>
+        <button className="btn btn-primary" style={{ width: "100%" }} disabled={guard.busy}>
           {t("create")}
         </button>
       </form>

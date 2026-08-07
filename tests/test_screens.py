@@ -328,3 +328,462 @@ def test_pole_skanera_lovit_enter_samo():
     scanner = source[source.index("export function BarcodeScanner"):]
     assert "onKeyDown" in scanner, "поле сканера полагается на отправку формы"
     assert 'e.key === "Enter"' in scanner
+
+
+# --- ответ на прошлый запрос не ложится поверх нового -----------------------
+#
+# Экран с фильтром отправляет запрос на каждое изменение отбора, а ответы
+# приходят в том порядке, в каком успел сервер. Набрали «Ив», через миг
+# «Иванов» — и если первый ответ доехал вторым, на экране окажется выдача по
+# «Ив» под словом «Иванов» в поле. Ошибка тихая: список правдоподобный, и
+# заметить её можно, только зная, что искал.
+#
+# Лечится это одним приёмом на все экраны — флажком в замыкании эффекта,
+# который снимает уборка при следующем запуске. Здесь проверяется, что приём
+# стоит везде, где есть отбор: признаком отбора берём паузу в наборе
+# (`useDebounced`) — она есть ровно там, где человек меняет условие быстрее,
+# чем отвечает сервер.
+
+
+def _cancels_stale_answers(text: str) -> bool:
+    """Есть ли в файле флажок «этот ответ ещё нужен» и его снятие в уборке."""
+    return bool(
+        re.search(r"let (current|alive|fresh) = true", text)
+        and re.search(r"\b(current|alive|fresh) = false", text)
+    )
+
+
+def test_screens_with_a_filter_cancel_stale_answers():
+    """Каждый экран с паузой в наборе отбрасывает ответ на прошлый отбор."""
+    filtered = {}
+    for path in sorted(SCREENS.rglob("*.tsx")):
+        text = path.read_text(encoding="utf-8")
+        if "useDebounced" in text:
+            filtered[path.name] = text
+    assert len(filtered) >= 8, (
+        f"экранов с отбором найдено {len(filtered)} — проверка смотрит не туда"
+    )
+
+    racing = sorted(name for name, text in filtered.items() if not _cancels_stale_answers(text))
+    assert not racing, "ответ на прошлый отбор ляжет поверх нового: " + ", ".join(racing)
+
+
+# --- двойное нажатие не заводит вторую запись -------------------------------
+#
+# Перебор, а не список подозрительных мест: точек `api.post` под шесть десятков,
+# и раскладывали их руками. Каждая либо стоит за засовом (`useGuard`), либо
+# названа ниже вместе с причиной, почему второе нажатие ей не страшно.
+#
+# Засов обязан быть именно ref'ом, а не состоянием React: `setBusy(true)` меняет
+# значение только к следующему рендеру, а два обработчика, сработавшие в одном
+# тике, читают `busy` каждый из своего замыкания — и оба видят `false`. Человек
+# так жмёт редко, зато сканер, залипшая кнопка мыши и Enter на автоповторе —
+# как раз так. Подробности — в `lib/guard.ts`.
+
+# Ключ — файл и путь запроса; подстановки шаблона свёрнуты в `{}`.
+POST_WITHOUT_LATCH: dict[tuple[str, str], str] = {
+    # Перевод состояния уже существующей записи. Второе нажатие повторяет
+    # первое: бланк, который уже «закрыт», закрывается в то же самое «закрыт».
+    ("DocumentCard.tsx", "/documents/{}/status"): "перевод состояния бланка",
+    ("DealCard.tsx", "/deals/{}/move"): "перевод этапа: сервер отвечает stage_moved_meanwhile",
+    ("Deals.tsx", "/deals/{}/move"): "перевод этапа перетаскиванием, тот же ответ сервера",
+    ("OrderCard.tsx", "/orders/{}/ready"): "пометка «собран» — состояние, а не запись",
+    ("CompanyCard.tsx", "/companies/{}/default"): "«основная» ровно одна: повтор ничего не меняет",
+    ("SettingsRoles.tsx", "/roles/{}/default"): "должность по умолчанию ровно одна",
+    ("SettingsModules.tsx", "/modules/{}"): "переключатель блока: включён либо выключен",
+    ("Setup.tsx", "/modules/presets"): "набор блоков применяется целиком, повтор даёт тот же набор",
+    ("app.tsx", "/settings/maintenance"): "режим обслуживания: включён либо выключен",
+    ("Mail.tsx", "/mail/messages/{}/read"): "отметка «прочитано»",
+    ("Mailboxes.tsx", "/mail/accounts/{}/check"): "проверка подключения ничего не пишет",
+    ("Mailboxes.tsx", "/mail/accounts/{}/sync"): "забор почты: письма различаются по message-id",
+    ("Settings.tsx", "/settings/site-logo/fetch"): "перечитывание логотипа с сайта",
+    ("StorageCard.tsx", "/system/storage/purge"): "уборка мусора: повтор убирает уже убранное",
+    ("ProductBarcodes.tsx", "/labels/products/{}/barcodes/{}/primary"): (
+        "основной штрихкод ровно один"
+    ),
+    ("Staff.tsx", "path"): "одобрение, отказ, отключение и восстановление — состояния",
+    ("Staff.tsx", "/staff/{}/role"): "владелец или сотрудник — состояние",
+    ("Staff.tsx", "/roles/assign/{}"): "должность у человека одна",
+    # Стоит за окном подтверждения, а окно закрывается тем же нажатием: второй
+    # раз нажимать уже не по чему.
+    ("OrderCard.tsx", "/orders/{}/{}"): "отмена и откат заказа — за окном подтверждения",
+    ("DocumentCard.tsx", "/documents/acts/{}/cancel"): "за окном подтверждения",
+    ("BoardEditor.tsx", "/shares/{}/regenerate"): "за окном подтверждения",
+    ("TelephonySettings.tsx", "/telephony/settings/secret"): "за окном подтверждения",
+    # Вход, регистрация и свой пароль. Записи не заводят: на занятую почту
+    # сервер отвечает честным конфликтом, а пароль меняется в то же значение.
+    ("Auth.tsx", "/auth/login"): "вход: записи не заводит",
+    ("Auth.tsx", "/auth/register"): "регистрация: на занятую почту сервер отвечает конфликтом",
+    ("Auth.tsx", "/auth/me/password"): "смена своего пароля в то же значение",
+    ("Profile.tsx", "/auth/me/password"): "смена своего пароля в то же значение",
+    ("app.tsx", "/auth/logout"): "выход",
+}
+
+
+def _first_argument(text: str, start: int) -> str:
+    """Путь запроса из вызова: `start` — сразу за открывающей скобкой.
+
+    Подстановки шаблона сворачиваем в `{}`: номер записи в ключе только мешал
+    бы, а вложенные в подстановку кавычки (``${x ? "a" : "b"}``) простую
+    регулярку ломают — на этом ключ у отмены заказа один раз уже съехал.
+    """
+    i = start
+    while i < len(text) and text[i] in " \n\r\t":
+        i += 1
+    if i >= len(text):
+        return "?"
+    quote = text[i]
+    if quote not in "\"'`":
+        name = re.match(r"[A-Za-z_$][\w$]*", text[i:])
+        return name.group(0) if name else "?"
+    i += 1
+    out: list[str] = []
+    while i < len(text):
+        char = text[i]
+        if char == "\\":
+            i += 2
+            continue
+        if quote == "`" and text.startswith("${", i):
+            depth, i = 1, i + 2
+            while i < len(text) and depth:
+                if text[i] == "{":
+                    depth += 1
+                elif text[i] == "}":
+                    depth -= 1
+                i += 1
+            out.append("{}")
+            continue
+        if char == quote:
+            break
+        out.append(char)
+        i += 1
+    return "".join(out)
+
+
+def _handler_of(lines: list[str], at: int) -> str:
+    """Текст обработчика, внутри которого стоит строка `at`.
+
+    Ищем ближайшую выше строку, которая открывает функцию и стоит левее самого
+    вызова. Соседний обработчик в счёт не идёт — иначе засов из соседней
+    функции засчитывался бы этой: так `makeDefault` в конструкторе доступов
+    один раз уже «прошёл» проверку за счёт стоящего выше `save`.
+    """
+    starts = re.compile(r"=>\s*\{|=\s*async\b|function\s+\w+")
+    own = len(lines[at]) - len(lines[at].lstrip())
+    for j in range(at - 1, -1, -1):
+        line = lines[j]
+        if line.strip() and len(line) - len(line.lstrip()) < own and starts.search(line):
+            return "\n".join(lines[j:at + 1])
+    return "\n".join(lines[:at + 1])
+
+
+def _post_calls() -> list[tuple[str, str, int, str]]:
+    """Все `api.post` интерфейса: файл, путь, строка, текст обработчика."""
+    call = re.compile(r"api\.post(?:<[^<>]*>)?\(")
+    found = []
+    for path in sorted(SCREENS.rglob("*.tsx")):
+        text = path.read_text(encoding="utf-8")
+        lines = text.splitlines()
+        for match in call.finditer(text):
+            at = text[:match.start()].count("\n")
+            found.append(
+                (path.name, _first_argument(text, match.end()), at + 1, _handler_of(lines, at))
+            )
+    return found
+
+
+def test_the_sweep_sees_every_post():
+    """Пустой перебор сделал бы проверку ниже зелёной и бессмысленной."""
+    assert len(_post_calls()) > 50, "вызовы не собрались — проверка ничего не значит"
+
+
+def test_every_created_record_stands_behind_a_latch():
+    """Действие, заводящее запись, не срабатывает дважды от одного нажатия."""
+    latch = re.compile(r"\w*[Gg]uard\.take\(\)")
+    naked = []
+    for name, route, line, handler in _post_calls():
+        if latch.search(handler):
+            continue
+        if (name, route) in POST_WITHOUT_LATCH:
+            continue
+        naked.append(f'{name}:{line} — api.post("{route}")')
+
+    assert not naked, (
+        "запись заводится без засова, и двойное нажатие заведёт вторую:\n"
+        + "\n".join(naked)
+        + "\n\nЛибо возьми useGuard, либо внеси в POST_WITHOUT_LATCH с объяснением, "
+        "почему повтор безвреден."
+    )
+
+
+def test_the_latch_is_a_ref_and_not_a_state():
+    """Засов меняется в тот же миг, а не к следующему рендеру.
+
+    Проверено нажатием: три вызова подряд в одном тике завели три заявки.
+    Состояние остаётся рядом только ради `disabled` на кнопке.
+    """
+    text = (SCREENS / "lib" / "guard.ts").read_text(encoding="utf-8")
+    assert "useRef(false)" in text, "засов держится состоянием — он опоздает на рендер"
+    assert re.search(r"if \(held\.current\) return false", text)
+
+
+# Флажки «это уже было», не имеющие отношения к засову, — с причиной у каждого.
+OWN_FLAGS: dict[str, str] = {
+    "app.tsx": "мастер первого запуска показывается один раз на загрузку страницы",
+    "Documents.tsx": "фокус в поле сканера забирается однажды, а не при каждой перезагрузке списка",
+}
+
+
+def test_no_screen_keeps_its_own_copy_of_the_latch():
+    """Своего `useRef(false)` под нужду засова у экранов нет.
+
+    Копия расходится с оригиналом молча: палитра команд держала свой засов и
+    свой комментарий к нему, и правка общего крючка её бы не касалась.
+    """
+    own = [
+        path.name
+        for path in sorted(SCREENS.rglob("*.tsx"))
+        if "useRef(false)" in path.read_text(encoding="utf-8")
+        and path.name not in OWN_FLAGS
+    ]
+    assert not own, "экран держит свой засов мимо lib/guard.ts: " + ", ".join(own)
+
+
+# --- карточка не показывает чужие данные под своим адресом ------------------
+
+
+def test_a_card_is_rebuilt_when_the_number_in_the_address_changes():
+    """Переход с клиента А на клиента Б собирает карточку заново.
+
+    Маршрут при таком переходе тот же, и React оставляет карточку смонтированной
+    со всем состоянием: полсекунды до ответа сервера на экране висят имя, лента
+    и файлы предыдущего клиента — данные А под адресом Б. Хуже с полями, которые
+    держат содержимое сами (`defaultValue`): название заявки А оставалось в поле
+    над заявкой Б и по потере фокуса уезжало на сервер как правка Б.
+
+    Ключ по номеру рвёт эту связь одной обёрткой на все карточки, поэтому
+    проверяем не каждый экран по отдельности, а сами маршруты.
+    """
+    app = (SCREENS / "App.tsx").read_text(encoding="utf-8")
+
+    assert re.search(r"function ById\b", app), "обёртка ById исчезла"
+    assert re.search(r"<Fragment key=\{id\}>", app), (
+        "ById перестал собирать карточку заново: без ключа обёртка ничего не делает"
+    )
+
+    routes = re.findall(r'<Route\s+path="([^"]*:id[^"]*)"\s+element=\{(.*?)\}\s*/>', app, re.S)
+    assert len(routes) >= 5, f"маршрутов с номером найдено {len(routes)} — проверка смотрит не туда"
+
+    unkeyed = [path for path, element in routes if "<ById>" not in element]
+    assert not unkeyed, (
+        "карточка переживёт смену номера в адресе вместе с чужими данными: "
+        + ", ".join(unkeyed)
+    )
+
+
+# --- доступность ------------------------------------------------------------
+
+
+def test_a_switch_is_a_button_and_it_actually_switches():
+    """Переключатель работает с клавиатуры — и сам, а не только через обёртку.
+
+    Две беды подряд, обе про одно. Сначала переключатель был `div` с
+    обработчиком: под Tab не попадает, на пробел не отвечает — и ни один блок
+    системы нельзя было включить, не взяв мышь.
+
+    Потом — уже настоящей кнопкой — он попадался с пустым `onToggle`: рядом
+    стоял обработчик на всей строке, и выглядело это безобидно. Но `Toggle`
+    останавливает всплытие (иначе одно нажатие срабатывало бы дважды), то есть
+    нажатие ПО САМОМУ переключателю не делало ничего — а Tab приводит фокус
+    именно на него. Так в настройках ящиков было три мёртвых переключателя,
+    включая оба «использовать SSL».
+    """
+    ui = (SCREENS / "components" / "ui.tsx").read_text(encoding="utf-8")
+    toggle = ui[ui.index("export function Toggle"):]
+    assert "<button" in toggle, "переключатель перестал быть кнопкой"
+    assert 'role="switch"' in toggle and "aria-checked={on}" in toggle
+    assert "e.stopPropagation()" in toggle, (
+        "без остановки всплытия строка-обёртка вернёт переключатель обратно"
+    )
+
+    dead = []
+    for path in sorted(SCREENS.rglob("*.tsx")):
+        text = path.read_text(encoding="utf-8")
+        for match in re.finditer(r"onToggle=\{([^{}]*)\}", text):
+            body = " ".join(match.group(1).split())
+            if re.fullmatch(r"\(\)\s*=>\s*(undefined|null|void 0)?", body):
+                dead.append(f"{path.name}:{text[:match.start()].count(chr(10)) + 1}")
+    assert not dead, (
+        "переключатель не делает ничего, а фокус с клавиатуры приходит именно на него: "
+        + ", ".join(dead)
+    )
+
+
+def test_a_modal_is_a_dialog_and_keeps_the_focus():
+    """Окно объявлено окном и не выпускает Tab на страницу под собой.
+
+    Пока ловушки не было, Tab уводил по ссылкам страницы ПОД затемнением — по
+    тем самым, по которым мышью не попасть. А без `role="dialog"` читалка
+    объявляла содержимое окна как продолжение страницы.
+    """
+    ui = (SCREENS / "components" / "ui.tsx").read_text(encoding="utf-8")
+    modal = ui[ui.index("export function Modal"):]
+    assert 'role="dialog"' in modal and 'aria-modal="true"' in modal
+    assert "aria-label={title ?? label}" in modal, "у окна без заголовка не осталось имени"
+    assert 'e.key !== "Tab"' in modal, "ловушка фокуса исчезла — Tab уйдёт под окно"
+    assert 'e.key === "Escape"' in modal
+
+
+def _open_tag_end(text: str, start: int) -> int:
+    """Индекс `>`, закрывающего открывающий тег: `>` внутри `{...}` не в счёт.
+
+    Без этого стрелка в `onClick={() => …}` обрывала бы разбор тега на первом же
+    `>`, и половина кнопок молча выпадала бы из перебора — а зелёная проверка,
+    которая ничего не смотрит, хуже её отсутствия.
+    """
+    depth, i = 0, start
+    while i < len(text):
+        char = text[i]
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+        elif char in "\"'`":
+            quote, i = char, i + 1
+            while i < len(text) and text[i] != quote:
+                i += 2 if text[i] == "\\" else 1
+        elif char == ">" and depth == 0:
+            return i
+        i += 1
+    return -1
+
+
+def _elements(tag: str):
+    """Все `<tag …>…</tag>` интерфейса: файл, строка, атрибуты, содержимое."""
+    edges = re.compile(r"<" + tag + r"\b|</" + tag + r">")
+    for path in sorted(SCREENS.rglob("*.tsx")):
+        text = path.read_text(encoding="utf-8")
+        for match in re.finditer(r"<" + tag + r"\b", text):
+            head = _open_tag_end(text, match.start())
+            if head < 0 or text[head - 1] == "/":
+                continue
+            depth, i, close = 1, head + 1, None
+            while i < len(text) and depth:
+                nxt = edges.search(text, i)
+                if not nxt:
+                    break
+                if nxt.group(0).startswith("</"):
+                    depth -= 1
+                    if depth == 0:
+                        close = nxt.start()
+                        break
+                    i = nxt.end()
+                else:
+                    inner = _open_tag_end(text, nxt.start())
+                    if inner > 0 and text[inner - 1] == "/":
+                        i = nxt.start() + 1
+                        continue
+                    depth += 1
+                    i = nxt.end()
+            if close is None:
+                continue
+            line = text[:match.start()].count("\n") + 1
+            yield path.name, line, text[match.start() + len(tag) + 1:head], text[head + 1:close]
+
+
+def _named(attrs: str, body: str) -> bool:
+    """Есть ли у кнопки доступное имя: подпись, `aria-label` или `title`."""
+    if "aria-label" in attrs or "aria-labelledby" in attrs or "title=" in attrs:
+        return True
+    inner = re.sub(r"<Icon\b[^>]*/>", "", body)
+    inner = re.sub(r"<[^>]*>", "", inner)
+    return bool(re.search(r"\bt\(|[A-Za-zА-Яа-я]{2,}", inner))
+
+
+def test_every_button_says_what_it_does():
+    """У кнопки есть либо подпись, либо доступное имя.
+
+    Кнопка из одного значка — пустая кнопка для всех, кто значка не видит:
+    читалка объявляет «кнопка» и замолкает. Таких набралось десять — удаление
+    файла, работы и штрихкода, закрытие окна, меню карточки клиента.
+    """
+    buttons = list(_elements("button")) + list(_elements("a"))
+    assert len(buttons) >= 120, f"кнопок разобрано {len(buttons)} — проверка смотрит не туда"
+
+    mute = [f"{name}:{line}" for name, line, attrs, body in buttons if not _named(attrs, body)]
+    assert not mute, "кнопка без текста и без доступного имени: " + ", ".join(mute)
+
+
+# --- мелочи, у каждой своя беда ---------------------------------------------
+
+
+def _without_comments(text: str) -> str:
+    """Тот же текст, но комментарии заменены пробелами — номера строк целы."""
+    def blank(match: re.Match) -> str:
+        return re.sub(r"[^\n]", " ", match.group(0))
+
+    return re.sub(r"/\*.*?\*/|//[^\n]*", blank, text, flags=re.S)
+
+
+def test_copying_goes_through_the_one_place_that_has_a_fallback():
+    """`navigator.clipboard` зовётся только из `lib/clipboard.ts`.
+
+    Объект живёт лишь в защищённом контексте, а CRM у большинства открыта по
+    HTTP на адресе вида 10.0.0.130: там его нет вовсе, и обращение падает
+    синхронным TypeError — ещё до промиса, так что `.catch()` на нём бесполезен.
+    Именно поэтому на экране телефонии всплывало «Скопировано» над пустым
+    буфером: адрес вебхука вставляют в настройки АТС ровно один раз и не
+    проверяя.
+    """
+    direct = []
+    for path in sorted(SCREENS.rglob("*.ts*")):
+        if path.name == "clipboard.ts":
+            continue
+        # Комментарии не в счёт: объяснение, почему так делать нельзя, стоит
+        # ровно рядом с местом, где это когда-то делали.
+        text = _without_comments(path.read_text(encoding="utf-8"))
+        for match in re.finditer(r"navigator\.clipboard", text):
+            direct.append(f"{path.name}:{text[:match.start()].count(chr(10)) + 1}")
+    assert not direct, (
+        "буфер обмена мимо copyText — по HTTP это молчаливый отказ: " + ", ".join(direct)
+    )
+
+
+# Справочники, чей отказ показывать негде и незачем, — с причиной у каждого.
+# Ключ — файл и имя списка: «в файле где-то есть слово failure» проверкой не
+# было бы вовсе, на карточке заявки таких списков семь.
+REFERENCE_WITHOUT_WORD: dict[tuple[str, str], str] = {
+    # Ящики нужны только выбору отправителя и доступны одному root. Не ответило
+    # — форма всё равно работает: сервер возьмёт первый активный ящик сам.
+    ("Mail.tsx", "accounts"): "отказ ни на что не влияет: отправку делает сервер",
+    ("ClientCard.tsx", "mailAccounts"): "то же: сервер возьмёт первый активный ящик",
+    ("DealCard.tsx", "mailAccounts"): "то же: сервер возьмёт первый активный ящик",
+}
+
+
+def test_a_reference_that_did_not_load_says_so():
+    """Экран со справочником умеет отличить «записей нет» от «не спросили».
+
+    Крючок `useReference` держит эти два состояния врозь (`items === null` и
+    отдельное `failure`), но толку от этого нет, пока экран смотрит только на
+    `items`. Так и было: окно новой заявки на упавшем сервере советовало
+    «сначала заведите клиента» там, где их двести, а список должностей
+    рисовался из одного пункта «Без роли» — и выбор этого единственного пункта
+    СНИМАЛ должность по-настоящему.
+    """
+    lists, silent = 0, []
+    for path in sorted(SCREENS.rglob("*.tsx")):
+        text = path.read_text(encoding="utf-8")
+        for match in re.finditer(r"const (\w+) = useReference", text):
+            name = match.group(1)
+            lists += 1
+            if (path.name, name) in REFERENCE_WITHOUT_WORD:
+                continue
+            if f"{name}.failure" not in text:
+                silent.append(f"{path.name}: {name}")
+
+    assert lists >= 15, f"справочников найдено {lists} — проверка смотрит не туда"
+    assert not silent, (
+        "справочник не приехал, а экран об этом молчит:\n" + "\n".join(silent)
+        + "\n\nЛибо покажи LoadFailed, либо внеси в REFERENCE_WITHOUT_WORD с объяснением."
+    )

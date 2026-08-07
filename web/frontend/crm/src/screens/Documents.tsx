@@ -7,6 +7,7 @@ import { api, ApiError } from "../lib/api";
 import { useApp } from "../lib/app";
 import { useDebounced } from "../lib/debounce";
 import { useFailure } from "../lib/failure";
+import { useGuard } from "../lib/guard";
 import { formatDate } from "../lib/format";
 import { useReference } from "../lib/reference";
 import { DOC_STATUSES, statusLabel, statusVariant } from "../lib/documents";
@@ -210,7 +211,11 @@ export function NewDocumentModal({
   // Список клиентов формы: `null` — не приехал. Пустой выпадающий список молча
   // превращал бы бланк для клиента из справочника в бланк «для прохожего».
   const clients = useReference<any>(clientId ? null : "/clients?per_page=200");
-  const [busy, setBusy] = useState(false);
+  // Засов, а не флаг: бланк получает номер, и второй бланк на ту же вещь —
+  // это вторая бумага с другим номером. На руках у клиента останется одна, а в
+  // системе будут висеть обе, и закроют потом не ту. Отпускаем только на
+  // отказе: при успехе уходим в созданный бланк.
+  const guard = useGuard();
   const [form, setForm] = useState<Record<string, string>>({
     client_id: clientId ? String(clientId) : "",
     client_name: "",
@@ -235,7 +240,7 @@ export function NewDocumentModal({
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    setBusy(true);
+    if (!guard.take()) return;
     try {
       onCreated(
         await api.post("/documents", {
@@ -246,7 +251,7 @@ export function NewDocumentModal({
       );
     } catch (err) {
       toastError(err);
-      setBusy(false);
+      guard.free();
     }
   };
 
@@ -309,7 +314,7 @@ export function NewDocumentModal({
 
         <div className="field-desc" style={{ margin: "2px 0 18px" }}>{t("docFieldLimit")}</div>
 
-        <button className="btn btn-primary" style={{ width: "100%" }} disabled={busy}>
+        <button className="btn btn-primary" style={{ width: "100%" }} disabled={guard.busy}>
           {t("create")}
         </button>
       </form>

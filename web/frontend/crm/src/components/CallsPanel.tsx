@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { api, type PhoneCall } from "../lib/api";
 import { useApp } from "../lib/app";
+import { useGuard } from "../lib/guard";
 import { formatCallDuration, formatDateTime } from "../lib/format";
 import { moduleOn } from "../lib/modules";
 import { Icon } from "./Icon";
@@ -46,14 +47,17 @@ export function CallButton({
   onCalled?: () => void;
 }) {
   const { t, modules, toast, toastError } = useApp();
-  const [busy, setBusy] = useState(false);
+  // Засов, а не флаг состояния: станция поднимает трубку не мгновенно, кнопка
+  // выглядит неотвеченной — и второе нажатие ставило второй вызов на тот же
+  // номер. У клиента это два звонка подряд, у нас — две строки в журнале.
+  const guard = useGuard();
   if (!moduleOn(modules, "telephony") || !number.trim()) return null;
   return (
     <button
       className="btn btn-secondary"
-      disabled={busy}
+      disabled={guard.busy}
       onClick={async () => {
-        setBusy(true);
+        if (!guard.take()) return;
         try {
           await api.post("/telephony/click-to-call", { number, deal_id: dealId ?? null });
           toast(t("clickToCall") + " ✓");
@@ -61,7 +65,7 @@ export function CallButton({
         } catch (e) {
           toastError(e);
         } finally {
-          setBusy(false);
+          guard.free();
         }
       }}
     >

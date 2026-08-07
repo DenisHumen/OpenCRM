@@ -5,6 +5,7 @@ import { Icon } from "./Icon";
 import { Chip } from "./ui";
 import { api, ApiError } from "../lib/api";
 import { useApp } from "../lib/app";
+import { useGuard } from "../lib/guard";
 import { moduleOn } from "../lib/modules";
 import { can } from "../lib/permissions";
 
@@ -188,12 +189,15 @@ function AddBarcode({
   const { t, toastError } = useApp();
   const [code, setCode] = useState("");
   const [pack, setPack] = useState("1");
-  const [busy, setBusy] = useState(false);
+  // Засов на оба действия формы: и добавление чужого кода, и выпуск своего
+  // заводят строку. Состояния здесь мало — поле принимает сканер, а сканер
+  // заканчивает ввод Enter'ом и повторяет его при затёртой наклейке. Два
+  // нажатия в одном тике оба видят `busy === false`: см. lib/guard.ts.
+  const guard = useGuard();
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    if (!code.trim() || busy) return;
-    setBusy(true);
+    if (!code.trim() || !guard.take()) return;
     try {
       await api.post(`/labels/products/${productId}/barcodes`, {
         code: code.trim(),
@@ -207,12 +211,12 @@ function AddBarcode({
     } catch (err) {
       toastError(err);
     } finally {
-      setBusy(false);
+      guard.free();
     }
   };
 
   const issueOwn = async () => {
-    setBusy(true);
+    if (!guard.take()) return;
     try {
       const created = await api.post<Barcode>(`/labels/products/${productId}/barcodes/internal`);
       toast(created.code);
@@ -220,7 +224,7 @@ function AddBarcode({
     } catch (err) {
       toastError(err);
     } finally {
-      setBusy(false);
+      guard.free();
     }
   };
 
@@ -247,14 +251,14 @@ function AddBarcode({
         <label className="label">{t("barcodePack")}</label>
         <input className="input" value={pack} onChange={(e) => setPack(e.target.value)} />
       </div>
-      <button className="btn btn-primary" disabled={busy}>
+      <button className="btn btn-primary" disabled={guard.busy}>
         {t("barcodeAdd")}
       </button>
       <button
         type="button"
         className="btn btn-secondary"
-        onClick={issueOwn}
-        disabled={busy}
+        onClick={() => void issueOwn()}
+        disabled={guard.busy}
         title={t("barcodeIssueInternalHint")}
       >
         {t("barcodeIssueInternal")}

@@ -8,6 +8,7 @@ import { api } from "../lib/api";
 import { useApp } from "../lib/app";
 import { useDebounced } from "../lib/debounce";
 import { useFailure } from "../lib/failure";
+import { useGuard } from "../lib/guard";
 import { initials, relativeDay } from "../lib/format";
 
 export function Clients() {
@@ -140,19 +141,23 @@ function NewClientModal({ onClose, onCreated }: { onClose: () => void; onCreated
   const [form, setForm] = useState({
     name: "", company: "", phone: "", email: "", messenger: "", tags: "", source: "",
   });
-  const [busy, setBusy] = useState(false);
+  // Засов, а не флаг состояния: Enter в поле имени отправляет форму, и жмут
+  // его дважды. Второй клиент с тем же именем расщепляет историю — половина
+  // заявок и писем уезжает в карточку, которую никто больше не откроет.
+  // Отпускаем только на отказе: при успехе уходим в созданную карточку.
+  const guard = useGuard();
 
   const set = (key: string) => (e: any) => setForm((f) => ({ ...f, [key]: e.target.value }));
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    setBusy(true);
+    if (!guard.take()) return;
     try {
       const client = await api.post("/clients", form);
       onCreated(client);
     } catch (err) {
       toastError(err);
-      setBusy(false);
+      guard.free();
     }
   };
 
@@ -193,7 +198,7 @@ function NewClientModal({ onClose, onCreated }: { onClose: () => void; onCreated
           <SourcePicker value={form.source} onChange={(next) => setForm((f) => ({ ...f, source: next }))} />
           <div className="field-desc">{t("clientSourceHint")}</div>
         </div>
-        <button className="btn btn-primary" style={{ width: "100%" }} disabled={busy}>
+        <button className="btn btn-primary" style={{ width: "100%" }} disabled={guard.busy}>
           {t("create")}
         </button>
       </form>

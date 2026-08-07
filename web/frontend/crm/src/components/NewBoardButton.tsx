@@ -1,8 +1,8 @@
-import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
+import { useGuard } from "../lib/guard";
 import { Icon } from "./Icon";
 
 /**
@@ -20,13 +20,17 @@ import { Icon } from "./Icon";
 export function NewBoardButton({ clientId }: { clientId?: number }) {
   const { t, toastError } = useApp();
   const navigate = useNavigate();
-  const [busy, setBusy] = useState(false);
+  const guard = useGuard();
 
   const create = async () => {
     // Второе нажатие по неответившей кнопке заводило вторую доску: человек не
     // видел отклика и жал ещё раз, а получал два черновика.
-    if (busy) return;
-    setBusy(true);
+    //
+    // Засов, а не состояние: `setBusy(true)` виден только со следующего
+    // рендера, а два нажатия в одном тике читают `busy` из своих замыканий и
+    // оба видят `false` (подробности — в lib/guard.ts). Отпускать нечего:
+    // при успехе экран уезжает в созданную доску.
+    if (!guard.take()) return;
     try {
       const board = await api.post("/boards", {
         title: t("newBoard"),
@@ -35,12 +39,12 @@ export function NewBoardButton({ clientId }: { clientId?: number }) {
       navigate(`/boards/${board.id}`);
     } catch (e) {
       toastError(e);
-      setBusy(false);
+      guard.free();
     }
   };
 
   return (
-    <button className="btn btn-primary" onClick={() => void create()} disabled={busy}>
+    <button className="btn btn-primary" onClick={() => void create()} disabled={guard.busy}>
       <Icon name="plus" stroke={2} />
       {t("newBoard")}
     </button>
