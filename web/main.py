@@ -40,6 +40,7 @@ from web.api.routes import (
     labels,
     leads,
     mail,
+    metrics,
     modules,
     orders,
     people,
@@ -310,6 +311,7 @@ def create_app() -> FastAPI:
     app.include_router(orders.router, prefix=api_prefix)
     app.include_router(warehouse.router, prefix=api_prefix)
     app.include_router(warehouse.places_router, prefix=api_prefix)
+    app.include_router(metrics.router, prefix=api_prefix)
     app.include_router(system.router, prefix=api_prefix)
     app.include_router(workspace.router, prefix=api_prefix)
     app.include_router(telephony.router, prefix=api_prefix)

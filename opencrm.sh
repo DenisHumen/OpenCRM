@@ -772,6 +772,57 @@ db_engine() {
     esac
 }
 
+# --------------------------------------------------------------------------
+# Профили compose
+# --------------------------------------------------------------------------
+#
+# COMPOSE_PROFILES — общий список, в который пишут независимые решения: база
+# (`mysql`) и мониторинг (`monitoring`, `monitoring-logs`). Поэтому значение
+# правится по одному имени, а не перезаписывается целиком: строка
+# `env_set COMPOSE_PROFILES monitoring` молча вынесла бы из стека службу базы —
+# и сайт после ближайшего `up` поднялся бы на пустом файле рядом.
+
+compose_profile_enabled() {
+    case ",$(env_get "$DOCKER_ENV" COMPOSE_PROFILES 2>/dev/null || true)," in
+        *",$1,"*) return 0 ;;
+        *)        return 1 ;;
+    esac
+}
+
+# compose_profile <имя> on|off
+compose_profile() {
+    _pkey=$1; _pwant=$2
+    _plist=""
+    for _pitem in $(env_get "$DOCKER_ENV" COMPOSE_PROFILES 2>/dev/null | tr ',' ' ' || true); do
+        # Явный if, а не `[ ] && continue`: под `set -e` невыполнившийся тест в
+        # конце списка сам по себе завершает скрипт (тот же разбор — у меню).
+        if [ "$_pitem" != "$_pkey" ]; then
+            _plist="${_plist:+$_plist,}$_pitem"
+        fi
+    done
+    if [ "$_pwant" = "on" ]; then
+        _plist="${_plist:+$_plist,}$_pkey"
+    fi
+    env_set "$DOCKER_ENV" COMPOSE_PROFILES "$_plist"
+}
+
+# Адрес, по которому мониторинг проверяет сайт СНАРУЖИ.
+#
+# Значение то же, что у OPENCRM_BASE_URL, но лежать обязано в docker/.env:
+# compose подставляет переменные в описание служб только оттуда, а config/.env
+# он лишь передаёт внутрь контейнера приложения. Записанный в config/.env адрес
+# Prometheus не увидел бы вовсе.
+#
+# Зовётся из всех мест, где адрес может поменяться (запуск, перезапуск, выпуск
+# сертификата), а не один раз при установке: после перехода на HTTPS проверка
+# обязана пойти на https://, иначе она вечно ходит по редиректу.
+sync_monitor_url() {
+    _murl=$(env_get "$APP_ENV" OPENCRM_BASE_URL 2>/dev/null || true)
+    [ -n "$_murl" ] || return 0
+    [ -f "$DOCKER_ENV" ] || return 0
+    env_set "$DOCKER_ENV" OPENCRM_MONITOR_URL "$_murl"
+}
+
 configure_domain() {
     step "$(tr_ "Домен" "Domain")"
     _current=$(env_get "$DOCKER_ENV" OPENCRM_DOMAIN 2>/dev/null || true)
@@ -900,11 +951,14 @@ choose_database() {
             # alembic и entrypoint.sh запускаются из разных рабочих каталогов,
             # и относительный URL однажды укажет на пустой файл рядом.
             env_set "$APP_ENV" OPENCRM_DB_URL "sqlite:////app/data/opencrm.db"
-            # Пустой профиль — это «службы базы в стеке нет». Пишем явно, а не
+            # Снятый профиль — это «службы базы в стеке нет». Снимаем явно, а не
             # оставляем строку отсутствовать: установку запускают и поверх
             # прежней, и там COMPOSE_PROFILES=mysql могло остаться с прошлого
             # раза — тогда рядом молча поднялся бы никому не нужный сервер.
-            env_set "$DOCKER_ENV" COMPOSE_PROFILES ""
+            #
+            # Снимается ровно `mysql`, а не весь список: рядом в нём живёт
+            # решение про мониторинг, и затирать его выбором базы нельзя.
+            compose_profile mysql off
             ok "$(tr_ "SQLite: $(home_dir)/data/opencrm.db" "SQLite: $(home_dir)/data/opencrm.db")"
             return 0
             ;;
@@ -924,7 +978,7 @@ choose_database() {
     env_set "$DOCKER_ENV" OPENCRM_DB_USER opencrm
     env_set "$DOCKER_ENV" OPENCRM_DB_PASSWORD "$_db_pass"
     env_set "$DOCKER_ENV" OPENCRM_DB_ROOT_PASSWORD "$_db_root"
-    env_set "$DOCKER_ENV" COMPOSE_PROFILES mysql
+    compose_profile mysql on
     # charset=utf8mb4 в URL — вторая половина той же защиты, что и настройка
     # сервера: без неё соединение договаривается о трёхбайтном utf8, и эмодзи
     # в заметке клиента обрывают вставку на полуслове.
@@ -995,6 +1049,151 @@ migrate_sqlite_to_mysql() {
     fi
 }
 
+# --------------------------------------------------------------------------
+# Мониторинг
+# --------------------------------------------------------------------------
+#
+# Заводится как всё остальное необязательное: службы стоят под профилями
+# compose, и выключенный мониторинг — это не остановленные контейнеры, а
+# контейнеры, которых в стеке нет.
+#
+# Спрашивается один раз, и ответ по умолчанию зависит от машины. На VPS с двумя
+# гигабайтами полный набор наблюдателей съедает заметную часть памяти, а сайт с
+# неё же и живёт; на машине попросторнее отказываться незачем. Поэтому умолчание
+# считается от того, сколько памяти есть на самом деле, и решение проговаривается
+# вслух — угадывать за человека можно, молчать об этом нельзя.
+
+#: Сколько памяти (вместе с подкачкой) считаем достаточным для полного набора:
+#: метрики плюс логи. Ниже этого порога предлагаем только метрики.
+MONITORING_LOGS_MIN_MB=3000
+#: Ниже этого мониторинг по умолчанию не предлагаем вовсе.
+MONITORING_MIN_MB=1800
+
+MONITORING_PASSWORD_SHOWN=""
+
+# Пароль Grafana. Генерируется, а не спрашивается, и в репозиторий не попадает —
+# ровно как пароль MySQL: лежит в docker/.env с правами 600.
+#
+# Существующий не трогаем никогда. Перегенерация означала бы, что человек,
+# записавший пароль себе, в следующий заход установщика теряет доступ к панели.
+seed_grafana_password() {
+    _gp=$(env_get "$DOCKER_ENV" OPENCRM_GRAFANA_PASSWORD 2>/dev/null || true)
+    if [ -n "$_gp" ]; then
+        return 0
+    fi
+    MONITORING_PASSWORD_SHOWN=$(gen_secret 24)
+    env_set "$DOCKER_ENV" OPENCRM_GRAFANA_PASSWORD "$MONITORING_PASSWORD_SHOWN"
+}
+
+# Канал оповещений. Бот берётся тот же, что у автообновления: он уже настроен, и
+# этот чат уже читают. Заводить второй значит завести второй, который читать
+# перестанут.
+#
+# Значения переносятся в docker/.env, а не читаются из autoupdate.env напрямую.
+# Причина не в удобстве: в autoupdate.env рядом лежит токен GitHub, и подключать
+# весь файл к контейнеру Alertmanager значило бы отдать ему заодно и его.
+sync_alert_channel() {
+    _auto="$(home_dir)/autoupdate.env"
+    _tok=$(env_get "$DOCKER_ENV" OPENCRM_MONITORING_TELEGRAM_TOKEN 2>/dev/null || true)
+    _cha=$(env_get "$DOCKER_ENV" OPENCRM_MONITORING_TELEGRAM_CHAT 2>/dev/null || true)
+    if [ -z "$_tok" ] && [ -f "$_auto" ]; then
+        _tok=$(env_get "$_auto" OPENCRM_UPDATE_TELEGRAM_TOKEN 2>/dev/null || true)
+        _cha=$(env_get "$_auto" OPENCRM_UPDATE_TELEGRAM_CHAT 2>/dev/null || true)
+    fi
+    if [ -z "$_tok" ] || [ -z "$_cha" ]; then
+        return 1
+    fi
+    # Alertmanager принимает chat_id только числом. Имя канала (@name) он
+    # отвергнет при разборе конфига и не поднимется вовсе — а узнать об этом
+    # хотелось бы сейчас, а не в день первой аварии.
+    case "$_cha" in
+        ''|*[!0-9-]*)
+            warn "$(tr_ "chat_id «$_cha» не число — Alertmanager такой не примет" "chat_id \"$_cha\" is not a number — Alertmanager will not take it")"
+            say "$(tr_ "        Нужен числовой id чата (у групп он отрицательный), а не @имя." "        A numeric chat id is required (negative for groups), not @name.")"
+            return 1
+            ;;
+    esac
+    env_set "$DOCKER_ENV" OPENCRM_MONITORING_TELEGRAM_TOKEN "$_tok"
+    env_set "$DOCKER_ENV" OPENCRM_MONITORING_TELEGRAM_CHAT "$_cha"
+    return 0
+}
+
+configure_monitoring() {
+    step "$(tr_ "Мониторинг" "Monitoring")"
+
+    if compose_profile_enabled monitoring; then
+        seed_grafana_password
+        sync_alert_channel || true
+        ok "$(tr_ "уже включён — не трогаю" "already on — leaving it alone")"
+        return 0
+    fi
+
+    _mem=$(mem_mb); _swap=$(swap_mb); _total=$((_mem + _swap))
+    say "$(tr_ \
+        "    ${D}Оповещения в Telegram: сайт не отвечает, кончается место, истекает${R}" \
+        "    ${D}Telegram alerts: the site is down, disk is filling up, the certificate${R}")"
+    say "$(tr_ \
+        "    ${D}сертификат, откатился деплой, не снялась копия. Плюс графики и поиск${R}" \
+        "    ${D}is expiring, a deploy rolled back, a backup was missed. Plus dashboards${R}")"
+    say "$(tr_ \
+        "    ${D}по логам в Grafana на /monitoring/ этого же сайта.${R}" \
+        "    ${D}and log search in Grafana at /monitoring/ on this same site.${R}")"
+    say ""
+    info "$(tr_ "памяти с подкачкой: ${_total} МБ; метрики занимают ~250 МБ, логи ещё ~200 МБ" "memory with swap: ${_total} MB; metrics take ~250 MB, logs another ~200 MB")"
+
+    if [ "$_total" -ge "$MONITORING_MIN_MB" ]; then
+        _default=y
+    else
+        _default=n
+        warn "$(tr_ "на этой машине памяти мало — по умолчанию предлагаю обойтись без него" "this machine is short on memory — the default is to skip it")"
+    fi
+
+    if ! confirm "$(tr_ "    Включить мониторинг?" "    Enable monitoring?")" "$_default"; then
+        compose_profile monitoring off
+        compose_profile monitoring-logs off
+        info "$(tr_ "пропускаю; включить позже — ./opencrm.sh monitoring" "skipping; enable later — ./opencrm.sh monitoring")"
+        return 0
+    fi
+
+    compose_profile monitoring on
+    if [ "$_total" -ge "$MONITORING_LOGS_MIN_MB" ]; then
+        compose_profile monitoring-logs on
+        ok "$(tr_ "включены метрики и логи" "metrics and logs are on")"
+    else
+        compose_profile monitoring-logs off
+        ok "$(tr_ "включены метрики" "metrics are on")"
+        info "$(tr_ "логи (Loki) не включаю: памяти мало. Без них не будет поиска по логам и правила про долю 5xx" "logs (Loki) left off: not enough memory. Without them there is no log search and no 5xx-share alert")"
+        say "$(tr_ "        Передумаете — ./opencrm.sh monitoring logs" "        Changed your mind — ./opencrm.sh monitoring logs")"
+    fi
+
+    seed_grafana_password
+    sync_monitor_url
+
+    if sync_alert_channel; then
+        ok "$(tr_ "тревоги пойдут в тот же Telegram, что и сообщения об обновлениях" "alerts will go to the same Telegram as the update messages")"
+        return 0
+    fi
+
+    say ""
+    say "$(tr_ \
+        "    ${D}Оповещения важнее графиков: график смотрят, когда уже заподозрили,${R}" \
+        "    ${D}Alerts matter more than dashboards: a dashboard is opened once you${R}")"
+    say "$(tr_ \
+        "    ${D}а сообщение приходит само.${R}" \
+        "    ${D}already suspect something; a message arrives on its own.${R}")"
+    _tok=$(ask "$(tr_ "    Telegram-токен бота (Enter — без оповещений)" "    Telegram bot token (Enter — no alerts)")" "")
+    if [ -z "$_tok" ]; then
+        warn "$(tr_ "канал не настроен — тревоги будут копиться в Grafana, но никуда не уйдут" "no channel — alerts will pile up in Grafana but go nowhere")"
+        return 0
+    fi
+    _cha=$(ask "$(tr_ "    chat_id (число; у групп отрицательное)" "    chat_id (a number; negative for groups)")" "")
+    env_set "$DOCKER_ENV" OPENCRM_MONITORING_TELEGRAM_TOKEN "$_tok"
+    env_set "$DOCKER_ENV" OPENCRM_MONITORING_TELEGRAM_CHAT "$_cha"
+    if sync_alert_channel; then
+        ok "$(tr_ "оповещения настроены" "alerts configured")"
+    fi
+}
+
 # Язык запоминается в docker/.env, а не в отдельном файле: он и так есть на
 # каждой установке, лежит рядом с остальными настройками стека и переживает
 # обновления. Спрашиваем один раз — при повторных запусках берём сохранённое.
@@ -1055,10 +1254,14 @@ create_dirs() {
     # mysql создаётся всегда, даже на SQLite: пустой каталог не стоит ничего, а
     # созданный докером на лету принадлежал бы root — и служба базы, включённая
     # позже, упёрлась бы в права на своём же каталоге данных.
-    for _sub in data storage letsencrypt acme updates mysql; do
+    # Каталоги мониторинга создаются всегда, даже когда он выключен, — по той же
+    # причине, что и mysql: созданный докером на лету принадлежал бы root, и
+    # включённый позже Prometheus упёрся бы в права на своём же хранилище.
+    for _sub in data storage letsencrypt acme updates mysql \
+                monitoring/prometheus monitoring/grafana monitoring/alertmanager monitoring/loki; do
         mkdir -p "$_home/$_sub"
     done
-    ok "$_home/{data,storage,letsencrypt,acme,updates,mysql}"
+    ok "$_home/{data,storage,letsencrypt,acme,updates,mysql,monitoring}"
 }
 
 compose() {
@@ -1070,6 +1273,10 @@ compose() {
 # жить со старыми значениями. Молча и потому опасно: после выпуска сертификата
 # сайт уже за TLS, а cookie так и остались бы без флага Secure.
 apply_env_change() {
+    # Адрес сайта мог только что смениться (выпуск сертификата переводит его на
+    # https) — проверка снаружи обязана пойти туда же, иначе она вечно ходит по
+    # редиректу.
+    sync_monitor_url
     run_painted compose up -d --force-recreate app
     # nginx проксирует в app и до его готовности отдаёт 502 — ждём здесь, иначе
     # каждый вызывающий получал бы «сайт лежит» сразу после успешной настройки.
@@ -1102,6 +1309,7 @@ reload_nginx() {
 
 build_and_start() {
     step "$(tr_ "Сборка и запуск" "Build and start")"
+    sync_monitor_url
     # Фаервол мог стоять на сервере и до нас. Тогда контейнеру сборки нечем
     # резолвить имена, и установка обрывается на `pip install` невнятной ошибкой,
     # в которой про фаервол ни слова. Разрешение узкое, лишним не будет.
@@ -1320,6 +1528,12 @@ show_summary() {
     else
         say "$(tr_ "  База:   SQLite, $(home_dir)/data/opencrm.db" "  Database: SQLite, $(home_dir)/data/opencrm.db")"
     fi
+    if compose_profile_enabled monitoring; then
+        say "$(tr_ "  Мониторинг: ${_url}/monitoring/  (логин admin)" "  Monitoring: ${_url}/monitoring/  (login admin)")"
+        if [ -n "$MONITORING_PASSWORD_SHOWN" ]; then
+            printf '  %s%s%s\n' "$B" "$MONITORING_PASSWORD_SHOWN" "$R"
+        fi
+    fi
     if [ -n "$ROOT_PASSWORD_SHOWN" ]; then
         printf '  Пароль: %s%s%s\n' "$B" "$ROOT_PASSWORD_SHOWN" "$R"
         say ""
@@ -1376,7 +1590,14 @@ cmd_install() {
     issue_certificate
     setup_firewall
     setup_backups
+    # Строго после setup_autoupdate: канал оповещений берётся из настроенного
+    # там же бота, и спрашивать токен второй раз незачем.
     setup_autoupdate
+    configure_monitoring
+    if compose_profile_enabled monitoring; then
+        step "$(tr_ "Запуск мониторинга" "Starting monitoring")"
+        monitoring_apply
+    fi
     show_summary
 }
 
@@ -1418,9 +1639,9 @@ cmd_status() {
     df -h "$(home_dir)" | tail -n 2
 }
 
-cmd_start()   { need_install; step "$(tr_ "Запуск" "Start")"; run_painted compose up -d; if wait_health 60; then ok "$(tr_ "сайт отвечает" "the site is answering")"; else warn "$(tr_ "сайт ещё поднимается" "the site is still coming up")"; fi; }
+cmd_start()   { need_install; step "$(tr_ "Запуск" "Start")"; sync_monitor_url; run_painted compose up -d; if wait_health 60; then ok "$(tr_ "сайт отвечает" "the site is answering")"; else warn "$(tr_ "сайт ещё поднимается" "the site is still coming up")"; fi; }
 cmd_stop()    { need_install; step "$(tr_ "Остановка" "Stop")"; run_painted compose down; ok "$(tr_ "остановлено" "stopped")"; }
-cmd_restart() { need_install; step "$(tr_ "Перезапуск" "Restart")"; run_painted compose restart; if wait_health 60; then ok "$(tr_ "сайт отвечает" "the site is answering")"; else warn "$(tr_ "сайт ещё поднимается" "the site is still coming up")"; fi; }
+cmd_restart() { need_install; step "$(tr_ "Перезапуск" "Restart")"; sync_monitor_url; run_painted compose restart; if wait_health 60; then ok "$(tr_ "сайт отвечает" "the site is answering")"; else warn "$(tr_ "сайт ещё поднимается" "the site is still coming up")"; fi; }
 
 cmd_logs() {
     need_install
@@ -1462,6 +1683,146 @@ cmd_autoupdate() {
 }
 
 cmd_history() { need_install; autoupdate history -n "${1:-15}"; }
+
+# Службы мониторинга поимённо. Список нужен для выключения: снятый профиль
+# убирает службу из ОПИСАНИЯ стека, но уже поднятый контейнер от этого сам не
+# исчезает — а compose не считает его «лишним» (orphan), потому что службу он
+# знает, просто не выбрал. Проверено на стенде: после снятия профиля и
+# `up -d --remove-orphans` все контейнеры мониторинга продолжали работать и есть
+# память, а человек считал, что выключил их.
+#
+# Названная поимённо служба поднимает свой профиль сама, поэтому `rm` до них
+# дотягивается и при снятом профиле.
+MONITORING_SERVICES="prometheus alertmanager node-exporter containers blackbox grafana loki promtail"
+
+monitoring_apply() {
+    run_painted compose up -d --remove-orphans
+}
+
+monitoring_remove() {
+    # shellcheck disable=SC2086  # список имён служб должен разбиться на слова
+    run_painted compose rm -s -f $MONITORING_SERVICES || true
+}
+
+monitoring_state() {
+    if compose_profile_enabled monitoring; then
+        _mstate="$(tr_ "включён" "on")"
+        if compose_profile_enabled monitoring-logs; then
+            _mstate="$_mstate + $(tr_ "логи" "logs")"
+        else
+            _mstate="$_mstate, $(tr_ "без логов" "no logs")"
+        fi
+    else
+        _mstate="$(tr_ "выключен" "off")"
+    fi
+    printf '%s' "$_mstate"
+}
+
+cmd_monitoring() {
+    need_install
+    step "$(tr_ "Мониторинг" "Monitoring")"
+
+    case "${1:-}" in
+        on)
+            compose_profile monitoring on
+            # Логи — по тому же правилу, что при установке: на тесной машине их
+            # не поднимаем. Иначе выключение и включение обратно тихо меняло бы
+            # состав: человек выключил полный набор, включил — а поиска по
+            # логам больше нет, и связать это не с чем.
+            _total=$(( $(mem_mb) + $(swap_mb) ))
+            if [ "$_total" -ge "$MONITORING_LOGS_MIN_MB" ]; then
+                compose_profile monitoring-logs on
+            else
+                info "$(tr_ "памяти ${_total} МБ — логи не поднимаю (./opencrm.sh monitoring logs)" "memory is ${_total} MB — leaving logs off (./opencrm.sh monitoring logs)")"
+            fi
+            seed_grafana_password
+            sync_monitor_url
+            sync_alert_channel || warn "$(tr_ "канал Telegram не настроен — тревоги никуда не пойдут" "no Telegram channel — alerts will go nowhere")"
+            monitoring_apply
+            ok "$(tr_ "включён" "on")"
+            return 0
+            ;;
+        off)
+            monitoring_remove
+            compose_profile monitoring off
+            compose_profile monitoring-logs off
+            monitoring_apply
+            ok "$(tr_ "выключен, контейнеры сняты" "off, containers removed")"
+            return 0
+            ;;
+        reload)
+            # Правила и конфиги примонтированы из чекаута, и службы перечитывают
+            # их сами раз в пять минут (см. entrypoint.sh каждой). Эта команда —
+            # для тех случаев, когда ждать не хочется.
+            run_painted compose restart prometheus alertmanager
+            ok "$(tr_ "конфиги и правила перечитаны" "configs and rules re-read")"
+            return 0
+            ;;
+        logs)
+            if compose_profile_enabled monitoring-logs; then
+                # shellcheck disable=SC2086
+                run_painted compose rm -s -f loki promtail || true
+                compose_profile monitoring-logs off
+                ok "$(tr_ "логи выключены: минус ~200 МБ памяти, минус поиск по логам и правило про долю 5xx" "logs off: ~200 MB less memory, no log search and no 5xx-share alert")"
+            else
+                compose_profile monitoring on
+                compose_profile monitoring-logs on
+                ok "$(tr_ "логи включены" "logs on")"
+            fi
+            monitoring_apply
+            return 0
+            ;;
+        password)
+            _np=$(gen_secret 24)
+            env_set "$DOCKER_ENV" OPENCRM_GRAFANA_PASSWORD "$_np"
+            printf '    %s%s%s\n' "$B" "$_np" "$R"
+            # Пароль читается при СОЗДАНИИ контейнера, поэтому не `restart`:
+            # перезапущенная Grafana осталась бы со старым.
+            run_painted compose up -d --force-recreate grafana
+            ok "$(tr_ "пароль сменён" "password changed")"
+            return 0
+            ;;
+    esac
+
+    say "$(tr_ "    Состояние: $(monitoring_state)" "    State: $(monitoring_state)")"
+    if compose_profile_enabled monitoring; then
+        _murl=$(env_get "$DOCKER_ENV" OPENCRM_MONITOR_URL 2>/dev/null || true)
+        say "$(tr_ "    Панель:    ${_murl}/monitoring/  (логин admin)" "    Dashboard: ${_murl}/monitoring/  (login admin)")"
+        if [ -n "$(env_get "$DOCKER_ENV" OPENCRM_MONITORING_TELEGRAM_TOKEN 2>/dev/null || true)" ]; then
+            say "$(tr_ "    Тревоги:   Telegram, чат $(env_get "$DOCKER_ENV" OPENCRM_MONITORING_TELEGRAM_CHAT)" "    Alerts:    Telegram, chat $(env_get "$DOCKER_ENV" OPENCRM_MONITORING_TELEGRAM_CHAT)")"
+        else
+            warn "$(tr_ "тревоги никуда не уходят — Telegram не настроен" "alerts go nowhere — Telegram is not configured")"
+        fi
+        say ""
+        run_painted compose ps prometheus alertmanager grafana || true
+        say ""
+        menu_item 1 "$(tr_ "Выключить мониторинг" "Turn monitoring off")"
+        menu_item 2 "$(tr_ "Логи (Loki): включить / выключить" "Logs (Loki): on / off")"
+        menu_item 3 "$(tr_ "Сменить пароль панели" "Change the dashboard password")"
+        menu_item 4 "$(tr_ "Перечитать правила тревог сейчас" "Re-read the alert rules now")"
+        menu_item 0 "$(tr_ "Ничего не менять" "Leave as is")"
+        case "$(ask "$(tr_ "    Выбор" "    Choice")" "0")" in
+            1) cmd_monitoring off ;;
+            2) cmd_monitoring logs ;;
+            3) cmd_monitoring password ;;
+            4) cmd_monitoring reload ;;
+            *) info "$(tr_ "оставляю как есть" "leaving it as is")" ;;
+        esac
+    else
+        say "$(tr_ \
+            "    ${D}Оповещения в Telegram о том, что сайт лёг, кончается место или${R}" \
+            "    ${D}Telegram alerts when the site is down, the disk is filling up or${R}")"
+        say "$(tr_ \
+            "    ${D}истекает сертификат. Плюс графики и логи на /monitoring/.${R}" \
+            "    ${D}the certificate is expiring. Plus dashboards and logs at /monitoring/.${R}")"
+        info "$(tr_ "цена: ~250 МБ памяти, с логами ~450 МБ" "cost: ~250 MB of memory, ~450 MB with logs")"
+        if confirm "$(tr_ "    Включить?" "    Enable it?")" y; then
+            cmd_monitoring on
+        else
+            info "$(tr_ "оставляю как есть" "leaving it as is")"
+        fi
+    fi
+}
 
 # Снять дамп MySQL в указанный файл.
 #
@@ -1925,6 +2286,42 @@ cmd_doctor() {
         probe "$(tr_ "резервная копия" "backup")" 0 "$(tr_ "последняя копия НЕГОДНА — смотрите $_check" "the last backup is BROKEN — see $_check")"
     fi
 
+    # Мониторинг. Три вопроса, и третий важнее первых двух: включён ли он,
+    # закрыта ли панель паролем и **уйдёт ли тревога хоть куда-нибудь**.
+    # Мониторинг, который всё видит и молчит, отличается от выключенного только
+    # съеденной памятью.
+    if ! compose_profile_enabled monitoring; then
+        probe "$(tr_ "мониторинг" "monitoring")" 1 "$(tr_ "выключен (./opencrm.sh monitoring)" "off (./opencrm.sh monitoring)")"
+    else
+        if compose ps prometheus 2>/dev/null | grep -q "prometheus"; then
+            probe "$(tr_ "мониторинг" "monitoring")" 1 "$(monitoring_state)"
+        else
+            probe "$(tr_ "мониторинг" "monitoring")" 0 "$(tr_ "профиль включён, а контейнеров нет — ./opencrm.sh monitoring on" "profile is on but there are no containers — ./opencrm.sh monitoring on")"
+        fi
+
+        if [ -n "$(env_get "$DOCKER_ENV" OPENCRM_GRAFANA_PASSWORD 2>/dev/null || true)" ]; then
+            probe "$(tr_ "панель" "dashboard")" 1 "$(tr_ "закрыта паролем" "password protected")"
+        else
+            probe "$(tr_ "панель" "dashboard")" 0 "$(tr_ "пароль пуст — Grafana пустит по admin/admin; ./opencrm.sh monitoring password" "password is empty — Grafana will accept admin/admin; ./opencrm.sh monitoring password")"
+        fi
+
+        if [ -n "$(env_get "$DOCKER_ENV" OPENCRM_MONITORING_TELEGRAM_TOKEN 2>/dev/null || true)" ]; then
+            probe "$(tr_ "тревоги" "alerts")" 1 "Telegram"
+        else
+            probe "$(tr_ "тревоги" "alerts")" 0 "$(tr_ "канал не настроен — о поломке узнают глазами; ./opencrm.sh monitoring" "no channel — breakage will be spotted by eye; ./opencrm.sh monitoring")"
+        fi
+
+        # Проверка сайта обязана идти по внешнему адресу. По внутреннему она
+        # зелёная и тогда, когда nginx не поднялся, а 443 никто не слушает, —
+        # то есть ровно в том случае, ради которого всё затевалось.
+        _murl=$(env_get "$DOCKER_ENV" OPENCRM_MONITOR_URL 2>/dev/null || true)
+        if [ -n "$_murl" ]; then
+            probe "$(tr_ "проверка сайта" "site probe")" 1 "$_murl"
+        else
+            probe "$(tr_ "проверка сайта" "site probe")" 0 "$(tr_ "адрес не задан — проверка пойдёт изнутри сети и не увидит 443; ./opencrm.sh monitoring" "no address — the probe will run from inside the network and will not see 443; ./opencrm.sh monitoring")"
+        fi
+    fi
+
     if [ -f "$REPO_DIR/docker/nginx/maintenance/maintenance.html" ]; then
         probe "$(tr_ "заглушка" "fallback page")" 1 "$(tr_ "есть — при обновлении вместо 502 будет страница" "present — an update shows a page instead of 502")"
     else
@@ -2105,6 +2502,7 @@ menu() {
         menu_item 13 "$(tr_ "Сбросить пароль администратора" "Reset admin password")"
         menu_item 14 "$(tr_ "Диагностика" "Diagnostics")"
         menu_item 15 "$(tr_ "Починка прав (после запуска под sudo)" "Repair ownership (after running under sudo)")"
+        menu_item 16 "$(tr_ "Мониторинг и оповещения" "Monitoring and alerts")"
         say ""
         menu_item 0  "$(tr_ "Выход" "Exit")"
         say ""
@@ -2125,6 +2523,7 @@ menu() {
             13) cmd_password ;;
             14) cmd_doctor ;;
             15) cmd_repair ;;
+            16) cmd_monitoring ;;
             0|q|Q|"") say ""; exit 0 ;;
             *)  warn "$(tr_ "нет такого пункта" "no such item")" ;;
         esac
@@ -2155,6 +2554,8 @@ OpenCRM v$VERSION — установка и управление
   ./opencrm.sh password           сбросить пароль администратора
   ./opencrm.sh doctor             диагностика
   ./opencrm.sh repair             починка прав после запуска под sudo
+  ./opencrm.sh monitoring [on|off|logs|password|reload]
+                                  мониторинг, оповещения и панель /monitoring/
 
 Флаги установки (для неинтерактивного запуска):
   --domain example.com   домен сайта; --domain "" — работать по IP без HTTPS
@@ -2211,6 +2612,7 @@ main() {
         password)   cmd_password ;;
         doctor)     cmd_doctor ;;
         repair)     cmd_repair ;;
+        monitoring) cmd_monitoring "${1:-}" ;;
         "")
             if installed; then menu; else cmd_install; fi
             ;;

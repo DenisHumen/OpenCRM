@@ -1,0 +1,78 @@
+# Loki: логи в одном месте с поиском.
+#
+# Один процесс, файловое хранилище, никакого S3 и никакого кольца — на одном
+# сервере всё остальное было бы обвязкой ради обвязки.
+#
+# **Потолок хранения обязателен.** Без него первым, что сломает диск, окажется
+# мониторинг диска: неделя логов занимает десятки мегабайт, год — гигабайты, а
+# сайт живёт месяцами без присмотра. Неделя выбрана по делу: разбирают вчерашний
+# инцидент, а не прошлогодний, и столько же держат логи контейнеров (10 МБ × 3 в
+# docker-compose.yml).
+
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+  grpc_listen_port: 9096
+  # Свои собственные логи Loki пишет щедро, а читает их некому: они уходят в тот
+  # же docker json-file и занимают место наравне с полезными.
+  log_level: warn
+
+common:
+  path_prefix: /loki
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+
+schema_config:
+  configs:
+    - from: 2024-01-01
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+storage_config:
+  tsdb_shipper:
+    active_index_directory: /loki/tsdb-index
+    cache_location: /loki/tsdb-cache
+
+limits_config:
+  # Собственно потолок: старше недели удаляется компактором.
+  retention_period: 168h
+  reject_old_samples: true
+  reject_old_samples_max_age: 168h
+  # Защита от взбесившегося источника: контейнер в цикле перезапуска способен
+  # выдать сотни мегабайт за час, и без ограничения он забьёт диск быстрее, чем
+  # сработает правило о свободном месте.
+  ingestion_rate_mb: 4
+  ingestion_burst_size_mb: 8
+  max_streams_per_user: 500
+  volume_enabled: true
+
+compactor:
+  working_directory: /loki/compactor
+  # Именно здесь включается удаление старого. Без `retention_enabled` настройка
+  # `retention_period` выше — просто число: индекс уплотняется, а чанки лежат
+  # вечно.
+  retention_enabled: true
+  delete_request_store: filesystem
+  compaction_interval: 10m
+  retention_delete_delay: 1h
+
+ingester:
+  chunk_idle_period: 5m
+  chunk_retain_period: 30s
+  # Час вместо суток: длинный кусок держится в памяти целиком, а память здесь
+  # дороже, чем лишний файл на диске.
+  max_chunk_age: 1h
+
+analytics:
+  reporting_enabled: false

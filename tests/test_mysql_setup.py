@@ -65,7 +65,13 @@ def test_baza_zhivyot_pod_profilem():
     assert 'profiles: ["mysql"]' in _sluzhba_db(), "служба базы поднимается всегда"
     # Профиль включается строкой в docker/.env, которую пишет установщик;
     # без неё выбор MySQL остался бы словами в конфиге.
-    assert 'env_set "$DOCKER_ENV" COMPOSE_PROFILES mysql' in _script()
+    #
+    # Пишется он **по одному имени**, а не значением целиком. В COMPOSE_PROFILES
+    # рядом живёт решение про мониторинг, и запись вида
+    # `env_set ... COMPOSE_PROFILES mysql` затирала бы его молча — а обратная
+    # запись так же молча выносила бы из стека саму базу.
+    assert "compose_profile mysql on" in _script()
+    assert "compose_profile mysql off" in _script(), "выбор SQLite не снимает профиль базы"
 
 
 def test_proverka_zdorovya_idyot_po_tcp():

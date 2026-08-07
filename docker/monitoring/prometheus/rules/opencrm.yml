@@ -1,0 +1,250 @@
+# Поводы разбудить человека.
+#
+# Это главный файл всего стека. Дашборд смотрят, когда уже заподозрили неладное;
+# оповещение приходит само — и только оно отвечает на задачу, ради которой всё
+# затевалось: **узнать о поломке раньше клиента.**
+#
+# Правила отсюда:
+#
+# * `severity: critical` — сайт не работает или вот-вот перестанет. Такие уходят
+#   в Telegram сразу и повторяются каждый час, пока не починят;
+# * `severity: warning` — работает, но так дальше нельзя. Уходят тоже, но
+#   повторяются раз в сутки, чтобы не приучить не читать.
+#
+# `for:` у каждого правила не для красоты: без выдержки одна неудачная проверка
+# в момент обновления контейнера присылала бы «сайт лёг» на каждом деплое, и
+# через неделю эти сообщения перестали бы читать.
+#
+# Чего здесь НЕТ намеренно: правила «цель не отвечает» на приложение
+# (`up{job="opencrm-app"}`). Блок мониторинга выключается в интерфейсе, и
+# выключенный он закрывает `/api/v1/metrics` вместе с остальным своим API —
+# честное «блок выключен» выглядело бы как поломка. Что приложения нет по
+# правде, скажет проверка сайта снаружи, а она в этом не ошибается.
+
+groups:
+  - name: opencrm-site
+    rules:
+      - alert: SiteDown
+        # Проверка идёт снаружи, через nginx и настоящий 443. Именно так и
+        # выглядел случай, ради которого всё это делалось: приложение отвечало
+        # на localhost, а снаружи не отвечал никто.
+        expr: probe_success{job="site"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Сайт не отвечает: {{ $labels.instance }}"
+          description: >-
+            Внешняя проверка не проходит уже 2 минуты.
+            Смотреть: ./opencrm.sh doctor, затем ./opencrm.sh logs nginx и logs app.
+
+      - alert: SiteSlow
+        # Медленно — это ещё не лежит, поэтому выдержка длинная: короткая
+        # присылала бы сообщение на каждую резервную копию и каждую сборку.
+        expr: probe_duration_seconds{job="site"} > 3
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Сайт отвечает дольше 3 секунд: {{ $labels.instance }}"
+          description: "Время ответа снаружи: {{ $value | printf \"%.1f\" }} с."
+
+      - alert: CertificateExpiringSoon
+        # Продление идёт само (certbot дважды в сутки, Let's Encrypt обновляет
+        # за 30 дней), поэтому 14 дней — это уже «продление сломано», а не
+        # «скоро пора». Ряда нет вовсе, когда сайт работает по HTTP, — и тогда
+        # правило молчит, что верно: продлевать нечего.
+        expr: (probe_ssl_earliest_cert_expiry{job="site"} - time()) / 86400 < 14
+        for: 1h
+        labels:
+          severity: critical
+        annotations:
+          summary: "Сертификат истекает через {{ $value | printf \"%.0f\" }} дней"
+          description: >-
+            Автопродление не сработало. Проверить: ./opencrm.sh logs certbot,
+            выпустить заново: ./opencrm.sh https
+
+      - alert: HighErrorRate
+        # Доля пятисоток за пять минут. Знаменатель ограничен снизу и по частоте,
+        # и по классу ответа:
+        #
+        # * без порога по частоте одна ошибка на два ночных запроса давала бы
+        #   50% и будила бы человека каждую ночь;
+        # * `status_class=~"[1-5]xx"` отсекает строки журнала ошибок nginx,
+        #   попадающие в тот же поток: они не ответы и в знаменателе им не место.
+        expr: >-
+          sum(rate(promtail_custom_opencrm_nginx_responses_total{status_class="5xx"}[5m]))
+          /
+          sum(rate(promtail_custom_opencrm_nginx_responses_total{status_class=~"[1-5]xx"}[5m]))
+          > 0.05
+          and
+          sum(rate(promtail_custom_opencrm_nginx_responses_total{status_class=~"[1-5]xx"}[5m])) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Доля ответов 5xx выше 5%"
+          description: >-
+            {{ $value | printf "%.0f%%" }} запросов заканчиваются ошибкой сервера.
+            Логи: ./opencrm.sh logs app
+
+      - alert: HighClientErrorRate
+        # Четырёхсотки сами по себе норма (чужие боты, старые закладки), но
+        # резкий рост — это обычно сломанный фронтенд после обновления.
+        expr: >-
+          sum(rate(promtail_custom_opencrm_nginx_responses_total{status_class="4xx"}[10m]))
+          /
+          sum(rate(promtail_custom_opencrm_nginx_responses_total{status_class=~"[1-5]xx"}[10m]))
+          > 0.4
+          and
+          sum(rate(promtail_custom_opencrm_nginx_responses_total{status_class=~"[1-5]xx"}[10m])) > 0.2
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Доля ответов 4xx выше 40%"
+          description: "Похоже на сломанный фронтенд или чужой перебор адресов."
+
+  - name: opencrm-host
+    rules:
+      - alert: DiskAlmostFull
+        # Кончившееся место останавливает не только логи: встают загрузка
+        # файлов, резервные копии и сами обновления. 15 минут выдержки — чтобы
+        # сборка образа, временно съедающая гигабайты, не считалась аварией.
+        expr: >-
+          node_filesystem_avail_bytes{mountpoint="/", fstype!~"tmpfs|overlay|squashfs"}
+          /
+          node_filesystem_size_bytes{mountpoint="/", fstype!~"tmpfs|overlay|squashfs"}
+          < 0.10
+        for: 15m
+        labels:
+          severity: critical
+        annotations:
+          summary: "На диске меньше 10% свободного места"
+          description: >-
+            Свободно {{ $value | printf "%.1f%%" }}. Освободить:
+            ./opencrm.sh doctor, очистка корзины в настройках, docker image prune.
+
+      - alert: HostMemoryLow
+        expr: node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes < 0.10
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Свободной памяти меньше 10%"
+          description: >-
+            Доступно {{ $value | printf "%.1f%%" }}. На маленьком VPS следующая
+            сборка образа может не пройти.
+
+      - alert: HostSwapping
+        # Своп сам по себе не беда, а вот постоянная запись в него означает, что
+        # памяти не хватает по-настоящему, и сайт при этом уже подтормаживает.
+        expr: rate(node_vmstat_pswpout[15m]) > 100
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Машина активно уходит в подкачку"
+          description: "Памяти не хватает; сайт отвечает медленнее, чем мог бы."
+
+  - name: opencrm-containers
+    rules:
+      - alert: ContainerRestartLoop
+        # Цикл перезапуска снаружи выглядит как работающий сайт: контейнер
+        # поднимается, отвечает несколько секунд и падает снова. `restart:
+        # unless-stopped` делает это бесконечно и молча.
+        #
+        # Считаем по счётчику самого docker (`RestartCount`), а не по скачкам
+        # времени старта: второе не отличает перезапуск от обновления, при
+        # котором контейнер пересоздаётся штатно и время старта тоже меняется.
+        expr: increase(opencrm_container_restarts_total[15m]) > 3
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Контейнер {{ $labels.service }} перезапускается по кругу"
+          description: >-
+            Больше трёх перезапусков за 15 минут.
+            Причина — в логе: ./opencrm.sh logs {{ $labels.service }}
+
+      - alert: ContainerUnhealthy
+        # Не то же самое, что «упал». Контейнер работает, docker его не трогает,
+        # а собственная проверка здоровья не проходит — например, приложение
+        # отвечает, но не достучалось до базы. Снаружи это может ещё какое-то
+        # время выглядеть нормально.
+        expr: opencrm_container_healthy == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Контейнер {{ $labels.service }} нездоров"
+          description: >-
+            Проверка здоровья не проходит пять минут подряд.
+            Смотреть: ./opencrm.sh logs {{ $labels.service }}
+
+  - name: opencrm-operations
+    rules:
+      - alert: BackupTooOld
+        # Копия снимается таймером в 3:30 с разбросом до 20 минут и
+        # `Persistent=true`. 25 часов — это «одна ночь пропущена целиком», то
+        # есть таймер не отработал, а не просто сдвинулся.
+        expr: time() - max(opencrm_backup_last_timestamp_seconds) > 90000
+        for: 30m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Резервная копия не снималась больше суток"
+          description: >-
+            Последняя копия старше 25 часов. Проверить расписание:
+            systemctl list-timers opencrm-backup; снять вручную: ./opencrm.sh backup
+
+      - alert: BackupBroken
+        # Копия, не прошедшая проверку годности, хуже отсутствующей: на неё
+        # рассчитывают. Оборванный `.backup` выглядит как база и читается до
+        # первой битой страницы.
+        expr: min(opencrm_backup_verified) == 0
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Последняя резервная копия НЕГОДНА"
+          description: "Подробности: ~/opencrm/data/backups/last-check.json"
+
+      - alert: DeployRolledBack
+        # Откат — это уже сработавшая защита: сайт живой, но приехавший коммит
+        # не встал, и следующий приедет на ту же грабли. Ряд «сколько времени
+        # назад» держит сообщение час, а не навсегда: иначе оно висело бы до
+        # следующего удачного деплоя и перестало бы что-либо означать.
+        expr: >-
+          (max(opencrm_deploy_last_status{status=~"rolled-back|broken"}) == 1)
+          and on()
+          ((time() - max(opencrm_deploy_last_timestamp_seconds)) < 3600)
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Обновление откатилось"
+          description: >-
+            Последний деплой не встал и был отменён. Что именно:
+            ./opencrm.sh history
+
+      - alert: DatabaseSchemaMismatch
+        # Приложение с несошедшейся схемой не поднимается вовсе, поэтому сюда
+        # дело обычно не доходит. Но если однажды дойдёт, узнать об этом надо
+        # раньше, чем первый раздел ответит 500.
+        expr: opencrm_schema_ok == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Схема базы не совпадает с моделями"
+          description: "Подробности: GET /api/v1/system/schema либо ./opencrm.sh doctor"
+
+      - alert: UploadsBlocked
+        expr: opencrm_uploads_blocked == 1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Загрузка файлов остановлена нехваткой места"
+          description: "Порог — OPENCRM_DISK_MIN_FREE_MB в config/.env."

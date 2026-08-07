@@ -1,0 +1,233 @@
+{
+  "uid": "opencrm-site",
+  "title": "OpenCRM — сайт",
+  "description": "Что видит посетитель: доступность снаружи, время ответа, доли ошибок, сертификат, копии и деплой.",
+  "tags": ["opencrm"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "1m",
+  "time": {"from": "now-6h", "to": "now"},
+  "editable": false,
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Сайт снаружи",
+      "description": "Проверка идёт по публичному адресу через nginx и настоящий 443. Проверка изнутри контейнера была бы зелёной и тогда, когда снаружи не отвечает никто.",
+      "datasource": {"type": "prometheus", "uid": "opencrm-prometheus"},
+      "gridPos": {"h": 5, "w": 5, "x": 0, "y": 0},
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {"type": "value", "options": {"0": {"text": "не отвечает", "color": "red", "index": 0}}},
+            {"type": "value", "options": {"1": {"text": "отвечает", "color": "green", "index": 1}}}
+          ],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]}
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}
+      },
+      "targets": [
+        {"refId": "A", "expr": "min(probe_success{job=\"site\"})", "instant": true, "legendFormat": "сайт"}
+      ]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Ответ снаружи",
+      "datasource": {"type": "prometheus", "uid": "opencrm-prometheus"},
+      "gridPos": {"h": 5, "w": 5, "x": 5, "y": 0},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 1}, {"color": "red", "value": 3}]}
+        },
+        "overrides": []
+      },
+      "options": {"colorMode": "value", "graphMode": "area", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}},
+      "targets": [
+        {"refId": "A", "expr": "max(probe_duration_seconds{job=\"site\"})", "legendFormat": "с"}
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Сертификат",
+      "description": "Дней до истечения. Продление идёт само; меньше 14 дней означает, что оно сломано.",
+      "datasource": {"type": "prometheus", "uid": "opencrm-prometheus"},
+      "gridPos": {"h": 5, "w": 5, "x": 10, "y": 0},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "d",
+          "decimals": 0,
+          "noValue": "без HTTPS",
+          "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "yellow", "value": 14}, {"color": "green", "value": 30}]}
+        },
+        "overrides": []
+      },
+      "options": {"colorMode": "background", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}},
+      "targets": [
+        {"refId": "A", "expr": "min(probe_ssl_earliest_cert_expiry{job=\"site\"} - time()) / 86400", "instant": true, "legendFormat": "дней"}
+      ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Последняя копия",
+      "description": "Сколько прошло с момента снятия. Больше суток — таймер не отработал.",
+      "datasource": {"type": "prometheus", "uid": "opencrm-prometheus"},
+      "gridPos": {"h": 5, "w": 5, "x": 15, "y": 0},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "noValue": "копий нет",
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 86400}, {"color": "red", "value": 172800}]}
+        },
+        "overrides": []
+      },
+      "options": {"colorMode": "background", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}},
+      "targets": [
+        {"refId": "A", "expr": "time() - max(opencrm_backup_last_timestamp_seconds)", "instant": true, "legendFormat": "назад"}
+      ]
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Размер базы",
+      "datasource": {"type": "prometheus", "uid": "opencrm-prometheus"},
+      "gridPos": {"h": 5, "w": 4, "x": 20, "y": 0},
+      "fieldConfig": {"defaults": {"unit": "bytes", "noValue": "MySQL"}, "overrides": []},
+      "options": {"colorMode": "none", "graphMode": "area", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}},
+      "targets": [
+        {"refId": "A", "expr": "max(opencrm_database_size_bytes)", "legendFormat": "база"}
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Время ответа снаружи",
+      "datasource": {"type": "prometheus", "uid": "opencrm-prometheus"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 5},
+      "fieldConfig": {
+        "defaults": {"unit": "s", "custom": {"fillOpacity": 10, "lineWidth": 1}},
+        "overrides": []
+      },
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "none"}},
+      "targets": [
+        {"refId": "A", "expr": "probe_duration_seconds{job=\"site\"}", "legendFormat": "{{instance}}"}
+      ]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Запросы в секунду по классам ответа",
+      "description": "Считается по журналу nginx (promtail). Только он видит 502: приложение о них не знает, его в этот момент нет.",
+      "datasource": {"type": "prometheus", "uid": "opencrm-prometheus"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 5},
+      "fieldConfig": {
+        "defaults": {"unit": "reqps", "custom": {"fillOpacity": 30, "lineWidth": 1, "stacking": {"mode": "normal", "group": "A"}}},
+        "overrides": [
+          {"matcher": {"id": "byName", "options": "5xx"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "red"}}]},
+          {"matcher": {"id": "byName", "options": "4xx"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "orange"}}]},
+          {"matcher": {"id": "byName", "options": "2xx"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "green"}}]}
+        ]
+      },
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "none"}},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (status_class) (rate(promtail_custom_opencrm_nginx_responses_total{status_class=~\"[1-5]xx\"}[5m]))",
+          "legendFormat": "{{status_class}}"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Доля ошибок сервера (5xx)",
+      "description": "Порог правила SiteErrorRate — 5%.",
+      "datasource": {"type": "prometheus", "uid": "opencrm-prometheus"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 13},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "custom": {"fillOpacity": 20, "lineWidth": 1, "thresholdsStyle": {"mode": "line"}},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 0.05}]}
+        },
+        "overrides": []
+      },
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "single", "sort": "none"}},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(promtail_custom_opencrm_nginx_responses_total{status_class=\"5xx\"}[5m])) / sum(rate(promtail_custom_opencrm_nginx_responses_total{status_class=~\"[1-5]xx\"}[5m]))",
+          "legendFormat": "доля 5xx"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Время ответа nginx: медиана и 95-й процентиль",
+      "description": "Медиана говорит, как живётся обычному запросу; 95-й — сколько ждут те, кому не повезло. Средним пользоваться нельзя: один десятисекундный отчёт вытягивает его весь.",
+      "datasource": {"type": "prometheus", "uid": "opencrm-prometheus"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 13},
+      "fieldConfig": {"defaults": {"unit": "s", "custom": {"fillOpacity": 5, "lineWidth": 1}}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "none"}},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(promtail_custom_opencrm_nginx_request_seconds_bucket[5m])))",
+          "legendFormat": "медиана"
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(promtail_custom_opencrm_nginx_request_seconds_bucket[5m])))",
+          "legendFormat": "95-й процентиль"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "table",
+      "title": "Последний деплой",
+      "description": "Единица стоит у того статуса, которым кончилась последняя попытка обновления. Подробности — ./opencrm.sh history.",
+      "datasource": {"type": "prometheus", "uid": "opencrm-prometheus"},
+      "gridPos": {"h": 7, "w": 8, "x": 0, "y": 21},
+      "fieldConfig": {"defaults": {}, "overrides": []},
+      "options": {"showHeader": true},
+      "targets": [
+        {"refId": "A", "expr": "opencrm_deploy_last_status == 1", "instant": true, "format": "table"}
+      ]
+    },
+    {
+      "id": 11,
+      "type": "logs",
+      "title": "Ошибки приложения",
+      "description": "Пусто и написано «источник не отвечает» — значит профиль monitoring-logs выключен.",
+      "datasource": {"type": "loki", "uid": "opencrm-loki"},
+      "gridPos": {"h": 7, "w": 16, "x": 8, "y": 21},
+      "options": {"showTime": true, "wrapLogMessage": true, "sortOrder": "Descending", "enableLogDetails": true},
+      "targets": [
+        {"refId": "A", "expr": "{service=\"app\", level=~\"error|critical|traceback\"}"}
+      ]
+    },
+    {
+      "id": 12,
+      "type": "logs",
+      "title": "Журнал nginx",
+      "datasource": {"type": "loki", "uid": "opencrm-loki"},
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 28},
+      "options": {"showTime": true, "wrapLogMessage": true, "sortOrder": "Descending", "enableLogDetails": true},
+      "targets": [
+        {"refId": "A", "expr": "{service=\"nginx\"}"}
+      ]
+    }
+  ]
+}
