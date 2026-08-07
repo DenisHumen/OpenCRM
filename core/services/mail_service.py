@@ -7,6 +7,7 @@
 """
 
 import logging
+from datetime import datetime, timedelta
 
 from sqlalchemy.orm import Session
 
@@ -23,8 +24,17 @@ from core.services.mail_transport import (
 )
 from core.utils import is_valid_email, now_utc
 from database.models import ClientNote, MailAccount, MailMessage, User
-from database.models.mail import DIRECTION_IN, DIRECTION_OUT, MESSAGE_ID_LENGTH
+from database.models.mail import (
+    ADDRESS_LENGTH,
+    DIRECTION_IN,
+    DIRECTION_OUT,
+    HOST_LENGTH,
+    TITLE_LENGTH,
+    message_id_key,
+)
+from database.repositories import deals as deals_repo
 from database.repositories import mail as mail_repo
+from database.session import tochka_otkata
 
 logger = logging.getLogger("opencrm.mail")
 
@@ -33,6 +43,29 @@ SECRET_PURPOSE = "mail-account-password"
 # листают глазами, а не читают договоры. Полный текст лежит в mail_messages и
 # открывается в карточке письма.
 FEED_BODY_LIMIT = 2000
+
+#: Сколько адресатов допускается в одном письме.
+#:
+#: Потолок нужен по двум причинам, и вторая тяжелее. Первая: переписка — это
+#: разговор, а письмо на три тысячи адресов — рассылка, которую почтовый сервер
+#: всё равно отвергнет или посчитает спамом. Вторая: список получателей лежит в
+#: колонке TEXT, а TEXT в MySQL — 65 535 **байт**; три тысячи адресов туда не
+#: помещаются, и в нестрогом режиме список обрежется молча — письмо в базе
+#: окажется адресовано не тем, кому ушло.
+MAX_RECIPIENTS = 50
+
+#: Насколько письмо вправе опережать наши часы.
+#:
+#: `sent_at` приезжает из заголовка `Date:`, а его пишет отправитель — то есть
+#: это единственное время в системе, которое выбирает не она. Письмо с датой
+#: `9999-01-01` встаёт наверху ленты клиента и остаётся там навсегда, закрывая
+#: собой всё, что действительно происходило.
+#:
+#: Час — это расхождение часов, а не ошибка: у отправителя они бывают сбиты на
+#: минуты. Всё, что дальше, — уже не «спешат часы», и такому письму мы ставим
+#: время синхронизации, ровно как письму без разбираемой даты
+#: (`mail_transport.header_date_to_utc`).
+FUTURE_TOLERANCE = timedelta(hours=1)
 
 
 # --- ящики ---
@@ -44,20 +77,38 @@ def get_account(db: Session, account_id: int) -> MailAccount:
     return account
 
 
+#: Поле ящика → его потолок, имя в ответе и код отказа.
+#:
+#: Потолки взяты из ширины колонок (`database/models/mail.py`), а не выбраны
+#: заново: длинное название и длинный хост доезжали до вставки как есть. SQLite
+#: такое принимает молча — на боевом MySQL та же настройка уронила бы операцию,
+#: то есть беда пряталась ровно до дня переезда.
+_ACCOUNT_FIELDS = (
+    ("title", TITLE_LENGTH, "Title", "title_too_long"),
+    ("imap_host", HOST_LENGTH, "IMAP host", "host_too_long"),
+    ("smtp_host", HOST_LENGTH, "SMTP host", "host_too_long"),
+    ("login", ADDRESS_LENGTH, "Login", "login_too_long"),
+)
+
+
 def create_account(db: Session, data: dict) -> MailAccount:
-    address = (data.get("address") or "").strip()
-    if not is_valid_email(address):
-        raise errors.ValidationError("A valid mailbox address is required", code="bad_address")
+    address = _clean_address(data.get("address"))
+    fields = {
+        name: _clean_field(data.get(name), limit, label=label, code=code)
+        for name, limit, label, code in _ACCOUNT_FIELDS
+    }
     account = MailAccount(
-        title=(data.get("title") or "").strip() or address,
+        # Название по умолчанию — адрес, но колонка названия уже колонки адреса,
+        # и длинный адрес обязан обрезаться: это подпись для списка, а не данные.
+        title=fields["title"] or address[:TITLE_LENGTH],
         address=address,
-        imap_host=(data.get("imap_host") or "").strip(),
-        imap_port=int(data.get("imap_port") or 993),
+        imap_host=fields["imap_host"],
+        imap_port=_clean_port(data.get("imap_port"), 993),
         imap_ssl=bool(data.get("imap_ssl", True)),
-        smtp_host=(data.get("smtp_host") or "").strip(),
-        smtp_port=int(data.get("smtp_port") or 465),
+        smtp_host=fields["smtp_host"],
+        smtp_port=_clean_port(data.get("smtp_port"), 465),
         smtp_ssl=bool(data.get("smtp_ssl", True)),
-        login=(data.get("login") or "").strip() or address,
+        login=fields["login"] or address,
         is_active=bool(data.get("is_active", True)),
     )
     _set_password(account, data.get("password"))
@@ -68,17 +119,14 @@ def create_account(db: Session, data: dict) -> MailAccount:
 
 def update_account(db: Session, account_id: int, data: dict) -> MailAccount:
     account = get_account(db, account_id)
-    for text_field in ("title", "imap_host", "smtp_host", "login"):
-        if data.get(text_field) is not None:
-            setattr(account, text_field, data[text_field].strip())
+    for name, limit, label, code in _ACCOUNT_FIELDS:
+        if data.get(name) is not None:
+            setattr(account, name, _clean_field(data[name], limit, label=label, code=code))
     if data.get("address") is not None:
-        address = data["address"].strip()
-        if not is_valid_email(address):
-            raise errors.ValidationError("A valid mailbox address is required", code="bad_address")
-        account.address = address
-    for int_field in ("imap_port", "smtp_port"):
+        account.address = _clean_address(data["address"])
+    for int_field, default in (("imap_port", 993), ("smtp_port", 465)):
         if data.get(int_field) is not None:
-            setattr(account, int_field, int(data[int_field]))
+            setattr(account, int_field, _clean_port(data[int_field], default))
     for flag in ("imap_ssl", "smtp_ssl", "is_active"):
         if data.get(flag) is not None:
             setattr(account, flag, bool(data[flag]))
@@ -108,6 +156,44 @@ def delete_account(db: Session, account_id: int, actor: User) -> None:
         entity_id=account_id_before,
         entity_label=label,
     )
+
+
+def _clean_field(value: str | None, limit: int, *, label: str, code: str) -> str:
+    """Строка настроек ящика: без краёв и не длиннее своей колонки.
+
+    Отказ, а не обрезание: обрезанный хост — это другой хост, и ящик после
+    такого «сохранения» просто перестал бы забирать почту, не сказав почему.
+    """
+    text = (value or "").strip()
+    if len(text) > limit:
+        raise errors.ValidationError(f"{label} is too long (max {limit} characters)", code=code)
+    return text
+
+
+def _clean_address(value: str | None) -> str:
+    """Адрес ящика. Длину проверяем ДО вида: `is_valid_email` её не смотрит,
+    и адрес на пять тысяч знаков спокойно проходил как «валидный»."""
+    address = (value or "").strip()
+    if len(address) > ADDRESS_LENGTH:
+        raise errors.ValidationError(
+            f"Mailbox address is too long (max {ADDRESS_LENGTH} characters)",
+            code="address_too_long",
+        )
+    if not is_valid_email(address):
+        raise errors.ValidationError("A valid mailbox address is required", code="bad_address")
+    return address
+
+
+def _clean_port(value, default: int) -> int:
+    """Номер порта. Тот же разговор, что и с длиной строки, только про число:
+    в колонке INT, и значение вне диапазона портов уронило бы вставку на MySQL,
+    а до неё — сам вызов `socket`."""
+    if value is None or value == "":
+        return default
+    port = int(value)
+    if not 1 <= port <= 65535:
+        raise errors.ValidationError("Port must be between 1 and 65535", code="bad_port")
+    return port
 
 
 def _set_password(account: MailAccount, password: str | None) -> None:
@@ -174,8 +260,7 @@ def check_account(db: Session, account_id: int) -> dict:
     try:
         make_transport(account).check()
     except MailTransportError as exc:
-        _remember_error(account, str(exc))
-        db.flush()
+        _remember_error(db, account, str(exc))
         return {"ok": False, "error": account.last_error}
     account.last_error = None
     account.last_error_at = None
@@ -189,7 +274,9 @@ def sync_account(db: Session, account_id: int) -> dict:
     """Забирает новые письма, привязывает к клиентам и пишет их в ленту.
 
     Повторный запуск на тех же письмах ничего не меняет: ключ идемпотентности —
-    Message-ID, и до создания записи ленты дело просто не доходит.
+    пара (ящик, Message-ID), и до создания записи ленты дело просто не доходит.
+    Именно пара, а не один Message-ID: то же письмо в соседнем ящике фирмы —
+    это его письмо, со своим UID и своим местом в его выборке.
     """
     account = get_account(db, account_id)
     if not account.is_active:
@@ -199,8 +286,7 @@ def sync_account(db: Session, account_id: int) -> dict:
     try:
         fetched = transport.fetch(since_uid=mail_repo.last_uid(db, account.id))
     except MailTransportError as exc:
-        _remember_error(account, str(exc))
-        db.flush()
+        _remember_error(db, account, str(exc))
         raise errors.ValidationError(account.last_error or "Sync failed", code="mail_sync_failed") from exc
 
     stored, linked, skipped, broken = 0, 0, 0, 0
@@ -214,7 +300,7 @@ def sync_account(db: Session, account_id: int) -> dict:
         # Проверено: пачка из двух писем, второе без даты отправки → в базе не
         # оставалось ни одного, ответ 500.
         try:
-            with db.begin_nested():
+            with tochka_otkata(db):
                 message = store_incoming(db, account, item)
         except Exception:
             # Письмо, которое мы не смогли разобрать, не должно останавливать
@@ -246,11 +332,16 @@ def sync_account(db: Session, account_id: int) -> dict:
 
 
 def store_incoming(db: Session, account: MailAccount, item: FetchedMessage) -> MailMessage | None:
-    """Сохраняет входящее письмо. `None` — письмо уже было, ничего не изменилось."""
-    message_id = (item.message_id or "").strip()[:MESSAGE_ID_LENGTH]
+    """Сохраняет входящее письмо. `None` — письмо уже было, ничего не изменилось.
+
+    «Уже было» считается по паре (ящик, Message-ID). То же письмо, доставленное
+    на другой ящик фирмы, — это другая строка: у каждого ящика своё зеркало и
+    свой `last_uid`.
+    """
+    message_id = message_id_key(item.message_id or "")
     if not message_id:
         return None
-    if mail_repo.find_by_message_id(db, message_id) is not None:
+    if mail_repo.find_by_message_id(db, account.id, message_id) is not None:
         return None
 
     # Сопоставление с клиентом идёт по адресу отправителя — и только сопоставление.
@@ -272,9 +363,9 @@ def store_incoming(db: Session, account: MailAccount, item: FetchedMessage) -> M
         subject=item.subject[:500],
         body_text=item.body_text,
         body_html=item.body_html,
-        from_addr=item.from_addr[:320],
+        from_addr=item.from_addr[:ADDRESS_LENGTH],
         to_addrs=", ".join(item.to_addrs),
-        sent_at=item.sent_at,
+        sent_at=_sent_at_not_ahead_of_us(item.sent_at),
         has_attachments=item.has_attachments,
         client_id=client.id if client else None,
         is_read=False,
@@ -283,6 +374,28 @@ def store_incoming(db: Session, account: MailAccount, item: FetchedMessage) -> M
     db.flush()
     _add_feed_entry(db, message, author_id=None)
     return message
+
+
+def _sent_at_not_ahead_of_us(sent_at: datetime) -> datetime:
+    """Время письма, не забегающее вперёд наших часов.
+
+    Проверка стоит здесь, а не в разборе заголовка, нарочно: разбор — дело
+    транспорта, а транспортов будет больше одного (тот же Gmail API отдаёт своё
+    время своим полем). Через `store_incoming` проходит любое входящее письмо,
+    каким бы путём оно ни пришло, и это единственное место, где потолок нельзя
+    обойти, добавив второй транспорт.
+
+    Письмо без времени отправки (`None`) до базы не доходит и здесь: сравнение
+    бросит `TypeError`, синхронизация посчитает письмо битым и пойдёт дальше —
+    ровно то, что нужно, потому что пустое `sent_at` колонка не примет.
+    """
+    now = now_utc()
+    if sent_at > now + FUTURE_TOLERANCE:
+        logger.warning(
+            "письмо с датой отправки из будущего (%s) — ставим время синхронизации", sent_at
+        )
+        return now
+    return sent_at
 
 
 # --- отправка ---
@@ -300,7 +413,16 @@ def send_message(
     recipients = [addr.strip() for addr in to_addrs if addr and addr.strip()]
     if not recipients:
         raise errors.ValidationError("At least one recipient is required", code="no_recipients")
+    if len(recipients) > MAX_RECIPIENTS:
+        raise errors.ValidationError(
+            f"Too many recipients (max {MAX_RECIPIENTS})", code="too_many_recipients"
+        )
     for addr in recipients:
+        if len(addr) > ADDRESS_LENGTH:
+            raise errors.ValidationError(
+                f"Recipient address is too long (max {ADDRESS_LENGTH} characters)",
+                code="recipient_too_long",
+            )
         if not is_valid_email(addr):
             raise errors.ValidationError(f"Bad recipient address: {addr}", code="bad_recipient")
     if not body_text.strip():
@@ -312,6 +434,7 @@ def send_message(
     # снова — клиенту приходит второе письмо.
     client_id = references.client(db, client_id)
     deal_id = references.deal(db, deal_id)
+    client_id = _agree_client_and_deal(db, client_id, deal_id)
 
     account = get_account(db, account_id) if account_id else mail_repo.first_active_account(db)
     if account is None:
@@ -324,8 +447,7 @@ def send_message(
             OutgoingMessage(to_addrs=recipients, subject=subject.strip(), body_text=body_text)
         )
     except MailTransportError as exc:
-        _remember_error(account, str(exc))
-        db.flush()
+        _remember_error(db, account, str(exc))
         raise errors.ValidationError(account.last_error or "Send failed", code="mail_send_failed") from exc
 
     # Адресат мог не значиться клиентом — тогда письмо остаётся непривязанным,
@@ -337,12 +459,12 @@ def send_message(
     message = MailMessage(
         account_id=account.id,
         uid=None,
-        message_id=sent.message_id[:MESSAGE_ID_LENGTH],
+        message_id=message_id_key(sent.message_id),
         direction=DIRECTION_OUT,
         subject=sent.subject[:500],
         body_text=sent.body_text,
         body_html="",
-        from_addr=account.address[:320],
+        from_addr=account.address[:ADDRESS_LENGTH],
         to_addrs=", ".join(recipients),
         sent_at=sent.sent_at,
         has_attachments=False,
@@ -354,6 +476,36 @@ def send_message(
     db.flush()
     _add_feed_entry(db, message, author_id=author.id)
     return message
+
+
+def _agree_client_and_deal(db: Session, client_id: int | None, deal_id: int | None) -> int | None:
+    """Клиент и заявка письма обязаны сходиться друг с другом.
+
+    Существование каждого по отдельности уже проверено (`core/references.py`), а
+    вот их согласие — нет: письмо Алисе записывалось на заявку Боба. В ленте
+    заявки после этого лежит переписка, которой в ней не было, и выглядит она
+    совершенно обычно — заметить подмену не по чему.
+
+    Проверка и отказ — те же, что у звонка (`telephony_service.attach_deal`,
+    код `deal_other_client`). Одинаковая беда обязана отвечать одинаково, иначе
+    интерфейсу приходится разбирать два кода про одно и то же.
+
+    Заявка указана, клиент нет — берём клиента у заявки. Это не угадывание:
+    заявку выбрал человек, а клиент у неё ровно один. Заодно это отменяет
+    сопоставление по адресу получателя, которое иначе могло привязать письмо к
+    клиенту, к этой заявке отношения не имеющему.
+    """
+    if deal_id is None:
+        return client_id
+    deal = deals_repo.get(db, deal_id)
+    if deal is None:
+        # Сюда не попасть: `references.deal` выше уже ответил бы 404. Но
+        # полагаться на порядок соседних строк — способ однажды получить
+        # AttributeError вместо внятного отказа.
+        raise errors.NotFoundError("Deal not found", code="deal_not_found")
+    if client_id is not None and deal.client_id != client_id:
+        raise errors.ValidationError("Deal belongs to another client", code="deal_other_client")
+    return client_id if client_id is not None else deal.client_id
 
 
 def mark_read(db: Session, message_id: int, is_read: bool = True) -> MailMessage:
@@ -409,13 +561,28 @@ def _feed_body(message: MailMessage) -> str:
     return f"{subject}\n\n{text}".strip()
 
 
-def _remember_error(account: MailAccount, text: str) -> None:
+def _remember_error(db: Session, account: MailAccount, text: str) -> None:
     """Последняя ошибка ящика — чтобы root видел её в интерфейсе, а не в логе.
+
+    Запись сразу фиксируется (`mail_repo.save_last_error`), и это не
+    перестраховка, а условие того, чтобы обещание первой строки выполнялось.
+    Синхронизация и отправка после этой записи бросают `ValidationError`, а
+    исключение откатывает транзакцию запроса вместе с ней. Пока фиксации не
+    было, беда выглядела так: почта не забирается неделю, а в настройках у
+    ящика чисто — потому что каждая попытка сама же и стирала свой след.
+    Проверялось это, судя по всему, на `check_account`, где исключения нет и
+    запись доживала до конца запроса.
 
     В текст ошибки пароль не попадает: сюда приходит сообщение транспорта
     («SMTP: 535 authentication failed»), а сам пароль не логируется нигде —
     ни здесь, ни в `mail_transport`.
     """
-    account.last_error = text[:500]
-    account.last_error_at = now_utc()
-    logger.warning("mail account %s: %s", account.address, account.last_error)
+    text = text[:500]
+    logger.warning("mail account %s: %s", account.address, text)
+    try:
+        mail_repo.save_last_error(db, account, text, now_utc())
+    except Exception:  # noqa: BLE001
+        # Запись ошибки не должна подменить собой саму ошибку. Вызывающий сейчас
+        # скажет человеку «почта не забралась, вот почему»; если вместо этого
+        # улетит отказ базы, до причины никто не доберётся.
+        logger.exception("ящик %s: последнюю ошибку не удалось сохранить", account.address)

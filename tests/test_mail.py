@@ -16,6 +16,7 @@ from core.security import secretbox
 from core.services import mail_service
 from core.services.mail_transport import FetchedMessage, MailTransport, MailTransportError
 from core.utils import now_utc
+from database.models.mail import MESSAGE_ID_LENGTH
 from database.repositories import mail as mail_repo
 from database.session import SessionLocal
 from tests.conftest import API, make_manager
@@ -95,11 +96,28 @@ def fake_transport():
 
 @pytest.fixture()
 def mail_on(root_client: TestClient):
-    """Блок по умолчанию выключен — включаем его перед рабочими проверками."""
-    response = root_client.post(f"{API}/modules/mail", json={"enabled": True})
-    assert response.status_code == 200, response.text
+    """Блок по умолчанию выключен — включаем его перед рабочими проверками.
+
+    Переключаем только когда он и правда выключен, а не на всякий случай.
+    Переключение блока пишет строку в журнал действий **даже если значение не
+    изменилось** (`modules_service._write_state`), а журнал — общий на весь
+    прогон: полсотни лишних записей вытесняют со страницы чужие, и соседний
+    тест начинает падать не от поломки, а от нашего соседства. Так уже было —
+    у `test_audit.test_switching_a_module_records_both_states` про это написана
+    отдельная докстрока.
+    """
+    def enabled() -> bool:
+        listed = root_client.get(f"{API}/modules").json()["items"]
+        return next(item["enabled"] for item in listed if item["key"] == "mail")
+
+    def turn_on() -> None:
+        if not enabled():
+            response = root_client.post(f"{API}/modules/mail", json={"enabled": True})
+            assert response.status_code == 200, response.text
+
+    turn_on()
     yield
-    root_client.post(f"{API}/modules/mail", json={"enabled": True})
+    turn_on()
 
 
 def make_account(root_client: TestClient, address: str = "office@studio.test") -> dict:
@@ -251,6 +269,176 @@ def test_second_sync_of_the_same_letter_does_not_double_the_feed(root_client, ma
     assert messages["total"] == 1, "письмо сохранилось дважды"
 
 
+def test_a_letter_delivered_to_two_mailboxes_is_stored_for_both(root_client, mail_on):
+    """Письмо в общий ящик и в копии на личный — это два письма, полученных фирмой.
+
+    Пока `message_id` был уникален глобально, второй ящик такое письмо не
+    сохранял вовсе. Само по себе это ещё полбеды; беда в следствии: `last_uid`
+    ящика — это `max(uid)` по его строкам, строк не появлялось, и каждая
+    синхронизация тянула ящик с начала. Навсегда — до первого письма, пришедшего
+    только на него.
+    """
+    first = make_account(root_client, "sales@studio.test")
+    second = make_account(root_client, "support@studio.test")
+
+    FakeTransport.inbox = [
+        incoming(8101, "<two-boxes@remote.test>", "buyer@twobox.test", datetime(2026, 7, 24, 10, 0))
+    ]
+    to_first = root_client.post(f"{MAIL}/accounts/{first['id']}/sync").json()
+    to_second = root_client.post(f"{MAIL}/accounts/{second['id']}/sync").json()
+    assert to_first["stored"] == 1, to_first
+    assert to_second["stored"] == 1, f"второй ящик потерял письмо целиком: {to_second}"
+
+    db = SessionLocal()
+    try:
+        assert mail_repo.last_uid(db, second["id"]) == 8101, (
+            "у второго ящика нет last_uid — он будет тянуть себя с начала каждый раз"
+        )
+    finally:
+        db.close()
+
+    # Идемпотентность внутри ящика при этом никуда не делась: то же письмо под
+    # другим UID (так выглядит смена UIDVALIDITY) второй раз не сохраняется.
+    FakeTransport.inbox = [
+        incoming(8102, "<two-boxes@remote.test>", "buyer@twobox.test", datetime(2026, 7, 24, 10, 0))
+    ]
+    again = root_client.post(f"{MAIL}/accounts/{second['id']}/sync").json()
+    assert again["stored"] == 0 and again["skipped"] == 1, again
+
+
+def test_letters_whose_ids_differ_beyond_the_column_are_not_taken_for_one(root_client, mail_on):
+    """Ключ сравнения нельзя обрезать: обрезанный склеивает разные письма.
+
+    Раньше Message-ID резался до ширины колонки, и два письма, совпадающие в
+    первых 320 знаках, становились одной строкой: второе тихо считалось
+    дубликатом. Со стороны это неотличимо от честной идемпотентности — в ответе
+    растёт `skipped`, — а у клиента в ленте не хватает письма.
+    """
+    account = make_account(root_client, "longid@studio.test")
+    head = "<" + "a" * 400
+    FakeTransport.inbox = [
+        incoming(
+            8201, f"{head}-first@mailer.test>", "sender@longid.test",
+            datetime(2026, 7, 23, 9, 0), subject="Первое",
+        ),
+        incoming(
+            8202, f"{head}-second@mailer.test>", "sender@longid.test",
+            datetime(2026, 7, 23, 9, 5), subject="Второе",
+        ),
+    ]
+    result = root_client.post(f"{MAIL}/accounts/{account['id']}/sync").json()
+    assert result["stored"] == 2, f"письмо потеряно как мнимый дубль: {result}"
+
+    listed = root_client.get(f"{MAIL}/messages?account_id={account['id']}").json()
+    assert {m["subject"] for m in listed["items"]} == {"Первое", "Второе"}
+    keys = {m["message_id"] for m in listed["items"]}
+    assert len(keys) == 2, "у разных писем один ключ идемпотентности"
+    assert all(len(key) <= MESSAGE_ID_LENGTH for key in keys), "ключ не влезает в колонку"
+
+    # И повтор такое письмо по-прежнему ловит: ключ считается от значения, а не
+    # выдаётся новым на каждую строку.
+    FakeTransport.inbox = [
+        incoming(
+            8203, f"{head}-first@mailer.test>", "sender@longid.test",
+            datetime(2026, 7, 23, 9, 0), subject="Первое",
+        )
+    ]
+    again = root_client.post(f"{MAIL}/accounts/{account['id']}/sync").json()
+    assert again["stored"] == 0 and again["skipped"] == 1, again
+
+
+def test_a_failed_sync_leaves_its_error_on_the_mailbox(root_client, mail_on):
+    """Ошибка синхронизации обязана дожить до интерфейса.
+
+    `_remember_error` писал её в ту же транзакцию, которую следом откатывало
+    исключение синхронизации. Root открывал настройки и видел чистый ящик,
+    хотя почта не забиралась неделю: каждая попытка стирала собственный след.
+    """
+    account = make_account(root_client, "failing@studio.test")
+    FakeTransport.fail_with = "IMAP: connection refused"
+    failed = root_client.post(f"{MAIL}/accounts/{account['id']}/sync")
+    assert failed.status_code == 422, failed.text
+    assert failed.json()["error"]["code"] == "mail_sync_failed"
+    FakeTransport.fail_with = None
+
+    listed = root_client.get(f"{MAIL}/accounts").json()["items"]
+    entry = next(item for item in listed if item["id"] == account["id"])
+    assert entry["last_error"], "ошибка синхронизации не сохранилась — ящик выглядит здоровым"
+    assert "connection refused" in entry["last_error"]
+    assert entry["last_error_at"], "у ошибки нет времени — непонятно, свежая она или прошлогодняя"
+    assert MAILBOX_PASSWORD not in entry["last_error"]
+
+    # Удачная синхронизация ошибку снимает: иначе она висела бы вечно.
+    healed = root_client.post(f"{MAIL}/accounts/{account['id']}/sync")
+    assert healed.status_code == 200, healed.text
+    listed = root_client.get(f"{MAIL}/accounts").json()["items"]
+    entry = next(item for item in listed if item["id"] == account["id"])
+    assert entry["last_error"] is None
+
+
+def test_a_letter_dated_in_the_future_does_not_stick_to_the_top_of_the_feed(root_client, mail_on):
+    """`Date:` пишет отправитель — единственное время в системе, которое выбираем не мы.
+
+    Письмо с датой 9999-01-01 вставало наверху ленты клиента и оставалось там
+    навсегда, закрывая собой всё, что действительно происходило.
+    """
+    account = make_account(root_client, "ahead@studio.test")
+    client = make_client(root_client, "Из будущего", "ahead@remote.test")
+
+    FakeTransport.inbox = [
+        incoming(8601, "<ahead-1@remote.test>", "ahead@remote.test", datetime(9999, 1, 1))
+    ]
+    synced = root_client.post(f"{MAIL}/accounts/{account['id']}/sync")
+    assert synced.status_code == 200 and synced.json()["stored"] == 1, synced.text
+
+    stored = root_client.get(f"{MAIL}/messages?account_id={account['id']}").json()["items"][0]
+    assert not stored["sent_at"].startswith("9999"), "письмо сохранило дату из будущего"
+    assert stored["sent_at"].startswith(now_utc().strftime("%Y-%m-%d"))
+
+    entry = next(n for n in feed(root_client, client["id"]) if n["kind"] == "email")
+    assert not entry["happened_at"].startswith("9999"), "лента клиента навсегда заперта письмом"
+
+
+def test_percent_in_the_search_is_a_character_not_a_wildcard(root_client, mail_on):
+    """Проверка, а не починка: экранированием занят общий слой запросов.
+
+    `search_messages` ищет через `database.query.contains`, а он обезвреживает
+    `%` и `_` знаком `/`. Тест закрепляет это со стороны почты: замени кто-нибудь
+    `contains` на голый `ilike`, и поиск по одному знаку `%` вернул бы всю
+    переписку фирмы разом.
+    """
+    account = make_account(root_client, "wildcard@studio.test")
+    FakeTransport.inbox = [
+        incoming(
+            8701, "<wild-1@remote.test>", "wild@remote.test",
+            datetime(2026, 7, 22, 9, 0), subject="Скидка 50% на витрину",
+        ),
+        incoming(
+            8702, "<wild-2@remote.test>", "wild@remote.test",
+            datetime(2026, 7, 22, 9, 5), subject="Смета без знака",
+        ),
+        incoming(
+            8703, "<wild-3@remote.test>", "wild@remote.test",
+            datetime(2026, 7, 22, 9, 10), subject="акт_один",
+        ),
+        incoming(
+            8704, "<wild-4@remote.test>", "wild@remote.test",
+            datetime(2026, 7, 22, 9, 15), subject="актХодин",
+        ),
+    ]
+    root_client.post(f"{MAIL}/accounts/{account['id']}/sync")
+
+    def search(needle: str) -> list[str]:
+        response = root_client.get(
+            f"{MAIL}/messages", params={"account_id": account["id"], "search": needle}
+        )
+        assert response.status_code == 200, response.text
+        return [m["subject"] for m in response.json()["items"]]
+
+    assert search("%") == ["Скидка 50% на витрину"], "знак процента сработал как шаблон"
+    assert search("_") == ["акт_один"], "подчёркивание сработало как «любой символ»"
+
+
 def test_letter_from_an_unknown_address_does_not_create_a_client(root_client, mail_on):
     """Рассылки и спам не должны заводить карточки клиентов."""
     account = make_account(root_client, "unknown@studio.test")
@@ -334,6 +522,92 @@ def test_sent_letter_lands_in_the_feed_as_outgoing(root_client, mail_on):
     entries = [n for n in feed(root_client, client["id"]) if n["kind"] == "email"]
     assert len(entries) == 1 and entries[0]["direction"] == "out"
     assert entries[0]["author_id"] is not None, "у исходящего письма есть автор"
+
+
+def test_a_letter_cannot_be_written_onto_another_clients_deal(root_client, mail_on):
+    """Клиент и заявка письма обязаны сходиться между собой.
+
+    По отдельности существование каждого проверялось, а согласие — нет: письмо
+    Алисе записывалось на заявку Боба. В ленте заявки Боба появлялась чужая
+    переписка, и выглядела она совершенно обычно. Звонок эту проверку делает
+    (`telephony_service.attach_deal`), письмо не делало.
+    """
+    account = make_account(root_client, "cross@studio.test")
+    alice = make_client(root_client, "Алиса", "alice@cross.test")
+    bob = make_client(root_client, "Боб", "bob@cross.test")
+    bobs_deal = root_client.post(
+        f"{API}/deals", json={"title": "Заказ Боба", "client_id": bob["id"]}
+    ).json()
+
+    response = root_client.post(
+        f"{MAIL}/send",
+        json={
+            "to": ["alice@cross.test"],
+            "subject": "Смета",
+            "body": "Смета во вложении.",
+            "account_id": account["id"],
+            "client_id": alice["id"],
+            "deal_id": bobs_deal["id"],
+        },
+    )
+    assert response.status_code == 422, response.text
+    assert response.json()["error"]["code"] == "deal_other_client"
+    assert FakeTransport.sent == [], "письмо ушло в сеть до проверки"
+
+    deal_feed = root_client.get(f"{API}/deals/{bobs_deal['id']}/feed").json()["items"]
+    assert [n for n in deal_feed if n["kind"] == "email"] == [], "чужая переписка в ленте заявки"
+
+
+def test_a_letter_to_thousands_of_recipients_is_refused(root_client, mail_on):
+    """Три тысячи адресатов — это рассылка, а не переписка.
+
+    Список получателей лежит в колонке TEXT, а TEXT в MySQL меряется байтами
+    (65 535): такой список туда не помещается и в нестрогом режиме обрезается
+    молча — письмо в базе оказалось бы адресовано не тем, кому ушло.
+    """
+    account = make_account(root_client, "bulk@studio.test")
+    response = root_client.post(
+        f"{MAIL}/send",
+        json={
+            "to": [f"user{number}@remote.test" for number in range(3000)],
+            "subject": "Рассылка",
+            "body": "Текст",
+            "account_id": account["id"],
+        },
+    )
+    assert response.status_code == 422, response.text
+    assert response.json()["error"]["code"] == "too_many_recipients"
+    assert FakeTransport.sent == [], "письмо ушло в сеть до проверки"
+
+
+def test_overlong_mailbox_fields_are_refused(root_client, mail_on):
+    """Название и хост длиннее своих колонок не должны доезжать до вставки.
+
+    SQLite принимает такую строку молча, MySQL — куда проект переезжает —
+    отвергает операцию. То есть беда сидела бы тихо ровно до дня переезда, а
+    проявилась бы на настройке ящика, то есть на первом же шаге после него.
+    """
+    created = root_client.post(
+        f"{MAIL}/accounts", json={"address": "toolong@studio.test", "title": "Я" * 5000}
+    )
+    assert created.status_code == 422, created.text
+    assert created.json()["error"]["code"] == "title_too_long"
+
+    account = make_account(root_client, "limits@studio.test")
+    patched = root_client.patch(
+        f"{MAIL}/accounts/{account['id']}", json={"imap_host": "h" * 5000}
+    )
+    assert patched.status_code == 422, patched.text
+    assert patched.json()["error"]["code"] == "host_too_long"
+
+    listed = root_client.get(f"{MAIL}/accounts").json()["items"]
+    entry = next(item for item in listed if item["id"] == account["id"])
+    assert entry["imap_host"] == "imap.studio.test", "отказ всё-таки испортил настройки ящика"
+
+    long_address = "a" * 400 + "@studio.test"
+    refused = root_client.post(f"{MAIL}/accounts", json={"address": long_address})
+    assert refused.status_code == 422, refused.text
+    assert refused.json()["error"]["code"] == "address_too_long"
 
 
 def test_sending_to_a_bad_address_is_refused(root_client, mail_on):
@@ -447,7 +721,7 @@ def test_purged_client_does_not_take_the_correspondence_with_him(root_client, ma
 
     db = SessionLocal()
     try:
-        stored = mail_repo.find_by_message_id(db, "<purge-1@remote.test>")
+        stored = mail_repo.find_by_message_id(db, account["id"], "<purge-1@remote.test>")
         assert stored is not None and stored.client_id == client["id"]
         row_id = stored.id
         db.delete(db.get(Client, client["id"]))
