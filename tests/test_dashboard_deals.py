@@ -6,11 +6,32 @@
 действительно мои.
 """
 
+from datetime import datetime, timedelta, timezone
+
 from tests.conftest import API
 from tests.test_deals import DEALS, make_client
 
 DASH = f"{API}/dashboard"
 TASKS = f"{API}/tasks"
+
+
+def skoro(hours: int = 3) -> str:
+    """Срок задачи — от «сейчас», а не зашитой датой.
+
+    Зашитая дата в тесте — мина с часовым механизмом. Пока «сегодня» совпадает
+    с днём написания, всё зелено; назавтра задача становится просроченной,
+    меняет своё место в списке — и роняет ЧУЖОЙ тест в другом файле, где про
+    эту дату не знают вовсе. Так и случилось: `2026-08-06` пережил ночь, и
+    `test_tasks.py::test_undated_tasks_do_not_push_overdue_ones_down` начал
+    падать только при полном прогоне, а поодиночке проходил.
+
+    Настоящая причина глубже и здесь не чинится: тестовые файлы делят одну
+    базу, поэтому задачи, заведённые тут, видны там. Относительный срок эту
+    связь не разрывает, но перестаёт её дёргать — заведённая задача остаётся
+    непросроченной в любой день прогона.
+    """
+    moment = datetime.now(timezone.utc) + timedelta(hours=hours)
+    return moment.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def stages(client):
@@ -154,10 +175,10 @@ def test_dashboard_shows_my_tasks_not_everyones(manager_client, root_client):
     """«С чего начать» — вопрос про свои задачи. Общий список фирмы на него
     не отвечает."""
     mine = manager_client.post(
-        TASKS, json={"title": "Позвонить своему", "due_at": "2026-08-06T09:00:00Z"}
+        TASKS, json={"title": "Позвонить своему", "due_at": skoro()}
     ).json()
     stranger = root_client.post(
-        TASKS, json={"title": "Чужая забота", "due_at": "2026-08-06T09:00:00Z"}
+        TASKS, json={"title": "Чужая забота", "due_at": skoro()}
     ).json()
 
     titles = [t["id"] for t in manager_client.get(DASH).json()["my_tasks"]]
@@ -169,7 +190,7 @@ def test_undated_task_does_not_crowd_out_todays(manager_client):
     """На дашборде мало места, и занимать его бессрочным «когда-нибудь»
     нельзя: список «на сегодня» перестаёт быть списком на сегодня."""
     dated = manager_client.post(
-        TASKS, json={"title": "Сегодня до обеда", "due_at": "2026-08-06T11:00:00Z"}
+        TASKS, json={"title": "Сегодня до обеда", "due_at": skoro()}
     ).json()
     undated = manager_client.post(TASKS, json={"title": "Когда-нибудь потом"}).json()
 
