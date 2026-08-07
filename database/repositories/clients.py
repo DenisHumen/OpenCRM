@@ -1,4 +1,4 @@
-from sqlalchemy import or_, select
+from sqlalchemy import literal, or_, select
 from sqlalchemy.orm import Session
 
 from database.models import Client, ClientFile, ClientNote
@@ -66,8 +66,17 @@ def search(
         if digits:
             conditions.append(contains(Client.phone_norm, digits))
         stmt = stmt.where(or_(*conditions))
-    if tag:
-        stmt = stmt.where(contains(Client.tags, tag.strip()))
+    if tag and tag.strip():
+        # Метки лежат одной строкой через запятую, и подстрочный поиск по ней
+        # находит чужие: фильтр `ip` возвращал всех, у кого стоит `vip`, `zip`
+        # или `equipment`. Обрамляем и строку, и искомое запятыми — тогда
+        # совпасть может только метка целиком.
+        #
+        # Сложение строк, а не `func.concat`: SQLAlchemy сама соберёт `||` для
+        # SQLite и `concat()` для MySQL. Экранирование `%` и `_` остаётся за
+        # `contains`.
+        v_ramke = literal(",") + Client.tags + literal(",")
+        stmt = stmt.where(contains(v_ramke, f",{tag.strip()},"))
     if manager_id:
         stmt = stmt.where(Client.manager_id == manager_id)
     stmt = stmt.order_by(Client.updated_at.desc())
