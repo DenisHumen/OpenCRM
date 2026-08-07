@@ -13,7 +13,7 @@
 """
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import delete, select, update
 
 from core import events
 from core import exceptions as errors
@@ -296,6 +296,62 @@ def test_nobody_can_edit_or_delete_an_entry(root_client, manager_client, deal, s
 
     # и запись на месте
     assert session.get(AuditEvent, logged["id"]) is not None
+
+
+def test_a_mass_update_or_delete_cannot_rewrite_the_log(
+    root_client, manager_client, deal, session
+):
+    """Запрет держится и против одного запроса на всю таблицу.
+
+    Проверка выше правит **объект** — её ловит мэппер. Но `update()` и
+    `delete()` уезжают в базу одним запросом, объектов не трогают вовсе и оба
+    мэпперных запрета проходят насквозь: журнал переписывался молча, одной
+    строкой из соседнего сервиса. Журнал, который можно тихо переписать,
+    отвечает на вопрос «кто это сделал» ровно до первого человека, которому
+    ответ невыгоден.
+    """
+    manager_client.post(f"{DEALS}/{deal['id']}/move", json={"stage": "in_progress"})
+    logged = about(root_client, "deal", deal["id"])[0]
+
+    with pytest.raises(errors.ForbiddenError) as rewritten:
+        session.execute(
+            update(AuditEvent).where(AuditEvent.id == logged["id"]).values(actor_name="Никто")
+        )
+    assert rewritten.value.code == "audit_append_only"
+    session.rollback()
+
+    with pytest.raises(errors.ForbiddenError) as wiped:
+        session.execute(delete(AuditEvent).where(AuditEvent.id == logged["id"]))
+    assert wiped.value.code == "audit_append_only"
+    session.rollback()
+
+    # И «почистить журнал целиком» — тоже нет.
+    with pytest.raises(errors.ForbiddenError):
+        session.execute(delete(AuditEvent))
+    session.rollback()
+
+    # Обход по самой таблице, мимо модели, закрыт тем же запретом: смотрим на
+    # таблицу, а не на то, каким словом её назвали в запросе.
+    with pytest.raises(errors.ForbiddenError):
+        session.execute(delete(AuditEvent.__table__))
+    session.rollback()
+
+    entry = session.get(AuditEvent, logged["id"])
+    assert entry is not None, "запись журнала всё-таки удалилась"
+    assert entry.actor_name != "Никто", "запись журнала всё-таки переписали"
+
+
+def test_the_log_is_still_readable(root_client, manager_client, deal, session):
+    """Запрет закрывает правку, а не чтение.
+
+    Пара к тесту выше: сторож на уровне сессии видит все запросы подряд, и
+    заодно закрытый `SELECT` превратил бы журнал в таблицу, которую нельзя
+    прочитать, — то есть в отсутствующую.
+    """
+    manager_client.post(f"{DEALS}/{deal['id']}/move", json={"stage": "in_progress"})
+    logged = about(root_client, "deal", deal["id"])[0]
+
+    assert session.scalars(select(AuditEvent).where(AuditEvent.id == logged["id"])).all()
 
 
 def test_the_log_has_no_write_endpoints(root_client, manager_client, deal):
@@ -739,6 +795,121 @@ def test_everything_that_disappears_leaves_a_trace(root_client, manager_client):
         assert recorded[0]["action"] == f"{kind}.deleted"
         assert recorded[0]["entity_label"] == label, kind
         assert recorded[0]["actor_name"], f"{kind}: удаление записано без исполнителя"
+
+
+# --- длина полей: журнал не роняет то, о чём он пишет ---
+
+
+def test_long_values_do_not_break_the_operation_being_recorded(session, root_client):
+    """Длинная строка обрезается, а не роняет саму операцию.
+
+    Журнал пишется в ТОЙ ЖЕ транзакции, что и изменение. На MySQL строка длиннее
+    колонки — это `Data too long for column`, то есть отказ основной операции:
+    сотрудник не смог бы провести акт из-за длинного имени действия. `actor_name`,
+    `source_ref` и `entity_label` обрезались, а `action` и `entity_type` — нет,
+    и на SQLite это не всплывало: он молча режет сам.
+
+    Пределы берём у колонок, а не переписываем сюда числами: сузят колонку в
+    миграции — тест поедет за ней.
+    """
+    actor = session.scalar(select(User).where(User.email == "root@test.local"))
+    columns = AuditEvent.__table__.c
+
+    entry = audit_service.record(
+        session,
+        action="deal." + "x" * 200,
+        actor=actor,
+        source=SOURCE_MANUAL,
+        entity_type="y" * 200,
+        entity_id=1,
+        entity_label="z" * 500,
+        source_ref="r" * 200,
+    )
+
+    for name in ("action", "entity_type", "entity_label", "source_ref", "actor_name"):
+        limit = columns[name].type.length
+        assert len(getattr(entry, name)) <= limit, f"{name} длиннее колонки ({limit})"
+
+
+# --- возврат из корзины помнит, кого вернули ---
+
+
+def test_a_restore_without_a_name_is_refused_just_like_a_deletion(session):
+    """У возврата то же требование, что и у удаления, и по тому же доводу.
+
+    «client 5 возвращён» не отвечает на вопрос «кого»: спрашивают об этом
+    позже, а карточку к тому времени могли удалить снова — уже начисто.
+    Требование стояло только на половине пары, и в журнале получалось
+    «удалил Иванова» рядом с безымянным возвратом.
+    """
+    actor = session.scalar(select(User).where(User.email == "root@test.local"))
+
+    with pytest.raises(ValueError, match="without a label"):
+        audit_service.record_restore(
+            session, actor=actor, entity_type="client", entity_id=5, entity_label=""
+        )
+
+    # Вторая половина пары — как и была.
+    with pytest.raises(ValueError, match="without a label"):
+        audit_service.record_deletion(
+            session, actor=actor, entity_type="client", entity_id=5, entity_label=""
+        )
+
+
+# --- поиск по журналу: закрепляем то, что уже цело ---
+
+
+def _log_lines(session, actor, action: str, labels) -> None:
+    for label in labels:
+        audit_service.record(
+            session,
+            action=action,
+            actor=actor,
+            source=SOURCE_MANUAL,
+            entity_type="deal",
+            entity_id=None,
+            entity_label=label,
+        )
+
+
+def test_wildcards_in_the_search_string_are_letters_not_a_pattern(session):
+    """`%` и `_` в строке поиска — то, что человек набрал, а не шаблон LIKE.
+
+    Держится это общим слоем (`database/query.contains` экранирует сам), но
+    проверяется здесь: журнал — единственное место, куда приходят разбираться,
+    и поиск по одному знаку `%`, отдающий всю таблицу, был бы выгрузкой всего
+    журнала по случайному нажатию.
+    """
+    from database.repositories import audit as audit_repo
+
+    actor = session.scalar(select(User).where(User.email == "root@test.local"))
+    _log_lines(session, actor, "test.wildcard", ("тест_один", "тестХодин"))
+
+    found, _ = audit_repo.search(session, action="test.wildcard", q="тест_один")
+    assert [e.entity_label for e in found] == ["тест_один"], "`_` сработал как «любой символ»"
+
+    _, total = audit_repo.search(session, action="test.wildcard", q="%")
+    assert total == 0, "поиск по одному проценту отдал всё подряд"
+
+
+def test_page_zero_is_the_first_page_and_not_a_negative_offset(session):
+    """`page=0` не превращается в `OFFSET -50`.
+
+    Снаружи не пройдёт — маршрут объявляет `ge=1`, — но защита в двадцати
+    четырёх местах держится на памяти автора следующего маршрута. Ниже стоит
+    `offset_for`, и забыть её нельзя; тест закрепляет, что журнал ходит именно
+    через неё. На SQLite отрицательное смещение молча даёт первую страницу, на
+    MySQL — синтаксическая ошибка, то есть пятисотка на живом сервере.
+    """
+    from database.repositories import audit as audit_repo
+
+    actor = session.scalar(select(User).where(User.email == "root@test.local"))
+    _log_lines(session, actor, "test.paging", ("строка 1", "строка 2", "строка 3"))
+
+    first, total = audit_repo.search(session, action="test.paging", page=1, per_page=2)
+    assert total == 3
+    zero, _ = audit_repo.search(session, action="test.paging", page=0, per_page=2)
+    assert [e.id for e in zero] == [e.id for e in first]
 
 
 def test_the_share_token_never_reaches_the_journal(root_client, manager_client):

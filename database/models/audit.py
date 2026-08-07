@@ -27,7 +27,7 @@
 from datetime import datetime
 
 from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text, event
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, Session, mapped_column
 from sqlalchemy.sql import func
 
 from core import exceptions as errors
@@ -143,3 +143,28 @@ def _no_edits(mapper, connection, target) -> None:
 @event.listens_for(AuditEvent, "before_delete", propagate=True)
 def _no_deletes(mapper, connection, target) -> None:
     raise errors.ForbiddenError(_APPEND_ONLY, code="audit_append_only")
+
+
+# Две проверки выше стоят на **объекте**: их зовёт flush, разбирая изменённые и
+# удалённые экземпляры. Массовая операция объектов не трогает вовсе —
+# `session.execute(update(AuditEvent).values(...))` и `delete(AuditEvent)`
+# уезжают в базу одним запросом, мимо мэппера и мимо обоих запретов. То есть
+# журнал переписывался молча: одной строкой из соседнего сервиса или из скрипта
+# обслуживания, и ровно тем человеком, которому ответ «кто это сделал» невыгоден.
+#
+# Поэтому вторая граница — на **сессии**. `do_orm_execute` видит всё, что уходит
+# через `Session.execute`, до отправки в базу; здесь же ловится и Core-запрос по
+# самой таблице (`update(AuditEvent.__table__)`), потому что смотрим на таблицу,
+# а не на модель. Чтения не касаемся: журнал читают, и читать его надо.
+#
+# Что этим по-прежнему не закрыто — то же, что и раньше: `text("UPDATE ...")` и
+# любой клиент базы снаружи. Граница проходит по ORM, и это сказано честно.
+
+
+@event.listens_for(Session, "do_orm_execute")
+def _no_bulk_edits(state) -> None:
+    if not (state.is_update or state.is_delete):
+        return
+    target = getattr(state.statement, "table", None)
+    if getattr(target, "name", None) == AuditEvent.__tablename__:
+        raise errors.ForbiddenError(_APPEND_ONLY, code="audit_append_only")

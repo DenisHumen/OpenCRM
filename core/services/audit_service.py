@@ -115,8 +115,30 @@ ENTITY_DOCUMENT = "document"
 ENTITY_NOTE = "note"
 ENTITY_FILE = "file"
 
-MAX_LABEL = 200
-MAX_SOURCE_REF = 64
+# --- длины строковых полей ---
+#
+# Берутся у самой колонки, а не переписаны сюда числами. Переписанное число
+# расходится с колонкой молча: сузили `action` в миграции — и обрезка осталась
+# по старой мерке, а узнали бы об этом на первой длинной строке боевого сервера.
+#
+# Обрезаем **все** строковые поля, а не половину. Журнал пишется в той же
+# транзакции, что и само изменение, и на MySQL строка длиннее колонки — это не
+# кривая запись в журнале, а отказ **основной операции**: `Data too long for
+# column`. То есть сотрудник не смог бы провести акт из-за того, что кто-то
+# завёл длинное имя действия. SQLite такое молча режет сам, поэтому в тестах
+# ничего не всплывает — расхождение движков ровно того сорта, ради которого
+# заведён `docs/03-database.md`.
+
+
+def _column_limit(name: str) -> int:
+    return AuditEvent.__table__.c[name].type.length
+
+
+MAX_ACTION = _column_limit("action")
+MAX_ACTOR_NAME = _column_limit("actor_name")
+MAX_ENTITY_TYPE = _column_limit("entity_type")
+MAX_LABEL = _column_limit("entity_label")
+MAX_SOURCE_REF = _column_limit("source_ref")
 
 
 def assert_actor(actor: User | None, source: str, what: str) -> None:
@@ -163,12 +185,12 @@ def record(
     assert_actor(actor, source, f"Audit entry {action!r}")
 
     entry = AuditEvent(
-        action=action,
+        action=action[:MAX_ACTION],
         actor_id=actor.id if actor else None,
-        actor_name=(actor.name if actor else "")[:120],
+        actor_name=(actor.name if actor else "")[:MAX_ACTOR_NAME],
         source=source,
         source_ref=(source_ref or "")[:MAX_SOURCE_REF],
-        entity_type=entity_type,
+        entity_type=entity_type[:MAX_ENTITY_TYPE],
         entity_id=entity_id,
         entity_label=(entity_label or "")[:MAX_LABEL],
         value_before=before,
@@ -237,7 +259,18 @@ def record_restore(
 
     Пары «было/стало» здесь нет по той же причине, что и у удаления: менялось не
     значение, а само наличие записи.
+
+    Название обязательно — ровно как у удаления, и по тому же доводу. «client 5
+    возвращён» не отвечает на вопрос «кого вернули»: спрашивают об этом уже
+    после, а карточку к тому времени могли удалить снова и уже начисто. Форма
+    записи у возврата и удаления одна, и требование к ней обязано быть одно —
+    иначе половина пары в журнале с именем, половина без.
     """
+    if not entity_label:
+        raise ValueError(
+            f"Restore of {entity_type}:{entity_id} recorded without a label — "
+            "спросить название потом будет не у кого."
+        )
     return record(
         db,
         action=f"{entity_type}.restored",

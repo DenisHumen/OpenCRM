@@ -176,6 +176,64 @@ def test_participant_failure_undoes_everything(manager_client, deal, subscribe):
     assert feed(manager_client, deal, kind=KIND_STAGE) == [], "лента запомнила отменённое"
 
 
+def test_an_observer_does_not_swallow_a_nested_participants_refusal(
+    manager_client, deal, subscribe
+):
+    """Отказ участника обязан отменять операцию и со второго уровня тоже.
+
+    Наблюдатель вправе поднять внутри себя второе событие — так и делают, когда
+    записанное само по себе является поводом для чего-то ещё. Но у второго
+    события свои участники, а участник существует ровно затем, чтобы сказать
+    «нет»: не списалось — акт не провёлся.
+
+    `_run_observer` ловил всё подряд, и это «нет» проглатывалось вместе с
+    падениями самого наблюдателя: операция состоялась вопреки прямому отказу и
+    не оставила ни строки о том, что кто-то возражал. Обещание «участник может
+    отменить операцию» держалось только на первом уровне.
+    """
+    nested = "test.raised_from_an_observer"
+
+    def refuses(event):
+        raise errors.ValidationError("Нечего списывать", code="nothing_to_write_off")
+
+    def raises_a_second_event(event):
+        events.emit(nested, db=event.db, actor=event.actor, reason=event.reason)
+
+    subscribe(nested, refuses, is_participant=True)
+    subscribe(DEAL_STAGE_CHANGED, raises_a_second_event)
+
+    response = move(manager_client, deal)
+    assert response.status_code == 422, response.text
+    assert response.json()["error"]["code"] == "nothing_to_write_off"
+
+    card = manager_client.get(f"{DEALS}/{deal['id']}").json()
+    assert card["stage"] == "new", "этап сменился вопреки отказу участника второго уровня"
+    assert feed(manager_client, deal, kind=KIND_STAGE) == [], "лента запомнила отменённое"
+
+
+def test_an_observers_own_failure_is_still_swallowed(manager_client, deal, subscribe, caplog):
+    """Обратная половина: своё падение наблюдатель по-прежнему проглатывает.
+
+    Без этой пары починку выше легко «доделать» до того, что любая ошибка в
+    ленте начнёт отменять работу, — то есть ровно до беды, от которой точка
+    отката и заводилась.
+    """
+    def emits_then_breaks(event):
+        events.emit(
+            "test.nobody_listens", db=event.db, actor=event.actor, reason=event.reason
+        )
+        raise RuntimeError("наблюдателю поплохело после второго события")
+
+    subscribe(DEAL_STAGE_CHANGED, emits_then_breaks)
+
+    with caplog.at_level("ERROR", logger="opencrm.events"):
+        response = move(manager_client, deal)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["stage"] == "in_progress"
+    assert "emits_then_breaks" in caplog.text, "падение осталось без следа в журнале"
+
+
 def test_participants_run_before_observers(manager_client, deal, subscribe):
     """Наблюдатель записывает то, что состоялось, — значит после всех участников.
 
@@ -224,6 +282,53 @@ def test_subscriber_of_a_switched_off_module_is_skipped(
     root_client.post(f"{MODULES}/documents", json={"enabled": True})
     assert move(manager_client, deal, "done").status_code == 200
     assert heard == ["общий", "бланки"]
+
+
+def test_a_typo_in_the_module_key_is_refused_at_subscription(subscribe):
+    """Опечатка в ключе блока падает при загрузке, а не молчит годами.
+
+    `emit` спрашивает `modules_service.is_enabled(db, sub.module)`, и незнакомый
+    ключ для него — «блок выключен». Отличить `warehous` от честно выключенного
+    склада нечем: подписчик просто никогда не зовётся, ошибки при этом нет
+    никакой. Списание по акту тихо перестало бы происходить, а искать причину
+    пришлось бы по остаткам склада — то есть неделю спустя и не в том месте.
+
+    Проверять надо в момент подписки: подписки загружаются один раз при первом
+    событии, значит и отказ будет один и громкий.
+    """
+    def handler(event):
+        pass
+
+    with pytest.raises(ValueError, match="Unknown module"):
+        subscribe("test.typo", handler, module="warehous")
+
+    # И тем входом, которым пользуются в рабочем коде, — декоратором.
+    with pytest.raises(ValueError, match="Unknown module"):
+        events.observer("test.typo", module="warehous")(handler)
+    with pytest.raises(ValueError, match="Unknown module"):
+        events.participant("test.typo", module="warehous")(handler)
+
+    # Опечатка не оставила после себя половину подписки.
+    assert events.subscribers_of("test.typo") == ()
+
+    # А настоящий ключ проходит — проверка ловит опечатку, а не запрещает блоки.
+    subscribe("test.typo", handler, module="warehouse")
+    assert len(events.subscribers_of("test.typo")) == 1
+
+
+def test_every_subscription_in_the_wild_names_a_module_that_exists():
+    """Сводная: ни одна подписка рабочего кода не указывает в пустоту.
+
+    Проверка выше сторожит вход, эта — то, что сегодня в реестре подписок.
+    Расходятся они в тот день, когда блок переименуют, а подписку забудут.
+    """
+    from core import modules
+
+    events._load_subscriptions()
+    unknown = sorted(
+        {sub.module for sub in events._subscribers if sub.module and not modules.get(sub.module)}
+    )
+    assert unknown == [], f"подписка на несуществующий блок: {unknown}"
 
 
 # --- порядок ---
