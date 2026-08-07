@@ -211,13 +211,13 @@
 
 | Метод | Путь | Права | Описание |
 |---|---|---|---|
-| GET | `/telephony/calls` | 👤 | Журнал: `?direction=in\|out`, `?outcome=`, `?client_id=`, `?deal_id=`, `?user_id=`, `?number=` (приводится к нормализованному виду), `?since=`, `?until=`, пагинация |
+| GET | `/telephony/calls` | 👤 | Журнал: `?direction=in\|out`, `?outcome=`, `?client_id=`, `?deal_id=`, `?user_id=`, `?number=` (приводится к нормализованному виду), `?since=`, `?until=`, пагинация. Незнакомое значение `direction`/`outcome` — `422`, а не пустая выдача, неотличимая от «звонков нет» |
 | GET | `/telephony/calls/{id}` | 👤 | Карточка звонка |
 | PATCH | `/telephony/calls/{id}` | 👤 | Привязать разговор к заявке или отвязать: `{"deal_id": 7 \| null}`. `422 deal_other_client` — заявка чужого клиента |
 | POST | `/telephony/calls/{id}/callback-task` | 👤 | Напоминание перезвонить по пропущенному. `422 call_not_missed`, `409 module_disabled` — блок напоминаний выключен |
-| POST | `/telephony/click-to-call` | 👤 | Просит АТС набрать: `{"number": "…", "from_ext": "…", "deal_id": 7}`. `422 telephony_not_configured`, `400 pbx_unavailable` |
+| POST | `/telephony/click-to-call` | 👤 | Просит АТС набрать: `{"number": "…", "from_ext": "…", "deal_id": 7}`. `422 telephony_not_configured`, `400 pbx_unavailable`, `409 pbx_call_id_taken` — станция выдала ключ, который уже занят прошлым разговором |
 | GET | `/telephony/settings` | 👑 | Настройки подключения. Секреты не отдаются — только `has_api_token` / `has_webhook_secret` |
-| PATCH | `/telephony/settings` | 👑 | Провайдер, адрес команды набора, токен, внутренний номер, смещение зоны АТС, код страны |
+| PATCH | `/telephony/settings` | 👑 | Провайдер, адрес команды набора, токен, внутренний номер, смещение зоны АТС, код страны. `422 bad_telephony_url` — адрес станции не http(s) или слишком длинный |
 | POST | `/telephony/settings/secret` | 👑 | Новый секрет подписи вебхука; возвращается **один раз** |
 | POST | `/telephony/webhook` | 🔓 | События звонка от АТС. Подпись обязательна (см. [07-security.md](07-security.md)) |
 

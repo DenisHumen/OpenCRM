@@ -116,6 +116,15 @@ def update_settings(db: Session, changes: dict[str, str]) -> dict:
                 f"provider must be one of {telephony_providers.PROVIDER_KEYS}",
                 code="bad_provider",
             )
+    if SETTING_API_URL in changes:
+        # Адрес станции — единственная настройка блока, по которой сервер сам
+        # ходит наружу. Приводим и проверяем той же меркой, что все внешние
+        # ссылки в системе; почему именно так и что осталось разрешённым —
+        # в `telephony_providers.build`.
+        changes = {
+            **changes,
+            SETTING_API_URL: telephony_providers.safe_pbx_url(changes[SETTING_API_URL] or ""),
+        }
     if SETTING_UTC_OFFSET in changes:
         _parse_offset(changes[SETTING_UTC_OFFSET])  # проверка формата на входе
     if SETTING_COUNTRY_CODE in changes:
@@ -240,6 +249,17 @@ MAX_EXTERNAL_ID = 128
 #: число вроде 10^19 доезжало до вставки и роняло запрос переполнением.
 MAX_DURATION_SECONDS = 24 * 60 * 60
 
+#: Насколько время события может опережать наше. Разговор в будущем не
+#: начинается, но часы станции нам не подчиняются и уходят вперёд — сутки
+#: покрывают и сбитую зону, и забытый перевод часов.
+#:
+#: Потолок нужен потому, что время ленты берётся отсюда: `9999-01-01` от
+#: станции вставало первой строкой в карточке клиента и оставалось там
+#: навсегда — правки времени у записи звонка нет, а удалять факт разговора
+#: ради починки сортировки нечестно. Ниже потолка ошибка сама уезжает вниз
+#: ленты через сутки.
+MAX_FUTURE_SKEW_SECONDS = 24 * 60 * 60
+
 
 def parse_started_at(value: Any, offset: timedelta) -> datetime:
     """Момент начала звонка в naive UTC.
@@ -261,16 +281,25 @@ def parse_started_at(value: Any, offset: timedelta) -> datetime:
     try:
         if isinstance(value, (int, float)):
             # unix-время всегда в UTC по определению — смещение не применяем
-            return datetime.fromtimestamp(float(value), tz=timezone.utc).replace(tzinfo=None)
-        text = str(value).strip().replace("Z", "+00:00")
-        parsed = datetime.fromisoformat(text)
-        if parsed.tzinfo is not None:
-            return parsed.astimezone(timezone.utc).replace(tzinfo=None)
-        return parsed - offset
+            moment = datetime.fromtimestamp(float(value), tz=timezone.utc).replace(tzinfo=None)
+        else:
+            text = str(value).strip().replace("Z", "+00:00")
+            parsed = datetime.fromisoformat(text)
+            if parsed.tzinfo is not None:
+                moment = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+            else:
+                moment = parsed - offset
     except (TypeError, ValueError, OverflowError, OSError) as exc:
         raise errors.ValidationError(
             "started_at is not a valid datetime", code="bad_started_at"
         ) from exc
+    # Разобралось — ещё не значит «бывает». Время события приходит снаружи, и
+    # без потолка `9999-01-01` навсегда занимал верх ленты клиента.
+    if (moment - now_utc()).total_seconds() > MAX_FUTURE_SKEW_SECONDS:
+        raise errors.ValidationError(
+            "started_at is too far in the future", code="started_at_in_future"
+        )
+    return moment
 
 
 # --- приём событий ---
@@ -313,20 +342,47 @@ def ingest_event(db: Session, payload: dict) -> PhoneCall:
     правят одну и ту же строку, найденную по ``external_id``. Поэтому повтор
     того же события ничего не удваивает: ни звонок, ни запись в ленте, — в том
     числе когда события пришли ОДНОВРЕМЕННО (см. ``_insert_or_take_existing``).
+
+    **Сначала разбираем событие целиком, потом трогаем базу.** Порядок здесь не
+    вкусовой: отказ, случившийся на полпути, строку уже не отменяет. Ошибку
+    ловит `@app.exception_handler(DomainError)`, а он срабатывает раньше, чем
+    `get_db` увидит исключение, — сессия закрывается обычным `commit`, и
+    наполовину заполненный звонок остаётся в журнале. Пока `duration` разбирался
+    после вставки, событие с длительностью `10**19` оставляло в журнале звонок
+    без длительности и без итога, и повторить его станция уже не могла:
+    идентификатор занят.
     """
     # Ключ идемпотентности обрезаем под длину колонки, как и все соседние поля.
     # Не обрезанный, он на SQLite ложился целиком (длину она не держит), а на
     # MySQL, на который проект рассчитан, — либо ронял вставку, либо молча
     # обрезался сам. Второе хуже: два РАЗНЫХ звонка с общим началом ключа
     # склеились бы в один.
-    external_id = str(payload.get("call_id") or payload.get("id") or "").strip()[:MAX_EXTERNAL_ID]
+    external_id = _clean_text(
+        payload.get("call_id") or payload.get("id"), "call_id"
+    )[:MAX_EXTERNAL_ID]
     if not external_id:
         raise errors.ValidationError("call_id is required", code="call_id_required")
-    direction = str(payload.get("direction") or "").strip()
+    direction = _clean_text(payload.get("direction"), "direction")
     outcome = _clean_outcome(payload.get("outcome") or payload.get("status"))
+    from_number = _clean_text(payload.get("from") or payload.get("caller"), "from")
+    to_number = _clean_text(payload.get("to") or payload.get("callee"), "to")
+    recording = _clean_text(
+        payload.get("recording") or payload.get("recording_path"), "recording"
+    )
+    operator = _clean_text(payload.get("operator_email"), "operator_email").lower()
+    has_duration = "duration" in payload or "duration_sec" in payload
+    duration = (
+        _clean_duration(payload.get("duration", payload.get("duration_sec")))
+        if has_duration
+        else None
+    )
     settings_values = get_settings_values(db)
     offset = _parse_offset(settings_values[SETTING_UTC_OFFSET])
     code = country_code(db)
+    # Время события разбираем здесь же, до вставки: пустое значит «станция не
+    # сказала» — у нового звонка это «сейчас», у существующего время не трогаем.
+    started_at = parse_started_at(payload.get("started_at"), offset)
+    knows_started_at = bool(payload.get("started_at"))
 
     call = telephony_repo.get_by_external_id(db, external_id)
     if call is None:
@@ -334,20 +390,16 @@ def ingest_event(db: Session, payload: dict) -> PhoneCall:
             raise errors.ValidationError(
                 f"direction must be one of {CALL_DIRECTIONS}", code="bad_direction"
             )
-        call = _insert_or_take_existing(
-            db, external_id, direction, parse_started_at(payload.get("started_at"), offset)
-        )
+        call = _insert_or_take_existing(db, external_id, direction, started_at)
         # Направление уже проверено выше. Проставляем его и здесь: строка могла
         # оказаться чужой, вставленной в тот же миг соседним запросом.
         call.direction = direction
     elif direction in CALL_DIRECTIONS:
         call.direction = direction
 
-    if "started_at" in payload and payload["started_at"]:
-        call.started_at = parse_started_at(payload["started_at"], offset)
+    if knows_started_at:
+        call.started_at = started_at
 
-    from_number = str(payload.get("from") or payload.get("caller") or "").strip()
-    to_number = str(payload.get("to") or payload.get("callee") or "").strip()
     if from_number:
         call.from_number = from_number[:64]
         call.from_number_norm = normalize_phone(from_number, code)[:32]
@@ -355,18 +407,16 @@ def ingest_event(db: Session, payload: dict) -> PhoneCall:
         call.to_number = to_number[:64]
         call.to_number_norm = normalize_phone(to_number, code)[:32]
 
-    if "duration" in payload or "duration_sec" in payload:
-        call.duration_sec = _clean_duration(payload.get("duration", payload.get("duration_sec")))
+    if has_duration:
+        call.duration_sec = duration
     if outcome is not None:
         call.outcome = outcome
-    recording = str(payload.get("recording") or payload.get("recording_path") or "").strip()
     if recording:
         call.recording_path = recording[:500]
 
     # Кто говорил — можно принять от станции: у неё есть внутренние номера и
     # почты операторов, а подпись вебхука подтверждает, что запрос от неё.
     # Клиента так брать нельзя (см. ниже): про клиентов станция ничего не знает.
-    operator = str(payload.get("operator_email") or "").strip().lower()
     if operator and call.user_id is None:
         user = users_repo.get_by_email(db, operator)
         if user is not None:
@@ -395,8 +445,31 @@ def _link_client(db: Session, call: PhoneCall) -> None:
         call.client_id = client.id
 
 
+def _clean_text(value: Any, field: str) -> str:
+    """Строковое поле события: строка или число, но не составное значение.
+
+    Тело вебхука пишем не мы, и `str(...)` над ним был не приведением типа, а
+    молчаливым согласием на что угодно: `{"from": {"nested": "html"}}` ложился
+    в номер как `{'nested': 'html'}` — и дальше ехал в карточку клиента, в
+    текст записи ленты и в заголовок задачи «перезвонить». Никакая проверка
+    ниже такое не ловит: это уже строка, и по всем признакам «номер».
+
+    Число принимаем: `{"call_id": 12345}` — обычное дело у станций, и в строку
+    оно переходит без потерь. Всё остальное (объект, список, `true`) — честный
+    отказ с именем поля: станция запишет его в свой лог и остановится.
+    """
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    # `bool` в Python — подвид `int`, и `True` иначе превратился бы в номер «1»
+    if isinstance(value, int) and not isinstance(value, bool):
+        return str(value)
+    raise errors.ValidationError(f"{field} must be a string", code="bad_field_type")
+
+
 def _clean_outcome(value: Any) -> str | None:
-    outcome = str(value or "").strip().lower()
+    outcome = _clean_text(value, "outcome").lower()
     if not outcome:
         return None
     if outcome not in CALL_OUTCOMES:
@@ -524,6 +597,23 @@ def click_to_call(
     ``deal_id`` приходит из карточки заявки, откуда нажали кнопку. Это знание
     из первых рук — от сотрудника, а не от станции, — поэтому ему верим и
     сразу кладём звонок в нужную заявку.
+
+    **Строка заводится только новая.** Раньше здесь искали звонок с тем же
+    ``external_id`` и, найдя, дописывали в него свои поля — тем же приёмом, что
+    у входящих событий. Но у входящих он законен: события с одним ключом
+    приходят от одной станции и описывают **один** разговор. Здесь разговор
+    родился секунду назад по нажатию кнопки, и его ключ мы видим впервые;
+    строка с таким же ключом — заведомо другой, более старый звонок. Присвоение
+    переписывало ему номера и оператора, а клиент и заявка оставались от
+    прежнего разговора — исходящий звонок оказывался в чужой карточке, и
+    запись в чужой ленте переписывалась под него.
+
+    Взять такой ключ станции есть откуда: счётчик демо-провайдера живёт в
+    памяти процесса и после перезапуска начинается заново, а настоящая АТС
+    переиспользует идентификаторы после своего перезапуска или смены нумерации.
+    Поэтому занятый ключ — это отказ. Набор к этому моменту уже ушёл в станцию
+    и телефон, возможно, звонит; но звонок придёт в журнал событием вебхука, а
+    испорченной чужой строки не будет.
     """
     number = (number or "").strip()
     if not number:
@@ -539,16 +629,24 @@ def click_to_call(
     )
     result = provider.originate(ext, number)
 
-    call = telephony_repo.get_by_external_id(db, result.external_id)
     code = country_code(db)
-    if call is None:
-        call = PhoneCall(external_id=result.external_id, direction="out", started_at=now_utc())
-        db.add(call)
-    call.from_number = ext[:64]
-    call.from_number_norm = normalize_phone(ext, code)[:32]
-    call.to_number = number[:64]
-    call.to_number_norm = normalize_phone(number, code)[:32]
-    call.user_id = user.id
+    call = PhoneCall(
+        # Ключ приходит от станции, и его длину выбирает не сервер — обрезаем
+        # так же, как в вебхуке: на MySQL длинный ключ либо роняет вставку,
+        # либо молча обрезается сам.
+        external_id=result.external_id[:MAX_EXTERNAL_ID],
+        direction="out",
+        started_at=now_utc(),
+        from_number=ext[:64],
+        from_number_norm=normalize_phone(ext, code)[:32],
+        to_number=number[:64],
+        to_number_norm=normalize_phone(number, code)[:32],
+        user_id=user.id,
+    )
+    if telephony_repo.insert_new(db, call) is None:
+        raise errors.ConflictError(
+            "PBX returned a call id that is already taken", code="pbx_call_id_taken"
+        )
     _link_client(db, call)
     if deal_id is not None:
         attach_deal(db, call, deal_id)
