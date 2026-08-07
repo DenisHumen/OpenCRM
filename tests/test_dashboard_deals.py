@@ -137,8 +137,41 @@ def test_average_check_divides_by_priced_deals_only(manager_client):
     assert after["won_count_priced"] - before["won_count_priced"] == 2, (
         "сделка без цены попала в знаменатель"
     )
-    # среднее делится именно на число сделок с ценой
-    assert after["avg_check"] == round(after["won_since"] / after["won_count_priced"])
+    # среднее делится именно на число сделок с ценой — и тем же правилом, что в
+    # отчёте о выручке. Раньше здесь стоял `round()`, то есть проверка повторяла
+    # ошибку кода вместо того, чтобы её ловить.
+    from core.utils import divide_money
+
+    assert after["avg_check"] == divide_money(after["won_since"], after["won_count_priced"])
+
+
+def test_sredniy_chek_ne_okruglyaet_polovinu_k_chyotnomu(manager_client):
+    """Плитка сводки и отчёт о выручке обязаны делить деньги одинаково.
+
+    `round()` в Python округляет половину к ЧЁТНОМУ: 100,5 даёт 100, а 101,5 —
+    102. Ошибка в половину минорной единицы, зато то в одну сторону, то в
+    другую, и человеку, пересчитавшему средний чек на калькуляторе, объяснить
+    её нечем. Отчёт это правило уже соблюдал, плитка — нет, и два числа под
+    одной подписью расходились.
+
+    Две сделки на 100,00 и 101,00 дают ровно половину — тот единственный
+    случай, где два правила округления расходятся.
+    """
+    from core.utils import divide_money, now_utc
+    from database.repositories import deals as deals_repo
+    from database.session import SessionLocal
+
+    assert divide_money(20100, 2) == 10050, "делитель на половине уехал к чётному"
+    assert divide_money(-20100, 2) == -10050, "на отрицательной сумме половина уехала не в ту сторону"
+
+    person = make_client(manager_client, "Клиент половины")
+    month_start = now_utc().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    win(manager_client, person["id"], amount=10000)
+    win(manager_client, person["id"], amount=10100)
+
+    with SessionLocal() as db:
+        svodka = deals_repo.money_summary(db, month_start)
+    assert svodka["avg_check"] == divide_money(svodka["won_since"], svodka["won_count_priced"])
 
 
 def test_empty_stage_stays_visible_in_the_funnel(manager_client):

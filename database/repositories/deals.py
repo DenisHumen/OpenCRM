@@ -1,6 +1,7 @@
 from sqlalchemy import func, or_, select, update
 from sqlalchemy.orm import Session
 
+from core.utils import divide_money
 from database.models import Client, Deal, DealStageChange, PipelineStage
 from database.models.pipeline import CLOSED_KINDS, KIND_OPEN, KIND_WON
 from database.query import contains, page_of
@@ -169,7 +170,11 @@ def money_summary(db: Session, since, only_manager_id: int | None = None) -> dic
         # Без единой сделки с ценой среднего чека нет — и это НЕ ноль. Ноль
         # прочитают как «работаем даром», а верный ответ — «пока не о чем
         # говорить».
-        "avg_check": round(won_since / priced_won) if priced_won else None,
+        # Делим тем же правилом, что и отчёт о выручке (`core/utils.divide_money`):
+        # целочисленно и с округлением половины ОТ нуля. `round()` округляет
+        # половину к чётному, и плитка сводки расходилась с отчётом за тот же
+        # период на единицу — под одной подписью «Средний чек».
+        "avg_check": divide_money(won_since, priced_won) if priced_won else None,
     }
 
 

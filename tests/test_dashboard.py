@@ -1,5 +1,12 @@
-from fastapi.testclient import TestClient
+from datetime import timedelta
 
+from fastapi.testclient import TestClient
+from sqlalchemy import select
+
+from core.utils import now_utc
+from database.models import ShareLink, ShareView
+from database.repositories import stats as stats_repo
+from database.session import SessionLocal
 from tests.conftest import API, png_bytes
 from web.main import app
 
@@ -27,6 +34,103 @@ def test_dashboard_aggregates(root_client, manager_client):
     assert len(data["recent_boards"]) >= 1
     first = data["recent_boards"][0]
     assert {"views_count", "has_active_link", "has_pin", "works_count"} <= set(first)
+
+
+# --- плитка просмотров против графика под ней ---
+
+def _published_board_with_a_view(client, title: str) -> int:
+    """Доска, витрина и один просмотр по ней. Возвращает id доски."""
+    board = client.post(f"{API}/boards", json={"title": title}).json()
+    client.post(
+        f"{API}/boards/{board['id']}/works",
+        files={"file": ("w.png", png_bytes(), "image/png")},
+    )
+    client.patch(f"{API}/boards/{board['id']}", json={"is_published": True})
+    share = client.post(f"{API}/boards/{board['id']}/shares", json={}).json()
+    TestClient(app).get(f"/b/{share['token']}")
+    return board["id"]
+
+
+def _move_views(board_id: int, moment) -> int:
+    """Переносит просмотры доски в прошлое прямо в базе.
+
+    Через API недостижимо: время просмотра ставит сервер, а проверять окно без
+    прошлого нечем.
+    """
+    with SessionLocal() as db:
+        views = list(
+            db.scalars(
+                select(ShareView)
+                .join(ShareLink, ShareLink.id == ShareView.share_link_id)
+                .where(ShareLink.board_id == board_id)
+            )
+        )
+        for view in views:
+            view.viewed_at = moment
+        db.commit()
+        return len(views)
+
+
+def test_views_tile_equals_the_sum_of_the_bars_under_it(manager_client):
+    """Плитка «просмотров за 7 дней» и столбики под ней — одно число.
+
+    Плитка считала скользящее окно (последние 168 часов), график — семь
+    календарных суток. Совпадали они ровно в полночь, а весь остальной день
+    расходились на хвост седьмого дня назад: столбик рисовал его целиком, плитка
+    брала от него только часы после текущего.
+
+    Заметить это глазами можно: столбиков семь, они складываются, и сумма не
+    сходится с числом над ними. Правильным берём график — его человек и
+    проверяет; плитку приводим к нему.
+
+    Просмотр кладём ровно в середину зазора между окнами: он попадает в
+    скользящее окно и не попадает в календарное, то есть проявляет расхождение
+    в любое время суток, а не только в удачное.
+    """
+    board_id = _published_board_with_a_view(manager_client, "Зазор между окнами")
+
+    now = now_utc()
+    chart_start = (now - timedelta(days=6)).replace(hour=0, minute=0, second=0, microsecond=0)
+    rolling_start = now - timedelta(days=7)
+    assert rolling_start < chart_start, "зазора нет — проверять нечего"
+    moved = _move_views(board_id, rolling_start + (chart_start - rolling_start) / 2)
+    assert moved == 1, "просмотр не записался — тест ни о чём"
+
+    data = manager_client.get(f"{API}/dashboard").json()
+    assert len(data["views_by_day"]) == 7
+    assert sum(day["count"] for day in data["views_by_day"]) == data["views_7d"], (
+        "плитка за 7 дней не равна сумме столбиков под ней"
+    )
+
+
+def test_views_window_is_seven_whole_days_up_to_tonight(manager_client):
+    """Окно плитки — календарное и полуоткрытое: [полночь-6 суток; завтра).
+
+    Проверяем само окно, а не только равенство сумм: равенство держалось бы и на
+    двух одинаково неверных окнах. Вечерний просмотр сегодняшнего дня обязан
+    попасть в плитку — иначе к полуночи она бы отставала от графика на весь
+    сегодняшний вечер.
+    """
+    start, end = stats_repo.views_window(7, now_utc().replace(hour=10, minute=30))
+    assert start.hour == 0 and start.minute == 0 and start.second == 0
+    assert (end - start) == timedelta(days=7)
+    assert end.date() == (now_utc() + timedelta(days=1)).date(), (
+        "окно кончается раньше полуночи — вечерние просмотры выпадают из плитки"
+    )
+
+
+def test_previous_week_is_measured_by_the_same_ruler(manager_client):
+    """«К прошлой неделе» сравнивает семь суток с семью сутками.
+
+    Скользящее окно против календарного давало сравнение разной длины: рост в
+    процентах считался от знаменателя, который в среднем на полдня короче
+    числителя, и стрелка вверх появлялась сама собой.
+    """
+    now = now_utc()
+    start, end = stats_repo.views_window(7, now)
+    prev_start, prev_end = stats_repo.views_window(7, now - timedelta(days=7))
+    assert prev_end == start, "окна недель не стыкуются встык"
+    assert (end - start) == (prev_end - prev_start)
 
 
 def test_boards_list_extended_fields(manager_client):

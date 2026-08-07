@@ -17,10 +17,12 @@
 числа менялись бы от порядка запуска файлов.
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from sqlalchemy import select
 
+from core.services import report_service
+from core.utils import now_utc
 from database.models import Client, Deal, DealStageChange
 from database.session import SessionLocal
 from tests.conftest import API
@@ -703,3 +705,263 @@ def test_the_sources_total_says_nothing_instead_of_zero(root_client):
         assert sources["revenue_total"] is None, (
             "выручка показывает прочерк, а итог источников — ноль"
         )
+
+
+# --- одно слово — одна величина ---
+
+# Декабрь 2026 — своё пустое окно: здесь сверяются абсолютные числа трёх
+# отчётов между собой, и чужие сделки в периоде сделали бы сверку бессмысленной.
+def dec(day: int, hour: int = 12) -> datetime:
+    return datetime(2026, 12, day, hour)
+
+
+DECEMBER = {"from": "2026-12-01", "to": "2026-12-31", "tz_offset": 0}
+
+
+def test_won_is_one_number_across_the_whole_screen(manager_client):
+    """«Выиграно» в трёх карточках отчёта — одна величина, а не две разных.
+
+    Расхождение достижимо и достигается одним движением мышью: заявку довели до
+    выигранного этапа и вернули в работу. Дата закрытия при возврате обнуляется
+    (`deal_service.move`), а запись журнала «вошла в выигранный этап» остаётся
+    навсегда. Пока воронка считала по журналу, а выручка и источники — по дате
+    закрытия, экран показывал «Выиграно 2» сверху и «Выиграно 1» ниже, про одни
+    и те же заявки.
+
+    Правильна дата закрытия: заявку вернули в работу, и выигранной она уже не
+    является — это видно и в списке, и на канбане. Журнальное число остаётся, но
+    отвечает на другой вопрос («сколько прошло через этап») и стоит в столбцах
+    воронки, а не под словом «Выиграно».
+    """
+    person = new_client(
+        manager_client, "Возврат из выигранного", source="возврат-декабрь", moment=dec(1)
+    )
+    make_deal(manager_client, person["id"], "won", dec(10), amount=200_000)
+
+    returned = manager_client.post(
+        DEALS, json={"title": "Вернули в работу", "client_id": person["id"]}
+    ).json()
+    won_key, open_key = stage_key(manager_client, "won"), stage_key(manager_client, "open")
+    assert manager_client.post(
+        f"{DEALS}/{returned['id']}/move", json={"stage": won_key}
+    ).status_code == 200
+    back = manager_client.post(f"{DEALS}/{returned['id']}/move", json={"stage": open_key})
+    assert back.status_code == 200, back.text
+    assert back.json()["closed_at"] is None, "возврат в работу не снял дату закрытия"
+    # Обе записи журнала — в отчётное окно; дата закрытия у вернувшейся пуста.
+    backdate(returned["id"], None, journal=dec(12))
+
+    funnel = report(manager_client, "funnel", **DECEMBER)
+    revenue = report(manager_client, "revenue", **DECEMBER)
+    sources = report(manager_client, "sources", **DECEMBER)
+    row = next(r for r in sources["items"] if r["source"] == "возврат-декабрь")
+
+    assert funnel["won"] == revenue["won_count"], (
+        "«Выиграно» воронки не сошлось с «Выиграно» выручки"
+    )
+    assert row["won_count"] == revenue["won_count"], (
+        "«Выиграно» в таблице источников не сошлось с остальным экраном"
+    )
+    assert revenue["won_count"] == 1, "вернувшаяся в работу заявка осталась выигранной"
+
+    # А столбец воронки по-прежнему помнит обе: через выигранный этап прошли
+    # двое, и это другой вопрос — под другой подписью («вошло заявок»).
+    passed = next(s["entered"] for s in funnel["stages"] if s["key"] == won_key)
+    assert passed == 2, "воронка забыла заявку, которая через этап всё же прошла"
+
+
+def test_conversions_are_computed_from_the_same_won(manager_client):
+    """Проценты на экране считаются от одного и того же «Выиграно».
+
+    Числитель у конверсии воронки — то же число, что стоит в плитке «Выиграно»
+    рядом и в выручке ниже. Пока он брался из журнала, а соседние — из даты
+    закрытия, три процента на экране считались от двух разных числителей, и
+    пересчитать их вручную было нельзя ни по одному набору чисел.
+
+    Знаменатели у воронки и у выручки при этом разные намеренно: «доля от всего,
+    что пришло» и «доля выигранных среди закрытых» — законные и разные вопросы.
+    Это и есть та пара, которой нужны РАЗНЫЕ подписи на экране.
+    """
+    funnel = report(manager_client, "funnel", **DECEMBER)
+    revenue = report(manager_client, "revenue", **DECEMBER)
+    sources = report(manager_client, "sources", **DECEMBER)
+    row = next(r for r in sources["items"] if r["source"] == "возврат-декабрь")
+
+    assert funnel["entered"] > 0, "пустое окно — проверять нечего"
+    assert funnel["conversion"] == round(revenue["won_count"] * 100 / funnel["entered"], 1), (
+        "конверсия воронки посчитана не от того «Выиграно», что стоит рядом с ней"
+    )
+    # Конверсия источника и конверсия выручки — одна величина в разном охвате: в
+    # этом окне источник один, значит и число обязано быть одно.
+    assert row["conversion"] == revenue["conversion"], (
+        "«Конверсия» источника и «Конверсия» выручки посчитаны по-разному"
+    )
+
+
+# --- охват строки отчёта ---
+
+def test_clients_column_narrows_with_the_rest_of_its_row(root_client):
+    """Строка отчёта складывается из чисел одного охвата.
+
+    Право «только свои заявки» сужало выигранные и потерянные в строке, а
+    колонку «Клиентов» — нет. Строка получалась из делимого по всей фирме и
+    делителя по своим: менеджер видел «клиентов 40, выиграно 2» и делал вывод о
+    своей работе из чужих цифр.
+    """
+    from tests.conftest import make_manager
+    from tests.test_roles import ROLES, _user_id
+
+    made = root_client.post(
+        ROLES,
+        json={
+            "name": "Отчёты только по своим заявкам",
+            # Ни `deals.view_others`, ни прав на суммы: проверяем именно охват
+            # строки, а не то, видно ли в ней деньги.
+            "permissions": [
+                "clients.view", "clients.create",
+                "deals.view", "deals.create", "deals.move_stage",
+                "reports.view",
+            ],
+        },
+    )
+    assert made.status_code == 201, made.text
+    watcher = make_manager(root_client, "own-scope@test.local")
+    user_id = _user_id(root_client, "own-scope@test.local")
+    assert root_client.post(
+        f"{ROLES}/assign/{user_id}", json={"role_id": made.json()["id"]}
+    ).status_code == 200
+
+    won = next(
+        c for c in root_client.get(f"{API}/deals/board").json()["columns"] if c["kind"] == "won"
+    )["key"]
+    source = "охват-строки"
+
+    def sell(client, name: str) -> None:
+        made = client.post(f"{API}/clients", json={"name": name, "source": source})
+        assert made.status_code == 201, made.text
+        deal = client.post(
+            f"{API}/deals", json={"title": name, "client_id": made.json()["id"]}
+        )
+        assert deal.status_code == 201, deal.text
+        moved = client.post(f"{API}/deals/{deal.json()['id']}/move", json={"stage": won})
+        assert moved.status_code == 200, moved.text
+
+    sell(watcher, "Свой клиент")
+    sell(root_client, "Чужой клиент")
+
+    seen = watcher.get(f"{API}/reports/sources", params={"tz_offset": 0}).json()
+    row = next(r for r in seen["items"] if r["source"] == source)
+
+    assert row["won_count"] == 1, "заявки в строке уже сужались — тест ни о чём"
+    assert row["clients"] == 1, (
+        "колонка «Клиентов» посчитана по всей фирме, а соседние — по своим"
+    )
+    assert seen["clients_total"] == sum(r["clients"] for r in seen["items"])
+
+
+# --- список источников ---
+
+def test_a_deleted_client_leaves_the_sources_report(manager_client):
+    """Клиент в корзине не должен рисовать в отчёте строку про себя.
+
+    Список источников собирался отдельным проходом по всей таблице клиентов, и
+    `deleted_at` в нём не смотрели. Источник, оставшийся только у удалённых,
+    висел в отчёте пустой строкой — про людей, которых убрали.
+    """
+    person = new_client(manager_client, "Ушёл в корзину", source="источник-в-корзине", moment=at(8))
+    assert "источник-в-корзине" in [
+        row["source"] for row in report(manager_client, "sources")["items"]
+    ], "источник живого клиента в отчёт не попал — проверять нечего"
+
+    assert manager_client.delete(f"{API}/clients/{person['id']}").status_code == 200
+    keys = [row["source"] for row in report(manager_client, "sources")["items"]]
+    assert "источник-в-корзине" not in keys, "удалённый клиент остался строкой отчёта"
+
+
+def test_a_source_untouched_in_the_period_is_not_a_row(manager_client):
+    """Отчёт за март не рассказывает про источник, которого в марте не было.
+
+    Своё значение источника попадало в отчёт из прохода по всем клиентам за всю
+    историю — то есть навсегда и в любой период. Кроме нулевых строк в каждом
+    отчёте это давало полное чтение таблицы клиентов на каждый показ: незаметно
+    на тестовой базе и неработающе на третий год.
+    """
+    new_client(
+        manager_client, "Позапрошлогодний", source="позапрошлый-год", moment=datetime(2024, 5, 5)
+    )
+    keys = [row["source"] for row in report(manager_client, "sources")["items"]]
+    assert "позапрошлый-год" not in keys, "источник вне периода стал строкой отчёта"
+
+    # А в своём периоде он, разумеется, есть.
+    old = report(manager_client, "sources", **{"from": "2024-05-01", "to": "2024-05-31"})
+    assert "позапрошлый-год" in [row["source"] for row in old["items"]]
+
+
+# --- умолчание периода ---
+
+def test_default_period_is_today_in_the_callers_timezone():
+    """«Сегодня» без явных дат — местное, а не UTC.
+
+    Интерфейс всегда присылает даты, поэтому расхождения не видно. Интеграции не
+    присылают: для UTC+14 отчёт «за сегодня» после десяти утра по UTC отдавал
+    вчерашний день, а первого числа — весь прошлый месяц. Проверяем оба края
+    диапазона зон: хотя бы в одном из них местная дата всегда расходится с UTC.
+    """
+    for tz_offset in (-14 * 60, 12 * 60):  # UTC+14 и UTC-12
+        shift = timedelta(minutes=tz_offset)
+        before = now_utc()
+        start, end, start_day, end_day = report_service.parse_period(None, None, tz_offset)
+        after = now_utc()
+
+        assert end_day in {(before - shift).date(), (after - shift).date()}, (
+            f"умолчание «по» посчитано в UTC мимо tz_offset={tz_offset}"
+        )
+        assert start_day == end_day.replace(day=1), "умолчание «с» — первое число того же месяца"
+        # И главное следствие: период по умолчанию обязан содержать текущий
+        # момент. Иначе «за сегодня» отвечает про день, который ещё не начался
+        # или уже кончился.
+        assert start <= after < end, f"период по умолчанию не включает сейчас, tz_offset={tz_offset}"
+
+
+def test_a_bad_timezone_offset_is_refused_before_it_is_used():
+    """Смещение проверяется до того, как подействует на умолчание."""
+    try:
+        report_service.parse_period(None, None, 20 * 60)
+    except Exception as failure:  # noqa: BLE001 — проверяем именно код ошибки
+        assert getattr(failure, "code", None) == "bad_tz_offset"
+    else:
+        raise AssertionError("смещение за пределами суток принято")
+
+
+# --- округление денег ---
+
+def test_average_deal_does_not_round_a_half_to_the_even(manager_client):
+    """Средний чек округляется как деньги, а не как `round()` в Python.
+
+    `round()` округляет половину к ЧЁТНОМУ: 100,5 даёт 100, а 101,5 — 102. В
+    отчёте о деньгах это ошибка в половину минорной единицы, гуляющая то в одну
+    сторону, то в другую, и человеку, пересчитавшему чек на калькуляторе,
+    объяснить её нечем.
+
+    Ноябрь 2026 — своё пустое окно: здесь важно точное число, а не прирост.
+    """
+    window = {"from": "2026-11-01", "to": "2026-11-30", "tz_offset": 0}
+    november = datetime(2026, 11, 12, 12, 0)
+    person = new_client(manager_client, "Половина минорной единицы", moment=november)
+    make_deal(manager_client, person["id"], "won", november, amount=100)
+    make_deal(manager_client, person["id"], "won", november, amount=101)
+
+    data = report(manager_client, "revenue", **window)
+    assert data["won_priced"] == 2 and data["won_amount"] == 201, "окно не пустое — тест ни о чём"
+    assert data["avg_check"] == 101, "100,5 округлилось к чётному вниз"
+    assert data["months"][0]["avg_check"] == 101, "средний чек месяца округлён иначе, чем итог"
+
+
+def test_money_is_divided_without_float():
+    """Половина уходит ОТ нуля, и деление идёт целыми."""
+    assert report_service.divide_money(201, 2) == 101  # round() дал бы 100
+    assert report_service.divide_money(203, 2) == 102  # сюда round() попадает случайно
+    assert report_service.divide_money(200, 2) == 100
+    assert report_service.divide_money(-201, 2) == -101, "знак поменял правило округления"
+    assert report_service.divide_money(1, 3) == 0
+    assert report_service.divide_money(2, 3) == 1

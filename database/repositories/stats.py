@@ -53,20 +53,52 @@ def unique_viewers_in_range(db: Session, start: datetime, end: datetime) -> int:
     )
 
 
-def views_by_day(db: Session, days: int = 7) -> list[dict]:
-    """Просмотры по дням за последние `days` дней (включая сегодня)."""
-    now = now_utc()
-    start = (now - timedelta(days=days - 1)).replace(hour=0, minute=0, second=0, microsecond=0)
+def views_window(days: int = 7, now: datetime | None = None) -> tuple[datetime, datetime]:
+    """Окно графика просмотров: `days` календарных суток, последние — сегодняшние.
+
+    Одно окно на плитку и на столбики под ней. Плитка считала скользящие 168
+    часов, график — семь календарных суток, и два числа об одном и том же на
+    одном экране не сходились: столбик за седьмой день назад показывал весь
+    день, а плитка брала от него только хвост после текущего часа.
+
+    Правильным считаем календарь: столбики человек проверяет глазами и
+    складывает, а скользящее окно проверить нечем. Поэтому плитка приводится к
+    графику, а не наоборот.
+
+    Границы — полуоткрытый интервал [начало; начало+дни), как у периодов
+    отчётов: конец окна — полночь ПОСЛЕ сегодняшнего дня, иначе просмотр
+    сегодняшнего вечера выпал бы из плитки, оставшись в столбике.
+
+    `now` параметром, а не только из `now_utc()`: окно считается один раз и
+    раздаётся всем запросам сводки. Посчитанное дважды, оно разъехалось бы на
+    полуночи — редко, зато ровно тем расхождением, ради которого всё это и
+    писалось.
+    """
+    moment = now or now_utc()
+    start = (moment - timedelta(days=days - 1)).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    return start, start + timedelta(days=days)
+
+
+def views_by_day(db: Session, start: datetime, end: datetime) -> list[dict]:
+    """Просмотры по суткам окна [start; end).
+
+    Пустые дни остаются в списке: провал видно только тогда, когда он нарисован
+    нулём, а не пропущен.
+    """
     rows = db.execute(
         select(func.date(ShareView.viewed_at), func.count())
-        .where(ShareView.viewed_at >= start)
+        .where(ShareView.viewed_at >= start, ShareView.viewed_at < end)
         .group_by(func.date(ShareView.viewed_at))
     ).all()
-    counts = {str(day): count for day, count in rows}
+    counts = {str(day): int(count or 0) for day, count in rows}
     result = []
-    for offset in range(days):
-        day = start + timedelta(days=offset)
-        result.append({"date": day.strftime("%Y-%m-%d"), "count": counts.get(day.strftime("%Y-%m-%d"), 0)})
+    day = start
+    while day < end:
+        label = day.strftime("%Y-%m-%d")
+        result.append({"date": label, "count": counts.get(label, 0)})
+        day += timedelta(days=1)
     return result
 
 
