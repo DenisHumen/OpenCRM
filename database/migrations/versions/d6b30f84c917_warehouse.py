@@ -14,7 +14,16 @@ Create Date: 2026-08-06 10:00:00.000000
 from typing import Sequence, Union
 
 from alembic import op
+# У TEXT значение по умолчанию записано выражением — `DEFAULT ('')`, не `DEFAULT ''`:
+# обычную форму MySQL отвергает (ошибка 1101), и миграция обрывается на середине.
+# Скобки понимают оба движка. Подробности — database/types.text_default.
+# Сравнение строк в MySQL по умолчанию регистронезависимо. Для колонок ниже
+# это меняет смысл: `UNIQUE` начинает считать одним значением то, что в
+# SQLite было разным, а поиск по токену находит чужую запись, отличающуюся
+# регистром. Поэтому у них сравнение побайтное — как было и остаётся в
+# SQLite. Разбор — database/types.ExactString.
 import sqlalchemy as sa
+from sqlalchemy.dialects import mysql
 
 
 revision: str = 'd6b30f84c917'
@@ -29,7 +38,7 @@ def upgrade() -> None:
         sa.Column('id', sa.Integer(), nullable=False),
         # Артикул необязателен, поэтому nullable: NULL в уникальном индексе не
         # конфликтует, а пустая строка конфликтовала бы со второй такой же.
-        sa.Column('sku', sa.String(length=64), nullable=True),
+        sa.Column('sku', sa.String(length=64).with_variant(mysql.VARCHAR(64, collation="utf8mb4_bin"), "mysql"), nullable=True),
         sa.Column('name', sa.String(length=200), nullable=False),
         sa.Column('unit', sa.String(length=16), nullable=False, server_default='pcs'),
         # Деньги — целые в минимальных единицах; NULL значит «цену не назвали».
@@ -38,7 +47,7 @@ def upgrade() -> None:
         sa.Column('is_service', sa.Boolean(), nullable=False, server_default='0'),
         # Порог предупреждения — в тех же тысячных долях, что и количество.
         sa.Column('min_stock_milli', sa.Integer(), nullable=True),
-        sa.Column('note', sa.Text(), nullable=False, server_default=''),
+        sa.Column('note', sa.Text(), nullable=False, server_default=sa.text("('')")),
         sa.Column('created_at', sa.DateTime(), server_default=sa.func.now(), nullable=False),
         sa.Column('updated_at', sa.DateTime(), server_default=sa.func.now(), nullable=False),
         sa.Column('deleted_at', sa.DateTime(), nullable=True),
@@ -58,7 +67,7 @@ def upgrade() -> None:
         sa.Column('kind', sa.String(length=16), nullable=False),
         sa.Column('deal_id', sa.Integer(), nullable=True),
         sa.Column('cost_minor', sa.Integer(), nullable=True),
-        sa.Column('comment', sa.Text(), nullable=False, server_default=''),
+        sa.Column('comment', sa.Text(), nullable=False, server_default=sa.text("('')")),
         sa.Column('happened_at', sa.DateTime(), server_default=sa.func.now(), nullable=False),
         sa.Column('created_at', sa.DateTime(), server_default=sa.func.now(), nullable=False),
         sa.Column('author_id', sa.Integer(), nullable=True),

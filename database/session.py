@@ -21,6 +21,33 @@ def _make_engine():
         if db_path and db_path != ":memory:":
             Path(db_path).parent.mkdir(parents=True, exist_ok=True)
     engine = create_engine(url, **kwargs)
+
+    if url.startswith("mysql"):
+        @event.listens_for(engine, "connect")
+        def _prepare_mysql(dbapi_connection, _record):
+            """Часовой пояс сессии — UTC. Это не настройка, а условие правильности.
+
+            Весь проект хранит **наивный UTC**: `now_utc()` пишет время без
+            смещения, и колонки объявлены `DateTime` без часового пояса. В
+            SQLite `func.now()` (то есть `CURRENT_TIMESTAMP`) тоже даёт UTC, и
+            всё сходится само.
+
+            В MySQL `NOW()` возвращает **местное время сессии**. Оставь мы это
+            как есть — часть времён легла бы UTC (те, что пишет Python), часть
+            местным (те, что ставит `server_default=func.now()` и `onupdate`), и
+            **различить их постфактум было бы нечем**: в колонке лежит голое
+            число без пояса. Journал действий, время движения склада, отметка
+            «когда клиент позвонил» — всё это разъехалось бы на величину
+            смещения и молча.
+
+            Одна строка на соединение закрывает разом все двадцать пять колонок
+            с `func.now()` и все `onupdate` — переписывать каждую было бы и
+            дороже, и ненадёжнее: забытая колонка не проявляется ничем.
+            """
+            cursor = dbapi_connection.cursor()
+            cursor.execute("SET time_zone = '+00:00'")
+            cursor.close()
+
     if url.startswith("sqlite"):
         @event.listens_for(engine, "connect")
         def _prepare_sqlite(dbapi_connection, _record):

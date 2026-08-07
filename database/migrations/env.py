@@ -5,6 +5,7 @@ from sqlalchemy import engine_from_config, pool
 
 from config.settings import get_settings
 from database import models  # noqa: F401 — регистрирует таблицы в metadata
+from database import types  # noqa: F401 — правила переносимости типов (DATETIME(6) в MySQL)
 from database.session import Base
 
 config = context.config

@@ -1,6 +1,8 @@
 from datetime import datetime
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, String
+
+from database.types import ExactString
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 
@@ -14,7 +16,9 @@ class ShareLink(Base):
     board_id: Mapped[int] = mapped_column(
         ForeignKey("boards.id", ondelete="CASCADE"), index=True
     )
-    token: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    # Побайтно: по токену пускают на витрину, а регистронезависимое сравнение
+    # приравняло бы токены, отличающиеся регистром, — и удешевило перебор.
+    token: Mapped[str] = mapped_column(ExactString(64), unique=True, index=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     pin_hash: Mapped[str | None] = mapped_column(String(128), nullable=True)

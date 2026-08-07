@@ -29,6 +29,9 @@ Create Date: 2026-08-07 10:00:00.000000
 from typing import Sequence, Union
 
 from alembic import op
+# У TEXT значение по умолчанию записано выражением — `DEFAULT ('')`, не `DEFAULT ''`:
+# обычную форму MySQL отвергает (ошибка 1101), и миграция обрывается на середине.
+# Скобки понимают оба движка. Подробности — database/types.text_default.
 import sqlalchemy as sa
 
 
@@ -45,9 +48,9 @@ def upgrade() -> None:
         sa.Column("id", sa.Integer(), nullable=False),
         sa.Column("name", sa.String(length=200), nullable=False),
         sa.Column("code", sa.String(length=32), nullable=True),
-        sa.Column("address", sa.Text(), server_default="", nullable=False),
+        sa.Column("address", sa.Text(), server_default=sa.text("('')"), nullable=False),
         sa.Column("is_default", sa.Boolean(), server_default="0", nullable=False),
-        sa.Column("note", sa.Text(), server_default="", nullable=False),
+        sa.Column("note", sa.Text(), server_default=sa.text("('')"), nullable=False),
         sa.Column("created_at", sa.DateTime(), server_default=sa.func.now(), nullable=False),
         sa.Column("updated_at", sa.DateTime(), server_default=sa.func.now(), nullable=False),
         sa.Column("deleted_at", sa.DateTime(), nullable=True),
@@ -62,7 +65,7 @@ def upgrade() -> None:
         sa.Column("id", sa.Integer(), nullable=False),
         sa.Column("from_warehouse_id", sa.Integer(), nullable=False),
         sa.Column("to_warehouse_id", sa.Integer(), nullable=False),
-        sa.Column("comment", sa.Text(), server_default="", nullable=False),
+        sa.Column("comment", sa.Text(), server_default=sa.text("('')"), nullable=False),
         sa.Column("reverses_id", sa.Integer(), nullable=True),
         sa.Column("happened_at", sa.DateTime(), server_default=sa.func.now(), nullable=False),
         sa.Column("created_at", sa.DateTime(), server_default=sa.func.now(), nullable=False),

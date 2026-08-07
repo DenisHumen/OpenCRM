@@ -11,6 +11,8 @@
 from datetime import datetime
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text
+
+from database.types import ExactString, text_default
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 
@@ -20,7 +22,16 @@ from database.session import Base
 # Дробные килограммы и метры существуют, а float в учёте недопустим — 0.1 + 0.2
 # в нём не равно 0.3, и склад начинает «терять» сотые доли на каждой операции.
 # Три знака после запятой закрывают граммы и миллилитры; больше в рознице не
-# встречается, а Integer в SQLite/MySQL — 8 байт, переполнения не будет.
+# встречается.
+#
+# Про запас прочности. В SQLite INTEGER — до 8 байт, и упереться в него нельзя.
+# В MySQL INT — **4 байта**, то есть до 2 147 483 647, а в тысячных долях это
+# всего 2 147 483 единицы. Для штук, килограммов и метров розницы запас
+# громадный, но это предел, а не его отсутствие: сумма движений по одному
+# товару за годы работы складывается в BIGINT (`SUM` в MySQL расширяется сам),
+# а вот отдельное движение больше двух миллионов единиц туда не влезет.
+# Понадобится — колонку расширяют до BigInteger; сейчас это было бы лишним
+# весом в каждой строке самой большой таблицы.
 QUANTITY_SCALE = 1000
 
 # Единицы измерения — стабильные ключи, подписи живут в i18n фронтенда.
@@ -66,10 +77,10 @@ class Warehouse(Base):
     code: Mapped[str | None] = mapped_column(
         String(32), nullable=True, unique=True, index=True
     )
-    address: Mapped[str] = mapped_column(Text, default="", server_default="")
+    address: Mapped[str] = mapped_column(Text, default="", server_default=text_default())
     # Куда попадает приход, если склад не выбрали.
     is_default: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
-    note: Mapped[str] = mapped_column(Text, default="", server_default="")
+    note: Mapped[str] = mapped_column(Text, default="", server_default=text_default())
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()
@@ -110,7 +121,7 @@ class StockTransfer(Base):
     to_warehouse_id: Mapped[int] = mapped_column(
         ForeignKey("warehouses.id", ondelete="RESTRICT"), index=True
     )
-    comment: Mapped[str] = mapped_column(Text, default="", server_default="")
+    comment: Mapped[str] = mapped_column(Text, default="", server_default=text_default())
     # Отмена переезда — это обратный переезд, а не удаление строк: склад обязан
     # помнить, что уезжало и что вернулось. Здесь лежит ссылка на тот переезд,
     # который этот отменяет; у обычного переезда NULL.
@@ -134,7 +145,12 @@ class Product(Base):
     # строка: два товара без артикула — норма, а две пустые строки нарушили бы
     # уникальность. NULL в уникальном индексе не конфликтует ни в SQLite, ни в
     # MySQL — это ровно то поведение, которое здесь нужно.
-    sku: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True, index=True)
+    # Побайтно: артикул — опознавательный знак товара, и «ABC» с «abc» в
+    # SQLite всегда были разными. Регистронезависимое сравнение MySQL слило
+    # бы их в один — и перенос базы упал бы на дубле там, где дубля нет.
+    sku: Mapped[str | None] = mapped_column(
+        ExactString(64), nullable=True, unique=True, index=True
+    )
     name: Mapped[str] = mapped_column(String(200), index=True)
     unit: Mapped[str] = mapped_column(String(16), default="pcs", server_default="pcs")
     # Деньги — целые в минорных единицах (копейки/центы). NULL — «цену не
@@ -147,7 +163,7 @@ class Product(Base):
     # Порог предупреждения, в тех же тысячных. NULL — «не следим»; 0 — осмысленное
     # «предупреждай, как только уйдёт в минус».
     min_stock_milli: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    note: Mapped[str] = mapped_column(Text, default="", server_default="")
+    note: Mapped[str] = mapped_column(Text, default="", server_default=text_default())
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()
@@ -264,7 +280,7 @@ class StockMove(Base):
     # не ссылка на products.cost_minor: закупочная цена меняется, а себестоимость
     # прошлой заявки — нет. NULL — «не знали», это не ноль.
     cost_minor: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    comment: Mapped[str] = mapped_column(Text, default="", server_default="")
+    comment: Mapped[str] = mapped_column(Text, default="", server_default=text_default())
     # Когда операция случилась на самом деле (склад часто заполняют вечером за
     # весь день) — и отдельно когда о ней узнала база. Расхождение этих двух дат
     # и есть повод не доверять «остатку на сейчас» задним числом.

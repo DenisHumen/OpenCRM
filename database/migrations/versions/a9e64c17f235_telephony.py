@@ -96,8 +96,16 @@ def _backfill_client_phone_norm() -> None:
     from core.utils import normalize_phone
 
     bind = op.get_bind()
+    # `key` — зарезервированное слово в MySQL, и голым текстом этот запрос там
+    # падает на разборе (ERROR 1064). Собираем через конструкции SQLAlchemy: она
+    # закавычит имя так, как принято в текущем движке.
+    site_settings = sa.table(
+        "site_settings", sa.column("key", sa.String), sa.column("value", sa.String)
+    )
     code = bind.execute(
-        sa.text("SELECT value FROM site_settings WHERE key = 'default_country_code'")
+        sa.select(site_settings.c.value).where(
+            site_settings.c.key == "default_country_code"
+        )
     ).scalar() or ''
     rows = bind.execute(sa.text("SELECT id, phone FROM clients WHERE phone <> ''")).fetchall()
     for client_id, phone in rows:
