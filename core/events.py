@@ -27,6 +27,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from core import modules
 from core.services import modules_service
 from database.models import User
 from database.models.audit import SOURCES, SOURCE_MANUAL
@@ -119,6 +120,22 @@ def subscribe(
     module: str | None = None,
     order: int = DEFAULT_ORDER,
 ) -> Subscriber:
+    # Ключ блока сверяем с реестром здесь, в момент подписки, а не в `emit`.
+    # `is_enabled` про незнакомый ключ отвечает «выключен», и опечатка
+    # (`warehous`, `client`) от честно выключенного блока ничем не отличается:
+    # подписчик просто никогда не зовётся, событие проходит мимо, и никакой
+    # ошибки при этом нет. Списание по акту тихо перестало бы происходить, а
+    # искать причину пришлось бы по остаткам склада.
+    #
+    # Здесь же отказ приходит один раз и громко: подписки загружаются при первом
+    # событии (`_load_subscriptions`), то есть приложение падает на старте, а не
+    # ведёт себя странно месяцами.
+    if module is not None and modules.get(module) is None:
+        raise ValueError(
+            f"Unknown module {module!r} in subscription to {event!r} "
+            f"(реестр блоков — core/modules.py)"
+        )
+
     sub = Subscriber(
         event=event,
         handler=handler,
@@ -243,9 +260,28 @@ def emit(
         if sub.is_participant:
             # Ошибку не ловим намеренно: она обязана дойти до вызывающего и
             # отменить всю операцию целиком.
-            sub.handler(event)
+            _run_participant(sub, event)
         else:
             _run_observer(sub, event)
+
+
+#: Метка на исключении: «это отказ участника, глотать нельзя». Ставится на самом
+#: объекте исключения, а не на глобальном флаге, потому что должна пережить
+#: подъём по стеку через чужие `except` и не зависеть от того, сколько событий
+#: поднято одновременно и в скольких потоках.
+_REFUSAL = "opencrm_participant_refusal"
+
+
+def _run_participant(sub: Subscriber, event: Event) -> None:
+    """Участник работает без точки отката и его отказ помечается как отказ.
+
+    Метка нужна не здесь, а этажом выше — в `_run_observer`. Разбор там.
+    """
+    try:
+        sub.handler(event)
+    except Exception as refusal:
+        setattr(refusal, _REFUSAL, True)
+        raise
 
 
 def _run_observer(sub: Subscriber, event: Event) -> None:
@@ -257,14 +293,29 @@ def _run_observer(sub: Subscriber, event: Event) -> None:
     сессию, и основная операция не смогла бы завершиться — то есть наблюдатель
     отменил бы то, что отменять не имеет права. Точка отката снимает оба
     случая: откатывается ровно то, что успел сделать он.
+
+    **Проглатывается падение самого наблюдателя, а не чей угодно отказ.** Пусть
+    наблюдатель поднял внутри себя второе событие — так делают, когда запись в
+    ленте сама по себе является поводом для чего-то ещё. У второго события свои
+    участники, и участник имеет право отменить операцию: не списалось — акт не
+    провёлся. Поймай мы этот отказ здесь — обещание «участник может отменить»
+    держалось бы только на первом уровне, а на втором операция состоялась бы
+    вопреки прямому «нет», и в журнале не осталось бы даже строки о том, что
+    кто-то возражал.
+
+    Свои записи наблюдателя при этом всё равно откатываются: он их не доделал.
+    Дальше отказ едет вверх и отменяет всё целиком — как отменил бы участник
+    первого уровня.
     """
     savepoint = event.db.begin_nested()
     try:
         sub.handler(event)
         savepoint.commit()
-    except Exception:
+    except Exception as failure:
         if savepoint.is_active:
             savepoint.rollback()
+        if getattr(failure, _REFUSAL, False):
+            raise
         # exception, а не warning: наблюдатель молчаливо потерянный — это то,
         # чего никто не заметит до разговора с клиентом.
         logger.exception("subscriber %s failed on %s", sub.name, event.name)
