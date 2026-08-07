@@ -352,3 +352,38 @@ def test_several_workers_on_sqlite_are_refused_not_attempted():
     assert "OPENCRM_WORKERS" in entrypoint and "sqlite*" in entrypoint, (
         "entrypoint запускает несколько процессов, не спросив про базу"
     )
+
+
+def test_propavshiy_config_ne_podnimaet_prod_v_dev_rezhime():
+    """`config/.env` подключён с `required: false` — и это осознанно: без него
+    первый запуск до установки не поднялся бы вовсе.
+
+    Оборотная сторона: пропади файл (снесли, сломалось монтирование, перепутали
+    путь), и compose поднимет контейнер молча, а приложение возьмёт значения по
+    умолчанию — dev-режим и всем известный ключ подписи cookie. Снаружи это
+    выглядит как работающий сайт, а PIN-доступ к доскам подделывается ключом
+    из репозитория.
+
+    Развёртывание в dev-режиме не бывает законным: образ собирают, чтобы им
+    пользовались, а не чтобы разрабатывать внутри него.
+    """
+    from config.settings import Settings
+
+    lost = Settings(deployed=True, env="dev")
+    assert any("config/.env" in problem for problem in lost.config_errors()), lost.config_errors()
+
+    # На ноутбуке тот же dev-режим — норма, и мешать ему нельзя.
+    laptop = Settings(deployed=False, env="dev")
+    assert laptop.config_errors() == []
+
+
+def test_obraz_pomechen_kak_razvyortyvanie():
+    """Флаг зашит в образ, поэтому снаружи его не потерять.
+
+    Сторож: убрать строку из Dockerfile легко — выглядит она как лишняя
+    переменная, — а без неё проверка выше перестанет срабатывать молча.
+    """
+    dockerfile = (ROOT / "docker" / "Dockerfile").read_text(encoding="utf-8")
+    assert "ENV OPENCRM_DEPLOYED=1" in dockerfile, "образ перестал помечаться как развёртывание"
+    # Этап тестов флаг снимает: набор развёртыванием не является.
+    assert "ENV OPENCRM_DEPLOYED=0" in dockerfile

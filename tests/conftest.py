@@ -20,6 +20,11 @@ os.environ.update(
         "OPENCRM_ROOT_EMAIL": "root@test.local",
         "OPENCRM_ROOT_PASSWORD": "root-initial-pw",
         "OPENCRM_IP_HASH_SALT": "test-salt",
+        # Тесты — не развёртывание. Флаг зашит в образ (`OPENCRM_DEPLOYED=1`),
+        # а этап `tests` наследует его от этапа `app`: без явного снятия весь
+        # набор падал бы в контейнере на «конфиг не доехал» — и падал бы
+        # именно там, где его гоняет автообновление перед деплоем.
+        "OPENCRM_DEPLOYED": "0",
     }
 )
 
