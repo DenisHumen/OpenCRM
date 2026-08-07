@@ -1,5 +1,9 @@
 # OpenCRM — nginx с TLS. Подставляется, когда сертификат для домена уже выпущен.
 
+# Формат журнала доступа: на уровне http, потому что `log_format` и `map` в
+# server-блоке не живут. По этим строкам мониторинг считает доли ответов.
+include /opencrm/templates/logging.inc;
+
 server {
     listen 80;
     server_name ${OPENCRM_DOMAIN};

@@ -1,0 +1,21 @@
+# Дашборды подкладываются файлами из репозитория.
+#
+# `allowUiUpdates: false` — не строгость ради строгости: правка, сделанная в
+# интерфейсе, живёт только в базе Grafana. Она не попадает в git, не переезжает
+# на другой сервер и исчезает вместе с каталогом состояния. Пусть лучше правка
+# требует коммита, чем однажды окажется, что единственный полезный дашборд
+# существовал в одном экземпляре на одной машине.
+
+apiVersion: 1
+
+providers:
+  - name: opencrm
+    orgId: 1
+    folder: OpenCRM
+    type: file
+    disableDeletion: false
+    allowUiUpdates: false
+    updateIntervalSeconds: 60
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

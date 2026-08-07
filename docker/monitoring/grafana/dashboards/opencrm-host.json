@@ -1,0 +1,209 @@
+{
+  "uid": "opencrm-host",
+  "title": "OpenCRM — сервер и контейнеры",
+  "description": "Процессор, память, подкачка, место на диске; состояние каждого контейнера, его аппетит и перезапуски.",
+  "tags": ["opencrm"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "1m",
+  "time": {"from": "now-6h", "to": "now"},
+  "editable": false,
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Свободно на диске",
+      "datasource": {"type": "prometheus", "uid": "opencrm-prometheus"},
+      "gridPos": {"h": 5, "w": 6, "x": 0, "y": 0},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "yellow", "value": 0.1}, {"color": "green", "value": 0.2}]}
+        },
+        "overrides": []
+      },
+      "options": {"colorMode": "background", "graphMode": "area", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "node_filesystem_avail_bytes{mountpoint=\"/\", fstype!~\"tmpfs|overlay|squashfs\"} / node_filesystem_size_bytes{mountpoint=\"/\", fstype!~\"tmpfs|overlay|squashfs\"}",
+          "legendFormat": "свободно"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Свободная память",
+      "datasource": {"type": "prometheus", "uid": "opencrm-prometheus"},
+      "gridPos": {"h": 5, "w": 6, "x": 6, "y": 0},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "yellow", "value": 0.1}, {"color": "green", "value": 0.25}]}
+        },
+        "overrides": []
+      },
+      "options": {"colorMode": "background", "graphMode": "area", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}},
+      "targets": [
+        {"refId": "A", "expr": "node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes", "legendFormat": "доступно"}
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Мониторинг съедает",
+      "description": "Сумма памяти контейнеров мониторинга. Ради этой цифры и стоят потолки mem_limit в docker-compose.yml: наблюдение не имеет права стать самой тяжёлой частью сервера.",
+      "datasource": {"type": "prometheus", "uid": "opencrm-prometheus"},
+      "gridPos": {"h": 5, "w": 6, "x": 12, "y": 0},
+      "fieldConfig": {"defaults": {"unit": "bytes"}, "overrides": []},
+      "options": {"colorMode": "none", "graphMode": "area", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(opencrm_container_memory_bytes{service=~\"prometheus|grafana|alertmanager|node-exporter|containers|blackbox|loki|promtail\"})",
+          "legendFormat": "мониторинг"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Приложение и nginx съедают",
+      "datasource": {"type": "prometheus", "uid": "opencrm-prometheus"},
+      "gridPos": {"h": 5, "w": 6, "x": 18, "y": 0},
+      "fieldConfig": {"defaults": {"unit": "bytes"}, "overrides": []},
+      "options": {"colorMode": "none", "graphMode": "area", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(opencrm_container_memory_bytes{service=~\"app|nginx|db|certbot\"})",
+          "legendFormat": "сайт"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Процессор хоста",
+      "datasource": {"type": "prometheus", "uid": "opencrm-prometheus"},
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 5},
+      "fieldConfig": {"defaults": {"unit": "percentunit", "min": 0, "custom": {"fillOpacity": 10, "lineWidth": 1}}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "single", "sort": "none"}},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "1 - avg(rate(node_cpu_seconds_total{mode=\"idle\"}[5m]))",
+          "legendFormat": "занято"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Память и подкачка",
+      "datasource": {"type": "prometheus", "uid": "opencrm-prometheus"},
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 5},
+      "fieldConfig": {"defaults": {"unit": "bytes", "min": 0, "custom": {"fillOpacity": 10, "lineWidth": 1}}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "none"}},
+      "targets": [
+        {"refId": "A", "expr": "node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes", "legendFormat": "занято"},
+        {"refId": "B", "expr": "node_memory_MemTotal_bytes", "legendFormat": "всего"},
+        {"refId": "C", "expr": "node_memory_SwapTotal_bytes - node_memory_SwapFree_bytes", "legendFormat": "в подкачке"}
+      ]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Место на диске",
+      "datasource": {"type": "prometheus", "uid": "opencrm-prometheus"},
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 5},
+      "fieldConfig": {"defaults": {"unit": "bytes", "min": 0, "custom": {"fillOpacity": 10, "lineWidth": 1}}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "none"}},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "node_filesystem_avail_bytes{mountpoint=\"/\", fstype!~\"tmpfs|overlay|squashfs\"}",
+          "legendFormat": "свободно"
+        },
+        {"refId": "B", "expr": "max(opencrm_storage_bytes)", "legendFormat": "storage сайта"},
+        {"refId": "C", "expr": "max(opencrm_backup_last_size_bytes)", "legendFormat": "последняя копия"}
+      ]
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Память по контейнерам",
+      "datasource": {"type": "prometheus", "uid": "opencrm-prometheus"},
+      "gridPos": {"h": 9, "w": 12, "x": 0, "y": 13},
+      "fieldConfig": {"defaults": {"unit": "bytes", "min": 0, "custom": {"fillOpacity": 20, "lineWidth": 1, "stacking": {"mode": "normal", "group": "A"}}}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "right", "showLegend": true, "calcs": ["lastNotNull"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "opencrm_container_memory_bytes",
+          "legendFormat": "{{service}}"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Процессор по контейнерам",
+      "datasource": {"type": "prometheus", "uid": "opencrm-prometheus"},
+      "gridPos": {"h": 9, "w": 12, "x": 12, "y": 13},
+      "fieldConfig": {"defaults": {"unit": "percentunit", "min": 0, "custom": {"fillOpacity": 10, "lineWidth": 1}}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "right", "showLegend": true, "calcs": ["lastNotNull"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "rate(opencrm_container_cpu_seconds_total[5m])",
+          "legendFormat": "{{service}}"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Перезапуски контейнеров за 15 минут",
+      "description": "Цикл перезапуска снаружи выглядит как работающий сайт: контейнер поднимается, отвечает несколько секунд и падает снова.",
+      "datasource": {"type": "prometheus", "uid": "opencrm-prometheus"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 22},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {"fillOpacity": 0, "lineWidth": 2, "thresholdsStyle": {"mode": "line"}},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 3}]}
+        },
+        "overrides": []
+      },
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "increase(opencrm_container_restarts_total[15m])",
+          "legendFormat": "{{service}}"
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "type": "table",
+      "title": "Кого Prometheus видит",
+      "description": "Ноль у цели из профиля monitoring-logs означает, что профиль выключен, а не что что-то сломалось.",
+      "datasource": {"type": "prometheus", "uid": "opencrm-prometheus"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 22},
+      "fieldConfig": {"defaults": {}, "overrides": []},
+      "options": {"showHeader": true},
+      "targets": [
+        {"refId": "A", "expr": "up", "instant": true, "format": "table"}
+      ]
+    }
+  ]
+}

@@ -8,6 +8,8 @@ name: opencrm
 #   ~/opencrm/storage/      медиа досок, файлы клиентов, брендинг, аватары
 #   ~/opencrm/letsencrypt/  сертификаты и приватные ключи
 #   ~/opencrm/acme/         webroot для http-01-проверки Let's Encrypt
+#   ~/opencrm/updates/      что развёрнуто и история обновлений (пишет deploy/)
+#   ~/opencrm/monitoring/   ряды Prometheus, база Grafana, чанки Loki
 #
 # Именованные тома Docker для этого не годятся: они лежат в /var/lib/docker,
 # их не видно обычными средствами и легко снести вместе с `docker system prune`.
@@ -25,6 +27,15 @@ x-logging: &logging
   options:
     max-size: "10m"
     max-file: "3"
+
+# Общее для всех служб мониторинга: профиль, перезапуск и та же ротация логов.
+# Вынесено якорем, чтобы забыть его у новой службы было негде: пропущенный
+# профиль поднял бы лишний контейнер там, где мониторинг выключен, а
+# пропущенная ротация вернула бы растущий без предела json-лог.
+x-monitoring: &monitoring_defaults
+  profiles: ["monitoring"]
+  restart: unless-stopped
+  logging: *logging
 
 services:
   app:
@@ -60,6 +71,11 @@ services:
       # не делала бы. Меняют его, когда впереди появляется ещё один прокси
       # (Cloudflare, балансировщик) — иначе все посетители сольются в один адрес.
       OPENCRM_TRUSTED_PROXY_HOPS: "${OPENCRM_TRUSTED_PROXY_HOPS:-1}"
+      # Где лежит журнал обновлений — его читает /api/v1/metrics, чтобы сказать
+      # мониторингу, чем кончился последний деплой. Значение совпадает с точкой
+      # монтирования ниже; переменная здесь ради того, чтобы связь между двумя
+      # строками была видна, а не угадывалась.
+      OPENCRM_UPDATES_DIR: /app/updates
     # Каталоги в домашней папке принадлежат хозяину машины, а не root'у, поэтому
     # процесс в контейнере должен работать под его же UID — иначе миграции
     # упрутся в «permission denied» на первом же запуске.
@@ -67,6 +83,16 @@ services:
     volumes:
       - ${OPENCRM_HOME:-${HOME}/opencrm}/data:/app/data
       - ${OPENCRM_HOME:-${HOME}/opencrm}/storage:/app/storage
+      # Журнал обновлений — строго на чтение. Пишет в него демон обновления с
+      # хоста (deploy/journal.py), приложение только смотрит, чем кончился
+      # последний деплой, и отдаёт это мониторингу.
+      #
+      # Каталог обязан существовать ДО первого `up`. Docker создаёт недостающую
+      # точку монтирования сам и делает это от root — а демон обновления
+      # работает от обычного пользователя и после этого не сможет туда писать.
+      # Поэтому `updates` создаётся установщиком (`create_dirs` в opencrm.sh)
+      # наравне с data и storage.
+      - ${OPENCRM_HOME:-${HOME}/opencrm}/updates:/app/updates:ro
     expose: ["8000"]
     # На SQLite службы `db` в стеке нет вовсе (она под профилем), поэтому
     # `required: false`: без него compose отказался бы поднимать приложение,
@@ -217,3 +243,244 @@ services:
     depends_on: [nginx]
     restart: unless-stopped
     logging: *logging
+
+  # ==========================================================================
+  # Мониторинг
+  # ==========================================================================
+  #
+  # Устроен так же, как MySQL: **под профилем**. Выключенный блок — это не
+  # остановленные контейнеры, а контейнеры, которых в стеке нет вовсе. Иначе
+  # `compose up` тянул бы образы и поднимал полдюжины служб на машине, где
+  # памяти два гигабайта и половина из них нужна сайту.
+  #
+  # Профилей два, и деление между ними — по цене:
+  #
+  #   monitoring       Prometheus, Alertmanager, node-exporter, cAdvisor,
+  #                    blackbox, Grafana. Отсюда все оповещения, кроме одного.
+  #   monitoring-logs  Loki и promtail: поиск по логам и доли ответов 4xx/5xx
+  #                    (их считает promtail по журналу nginx — больше их взять
+  #                    неоткуда, приложение 502 не видит).
+  #
+  # Выключить второй — потерять поиск по логам и правило про долю 5xx, сохранив
+  # всё остальное. Замеры, из-за которых деление появилось, — в
+  # docs/08-deployment.md.
+  #
+  # **Наружу не публикуется ни один порт.** Grafana доступна через тот же nginx
+  # по пути /monitoring/ и под паролем; остальные службы разговаривают только
+  # внутри сети compose. Панель мониторинга без пароля — это карта всей системы,
+  # выданная любому.
+  #
+  # `mem_limit` у каждой службы стоит не от жадности: без потолка Prometheus на
+  # большом запросе или Loki на взбесившемся источнике выбирают всю память, и
+  # OOM-killer уносит НЕ их, а самый крупный процесс — то есть сайт. Пусть лучше
+  # упадёт наблюдатель, и об этом придёт оповещение о циклическом перезапуске.
+
+  prometheus:
+    <<: *monitoring_defaults
+    image: prom/prometheus:v3.1.0
+    # Конфиг рождается при старте: в него подставляется адрес, по которому
+    # сайт проверяется снаружи. Разбор — в docker/monitoring/prometheus/entrypoint.sh.
+    entrypoint: ["/bin/sh", "/opencrm/entrypoint.sh"]
+    command:
+      # Потолок хранения, и он обязателен. Без него ряды копятся, пока не
+      # кончится диск, — и первым, что сломает сервер, окажется мониторинг
+      # диска. Два ограничения вместе: по времени и по размеру, срабатывает
+      # то, которое наступит раньше.
+      - --storage.tsdb.retention.time=15d
+      - --storage.tsdb.retention.size=512MB
+      - --storage.tsdb.path=/prometheus
+      - --web.listen-address=:9090
+      # Перезагрузка конфига по HTTP выключена. Отдельным флагом её не пишем:
+      # Prometheus разбирает булевы флаги как `--no-имя`, а привычное
+      # `--web.enable-lifecycle=false` он отвергает с «unexpected false» и уходит
+      # в цикл перезапуска (поймано на стенде). По умолчанию она и так выключена.
+      - --no-web.enable-lifecycle
+    environment:
+      OPENCRM_MONITOR_URL: ${OPENCRM_MONITOR_URL:-}
+    user: "${OPENCRM_UID:-1000}:${OPENCRM_GID:-1000}"
+    volumes:
+      - ./monitoring/prometheus/entrypoint.sh:/opencrm/entrypoint.sh:ro
+      - ./monitoring/prometheus/prometheus.yml.template:/etc/prometheus/prometheus.yml.template:ro
+      - ./monitoring/prometheus/rules:/etc/prometheus/rules:ro
+      - ${OPENCRM_HOME:-${HOME}/opencrm}/monitoring/prometheus:/prometheus
+    expose: ["9090"]
+    mem_limit: 320m
+
+  alertmanager:
+    <<: *monitoring_defaults
+    image: prom/alertmanager:v0.28.0
+    entrypoint: ["/bin/sh", "/opencrm/entrypoint.sh"]
+    command:
+      - --storage.path=/alertmanager
+      # Хранит только заглушенные и уже отправленные тревоги — трое суток
+      # хватает, чтобы не слать одно и то же после перезапуска.
+      - --data.retention=72h
+      - --web.listen-address=:9093
+    environment:
+      # Токен и чат — из docker/.env (права 600), как пароль MySQL. В
+      # репозитории их нет и быть не может; пустые значения означают «канал не
+      # настроен», и Alertmanager тогда поднимается с конфигом без приёмника,
+      # а не падает в цикл перезапуска.
+      OPENCRM_MONITORING_TELEGRAM_TOKEN: ${OPENCRM_MONITORING_TELEGRAM_TOKEN:-}
+      OPENCRM_MONITORING_TELEGRAM_CHAT: ${OPENCRM_MONITORING_TELEGRAM_CHAT:-}
+      # Свой прокси там, где Telegram заблокирован; на стенде — заглушка,
+      # которой проверяют, что сообщение действительно уходит.
+      OPENCRM_MONITORING_TELEGRAM_API: ${OPENCRM_MONITORING_TELEGRAM_API:-https://api.telegram.org}
+    user: "${OPENCRM_UID:-1000}:${OPENCRM_GID:-1000}"
+    volumes:
+      - ./monitoring/alertmanager/entrypoint.sh:/opencrm/entrypoint.sh:ro
+      - ./monitoring/alertmanager/alertmanager.yml.template:/etc/alertmanager/alertmanager.yml.template:ro
+      - ./monitoring/alertmanager/alertmanager-silent.yml:/etc/alertmanager/alertmanager-silent.yml:ro
+      - ${OPENCRM_HOME:-${HOME}/opencrm}/monitoring/alertmanager:/alertmanager
+    expose: ["9093"]
+    mem_limit: 96m
+
+  # Процессор, память, подкачка и место — глазами хоста, а не контейнера.
+  # Внутри контейнера /proc показывает хостовые числа лишь частично, а свободное
+  # место — вообще про слой образа.
+  node-exporter:
+    <<: *monitoring_defaults
+    image: prom/node-exporter:v1.8.2
+    command:
+      - --path.procfs=/host/proc
+      - --path.sysfs=/host/sys
+      - --path.rootfs=/rootfs
+      # Список собирателей сужен намеренно. Каждый включённый — это десятки
+      # рядов на каждый диск, интерфейс и ядро, то есть место на диске и работа
+      # для Prometheus. Здесь ровно то, по чему написаны правила.
+      - --collector.disable-defaults
+      - --collector.cpu
+      - --collector.meminfo
+      - --collector.vmstat
+      - --collector.loadavg
+      - --collector.filesystem
+      - --collector.diskstats
+      - --collector.netdev
+      - --collector.uname
+      - --collector.os
+      - --collector.filesystem.mount-points-exclude=^/(dev|proc|sys|run|var/lib/docker/.+)($|/)
+    pid: host
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      # Без `rslave`, хотя документация node-exporter его советует. Причина
+      # проверена живьём: там, где корень хоста не помечен shared или slave
+      # (WSL, часть минимальных образов), docker отказывается делать такое
+      # монтирование, и `compose up` завершается ошибкой ЦЕЛИКОМ. А `up` — это
+      # шаг деплоя: мелочь в мониторинге откатила бы исправное обновление сайта.
+      # Взамен теряется только видимость томов, примонтированных ПОСЛЕ старта
+      # контейнера, — по ним правил всё равно нет.
+      - /:/rootfs:ro
+    expose: ["9100"]
+    mem_limit: 64m
+
+  # Кто из контейнеров жив, здоров, сколько ест и как часто перезапускался.
+  #
+  # Здесь был cAdvisor — обычный ответ на этот вопрос. Снят после проверки
+  # живьём: на Docker 29 (хранилище образов переехало на containerd,
+  # `Storage Driver: overlayfs`) он не находит привычную раскладку слоёв и не
+  # заводит обработчик НИ ДЛЯ ОДНОГО контейнера. Снаружи это выглядит хуже
+  # всего, что могло быть: служба поднята, `/metrics` отвечает, цель зелёная — и
+  # ровно один ряд, про машину целиком. Проверено на v0.49.1 и v0.52.1, с
+  # privileged и без; разбор — в docker/monitoring/containers/exporter.py.
+  #
+  # Взамен полсотни строк на стандартной библиотеке поверх API самого docker:
+  # образ вчетверо меньше, памяти меньше вдвое, а счётчик перезапусков берётся
+  # у docker настоящий, а не угадывается по скачкам времени старта.
+  containers:
+    <<: *monitoring_defaults
+    image: python:3.12-alpine
+    command: ["python", "-u", "/opencrm/exporter.py"]
+    volumes:
+      - ./monitoring/containers/exporter.py:/opencrm/exporter.py:ro
+      # Только на чтение. Доступ к сокету всё равно равносилен root на машине —
+      # размен назван в docs/08-deployment.md, — но лишнего права писать у
+      # сборщика метрик быть не должно.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    expose: ["9110"]
+    mem_limit: 64m
+
+  # Проверка сайта снаружи: тот самый случай, когда приложение отвечало на
+  # localhost, а посетитель не получал ничего.
+  blackbox:
+    <<: *monitoring_defaults
+    image: prom/blackbox-exporter:v0.25.0
+    command:
+      - --config.file=/etc/blackbox/blackbox.yml
+      - --web.listen-address=:9115
+    volumes:
+      - ./monitoring/blackbox/blackbox.yml:/etc/blackbox/blackbox.yml:ro
+    expose: ["9115"]
+    mem_limit: 64m
+
+  grafana:
+    <<: *monitoring_defaults
+    image: grafana/grafana:11.5.2
+    environment:
+      # Пароль генерирует `./opencrm.sh` и кладёт в docker/.env (права 600) —
+      # ровно так же, как пароль MySQL. Пустое значение здесь означало бы
+      # общеизвестный admin/admin, поэтому установщик его не оставляет пустым, а
+      # `./opencrm.sh doctor` отдельной строкой проверяет, что он задан.
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${OPENCRM_GRAFANA_PASSWORD:-}
+      # Регистрация и анонимный вход закрыты: панель мониторинга без пароля
+      # выдаёт наружу карту всей системы.
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_AUTH_BASIC_ENABLED: "true"
+      # Grafana живёт на подпути того же домена — своего порта наружу у неё нет.
+      GF_SERVER_ROOT_URL: ${OPENCRM_MONITOR_URL:-http://localhost}/monitoring/
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+      # Собственные тревоги Grafana выключены: оповещения делает Alertmanager по
+      # правилам из docker/monitoring/prometheus/rules. Два механизма тревог
+      # разойдутся в первый же месяц, а память здесь считаная.
+      GF_UNIFIED_ALERTING_ENABLED: "false"
+      GF_ALERTING_ENABLED: "false"
+      # Никаких обращений наружу с боевого сервера: ни телеметрии, ни проверки
+      # обновлений, ни новостей на стартовом экране.
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+      GF_LOG_LEVEL: warn
+    user: "${OPENCRM_UID:-1000}:${OPENCRM_GID:-1000}"
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - ${OPENCRM_HOME:-${HOME}/opencrm}/monitoring/grafana:/var/lib/grafana
+    depends_on:
+      prometheus:
+        condition: service_started
+    expose: ["3000"]
+    mem_limit: 256m
+
+  # --- профиль monitoring-logs: поиск по логам и доли ответов ---------------
+
+  loki:
+    <<: *monitoring_defaults
+    profiles: ["monitoring-logs"]
+    image: grafana/loki:3.4.1
+    command: ["-config.file=/etc/loki/loki.yml"]
+    user: "${OPENCRM_UID:-1000}:${OPENCRM_GID:-1000}"
+    volumes:
+      - ./monitoring/loki/loki.yml:/etc/loki/loki.yml:ro
+      - ${OPENCRM_HOME:-${HOME}/opencrm}/monitoring/loki:/loki
+    expose: ["3100"]
+    mem_limit: 256m
+
+  promtail:
+    <<: *monitoring_defaults
+    profiles: ["monitoring-logs"]
+    image: grafana/promtail:3.4.1
+    command: ["-config.file=/etc/promtail/promtail.yml"]
+    volumes:
+      - ./monitoring/promtail/promtail.yml:/etc/promtail/promtail.yml:ro
+      # Сокет на чтение: только по нему видно, какому контейнеру принадлежит
+      # поток логов. В путях /var/lib/docker/containers лежат идентификаторы, а
+      # не имена, и «это nginx, а это приложение» по ним не разобрать.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      loki:
+        condition: service_started
+    expose: ["9080"]
+    mem_limit: 128m

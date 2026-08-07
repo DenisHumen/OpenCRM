@@ -1,0 +1,92 @@
+# Prometheus: что и как часто спрашивать. Шаблон — из-за `__SITE_URL__`,
+# подстановку делает docker/monitoring/prometheus/entrypoint.sh.
+#
+# **Интервал 30 секунд, а не 15.** Каждая точка ряда — это байты на диске
+# навсегда, а мониторинг не имеет права стать самой тяжёлой частью сервера.
+# Тридцати секунд хватает всему, ради чего он заводился: правило «сайт не
+# отвечает 2 минуты» видит четыре промаха подряд, а не два.
+
+global:
+  scrape_interval: 30s
+  scrape_timeout: 10s
+  evaluation_interval: 30s
+  external_labels:
+    installation: opencrm
+
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
+scrape_configs:
+  # --- главное: сайт глазами постороннего --------------------------------
+  #
+  # Идёт через blackbox по публичному адресу, то есть через настоящий nginx,
+  # настоящий 443 и настоящий сертификат. Отсюда же берётся срок сертификата
+  # (`probe_ssl_earliest_cert_expiry`) — отдельного экспортёра для этого не
+  # нужно.
+  - job_name: site
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    static_configs:
+      - targets:
+          - __SITE_URL__/healthz
+          - __SITE_URL__/
+    relabel_configs:
+      # Цель уезжает в параметр запроса, а сам запрос — в blackbox. Без этой
+      # перестановки Prometheus ходил бы прямо на сайт и получал HTML вместо
+      # метрик.
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox:9115
+
+  # --- хост: процессор, память, подкачка, место ---------------------------
+  - job_name: node
+    static_configs:
+      - targets: ["node-exporter:9100"]
+
+  # --- контейнеры: живы ли, здоровы ли, сколько едят, сколько раз падали ---
+  - job_name: containers
+    static_configs:
+      - targets: ["containers:9110"]
+
+  # --- приложение: размер базы, свежесть копии, исход деплоя --------------
+  #
+  # Напрямую по сети compose, минуя nginx: снаружи этот адрес закрыт
+  # (docker/nginx/templates/locations.inc), и открывать его незачем.
+  - job_name: opencrm-app
+    metrics_path: /api/v1/metrics
+    static_configs:
+      - targets: ["app:8000"]
+
+  # --- доли ответов и время ответа из журнала nginx -----------------------
+  #
+  # Считает promtail на лету, пока разбирает журнал (docker/monitoring/promtail).
+  # Это единственный источник, который видит и 502 от самого nginx, — приложение
+  # о них не знает по определению, потому что в этот момент его нет.
+  #
+  # Живёт в профиле `monitoring-logs`. Профиль выключен — цель просто не
+  # отвечает, и правила, написанные через `absent`-безопасные выражения, молчат.
+  - job_name: nginx-logs
+    static_configs:
+      - targets: ["promtail:9080"]
+
+  # --- сам мониторинг -----------------------------------------------------
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  - job_name: alertmanager
+    static_configs:
+      - targets: ["alertmanager:9093"]
+
+  - job_name: blackbox
+    static_configs:
+      - targets: ["blackbox:9115"]

@@ -1,0 +1,114 @@
+# Promtail: забирает логи контейнеров и по дороге считает по ним метрики.
+#
+# Две работы в одном процессе, и вторая — не бесплатное дополнение. Доли ответов
+# 4xx/5xx и время ответа берутся из журнала nginx, потому что **только он видит
+# 502**: приложение о своих пятисотках знает, а о том, что до него не дозвонились
+# вовсе, — по определению нет, его в этот момент не существует.
+#
+# Источник — docker, а не файлы в /var/lib/docker/containers. Имя контейнера в
+# пути отсутствует, там только его идентификатор, и разобрать «это nginx, а это
+# приложение» по такому пути нельзя. Ценой служит сокет docker, примонтированный
+# на чтение: доступ к нему равносилен root на машине, и это осознанный размен,
+# названный в docs/08-deployment.md.
+
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+  log_level: warn
+
+positions:
+  # В /tmp, а не на том: отметка «докуда прочитано» переживать перезапуск
+  # контейнера не обязана. Потеряется — промотает логи заново, это дешевле, чем
+  # ещё один каталог состояния.
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+    # Loki поднимается не мгновенно; без запаса первые минуты логов терялись бы
+    # ровно на старте стека — то есть тогда, когда они и нужны.
+    backoff_config:
+      min_period: 1s
+      max_period: 5m
+      max_retries: 20
+
+scrape_configs:
+  - job_name: opencrm
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 30s
+
+    relabel_configs:
+      # Только свои контейнеры. На сервере рядом может крутиться что угодно
+      # чужое, и тащить это в свой Loki — значит платить за чужие логи местом и
+      # памятью.
+      - source_labels: ["__meta_docker_container_label_com_docker_compose_project"]
+        regex: opencrm
+        action: keep
+      - source_labels: ["__meta_docker_container_label_com_docker_compose_service"]
+        target_label: service
+      - source_labels: ["__meta_docker_container_name"]
+        regex: "/(.*)"
+        target_label: container
+      # Себя и Loki не читаем: promtail пишет о том, что читает, Loki — о том,
+      # что принял, и вдвоём они устраивают петлю, в которой полезных строк нет
+      # вовсе.
+      - source_labels: [service]
+        regex: "promtail|loki"
+        action: drop
+
+    pipeline_stages:
+      # --- журнал nginx: считаем ответы, не сохраняя, кто их спрашивал --------
+      - match:
+          selector: '{service="nginx"}'
+          stages:
+            - json:
+                expressions:
+                  status: status
+                  request_time: request_time
+            # Класс ответа вместо самого кода: 404 и 410 в одном ряду отвечают
+            # на вопрос «сколько ошибок клиента», а полторы сотни кодов по
+            # отдельности не отвечают ни на один и стоят полутора сотен рядов.
+            - template:
+                source: status_class
+                template: '{{ if .status }}{{ substr 0 1 .status }}xx{{ end }}'
+            - labels:
+                status_class:
+            - metrics:
+                # `_total` в имени — не украшение, а часть имени.
+                #
+                # Promtail отдаёт метрику ровно так, как она названа здесь, и
+                # НИЧЕГО не дописывает: счётчик, названный
+                # `opencrm_nginx_responses`, наружу выходит как
+                # `promtail_custom_opencrm_nginx_responses` — без привычного
+                # суффикса. Поймано на стенде: правило про долю 5xx смотрело на
+                # имя с `_total`, которого не существовало, и молчало бы при
+                # любой аварии. Молчащее правило неотличимо от исправного, пока
+                # не случится то, ради чего оно написано.
+                opencrm_nginx_responses_total:
+                  type: Counter
+                  description: "Ответы nginx по классам кода ответа"
+                  # `source` обязателен: без него счётчик щёлкал бы и на строках
+                  # журнала ОШИБОК nginx, которые в тот же поток попадают и
+                  # ответами не являются. Тогда знаменатель доли 5xx врал бы.
+                  source: status
+                  config:
+                    action: inc
+                opencrm_nginx_request_seconds:
+                  type: Histogram
+                  description: "Время ответа nginx, секунды"
+                  source: request_time
+                  config:
+                    action: observe
+                    buckets: [0.1, 0.3, 1.0, 3.0, 10.0]
+
+      # --- всё остальное: просто в Loki, с пометкой уровня --------------------
+      #
+      # Уровень выделяется меткой, чтобы «покажи ошибки за час» было одним
+      # щелчком, а не чтением всего подряд.
+      - match:
+          selector: '{service!="nginx"}'
+          stages:
+            - regex:
+                expression: "(?i)(?P<level>error|warning|critical|traceback)"
+            - labels:
+                level:

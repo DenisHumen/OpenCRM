@@ -86,6 +86,9 @@ def test_kazhdyy_blok_nazvan_hotya_by_v_odnom_nabore():
         # Шаблоны — тоже: типовой ответ нужен всякому, кто пишет клиентам,
         # и спрашивать об этом отдельным вопросом незачем.
         "templates",
+        # Мониторинг — решение про сервер, а не про тип дела: он одинаково
+        # нужен и мастерской, и студии, и упирается не в отрасль, а в память.
+        "monitoring",
     }
     named = {key for preset in modules.PRESETS for key in preset.modules}
     optional = {m.key for m in modules.MODULES if not m.core and m.ready}
