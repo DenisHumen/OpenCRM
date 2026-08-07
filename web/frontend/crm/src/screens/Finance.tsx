@@ -2,10 +2,11 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 
 import { Icon } from "../components/Icon";
-import { Chip, EmptyState, Modal, ScreenLoading } from "../components/ui";
+import { Chip, EmptyState, LoadFailed, Modal, ScreenLoading } from "../components/ui";
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
 import { useFailure } from "../lib/failure";
+import { useGuard } from "../lib/guard";
 import { formatDate, formatMoney } from "../lib/format";
 import { moduleOn } from "../lib/modules";
 import { can } from "../lib/permissions";
@@ -340,7 +341,10 @@ function OperationModal({
     deal_id: "",
     company_id: "",
   });
-  const [busy, setBusy] = useState(false);
+  // Засов, а не флаг состояния: операция — это движение денег, и вторая
+  // такая же строка тихо занижает прибыль ровно на свою сумму. Отпускаем
+  // только на отказе: при успехе окно закрывается.
+  const guard = useGuard();
 
   // Заявки — только выбранного клиента. Список всех заявок фирмы в выпадающем
   // это выбор из тысячи, а расход почти всегда относится к работе того клиента,
@@ -353,7 +357,7 @@ function OperationModal({
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    setBusy(true);
+    if (!guard.take()) return;
     try {
       await api.post("/finance/operations", {
         category_id: Number(form.category_id),
@@ -376,7 +380,7 @@ function OperationModal({
       onSaved();
     } catch (err) {
       onFailed(err);
-      setBusy(false);
+      guard.free();
     }
   };
 
@@ -395,10 +399,15 @@ function OperationModal({
               </option>
             ))}
           </select>
-          {/* Статей нет вовсе — говорим, куда идти. Пустой выпадающий список
-              оставляет человека перед формой, которую нельзя отправить. */}
-          {categories.items !== null && open.length === 0 && (
-            <div className="field-desc">{t("finNoCategories")}</div>
+          {/* «Статей нет» — только когда их действительно нет. Отказ говорит о
+              себе сам: без статей форма не отправляется вовсе, и человек перед
+              пустым списком решал бы, что финансы в этой системе не настроены. */}
+          {categories.failure !== null ? (
+            <LoadFailed error={categories.failure} onRetry={categories.reload} />
+          ) : (
+            categories.items !== null && open.length === 0 && (
+              <div className="field-desc">{t("finNoCategories")}</div>
+            )
           )}
         </div>
         <div className="field">
@@ -425,7 +434,18 @@ function OperationModal({
               </option>
             ))}
           </select>
+          {/* Список не приехал — расход запишется ничейным, и в разбивке по
+              клиентам его никто не найдёт. Молчать об этом нельзя. */}
+          {clients.failure !== null && (
+            <LoadFailed error={clients.failure} onRetry={clients.reload} />
+          )}
         </div>
+        {/* Заявок у клиента может не быть — тогда выбора нет по делу. Отказ —
+            другое дело: он прячет выбор, который на самом деле есть, и расход
+            остаётся не привязанным к работе, ради которой его понесли. */}
+        {form.client_id && deals.failure !== null && (
+          <LoadFailed error={deals.failure} onRetry={deals.reload} />
+        )}
         {form.client_id && (deals.items ?? []).length > 0 && (
           <div className="field">
             <label className="label">{t("deal")}</label>
@@ -450,13 +470,16 @@ function OperationModal({
                 </option>
               ))}
             </select>
+            {companies.failure !== null && (
+              <LoadFailed error={companies.failure} onRetry={companies.reload} />
+            )}
           </div>
         )}
         <div className="field" style={{ marginBottom: 20 }}>
           <label className="label">{t("finComment")}</label>
           <textarea className="textarea" value={form.comment} onChange={set("comment")} />
         </div>
-        <button className="btn btn-primary" style={{ width: "100%" }} disabled={busy}>
+        <button className="btn btn-primary" style={{ width: "100%" }} disabled={guard.busy}>
           {t("create")}
         </button>
       </form>

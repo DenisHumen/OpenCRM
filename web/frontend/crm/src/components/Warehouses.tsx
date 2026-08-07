@@ -4,6 +4,7 @@ import { Icon } from "./Icon";
 import { Chip, Modal } from "./ui";
 import { api, ApiError } from "../lib/api";
 import { useApp } from "../lib/app";
+import { useGuard } from "../lib/guard";
 import { formatQuantity } from "../lib/format";
 
 /** Склады как места: выбор в формах, раскладка остатка, переезд.
@@ -175,12 +176,14 @@ export function TransferModal({
   const [to, setTo] = useState(places.items[1]?.id ?? 0);
   const [quantity, setQuantity] = useState("");
   const [comment, setComment] = useState("");
-  const [busy, setBusy] = useState(false);
+  // Засов, а не состояние. Переезд — это запись в истории склада, а остаток
+  // равен её сумме: два одинаковых переезда от двойного нажатия увезут вдвое
+  // больше, чем увезли на самом деле, и разобраться потом будет не по чему.
+  const guard = useGuard();
   const [shortage, setShortage] = useState<string | null>(null);
 
   const send = async (force: boolean) => {
-    if (!quantity.trim() || busy) return;
-    setBusy(true);
+    if (!quantity.trim() || !guard.take()) return;
     try {
       await api.post("/warehouse/transfers", {
         product_id: productId,
@@ -203,7 +206,7 @@ export function TransferModal({
         toastError(err);
       }
     } finally {
-      setBusy(false);
+      guard.free();
     }
   };
 
@@ -268,13 +271,13 @@ export function TransferModal({
             type="button"
             className="btn btn-primary"
             style={{ width: "100%" }}
-            disabled={busy}
+            disabled={guard.busy}
             onClick={() => void send(true)}
           >
             {t("transferForce")}
           </button>
         ) : (
-          <button className="btn btn-primary" style={{ width: "100%" }} disabled={busy || from === to}>
+          <button className="btn btn-primary" style={{ width: "100%" }} disabled={guard.busy || from === to}>
             {t("transferDo")}
           </button>
         )}
@@ -301,6 +304,10 @@ export function TransferLog({
 }) {
   const { t, locale, toastError } = useApp();
   const [items, setItems] = useState<Transfer[] | null>(null);
+  // Отмена переезда — не удаление, а встречный переезд, то есть ещё одна
+  // запись в истории. Двойное нажатие завело бы две, и товар уехал бы обратно
+  // дважды. Засов один на весь журнал: отменяют по одному.
+  const guard = useGuard();
 
   const load = useCallback(() => {
     const query = new URLSearchParams();
@@ -353,12 +360,16 @@ export function TransferLog({
           {!row.reverted && row.reverses_id === null && (
             <button
               className="btn btn-secondary btn-sm"
+              disabled={guard.busy}
               onClick={async () => {
+                if (!guard.take()) return;
                 try {
                   await api.post(`/warehouse/transfers/${row.id}/revert`);
                   load();
                 } catch (err) {
                   toastError(err);
+                } finally {
+                  guard.free();
                 }
               }}
             >

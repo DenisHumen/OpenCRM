@@ -51,6 +51,9 @@ export function DealCard() {
   const [askReason, setAskReason] = useState<string | null>(null);
   const [reason, setReason] = useState("");
   const guard = useGuard();
+  // Свой засов у акта: с засовом причины отказа он не общий — это разные окна
+  // и разные действия, и запирать одно другим значило бы связать их без нужды.
+  const actGuard = useGuard();
   const [composing, setComposing] = useState(false);
 
   const { failure, fail, clear } = useFailure();
@@ -309,6 +312,15 @@ export function DealCard() {
               </select>
             </div>
           )}
+          {/* Отказ прячет сам выбор: список короче двух — это «фирма одна», и
+              поле не показывается по делу. Молча совпасть эти два состояния не
+              должны — иначе заявка уедет на реквизиты основной фирмы, а
+              выбирали другую. */}
+          {hasCompanies && companies.failure !== null && (
+            <div className="field">
+              <LoadFailed error={companies.failure} onRetry={companies.reload} />
+            </div>
+          )}
           <div className="field">
             <label className="label">{t("dueDate")}</label>
             <input
@@ -467,13 +479,21 @@ export function DealCard() {
             {can(user, "documents.create") && (
               <button
                 className="btn btn-secondary btn-sm"
+                disabled={actGuard.busy}
                 onClick={() => {
                   void (async () => {
+                    // Акт заводится пустым и сразу открывается: пока сервер
+                    // отдаёт номер, кнопка выглядит неотвеченной, и второе
+                    // нажатие заводило второй акт по той же работе. Уходили в
+                    // один, а закрывали заявку потом другим — с пустым
+                    // перечнем. Отпускать нечего: при успехе экран уезжает.
+                    if (!actGuard.take()) return;
                     try {
                       const act = await api.post("/documents/acts", { deal_id: deal.id });
                       navigate(`/documents/${act.id}`);
                     } catch (e) {
                       toastError(e);
+                      actGuard.free();
                     }
                   })();
                 }}

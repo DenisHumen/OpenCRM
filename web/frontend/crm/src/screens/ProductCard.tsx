@@ -14,6 +14,7 @@ import { ConfirmModal, EmptyState, ScreenLoading } from "../components/ui";
 import { api, ApiError } from "../lib/api";
 import { useApp } from "../lib/app";
 import { useFailure } from "../lib/failure";
+import { useGuard } from "../lib/guard";
 import { formatDateTime, formatMoney, formatQuantity } from "../lib/format";
 import { StockValue, unitKey, type Product } from "./Warehouse";
 
@@ -278,12 +279,16 @@ function MoveForm({
   const [place, setPlace] = useState<number | null>(null);
   const [quantity, setQuantity] = useState("");
   const [comment, setComment] = useState("");
-  const [busy, setBusy] = useState(false);
+  // Засов, а не флаг состояния, и это здесь дороже, чем где-либо ещё: остаток
+  // склада не хранится, он равен сумме движений. Записанное дважды движение
+  // не «показывает лишнее» — оно и ЕСТЬ остаток, и отличить его от настоящего
+  // потом нельзя ничем, кроме памяти кладовщика. Два нажатия в одном тике оба
+  // читают `busy` из своих замыканий и оба видят `false` — см. lib/guard.ts.
+  const guard = useGuard();
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    if (!quantity.trim()) return;
-    setBusy(true);
+    if (!quantity.trim() || !guard.take()) return;
     try {
       // Количество уходит строкой как набрали: разбирает его сервер, чтобы
       // лишние знаки после запятой получили отказ, а не тихое округление здесь.
@@ -303,7 +308,7 @@ function MoveForm({
     } catch (err) {
       toastError(err);
     } finally {
-      setBusy(false);
+      guard.free();
     }
   };
 
@@ -347,7 +352,7 @@ function MoveForm({
           <label className="label">{t("moveComment")}</label>
           <input className="input" value={comment} onChange={(e) => setComment(e.target.value)} />
         </div>
-        <button className="btn btn-primary" disabled={busy}>
+        <button className="btn btn-primary" disabled={guard.busy}>
           {t("newMove")}
         </button>
       </div>

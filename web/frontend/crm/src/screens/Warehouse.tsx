@@ -9,6 +9,7 @@ import { api } from "../lib/api";
 import { useApp } from "../lib/app";
 import { useDebounced } from "../lib/debounce";
 import { useFailure } from "../lib/failure";
+import { useGuard } from "../lib/guard";
 import { formatMoney, formatQuantity } from "../lib/format";
 
 export const UNITS = ["pcs", "kg", "g", "l", "ml", "m", "m2", "pack", "hour"] as const;
@@ -255,13 +256,16 @@ function NewProductModal({
     note: "",
     is_service: false,
   });
-  const [busy, setBusy] = useState(false);
+  // Засов, а не флаг: два одинаковых товара в справочнике — это два остатка,
+  // и приход дальше ляжет на тот, который откроют, а не на тот, который
+  // считают. Отпускаем только на отказе: при успехе уходим в карточку.
+  const guard = useGuard();
 
   const set = (key: string) => (e: any) => setForm((f) => ({ ...f, [key]: e.target.value }));
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    setBusy(true);
+    if (!guard.take()) return;
     try {
       onCreated(
         await api.post("/warehouse/products", {
@@ -281,7 +285,7 @@ function NewProductModal({
       );
     } catch (err) {
       toastError(err);
-      setBusy(false);
+      guard.free();
     }
   };
 
@@ -340,7 +344,7 @@ function NewProductModal({
           <label className="label">{t("productNote")}</label>
           <textarea className="textarea" value={form.note} onChange={set("note")} />
         </div>
-        <button className="btn btn-primary" style={{ width: "100%" }} disabled={busy}>
+        <button className="btn btn-primary" style={{ width: "100%" }} disabled={guard.busy}>
           {t("create")}
         </button>
       </form>

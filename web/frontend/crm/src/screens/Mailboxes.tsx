@@ -5,6 +5,7 @@ import { ConfirmModal, EmptyState, Modal, ScreenLoading, Toggle } from "../compo
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
 import { useFailure } from "../lib/failure";
+import { useGuard } from "../lib/guard";
 import { formatDateTime } from "../lib/format";
 import { moduleOn } from "../lib/modules";
 
@@ -55,7 +56,7 @@ export function Mailboxes() {
   const [accounts, setAccounts] = useState<Account[] | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<Account | null>(null);
-  const [busy, setBusy] = useState(false);
+  const guard = useGuard();
 
   // Экран открыт и при выключенном блоке: в него приходят из настроек модулей,
   // чтобы понять, что тут вообще настраивается. API при этом закрыт, поэтому
@@ -81,8 +82,10 @@ export function Mailboxes() {
   }, [enabled, load]);
 
   const save = async () => {
-    if (!draft) return;
-    setBusy(true);
+    // Засов, а не флаг состояния: пока сервер проверяет подключение (а он
+    // ходит к IMAP), кнопка выглядит неотвеченной, и второе нажатие заводило
+    // второй ящик с тем же адресом. Дальше почта тянулась дважды.
+    if (!draft || !guard.take()) return;
     try {
       if (draft.id) await api.patch(`/mail/accounts/${draft.id}`, draft);
       else await api.post("/mail/accounts", draft);
@@ -91,7 +94,7 @@ export function Mailboxes() {
     } catch (e) {
       toastError(e);
     } finally {
-      setBusy(false);
+      guard.free();
     }
   };
 
@@ -258,18 +261,28 @@ export function Mailboxes() {
               setDraft({ ...draft, smtp_host: host, smtp_port: port, smtp_ssl: ssl })
             }
           />
+          {/* Действие у переключателя своё, а не только у обёртки. Пустой
+              `onToggle` выглядел безобидно — рядом же стоит обработчик на всей
+              строке, — но `Toggle` останавливает всплытие (иначе одно нажатие
+              срабатывало бы дважды). То есть нажатие ПО САМОМУ переключателю не
+              делало ничего, и с клавиатуры ящик было не включить вовсе: Tab
+              приводит фокус именно на кнопку, а пробел на ней — тот же клик. */}
           <div
             style={{ display: "flex", alignItems: "center", gap: 11, cursor: "pointer", marginTop: 4 }}
             onClick={() => setDraft({ ...draft, is_active: !(draft.is_active ?? true) })}
           >
-            <Toggle on={draft.is_active ?? true} onToggle={() => undefined} />
+            <Toggle
+              on={draft.is_active ?? true}
+              label={t("mailboxActive")}
+              onToggle={() => setDraft({ ...draft, is_active: !(draft.is_active ?? true) })}
+            />
             <div style={{ fontSize: 13 }}>{t("mailboxActive")}</div>
           </div>
           <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 20 }}>
             <button className="btn btn-secondary btn-sm" onClick={() => setDraft(null)}>
               {t("cancel")}
             </button>
-            <button className="btn btn-primary btn-sm" disabled={busy} onClick={() => void save()}>
+            <button className="btn btn-primary btn-sm" disabled={guard.busy} onClick={() => void save()}>
               {t("save")}
             </button>
           </div>
@@ -359,7 +372,16 @@ function ServerRow({
           style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}
           onClick={() => onChange(host, port, !ssl)}
         >
-          <Toggle on={ssl} onToggle={() => undefined} />
+          {/* Своё действие, а не только у обёртки: см. переключатель активности
+              ящика выше. Здесь цена ошибки больше — с клавиатуры нельзя было
+              СНЯТЬ шифрование там, где сервер его не держит, и ящик молча не
+              подключался. Имя переключателя — вместе с сервером: их на форме
+              два, и «Использовать SSL» без «IMAP» ни о чём не говорит. */}
+          <Toggle
+            on={ssl}
+            label={`${label} · ${sslLabel}`}
+            onToggle={() => onChange(host, port, !ssl)}
+          />
           <span style={{ fontSize: 12.5 }}>{sslLabel}</span>
         </div>
       </div>

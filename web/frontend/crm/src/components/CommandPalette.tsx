@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
 import { PALETTE_DELAY, useDebounced } from "../lib/debounce";
+import { useGuard } from "../lib/guard";
 import { initials, relativeDay } from "../lib/format";
 import { type Gated, shown } from "../lib/modules";
 import { term } from "../lib/terms";
@@ -39,11 +40,12 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
   const [loading, setLoading] = useState(true);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
-  // Засов «Новой доски». Ref, а не состояние: строки палитры пересобираются на
-  // каждую набранную букву, и всё, что живёт в замыкании строки, к следующему
-  // нажатию уже другое. Без засова Enter, нажатый дважды (а его нажимают
-  // дважды), заводил два черновика — человек уходил в один, второй оставался.
-  const creatingBoard = useRef(false);
+  // Засов «Новой доски» — общий крючок, а не своя копия того же ref. Ref здесь
+  // обязателен вдвойне: строки палитры пересобираются на каждую набранную
+  // букву, и всё, что живёт в замыкании строки, к следующему нажатию уже
+  // другое. Без засова Enter, нажатый дважды (а его нажимают дважды), заводил
+  // два черновика — человек уходил в один, второй оставался.
+  const boardGuard = useGuard();
 
   const go = useCallback(
     (path: string) => {
@@ -181,15 +183,14 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
         icon: <Icon name="plus" size={15} stroke={2} />,
         match: [t("newBoard"), "board", "доск"],
         run: async () => {
-          if (creatingBoard.current) return;
-          creatingBoard.current = true;
+          if (!boardGuard.take()) return;
           try {
             const board = await api.post("/boards", { title: t("newBoard") });
             go(`/boards/${board.id}`);
           } catch (e) {
             toastError(e);
             // Засов снимаем только на отказе: при успехе палитра уже закрыта.
-            creatingBoard.current = false;
+            boardGuard.free();
           }
         },
       },

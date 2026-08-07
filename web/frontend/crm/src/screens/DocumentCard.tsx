@@ -8,6 +8,7 @@ import { api, ApiError } from "../lib/api";
 import { useApp } from "../lib/app";
 import { useDebounced } from "../lib/debounce";
 import { useFailure } from "../lib/failure";
+import { useGuard } from "../lib/guard";
 import { copyText } from "../lib/clipboard";
 import { isFinished, nextStatuses, statusLabel, statusVariant } from "../lib/documents";
 import { formatDateTime, formatMoney, formatQuantity } from "../lib/format";
@@ -276,7 +277,10 @@ function History({ events }: { events: any[] | undefined }) {
  */
 function ActCard({ act, reload }: { act: any; reload: () => Promise<void> }) {
   const { t, locale, workspace, toast, toastError } = useApp();
-  const [busy, setBusy] = useState(false);
+  // Проведение делает сразу три вещи: списывает материалы, закрывает акт и
+  // переводит заявку. Засов, а не флаг состояния: второе нажатие в том же тике
+  // списало бы материалы дважды, а остаток склада равен сумме движений.
+  const guard = useGuard();
   const [shortage, setShortage] = useState<string | null>(null);
   const [confirm, setConfirm] = useState(false);
   const [stage, setStage] = useState<string>(act.next_stage || "");
@@ -290,7 +294,7 @@ function ActCard({ act, reload }: { act: any; reload: () => Promise<void> }) {
   const movedTo = (stages.items ?? []).find((s) => s.key === act.next_stage);
 
   const complete = async (force: boolean) => {
-    setBusy(true);
+    if (!guard.take()) return;
     try {
       await api.post(`/documents/acts/${act.id}/complete`, {
         warehouse_id: place,
@@ -310,7 +314,7 @@ function ActCard({ act, reload }: { act: any; reload: () => Promise<void> }) {
         toastError(err);
       }
     } finally {
-      setBusy(false);
+      guard.free();
     }
   };
 
@@ -415,13 +419,13 @@ function ActCard({ act, reload }: { act: any; reload: () => Promise<void> }) {
             </select>
             <button
               className="btn btn-primary"
-              disabled={busy || act.lines.length === 0}
+              disabled={guard.busy || act.lines.length === 0}
               onClick={() => void complete(false)}
             >
               <Icon name="check" size={14} stroke={2} />
               {t("actComplete")}
             </button>
-            <button className="btn btn-secondary" disabled={busy} onClick={() => setConfirm(true)}>
+            <button className="btn btn-secondary" disabled={guard.busy} onClick={() => setConfirm(true)}>
               {t("actCancel")}
             </button>
           </div>
@@ -433,7 +437,7 @@ function ActCard({ act, reload }: { act: any; reload: () => Promise<void> }) {
           {shortage && (
             <div style={{ marginTop: 12 }}>
               <div className="field-desc" style={{ color: "var(--warning)" }}>{shortage}</div>
-              <button className="btn btn-secondary btn-sm" disabled={busy} onClick={() => void complete(true)}>
+              <button className="btn btn-secondary btn-sm" disabled={guard.busy} onClick={() => void complete(true)}>
                 {t("actCompleteForce")}
               </button>
             </div>
@@ -490,7 +494,10 @@ function ActLineForm({ actId, onAdded }: { actId: number; onAdded: () => Promise
   const [picked, setPicked] = useState<Product | null>(null);
   const [quantity, setQuantity] = useState("1");
   const [price, setPrice] = useState("");
-  const [busy, setBusy] = useState(false);
+  // Засов, а не флаг: строку добавляют Enter'ом, и вторая такая же строка в
+  // акте — это вдвое больший счёт клиенту и вдвое большее списание материала
+  // при проведении.
+  const guard = useGuard();
   const [found, setFound] = useState<Product[]>([]);
 
   const search = useDebounced(name);
@@ -519,9 +526,8 @@ function ActLineForm({ actId, onAdded }: { actId: number; onAdded: () => Promise
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    if (busy) return;
     if (fromCatalogue ? !picked : !name.trim()) return;
-    setBusy(true);
+    if (!guard.take()) return;
     try {
       await api.post(`/documents/acts/${actId}/lines`, {
         product_id: picked?.id ?? null,
@@ -541,7 +547,7 @@ function ActLineForm({ actId, onAdded }: { actId: number; onAdded: () => Promise
     } catch (err) {
       toastError(err);
     } finally {
-      setBusy(false);
+      guard.free();
     }
   };
 
@@ -620,7 +626,7 @@ function ActLineForm({ actId, onAdded }: { actId: number; onAdded: () => Promise
             onChange={(e) => setPrice(e.target.value)}
           />
         </div>
-        <button className="btn btn-primary" disabled={busy}>
+        <button className="btn btn-primary" disabled={guard.busy}>
           {t("orderAddLine")}
         </button>
       </div>

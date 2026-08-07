@@ -10,6 +10,7 @@ import {
 } from "../lib/api";
 import { useApp } from "../lib/app";
 import { useFailure } from "../lib/failure";
+import { useGuard } from "../lib/guard";
 import type { TranslationKey } from "../lib/i18n";
 import { moduleOn } from "../lib/modules";
 
@@ -64,7 +65,10 @@ export function SettingsRoles() {
   const [draft, setDraft] = useState<{ name: string; codes: Set<string> } | null>(null);
   const [creating, setCreating] = useState(false);
   const [removing, setRemoving] = useState<Role | null>(null);
-  const [busy, setBusy] = useState(false);
+  // Засов, а не флаг состояния: должность заводят кнопкой «Сохранить», и
+  // вторая должность с тем же названием и тем же набором прав — это набор,
+  // который потом правят в одной копии, а выдан он из другой.
+  const guard = useGuard();
 
   const { failure, fail, clear } = useFailure();
 
@@ -135,8 +139,7 @@ export function SettingsRoles() {
   };
 
   const save = async () => {
-    if (!draft || busy) return;
-    setBusy(true);
+    if (!draft || !guard.take()) return;
     try {
       const body = { name: draft.name, permissions: [...draft.codes] };
       if (creating) {
@@ -151,7 +154,7 @@ export function SettingsRoles() {
     } catch (e) {
       toastError(e);
     } finally {
-      setBusy(false);
+      guard.free();
     }
   };
 
@@ -293,7 +296,7 @@ export function SettingsRoles() {
           </div>
 
           <div style={{ display: "flex", gap: 8, marginTop: 18 }}>
-            <button className="btn btn-primary" disabled={busy} onClick={() => void save()}>
+            <button className="btn btn-primary" disabled={guard.busy} onClick={() => void save()}>
               {t("save")}
             </button>
             <button className="btn" onClick={close}>{t("cancel")}</button>

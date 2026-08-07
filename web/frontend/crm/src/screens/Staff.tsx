@@ -13,6 +13,7 @@ import {
 import { api, type Role } from "../lib/api";
 import { useApp } from "../lib/app";
 import { useFailure } from "../lib/failure";
+import { useGuard } from "../lib/guard";
 import { formatDateTime, initials } from "../lib/format";
 import { can } from "../lib/permissions";
 import { useReference } from "../lib/reference";
@@ -24,6 +25,11 @@ export function Staff() {
   const [confirmDisable, setConfirmDisable] = useState<number | null>(null);
   const [confirmRole, setConfirmRole] = useState<{ id: number; name: string; role: "root" | "manager" } | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<{ id: number; name: string } | null>(null);
+  // Засов на сброс пароля. Не запись, но цена та же: каждое нажатие ставит
+  // НОВЫЙ временный пароль, а окно показывает тот ответ, который пришёл
+  // последним. Два нажатия — и на экране пароль от одного сброса, а в базе от
+  // другого; человек диктует его сотруднику, и тот не входит.
+  const resetGuard = useGuard();
 
   // Должности раздаёт не всякий, кто видит список сотрудников: завести человека
   // и решить, что ему можно, — разные по весу решения. Без права список ролей
@@ -238,12 +244,16 @@ export function Staff() {
                     <>
                       <button
                         className="text-link"
+                        disabled={resetGuard.busy}
                         onClick={async () => {
+                          if (!resetGuard.take()) return;
                           try {
                             const result = await api.post(`/staff/${person.id}/reset-password`);
                             setTempPassword({ name: person.name, password: result.temp_password });
                           } catch (e) {
                             toastError(e);
+                          } finally {
+                            resetGuard.free();
                           }
                         }}
                       >

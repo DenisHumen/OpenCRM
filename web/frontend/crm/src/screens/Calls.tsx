@@ -8,6 +8,7 @@ import { api, type PhoneCall } from "../lib/api";
 import { useApp } from "../lib/app";
 import { useDebounced } from "../lib/debounce";
 import { useFailure } from "../lib/failure";
+import { useGuard } from "../lib/guard";
 import { formatCallDuration, formatDateTime } from "../lib/format";
 import { moduleOn } from "../lib/modules";
 
@@ -27,6 +28,10 @@ export function Calls() {
   const [missedOnly, setMissedOnly] = useState(false);
   const outcomeLabel = useOutcomeLabel();
   const tasksOn = moduleOn(modules, "tasks");
+  // Засов на «перезвонить»: кнопка стоит в каждой строке пропущенных, и второе
+  // нажатие заводило второе такое же напоминание по тому же звонку. Один засов
+  // на весь журнал — напоминания ставят по одному.
+  const guard = useGuard();
 
   const [attempt, setAttempt] = useState(0);
 
@@ -71,12 +76,15 @@ export function Calls() {
   // Напоминание перезвонить живёт в блоке напоминаний: он выключен — кнопки
   // просто нет, а журнал работает как работал.
   const remind = async (call: PhoneCall) => {
+    if (!guard.take()) return;
     try {
       await api.post(`/telephony/calls/${call.id}/callback-task`);
       toast(t("callbackTaskCreated"));
       void refreshTasks();
     } catch (e) {
       toastError(e);
+    } finally {
+      guard.free();
     }
   };
 
@@ -175,7 +183,7 @@ export function Calls() {
                 style={{ ...COL.actions, display: "flex", gap: 8, justifyContent: "flex-end" }}
               >
                 {call.outcome === "missed" && tasksOn && (
-                  <button className="text-link" onClick={() => void remind(call)}>
+                  <button className="text-link" disabled={guard.busy} onClick={() => void remind(call)}>
                     {t("callbackTask")}
                   </button>
                 )}

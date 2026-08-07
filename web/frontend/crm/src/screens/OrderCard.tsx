@@ -9,6 +9,7 @@ import { api, ApiError } from "../lib/api";
 import { useApp } from "../lib/app";
 import { useDebounced } from "../lib/debounce";
 import { useFailure } from "../lib/failure";
+import { useGuard } from "../lib/guard";
 import { formatMoney, formatQuantity } from "../lib/format";
 import { ORDER_STATUS_LABEL, type Order } from "./Orders";
 import type { Product } from "./Warehouse";
@@ -24,7 +25,10 @@ export function OrderCard() {
   const { t, locale, workspace, toast, toastError } = useApp();
   const navigate = useNavigate();
   const [order, setOrder] = useState<Order | null>(null);
-  const [busy, setBusy] = useState(false);
+  // Проведение трогает склад: отгрузка списывает, приёмка приходует. Засов, а
+  // не флаг состояния — двойное нажатие записало бы движения дважды, а остаток
+  // равен их сумме и отличить лишнее от настоящего потом нечем.
+  const guard = useGuard();
   const [shortage, setShortage] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<"cancel" | "revert" | null>(null);
   const places = useWarehouses();
@@ -55,7 +59,7 @@ export function OrderCard() {
   const open = order.status === "issued" || order.status === "ready";
 
   const close = async (force: boolean) => {
-    setBusy(true);
+    if (!guard.take()) return;
     try {
       await api.post(`/orders/${order.id}/close`, {
         warehouse_id: place,
@@ -74,7 +78,7 @@ export function OrderCard() {
         toastError(err);
       }
     } finally {
-      setBusy(false);
+      guard.free();
     }
   };
 
@@ -203,18 +207,18 @@ export function OrderCard() {
           <WarehousePicker places={places} value={place ?? places?.items[0]?.id ?? null} onChange={setPlace} />
           <button
             className="btn btn-primary"
-            disabled={busy || order.lines.length === 0}
+            disabled={guard.busy || order.lines.length === 0}
             onClick={() => void close(false)}
           >
             {outgoing ? t("orderShip") : t("orderReceive")}
           </button>
-          <button className="btn btn-secondary" disabled={busy} onClick={() => setConfirm("cancel")}>
+          <button className="btn btn-secondary" disabled={guard.busy} onClick={() => setConfirm("cancel")}>
             {t("orderCancel")}
           </button>
           {shortage && (
             <div style={{ flexBasis: "100%" }}>
               <div className="field-desc" style={{ color: "var(--warning)" }}>{shortage}</div>
-              <button className="btn btn-secondary btn-sm" disabled={busy} onClick={() => void close(true)}>
+              <button className="btn btn-secondary btn-sm" disabled={guard.busy} onClick={() => void close(true)}>
                 {t("orderShipForce")}
               </button>
             </div>
@@ -261,7 +265,10 @@ function AddLine({ orderId, onAdded }: { orderId: number; onAdded: () => Promise
   const [name, setName] = useState("");
   const [picked, setPicked] = useState<Product | null>(null);
   const [quantity, setQuantity] = useState("1");
-  const [busy, setBusy] = useState(false);
+  // Засов, а не флаг: строку добавляют Enter'ом из поля количества, и вторая
+  // такая же строка в заказе — это вдвое больший резерв и вдвое большее
+  // списание при отгрузке.
+  const guard = useGuard();
   const [found, setFound] = useState<Product[]>([]);
 
   const search = useDebounced(name);
@@ -290,9 +297,8 @@ function AddLine({ orderId, onAdded }: { orderId: number; onAdded: () => Promise
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    if (busy) return;
     if (fromCatalogue ? !picked : !name.trim()) return;
-    setBusy(true);
+    if (!guard.take()) return;
     try {
       await api.post(`/orders/${orderId}/lines`, {
         product_id: picked?.id ?? null,
@@ -306,7 +312,7 @@ function AddLine({ orderId, onAdded }: { orderId: number; onAdded: () => Promise
     } catch (err) {
       toastError(err);
     } finally {
-      setBusy(false);
+      guard.free();
     }
   };
 
@@ -374,7 +380,7 @@ function AddLine({ orderId, onAdded }: { orderId: number; onAdded: () => Promise
           <label className="label">{t("quantity")}</label>
           <input className="input" value={quantity} onChange={(e) => setQuantity(e.target.value)} />
         </div>
-        <button className="btn btn-primary" disabled={busy}>
+        <button className="btn btn-primary" disabled={guard.busy}>
           {t("orderAddLine")}
         </button>
       </div>
@@ -391,13 +397,16 @@ function AddLine({ orderId, onAdded }: { orderId: number; onAdded: () => Promise
 function PickScanner({ orderId, onPicked }: { orderId: number; onPicked: () => Promise<void> }) {
   const { t, toast, toastError } = useApp();
   const [code, setCode] = useState("");
-  const [busy, setBusy] = useState(false);
+  // Засов, а не флаг состояния, и здесь это не перестраховка: ввод идёт со
+  // сканера, а сканер шлёт Enter сам и повторяет его, когда наклейка читается
+  // с трудом. Каждое нажатие прибавляет собранное по строке заказа — второе
+  // прибавило бы ещё раз, и заказ считался бы собранным вдвое.
+  const guard = useGuard();
   const scanning = useLabelsOn();
 
   const lookup = async () => {
     const scanned = code.trim();
-    if (!scanned || busy) return;
-    setBusy(true);
+    if (!scanned || !guard.take()) return;
     try {
       const line = await api.post<{ name: string }>(`/orders/${orderId}/pick`, { code: scanned });
       setCode("");
@@ -408,7 +417,7 @@ function PickScanner({ orderId, onPicked }: { orderId: number; onPicked: () => P
       // ответ после писка сканера — как «сканер сломался».
       toastError(err);
     } finally {
-      setBusy(false);
+      guard.free();
     }
   };
 

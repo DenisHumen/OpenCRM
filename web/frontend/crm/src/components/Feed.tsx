@@ -57,6 +57,12 @@ export function Feed({ dealId, clientId }: { dealId: number; clientId: number })
   const [direction, setDirection] = useState("");
   const [body, setBody] = useState("");
   const guard = useGuard();
+  // Свой засов у «сделать напоминанием»: с засовом ввода он не общий намеренно
+  // — добавление записи и превращение записи в напоминание идут независимо, и
+  // одно не должно запирать другое. Один засов на все строки ленты — это и
+  // есть нужное поведение: двойное нажатие по строке заводило два одинаковых
+  // напоминания, и выяснялось это только когда оба напоминали.
+  const taskGuard = useGuard();
 
   // Лента через общий крючок справочников: отказ здесь не должен превращаться в
   // «Пока ничего не записано». Пустая лента — это ответ («по заявке ещё не
@@ -93,6 +99,7 @@ export function Feed({ dealId, clientId }: { dealId: number; clientId: number })
   // Задача из записи в один клик: «клиент просил перезвонить в четверг»
   // записывают в ленту, а вспоминают о нём — по напоминанию.
   const toTask = async (entry: any) => {
+    if (!taskGuard.take()) return;
     try {
       await api.post("/tasks", {
         title: entry.body.slice(0, 120),
@@ -103,6 +110,8 @@ export function Feed({ dealId, clientId }: { dealId: number; clientId: number })
       void refreshTasks();
     } catch (e) {
       toastError(e);
+    } finally {
+      taskGuard.free();
     }
   };
 
@@ -180,6 +189,7 @@ export function Feed({ dealId, clientId }: { dealId: number; clientId: number })
                 <button
                   className="btn-icon"
                   title={t("feedToTask")}
+                  disabled={taskGuard.busy}
                   onClick={() => void toTask(entry)}
                 >
                   <Icon name="clock" size={13} />

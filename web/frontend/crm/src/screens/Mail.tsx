@@ -7,6 +7,7 @@ import { api } from "../lib/api";
 import { useApp } from "../lib/app";
 import { useDebounced } from "../lib/debounce";
 import { useFailure } from "../lib/failure";
+import { useGuard } from "../lib/guard";
 import { formatDateTime } from "../lib/format";
 import { useReference } from "../lib/reference";
 
@@ -243,10 +244,13 @@ export function MailCompose({
   const { t, toast, toastError } = useApp();
   const [form, setForm] = useState({ to, subject: "", body: "" });
   const [accountId, setAccountId] = useState<number | "">(accounts[0]?.id ?? "");
-  const [busy, setBusy] = useState(false);
+  // Засов, а не флаг состояния: отправка идёт через SMTP и отвечает не сразу.
+  // Второе нажатие по «неответившей» кнопке слало клиенту второе такое же
+  // письмо — и отозвать его уже нельзя ничем.
+  const guard = useGuard();
 
   const send = async () => {
-    setBusy(true);
+    if (!guard.take()) return;
     try {
       await api.post("/mail/send", {
         to: form.to.split(",").map((a) => a.trim()).filter(Boolean),
@@ -262,7 +266,7 @@ export function MailCompose({
     } catch (e) {
       toastError(e);
     } finally {
-      setBusy(false);
+      guard.free();
     }
   };
 
@@ -314,7 +318,7 @@ export function MailCompose({
         <button className="btn btn-secondary btn-sm" onClick={onClose}>
           {t("cancel")}
         </button>
-        <button className="btn btn-primary btn-sm" disabled={busy} onClick={() => void send()}>
+        <button className="btn btn-primary btn-sm" disabled={guard.busy} onClick={() => void send()}>
           {t("sendLetter")}
         </button>
       </div>
