@@ -1646,6 +1646,19 @@ cmd_doctor() {
             probe "$(tr_ "схема базы" "database schema")" 0 "$(tr_ "приложение не отвечает — ./opencrm.sh logs" "the application is not answering — ./opencrm.sh logs")" ;;
     esac
 
+    # Резервная копия: когда снята и прошла ли проверку. Отчёт кладёт
+    # `scripts/verify_backup.py` рядом с копиями — вопрос «есть ли у нас
+    # рабочая копия» должен иметь ответ на диске, а не в чьей-то памяти.
+    _check="$(home_dir)/data/backups/last-check.json"
+    if [ ! -f "$_check" ]; then
+        probe "$(tr_ "резервная копия" "backup")" 0 "$(tr_ "ни одной проверенной копии — ./opencrm.sh backup" "no verified backup yet — ./opencrm.sh backup")"
+    elif grep -q '"ok": true' "$_check" 2>/dev/null; then
+        _when=$(sed -n 's/.*"checked_at": "\([^"]*\)".*/\1/p' "$_check" | head -n1)
+        probe "$(tr_ "резервная копия" "backup")" 1 "$(tr_ "проверена $_when" "verified $_when")"
+    else
+        probe "$(tr_ "резервная копия" "backup")" 0 "$(tr_ "последняя копия НЕГОДНА — смотрите $_check" "the last backup is BROKEN — see $_check")"
+    fi
+
     if [ -f "$REPO_DIR/docker/nginx/maintenance/maintenance.html" ]; then
         probe "$(tr_ "заглушка" "fallback page")" 1 "$(tr_ "есть — при обновлении вместо 502 будет страница" "present — an update shows a page instead of 502")"
     else
