@@ -172,6 +172,8 @@ export function Reports() {
         {funnel.entered === 0 && funnel.won === 0 && funnel.lost === 0 ? (
           <EmptyState title={t("repNothing")} />
         ) : (
+          <>
+          <div className="field-desc" style={{ marginBottom: 8 }}>{t("repStageEntered")}</div>
           <div className="funnel">
             {funnel.stages.map((stage: any) => (
               <Link
@@ -193,6 +195,7 @@ export function Reports() {
               </Link>
             ))}
           </div>
+          </>
         )}
 
         {funnel.lost_reasons.length > 0 && (
@@ -237,9 +240,13 @@ export function Reports() {
             money
           />
           <Figure
-            title={t("repConversion")}
+            /* Не «конверсия»: у воронки под этим словом доля от ВСЕГО, что
+               пришло, а здесь — доля выигранных среди ЗАКРЫТЫХ за период.
+               Знаменатели разные, и одна подпись над двумя числами читалась
+               как расхождение в отчёте. */
+            title={t("repWinRate")}
             value={percent(revenue.conversion, locale)}
-            sub={`${t("repWon")}: ${revenue.won_count}`}
+            sub={`${t("repWinRateHint")} · ${t("repWon")}: ${revenue.won_count}`}
           />
         </div>
 
@@ -285,7 +292,7 @@ export function Reports() {
               <span className="src-num">{t("repWon")}</span>
               <span className="src-num">{t("repLost")}</span>
               <span className="src-money">{t("repRevenue")}</span>
-              <span className="src-num">{t("repConversion")}</span>
+              <span className="src-num">{t("repWinRate")}</span>
             </div>
             {sources.items.map((row: any) => (
               <div className="src-row" key={row.source ?? "__none__"}>

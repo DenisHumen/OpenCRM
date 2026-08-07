@@ -234,8 +234,17 @@ const en = {
   repEnteredHint: "entered the first stage",
   repWon: "Won",
   repLost: "Lost",
-  repConversion: "Conversion",
+  repConversion: "Conversion from requests",
   repConversionHint: "of everything that came in",
+  // Вторая величина под тем же словом «конверсия»: доля выигранных среди
+  // ЗАКРЫТЫХ за период. Разные знаменатели, поэтому и слова разные —
+  // одна подпись над двумя числами читается как расхождение.
+  repWinRate: "Win rate",
+  repWinRateHint: "of those closed in the period",
+  // Число в столбце воронки бывает больше плитки «Выиграно» над ним: через
+  // выигранный этап прошли двое, а выиграна одна. Это правда, но без
+  // подписи читается как расхождение.
+  repStageEntered: "Requests that entered each stage",
   repRevenue: "Revenue",
   repLossValue: "Value lost",
   repLostReasons: "Why deals fall through",
@@ -1154,8 +1163,11 @@ const ru: typeof en = {
   repEnteredHint: "вошли в первый этап",
   repWon: "Выиграно",
   repLost: "Потеряно",
-  repConversion: "Конверсия",
+  repConversion: "Конверсия из заявок",
   repConversionHint: "от всего, что пришло",
+  repWinRate: "Доля побед",
+  repWinRateHint: "среди закрытых за период",
+  repStageEntered: "Вошло заявок в этап",
   repRevenue: "Выручка",
   repLossValue: "Сумма потерь",
   repLostReasons: "Почему не складывается",
