@@ -27,6 +27,8 @@ import { Mail } from "./screens/Mail";
 import { Mailboxes } from "./screens/Mailboxes";
 import { ProductCard } from "./screens/ProductCard";
 import { Profile } from "./screens/Profile";
+import { Finance } from "./screens/Finance";
+import { FinanceSettings } from "./screens/FinanceSettings";
 import { Reports } from "./screens/Reports";
 import {
   SettingsBrand,
@@ -228,6 +230,14 @@ export default function App() {
               <Route path="/orders/:id" element={<ById><OrderCard /></ById>} />
             </Route>
           </Route>
+          {/* Деньги отделены от отчётов правом, а не только блоком: отчёты
+              показывают, как идут дела, а этот раздел — сколько заработали и
+              кому заплатили. Второе видно не всем, кому видно первое. */}
+          <Route element={<ModuleRoute module="finance" />}>
+            <Route element={<PermRoute perm="finance.view" />}>
+              <Route path="/finance" element={<Finance />} />
+            </Route>
+          </Route>
           <Route element={<ModuleRoute module="reports" />}>
             <Route element={<PermRoute perm="reports.view" />}>
               <Route path="/reports" element={<Reports />} />
@@ -264,6 +274,13 @@ export default function App() {
           <Route element={<ModuleRoute module="warehouse" />}>
             <Route element={<PermRoute perm="warehouse.manage" />}>
               <Route path="/settings/warehouses" element={<SettingsWarehouses />} />
+            </Route>
+          </Route>
+          {/* Статьи и планы правит тот, кто отвечает за деньги, а не всякий, кто
+              их видит: переименованная статья меняет прошлые отчёты. */}
+          <Route element={<ModuleRoute module="finance" />}>
+            <Route element={<PermRoute perm="finance.manage" />}>
+              <Route path="/settings/finance" element={<FinanceSettings />} />
             </Route>
           </Route>
           <Route element={<PermRoute perm="settings.manage" />}>

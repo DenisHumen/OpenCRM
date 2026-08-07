@@ -230,12 +230,12 @@ def remove_line(db: Session, document_id: int, line_id: int) -> None:
 def total_minor(rows: list[DocumentLine]) -> int:
     """Сумма заказа в минорных единицах.
 
-    Считаем целыми: количество в тысячных, цена в минорных — произведение
-    делим на тысячу один раз в конце, с округлением к ближайшему. Делить на
-    каждой строке значит копить ошибку округления по числу позиций.
+    Сам счёт переехал в `document_service`, когда строками начал пользоваться и
+    акт выполненных работ: строки общие, значит и место, где по ним считаются
+    деньги, обязано быть одно. Здесь остался вход — его зовут сериализатор
+    заказа и печатная форма, и переучивать их незачем.
     """
-    scaled = sum(row.quantity_milli * (row.price_minor or 0) for row in rows)
-    return (scaled + 500) // 1000 if scaled >= 0 else -((-scaled + 500) // 1000)
+    return document_service.total_minor(rows)
 
 
 # --- сборка сканером ----------------------------------------------------------
@@ -454,21 +454,12 @@ def _line(db: Session, document_id: int, line_id: int) -> DocumentLine:
 def _shortages(db: Session, rows: list[DocumentLine], warehouse_id: int) -> list[str]:
     """Чего и сколько не хватает на складе. Пусто — отгружать можно.
 
-    Называем позиции поимённо: отказ «не хватает товара» без списка отправляет
-    человека сверять заказ со складом построчно руками.
+    Сам ответ переехал в склад, когда тот же вопрос перед проведением начал
+    задавать акт: «чего не хватает» — вопрос к складу, и двух ответов на него
+    быть не должно. Разошлись бы они не в цифрах, а в формулировке, и человек,
+    привыкший к одной, не узнал бы вторую.
     """
-    stock = warehouse_repo.stock_by_product(
-        db, [row.product_id for row in rows], warehouse_id=warehouse_id
-    )
-    short = []
-    for row in rows:
-        have = stock.get(row.product_id, 0)
-        if have < row.quantity_milli:
-            short.append(
-                f"{row.name_snapshot} ({warehouse_service.format_quantity(have)}"
-                f" из {warehouse_service.format_quantity(row.quantity_milli)})"
-            )
-    return short
+    return warehouse_service.shortages(db, rows, warehouse_id)
 
 
 def _as_text(quantity_milli: int) -> str:

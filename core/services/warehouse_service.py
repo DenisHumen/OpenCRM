@@ -285,8 +285,17 @@ def add_move(
     author: User,
     source: str = SOURCE_MANUAL,
     source_ref: str = "",
+    announce: bool = True,
 ) -> tuple[StockMove, bool]:
     """Записывает движение. Возвращает (движение, ушёл ли остаток в минус).
+
+    `announce=False` — движение не объявляет о себе событием `STOCK_WRITTEN_OFF`.
+    Нужно ровно там, где движение — не самостоятельное действие человека, а
+    часть большего, которое объявит себя само: акт на пять позиций это пять
+    движений, и пять строк в ленте вместо одной строки про акт означали бы
+    решать за кладовщика, что он имел в виду. Обещание это записано в докстроке
+    самого события; здесь — его исполнение. Журнал действий, себестоимость и
+    остаток при этом считаются как обычно: молчит только лента.
 
     **Уход в минус разрешён, но помечается.** Запрет выглядит правильнее, но
     ломает жизнь: в мастерской деталь ставят в машину сегодня, а накладную на
@@ -369,7 +378,7 @@ def add_move(
     db.add(move)
     db.flush()
 
-    if deal is not None and quantity < 0:
+    if announce and deal is not None and quantity < 0:
         events.emit(
             STOCK_WRITTEN_OFF,
             db=db,
@@ -413,6 +422,120 @@ def add_move(
         after=format_quantity(stock_after),
     )
     return move, went_negative
+
+
+def shortages(db: Session, rows, warehouse_id: int) -> list[str]:
+    """Чего и сколько не хватает на складе. Пусто — списывать можно.
+
+    Строка приходит откуда угодно, лишь бы у неё были `product_id`,
+    `quantity_milli` и `name_snapshot`: спрашивают об этом и заказ перед
+    отгрузкой, и акт перед проведением, и спрашивают ровно одно и то же. Два
+    ответа на один вопрос разошлись бы в формулировке раньше, чем в цифрах, — и
+    человек, привыкший к одной, не узнал бы вторую.
+
+    Называем позиции поимённо: отказ «не хватает товара» без списка отправляет
+    человека сверять бумагу со складом построчно руками.
+    """
+    stock = warehouse_repo.stock_by_product(
+        db, [row.product_id for row in rows], warehouse_id=warehouse_id
+    )
+    short = []
+    for row in rows:
+        have = stock.get(row.product_id, 0)
+        if have < row.quantity_milli:
+            short.append(
+                f"{row.name_snapshot} ({format_quantity(have)}"
+                f" из {format_quantity(row.quantity_milli)})"
+            )
+    return short
+
+
+def write_off_materials(
+    db: Session,
+    document,
+    rows,
+    author: User,
+    warehouse_id: int | None = None,
+    confirm_negative: bool = False,
+    comment: str = "",
+    source: str = SOURCE_MANUAL,
+    source_ref: str = "",
+) -> list[StockMove]:
+    """Снять со склада то, что бланк израсходовал. Возвращает движения.
+
+    **Материал от работы отличает карточка товара, а не колонка строки.** Строка
+    с услугой и строка без товара вовсе — выполненная работа: остатка у неё нет,
+    и проверка нехватки объявила бы «консультации на складе ноль», после чего
+    ни один акт с работами не провёлся бы вовсе. Ровно та же оговорка, что у
+    отгрузки заказа, и по той же причине.
+
+    **Нехватка останавливает.** У ручного движения принято «разрешаем с
+    предупреждением» (деталь поставили сегодня, накладную занесут в пятницу),
+    здесь этого мало: акт закрывает работу, и списать под него нечего
+    физически. Остановка и явное подтверждение, которое видно в отказе.
+
+    **Себестоимость снимается на строку бланка.** Это снимок момента, а не
+    хранимая производная: то же самое число уезжает в само движение
+    (`stock_moves.cost_minor`), и по той же причине — закупочная цена завтра
+    сменится, а во сколько обошлась ЭТА работа, обязано остаться прежним.
+    Хранить его у строки, а не считать по движениям, нужно ради выключаемости:
+    склад однажды выключат, его таблицы станут недоступны разделу бланков, и
+    акт, лезущий за своей себестоимостью в `stock_moves`, читал бы хранилище
+    выключенного блока. Сумма по строкам при этом нигде не хранится — она
+    считается (`document_service`), как и положено производному.
+
+    Движения молчаливые (`announce=False`): в ленту заявки идёт одна строка про
+    бланк, а не по строке на каждую снятую деталь. Разбор — у самого события.
+    """
+    materials = []
+    for row in rows:
+        if row.product_id is None:
+            continue
+        # Удалённый товар берём тоже: карточку могли убрать из справочника
+        # после того, как деталь поставили в работу, а списать её всё равно
+        # надо — иначе остаток останется завышенным навсегда.
+        product = get_product(db, row.product_id, include_deleted=True)
+        if product.is_service:
+            continue
+        materials.append((row, product))
+
+    if not materials:
+        return []
+
+    # Склад выбирается явно, а не подставляется молча: списание с основного
+    # однажды снимет деталь не оттуда, где её взяли. Не назвали — основной.
+    warehouse = resolve_warehouse(db, warehouse_id)
+    if not confirm_negative:
+        short = shortages(db, [row for row, _ in materials], warehouse.id)
+        if short:
+            raise errors.ValidationError(
+                "Not enough stock: " + ", ".join(short), code="not_enough_stock"
+            )
+
+    moves = []
+    for row, product in materials:
+        row.cost_minor = product.cost_minor
+        move, _ = add_move(
+            db,
+            {
+                "product_id": row.product_id,
+                # `writeoff`, а не `out`: расход — это продажа и выдача клиенту,
+                # а деталь, поставленная в работу, со склада именно списана.
+                # Журнал склада обязан читаться словами, а не только цифрами.
+                "kind": MOVE_WRITEOFF,
+                "quantity": format_quantity(row.quantity_milli),
+                "warehouse_id": warehouse.id,
+                "deal_id": document.deal_id,
+                "comment": comment,
+                "document_id": document.id,
+            },
+            author,
+            source=source,
+            source_ref=source_ref,
+            announce=False,
+        )
+        moves.append(move)
+    return moves
 
 
 # --- склады как места ---------------------------------------------------------

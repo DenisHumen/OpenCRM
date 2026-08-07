@@ -91,6 +91,14 @@ MODULES: tuple[Module, ...] = (
     # функция. Зависит только от клиентов: звонок обязан находить, кому он был,
     # а заявка у звонка бывает не всегда («позвонил спросить про цены»).
     Module(key="telephony", default=False, requires=("clients",)),
+    # Деньги предприятия: приход и расход по статьям, планы, прибыль.
+    #
+    # Без `requires` намеренно. Строка «Аренда за август» не относится ни к
+    # какой заявке и ни к какому клиенту — связи с ними у операции есть, но
+    # необязательные. Поставить зависимость значило бы запретить вести расходы
+    # тому, кто не ведёт заявок, а это ровно тот случай, ради которого блок и
+    # включают отдельно.
+    Module(key="finance", default=False),
 )
 
 BY_KEY: dict[str, Module] = {module.key: module for module in MODULES}
@@ -194,31 +202,31 @@ class Preset:
 PRESETS: tuple[Preset, ...] = (
     Preset(
         key="services",
-        modules=("documents", "warehouse", "tasks", "telephony"),
+        modules=("documents", "warehouse", "tasks", "telephony", "finance"),
         pipeline="services",
         deal_term="request",
     ),
     Preset(
         key="retail",
-        modules=("warehouse", "labels", "orders", "documents"),
+        modules=("warehouse", "labels", "orders", "documents", "finance"),
         pipeline="shop",
         deal_term="order",
     ),
     Preset(
         key="wholesale",
-        modules=("warehouse", "labels", "orders", "documents", "companies", "mail"),
+        modules=("warehouse", "labels", "orders", "documents", "companies", "mail", "finance"),
         pipeline="shop",
         deal_term="order",
     ),
     Preset(
         key="production",
-        modules=("warehouse", "labels", "orders", "documents", "companies"),
+        modules=("warehouse", "labels", "orders", "documents", "companies", "finance"),
         pipeline="universal",
         deal_term="order",
     ),
     Preset(
         key="agency",
-        modules=("boards", "tasks", "mail"),
+        modules=("boards", "tasks", "mail", "finance"),
         pipeline="agency",
         deal_term="deal",
     ),
