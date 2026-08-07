@@ -37,6 +37,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from core import exceptions as errors
+from database.session import tochka_otkata
 
 Row = TypeVar("Row")
 
@@ -109,7 +110,7 @@ def _placed(db: Session, row: Row, taken: Callable[[Row], bool]) -> bool:
     попробовать другое значение.
     """
     try:
-        with db.begin_nested():
+        with tochka_otkata(db):
             db.add(row)
             db.flush()
         return True
