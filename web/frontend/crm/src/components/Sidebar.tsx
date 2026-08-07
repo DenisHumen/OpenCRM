@@ -253,6 +253,9 @@ export function Sidebar({
     // Склад по умолчанию выключен: он нужен магазину и мастерской, а студии нет.
     { module: "orders", perm: "orders.view", to: "/orders", label: t("orders"), icon: "receipt" },
     { module: "warehouse", perm: "warehouse.view", to: "/warehouse", label: t("warehouse"), icon: "warehouse" },
+    // Деньги — перед отчётами: отчёты отвечают «как идут дела», а этот раздел
+    // «сколько заработали». Второй вопрос задают первым, когда сводят месяц.
+    { module: "finance", perm: "finance.view", to: "/finance", label: t("modFinance"), icon: "receipt" },
     // Отчёты последними в «Работе»: за ними приходят не каждый день, а когда
     // сводят месяц, — и они читают то, что накопили разделы выше.
     { module: "reports", perm: "reports.view", to: "/reports", label: t("reports"), icon: "analytics" },
@@ -295,6 +298,9 @@ export function Sidebar({
     // Склады как места. Своё право: их заводит тот, кто отвечает за структуру,
     // а не тот, кто правит логотип.
     { module: "warehouse", perm: "warehouse.manage", to: "/settings/warehouses", label: t("warehouses") },
+    // Статьи и планы — там же, где склады: справочник, который заводят один раз
+    // и правят редко, а последствия правки видны во всех прошлых отчётах.
+    { module: "finance", perm: "finance.manage", to: "/settings/finance", label: t("finCategories") },
     // Ящики стоят в настройках, а не в «Работе»: это конфигурация фирмы, а не
     // то, чем пользуются каждый день.
     { module: "mail", perm: "settings.manage", to: "/settings/mailboxes", label: t("mailboxes") },

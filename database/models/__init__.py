@@ -20,6 +20,11 @@ from database.models.warehouse import (
     Warehouse,
 )
 from database.models.telephony import PhoneCall
+from database.models.finance import (
+    FinanceBudget,
+    FinanceCategory,
+    FinanceOperation,
+)
 from database.models.audit import AuditEvent
 
 __all__ = [
@@ -53,5 +58,8 @@ __all__ = [
     "StockTransfer",
     "Warehouse",
     "PhoneCall",
+    "FinanceCategory",
+    "FinanceOperation",
+    "FinanceBudget",
     "AuditEvent",
 ]

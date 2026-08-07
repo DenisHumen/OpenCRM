@@ -26,6 +26,7 @@ export const LABEL: Record<string, TranslationKey> = {
   reports: "modReports",
   mail: "modMail",
   telephony: "modTelephony",
+  finance: "modFinance",
 };
 
 const ABOUT: Record<string, TranslationKey> = {
@@ -41,6 +42,7 @@ const ABOUT: Record<string, TranslationKey> = {
   reports: "modReportsAbout",
   mail: "modMailAbout",
   telephony: "modTelephonyAbout",
+  finance: "modFinanceAbout",
 };
 
 const ICON: Record<string, string> = {
@@ -56,6 +58,11 @@ const ICON: Record<string, string> = {
   reports: "analytics",
   mail: "email",
   telephony: "call",
+  // «receipt» — тот же значок, что у бланков и заказов, и это не оплошность:
+  // ближе к деньгам в наборе ничего нет, а свой значок ради одного блока
+  // означал бы правку `Icon.PATHS` — общего файла, куда финансам лезть незачем.
+  // Меню обязано взять тот же ключ: две карты значков уже расходились молча.
+  finance: "receipt",
 };
 
 export function SettingsModules() {

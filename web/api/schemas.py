@@ -368,13 +368,19 @@ def company_out(company: Company) -> dict:
     }
 
 
-def document_out(document: Document) -> dict:
+def _payload_of(document: Document) -> dict:
+    """Снимок для печати из хранимого JSON. Битый — показываем что есть: он не
+    должен ронять ни карточку, ни список целиком."""
     import json as _json
 
     try:
-        payload = _json.loads(document.payload or "{}")
+        return _json.loads(document.payload or "{}")
     except ValueError:
-        payload = {}
+        return {}
+
+
+def document_out(document: Document) -> dict:
+    payload = _payload_of(document)
     return {
         "id": document.id,
         "number": document.number,
@@ -878,6 +884,49 @@ def order_line_out(line, amounts: bool = True) -> dict:
         "price": line.price_minor if amounts else None,
         "cost": line.cost_minor if amounts else None,
         "sort_order": line.sort_order,
+    }
+
+
+def act_out(act, lines: list | None = None, amounts: bool = True) -> dict:
+    """Акт выполненных работ вместе со строками.
+
+    Отдельно от `order_out`, хотя половина полей совпадает: у акта нет ни
+    собранного сканером, ни вида заказа, зато есть `next_stage` — то, куда он
+    переводит заявку, — и себестоимость. Общая функция с ветвлением по виду
+    отдавала бы каждому экрану половину чужих полей и заставляла бы обоих
+    угадывать, какие из них сегодня заполнены.
+
+    Ни сумма, ни себестоимость нигде не хранятся: обе считаются по строкам при
+    каждом ответе (`document_service.total_minor`, `act_service.cost_minor`).
+    Третье число в базе разошлось бы с ними при первой же правке строки.
+
+    `amounts=False` гасит деньги, оставляя перечень работ. Отдельного права на
+    суммы у бланков сегодня нет — акт видит тот, кто видит раздел; аргумент
+    стоит здесь, чтобы место, где деньги вычёркиваются, было одно и заранее
+    известное, как у заказа и у товара.
+    """
+    from core.services import act_service, document_service
+
+    rows = lines or []
+    return {
+        "id": act.id,
+        "number": act.number,
+        "kind": act.kind,
+        "status": act.status,
+        "client_id": act.client_id,
+        "deal_id": act.deal_id,
+        "locale": act.locale,
+        # Куда акт переводит заявку. Пусто — «решим при проведении»: тогда
+        # берётся следующий этап воронки.
+        "next_stage": act.next_stage,
+        "payload": _payload_of(act),
+        "lines": [order_line_out(line, amounts=amounts) for line in rows],
+        "total": document_service.total_minor(rows) if amounts else None,
+        # null — себестоимость неизвестна ни по одной строке: акт ещё не
+        # проведён либо склад выключен. Это не то же самое, что ноль.
+        "cost": act_service.cost_minor(rows) if amounts else None,
+        "created_at": _iso(act.created_at),
+        "updated_at": _iso(act.updated_at),
     }
 
 

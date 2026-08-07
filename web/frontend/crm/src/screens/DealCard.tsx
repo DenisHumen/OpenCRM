@@ -458,10 +458,35 @@ export function DealCard() {
       <div className="card card-pad" style={{ marginBottom: 20 }}>
         <div className="page-head" style={{ marginBottom: 12 }}>
           <div className="metric-title">{t("docOfDeal")}</div>
-          <button className="btn btn-secondary btn-sm" onClick={() => setIssuing(true)}>
-            <Icon name="printer" size={13} />
-            {t("issueDocument")}
-          </button>
+          <div style={{ display: "flex", gap: 8 }}>
+            {/* Акт заводится отсюда, а не из общего списка бланков: он закрывает
+                РАБОТУ, и без заявки ему нечего закрывать и некуда переводить.
+                Кнопка на карточке — единственное место, где заявка известна
+                заранее, и спрашивать её ещё раз формой было бы вопросом ради
+                ответа, который уже дан. */}
+            {can(user, "documents.create") && (
+              <button
+                className="btn btn-secondary btn-sm"
+                onClick={() => {
+                  void (async () => {
+                    try {
+                      const act = await api.post("/documents/acts", { deal_id: deal.id });
+                      navigate(`/documents/${act.id}`);
+                    } catch (e) {
+                      toastError(e);
+                    }
+                  })();
+                }}
+              >
+                <Icon name="check" size={13} stroke={2} />
+                {t("actNew")}
+              </button>
+            )}
+            <button className="btn btn-secondary btn-sm" onClick={() => setIssuing(true)}>
+              <Icon name="printer" size={13} />
+              {t("issueDocument")}
+            </button>
+          </div>
         </div>
         {/* «Бланков нет» — только когда их действительно нет: выданную бумагу
             легко выдать второй раз, поверив пустой врезке. */}
