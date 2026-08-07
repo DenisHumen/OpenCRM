@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from database.models import Client, PhoneCall
 from database.query import contains, page_of
+from database.session import tochka_otkata
 
 
 def get(db: Session, call_id: int) -> PhoneCall | None:
@@ -34,7 +35,7 @@ def insert_or_take(db: Session, call: PhoneCall) -> PhoneCall:
     сериализуются, и там эта гонка обычное дело, а не редкость.
     """
     try:
-        with db.begin_nested():
+        with tochka_otkata(db):
             db.add(call)
             db.flush()
         return call
@@ -67,7 +68,7 @@ def insert_new(db: Session, call: PhoneCall) -> PhoneCall | None:
     вызывающий.
     """
     try:
-        with db.begin_nested():
+        with tochka_otkata(db):
             db.add(call)
             db.flush()
         return call

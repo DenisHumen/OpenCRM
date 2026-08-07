@@ -1,6 +1,7 @@
+from contextlib import contextmanager
 from pathlib import Path
 
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from config.settings import get_settings
@@ -54,6 +55,13 @@ def _make_engine():
             cursor = dbapi_connection.cursor()
             cursor.execute("PRAGMA foreign_keys=ON")
             cursor.execute("PRAGMA journal_mode=WAL")
+            # Сколько ждать своей очереди на запись. У драйвера по умолчанию
+            # пять секунд, и этого не хватало: писатель в SQLite ровно один, а
+            # запрос успевает подержать блокировку дольше, чем кажется —
+            # загрузка файла на доску и звонок на АТС случаются внутри запроса.
+            # Дождавшийся своей очереди медленнее того, кто не ждал; не
+            # дождавшийся отвечает пятисоткой, и человек теряет введённое.
+            cursor.execute("PRAGMA busy_timeout=15000")
             cursor.close()
             # Встроенные lower/upper в SQLite работают только с ASCII: lower('Брусника')
             # возвращает строку без изменений, из-за чего поиск по русским именам
@@ -79,3 +87,59 @@ SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
 def get_session() -> Session:
     """Новая сессия БД (для фоновых задач и скриптов). В веб-слое — через Depends."""
     return SessionLocal()
+
+
+@contextmanager
+def tochka_otkata(db: Session):
+    """Точка отката, объявляющая намерение писать.
+
+    Обычная `db.begin_nested()` плюс одна строка перед ней — и эта строка лечит
+    `database is locked`, то есть пятисотку на пустом месте при двух
+    одновременных запросах.
+
+    **Как заводится беда.** Драйвер SQLite не открывает транзакцию перед
+    `SELECT` — чтения идут вне транзакции, и на обычном пути «прочитали,
+    записали» повышаться нечему. Но `SAVEPOINT` транзакцию открывает, причём
+    отложенную: без блокировок. Дальше внутри неё случается чтение, транзакция
+    получает снимок базы, а следующая за ним запись обязана повыситься до
+    писателя. Если сосед за это время что-то записал, повышение невозможно —
+    и SQLite отвечает «занято» **немедленно**, не выжидая `busy_timeout`: ждать
+    бессмысленно, ни одна сторона не уступит. Поэтому беда и не лечилась
+    таймаутом: таймаут тут ни при чём.
+
+    **Почему замок ставится именно здесь.** Сначала казалось, что правильная
+    форма — `BEGIN IMMEDIATE` на весь пишущий запрос, благо метод HTTP-запроса
+    прямо говорит, пишет он или нет. Так делать нельзя: блокировка держалась бы
+    и во время загрузки файла на доску, и во время звонка на АТС в
+    `click_to_call` — то есть все записи в CRM ждали бы чужой медленной сети.
+    Проверено и на тестах: два из них, изображающие гонку двумя сессиями в один
+    поток, сразу встали намертво.
+
+    Замок нужен не на запрос, а ровно перед записью — и размечать для этого
+    ничего не пришлось: **сама точка отката и есть разметка**. Её ставят там и
+    только там, где сейчас будет запись, которая может столкнуться с чужой.
+
+    Проверено на настоящем uvicorn: четыре потока шлют события АТС с одним
+    `call_id`. До починки — `sqlite3.OperationalError: database is locked`,
+    после — все 48 запросов проходят.
+    """
+    _vzyat_zamok_zapisi(db)
+    with db.begin_nested() as savepoint:
+        yield savepoint
+
+
+def vzyat_zamok_zapisi(db: Session) -> None:
+    """То же намерение писать, но без точки отката (см. `tochka_otkata`)."""
+    _vzyat_zamok_zapisi(db)
+
+
+def _vzyat_zamok_zapisi(db: Session) -> None:
+    if engine.dialect.name != "sqlite":
+        # У MySQL блокировки строк и настоящее ожидание вместо немедленного
+        # отказа — этого поведения там нет вовсе.
+        return
+    # Транзакция уже открыта — значит запись в ней либо уже была (мы и так
+    # писатель), либо замок взят выше. Второй BEGIN был бы ошибкой.
+    if db.connection().connection.driver_connection.in_transaction:
+        return
+    db.execute(text("BEGIN IMMEDIATE"))
