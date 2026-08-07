@@ -155,8 +155,11 @@ export function SettingsBrand() {
           <label className="label" style={{ marginBottom: 6 }}>
             {t("logo")}
           </label>
+          {/* На подложке витрины: логотип студии почти всегда светлый по
+              прозрачному фону, и на светлой теме от него осталась бы пустая
+              рамка. Заодно превью честнее — витрина тёмная у всех. */}
           <div
-            className="dropzone"
+            className="dropzone media-plate"
             style={{ width: 96, height: 96, padding: 8, display: "grid", placeItems: "center", overflow: "hidden" }}
             onClick={() => logoInput.current?.click()}
           >
@@ -308,7 +311,7 @@ export function SettingsShowcase() {
             {t("ogImage")}
           </label>
           <div
-            className="dropzone"
+            className="dropzone media-plate"
             style={{ width: 220, height: 116, padding: 8, display: "grid", placeItems: "center", overflow: "hidden", borderRadius: 10 }}
             onClick={() => ogInput.current?.click()}
           >
@@ -392,7 +395,7 @@ export function SettingsReturnButton() {
             {t("siteLogo")}
           </label>
           <div
-            className="dropzone"
+            className="dropzone media-plate"
             style={{ height: 56, padding: 8, display: "grid", placeItems: "center", overflow: "hidden", borderRadius: 10 }}
             onClick={() => siteLogoInput.current?.click()}
           >
@@ -425,13 +428,15 @@ export function SettingsReturnButton() {
           {/* Наведите — превью проигрывает ту же волну, что кнопка на витрине
               (см. .btn-site в web/public/templates/showcase.html). Ширина не
               задана: пилюля подгоняется под длину надписи, как и там. */}
-          <div className="site-btn-preview">
-            {values.studio_site_logo && (
-              <span className="seg">
-                <img src={values.studio_site_logo} alt="" style={{ height: 17, width: "auto", maxWidth: 92, objectFit: "contain", display: "block" }} />
-              </span>
-            )}
-            <span style={{ padding: "0 18px" }}>{values.studio_site_label || "Return to the site"}</span>
+          <div className="preview-plate">
+            <div className="site-btn-preview">
+              {values.studio_site_logo && (
+                <span className="seg">
+                  <img src={values.studio_site_logo} alt="" style={{ height: 17, width: "auto", maxWidth: 92, objectFit: "contain", display: "block" }} />
+                </span>
+              )}
+              <span style={{ padding: "0 18px" }}>{values.studio_site_label || "Return to the site"}</span>
+            </div>
           </div>
         </div>
       )}

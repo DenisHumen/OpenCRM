@@ -194,7 +194,7 @@ export function AuthScreen() {
               width: 44,
               height: 44,
               borderRadius: "50%",
-              background: "rgba(232,162,61,0.15)",
+              background: "var(--tint-warning)",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",

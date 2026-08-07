@@ -17,7 +17,8 @@ export function BoardCard({ board, compact }: { board: any; compact?: boolean })
         ) : (
           <Icon name="image" size={22} />
         )}
-        {revoked && <div style={{ position: "absolute", inset: 0, background: "rgba(20,20,19,0.6)" }} />}
+        {/* Затемнение лежит на обложке, а не на карточке: от темы CRM не зависит. */}
+        {revoked && <div style={{ position: "absolute", inset: 0, background: "var(--media-scrim)" }} />}
       </div>
       <div style={{ padding: compact ? "12px 14px 14px" : "14px 16px 16px" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8, flexWrap: "wrap" }}>

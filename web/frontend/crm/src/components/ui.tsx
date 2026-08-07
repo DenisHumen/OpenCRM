@@ -310,7 +310,7 @@ export function ConfirmModal({
         </button>
         <button
           className="btn btn-primary btn-sm"
-          style={danger ? { background: "var(--danger)", color: "#fff" } : undefined}
+          style={danger ? { background: "var(--danger)", color: "var(--on-danger)" } : undefined}
           onClick={() => {
             onConfirm();
             onClose();
