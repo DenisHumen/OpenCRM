@@ -18,6 +18,11 @@ class Settings(BaseSettings):
     )
 
     env: str = "dev"
+    #: Запущено ли из образа (`ENV OPENCRM_DEPLOYED=1` в docker/Dockerfile).
+    #:
+    #: Отличает развёртывание от запуска на ноутбуке. Снаружи не задаётся: флаг
+    #: зашит в образ, и потерять его нельзя, не собрав другой образ.
+    deployed: bool = False
     secret_key: str = DEV_SECRET_KEY
     db_url: str = f"sqlite:///{(BASE_DIR / 'data' / 'opencrm.db').as_posix()}"
     #: Сколько рабочих процессов поднимает uvicorn (docker/entrypoint.sh).
@@ -121,6 +126,24 @@ class Settings(BaseSettings):
                 "SQLite допускает одного писателя, и процессы не поднимутся. "
                 "Оставьте OPENCRM_WORKERS=1 или переезжайте на MySQL "
                 "(scripts/migrate_to_mysql.py)."
+            )
+
+        # **Конфиг не доехал.** `config/.env` подключается как `env_file` с
+        # `required: false` — иначе первый запуск до установки не поднялся бы
+        # вовсе. Пропади он (снесли, сломалось монтирование, перепутали путь),
+        # и compose поднимет контейнер молча, а приложение возьмёт значения по
+        # умолчанию: dev-режим и всем известный секретный ключ. Снаружи это
+        # выглядит как работающий сайт, а внутри — cookie PIN-доступа,
+        # подписанные ключом из репозитория.
+        #
+        # Развёртывание в dev-режиме не бывает законным: образ собирают, чтобы
+        # им пользовались, а не чтобы разрабатывать внутри него.
+        if self.deployed and not self.is_production:
+            errors.append(
+                f"OPENCRM_ENV={self.env} внутри контейнера — почти наверняка не "
+                "подхватился config/.env. Приложение взяло бы значения по "
+                "умолчанию, включая dev-ключ подписи cookie. Проверьте, что файл "
+                "на месте и подключён: docker compose config | grep -A3 env_file"
             )
 
         if not self.is_production:
