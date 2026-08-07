@@ -38,6 +38,7 @@ from web.api.routes import (
     documents,
     finance,
     labels,
+    leads,
     mail,
     modules,
     orders,
@@ -58,6 +59,7 @@ from web.api.routes import (
     workspace,
 )
 from web import middleware
+from web.public import leads as public_leads
 from web.public import routes as public_routes
 
 def _ensure_schema() -> None:
@@ -297,6 +299,7 @@ def create_app() -> FastAPI:
     app.include_router(reports.router, prefix=api_prefix)
     app.include_router(mail.router, prefix=api_prefix)
     app.include_router(labels.router, prefix=api_prefix)
+    app.include_router(leads.router, prefix=api_prefix)
     app.include_router(shares.router, prefix=api_prefix)
     app.include_router(modules.router, prefix=api_prefix)
     app.include_router(audit.router, prefix=api_prefix)
@@ -313,6 +316,9 @@ def create_app() -> FastAPI:
     app.include_router(telephony.webhook_router, prefix=api_prefix)
     app.include_router(arcade.router, prefix=api_prefix)
     app.include_router(public_routes.router)
+    # Приём заявок с сайта: роутер несёт полный префикс сам
+    # (/api/v1/public/leads) — разбор в web/public/leads.py.
+    app.include_router(public_leads.router)
 
     # шрифты витрины (Montserrat, SIL OFL) — раздаём со своего домена, а не с CDN:
     # внешний запрос светил бы IP посетителя стороннему сервису и требовал бы правки CSP

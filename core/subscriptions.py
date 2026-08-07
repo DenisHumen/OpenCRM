@@ -35,9 +35,19 @@
 это один `ORDER BY` и один `LIMIT`, уже написанные.
 """
 
+from datetime import timedelta
+
 from core import events
-from core.services import client_service, deal_service, pipeline_service, warehouse_service
+from core.services import (
+    client_service,
+    deal_service,
+    lead_service,
+    pipeline_service,
+    task_service,
+    warehouse_service,
+)
 from core.services.act_service import ACT_COMPLETED
+from core.services.lead_service import LEAD_RECEIVED
 from core.services.deal_service import DEAL_STAGE_CHANGED
 from core.services.document_service import (
     DOCUMENT_CLOSED,
@@ -45,6 +55,7 @@ from core.services.document_service import (
     payload_of,
 )
 from core.services.warehouse_service import STOCK_WRITTEN_OFF, format_quantity
+from core.utils import now_utc
 from database.models.client import KIND_DOCUMENT, KIND_STAGE, KIND_STOCK
 from database.models.document import STATUS_CANCELLED
 
@@ -317,4 +328,38 @@ def act_into_feed(event: events.Event) -> None:
         f"Act {act.number} carried out: {len(event['lines'])} line(s)",
         deal_id=event["deal_id"],
         source=event.source,
+    )
+
+
+@events.observer(LEAD_RECEIVED, module="tasks")
+def lead_into_task(event: events.Event) -> None:
+    """Заявка с сайта ставит напоминание ответственному.
+
+    Наблюдатель, а не участник. Заявка уже заведена и уже видна на доске;
+    отменить её из-за того, что не записалось напоминание, значит потерять
+    обращение клиента ради строки в списке дел. Ошибка при этом не пропадает —
+    она уходит в журнал (`events._run_observer`).
+
+    Блок напоминаний выключен — подписчика не зовут, и заявка приходит без
+    задачи. Это не половина работы: пока блока нет, напоминаний в системе не
+    существует как явления, и место заявки на доске — тот же самый сигнал.
+
+    Свой список дел рядом с чужим не заводим по той же причине, по которой его
+    не завела телефония (`telephony_service.create_callback_task`): два места,
+    где ищут одно и то же, — верный способ пропустить и там, и там.
+    """
+    client, deal = event["client"], event["deal"]
+    task_service.create(
+        event.db,
+        {
+            "title": f"New website request: {client.name}"[: task_service.MAX_TITLE],
+            # Час — как у напоминания перезвонить по пропущенному звонку. Срок
+            # правится в самой задаче, и он не про то, «когда можно», а про то,
+            # чтобы обращение не пролежало до завтра.
+            "due_at": now_utc() + timedelta(hours=1),
+            "assignee_id": event.actor.id if event.actor else None,
+            "client_id": client.id,
+            "deal_id": deal.id,
+        },
+        event.actor,
     )
