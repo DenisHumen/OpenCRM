@@ -713,5 +713,5 @@ def test_search_drops_the_results_of_a_switched_off_module(root_client, manager_
     assert without.status_code == 200, without.text
     # Группа остаётся пустой, а не исчезает: форма ответа одна при любом наборе
     # блоков, и клиенту не нужно знать, какие ключи сегодня бывают.
-    assert without.json()["boards"] == {"items": [], "total": 0}
+    assert without.json()["boards"] == {"items": [], "total": 0, "has_more": False}
     assert without.json()["clients"]["items"], "клиенты — несущий блок, они обязаны находиться"

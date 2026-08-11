@@ -28,7 +28,13 @@ SEARCH = f"{API}/search"
 ROLES = f"{API}/roles"
 STAFF = f"{API}/staff"
 
-EMPTY = {"items": [], "total": 0}
+#: Форма пустой группы. `has_more` здесь наравне с `total`: ключи ответа не
+#: зависят ни от прав, ни от набора блоков — иначе клиенту пришлось бы знать,
+#: какие из них сегодня бывают.
+EMPTY = {"items": [], "total": 0, "has_more": False}
+
+#: Сколько строк палитра показывает в одной группе (`web/api/routes/search.py`).
+GROUP_LIMIT = 6
 
 
 # --- вспомогательное ---------------------------------------------------------
@@ -144,6 +150,175 @@ def test_forma_otveta_odna_pri_lyubom_naboru_grupp(root_client, manager_client):
     assert set(found) == {"query", "clients", "deals", "boards"}
     for group in ("clients", "deals", "boards"):
         assert found[group] == EMPTY, group
+
+
+def test_total_ne_obeshchaet_bolshe_chem_pokazano(manager_client):
+    """`total` — это длина показанного, а «есть ли ещё» отвечает `has_more`.
+
+    Точное число найденного из палитры ушло намеренно: оно стоило второго
+    полного прохода по таблице на каждую группу — ровно столько же, сколько
+    сама выборка, — и никем не показывалось. Проверяем не только новый ключ, но
+    и обещание: `total` никогда не больше, чем строк на экране, иначе подпись
+    «найдено N» когда-нибудь припишут к числу, которого в списке нет.
+    """
+    client_id = _client_id(manager_client, "Ттлмн Заказчик")
+    for number in range(GROUP_LIMIT + 1):
+        _deal(manager_client, title=f"Ттлмн Работа {number}", client_id=client_id)
+
+    many = manager_client.get(SEARCH, params={"q": "Ттлмн Работа"}).json()["deals"]
+    assert len(many["items"]) == GROUP_LIMIT
+    assert many["total"] == GROUP_LIMIT, "total обещает больше, чем показано"
+    assert many["has_more"] is True, "семь совпадений, а «есть ещё» не сказано"
+
+    # Ровно столько, сколько влезает: продолжения нет, и обещать его нельзя —
+    # иначе подпись «и ещё» появлялась бы на полной, но последней странице.
+    exact = manager_client.get(SEARCH, params={"q": "Ттлмн Работа 3"}).json()["deals"]
+    assert len(exact["items"]) == 1
+    assert exact["total"] == 1
+    assert exact["has_more"] is False
+
+
+def test_palitra_nakhodit_po_kusku_slova_vnutri(manager_client):
+    """Поиск остаётся ПОДСТРОЧНЫМ: «ванов» находит «Иванова», «бук» — «Ноутбук».
+
+    Сторож против тихого сползания на поиск по началу слова. Соблазн понятен:
+    префикс берёт индекс, а подстрока с ведущим `%` не берёт его ни в SQLite,
+    ни в MySQL, и переписать условие «чтобы стало быстро» ничего не стоит. Цена
+    же измерена на большой базе: «Иванов» подстрокой находит 14 132 клиента,
+    префиксом — ноль, потому что фамилия стоит в имени второй.
+    """
+    client_id = _client_id(manager_client, "Кскслв Алексей Ивановский")
+    deal = _deal(manager_client, title="Кскслв Ремонт ноутбука", client_id=client_id)
+
+    vnutri_imeni = manager_client.get(SEARCH, params={"q": "вановский"}).json()
+    assert client_id in {item["id"] for item in vnutri_imeni["clients"]["items"]}
+
+    vnutri_nazvaniya = manager_client.get(SEARCH, params={"q": "утбук"}).json()
+    assert deal["id"] in {item["id"] for item in vnutri_nazvaniya["deals"]["items"]}
+
+
+def test_poisk_po_nomeru_otvechaet_pro_nomer(manager_client):
+    """Цифры ищутся только в телефоне, а не по всей склейке карточки.
+
+    Разница не теоретическая. В склейку входят имя, фирма, почта и метки, и у
+    людей там встречаются длинные числа — номер заказа в имени, ЕДРПОУ в
+    названии фирмы. Ищи мы цифры по всей склейке, карточка без телефона вовсе
+    находилась бы по ЧУЖОМУ номеру: человек набирает телефон клиента, а видит
+    посторонних. Поиск по номеру обязан отвечать про номер.
+
+    Отдельным условием, а не общим: искомое приводится к цифрам, чтобы
+    «+380 67 111 22 33» нашлось как набрано в карточке, — и это приведение
+    осмысленно ровно для телефона.
+    """
+    s_nomerom_v_imeni = _client_id(manager_client, "Цфрраз Заказ 380671119999")
+    s_telefonom = manager_client.post(
+        f"{API}/clients", json={"name": "Цфрраз Пётр", "phone": "+380 67 111 99 99"}
+    )
+    assert s_telefonom.status_code == 201, s_telefonom.text
+
+    nayden = manager_client.get(SEARCH, params={"q": "+380671119999"}).json()
+    nomera = {item["id"] for item in nayden["clients"]["items"]}
+    assert s_telefonom.json()["id"] in nomera, "карточка с этим телефоном не нашлась"
+    assert s_nomerom_v_imeni not in nomera, (
+        "по номеру телефона нашлась карточка, у которой телефона нет вовсе — "
+        "цифры ищутся по всей склейке вместо phone_norm"
+    )
+
+
+def test_udalyonnyy_klient_ne_nakhoditsya_poiskom(manager_client):
+    """Карточка из корзины не приходит ни в список, ни в палитру.
+
+    Отдельным тестом, потому что условие `deleted_at IS NULL` стоит теперь в
+    ОДНОМ месте на оба пути — и на экран раздела, и на Ctrl+K. Одна снятая
+    строка возвращает удалённых сразу в двух местах, и до этого теста её
+    снятие не роняло ни одной проверки из полутора тысяч.
+
+    Для человека это выглядит так: карточку убрали из системы, а поиск её
+    продолжает предлагать — и по ней заводят новую заявку.
+    """
+    client_id = _client_id(manager_client, "Удлнн Тимур Корзинный")
+    assert manager_client.get(SEARCH, params={"q": "Удлнн"}).json()["clients"]["items"]
+
+    udalenie = manager_client.delete(f"{API}/clients/{client_id}")
+    assert udalenie.status_code in (200, 204), udalenie.text
+
+    posle = manager_client.get(SEARCH, params={"q": "Удлнн"}).json()
+    assert client_id not in {item["id"] for item in posle["clients"]["items"]}
+
+    v_spiske = manager_client.get(f"{API}/clients", params={"search": "Удлнн"}).json()
+    assert client_id not in {item["id"] for item in v_spiske["items"]}
+
+
+def test_telefon_nakhoditsya_i_tak_kak_ego_zapisali(manager_client):
+    """Телефон ищется и по цифрам, и по написанию — значит `phone` в склейке.
+
+    Цифровая ветка ходит в `phone_norm` и прикрывает поиск по одним цифрам.
+    Поле `phone` — то, что человек ВИДИТ в карточке: с пробелами, скобками,
+    добавочным номером словом. Выпади оно из склейки, замолчал бы поиск по
+    БУКВАМ внутри телефона, а все прочие проверки остались бы зелёными: цифры-то
+    находятся через `phone_norm`.
+
+    Поэтому здесь ищется «доб» — в запросе нет ни одной цифры, значит цифровая
+    ветка не срабатывает и отвечает ровно склейка. Первая версия этого теста
+    искала «доб. 415» и была бесполезной: цифра 415 попадает в `phone_norm`, и
+    карточка находилась даже с выброшенным из склейки полем.
+    """
+    otvet = manager_client.post(
+        f"{API}/clients", json={"name": "Дбвчн Ольга", "phone": "+380 44 200 10 20 доб. 415"}
+    )
+    assert otvet.status_code == 201, otvet.text
+    client_id = otvet.json()["id"]
+
+    po_bukvam = manager_client.get(SEARCH, params={"q": "доб"}).json()
+    assert client_id in {item["id"] for item in po_bukvam["clients"]["items"]}, (
+        "телефон не нашёлся по слову внутри него — поле phone выпало из склейки"
+    )
+
+    # А цифрами — по-прежнему в любом написании, это вторая половина обещания.
+    for zapros in ("44 200 10 20", "380442001020"):
+        nayden = manager_client.get(SEARCH, params={"q": zapros}).json()
+        assert client_id in {item["id"] for item in nayden["clients"]["items"]}, (
+            f"телефон не нашёлся по запросу «{zapros}»"
+        )
+
+
+def test_kartochka_nakhoditsya_srazu_posle_zavedeniya_i_pravki(manager_client):
+    """Склейка обязана обновляться сама — и при заведении, и при каждой правке.
+
+    Колонка `search_text` — копия того, что лежит рядом, и её беда известна
+    заранее по `phone_norm`: заполняет одна точка, а пишут карточку несколько,
+    и запись мимо неё оставляет колонку пустой МОЛЧА. У поиска цена такой
+    пустоты выше: карточка просто перестаёт находиться, и узнать об этом можно
+    только от человека, который её искал.
+
+    Поэтому проверяются оба конца: старое имя больше не находит (склейка не
+    осталась прежней), новое находит (склейка пересобрана).
+    """
+    client_id = _client_id(manager_client, "Прсчт Первоначальный")
+    deal = _deal(manager_client, title="Прсчт Первая работа", client_id=client_id)
+
+    zavedeno = manager_client.get(SEARCH, params={"q": "Прсчт Первоначальный"}).json()
+    assert client_id in {item["id"] for item in zavedeno["clients"]["items"]}
+    assert deal["id"] in {item["id"] for item in zavedeno["deals"]["items"]}
+
+    assert manager_client.patch(
+        f"{API}/clients/{client_id}", json={"name": "Прсчт Переименованный"}
+    ).status_code == 200
+    assert manager_client.patch(
+        f"{API}/deals/{deal['id']}", json={"title": "Прсчт Вторая работа"}
+    ).status_code == 200
+
+    po_novomu = manager_client.get(SEARCH, params={"q": "Переименованный"}).json()
+    assert client_id in {item["id"] for item in po_novomu["clients"]["items"]}
+    po_novoy_rabote = manager_client.get(SEARCH, params={"q": "Вторая работа"}).json()
+    assert deal["id"] in {item["id"] for item in po_novoy_rabote["deals"]["items"]}
+
+    po_staromu = manager_client.get(SEARCH, params={"q": "Первоначальный"}).json()
+    assert client_id not in {item["id"] for item in po_staromu["clients"]["items"]}, (
+        "карточка находится по имени, которого у неё больше нет: склейка не пересобрана"
+    )
+    po_staroy_rabote = manager_client.get(SEARCH, params={"q": "Первая работа"}).json()
+    assert deal["id"] not in {item["id"] for item in po_staroy_rabote["deals"]["items"]}
 
 
 # --- строка поиска — это строка, а не шаблон ---------------------------------

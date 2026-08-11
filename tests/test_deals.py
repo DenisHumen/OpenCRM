@@ -6,6 +6,8 @@
 его снимает.
 """
 
+from database.repositories import clients as clients_repo
+from database.repositories import deals as deals_repo
 from tests.conftest import API
 
 DEALS = f"{API}/deals"
@@ -313,3 +315,85 @@ def test_a_deadline_with_a_zone_keeps_its_moment(manager_client):
         f"{DEALS}/{deal['id']}", json={"due_at": "2026-09-01T10:00:00-05:00"}
     ).json()
     assert edited["due_at"] == "2026-09-01T15:00:00", edited["due_at"]
+
+
+# --- поиск заявок: подзапрос вместо соединения -------------------------------
+
+
+def test_zayavka_nakhoditsya_po_imeni_klienta_bez_join(manager_client, db):
+    """Имя клиента ищется подзапросом, а не соединением с `clients`.
+
+    Соединение появилось ради одной строки — «что там по Ромашке», — но
+    заставляло SQLite вести запрос ОТ клиентов: 200 000 проходов и на каждый
+    поиск в `ix_deals_client_id`. Замерено на большой базе: 2457 → 440 мс после
+    замены на подзапрос, найденное совпало до строки.
+
+    Проверка тройная, и механическая часть здесь главная. Смысл поиска можно
+    сохранить и с соединением, поэтому исход теста сам по себе ничего не
+    сторожит: `JOIN clients` вернётся с первой же правкой «чтобы было понятнее»,
+    и вернётся молча — ответ тот же, время другое.
+    """
+    from database.repositories.deals import _search_stmt
+
+    client = make_client(manager_client, "Джойн Ромашка")
+    deal = manager_client.post(
+        DEALS, json={"title": "Джойн Ремонт кровли", "client_id": client["id"]}
+    ).json()
+
+    # (а) находится и по своему названию, и по имени клиента — как и раньше.
+    by_title, _ = deals_repo.search(db, q="Джойн Ремонт")
+    assert deal["id"] in {d.id for d in by_title}
+    by_client, _ = deals_repo.search(db, q="Джойн Ромашка")
+    assert deal["id"] in {d.id for d in by_client}
+
+    # (б) клиент в корзине — заявка по-прежнему находится по его имени.
+    #
+    # Прежний ВНУТРЕННИЙ join мягко удалённых клиентов не отсеивал, и подзапрос
+    # сознательно этого не делает тоже: множество найденного обязано остаться
+    # тем же самым, иначе замена «ничего не меняет» перестаёт быть правдой.
+    assert manager_client.delete(f"{API}/clients/{client['id']}").status_code == 200
+    db.expire_all()
+    v_korzine, _ = deals_repo.search(db, q="Джойн Ромашка")
+    assert deal["id"] in {d.id for d in v_korzine}, (
+        "заявка удалённого клиента перестала находиться по его имени"
+    )
+
+    # (в) механически: соединения с клиентами в запросе больше нет.
+    sql = str(_search_stmt(q="Джойн").compile(compile_kwargs={"literal_binds": True}))
+    assert "JOIN CLIENTS" not in sql.upper(), sql
+
+
+def test_po_klientu_ishchetsya_imya_a_ne_vsya_ego_kartochka(manager_client, db):
+    """Заявку по-прежнему находит ИМЯ клиента, а не любое его поле.
+
+    Соблазн после появления склейки прямой: подзапрос по `Client.search_text`
+    короче и быстрее. Он же и расширяет выдачу молча — по названию фирмы, по
+    почте, по метке. Замерено на большой базе: «ООО» стоит в названиях фирм, и
+    заявок по нему находилось бы 32 792 вместо нуля.
+
+    Расширение тихое вдвойне: ошибки нет, строки правдоподобные, и заметить
+    подмену можно только сверив множество найденного с прежним.
+    """
+    client = manager_client.post(
+        f"{API}/clients",
+        json={"name": "Ммклнт Заказчик", "company": "Ммфрм Ромашка", "email": "mm@firma.test"},
+    ).json()
+    deal = manager_client.post(
+        DEALS, json={"title": "Ммзвк Работа", "client_id": client["id"]}
+    ).json()
+
+    by_name, _ = deals_repo.search(db, q="Ммклнт")
+    assert deal["id"] in {d.id for d in by_name}, "заявка не нашлась по имени клиента"
+
+    by_company, _ = deals_repo.search(db, q="Ммфрм")
+    assert deal["id"] not in {d.id for d in by_company}, (
+        "заявка нашлась по названию фирмы клиента — выдача расширилась молча"
+    )
+    by_email, _ = deals_repo.search(db, q="mm@firma.test")
+    assert deal["id"] not in {d.id for d in by_email}, (
+        "заявка нашлась по почте клиента — выдача расширилась молча"
+    )
+
+    # А сам клиент по этим словам находится: у него склейка полная.
+    found, _ = clients_repo.search(db, q="Ммфрм")
+    assert client["id"] in {c.id for c in found}

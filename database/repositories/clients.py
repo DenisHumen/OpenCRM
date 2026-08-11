@@ -2,7 +2,7 @@ from sqlalchemy import literal, or_, select
 from sqlalchemy.orm import Session
 
 from database.models import Client, ClientFile, ClientNote
-from database.query import contains, page_of
+from database.query import contains, contains_norm, page_of, page_without_total
 
 
 def get_many(db: Session, ids) -> list[Client]:
@@ -38,31 +38,40 @@ def get(db: Session, client_id: int, include_deleted: bool = False) -> Client | 
     return client
 
 
-def search(
-    db: Session,
+def _search_stmt(
     q: str | None = None,
     tag: str | None = None,
     manager_id: int | None = None,
-    page: int = 1,
-    per_page: int = 50,
-) -> tuple[list[Client], int]:
+):
+    """Условия отбора — отдельно от того, как выдачу нарезают на страницы.
+
+    Двое зовут один и тот же отбор по-разному: экран раздела листает выдачу и
+    просит точный `total` (`search`), командная палитра показывает шесть строк
+    и точное число выбрасывает (`search_top`). Собранные порознь, эти условия
+    однажды разъедутся — и поиск начнёт находить разное в двух местах, ничем
+    этого не объявив.
+    """
     stmt = select(Client).where(Client.deleted_at.is_(None))
     if q:
         needle = q.strip()
-        # Телефон ищем и как набрано, и в приведённом виде. Колонка `phone_norm`
-        # заведена ровно ради этого («показываем то, что ввёл менеджер, а ищем —
-        # по этому»), телефония ею пользуется, а поисковая строка — нет: две
-        # карточки с одним номером находились по-разному в зависимости от того,
-        # ставил ли менеджер пробелы. Искали «0671112233» — находили одну из
-        # двух.
+        # Пять условий `lower(колонка) LIKE …` заменены одним по склейке
+        # (`Client.search_text`, см. `database/models/client.py`). Набор
+        # найденного тот же: в склейку входят ровно те поля, что проверялись
+        # раньше, и совпадение не может перескочить границу поля — они склеены
+        # переводом строки, которого в строке поиска не бывает.
+        #
+        # Телефон по-прежнему ищется и как набрано, и в приведённом виде — но
+        # цифры ищутся ТОЛЬКО в `phone_norm`, а не по всей склейке. Разница не
+        # теоретическая: в склейку входят имя, фирма, почта и метки, и человек
+        # с номером заказа в имени («Заказ 380671119999») стал бы находиться по
+        # чужому телефону, хотя телефона у него нет вовсе. Поиск по номеру
+        # обязан отвечать про номер.
+        #
+        # Колонка `phone_norm` при этом остаётся нетронутой и в другом смысле:
+        # по ней телефония находит карточку РАВЕНСТВОМ, и это единственный
+        # быстрый путь в проекте.
         digits = "".join(ch for ch in needle if ch.isdigit())
-        conditions = [
-            contains(Client.name, needle),
-            contains(Client.company, needle),
-            contains(Client.phone, needle),
-            contains(Client.email, needle),
-            contains(Client.tags, needle),
-        ]
+        conditions = [contains_norm(Client.search_text, needle)]
         if digits:
             conditions.append(contains(Client.phone_norm, digits))
         stmt = stmt.where(or_(*conditions))
@@ -79,8 +88,36 @@ def search(
         stmt = stmt.where(contains(v_ramke, f",{tag.strip()},"))
     if manager_id:
         stmt = stmt.where(Client.manager_id == manager_id)
-    stmt = stmt.order_by(Client.updated_at.desc())
+    return stmt.order_by(Client.updated_at.desc())
+
+
+def search(
+    db: Session,
+    q: str | None = None,
+    tag: str | None = None,
+    manager_id: int | None = None,
+    page: int = 1,
+    per_page: int = 50,
+) -> tuple[list[Client], int]:
+    """Страница списка клиентов и точное число найденного.
+
+    Точный `total` здесь нужен: экран раздела листает выдачу, и из него
+    считается номер последней страницы.
+    """
+    stmt = _search_stmt(q, tag, manager_id)
     return page_of(db, stmt, page=page, per_page=per_page)
+
+
+def search_top(
+    db: Session, q: str | None = None, *, per_page: int = 6
+) -> tuple[list[Client], bool]:
+    """Первые несколько строк для командной палитры — без счёта найденного.
+
+    Второй проход по таблице ради числа, которого никто не показывает, стоит
+    столько же, сколько сама выборка. Вместо него — «есть ли ещё», см.
+    `database/query.page_without_total`.
+    """
+    return page_without_total(db, _search_stmt(q), page=1, per_page=per_page)
 
 
 def list_notes(

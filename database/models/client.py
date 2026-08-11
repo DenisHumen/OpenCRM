@@ -1,9 +1,10 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text, event
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 
+from database.query import search_norm
 from database.session import Base
 
 #: Виды, которые сотрудник заводит руками.
@@ -81,6 +82,66 @@ class Client(Base):
     # SQLite переоценивает избирательность `deleted_at IS NULL`. Замеры — в
     # миграции f9b41c7e2d08.
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+
+    # Склейка полей, по которым ищут, в нижнем регистре. Тот же приём, что у
+    # `phone_norm`: рядом с исходными полями лежит их приведённый вид, и поиск
+    # сравнивает две заранее приведённые строки.
+    #
+    # Зачем: пять `lower(колонка) LIKE …` — это пять переходов C→Python на
+    # КАЖДУЮ строку таблицы (подмена `lower()` в `database/session.py`), то есть
+    # миллион вызовов на один поиск по 200 000 карточек. Замерено на большой
+    # базе: 295 → 38,6 мс.
+    #
+    # Индекса НЕТ и не будет: подстрока с ведущим `%` его не берёт ни в SQLite,
+    # ни в MySQL, а префиксный по склейке бессмыслен — она начинается с имени, и
+    # «иванов» не нашёл бы «Алексея Иванова». Колонка здесь не индекс, а более
+    # дешёвый стог сена.
+    #
+    # `deferred`: колонку никогда не показывают, а списки иначе тянули бы в
+    # память удвоенный текст каждой карточки.
+    #
+    # Ширина — сумма ширин слагаемых (200+200+64+32+255+500 = 1251) плюс пять
+    # разделителей, с запасом.
+    search_text: Mapped[str] = mapped_column(String(1300), default="", deferred=True)
+
+
+def _sklejka_klienta(client: "Client") -> str:
+    """Из чего собирается поисковая склейка клиента.
+
+    Ровно те поля, по которым искали раньше пятью отдельными `OR`. `messenger`
+    сюда не входит — его не искали и до этого, а склейка обязана находить то же
+    самое, что находил прежний запрос, не больше и не меньше.
+    """
+    return search_norm(
+        client.name,
+        client.company,
+        client.phone,
+        client.phone_norm,
+        client.email,
+        client.tags,
+    )
+
+
+# Пересчёт склейки — мэппер-событиями, а НЕ сервисом.
+#
+# У `phone_norm` цена сервисного заполнения уже известна и названа: колонку
+# наполняет только `client_service`, и любая запись мимо него оставляет её
+# пустой молча. У `search_text` та же пустота дороже — карточка просто
+# перестаёт находиться, и узнать об этом можно лишь от человека, который её
+# искал. Клиентов и заявки пишет не один сервис (лид с сайта, синхронизация
+# почты, вебхук АТС), и забытый сервис здесь — вопрос времени.
+#
+# Образец мэппер-правила в проекте уже есть: `database/models/audit.py`, где
+# тем же способом запрещены правка и удаление журнала.
+#
+# Мимо мэппера проходит только массовый `update()` по таблице; сторож против
+# такого обхода — в `tests/test_db_boundary.py`.
+
+
+@event.listens_for(Client, "before_insert", propagate=True)
+@event.listens_for(Client, "before_update", propagate=True)
+def _peresobrat_poisk_klienta(mapper, connection, target: "Client") -> None:
+    target.search_text = _sklejka_klienta(target)[:1300]
 
 
 class ClientNote(Base):

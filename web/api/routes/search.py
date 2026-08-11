@@ -17,12 +17,16 @@ router = APIRouter(prefix="/search", tags=["search"])
 # палитра показывает короткий список: длинные выдачи листают на своих экранах
 GROUP_LIMIT = 6
 
-EMPTY = {"items": [], "total": 0}
+EMPTY = {"items": [], "total": 0, "has_more": False}
 
 
 def _clients_group(db: Session, query: str | None) -> dict:
-    found, total = clients_repo.search(db, q=query, page=1, per_page=GROUP_LIMIT)
-    return {"items": [schemas.client_out(c) for c in found], "total": total}
+    found, has_more = clients_repo.search_top(db, q=query, per_page=GROUP_LIMIT)
+    return {
+        "items": [schemas.client_out(c) for c in found],
+        "total": len(found),
+        "has_more": has_more,
+    }
 
 
 def _deals_group(db: Session, user: User, query: str | None) -> dict:
@@ -38,10 +42,9 @@ def _deals_group(db: Session, user: User, query: str | None) -> dict:
     цену работы можно было бы прочесть прямо из выдачи, не открывая заявку, —
     то есть запрет закрывал бы экран, а не деньги.
     """
-    found, total = deals_repo.search(
+    found, has_more = deals_repo.search_top(
         db,
         q=query,
-        page=1,
         per_page=GROUP_LIMIT,
         only_manager_id=permissions_service.deals_scope(db, user),
     )
@@ -56,15 +59,20 @@ def _deals_group(db: Session, user: User, query: str | None) -> dict:
             schemas.deal_out(deal, names.get(deal.client_id), amounts=amounts)
             for deal in found
         ],
-        "total": total,
+        "total": len(found),
+        "has_more": has_more,
     }
 
 
 def _boards_group(db: Session, query: str | None) -> dict:
-    boards, total = boards_repo.search(db, q=query, page=1, per_page=GROUP_LIMIT)
+    boards, has_more = boards_repo.search_top(db, q=query, per_page=GROUP_LIMIT)
     # Клиент нужен и здесь: палитра подписывает им доску, и без подписи две
     # «Витрины» разных заказчиков в списке не различить.
-    return {"items": cards.board_cards(db, boards, with_client=True), "total": total}
+    return {
+        "items": cards.board_cards(db, boards, with_client=True),
+        "total": len(boards),
+        "has_more": has_more,
+    }
 
 
 def _group(db: Session, user: User, area: str, build: Callable[[], dict]) -> dict:
@@ -110,6 +118,15 @@ def global_search(
     листают выдачу на своих экранах. Поэтому и `page` в запрос не приходит —
     номер страницы, взятый снаружи, пришлось бы сторожить от нуля и минуса
     (см. `database/query.py`), а несуществующий параметр сторожить не надо.
+
+    **Точного числа найденного здесь больше нет и не будет.** `total` — это
+    длина показанного (не больше `GROUP_LIMIT`), а «есть ли ещё» отвечает
+    `has_more`. Точный счёт означал второй полный проход по таблице на каждую
+    группу и стоил ровно столько же, сколько сама выборка: на 400 000 заявок
+    3128 мс против 3165 мс. Палитра показывает шесть строк и никуда не листает,
+    то есть тратились эти секунды на число, которое клиент выбрасывал не глядя.
+    Точный `total` живёт на экранах разделов — там из него считается номер
+    последней страницы.
     """
     query = q.strip() or None
     return {

@@ -63,13 +63,41 @@ def _make_engine():
             # дождавшийся отвечает пятисоткой, и человек теряет введённое.
             cursor.execute("PRAGMA busy_timeout=15000")
             cursor.close()
-            # Встроенные lower/upper в SQLite работают только с ASCII: lower('Брусника')
-            # возвращает строку без изменений, из-за чего поиск по русским именам
-            # становится регистрозависимым (ilike SQLAlchemy эмулирует через lower()).
-            # Подменяем их Python-реализациями, знающими Unicode.
-            dbapi_connection.create_function("lower", 1, _unicode_lower, deterministic=True)
-            dbapi_connection.create_function("upper", 1, _unicode_upper, deterministic=True)
+            _postavit_unicode_registr(dbapi_connection)
     return engine
+
+
+def _postavit_unicode_registr(dbapi_connection) -> None:
+    """Подменить lower/upper на понимающие Unicode — на голом соединении sqlite3.
+
+    Встроенные в SQLite работают только с ASCII: `lower('Брусника')` возвращает
+    строку без изменений, из-за чего поиск по русским именам становился
+    регистрозависимым (`ilike` SQLAlchemy эмулирует через `lower()`).
+    """
+    dbapi_connection.create_function("lower", 1, _unicode_lower, deterministic=True)
+    dbapi_connection.create_function("upper", 1, _unicode_upper, deterministic=True)
+
+
+def unicode_registr_dlya(bind) -> None:
+    """То же самое, но для ЧУЖОГО соединения — прежде всего для миграций.
+
+    `database/migrations/env.py` строит свой движок через `engine_from_config`,
+    а не через `_make_engine`, поэтому подписчика на `connect` там нет и
+    подмены нет тоже: `lower()` в миграции знает только ASCII. Миграция,
+    заполняющая нормализованную колонку одним `UPDATE` с `lower()`, оставила бы
+    «БРУСНИКУ» заглавной на всей уже населённой базе — и карточка перестала бы
+    находиться молча, ровно на том обновлении, ради которого всё делается.
+
+    Регистрируются ТОЛЬКО функции. Цеплять `_prepare_sqlite` целиком к движку
+    миграций нельзя: там же стоит `PRAGMA foreign_keys=ON`, а alembic в
+    batch-режиме пересоздаёт таблицы — включённые внешние ключи ломают этот
+    приём.
+
+    На не-SQLite не делает ничего: в MySQL `LOWER()` знает Unicode сам.
+    """
+    if bind.dialect.name != "sqlite":
+        return
+    _postavit_unicode_registr(bind.connection.driver_connection)
 
 
 def _unicode_lower(value):
