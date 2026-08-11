@@ -436,8 +436,10 @@ def test_search_does_not_leak_what_the_role_may_not_see(
 
     found = blind.get(f"{API}/search", params={"q": "Секрет"})
     assert found.status_code == 200, found.text
-    assert found.json()["clients"] == {"items": [], "total": 0}
-    assert found.json()["boards"] == {"items": [], "total": 0}
+    # `has_more` — часть формы ответа палитры наравне с `total`: точного числа
+    # найденного там больше нет, но ключи одни при любом наборе прав.
+    assert found.json()["clients"] == {"items": [], "total": 0, "has_more": False}
+    assert found.json()["boards"] == {"items": [], "total": 0, "has_more": False}
 
     # А тому, у кого права есть, поиск работает как работал.
     seen = manager_client.get(f"{API}/search", params={"q": "Секрет"}).json()

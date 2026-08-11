@@ -251,6 +251,91 @@ def test_every_migration_can_be_rolled_back(tmp_path):
     )
 
 
+def test_migratsiya_zapolnyaet_sklejku_tak_zhe_kak_prilozhenie(tmp_path):
+    """Склейку `search_text` собирают двое, и они обязаны собирать одинаковую.
+
+    Миграция заполняет уже населённую базу одним `UPDATE` средствами SQL, а
+    приложение пересчитывает колонку мэппер-событием через `search_norm`.
+    Разойдись эти двое — и половина базы (та, что была до обновления) начнёт
+    находиться иначе, чем та, что заведена после. Без ошибки, без записи в
+    журнал: просто часть карточек не находится.
+
+    Мест, где они могут разойтись, ровно три, и все три проверяются здесь:
+    приведение регистра (в миграции `lower()` знает только ASCII, если не
+    подставить свою функцию), склейка с NULL (в обоих движках она даёт NULL
+    целиком) и перевод строки внутри значения (описание с абзацами завело бы в
+    склейку лишнюю границу поля).
+    """
+    from alembic import command
+    from alembic.config import Config
+    from sqlalchemy import create_engine, text
+
+    from database.query import search_norm
+
+    url = f"sqlite:///{tmp_path / 'sklejka.db'}"
+    config = Config("alembic.ini")
+    config.set_main_option("sqlalchemy.url", url)
+    config.attributes["configure_logger"] = False
+
+    # Останавливаемся ПЕРЕД нужной ревизией и заводим данные так, как они лежали
+    # бы на боевой базе к моменту обновления.
+    command.upgrade(config, "c2a58f31d9e0")
+
+    klient = ("БРУСНИКА Иванов", "ООО Ромашка", "+380 67 111-22-33", "380671112233",
+              "A@B.COM", "VIP,ЗАКАЗ")
+    zayavka = ("НОУТБУК Ремонт", "первая строка\nвторая СТРОКА")
+
+    engine = create_engine(url)
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO clients (name, company, phone, phone_norm, email, tags,"
+                " messenger, created_at, updated_at) VALUES (:n, :c, :p, :pn, :e, :t,"
+                " '', '2025-01-01', '2025-01-01')"
+            ),
+            dict(zip(("n", "c", "p", "pn", "e", "t"), klient)),
+        )
+        # Карточка, у которой заполнено только имя: склейка с пустыми полями не
+        # должна обнулиться целиком (`coalesce` на каждой части).
+        connection.execute(
+            text(
+                "INSERT INTO clients (name, company, phone, phone_norm, email, tags,"
+                " messenger, created_at, updated_at) VALUES ('Пустой', '', '', '', '',"
+                " '', '', '2025-01-01', '2025-01-01')"
+            )
+        )
+        connection.execute(
+            text(
+                "INSERT INTO deals (title, client_id, stage, sort_order, description,"
+                " prepaid, lost_reason, created_at, updated_at) VALUES (:t, 1, 'new', 0,"
+                " :d, 0, '', '2025-01-01', '2025-01-01')"
+            ),
+            {"t": zayavka[0], "d": zayavka[1]},
+        )
+
+    command.upgrade(config, "head")
+
+    with engine.connect() as connection:
+        stalo = {
+            "клиент": connection.scalar(text("SELECT search_text FROM clients WHERE id = 1")),
+            "пустой": connection.scalar(text("SELECT search_text FROM clients WHERE id = 2")),
+            "заявка": connection.scalar(text("SELECT search_text FROM deals WHERE id = 1")),
+        }
+    engine.dispose()
+
+    assert stalo["клиент"] == search_norm(*klient), (
+        "миграция собрала склейку клиента иначе, чем приложение:\n"
+        f"  миграция: {stalo['клиент']!r}\n  приложение: {search_norm(*klient)!r}"
+    )
+    assert stalo["пустой"] == search_norm("Пустой", "", "", "", "", ""), (
+        f"пустые поля обнулили склейку целиком: {stalo['пустой']!r}"
+    )
+    assert stalo["заявка"] == search_norm(*zayavka), (
+        "миграция собрала склейку заявки иначе, чем приложение:\n"
+        f"  миграция: {stalo['заявка']!r}\n  приложение: {search_norm(*zayavka)!r}"
+    )
+
+
 def test_running_migrations_does_not_silence_the_application_log(tmp_path):
     """Прогон миграций не выключает журнал приложения.
 

@@ -2,7 +2,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from database.models import Board, Work
-from database.query import contains, page_of
+from database.query import contains, page_of, page_without_total
 
 
 def get(db: Session, board_id: int, include_deleted: bool = False) -> Board | None:
@@ -14,6 +14,23 @@ def get(db: Session, board_id: int, include_deleted: bool = False) -> Board | No
     return board
 
 
+def _search_stmt(q: str | None = None, client_id: int | None = None):
+    """Условия отбора досок — общие для списка раздела и для палитры.
+
+    Склейки `search_text` у досок НЕТ намеренно, хотя у клиентов и заявок она
+    появилась. Досок в системе единицы-сотни: полный проход по ним стоит
+    миллисекунды, а колонка платится записью на каждом сохранении и местом на
+    диске. Приём применяется там, где счёт замерен в секундах.
+    """
+    stmt = select(Board).where(Board.deleted_at.is_(None))
+    if q:
+        needle = q.strip()
+        stmt = stmt.where(or_(contains(Board.title, needle), contains(Board.description, needle)))
+    if client_id:
+        stmt = stmt.where(Board.client_id == client_id)
+    return stmt.order_by(Board.updated_at.desc())
+
+
 def search(
     db: Session,
     q: str | None = None,
@@ -21,14 +38,14 @@ def search(
     page: int = 1,
     per_page: int = 50,
 ) -> tuple[list[Board], int]:
-    stmt = select(Board).where(Board.deleted_at.is_(None))
-    if q:
-        needle = q.strip()
-        stmt = stmt.where(or_(contains(Board.title, needle), contains(Board.description, needle)))
-    if client_id:
-        stmt = stmt.where(Board.client_id == client_id)
-    stmt = stmt.order_by(Board.updated_at.desc())
-    return page_of(db, stmt, page=page, per_page=per_page)
+    return page_of(db, _search_stmt(q, client_id), page=page, per_page=per_page)
+
+
+def search_top(
+    db: Session, q: str | None = None, *, per_page: int = 6
+) -> tuple[list[Board], bool]:
+    """Первые несколько досок для командной палитры — без счёта найденного."""
+    return page_without_total(db, _search_stmt(q), page=1, per_page=per_page)
 
 
 def works_count_by_board(db: Session, board_ids: list[int]) -> dict[int, int]:

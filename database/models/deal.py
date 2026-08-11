@@ -1,10 +1,12 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, event
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 
+from database.query import search_norm
 from database.session import Base
+from database.types import LongText, text_default
 
 # Этапов здесь больше нет: они живут в таблице `pipeline_stages`
 # (database/models/pipeline.py). CRM рассчитана на любой малый бизнес, а у
@@ -92,6 +94,42 @@ class Deal(Base):
     # 29 500), и планировщик тащит такой индекс в каждый запрос про живые
     # записи. Разбор вариантов и замеры — в миграции f9b41c7e2d08.
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+
+    # Название и описание, склеенные и приведённые к нижнему регистру. Разбор
+    # приёма — у той же колонки в `database/models/client.py`; здесь только то,
+    # что своё.
+    #
+    # Тип `LongText`: `description` — это `Text`, а обычный TEXT в MySQL меряется
+    # в 65 535 БАЙТАХ, кириллица по два. Склейка длинного описания с названием
+    # упёрлась бы в потолок и была бы молча обрезана в нестрогом режиме — то
+    # есть заявка перестала бы находиться по концу описания, ничем этого не
+    # объявив. Сторож — `tests/test_mysql_portability.py`.
+    #
+    # `server_default` выражением, а не литералом: MySQL запрещает обычный
+    # DEFAULT у TEXT (ошибка 1101) и обрывает миграцию на середине.
+    #
+    # Индекса нет намеренно — по той же причине, что и у клиента.
+    search_text: Mapped[str] = mapped_column(
+        LongText, default="", server_default=text_default(), deferred=True
+    )
+
+
+def _sklejka_zayavki(deal: "Deal") -> str:
+    """Из чего собирается поисковая склейка заявки.
+
+    Имя клиента сюда НЕ входит, хотя по нему тоже ищут («что там по Ромашке»).
+    Оно живёт в чужой строке и меняется без ведома заявки: переименовали
+    клиента — и склейка у сорока его заявок стала неправдой, а пересчитывать её
+    пришлось бы каскадом. Поиск по имени клиента идёт подзапросом по
+    `clients.search_text` (`database/repositories/deals.py`).
+    """
+    return search_norm(deal.title, deal.description)
+
+
+@event.listens_for(Deal, "before_insert", propagate=True)
+@event.listens_for(Deal, "before_update", propagate=True)
+def _peresobrat_poisk_zayavki(mapper, connection, target: "Deal") -> None:
+    target.search_text = _sklejka_zayavki(target)
 
 
 class DealStageChange(Base):
