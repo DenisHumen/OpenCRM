@@ -29,18 +29,33 @@ from sqlalchemy.orm import Session
 from core import exceptions as errors
 from core import references
 from core import uniqueness
-from core.services import audit_service, company_service
+from core.services import audit_service, company_service, modules_service
 from core.utils import now_utc, to_utc_naive
-from database.models import FinanceBudget, FinanceCategory, FinanceOperation, User
+from database.models import (
+    FinanceBudget,
+    FinanceCategory,
+    FinanceOperation,
+    FinanceRule,
+    User,
+)
 from database.models.audit import SOURCE_MANUAL
+from database.models.document import KIND_SALES_ORDER
 from database.models.finance import (
+    BASE_INCOME_PERCENT,
+    BASES,
+    CORRECTION_ADJUSTMENT,
+    CORRECTION_REVERSAL,
     DIRECTION_INCOME,
     DIRECTIONS,
     MAX_AMOUNT_MINOR,
+    MAX_RATE_BP,
+    ORIGIN_ORDER_CLOSED,
+    ORIGIN_PAYMENT,
     PURPOSE_GENERAL,
     PURPOSE_SALARY,
     PURPOSE_TAX,
     PURPOSES,
+    RATE_SCALE,
 )
 from database.repositories import finance as finance_repo
 
@@ -52,6 +67,15 @@ from database.repositories import finance as finance_repo
 #: это изменение денег, а журнал существует ради вопроса «с чьей руки».
 ACTION_OPERATION_ADDED = "finance.operation_added"
 ACTION_BUDGET_SET = "finance.budget_set"
+#: Приняли деньги (или вернули их). Отдельным действием от «завели операцию»:
+#: спрашивают об этом иначе — «когда с нас взяли» и «когда мы отдали», — и
+#: искать это в общей куче операций пришлось бы по комментарию.
+ACTION_PAYMENT_RECEIVED = "finance.payment_received"
+#: Правило заведено, поправлено или закрыто. Ставка налога — то, из-за чего
+#: через год спорят с бухгалтером; менять её молча нельзя.
+ACTION_RULE_CHANGED = "finance.rule_changed"
+#: Сумму начисления поправили на месте: «было 80, стало 140, кто и когда».
+ACTION_ACCRUAL_ADJUSTED = "finance.accrual_adjusted"
 
 #: Типы объектов для журнала. Свои, а не общий «finance»: вопрос «куда делась
 #: статья» и вопрос «кто завёл этот расход» задают порознь, и отбор в журнале
@@ -59,15 +83,24 @@ ACTION_BUDGET_SET = "finance.budget_set"
 ENTITY_CATEGORY = "finance_category"
 ENTITY_OPERATION = "finance_operation"
 ENTITY_BUDGET = "finance_budget"
+ENTITY_RULE = "finance_rule"
 
 #: Сколько знаков имени статьи помещается в колонку.
 MAX_CATEGORY_NAME = 200
+#: Столько же у правила — колонка та же ширины.
+MAX_RULE_NAME = 200
 
 
 # --- деньги ---
 
 
-def parse_amount_minor(value, field: str = "amount", *, allow_negative: bool = True) -> int:
+def parse_amount_minor(
+    value,
+    field: str = "amount",
+    *,
+    allow_negative: bool = True,
+    allow_zero: bool = False,
+) -> int:
     """Сумма из запроса в минорные единицы. Только целое.
 
     Дробей здесь не принимаем **вовсе**, в отличие от количества на складе:
@@ -82,6 +115,12 @@ def parse_amount_minor(value, field: str = "amount", *, allow_negative: bool = T
     Ноль запрещён: операция на ноль ничего не описывает и в прибыли не меняет
     ничего, зато занимает строку в журнале и сбивает счётчик «сколько операций
     по статье».
+
+    `allow_zero` — единственное исключение, и оно про поправку суммы. «Упаковки
+    в этот раз не было» — законное новое значение начисления, и поправить 80 на
+    0 человек вправе; операции на ноль при этом всё равно не появится, потому что
+    в базу ляжет РАЗНИЦА (−80), а разница, равная нулю, отвергается отдельно
+    (`nothing_to_adjust`).
     """
     if isinstance(value, bool) or value is None or value == "":
         raise errors.ValidationError(
@@ -93,7 +132,7 @@ def parse_amount_minor(value, field: str = "amount", *, allow_negative: bool = T
         raise errors.ValidationError(
             f"{field} must be a whole number of minor units", code="bad_money"
         ) from None
-    if amount == 0:
+    if amount == 0 and not allow_zero:
         raise errors.ValidationError(f"{field} cannot be zero", code="zero_money")
     if amount < 0 and not allow_negative:
         raise errors.ValidationError(f"{field} cannot be negative", code="negative_money")
@@ -114,6 +153,68 @@ def in_terms_of(direction: str, amount_minor: int) -> int:
     `abs()` показал бы «потратили» там, где на самом деле вернули.
     """
     return amount_minor if direction == DIRECTION_INCOME else -amount_minor
+
+
+def accrue_minor(base_minor: int, rate_bp: int) -> int:
+    """Начисление по ставке в базисных пунктах, целыми. Единственное место
+    округления во всём блоке.
+
+    **Правило названо вслух: округление к ближайшей минорной единице, ровная
+    половина уходит ВВЕРХ ПО МОДУЛЮ, одинаково для прихода и для возврата.**
+    Целочисленно, без `float`, без `Decimal`, без `round()`.
+
+    Симметрия здесь не украшение. Несимметричное округление оставляет копейку
+    налога на каждом отменённом платеже, и через год «отложено налога» перестаёт
+    сходиться с нулём по полностью возвращённым заказам — а объяснить, откуда
+    взялись эти копейки, будет уже нечем.
+
+    Множитель 10 000, потому что ставка в сотых долях процента: 5% = 500 bp, и
+    12 345 × 500 = 6 172 500; (6 172 500 + 5 000) // 10 000 = 617. Точное
+    значение 617,25 — ближе к 617, туда и уходит.
+
+    Выражение то же, что в `document_service.total_minor`, и оттуда же берётся
+    второе правило: **округлять на ИТОГЕ, а не на каждой строке**. Здесь это
+    значит, что налог считается от суммы платежа целиком, а не построчно по
+    заказу — иначе ошибка копилась бы по числу позиций.
+
+    Целочисленное деление `//` разрешено: сторож `test_v_bloke_net_ni_deleniya_
+    ni_float` ищет по дереву `ast.Div`, а не `ast.FloorDiv`.
+    """
+    scaled = base_minor * rate_bp
+    half = RATE_SCALE // 2
+    if scaled >= 0:
+        return (scaled + half) // RATE_SCALE
+    return -((-scaled + half) // RATE_SCALE)
+
+
+def parse_rate_bp(value, field: str = "rate_bp") -> int:
+    """Ставка из запроса в базисных пунктах. Только целое.
+
+    Проценты в базисные пункты переводит браузер, целочисленно и на самом краю —
+    как копейки в модалке операции. Дробь сюда не доезжает: «5.5» здесь означало
+    бы, что кто-то по дороге посчитал ставку через `float`.
+
+    Ноль запрещён: правило со ставкой 0% ничего не начисляет, но выглядит
+    работающим — и человек, увидевший его в списке, будет ждать налога, которого
+    не будет. Не нужно начислять — выключи правило.
+    """
+    if isinstance(value, bool) or value is None or value == "":
+        raise errors.ValidationError(
+            f"{field} must be a whole number of basis points", code="bad_rate"
+        )
+    try:
+        rate = int(value)
+    except (TypeError, ValueError):
+        raise errors.ValidationError(
+            f"{field} must be a whole number of basis points", code="bad_rate"
+        ) from None
+    if rate <= 0:
+        raise errors.ValidationError(f"{field} must be positive", code="bad_rate")
+    if rate > MAX_RATE_BP:
+        # Начисление больше самого прихода не бывает ни налогом, ни комиссией:
+        # это опечатка на два нуля.
+        raise errors.ValidationError(f"{field} is above 100%", code="rate_too_large")
+    return rate
 
 
 # --- статьи ---
@@ -203,8 +304,20 @@ def close_category(db: Session, category_id: int, actor: User) -> FinanceCategor
     результат нажатия одной и той же кнопки зависит от того, успел ли кто-то
     завести операцию секунду назад. Пустая закрытая статья не мешает никому: из
     списка она уходит, а место в таблице стоит дешевле неожиданности.
+
+    **Единственный отказ — живое правило, смотрящее на эту статью.** И он здесь
+    не ради строгости, а чтобы перенести отказ туда, где человек его понимает.
+    Закрой мы статью «Упаковка», на которую смотрит правило, — и следующая
+    отгрузка заказа падала бы с непонятной ошибкой посреди работы у стойки.
+    Здесь же сказано прямо: сначала закройте правило.
     """
     category = get_category(db, category_id)
+    in_use = finance_repo.rules_using_category(db, category.id)
+    if in_use:
+        raise errors.ValidationError(
+            "A live rule points at this category: " + ", ".join(rule.name for rule in in_use),
+            code="category_in_use_by_rule",
+        )
     category.deleted_at = now_utc()
     db.flush()
     # Закрытие статьи — исчезновение раздела отчёта, и спрашивают об этом на
@@ -217,6 +330,177 @@ def close_category(db: Session, category_id: int, actor: User) -> FinanceCategor
         entity_label=category.name,
     )
     return category
+
+
+# --- правила начисления ---
+#
+# Правило отвечает на один вопрос: «что начислить само, когда деньги двинулись».
+# Видов начисления сегодня два (`BASES`), и оба живут в одной таблице — разбор,
+# почему не две таблицы и не JSON в настройках, в докстроке модели `FinanceRule`.
+#
+# Инвариант «заполнено ровно то, что осмысленно при этом `base`» держит сервис,
+# одной функцией на входе (`_clean_rule`), а не база — так же, как «ровно одна
+# основная фирма» и «ровно один основной склад».
+
+
+def list_rules(db: Session, include_closed: bool = False) -> list[FinanceRule]:
+    return finance_repo.list_rules(db, include_closed=include_closed)
+
+
+def get_rule(db: Session, rule_id: int, include_closed: bool = False) -> FinanceRule:
+    rule = finance_repo.get_rule(db, rule_id, include_closed=include_closed)
+    if rule is None:
+        raise errors.NotFoundError("Rule not found", code="rule_not_found")
+    return rule
+
+
+def _clean_rule(db: Session, data: dict, current: FinanceRule | None = None) -> dict:
+    """Разобрать правило целиком и отказать, если оно бессмысленно.
+
+    Проверка стоит здесь, а не в базе, по той же причине, что и «ровно одна
+    основная фирма»: описать «при `base = income_percent` заполнена `rate_bp`, а
+    при `per_order` — `amount_minor`» можно только CHECK-ограничением, а его
+    пришлось бы переписывать миграцией на каждое новое значение ключа. Ключей
+    впереди ещё два (эквайринг, привязка к товару).
+
+    Величина при этом ЧИСТИТСЯ, а не игнорируется: правило с процентом и суммой
+    одновременно — это не «лишнее поле», а два разных намерения в одной строке, и
+    через месяц никто не скажет, какое из них считалось.
+    """
+    fields: dict = {}
+    base = (data.get("base") if data.get("base") is not None else getattr(current, "base", ""))
+    base = (base or "").strip()
+    if base not in BASES:
+        raise errors.ValidationError(f"Unknown rule base: {base or '—'}", code="unknown_base")
+    fields["base"] = base
+
+    if data.get("name") is not None or current is None:
+        name = (data.get("name") or "").strip()
+        if not name:
+            raise errors.ValidationError("Name is required", code="name_required")
+        fields["name"] = name[:MAX_RULE_NAME]
+
+    # Куда ложится начисленное. Статья обязана быть живой: правило, кладущее
+    # деньги в закрытую статью, начисляло бы в раздел, которого нет в отчёте.
+    if data.get("category_id") is not None or current is None:
+        fields["category_id"] = get_category(db, data.get("category_id") or 0).id
+
+    # С чего считаем. Пусто — со всякого прихода, и это не «не заполнили», а
+    # осмысленное значение: налог с оборота обычно один на все виды дохода.
+    if "source_category_id" in data:
+        source_id = data.get("source_category_id")
+        if source_id:
+            source = get_category(db, source_id)
+            if source.direction != DIRECTION_INCOME:
+                raise errors.ValidationError(
+                    "A rule can only watch an income category",
+                    code="source_must_be_income",
+                )
+            fields["source_category_id"] = source.id
+        else:
+            fields["source_category_id"] = None
+
+    if base == BASE_INCOME_PERCENT:
+        given = data.get("rate_bp")
+        if given is None and current is not None and current.base == base:
+            fields["rate_bp"] = current.rate_bp
+        else:
+            fields["rate_bp"] = parse_rate_bp(given)
+        # Сумма при проценте бессмысленна и стирается.
+        fields["amount_minor"] = None
+    else:
+        given = data.get("amount")
+        if given is None and current is not None and current.base == base:
+            fields["amount_minor"] = current.amount_minor
+        else:
+            fields["amount_minor"] = parse_amount_minor(
+                given, "amount", allow_negative=False
+            )
+        fields["rate_bp"] = None
+        # Вид дохода к фиксированной сумме на заказ отношения не имеет: он
+        # отвечает на вопрос «с какого прихода», а прихода здесь нет вовсе.
+        fields["source_category_id"] = None
+
+    if data.get("is_active") is not None:
+        fields["is_active"] = bool(data.get("is_active"))
+    if data.get("sort_order") is not None:
+        fields["sort_order"] = int(data.get("sort_order"))
+    if data.get("note") is not None:
+        fields["note"] = (data.get("note") or "").strip()
+    return fields
+
+
+def create_rule(db: Session, data: dict, actor: User) -> FinanceRule:
+    fields = _clean_rule(db, data)
+    rule = finance_repo.add_rule(db, FinanceRule(**fields))
+    _record_rule(db, rule, actor, before=None)
+    return rule
+
+
+def update_rule(db: Session, rule_id: int, data: dict, actor: User) -> FinanceRule:
+    """Правка правила. Прошлые начисления она не трогает — и это главное здесь.
+
+    Ставка и сумма лежат СНИМКОМ на каждой начисленной операции, поэтому смена
+    5% на 7% меняет только то, что начислят завтра. Март остаётся мартом, и
+    `profit()` за март возвращает то же число, что вчера. Без снимка правка
+    переписывала бы прошлые отчёты задним числом — и это была бы не ошибка
+    реализации, а неизбежное следствие устройства.
+    """
+    rule = get_rule(db, rule_id)
+    was = _rule_text(rule)
+    for field, value in _clean_rule(db, data, rule).items():
+        setattr(rule, field, value)
+    db.flush()
+    _record_rule(db, rule, actor, before=was)
+    return rule
+
+
+def close_rule(db: Session, rule_id: int, actor: User) -> FinanceRule:
+    """Закрыть правило: оно перестаёт начислять и уходит из списка.
+
+    Мягко, как статью: на правило ссылаются уже сделанные начисления, и стереть
+    строку справочника значит переписать этим прошлое. Ссылка стоит на RESTRICT,
+    так что база настоящего удаления и не позволит.
+
+    Отличие от выключателя названо в модели: `is_active = False` — «сейчас не
+    считаем», сюда возвращаются одним нажатием; закрытие — «правила больше нет».
+    """
+    rule = get_rule(db, rule_id)
+    rule.deleted_at = now_utc()
+    db.flush()
+    audit_service.record_deletion(
+        db,
+        actor=actor,
+        entity_type=ENTITY_RULE,
+        entity_id=rule.id,
+        entity_label=rule.name,
+    )
+    return rule
+
+
+def _rule_text(rule: FinanceRule) -> str:
+    """Правило одной строкой для журнала: ставка или сумма, целыми.
+
+    Ни валюты, ни процента со знаком: форматирование зависит от локали
+    читающего и от настройки валюты, а обе могут смениться (тот же довод, что у
+    `audit_service.money_text`).
+    """
+    value = rule.rate_bp if rule.base == BASE_INCOME_PERCENT else rule.amount_minor
+    return f"{rule.base}:{value}:{'on' if rule.is_active else 'off'}"
+
+
+def _record_rule(db: Session, rule: FinanceRule, actor: User, *, before: str | None) -> None:
+    audit_service.record(
+        db,
+        action=ACTION_RULE_CHANGED,
+        actor=actor,
+        source=SOURCE_MANUAL,
+        entity_type=ENTITY_RULE,
+        entity_id=rule.id,
+        entity_label=rule.name,
+        before=before,
+        after=_rule_text(rule),
+    )
 
 
 # --- операции ---
@@ -247,12 +531,26 @@ def _company_id(db: Session, value) -> int | None:
     return int(value)
 
 
-def create_operation(db: Session, data: dict, author: User) -> FinanceOperation:
+def create_operation(
+    db: Session,
+    data: dict,
+    author: User,
+    *,
+    source: str = SOURCE_MANUAL,
+    source_ref: str = "",
+    action: str = ACTION_OPERATION_ADDED,
+) -> FinanceOperation:
     """Завести операцию. Сумма приходит в терминах статьи, в базу ложится со знаком.
 
     Отрицательная сумма законна и означает возврат: «вернули аренду за
     неиспользованный месяц» — это минус по расходной статье, а не доход. Знак
     относительный, поэтому и переворачивается тем же выражением, что при чтении.
+
+    **Приход сразу запускает процентные правила.** Это и есть «пришли деньги —
+    налог отложился в тот же день»: он не вычисляется в отчёте, а ЗАПИСЫВАЕТСЯ
+    операцией той же датой. Поэтому налог за март — это сумма мартовских
+    операций, и поехать ей нечем: пересчёта не существует, потому что нечего
+    пересчитывать.
     """
     category = get_category(db, data.get("category_id") or 0)
     named = parse_amount_minor(data.get("amount"), "amount")
@@ -269,14 +567,18 @@ def create_operation(db: Session, data: dict, author: User) -> FinanceOperation:
             deal_id=references.deal(db, data.get("deal_id")),
             client_id=references.client(db, data.get("client_id")),
             company_id=_company_id(db, data.get("company_id")),
+            # Бланк уже проверен вызывающим: сюда он приходит от `take_payment`,
+            # который сам его и нашёл. Обычная операция бланка не знает.
+            document_id=data.get("document_id"),
             author_id=author.id,
         ),
     )
     audit_service.record(
         db,
-        action=ACTION_OPERATION_ADDED,
+        action=action,
         actor=author,
-        source=SOURCE_MANUAL,
+        source=source,
+        source_ref=source_ref,
         entity_type=ENTITY_OPERATION,
         entity_id=operation.id,
         # Подпись — статья, а не номер: «finance_operation 42» не отвечает на
@@ -284,7 +586,558 @@ def create_operation(db: Session, data: dict, author: User) -> FinanceOperation:
         entity_label=category.name,
         after=audit_service.money_text(operation.amount_minor),
     )
+    _apply_income_rules(db, operation, category, author, source=source, source_ref=source_ref)
     return operation
+
+
+def _apply_income_rules(
+    db: Session,
+    operation: FinanceOperation,
+    category: FinanceCategory,
+    author: User,
+    *,
+    source: str,
+    source_ref: str,
+) -> list[FinanceOperation]:
+    """Начислить процент с прихода: налог с оборота.
+
+    Правила отбираются по статье платежа — «пусто или совпало». На каждое
+    подошедшее заводится своя операция по своей статье, той же датой, что у
+    платежа, со снимками ставки и базы.
+
+    **Начисленная операция правил не запускает.** Рекурсии нет и без этого —
+    налог ложится в расходную статью, а правила смотрят на доходные, — но
+    проверка стоит явно: правило, кладущее начисленное в доходную статью,
+    законно (возврат переплаченного налога — доход), и без этой строки оно
+    закрутило бы само себя.
+
+    **Возврат сторнируется сам.** Отрицательный платёж даёт отрицательное
+    начисление, потому что округление симметрично по модулю; отдельной ветки
+    «а если возврат» здесь нет и не нужно.
+    """
+    if operation.rule_id is not None:
+        return []
+    if category.direction != DIRECTION_INCOME:
+        return []
+
+    made: list[FinanceOperation] = []
+    for rule in finance_repo.rules_for_income(db, category.id):
+        accrued = accrue_minor(operation.amount_minor, rule.rate_bp or 0)
+        if accrued == 0:
+            # Платёж в одну минорную единицу при ставке 5% даёт ноль. Операции
+            # на ноль не заводим: она ничего не описывает, а строку в журнале
+            # занимает.
+            continue
+        made.append(
+            _accrue(
+                db,
+                rule,
+                author,
+                amount_minor=accrued,
+                happened_at=operation.happened_at,
+                comment=rule.name,
+                # Начислено ПРИХОДОМ денег — и снимается тоже приходом, то есть
+                # возвратом платежа. Отмена проведения заказа его не касается,
+                # даже когда оба висят на одном бланке.
+                origin=ORIGIN_PAYMENT,
+                deal_id=operation.deal_id,
+                client_id=operation.client_id,
+                company_id=operation.company_id,
+                document_id=operation.document_id,
+                rate_bp=rule.rate_bp,
+                base_amount_minor=operation.amount_minor,
+                source=source,
+                source_ref=source_ref,
+            )
+        )
+    return made
+
+
+def _accrue(
+    db: Session,
+    rule: FinanceRule,
+    author: User,
+    *,
+    amount_minor: int,
+    happened_at: datetime,
+    comment: str,
+    origin: str,
+    deal_id: int | None = None,
+    client_id: int | None = None,
+    company_id: int | None = None,
+    document_id: int | None = None,
+    rate_bp: int | None = None,
+    base_amount_minor: int | None = None,
+    source: str,
+    source_ref: str,
+) -> FinanceOperation:
+    """Одна операция, порождённая правилом. Единственное место, где они рождаются.
+
+    Сумма приходит В ТЕРМИНАХ СТАТЬИ правила (налог 617 — это «начислено 617»), а
+    в базу ложится со знаком, как и всё остальное.
+
+    `origin` — снимок «чем вызвано», и он обязателен: по нему отбирают, что
+    отыграть назад при отмене проведения заказа. Разбор, почему снимок, а не
+    взгляд на `base` живого правила, — в докстроке колонки
+    (`FinanceOperation.origin`).
+
+    Статью берём включая закрытые. Закрыть статью, на которую смотрит живое
+    правило, нельзя (`close_category`), так что закрытая здесь взяться может
+    только из прямого DELETE в базе. Отказывать в этот момент нечестно: деньги
+    уже двинулись, и остановить их записью справочника — значит уронить отгрузку
+    из-за чужой правки.
+    """
+    category = get_category(db, rule.category_id, include_deleted=True)
+    stored = in_terms_of(category.direction, amount_minor)
+    if abs(stored) > MAX_AMOUNT_MINOR:
+        # Правда о заказе, а не сбой: доменный отказ с кодом, а не пятисотка.
+        raise errors.ValidationError(
+            f"Accrual by rule {rule.name!r} is too large", code="money_too_large"
+        )
+    operation = finance_repo.add_operation(
+        db,
+        FinanceOperation(
+            category_id=category.id,
+            amount_minor=stored,
+            comment=comment,
+            happened_at=happened_at,
+            deal_id=deal_id,
+            client_id=client_id,
+            company_id=company_id,
+            document_id=document_id,
+            rule_id=rule.id,
+            origin=origin,
+            rate_bp=rate_bp,
+            base_amount_minor=base_amount_minor,
+            author_id=author.id if author else None,
+        ),
+    )
+    audit_service.record(
+        db,
+        action=ACTION_OPERATION_ADDED,
+        actor=author,
+        # Источник и «чем именно» едут вниз БЕЗ ИЗМЕНЕНИЙ: иначе автоматика
+        # выглядела бы в журнале как «Иванов завёл операцию руками», а
+        # разбираться будут именно в разнице между этими двумя.
+        source=source,
+        source_ref=source_ref,
+        entity_type=ENTITY_OPERATION,
+        entity_id=operation.id,
+        entity_label=category.name,
+        after=audit_service.money_text(operation.amount_minor),
+    )
+    return operation
+
+
+# --- оплата -------------------------------------------------------------------
+#
+# **Платёж — это доходная операция, а не своя таблица.** Отдельная таблица
+# `payments` была бы вторым местом, где лежат деньги: оборот пришлось бы считать
+# двумя запросами и складывать, а «выручка» в системе уже существует в двух
+# несвязанных видах — третий добил бы.
+#
+# У операции для этого уже есть всё нужное: `happened_at` («когда деньги
+# двинулись на самом деле», отдельно от `created_at`), связи с заявкой, клиентом
+# и фирмой, неизменяемость, исправление обратной операцией и индексы с суммой
+# внутри. Добавилась одна ссылка — на бланк.
+#
+# **Деньги считаются по оплате, а не по отгрузке.** Предоплата ложится в день
+# предоплаты, остаток — в день доплаты: это две операции с разными датами, и
+# налог начисляется с каждой отдельно, с той суммы, что пришла.
+
+
+def take_payment(db: Session, data: dict, author: User) -> FinanceOperation:
+    """Принять оплату по бланку — или вернуть её.
+
+    Одна ручка на оба действия, и решает знак суммы. Возврат — доходная операция
+    с ОТРИЦАТЕЛЬНОЙ суммой по той же статье (модель это прямо разрешает:
+    «возврат по расходной статье — это плюс по расходу, а не доход»). Правила
+    отрабатывают и на ней: налог получается отрицательным и сторнируется сам,
+    потому что округление симметрично по модулю.
+
+    Заявка и клиент подтягиваются от бланка, а не спрашиваются заново: два места
+    ввода одного и того же — верный способ получить платёж, привязанный не к той
+    карточке.
+
+    **Частичная оплата — это состояние, а не признак.** Ни `paid_at`, ни
+    `is_paid`, ни `payments_total` в базе не появляется: получено — это `SUM`, а
+    «оплачен» — остаток не больше нуля.
+    """
+    category = get_category(db, data.get("category_id") or 0)
+    if category.direction != DIRECTION_INCOME:
+        # Оплата — это приход. Расходная статья здесь означала бы, что кто-то
+        # проводит платёж клиенту как выручку, и налог с оборота посчитался бы
+        # не с того.
+        raise errors.ValidationError(
+            "A payment goes to an income category", code="payment_needs_income"
+        )
+
+    document = _document(db, data.get("document_id"))
+    fields = dict(data)
+    if document is not None:
+        fields["document_id"] = document.id
+        # Названное руками важнее подтянутого: платёж могут привязать к другой
+        # заявке осознанно. Но пустое поле заполняется от бланка, а не остаётся
+        # пустым — иначе врезка «Деньги по заявке» не увидела бы оплату.
+        fields.setdefault("deal_id", None)
+        fields.setdefault("client_id", None)
+        if not fields.get("deal_id"):
+            fields["deal_id"] = document.deal_id
+        if not fields.get("client_id"):
+            fields["client_id"] = document.client_id
+    return create_operation(
+        db,
+        fields,
+        author,
+        source=SOURCE_MANUAL,
+        source_ref=document.number if document is not None else "",
+        action=ACTION_PAYMENT_RECEIVED,
+    )
+
+
+def _document(db: Session, value):
+    """Бланк из запроса. Пусто — None; нет такого — 404 с внятной причиной.
+
+    Блок бланков выключен — ссылку не принимаем вовсе: она указывала бы на
+    раздел, которого у этого бизнеса нет, и «получено по заказу» показывать было
+    бы негде. Платёж при этом заводится обычной операцией по заявке.
+    """
+    if not value:
+        return None
+    if not modules_service.is_enabled(db, "documents"):
+        raise errors.ValidationError(
+            "Documents are switched off — a payment cannot name a form",
+            code="module_disabled",
+        )
+    from core.services import document_service
+
+    return document_service.get(db, int(value))
+
+
+# --- начисления по заказу -----------------------------------------------------
+#
+# Зовут отсюда подписчики событий заказа (`core/subscriptions.py`), а не сам
+# заказ: `order_service` про финансы не знает и знать не должен — заказы обязаны
+# работать при выключенном блоке денег.
+
+
+def accrue_order_costs(
+    db: Session,
+    order,
+    lines: list,
+    actor: User,
+    *,
+    source: str = SOURCE_MANUAL,
+    source_ref: str = "",
+) -> list[FinanceOperation]:
+    """Отгруженный заказ списывает стандартные расходы: упаковка, доставка.
+
+    Фиксированные суммы на заказ, по одной операции на правило, датой закрытия.
+    Правил нет, все выключены или все закрыты — не делается ничего, и это не
+    ошибка: у бизнеса, не заведшего ни одного правила, стандартных расходов не
+    существует как явления.
+
+    **Только заказ ПОКУПАТЕЛЮ.** Упаковка и доставка — расходы на отгрузку, и
+    при приёмке от поставщика их не бывает: коробку и курьера оплачивает он.
+    Событие при этом одно на оба вида заказа, и это правильно — складу интересны
+    оба; отбирает здесь тот, кто знает, что такое стандартный расход.
+
+    Позиции заказа сюда приезжают, но пока не участвуют: правила вида
+    `per_line`/`per_product` (привязка к товару) — следующая задача, и когда она
+    придёт, менять придётся только это тело.
+    """
+    if order.kind != KIND_SALES_ORDER:
+        return []
+
+    made: list[FinanceOperation] = []
+    for rule in finance_repo.rules_per_order(db):
+        amount = rule.amount_minor or 0
+        if amount == 0:
+            continue
+        made.append(
+            _accrue(
+                db,
+                rule,
+                actor,
+                amount_minor=amount,
+                happened_at=now_utc(),
+                comment=f"{rule.name} по заказу {order.number}",
+                # Порождено ЗАКРЫТИЕМ ЗАКАЗА — и снимется его отменой. Ровно по
+                # этой отметке `reverse_order_money` и отбирает своё.
+                origin=ORIGIN_ORDER_CLOSED,
+                deal_id=order.deal_id,
+                client_id=order.client_id,
+                document_id=order.id,
+                source=source,
+                source_ref=source_ref,
+            )
+        )
+    return made
+
+
+def reverse_order_money(
+    db: Session,
+    order,
+    actor: User,
+    *,
+    source: str = SOURCE_MANUAL,
+    source_ref: str = "",
+) -> list[FinanceOperation]:
+    """Отмена проведения заказа сторнирует НАЧИСЛЕННОЕ ЗАКРЫТИЕМ — обратной операцией.
+
+    Существующие операции не правятся и не удаляются. Образец — тот же заказ со
+    складом: «сотри мы движения, и остаток сойдётся, а вопрос „куда делись пять
+    матриц“ останется без ответа».
+
+    **Сторнируется только то, что породило само закрытие** (`origin =
+    order_closed`), а не всё, что висит на бланке. Разница не теоретическая:
+    налог с оборота начислен ПЛАТЕЖОМ и на бланке оказался лишь потому, что
+    платёж назвал бланк. Сняв его здесь, мы получили бы оборот 100 000 при налоге
+    ноль — а следом человек делает возврат денег отдельным действием, правило
+    снимает налог второй раз, уже с отрицательной базы, и прибыль растёт из
+    воздуха.
+
+    Отбор идёт по СНИМКУ на операции, а не по виду живого правила: вид правила
+    правится (`base` меняют на экране), и вчерашнее начисление после такой правки
+    попало бы не в ту корзину. По той же причине новый вид начисления ничего
+    здесь не сломает — он проставит свой `origin`, а этот отбор его не тронет.
+
+    **Платежи не отменяются.** Операции без правила — это полученные деньги, и
+    отмена проведения заказа их не отменяет: товар вернули, а деньги ещё нет.
+    Возврат клиенту — отдельное осознанное действие человека.
+
+    Сторнируется ИТОГ ЦЕПОЧКИ, а не первая записанная сумма: упаковку могли
+    поправить с 80 на 140, и вернуть надо 140. Сама сторнирующая операция входит
+    в ту же цепочку, поэтому её итог становится нулём — и второй раз отменить то
+    же начисление уже нечего (а `reversal_of` не даст и попробовать).
+
+    `happened_at` — **день отмены**, а не день исходного начисления. Прямое
+    следствие правила блока: правка задним числом означала бы, что прибыль за
+    прошлый квартал зависит от того, когда её спросили. Побочное следствие
+    названо вслух: закрытый месяц остаётся с оборотом, отменённым в следующем.
+    """
+    made: list[FinanceOperation] = []
+    for head in finance_repo.accruals_of_document(db, order.id, origin=ORIGIN_ORDER_CLOSED):
+        if finance_repo.reversal_of(db, head.id) is not None:
+            continue
+        total = finance_repo.accrual_total(db, head.id)
+        if total == 0:
+            continue
+        operation = finance_repo.add_operation(
+            db,
+            FinanceOperation(
+                category_id=head.category_id,
+                amount_minor=-total,
+                comment=f"отмена по заказу {order.number}",
+                happened_at=now_utc(),
+                deal_id=head.deal_id,
+                client_id=head.client_id,
+                company_id=head.company_id,
+                document_id=head.document_id,
+                rule_id=head.rule_id,
+                # Отметка «чем вызвано» едет от головы: цепочка целиком
+                # принадлежит одному событию, и отмена — её часть, а не своё
+                # отдельное явление.
+                origin=head.origin,
+                corrects_id=head.id,
+                correction=CORRECTION_REVERSAL,
+                author_id=actor.id if actor else None,
+            ),
+        )
+        audit_service.record(
+            db,
+            action=ACTION_OPERATION_ADDED,
+            actor=actor,
+            source=source,
+            source_ref=source_ref,
+            entity_type=ENTITY_OPERATION,
+            entity_id=operation.id,
+            entity_label=f"{order.number}",
+            after=audit_service.money_text(operation.amount_minor),
+        )
+        made.append(operation)
+    return made
+
+
+def adjust_accrual(
+    db: Session, operation_id: int, new_amount, author: User
+) -> FinanceOperation:
+    """Поправить сумму начисления НА МЕСТЕ: было 80, стало 140.
+
+    `new_amount` — новая ИТОГОВАЯ сумма в терминах статьи, а не разница. Разницу
+    считает сервер: вводить её руками — верный способ ошибиться на знак.
+
+    Исходная операция не правится и не удаляется. Заводится корректирующая — на
+    разницу, той же датой, что у исходной: поправка уточняет прошлое событие, а
+    не заводит новое, и месяц закрытия заказа не должен разъезжаться сам собой.
+
+    Экран показывает верную цифру не потому, что кто-то переписал число, а
+    потому что он СУММИРУЕТ цепочку (`accrual_totals`). Третья правка (140 → 200)
+    добавит ещё одну строку, и сумма снова будет верна без единой строки на
+    уборку. Журнал операций при этом показывает ОБЕ строки: молча слить их значило
+    бы спрятать факт правки от того, кто сводит кассу.
+
+    Правило не трогается: следующий заказ снова возьмёт 80 — это ровно то, что
+    просили («иногда упаковка стоит дороже»).
+    """
+    head = get_operation(db, operation_id)
+    if head.rule_id is None or head.correction is not None:
+        # Поправляют начисление, а не платёж и не другую поправку. Платёж
+        # исправляют возвратом — это разговор с кассой, а не с калькулятором;
+        # поправку поправляют, меняя итог у её головы.
+        raise errors.ValidationError(
+            "Only an accrual can be adjusted", code="not_an_accrual"
+        )
+    if finance_repo.reversal_of(db, head.id) is not None:
+        raise errors.ValidationError(
+            "This accrual has already been reversed", code="accrual_reverted"
+        )
+
+    category = get_category(db, head.category_id, include_deleted=True)
+    was_named = in_terms_of(category.direction, finance_repo.accrual_total(db, head.id))
+    now_named = parse_amount_minor(new_amount, "amount", allow_zero=True)
+    difference = now_named - was_named
+    if difference == 0:
+        raise errors.ValidationError(
+            "The accrual is already this amount", code="nothing_to_adjust"
+        )
+
+    operation = finance_repo.add_operation(
+        db,
+        FinanceOperation(
+            category_id=category.id,
+            amount_minor=in_terms_of(category.direction, difference),
+            comment=f"поправка: {head.comment or category.name}",
+            happened_at=head.happened_at,
+            deal_id=head.deal_id,
+            client_id=head.client_id,
+            company_id=head.company_id,
+            document_id=head.document_id,
+            rule_id=head.rule_id,
+            # «Чем вызвано» — от головы: поправка уточняет её событие, а не
+            # заводит своё. Иначе отмена заказа не нашла бы половину цепочки.
+            origin=head.origin,
+            # Ставки и базы у поправки нет: она ничего не считала, её назвал
+            # человек. Ноль здесь соврал бы «посчитано по нулевой ставке».
+            rate_bp=None,
+            base_amount_minor=None,
+            corrects_id=head.id,
+            correction=CORRECTION_ADJUSTMENT,
+            author_id=author.id,
+        ),
+    )
+    audit_service.record(
+        db,
+        action=ACTION_ACCRUAL_ADJUSTED,
+        actor=author,
+        source=SOURCE_MANUAL,
+        entity_type=ENTITY_OPERATION,
+        # Запись про ИСХОДНОЕ начисление, а не про поправку: спрашивают «почему
+        # тут 140, а в правиле 80», и отвечать должна история той строки.
+        entity_id=head.id,
+        entity_label=category.name,
+        before=audit_service.money_text(was_named),
+        after=audit_service.money_text(now_named),
+    )
+    return operation
+
+
+def money_of_document(db: Session, document_id: int) -> dict:
+    """Деньги по бланку: получено, остаток, начисления. Ни одно число не хранится.
+
+    - получено = `SUM` доходных операций с этим бланком;
+    - сумма бланка = `document_service.total_minor` по его строкам;
+    - остаток = сумма минус получено;
+    - «оплачен» = остаток не больше нуля;
+    - начисления = цепочки поправок, сложенные по головам.
+
+    Начисления показываются ВСЕ, чем бы ни были вызваны: и упаковка от закрытия
+    заказа, и налог от платежа. Отбор по `origin` нужен отмене проведения, а не
+    врезке: человек, открывший заказ, спрашивает «сколько на нём висит денег», а
+    не «что из этого отыграется, если отменить».
+
+    Колонок `documents.paid_total`, `paid_at` и `is_paid` нет и не появится: все
+    четыре числа рождаются заново на каждый запрос, и разойтись им не с чем.
+
+    Сумма бланка приходит пустой при выключенных бланках — тогда пустым остаётся
+    и остаток. Это не половина ответа, а правда о системе без бланков: получено
+    столько-то, а сравнивать не с чем.
+    """
+    received = finance_repo.received_of(db, document_id=document_id)
+    heads = finance_repo.accruals_of_document(db, document_id)
+    totals = finance_repo.accrual_totals(db, [row.id for row in heads])
+    reverted = finance_repo.reverted_heads(db, [row.id for row in heads])
+    categories = finance_repo.categories_by_ids(db, {row.category_id for row in heads})
+
+    accruals = []
+    for head in heads:
+        category = categories.get(head.category_id)
+        direction = category.direction if category else None
+        stored = totals.get(head.id, 0)
+        accruals.append(
+            {
+                "id": head.id,
+                "rule_id": head.rule_id,
+                "category_id": head.category_id,
+                "category_name": category.name if category else "",
+                "direction": direction,
+                "purpose": category.purpose if category else PURPOSE_GENERAL,
+                "comment": head.comment,
+                "amount": in_terms_of(direction, stored) if direction else stored,
+                "rate_bp": head.rate_bp,
+                "base_amount": head.base_amount_minor,
+                # Чем вызвано: «списано при отгрузке» или «отложено с платежа».
+                # Снимаются они разными действиями — отменой проведения и
+                # возвратом денег, — и различить их по имени статьи нельзя.
+                "origin": head.origin,
+                "happened_at": head.happened_at.isoformat() if head.happened_at else None,
+                # Отменённое начисление остаётся в списке нулём, а не исчезает:
+                # исчезнув, оно унесло бы с собой ответ на вопрос «а куда делась
+                # упаковка».
+                "reverted": head.id in reverted,
+            }
+        )
+
+    total = _document_total(db, document_id)
+    return {
+        "document_id": document_id,
+        "total": total,
+        "received": received,
+        "due": None if total is None else total - received,
+        "paid": None if total is None else total - received <= 0,
+        "accruals": accruals,
+    }
+
+
+def money_of_deal(db: Session, deal_id: int) -> dict:
+    """Сколько получено по заявке. Одно число, и оно тоже не хранится.
+
+    Отдельно от `money_of_document`, потому что вопрос другой: у заявки бывает
+    несколько бланков, а бывает ни одного (деньги приняли до того, как выписали
+    бумагу). Сумма бланка здесь поэтому не считается — сравнивать не с чем.
+
+    `deals.prepaid` эта функция НЕ трогает и не заменяет. Колонка остаётся: при
+    выключенном блоке денег она единственное место, где вообще видно «сколько
+    получено», а снять её значит разрушительная миграция и перенос старых
+    значений в операции — датой, которой у них нет. Пока двух мест ввода не
+    возникает за счёт интерфейса: при включённых финансах поле только для чтения.
+    """
+    return {"deal_id": deal_id, "received": finance_repo.received_of(db, deal_id=deal_id)}
+
+
+def _document_total(db: Session, document_id: int) -> int | None:
+    """Сумма бланка по его строкам. None — блок бланков выключен.
+
+    Считает её `document_service.total_minor` — та самая единственная точка, где
+    по строкам считаются деньги. Своего счёта здесь нет намеренно: второй означал
+    бы два места, где округляют, и они разошлись бы на первой же скидке.
+    """
+    if not modules_service.is_enabled(db, "documents"):
+        return None
+    from core.services import document_service
+
+    document = document_service.get(db, document_id)
+    return document_service.total_minor(document_service.lines(db, document.id))
 
 
 # --- прибыль ---

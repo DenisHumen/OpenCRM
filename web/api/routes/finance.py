@@ -72,6 +72,78 @@ class BudgetIn(BaseModel):
     note: str | None = None
 
 
+class RuleIn(BaseModel):
+    """Правило начисления: налог с прихода или стандартный расход на заказ.
+
+    Ставка приходит в БАЗИСНЫХ ПУНКТАХ (5% = 500), сумма — в минорных единицах.
+    Переводит проценты в пункты браузер, целочисленно и на самом краю — как
+    копейки в модалке операции: дробь, доехавшая сюда, означала бы, что кто-то по
+    дороге посчитал ставку через `float`.
+    """
+
+    name: str = Field(min_length=1, max_length=200)
+    #: `income_percent` | `per_order`.
+    base: str
+    #: Куда ложится начисленное.
+    category_id: int
+    #: С какого вида дохода считаем. Пусто — со всякого прихода.
+    source_category_id: int | None = None
+    rate_bp: int | None = None
+    amount: int | None = None
+    is_active: bool | None = None
+    sort_order: int | None = None
+    note: str | None = None
+
+
+class RulePatchIn(BaseModel):
+    """Правка правила. Величину меняют здесь же — но прошлое она не трогает.
+
+    Ставка и сумма лежат снимком на каждом уже сделанном начислении, поэтому
+    смена 5% на 7% меняет только то, что начислят завтра.
+    """
+
+    name: str | None = None
+    base: str | None = None
+    category_id: int | None = None
+    source_category_id: int | None = None
+    rate_bp: int | None = None
+    amount: int | None = None
+    is_active: bool | None = None
+    sort_order: int | None = None
+    note: str | None = None
+
+
+class PaymentIn(BaseModel):
+    """Оплата по бланку — и возврат ею же.
+
+    Одна ручка на оба действия, решает знак суммы: отрицательная означает, что
+    деньги отдали обратно. Отдельная ручка «вернуть» была бы вторым местом, где
+    заводится приход, и налог с оборота пришлось бы сторнировать в двух местах.
+    """
+
+    #: Сумма в минорных единицах, в терминах статьи. Отрицательная — возврат.
+    amount: int
+    category_id: int
+    document_id: int | None = None
+    #: Когда деньги двинулись на самом деле. Не указан — сегодня. Предоплата
+    #: ложится в день предоплаты, остаток — в день доплаты.
+    happened_at: datetime | None = None
+    deal_id: int | None = None
+    client_id: int | None = None
+    company_id: int | None = None
+    comment: str | None = None
+
+
+class AccrualPatchIn(BaseModel):
+    """Поправка суммы начисления на месте.
+
+    `amount` — НОВАЯ ИТОГОВАЯ сумма в терминах статьи, а не разница. Разницу
+    считает сервер: вводить её руками — верный способ ошибиться на знак.
+    """
+
+    amount: int
+
+
 class BudgetPatchIn(BaseModel):
     """Правка плана: только сумма и заметка.
 
@@ -163,6 +235,38 @@ def _operation_out(operation, category, author_name: str | None) -> dict:
         "company_id": operation.company_id,
         "author_id": operation.author_id,
         "author_name": author_name,
+        # Чем вызвана и что уточняет. Журнал показывает ОБЕ строки — «Упаковка
+        # −80» и «Упаковка, поправка −60»: слить их значило бы спрятать факт
+        # правки от того, кто сводит кассу, а различить их экран может только по
+        # этим полям.
+        "document_id": operation.document_id,
+        "rule_id": operation.rule_id,
+        "rate_bp": operation.rate_bp,
+        "base_amount": operation.base_amount_minor,
+        "corrects_id": operation.corrects_id,
+        "correction": operation.correction,
+    }
+
+
+def _rule_out(rule) -> dict:
+    """Правило наружу. Величина едет ДВУМЯ полями, а не одним универсальным.
+
+    Процент и сумма — разные единицы; склеенные в одно поле они врут при первом
+    же чтении без оглядки на `base`. Пустое поле здесь означает «при этом виде
+    начисления величины такого рода не бывает», а не «не заполнили».
+    """
+    return {
+        "id": rule.id,
+        "name": rule.name,
+        "base": rule.base,
+        "category_id": rule.category_id,
+        "source_category_id": rule.source_category_id,
+        "rate_bp": rule.rate_bp,
+        "amount": rule.amount_minor,
+        "is_active": rule.is_active,
+        "sort_order": rule.sort_order,
+        "note": rule.note,
+        "closed": rule.deleted_at is not None,
     }
 
 
@@ -274,6 +378,145 @@ def create_operation(
     operation = finance_service.create_operation(db, payload.model_dump(), user)
     category = finance_repo.get_category(db, operation.category_id, include_deleted=True)
     return _operation_out(operation, category, user.name)
+
+
+# --- правила начисления ---
+#
+# Читать — `finance.view`, править — `finance.manage`: правила из того же ряда,
+# что статьи и планы. Расходы заносят каждый день, а ставку налога заводят раз в
+# год, и это разные полномочия.
+#
+# Почему НЕ `settings.manage`, хотя по виду это настройка. Область `settings`
+# объявлена с `module=None` — её нельзя выключить, — и налоговые ставки висели бы
+# в настройках у того, кто финансы выключил. Правило принадлежит блоку денег и
+# обязано исчезать вместе с ним.
+
+
+@router.get("/rules")
+def list_rules(
+    include_closed: bool = False,
+    user: User = Depends(require_perm("finance", "view")),
+    db: Session = Depends(get_db),
+):
+    return {
+        "items": [
+            _rule_out(row) for row in finance_service.list_rules(db, include_closed=include_closed)
+        ]
+    }
+
+
+@router.post("/rules", status_code=201)
+def create_rule(
+    payload: RuleIn,
+    user: User = Depends(require_perm("finance", "manage")),
+    db: Session = Depends(get_db),
+):
+    return _rule_out(finance_service.create_rule(db, payload.model_dump(), user))
+
+
+@router.patch("/rules/{rule_id}")
+def update_rule(
+    rule_id: int,
+    payload: RulePatchIn,
+    user: User = Depends(require_perm("finance", "manage")),
+    db: Session = Depends(get_db),
+):
+    return _rule_out(
+        finance_service.update_rule(db, rule_id, payload.model_dump(exclude_unset=True), user)
+    )
+
+
+@router.delete("/rules/{rule_id}")
+def close_rule(
+    rule_id: int,
+    user: User = Depends(require_perm("finance", "manage")),
+    db: Session = Depends(get_db),
+):
+    # Закрытие, а не удаление: на правило ссылаются уже сделанные начисления.
+    finance_service.close_rule(db, rule_id, user)
+    return {"ok": True}
+
+
+# --- оплата и поправки ---
+#
+# Обе ручки под `finance.create`, а не `manage`, и это разделение уже заложено
+# реестром прав. Под капотом обеих создаётся операция; менеджер, принявший
+# оплату или поправивший сумму упаковки, справочником при этом не распоряжается.
+#
+# `finance.edit` и `finance.delete` по-прежнему не появляются: операция как была
+# неизменяемой, так и осталась. «Правка на месте» — это про то, что видит
+# человек, а не про то, что происходит со строкой.
+
+
+@router.post("/payments", status_code=201)
+def take_payment(
+    payload: PaymentIn,
+    user: User = Depends(require_perm("finance", "create")),
+    db: Session = Depends(get_db),
+):
+    """Принять оплату или вернуть её — решает знак суммы.
+
+    Налог с оборота начисляется здесь же и ТОЙ ЖЕ ДАТОЙ: пришли деньги — сразу
+    отложилось, видно в тот же день. Отдельного «пересчитать налог за месяц» нет
+    и быть не может: пересчитывать нечего.
+    """
+    operation = finance_service.take_payment(db, payload.model_dump(), user)
+    category = finance_repo.get_category(db, operation.category_id, include_deleted=True)
+    return _operation_out(operation, category, user.name)
+
+
+@router.patch("/accruals/{operation_id}")
+def adjust_accrual(
+    operation_id: int,
+    payload: AccrualPatchIn,
+    user: User = Depends(require_perm("finance", "create")),
+    db: Session = Depends(get_db),
+):
+    """Поправить сумму начисления: было 80, стало 140.
+
+    Исходная операция не правится и не удаляется — заводится корректирующая, на
+    разницу и той же датой. Ноль разницы — отказ `nothing_to_adjust`, а не пустая
+    операция.
+    """
+    operation = finance_service.adjust_accrual(db, operation_id, payload.amount, user)
+    category = finance_repo.get_category(db, operation.category_id, include_deleted=True)
+    return _operation_out(operation, category, user.name)
+
+
+@router.get("/documents/{document_id}/money")
+def money_of_document(
+    document_id: int,
+    user: User = Depends(require_perm("finance", "view")),
+    db: Session = Depends(get_db),
+):
+    """Деньги по бланку: получено, остаток, начисления.
+
+    Ни одно из этих чисел не хранится — все четыре рождаются заново на каждый
+    запрос. Колонок `paid_total`, `paid_at` и `is_paid` в базе нет.
+    """
+    return {
+        **finance_service.money_of_document(db, document_id),
+        "currency": settings_service.get_all(db).get("currency", "USD"),
+    }
+
+
+@router.get("/deals/{deal_id}/money")
+def money_of_deal(
+    deal_id: int,
+    user: User = Depends(require_perm("finance", "view")),
+    db: Session = Depends(get_db),
+):
+    """Сколько получено по заявке — суммой операций, а не колонкой.
+
+    `deals.prepaid` этим не заменяется и не трогается: при выключённом блоке
+    денег она остаётся единственным местом, где видно «сколько получено». Двух
+    мест ввода при этом не возникает — при включённых финансах поле в карточке
+    только для чтения.
+    """
+    return {
+        **finance_service.money_of_deal(db, deal_id),
+        "currency": settings_service.get_all(db).get("currency", "USD"),
+    }
 
 
 # --- прибыль ---

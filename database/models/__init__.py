@@ -25,6 +25,7 @@ from database.models.finance import (
     FinanceBudget,
     FinanceCategory,
     FinanceOperation,
+    FinanceRule,
 )
 from database.models.audit import AuditEvent
 
@@ -63,5 +64,6 @@ __all__ = [
     "FinanceCategory",
     "FinanceOperation",
     "FinanceBudget",
+    "FinanceRule",
     "AuditEvent",
 ]

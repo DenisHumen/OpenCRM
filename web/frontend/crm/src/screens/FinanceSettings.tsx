@@ -1,25 +1,90 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type CSSProperties,
+  type FormEvent,
+} from "react";
 
 import { Icon } from "../components/Icon";
-import { Chip, ConfirmModal, EmptyState, Modal, ScreenLoading } from "../components/ui";
+import { Chip, ConfirmModal, EmptyState, Modal, ScreenLoading, Toggle } from "../components/ui";
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
 import { useFailure } from "../lib/failure";
 import { useGuard } from "../lib/guard";
-import { formatMoney } from "../lib/format";
+import { formatMoney, formatRate, toMinorUnits } from "../lib/format";
 import type { FinanceCategory } from "./Finance";
 
-/** Справочник статей и планы по ним — экран настроек, на праве `finance.manage`.
+/** Справочник статей, правила начисления и планы — экран настроек, на праве
+ * `finance.manage`.
  *
- * Стоит рядом со складами и по той же причине: завести статью или назначить план
- * — решение структурное, вроде «завести юрлицо». Расходы заносят каждый день, а
- * статьи заводят раз в год, и это разные полномочия (`finance.create` против
- * `finance.manage`).
+ * Стоит рядом со складами и по той же причине: завести статью, ставку налога
+ * или назначить план — решение структурное, вроде «завести юрлицо». Расходы
+ * заносят каждый день, а ставку налога заводят раз в год, и это разные
+ * полномочия (`finance.create` против `finance.manage`).
  *
  * **Факт по бюджету считает сервер и не хранит.** Вторая колонка «сколько
  * вышло» рядом с планом разошлась бы с операциями при первой же записи задним
  * числом — тот же довод, по которому не хранится остаток склада.
  */
+
+/** Правило начисления. Величина едет ДВУМЯ полями, а не одним универсальным:
+ *  процент и сумма — разные единицы, и склеенные в одно поле они врут при
+ *  первом же чтении без оглядки на `base`. */
+interface FinanceRule {
+  id: number;
+  name: string;
+  /** `income_percent` — процент с прихода, `per_order` — сумма на заказ. */
+  base: string;
+  /** Куда ложится начисленное. */
+  category_id: number;
+  /** С какого вида дохода считаем. `null` — со всякого прихода. */
+  source_category_id: number | null;
+  /** Ставка в базисных пунктах: 5% = 500, 6,5% = 650. */
+  rate_bp: number | null;
+  amount: number | null;
+  is_active: boolean;
+  sort_order: number;
+  note: string;
+  closed: boolean;
+}
+
+const BASE_PERCENT = "income_percent";
+const BASE_PER_ORDER = "per_order";
+
+/** Заказ, на котором показывается пример: 12 000 в минорных единицах.
+ *
+ * Число из разговора с заказчиком («заказ 12 000 → налог 600, упаковка 80»):
+ * на нём 5% дают ровно 600, и пример узнаётся с первого взгляда. */
+const SAMPLE_MINOR = 1_200_000;
+
+/**
+ * Начисление по ставке в базисных пунктах — ровно тем же правилом, что на
+ * сервере (`finance_service.accrue_minor`): к ближайшей минорной единице,
+ * ровная половина ВВЕРХ ПО МОДУЛЮ, симметрично для обоих знаков.
+ *
+ * Это единственное место во фронтенде, где считается начисление, и считается
+ * оно НЕ ради денег: ни одно из этих чисел никуда не отправляется и нигде не
+ * показывается как факт. Это пример — «что произойдёт, если завести такое
+ * правило», — и спросить его у сервера негде: правила ещё нет, а у уже
+ * заведённого ручки «посчитай на 12 000» не существует и заводить её значило бы
+ * второй способ получить то же число.
+ *
+ * Настоящие суммы по заказу приходят с сервера готовыми и здесь не считаются
+ * никогда. Расхождение с сервером ловится глазами в первую же минуту: пример
+ * обещает 600, а в карточке заказа стоит 601.
+ *
+ * Целые точны: 2 000 000 000 × 10 000 = 2·10¹³, а двойная точность держит целые
+ * до 9·10¹⁵. `Math.floor` вместо `//` — в JS целочисленного деления нет.
+ */
+function accrueMinor(baseMinor: number, rateBp: number): number {
+  const scaled = baseMinor * rateBp;
+  const half = 5000;
+  return scaled >= 0
+    ? Math.floor((scaled + half) / 10000)
+    : -Math.floor((-scaled + half) / 10000);
+}
 
 interface Budget {
   id: number;
@@ -38,13 +103,18 @@ export function FinanceSettings() {
   const { t, locale, toast, toastError } = useApp();
   const [categories, setCategories] = useState<FinanceCategory[] | null>(null);
   const [budgets, setBudgets] = useState<Budget[] | null>(null);
+  const [rules, setRules] = useState<FinanceRule[] | null>(null);
   const [currency, setCurrency] = useState("USD");
   const [showClosed, setShowClosed] = useState(false);
+  const [showClosedRules, setShowClosedRules] = useState(false);
   const [editing, setEditing] = useState<FinanceCategory | null>(null);
   const [adding, setAdding] = useState(false);
   const [closing, setClosing] = useState<FinanceCategory | null>(null);
   const [planning, setPlanning] = useState(false);
   const [dropping, setDropping] = useState<Budget | null>(null);
+  const [rule, setRule] = useState<FinanceRule | null>(null);
+  const [addingRule, setAddingRule] = useState(false);
+  const [closingRule, setClosingRule] = useState<FinanceRule | null>(null);
   const { failure, fail, clear } = useFailure();
 
   // Период планов — тот же, что у экрана денег: смещение зоны едет с датами,
@@ -57,12 +127,14 @@ export function FinanceSettings() {
   const load = useCallback(async () => {
     clear();
     try {
-      const [list, plans] = await Promise.all([
+      const [list, plans, ruleset] = await Promise.all([
         api.get<{ items: FinanceCategory[] }>("/finance/categories?include_closed=true"),
         api.get<{ items: Budget[]; currency: string }>(`/finance/budgets?${query}`),
+        api.get<{ items: FinanceRule[] }>("/finance/rules?include_closed=true"),
       ]);
       setCategories(list.items);
       setBudgets(plans.items);
+      setRules(ruleset.items);
       setCurrency(plans.currency);
     } catch (e) {
       fail(e);
@@ -73,7 +145,7 @@ export function FinanceSettings() {
     void load();
   }, [load]);
 
-  if (!categories || !budgets) {
+  if (!categories || !budgets || !rules) {
     return <ScreenLoading error={failure} onRetry={() => void load()} />;
   }
 
@@ -141,6 +213,122 @@ export function FinanceSettings() {
           </div>
         ))}
         {shown.length === 0 && <EmptyState title={t("finCategories")} />}
+      </div>
+
+      {/* --- правила начисления ---------------------------------------------
+          Стоят между статьями и планами не по алфавиту: правило ссылается на
+          статью и без неё не заводится, а план — намерение, к начислению
+          отношения не имеющее. Порядок на экране повторяет порядок в голове:
+          сначала «куда относить», потом «что начислять», потом «сколько
+          собирались потратить». */}
+      <div className="page-head" style={{ marginTop: 32 }}>
+        <div>
+          <h1 className="page-title">{t("finRules")}</h1>
+          <div className="page-sub">{t("finRulesSub")}</div>
+        </div>
+        <button className="btn btn-secondary" onClick={() => setAddingRule(true)}>
+          <Icon name="plus" stroke={2} />
+          {t("finNewRule")}
+        </button>
+      </div>
+
+      <RulesExample
+        rules={rules}
+        categories={categories}
+        currency={currency}
+        style={{ marginBottom: 16 }}
+      />
+
+      <div className="field-desc" style={{ marginBottom: 16 }}>
+        <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+          <input
+            type="checkbox"
+            checked={showClosedRules}
+            onChange={(e) => setShowClosedRules(e.target.checked)}
+          />
+          {t("finShowClosed")}
+        </label>
+      </div>
+
+      <div className="list-card">
+        {rules
+          .filter((row) => showClosedRules || !row.closed)
+          .map((row) => {
+            const target = categories.find((c) => c.id === row.category_id);
+            const source = categories.find((c) => c.id === row.source_category_id);
+            return (
+              <div className="list-row" key={row.id} style={{ gap: 10 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ color: "var(--text)", fontSize: 13.5, fontWeight: 500 }}>
+                    {row.name}
+                  </div>
+                  {/* Строка под названием — не примечание, а само правило
+                      словами: с чего считает, куда кладёт, с какого дохода.
+                      Поэтому `--muted`, а не `--faint`: последний в тёмной
+                      теме даёт 3.1:1, и определение правила читалось бы на
+                      просвет. */}
+                  <div style={{ color: "var(--muted)", fontSize: 12 }}>
+                    {row.base === BASE_PERCENT
+                      ? t("finRuleIncomePercent")
+                      : t("finRulePerOrder")}
+                    {" · "}
+                    {t("finRuleTarget")}: {target ? target.name : "—"}
+                    {row.base === BASE_PERCENT &&
+                      ` · ${
+                        source ? t("finRuleOnIncome", { name: source.name }) : t("finAppliesToAny")
+                      }`}
+                  </div>
+                </div>
+                <span
+                  style={{
+                    color: "var(--text)",
+                    fontSize: 13.5,
+                    fontWeight: 600,
+                    whiteSpace: "nowrap",
+                  }}
+                  className="money-value"
+                >
+                  {row.base === BASE_PERCENT ? formatRate(row.rate_bp, locale) : money(row.amount)}
+                </span>
+                {row.closed ? (
+                  <Chip>{t("finRuleClosed")}</Chip>
+                ) : (
+                  <>
+                    {/* Выключатель и закрытие — разные вещи, и путать их нельзя:
+                        «сейчас не считаем» возвращается одним нажатием, а
+                        закрытое правило из списка уходит. */}
+                    <Toggle
+                      on={row.is_active}
+                      label={row.is_active ? t("finRuleOn") : t("finRuleOff")}
+                      onToggle={async () => {
+                        try {
+                          await api.patch(`/finance/rules/${row.id}`, {
+                            is_active: !row.is_active,
+                          });
+                          void load();
+                        } catch (err) {
+                          toastError(err);
+                        }
+                      }}
+                    />
+                    <button className="btn-icon" title={t("edit")} onClick={() => setRule(row)}>
+                      <Icon name="note" size={14} />
+                    </button>
+                    <button
+                      className="btn-icon"
+                      title={t("finCloseRule")}
+                      onClick={() => setClosingRule(row)}
+                    >
+                      <Icon name="trash" size={14} />
+                    </button>
+                  </>
+                )}
+              </div>
+            );
+          })}
+        {rules.filter((row) => showClosedRules || !row.closed).length === 0 && (
+          <EmptyState title={t("finNoRules")} />
+        )}
       </div>
 
       <div className="page-head" style={{ marginTop: 32 }}>
@@ -220,6 +408,41 @@ export function FinanceSettings() {
         />
       )}
 
+      {(addingRule || rule) && (
+        <RuleModal
+          rule={rule}
+          categories={categories.filter((row) => !row.closed)}
+          currency={currency}
+          onClose={() => {
+            setAddingRule(false);
+            setRule(null);
+          }}
+          onSaved={() => {
+            setAddingRule(false);
+            setRule(null);
+            void load();
+          }}
+          onFailed={toastError}
+        />
+      )}
+
+      {closingRule && (
+        <ConfirmModal
+          text={t("finCloseRuleConfirm", { name: closingRule.name })}
+          confirmLabel={t("finCloseRule")}
+          danger
+          onConfirm={async () => {
+            try {
+              await api.del(`/finance/rules/${closingRule.id}`);
+              void load();
+            } catch (err) {
+              toastError(err);
+            }
+          }}
+          onClose={() => setClosingRule(null)}
+        />
+      )}
+
       {closing && (
         <ConfirmModal
           text={t("finCloseCategoryConfirm", { name: closing.name })}
@@ -255,6 +478,326 @@ export function FinanceSettings() {
         />
       )}
     </div>
+  );
+}
+
+/**
+ * Пример расчёта прямо на экране настроек.
+ *
+ * Нужен затем, что правило само по себе нечитаемо: «income_percent, 500, статья
+ * 7» не отвечает на единственный вопрос, с которым сюда приходят, — «сколько у
+ * меня останется». Пример отвечает на него числом и заодно объясняет две вещи,
+ * которых иначе не видно вовсе: что налог считается с ПРИХОДА (а не с прибыли и
+ * не в конце месяца) и что стандартные расходы снимаются с КАЖДОГО закрытого
+ * заказа.
+ *
+ * Сумма правится на месте: 12 000 — образец из разговора, но проверять человек
+ * будет на своём среднем чеке.
+ */
+function RulesExample({
+  rules,
+  categories,
+  currency,
+  style,
+}: {
+  rules: FinanceRule[];
+  categories: FinanceCategory[];
+  currency: string;
+  style?: CSSProperties;
+}) {
+  const { t, locale } = useApp();
+  const [typed, setTyped] = useState(String(SAMPLE_MINOR / 100));
+  const [source, setSource] = useState("");
+
+  const money = (value: number) => formatMoney(value, currency, locale);
+  const base = toMinorUnits(typed);
+  const income = categories.filter((row) => row.direction === "income" && !row.closed);
+  const live = rules.filter((row) => !row.closed && row.is_active);
+
+  // Вид дохода спрашиваем, только когда он на что-то влияет: пока все ставки
+  // считаются со всякого прихода, второй выпадающий список — шум, из которого
+  // человек делает ложный вывод, что выбор что-то меняет.
+  const picky = live.some((row) => row.base === BASE_PERCENT && row.source_category_id !== null);
+  const sourceId = Number(source || income[0]?.id || 0);
+
+  // «Пусто или совпало» — то же условие, по которому отбирает правила сервер
+  // (`finance_repo.rules_for_income`). Фиксированные суммы снимаются с любого
+  // закрытого заказа и от вида дохода не зависят вовсе.
+  const firing = live.filter(
+    (row) =>
+      row.base === BASE_PER_ORDER ||
+      (row.base === BASE_PERCENT &&
+        (row.source_category_id === null || row.source_category_id === sourceId)),
+  );
+
+  const chargeOf = (row: FinanceRule) =>
+    row.base === BASE_PERCENT ? accrueMinor(base, row.rate_bp ?? 0) : row.amount ?? 0;
+  // Знак берём у статьи, а не у вида начисления: правило, кладущее деньги в
+  // доходную статью, встречается редко, но в примере оно обязано прибавлять, а
+  // не отнимать — иначе пример врёт ровно про то, ради чего его читают.
+  const signOf = (row: FinanceRule) =>
+    categories.find((c) => c.id === row.category_id)?.direction === "income" ? 1 : -1;
+
+  const left = firing.reduce((sum, row) => sum + signOf(row) * chargeOf(row), base);
+
+  return (
+    <div className="card card-pad" style={style}>
+      <div className="section-head" style={{ marginBottom: 12 }}>
+        <div className="metric-title">{t("finExample")}</div>
+      </div>
+
+      <div
+        style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: 4 }}
+      >
+        <span style={{ color: "var(--muted)", fontSize: 13 }}>{t("finExampleOrder")}</span>
+        <input
+          className="input input-sm"
+          style={{ width: 120 }}
+          value={typed}
+          aria-label={t("finExampleOrder")}
+          onChange={(e) => setTyped(e.target.value)}
+        />
+        {picky && (
+          <>
+            <span style={{ color: "var(--muted)", fontSize: 13 }}>{t("finExamplePaidAs")}</span>
+            <select
+              className="input input-sm"
+              style={{ width: 190 }}
+              value={String(sourceId)}
+              aria-label={t("finExamplePaidAs")}
+              onChange={(e) => setSource(e.target.value)}
+            >
+              {income.map((row) => (
+                <option key={row.id} value={row.id}>
+                  {row.name}
+                </option>
+              ))}
+            </select>
+          </>
+        )}
+      </div>
+      <div className="field-desc" style={{ marginBottom: 14 }}>
+        {t("finExampleHint")}
+      </div>
+
+      {live.length === 0 ? (
+        <div className="field-desc" style={{ marginTop: 0 }}>
+          {t("finExampleEmpty")}
+        </div>
+      ) : (
+        <div className="calc">
+          <div className="calc-row">
+            <div className="calc-name">{t("orderTotal")}</div>
+            <span className="calc-sum in">{money(base)}</span>
+          </div>
+          {firing.map((row) => (
+            <div className="calc-row" key={row.id}>
+              <div className="calc-name">
+                {row.name}
+                <div className="calc-why">
+                  {row.base === BASE_PERCENT
+                    ? t("finOfSum", {
+                        rate: formatRate(row.rate_bp, locale),
+                        sum: money(base),
+                      })
+                    : t("finRulePerOrder")}
+                </div>
+              </div>
+              <span className="calc-sum">
+                {(signOf(row) < 0 ? "− " : "+ ") + money(chargeOf(row))}
+              </span>
+            </div>
+          ))}
+          <div className="calc-row calc-total">
+            <div className="calc-name">{t("finLeftAfter")}</div>
+            <span className="calc-sum">{money(left)}</span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Заведение и правка правила.
+ *
+ * Ставка вводится процентами, а уезжает в базисных пунктах: перевод делает
+ * браузер, целочисленно и на самом краю — как копейки в модалке операции.
+ *
+ * Под полем величины стоит та же строка примера, что и на экране: человек
+ * набирает «6,5» и сразу видит, сколько это в деньгах на заказе из образца.
+ * Отдельного «предпросмотра» с кнопкой нет намеренно — предпросмотр, который
+ * надо запросить, никто не запрашивает.
+ */
+function RuleModal({
+  rule,
+  categories,
+  currency,
+  onClose,
+  onSaved,
+  onFailed,
+}: {
+  rule: FinanceRule | null;
+  categories: FinanceCategory[];
+  currency: string;
+  onClose: () => void;
+  onSaved: () => void;
+  onFailed: (error: unknown) => void;
+}) {
+  const { t, locale } = useApp();
+  const [form, setForm] = useState({
+    name: rule?.name ?? "",
+    base: rule?.base ?? BASE_PERCENT,
+    category_id: rule ? String(rule.category_id) : "",
+    source_category_id: rule?.source_category_id ? String(rule.source_category_id) : "",
+    // Проценты и деньги показываем человеку в его единицах; в пункты и копейки
+    // переводим на отправке.
+    rate: rule?.rate_bp != null ? String(rule.rate_bp / 100) : "",
+    amount: rule?.amount != null ? String(rule.amount / 100) : "",
+    note: rule?.note ?? "",
+    is_active: rule ? rule.is_active : true,
+  });
+  // Засов, а не флаг состояния: второе правило с тем же смыслом начисляет
+  // дважды, и налог тихо удваивается на каждом платеже.
+  const guard = useGuard();
+
+  const set = (key: string) => (e: any) => setForm((f) => ({ ...f, [key]: e.target.value }));
+  const percent = form.base === BASE_PERCENT;
+  const rateBp = Math.round(Number(form.rate.replace(",", ".") || "0") * 100);
+  const money = (value: number) => formatMoney(value, currency, locale);
+  const income = categories.filter((row) => row.direction === "income");
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!guard.take()) return;
+    try {
+      const body: Record<string, unknown> = {
+        name: form.name,
+        base: form.base,
+        category_id: Number(form.category_id),
+        // Вид дохода осмыслен только у процента. Не обнули мы его при переходе
+        // на фиксированную сумму — в базе осталась бы ссылка, которой правило
+        // не пользуется, и следующий читатель списка решил бы, что упаковка
+        // почему-то привязана к «Выручке».
+        source_category_id:
+          percent && form.source_category_id ? Number(form.source_category_id) : null,
+        is_active: form.is_active,
+        note: form.note,
+      };
+      if (percent) body.rate_bp = rateBp;
+      else body.amount = toMinorUnits(form.amount);
+
+      if (rule) await api.patch(`/finance/rules/${rule.id}`, body);
+      else await api.post("/finance/rules", body);
+      onSaved();
+    } catch (err) {
+      onFailed(err);
+      guard.free();
+    }
+  };
+
+  return (
+    <Modal title={rule ? rule.name : t("finNewRule")} onClose={onClose}>
+      <form onSubmit={submit}>
+        <div className="field">
+          <label className="label">{t("finRuleName")}</label>
+          <input className="input" value={form.name} onChange={set("name")} autoFocus required />
+        </div>
+
+        <div className="field">
+          <label className="label">{t("finRuleBase")}</label>
+          <select className="input" value={form.base} onChange={set("base")}>
+            <option value={BASE_PERCENT}>{t("finRuleIncomePercent")}</option>
+            <option value={BASE_PER_ORDER}>{t("finRulePerOrder")}</option>
+          </select>
+        </div>
+
+        {percent ? (
+          <div className="field">
+            <label className="label">{t("finRatePercent")}</label>
+            <input className="input" value={form.rate} onChange={set("rate")} required />
+            <div className="field-desc">{t("finRateHint")}</div>
+            {rateBp > 0 && (
+              <div className="field-desc">
+                {t("finOfSum", {
+                  rate: formatRate(rateBp, locale),
+                  sum: money(SAMPLE_MINOR),
+                })}
+                {" → "}
+                {money(accrueMinor(SAMPLE_MINOR, rateBp))}
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="field">
+            <label className="label">{t("finFixedAmount")}</label>
+            <input className="input" value={form.amount} onChange={set("amount")} required />
+            <div className="field-desc">{t("finFixedAmountHint")}</div>
+          </div>
+        )}
+
+        <div className="field">
+          <label className="label">{t("finRuleTarget")}</label>
+          <select
+            className="input"
+            value={form.category_id}
+            onChange={set("category_id")}
+            required
+          >
+            <option value="">—</option>
+            {categories.map((row) => (
+              <option key={row.id} value={row.id}>
+                {row.name} · {t(row.direction === "income" ? "finIncome" : "finExpense")}
+              </option>
+            ))}
+          </select>
+          <div className="field-desc">{t("finRuleTargetHint")}</div>
+          {categories.length === 0 && <div className="field-desc">{t("finNoCategories")}</div>}
+        </div>
+
+        {percent && (
+          <div className="field">
+            <label className="label">{t("finAppliesTo")}</label>
+            <select
+              className="input"
+              value={form.source_category_id}
+              onChange={set("source_category_id")}
+            >
+              {/* Пусто — не «не заполнили», а осмысленное значение: налог с
+                  оборота обычно один на все виды дохода. */}
+              <option value="">{t("finAppliesToAny")}</option>
+              {income.map((row) => (
+                <option key={row.id} value={row.id}>
+                  {row.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        <div
+          className="field"
+          style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}
+        >
+          <span style={{ color: "var(--muted)", fontSize: 13 }}>
+            {form.is_active ? t("finRuleOn") : t("finRuleOff")}
+          </span>
+          <Toggle
+            on={form.is_active}
+            label={t("finRuleOn")}
+            onToggle={() => setForm((f) => ({ ...f, is_active: !f.is_active }))}
+          />
+        </div>
+
+        <div className="field" style={{ marginBottom: 20 }}>
+          <label className="label">{t("note")}</label>
+          <textarea className="textarea" value={form.note} onChange={set("note")} />
+        </div>
+
+        <button className="btn btn-primary" style={{ width: "100%" }} disabled={guard.busy}>
+          {rule ? t("save") : t("create")}
+        </button>
+      </form>
+    </Modal>
   );
 }
 
