@@ -296,6 +296,18 @@ def events(db: Session, document_id: int) -> list[DocumentEvent]:
     return documents_repo.events(db, document_id)
 
 
+def lines(db: Session, document_id: int) -> list:
+    """Позиции бланка — без оглядки на его вид.
+
+    У заказа и у акта есть свои входы (`order_service.lines`, `act_service.lines`),
+    и оба сначала проверяют вид бумаги: отгружать квитанцию нечем, проводить
+    заказ как акт нельзя. Этот вход отвечает на вопрос попроще — «по какой сумме
+    эта бумага», — и задают его те, кому вид безразличен: врезка «Деньги»
+    считает остаток к оплате одинаково у заказа и у акта.
+    """
+    return documents_repo.lines_of(db, document_id)
+
+
 def search(
     db: Session,
     q: str | None = None,

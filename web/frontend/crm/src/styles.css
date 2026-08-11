@@ -1102,6 +1102,43 @@ button { font-family: var(--sans); }
 .src-num { position: relative; width: 76px; text-align: right; flex: none; color: var(--muted); font-variant-numeric: tabular-nums; }
 .src-money { position: relative; width: 120px; text-align: right; flex: none; font-variant-numeric: tabular-nums; }
 
+/* Разбор суммы: пример расчёта в настройках правил и деньги по заказу.
+
+   Одна разметка на два места нарочно. Пример в настройках обещает «заказ 12 000
+   → налог 600, упаковка 80», а карточка заказа показывает, что вышло на самом
+   деле; выглядеть по-разному они не имеют права — иначе обещание и итог не
+   узнаются друг в друге.
+
+   Итог отбит линией сверху, а не залит фоном: строка «Остаётся» — это ответ, и
+   заливка сделала бы её похожей на ещё одну статью расхода. */
+.calc { display: flex; flex-direction: column; }
+.calc-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 2px; border-bottom: 1px solid var(--line); font-size: 13px;
+}
+.calc-row:last-child { border-bottom: none; }
+.calc-name { flex: 1; min-width: 0; color: var(--text); }
+/* Подстрочник здесь несёт цифры («5% от 12 000», «было 80»), а не украшение,
+   поэтому он `--muted`, а не `--faint`: последний в тёмной теме даёт 3.1:1 и
+   для читаемого числа не годится. Иерархию держит размер. */
+.calc-why { color: var(--muted); font-size: 11.5px; margin-top: 2px; }
+.calc-sum { flex: none; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.calc-sum.in { color: var(--success); }
+.calc-row.calc-total {
+  border-top: 1px solid var(--border); border-bottom: none;
+  margin-top: 4px; padding-top: 13px;
+}
+.calc-total .calc-name { color: var(--muted); }
+.calc-total .calc-sum { color: var(--num); font-size: 16px; font-weight: 600; }
+/* Отменённое начисление не исчезает: исчезнув, оно унесло бы с собой ответ на
+   вопрос «а куда делась упаковка». Гасить его цветом при этом нельзя — ниже
+   `--muted` в тёмной теме текст уходит за 4.5:1, — поэтому состояние показано
+   зачёркнутой суммой и меткой рядом, а не бледностью. */
+.calc-row.calc-off .calc-name, .calc-row.calc-off .calc-sum { color: var(--muted); }
+.calc-row.calc-off .calc-sum { text-decoration: line-through; }
+.calc-edit { display: flex; align-items: center; gap: 6px; flex: none; }
+.calc-edit .input { width: 110px; text-align: right; }
+
 /* ============================================================
    Узкое окно: сайдбар уезжает, содержимое получает весь экран.
 

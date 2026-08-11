@@ -32,9 +32,18 @@ import json
 
 from sqlalchemy.orm import Session
 
+# Под псевдонимом, как в `act_service`: у заказа есть свои «события» в смысле
+# истории бумаги, и путать их с механизмом связи блоков нельзя.
+from core import events as event_bus
 from core import exceptions as errors
-from core.services import audit_service, document_service, modules_service, warehouse_service
-from core.utils import now_utc
+from core.services import (
+    audit_service,
+    client_service,
+    document_service,
+    modules_service,
+    warehouse_service,
+)
+from core.utils import normalize_phone, now_utc
 from database.models import Document, DocumentEvent, DocumentLine, User
 from database.models.audit import SOURCE_MANUAL
 from database.models.document import (
@@ -48,10 +57,44 @@ from database.models.document import (
     STATUS_READY,
 )
 from database.models.warehouse import MOVE_IN, MOVE_OUT, MOVE_RETURN, MOVE_WRITEOFF
+from database.repositories import clients as clients_repo
 from database.repositories import documents as documents_repo
 from database.repositories import warehouse as warehouse_repo
 
 MAX_LINE_NAME = 200
+
+#: Заказ проведён: отгружен покупателю или принят от поставщика.
+#:
+#: Подробности: `order`, `lines`, `from_status`.
+#:
+#: Событие поднимается ПОСЛЕ условной смены статуса и ПОСЛЕ движений склада, но
+#: ДО того, как операция признана состоявшейся. Все три границы жёсткие:
+#:
+#: - не раньше `take_status`: до захвата статуса подписчиков позвал бы и
+#:   проигравший гонку «двое нажали разом», то есть расходы записались бы дважды
+#:   по одному заказу. Условный UPDATE — единственная защита, и деньги обязаны
+#:   стоять за ней;
+#: - не раньше движений склада: отказ «не хватает на складе» обязан прийти до
+#:   того, как кто-то тронул деньги;
+#: - не позже возврата из функции: после того как операция признана
+#:   состоявшейся, отказ участника уже ничего не отменит.
+ORDER_CLOSED = "order.closed"
+
+#: Проведение отменено обратными движениями склада.
+#:
+#: Подробности: `order`, `from_status`.
+#:
+#: Место то же и по тем же доводам: после `take_status(closed → cancelled)` и
+#: после обратных движений, до записи в историю бумаги. От двойной отмены
+#: защищает та же условная смена статуса — второй нажавший до подписчиков не
+#: дойдёт.
+ORDER_REVERTED = "order.reverted"
+
+#: Сколько кандидатов показываем, когда клиент нашёлся не один.
+#:
+#: Шесть — как у командной палитры: список, в котором нельзя выбрать глазами,
+#: это не выбор, а вторая задача. Больше шести означает, что искали не по тому.
+MAX_CLIENT_CANDIDATES = 6
 
 
 # --- обещания складу ----------------------------------------------------------
@@ -100,12 +143,16 @@ def availability(db: Session, product_ids: list[int]) -> dict[int, dict[str, int
 # --- заказ --------------------------------------------------------------------
 
 
-def create(db: Session, data: dict, author: User) -> Document:
+def create(db: Session, data: dict, author: User) -> tuple[Document, bool]:
     """Завести заказ. Позиции добавляются отдельно — их может не быть сразу.
 
     Пустой заказ законен: у стойки сначала заводят бумагу, потом набивают
     позиции сканером. Отказать в пустом значит заставить набирать первую позицию
     раньше, чем заказ вообще появился.
+
+    Отвечает парой: сам заказ и «завели ли под него новую карточку клиента».
+    Второе — не украшение ответа, а обязательство перед экраном: карточка,
+    заведённая втихую, через месяц заводится второй раз.
     """
     kind = data.get("kind")
     if kind not in ORDER_KINDS:
@@ -114,6 +161,7 @@ def create(db: Session, data: dict, author: User) -> Document:
     fields = dict(data)
     # Квитанция требует описания вещи, заказу оно не нужно: у него есть строки.
     fields["item"] = data.get("item") or _title(kind)
+    fields["client_id"], created_client = _resolve_client(db, data, author)
     # **Заказ без клиента законен, и это не поблажка.** У заказа поставщику
     # клиента нет по устройству: он адресован поставщику, а поставщик отдельной
     # сущностью в системе не заведён. У заказа покупателя клиент бывает не
@@ -127,13 +175,213 @@ def create(db: Session, data: dict, author: User) -> Document:
     # клиента» на запрос, где клиента может не быть по существу. Поймано живым
     # прогоном на стенде — кнопка «Заказ покупателя» на экране создаёт ровно
     # такой запрос.
-    if not data.get("client_id"):
+    if not fields.get("client_id"):
         fields["client_name"] = (data.get("client_name") or "").strip() or _title(kind)
-    return document_service.create(db, fields, author)
+    return document_service.create(db, fields, author), created_client
 
 
 def _title(kind: str) -> str:
     return "Заказ покупателя" if kind == KIND_SALES_ORDER else "Заказ поставщику"
+
+
+# --- клиент заказа ------------------------------------------------------------
+
+
+def _resolve_client(db: Session, data: dict, author: User) -> tuple[int | None, bool]:
+    """Найти клиента по номеру, почте или имени — или завести нового.
+
+    Отвечает парой: `(client_id, завели ли карточку)`. **Молчаливых исходов нет
+    ни одного**: заказ либо привязан к той карточке, на которую указали ВСЕ
+    названные приметы, либо остановлен вопросом, либо заводит новую карточку — и
+    в последнем случае говорит об этом вслух.
+
+    Приметы делятся на два сорта, и в этом всё устройство:
+
+    - **точные** — номер и почта. Совпадение по ним означает «это он»;
+    - **имя** — подстрока, то есть догадка. «Иванов» находит Петра Иванова, у
+      которого совсем другой телефон.
+
+    Отсюда правило: **привязываем только к той карточке, на которую указывают и
+    точная примета, и названный номер**.
+
+    1. Ровно одна карточка совпала точными приметами, и названный номер указывает
+       именно на неё — привязываем. Карточку при этом НЕ
+       ПЕРЕЗАПИСЫВАЕМ: правило перенесено из `lead_service.receive` дословно —
+       «подтянулись данные» и «затёрлись данные» обязаны быть разными
+       действиями.
+    2. Точных совпадений несколько — отказ `client_ambiguous` со списком
+       кандидатов. Молча взять первого нельзя: `find_client_by_number` берёт
+       того, кого правили позже, и для анонимной формы с сайта это терпимо, а
+       для заказа у стойки означает, что деньги и товар уедут на чужую карточку.
+    3. Карточка одна, но названный номер указывает не на неё — отказ
+       `client_phone_mismatch`. Привязать значит выбросить номер, о котором
+       человек сказал вслух; а номер, противоречащий карточке, — это либо другой
+       человек, либо смена номера, и решает это человек, а не сервер.
+    4. Совпало только ИМЯ — отказ `client_name_only`. Подстрока не примета:
+       именно на этом исходе заказ и уезжал на чужую карточку.
+    5. Не совпало ничего — заводим карточку.
+
+    Отказы (2–4) снимаются вторым запросом: либо названным `client_id` — человек
+    посмотрел кандидатов и выбрал, — либо `client_create_new`, «ни один из них не
+    тот». Тот же приём, что `confirm_negative` у отгрузки: остановка и явное
+    подтверждение вместо догадки сервера.
+
+    **Имя новой карточки — номер, если имени не назвали.** Заказчик сказал
+    дословно: «указать клиента можно по номеру или имени, если клиента не было он
+    создается». Довод против («карточка с именем +380… нечитаема, и через месяц
+    того же человека заведут второй раз») бьёт мимо: второй раз его не заведут
+    как раз потому, что номер теперь лежит в карточке и находится по `phone_norm`
+    — это проверено отдельным тестом. А молчаливое 201 с ничейным заказом теряло
+    введённое без следа и без отказа, и это хуже неудобного имени, которое
+    переименовывается одним полем.
+
+    Назвали `client_id` — поиск не делается вовсе: человек уже выбрал.
+
+    **Только у заказа покупателя.** Заказ поставщику адресован поставщику, а
+    поставщик отдельной сущностью в системе не заведён: имя на такой бумаге —
+    это «ООО Поставщик», и заводить под него КАРТОЧКУ КЛИЕНТА значит засорять
+    справочник теми, кто ничего у нас не покупал.
+    """
+    if data.get("client_id"):
+        # Проверку существования делает `document_service.create` через
+        # `references.client`: второй такой проверкой мы бы завели второй ответ
+        # на один вопрос.
+        return data.get("client_id"), False
+    if data.get("kind") != KIND_SALES_ORDER:
+        return None, False
+
+    name = (data.get("client_name") or "").strip()
+    email = (data.get("client_email") or "").strip()
+    phone = (data.get("client_phone") or "").strip()
+    if not (name or email or phone):
+        return None, False
+
+    phone_norm = _phone_norm(db, phone)
+    found = clients_repo.find_candidates(
+        db, email=email, phone_norm=phone_norm, name=name, limit=MAX_CLIENT_CANDIDATES
+    )
+    # Совпавшие точной приметой стоят первыми (`find_candidates` сортирует именно
+    # так), но разделяем их здесь ещё раз: порядок отвечает за то, что точное не
+    # выпадет за предел выдачи, а этот отбор — за то, кого можно привязать.
+    exact = [row for row in found if _matched_exactly(row, email, phone_norm)]
+    say_new = bool(data.get("client_create_new"))
+
+    if len(exact) == 1 and _phone_agrees(exact[0], phone_norm):
+        return exact[0].id, False
+    if not say_new:
+        if len(exact) > 1:
+            raise errors.ConflictError(
+                "More than one client matches — say which one",
+                code="client_ambiguous",
+                details={"candidates": [_candidate(row) for row in exact]},
+            )
+        if exact:
+            raise errors.ConflictError(
+                "The phone number does not match this client — say which one",
+                code="client_phone_mismatch",
+                details={"candidates": [_candidate(row) for row in exact]},
+            )
+        if found:
+            raise errors.ConflictError(
+                "Only the name matches — say which client, or ask for a new one",
+                code="client_name_only",
+                details={"candidates": [_candidate(row) for row in found]},
+            )
+
+    client = client_service.create_client(
+        db,
+        {
+            # Имени нет — карточку называет номер: он и есть то, чем человека
+            # назвали. Пустого имени `create_client` не примет, а заказ без
+            # карточки терял бы введённое без следа.
+            "name": name or phone or email,
+            "phone": phone,
+            "email": email,
+            "manager_id": author.id,
+        },
+        author,
+    )
+    # Журнал отвечает на вопрос «откуда взялся этот клиент» — вместо догадки.
+    audit_service.record(
+        db,
+        action=audit_service.ACTION_CLIENT_CREATED,
+        actor=author,
+        source=SOURCE_MANUAL,
+        entity_type=audit_service.ENTITY_CLIENT,
+        entity_id=client.id,
+        entity_label=client.name,
+    )
+    return client.id, True
+
+
+def _matched_exactly(client, email: str, phone_norm: str) -> bool:
+    """Совпал ли клиент ТОЧНОЙ приметой — номером или почтой.
+
+    Имя сюда не входит и не войдёт: оно ищется подстрокой, и «Иванов» находит
+    Петра Иванова с чужим телефоном. Подстрока отвечает на вопрос «кто похож», а
+    привязка заказа задаёт другой — «кто это».
+    """
+    if phone_norm and (client.phone_norm or "") == phone_norm:
+        return True
+    return bool(email) and (client.email or "").strip().lower() == email.strip().lower()
+
+
+def _phone_agrees(client, phone_norm: str) -> bool:
+    """Указывает ли названный номер на эту карточку.
+
+    Совпадения одной приметы мало: почта сошлась, номер — нет, и это либо другой
+    человек, либо смена номера. Привязав по почте, мы бы выбросили номер, о
+    котором человек сказал вслух, — молча и без следа, потому что найденную
+    карточку мы не перезаписываем.
+
+    **Решает здесь номер, а не почта, и это выбор.** У стойки человека опознают
+    по телефону: его называют вслух, по нему звонят, по нему находит АТС. Почта в
+    карточке живёт годами и устаревает молча, и требовать её совпадения значило
+    бы останавливать обычный заказ постоянного покупателя, сменившего почту, —
+    ради приметы, по которой ему никто не позвонит. Названная почта, не совпавшая
+    с карточкой, поэтому НЕ повод для отказа: карточку она всё равно не
+    перезаписывает.
+
+    Номер не назвали — требовать нечего.
+    """
+    return not phone_norm or (client.phone_norm or "") == phone_norm
+
+
+def _phone_norm(db: Session, phone: str) -> str:
+    """Номер в сравнимом виде — той же функцией, что у клиентов и телефонии.
+
+    Своей копии здесь нет намеренно: разойдясь с `client_service`, она давала бы
+    заказ, не находящий карточку, которую по тому же номеру находит звонок.
+    Ровно она же делает «067…» и «+380 67…» одним человеком — при заполненной
+    настройке `default_country_code`, как и у звонка.
+    """
+    from core.services import settings_service
+
+    code = settings_service.get_all(db).get("default_country_code", "")
+    return normalize_phone(phone, code)[:32]
+
+
+def _candidate(client) -> dict:
+    """Кандидат для экрана «Кого из них?».
+
+    Номер маскируем: список кандидатов приходит на запрос, где человек назвал
+    ОДИН номер, и отдавать в ответ чужие целиком значит превратить форму заказа
+    в справочник телефонов.
+    """
+    return {
+        "id": client.id,
+        "name": client.name,
+        "company": client.company,
+        "phone_masked": _mask(client.phone),
+        "updated_at": client.updated_at.isoformat() if client.updated_at else None,
+    }
+
+
+def _mask(phone: str) -> str:
+    value = (phone or "").strip()
+    if len(value) <= 4:
+        return value
+    return "…" + value[-4:]
 
 
 def get(db: Session, document_id: int) -> Document:
@@ -340,6 +588,28 @@ def close(
             author,
         )
 
+    # Деньги — здесь, событием, а не прямым вызовом финансов: заказы обязаны
+    # работать при выключенном блоке денег, а `core/modules.py` связь
+    # «orders → finance» не объявляет. Выключен блок — подписчика просто не
+    # зовут, и отгрузка проходит целиком: статус, движения склада, журнал.
+    #
+    # Транзакция одна и открыта не здесь, а в `web/api/deps.py:get_db`: статус,
+    # движения склада и денежные операции коммитятся вместе — либо всё, либо
+    # ничего.
+    event_bus.emit(
+        ORDER_CLOSED,
+        db=db,
+        actor=author,
+        reason=f"order {order.number} closed",
+        source=SOURCE_MANUAL,
+        # Чем именно вызвано — номером бумаги, а не номером записи: по журналу
+        # ищут «двести двадцать третий», а не `document_id=417`.
+        source_ref=order.number,
+        order=order,
+        lines=rows,
+        from_status=previous,
+    )
+
     _record(db, order, previous, STATUS_CLOSED, author, "")
     audit_service.record(
         db,
@@ -398,6 +668,19 @@ def revert(db: Session, document_id: int, author: User) -> Document:
             },
             author,
         )
+
+    # Как и у закрытия: после захвата статуса и после обратных движений склада,
+    # до того как операция признана состоявшейся.
+    event_bus.emit(
+        ORDER_REVERTED,
+        db=db,
+        actor=author,
+        reason=f"order {order.number} reverted",
+        source=SOURCE_MANUAL,
+        source_ref=order.number,
+        order=order,
+        from_status=STATUS_CLOSED,
+    )
 
     _record(db, order, STATUS_CLOSED, STATUS_CANCELLED, author, "отмена проведения")
     audit_service.record(

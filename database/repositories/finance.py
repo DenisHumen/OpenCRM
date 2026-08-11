@@ -16,12 +16,31 @@
 
 from datetime import date, datetime
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
-from database.models import FinanceBudget, FinanceCategory, FinanceOperation
-from database.models.finance import DIRECTION_EXPENSE, DIRECTION_INCOME
+from database.models import FinanceBudget, FinanceCategory, FinanceOperation, FinanceRule
+from database.models.finance import (
+    BASE_INCOME_PERCENT,
+    BASE_PER_ORDER,
+    CORRECTION_REVERSAL,
+    DIRECTION_EXPENSE,
+    DIRECTION_INCOME,
+)
 from database.query import page_of
+
+
+def _chain():
+    """Голова цепочки поправок: `COALESCE(corrects_id, id)`.
+
+    Исходное начисление и все его поправки складываются в одну строку врезки
+    «Деньги по заказу»: было 80, стало 140 — это две записи в базе и одна цифра
+    на экране. Выражение живёт одной функцией, потому что группировка по нему
+    нужна в двух запросах, а разойдясь, они дали бы две разные суммы по одной и
+    той же упаковке.
+    """
+    return func.coalesce(FinanceOperation.corrects_id, FinanceOperation.id)
+
 
 # --- статьи ---
 
@@ -155,6 +174,252 @@ def add_operation(db: Session, row: FinanceOperation) -> FinanceOperation:
     db.add(row)
     db.flush()
     return row
+
+
+# --- правила начисления ---
+
+
+def get_rule(db: Session, rule_id: int, include_closed: bool = False) -> FinanceRule | None:
+    rule = db.get(FinanceRule, rule_id)
+    if rule is None:
+        return None
+    if rule.deleted_at is not None and not include_closed:
+        return None
+    return rule
+
+
+def list_rules(db: Session, include_closed: bool = False) -> list[FinanceRule]:
+    """Справочник правил в порядке применения.
+
+    Порядок задан явно и совпадает с составным индексом: сначала действующие,
+    внутри — по `sort_order`. Читают этот список ровно так, и второго порядка у
+    него не бывает.
+    """
+    stmt = select(FinanceRule)
+    if not include_closed:
+        stmt = stmt.where(FinanceRule.deleted_at.is_(None))
+    return list(
+        db.scalars(
+            stmt.order_by(
+                FinanceRule.is_active.desc(),
+                FinanceRule.sort_order.asc(),
+                FinanceRule.id.asc(),
+            )
+        )
+    )
+
+
+def add_rule(db: Session, row: FinanceRule) -> FinanceRule:
+    db.add(row)
+    db.flush()
+    return row
+
+
+def _live_rules(base: str):
+    """Отбор «правило считает прямо сейчас»: действующее и не закрытое.
+
+    Два условия, а не одно, потому что они про разное: `is_active` — «сегодня не
+    считаем», `deleted_at` — «правила больше нет». Собраны в одном месте, чтобы
+    два входа ниже не разошлись: разойдясь, они дали бы налог, который
+    начисляется, но в списке правил не показан.
+    """
+    return select(FinanceRule).where(
+        FinanceRule.base == base,
+        FinanceRule.is_active.is_(True),
+        FinanceRule.deleted_at.is_(None),
+    )
+
+
+def rules_for_income(db: Session, category_id: int) -> list[FinanceRule]:
+    """Правила, которые сработают на приход по этой статье.
+
+    «Пусто или совпало» — это и есть «ставок можно завести несколько, под разные
+    виды дохода»: правило без `source_category_id` считает со всякого прихода,
+    правило с ним — только со своего.
+    """
+    stmt = _live_rules(BASE_INCOME_PERCENT).where(
+        or_(
+            FinanceRule.source_category_id.is_(None),
+            FinanceRule.source_category_id == category_id,
+        )
+    )
+    return list(db.scalars(stmt.order_by(FinanceRule.sort_order.asc(), FinanceRule.id.asc())))
+
+
+def rules_per_order(db: Session) -> list[FinanceRule]:
+    """Стандартные расходы, списываемые при закрытии любого заказа."""
+    stmt = _live_rules(BASE_PER_ORDER)
+    return list(db.scalars(stmt.order_by(FinanceRule.sort_order.asc(), FinanceRule.id.asc())))
+
+
+def rules_using_category(db: Session, category_id: int) -> list[FinanceRule]:
+    """Живые правила, смотрящие на эту статью — куда кладут или с чего считают.
+
+    Нужно ровно для одного отказа: закрыть статью, на которую смотрит правило,
+    нельзя. Отказ переносится на момент правки справочника, где человек его
+    понимает, — вместо падения при закрытии заказа, где он выглядит поломкой.
+    """
+    return list(
+        db.scalars(
+            select(FinanceRule)
+            .where(
+                FinanceRule.deleted_at.is_(None),
+                or_(
+                    FinanceRule.category_id == category_id,
+                    FinanceRule.source_category_id == category_id,
+                ),
+            )
+            .order_by(FinanceRule.sort_order.asc(), FinanceRule.id.asc())
+        )
+    )
+
+
+def count_by_rule(db: Session, rule_id: int) -> int:
+    """Сколько раз правило сработало. Считается, а не хранится счётчиком.
+
+    Хранимый счётчик — то же самое, что хранимый остаток склада: разойдётся с
+    историей на первом же откате транзакции, и узнать, какое из двух чисел
+    верное, будет неоткуда.
+    """
+    return int(
+        db.scalar(
+            select(func.count())
+            .select_from(FinanceOperation)
+            .where(FinanceOperation.rule_id == rule_id)
+        )
+        or 0
+    )
+
+
+# --- деньги по бланку: всё считается запросом ---
+
+
+def operations_of_document(db: Session, document_id: int) -> list[FinanceOperation]:
+    """Все денежные операции по бланку: платежи, начисления, поправки, отмены."""
+    return list(
+        db.scalars(
+            select(FinanceOperation)
+            .where(FinanceOperation.document_id == document_id)
+            .order_by(FinanceOperation.happened_at.asc(), FinanceOperation.id.asc())
+        )
+    )
+
+
+def accruals_of_document(
+    db: Session, document_id: int, origin: str | None = None
+) -> list[FinanceOperation]:
+    """Начисления по бланку — только ГОЛОВЫ цепочек, без поправок и отмен.
+
+    Голова — это то, что начислило правило; поправка и отмена уточняют её и
+    отдельными строками врезки не показываются, а складываются в её сумму
+    (`accrual_totals`).
+
+    `origin` отбирает начисления по тому, ЧЕМ они вызваны. Врезке «Деньги по
+    заказу» нужны все — и упаковка от отгрузки, и налог от платежа; отмене
+    проведения — только порождённые закрытием этого заказа. Налог висит на том же
+    бланке лишь потому, что его назвал платёж, и снять его отменой заказа значит
+    снять его с оборота, который никуда не делся.
+    """
+    stmt = select(FinanceOperation).where(
+        FinanceOperation.document_id == document_id,
+        FinanceOperation.rule_id.is_not(None),
+        FinanceOperation.correction.is_(None),
+    )
+    if origin is not None:
+        stmt = stmt.where(FinanceOperation.origin == origin)
+    return list(db.scalars(stmt.order_by(FinanceOperation.id.asc())))
+
+
+def accrual_totals(db: Session, operation_ids) -> dict[int, int]:
+    """Итог по каждой цепочке поправок: {голова: сумма как лежит в базе}.
+
+    Один запрос на всю врезку, а не запрос на строку. Группировка по
+    `COALESCE(corrects_id, id)` — это и есть «экран показывает не последнее
+    записанное число, а сумму»: было 80, стало 140 — в базе −8000 и −6000, на
+    экране 140, и третья правка добавит ещё строку без единой строки на уборку.
+    """
+    operation_ids = [i for i in set(operation_ids) if i]
+    if not operation_ids:
+        return {}
+    head = _chain()
+    rows = db.execute(
+        select(head, func.coalesce(func.sum(FinanceOperation.amount_minor), 0))
+        .where(head.in_(operation_ids))
+        .group_by(head)
+    ).all()
+    return {int(head_id): int(total or 0) for head_id, total in rows}
+
+
+def accrual_total(db: Session, operation_id: int) -> int:
+    """Сколько по этой цепочке начислено сейчас, с учётом всех поправок."""
+    return accrual_totals(db, [operation_id]).get(operation_id, 0)
+
+
+def reversal_of(db: Session, operation_id: int) -> FinanceOperation | None:
+    """Операция, отменяющая эту. Второй раз отменить одно и то же нельзя.
+
+    Образец — `warehouses_repo.reversal_of` у перемещений: там тот же вопрос и
+    тот же ответ.
+    """
+    return db.scalars(
+        select(FinanceOperation).where(
+            FinanceOperation.corrects_id == operation_id,
+            FinanceOperation.correction == CORRECTION_REVERSAL,
+        )
+    ).first()
+
+
+def reverted_heads(db: Session, operation_ids) -> set[int]:
+    """Какие из этих начислений уже сторнированы — одним запросом на врезку.
+
+    Отдельно от `reversal_of`, и по той же причине, что у перемещений склада
+    (`warehouses_repo.reverted_ids`): «отменено ли вот это» спрашивают по одному,
+    а «какие из десяти отменены» — списком, и запрос на строку превратил бы
+    врезку в десяток обращений к базе.
+    """
+    operation_ids = [i for i in set(operation_ids) if i]
+    if not operation_ids:
+        return set()
+    rows = db.scalars(
+        select(FinanceOperation.corrects_id).where(
+            FinanceOperation.corrects_id.in_(operation_ids),
+            FinanceOperation.correction == CORRECTION_REVERSAL,
+        )
+    )
+    return {row for row in rows if row is not None}
+
+
+def received_of(
+    db: Session, document_id: int | None = None, deal_id: int | None = None
+) -> int:
+    """Сколько денег получено по бланку или по заявке, в минорных единицах.
+
+    Колонок `documents.paid_total`, `paid_at` и `is_paid` не существует и не
+    появится: получено — это `SUM` доходных операций, остаток — сумма бланка
+    минус она, «оплачен» — остаток не больше нуля. Хранимое число разошлось бы с
+    историей на первом же возврате.
+
+    Начисления сюда не попадают дважды: отбор идёт по направлению СТАТЬИ, а налог
+    ложится в расходную. Но `rule_id IS NULL` стоит отдельным условием — на
+    случай правила, кладущего начисленное в доходную статью (возврат
+    переплаченного налога — законная такая статья). Деньги в кассу от этого не
+    приходили.
+    """
+    if document_id is None and deal_id is None:
+        return 0
+    stmt = (
+        select(func.coalesce(func.sum(FinanceOperation.amount_minor), 0))
+        .join(FinanceCategory, FinanceCategory.id == FinanceOperation.category_id)
+        .where(
+            FinanceCategory.direction == DIRECTION_INCOME,
+            FinanceOperation.rule_id.is_(None),
+        )
+    )
+    if document_id is not None:
+        stmt = stmt.where(FinanceOperation.document_id == document_id)
+    if deal_id is not None:
+        stmt = stmt.where(FinanceOperation.deal_id == deal_id)
+    return int(db.scalar(stmt) or 0)
 
 
 # --- прибыль: считается запросом и нигде не хранится ---

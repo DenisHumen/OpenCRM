@@ -1,4 +1,4 @@
-from sqlalchemy import literal, or_, select
+from sqlalchemy import case, func, literal, or_, select
 from sqlalchemy.orm import Session
 
 from database.models import Client, ClientFile, ClientNote
@@ -118,6 +118,66 @@ def search_top(
     `database/query.page_without_total`.
     """
     return page_without_total(db, _search_stmt(q), page=1, per_page=per_page)
+
+
+def find_candidates(
+    db: Session,
+    *,
+    email: str = "",
+    phone_norm: str = "",
+    name: str = "",
+    limit: int = 6,
+) -> list[Client]:
+    """Кого система уже знает под этими приметами — СПИСКОМ, а не одного.
+
+    Отличие от `leads_repo.find_client` принципиальное, и потому это отдельный
+    вход, а не расширение того. Тот отвечает на вопрос «хоть кто-нибудь» и
+    сознательно берёт первого попавшегося: для анонимной формы с сайта это
+    терпимо. Здесь вопрос другой — «кто именно», — и его задают у стойки, где на
+    карточку сейчас лягут деньги и товар. Молча взятый первый означает, что они
+    уедут на чужую.
+
+    Одна функция на все три приметы, а не три вызова подряд из сервиса: три
+    вызова означали бы четвёртую копию правил поиска, которую докстрока
+    `database/repositories/leads.py` прямо запрещает.
+
+    Приёмы взяты у тех, кто их выстрадал: адрес сравнивается через `lower()`, а
+    не `ilike` (в адресах законны `_` и `%`, а для LIKE это шаблоны); номер — по
+    приведённой `phone_norm` равенством; имя — по склейке, той же, что у обычного
+    поиска.
+
+    **Порядок задан, и он не украшение.** Сначала совпавшие точной приметой
+    (адрес, номер), потом совпавшие только именем. Выдача обрезана пределом, а
+    имя ищется подстрокой: десяток однофамильцев, правленых сегодня, вытеснил бы
+    из окна ту единственную карточку, у которой сошёлся номер, — и заказ завёл бы
+    ей дубль вместо того, чтобы её найти.
+
+    Сортировка выражением `CASE`, а не булевым столбцом: булев тип в MySQL — это
+    TINYINT, и `ORDER BY` по нему зависит от того, как драйвер его отдал.
+    """
+    exact_conditions = []
+    if email and email.strip():
+        exact_conditions.append(func.lower(Client.email) == email.strip().lower())
+    if phone_norm:
+        exact_conditions.append(Client.phone_norm == phone_norm)
+    conditions = list(exact_conditions)
+    if name and name.strip():
+        conditions.append(contains_norm(Client.search_text, name.strip()))
+    if not conditions:
+        return []
+    exact_first = (
+        case((or_(*exact_conditions), 0), else_=1) if exact_conditions else literal(0)
+    )
+    stmt = (
+        select(Client)
+        .where(Client.deleted_at.is_(None), or_(*conditions))
+        # Внутри своей половины — свежая карточка первой: тот же порядок, что у
+        # поиска по номеру в телефонии. Но выбирать из списка всё равно будет
+        # человек.
+        .order_by(exact_first.asc(), Client.updated_at.desc(), Client.id.desc())
+        .limit(limit)
+    )
+    return list(db.scalars(stmt))
 
 
 def list_notes(

@@ -3,14 +3,18 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { Icon } from "../components/Icon";
 import { useLabelsOn } from "../components/ProductBarcodes";
-import { Chip, ConfirmModal, ScreenLoading } from "../components/ui";
+import { Chip, ConfirmModal, LoadFailed, Modal, ScreenLoading } from "../components/ui";
 import { WarehousePicker, useWarehouses } from "../components/Warehouses";
 import { api, ApiError } from "../lib/api";
 import { useApp } from "../lib/app";
 import { useDebounced } from "../lib/debounce";
 import { useFailure } from "../lib/failure";
 import { useGuard } from "../lib/guard";
-import { formatMoney, formatQuantity } from "../lib/format";
+import { formatDate, formatMoney, formatQuantity, formatRate, toMinorUnits } from "../lib/format";
+import { moduleOn } from "../lib/modules";
+import { can } from "../lib/permissions";
+import { useReference } from "../lib/reference";
+import type { FinanceCategory } from "./Finance";
 import { ORDER_STATUS_LABEL, type Order } from "./Orders";
 import type { Product } from "./Warehouse";
 
@@ -22,7 +26,7 @@ import type { Product } from "./Warehouse";
  */
 export function OrderCard() {
   const { id } = useParams();
-  const { t, locale, workspace, toast, toastError } = useApp();
+  const { t, locale, user, modules, workspace, toast, toastError } = useApp();
   const navigate = useNavigate();
   const [order, setOrder] = useState<Order | null>(null);
   // Проведение трогает склад: отгрузка списывает, приёмка приходует. Засов, а
@@ -226,6 +230,11 @@ export function OrderCard() {
         </div>
       )}
 
+      {/* Деньги по заказу — врезка блока `finance`, а не часть заказа.
+          Выключен блок или нет права смотреть деньги — заказ работает целиком,
+          и это не половина экрана, а правда о системе без финансов. */}
+      {moduleOn(modules, "finance") && can(user, "finance.view") && <OrderMoney order={order} />}
+
       {order.status === "closed" && (
         <button className="btn btn-secondary" onClick={() => setConfirm("revert")}>
           {t("orderRevert")}
@@ -249,6 +258,454 @@ export function OrderCard() {
         />
       )}
     </div>
+  );
+}
+
+/** Начисление по заказу: голова цепочки поправок, уже сложенная сервером. */
+interface Accrual {
+  id: number;
+  rule_id: number | null;
+  category_id: number;
+  category_name: string;
+  direction: "income" | "expense" | null;
+  purpose: string;
+  comment: string;
+  /** Сумма В ТЕРМИНАХ СТАТЬИ и с учётом всех поправок: было 80, стало 140. */
+  amount: number;
+  /** Снимок ставки на момент начисления. Пусто — начислено фиксированной суммой. */
+  rate_bp: number | null;
+  base_amount: number | null;
+  happened_at: string | null;
+  reverted: boolean;
+}
+
+interface OrderMoneyData {
+  document_id: number;
+  /** Пусто — блок бланков выключен, и сравнивать полученное не с чем. */
+  total: number | null;
+  received: number;
+  due: number | null;
+  paid: boolean | null;
+  accruals: Accrual[];
+  currency: string;
+}
+
+/**
+ * Разбор суммы заказа: из чего сложилось то, что осталось.
+ *
+ * **Ни одно число здесь не считается заново.** Получено, остаток, «оплачен» и
+ * сумма каждого начисления приходят с сервера посчитанными запросом; браузеру
+ * остаётся вычесть одно из другого ради строки «Остаётся». Это не то же самое,
+ * что запрещено на экране денег: там журнал показывает первую сотню операций из
+ * трёх тысяч, и сложение по экрану дало бы правдоподобно неверную прибыль.
+ * Здесь список начислений по заказу полон — сервер отдаёт его целиком, без
+ * листалки, — и вычитание не порождает второго способа получить число.
+ *
+ * Считается всё ПО ОПЛАТЕ, а не по отгрузке: приход — это то, что получено, а
+ * не то, что выписано. Сказано это на экране словами, потому что вывод
+ * «отгрузили на 12 000, а тут 5 000» человек сделает не в ту сторону.
+ */
+function OrderMoney({ order }: { order: Order }) {
+  const { t, locale, user, toast } = useApp();
+  const [money, setMoney] = useState<OrderMoneyData | null>(null);
+  const [failure, setFailure] = useState<unknown>(null);
+  const [paying, setPaying] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  // «Было 80» рядом с поправленной цифрой. Держится до перезагрузки страницы и
+  // нарочно: сервер отдаёт ИТОГ цепочки, а не первую записанную сумму, и взять
+  // «было» из ответа неоткуда. Постоянный ответ на этот вопрос живёт в журнале
+  // действий — о нём говорит подсказка под списком.
+  const [was, setWas] = useState<Record<number, number>>({});
+
+  useEffect(() => {
+    let current = true;
+    setFailure(null);
+    api
+      .get<OrderMoneyData>(`/finance/documents/${order.id}/money`)
+      .then((data) => {
+        if (current) setMoney(data);
+      })
+      .catch((e) => {
+        // Отказ — не «денег нет»: врезка говорит словами сервера и даёт
+        // повторить, а не показывает пустой разбор.
+        if (current) setFailure(e);
+      });
+    return () => {
+      current = false;
+    };
+    // Статус в зависимостях не для красоты: начисления заводятся ровно в момент
+    // закрытия заказа, и без перечитывания разбор остался бы вчерашним.
+  }, [order.id, order.status, attempt]);
+
+  if (failure !== null) {
+    return (
+      <div className="card card-pad" style={{ marginTop: 16 }}>
+        <LoadFailed error={failure} onRetry={() => setAttempt((n) => n + 1)} />
+      </div>
+    );
+  }
+  if (!money) return null;
+
+  const sum = (value: number | null) => formatMoney(value, money.currency, locale);
+  const total = money.total ?? order.total;
+  const canPay = can(user, "finance.create");
+  // Отменённые начисления в вычитание не идут: сторно уже сложено сервером в
+  // ноль, а показываются они затем, чтобы вопрос «куда делась упаковка» имел
+  // ответ на экране, а не в журнале.
+  const charged = money.accruals.reduce(
+    (acc, row) => acc + (row.direction === "income" ? -row.amount : row.amount),
+    0,
+  );
+
+  return (
+    <div className="card card-pad" style={{ marginTop: 16, marginBottom: 16 }}>
+      <div className="section-head" style={{ marginBottom: 12 }}>
+        <div className="metric-title">{t("orderMoney")}</div>
+        {/* Оплату принимаем только по заказу покупателя: у заказа поставщику
+            деньги идут в другую сторону, и «принять оплату» на нём означало бы
+            записать приход там, где был расход. */}
+        {canPay && order.kind === "sales_order" && (
+          <button className="btn btn-secondary btn-sm" onClick={() => setPaying(true)}>
+            {t("finTakePayment")}
+          </button>
+        )}
+      </div>
+
+      <div className="report-grid">
+        <div className="report-figure">
+          <div className="metric-title" style={{ marginBottom: 10 }}>
+            {t("orderTotal")}
+          </div>
+          <div className="metric-value money-value" style={{ fontSize: 22 }}>
+            {sum(total)}
+          </div>
+        </div>
+        <div className="report-figure">
+          <div className="metric-title" style={{ marginBottom: 10 }}>
+            {t("finReceived")}
+          </div>
+          <div className="metric-value money-value" style={{ fontSize: 22 }}>
+            {sum(money.received)}
+          </div>
+        </div>
+        {money.due !== null && (
+          <div className="report-figure">
+            <div className="metric-title" style={{ marginBottom: 10 }}>
+              {t("finDueLeft")}
+            </div>
+            {money.paid ? (
+              <Chip variant="success">{t("dealPaidInFull")}</Chip>
+            ) : (
+              <div className="metric-value money-value" style={{ fontSize: 22 }}>
+                {sum(money.due)}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      <div className="field-desc" style={{ marginTop: 0, marginBottom: 14 }}>
+        {t("finMoneyByPayment")}
+      </div>
+
+      <div className="section-head" style={{ marginBottom: 6 }}>
+        <div className="metric-title">{t("finAccruals")}</div>
+      </div>
+
+      {money.accruals.length === 0 ? (
+        <div className="field-desc" style={{ marginTop: 0 }}>
+          {t("finNoAccruals")}
+        </div>
+      ) : (
+        <>
+          <div className="calc">
+            <div className="calc-row">
+              <div className="calc-name">{t("finReceived")}</div>
+              <span className="calc-sum in">{sum(money.received)}</span>
+            </div>
+            {money.accruals.map((row) => (
+              <AccrualRow
+                key={row.id}
+                row={row}
+                currency={money.currency}
+                canEdit={canPay}
+                was={was[row.id]}
+                onAdjusted={(id, before) => {
+                  setWas((prev) => ({ ...prev, [id]: prev[id] ?? before }));
+                  setAttempt((n) => n + 1);
+                }}
+              />
+            ))}
+            <div className="calc-row calc-total">
+              <div className="calc-name">{t("finLeftAfter")}</div>
+              <span className="calc-sum">{sum(money.received - charged)}</span>
+            </div>
+          </div>
+          {canPay && (
+            <div className="field-desc">{t("finAdjustHint")}</div>
+          )}
+        </>
+      )}
+
+      {paying && (
+        <PaymentModal
+          order={order}
+          due={money.due}
+          currency={money.currency}
+          onClose={() => setPaying(false)}
+          onSaved={() => {
+            setPaying(false);
+            toast(t("finPaymentSaved"));
+            setAttempt((n) => n + 1);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+/**
+ * Строка начисления с правкой суммы НА МЕСТЕ.
+ *
+ * Меняют 80 на 140 — и в строке сразу стоит 140, потому что сервер отдаёт
+ * ИТОГ цепочки поправок, а не последнее записанное число. Исходная операция при
+ * этом не правится и не удаляется: рядом заводится операция на разницу, и в
+ * журнале видно обе.
+ *
+ * Разницу считает сервер: в теле запроса едет НОВАЯ ИТОГОВАЯ сумма. Вводить
+ * разницу руками — верный способ ошибиться на знак.
+ */
+function AccrualRow({
+  row,
+  currency,
+  canEdit,
+  was,
+  onAdjusted,
+}: {
+  row: Accrual;
+  currency: string;
+  canEdit: boolean;
+  /** Сумма до правки, сделанной в этот заход. */
+  was: number | undefined;
+  onAdjusted: (id: number, before: number) => void;
+}) {
+  const { t, locale, toastError } = useApp();
+  const [editing, setEditing] = useState(false);
+  const [typed, setTyped] = useState("");
+  // Засов: правка заводит операцию, и второе нажатие завело бы вторую поправку
+  // на ту же разницу — то есть 200 вместо 140, молча и правдоподобно.
+  const guard = useGuard();
+
+  const sum = (value: number) => formatMoney(value, currency, locale);
+
+  const save = async () => {
+    const next = toMinorUnits(typed);
+    // Та же сумма — просто закрываем поле. Сервер на это отвечает отказом
+    // `nothing_to_adjust`, и он прав, но человеку показывать отказ за то, что
+    // он передумал, не за что.
+    if (next === row.amount) {
+      setEditing(false);
+      return;
+    }
+    if (!guard.take()) return;
+    try {
+      await api.patch(`/finance/accruals/${row.id}`, { amount: next });
+      setEditing(false);
+      onAdjusted(row.id, row.amount);
+    } catch (err) {
+      toastError(err);
+    } finally {
+      guard.free();
+    }
+  };
+
+  return (
+    // Комментарий начисления («Упаковка по заказу 2026-000001») в строку не
+    // выводится: на карточке самого заказа он повторяет и статью, и номер,
+    // который стоит в заголовке. Под курсором он остаётся — на случай двух
+    // правил, кладущих деньги в одну статью.
+    <div className={"calc-row" + (row.reverted ? " calc-off" : "")} title={row.comment || undefined}>
+      <div className="calc-name">
+        {row.category_name}
+        <div className="calc-why">
+          {/* Ставка и база — снимок на момент начисления: правило с тех пор
+              могли поправить, и «5% от 12 000» отвечает на вопрос «почему тут
+              600, а в соседнем заказе 840». */}
+          {row.rate_bp !== null && row.base_amount !== null
+            ? t("finOfSum", {
+                rate: formatRate(row.rate_bp, locale),
+                sum: sum(row.base_amount),
+              })
+            : formatDate(row.happened_at, locale)}
+          {was !== undefined && ` · ${t("finAdjustWas", { sum: sum(was) })}`}
+        </div>
+      </div>
+      {row.reverted && <Chip>{t("finAccrualReverted")}</Chip>}
+      {editing ? (
+        <span className="calc-edit">
+          <input
+            className="input input-sm"
+            value={typed}
+            autoFocus
+            aria-label={t("finAdjust")}
+            onChange={(e) => setTyped(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                void save();
+              }
+              if (e.key === "Escape") setEditing(false);
+            }}
+          />
+          <button
+            className="btn-icon"
+            title={t("save")}
+            disabled={guard.busy}
+            onClick={() => void save()}
+          >
+            <Icon name="check" size={14} />
+          </button>
+          <button className="btn-icon" title={t("cancel")} onClick={() => setEditing(false)}>
+            <Icon name="x" size={14} />
+          </button>
+        </span>
+      ) : (
+        <>
+          <span className="calc-sum">
+            {(row.direction === "income" ? "+ " : "− ") + sum(row.amount)}
+          </span>
+          {canEdit && !row.reverted && (
+            <button
+              className="btn-icon"
+              title={t("finAdjust")}
+              onClick={() => {
+                setTyped(String(row.amount / 100));
+                setEditing(true);
+              }}
+            >
+              <Icon name="note" size={13} />
+            </button>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+/** Приём оплаты и возврат — одной формой: решает знак суммы.
+ *
+ * Отдельной кнопки «вернуть» нет намеренно. Возврат — это доходная операция с
+ * отрицательной суммой по той же статье, и налог по ней сторнируется сам;
+ * вторая форма означала бы второе место, где заводится приход.
+ */
+function PaymentModal({
+  order,
+  due,
+  currency,
+  onClose,
+  onSaved,
+}: {
+  order: Order;
+  due: number | null;
+  currency: string;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const { t, locale, toastError } = useApp();
+  const categories = useReference<FinanceCategory>("/finance/categories");
+  const [form, setForm] = useState({
+    // Умолчание — остаток к оплате: в большинстве случаев платят именно его, а
+    // предоплату человек поправит сам.
+    amount: due !== null && due > 0 ? String(due / 100) : "",
+    happened_at: "",
+    category_id: "",
+    comment: "",
+  });
+  // Засов: платёж — это движение денег, и вторая такая же строка завышает
+  // выручку ровно на свою сумму, а вместе с ней и отложенный налог.
+  const guard = useGuard();
+
+  const set = (key: string) => (e: any) => setForm((f) => ({ ...f, [key]: e.target.value }));
+  const income = (categories.items ?? []).filter(
+    (row) => !row.closed && row.direction === "income",
+  );
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!guard.take()) return;
+    try {
+      await api.post("/finance/payments", {
+        amount: toMinorUnits(form.amount),
+        category_id: Number(form.category_id),
+        document_id: order.id,
+        // Полдень, а не полночь: дату человек выбирает по своему календарю, а
+        // хранится момент в UTC. Полночь при смещении уезжает на соседние
+        // сутки, и платёж попадает в чужой месяц вместе со своим налогом.
+        happened_at: form.happened_at ? `${form.happened_at}T12:00:00` : null,
+        comment: form.comment,
+      });
+      onSaved();
+    } catch (err) {
+      toastError(err);
+      guard.free();
+    }
+  };
+
+  return (
+    <Modal title={t("finTakePayment")} onClose={onClose}>
+      <form onSubmit={submit}>
+        <div className="field">
+          <label className="label">{t("finAmount")}</label>
+          <input className="input" value={form.amount} onChange={set("amount")} autoFocus required />
+          <div className="field-desc">
+            {t("finPaymentHint")}
+            {due !== null && due > 0 && (
+              <>
+                {" "}
+                {t("finDueLeft")}: {formatMoney(due, currency, locale)}
+              </>
+            )}
+          </div>
+        </div>
+        <div className="field">
+          <label className="label">{t("finCategory")}</label>
+          <select className="input" value={form.category_id} onChange={set("category_id")} required>
+            <option value="">—</option>
+            {income.map((row) => (
+              <option key={row.id} value={row.id}>
+                {row.name}
+              </option>
+            ))}
+          </select>
+          <div className="field-desc">{t("finPaymentIncomeOnly")}</div>
+          {/* Список не приехал — платёж не записать вовсе, и молчать об этом
+              нельзя: пустой выбор читается как «доходных статей не завели». */}
+          {categories.failure !== null ? (
+            <LoadFailed error={categories.failure} onRetry={categories.reload} />
+          ) : (
+            categories.items !== null && income.length === 0 && (
+              <div className="field-desc">{t("finNoCategories")}</div>
+            )
+          )}
+        </div>
+        <div className="field">
+          <label className="label">{t("finDate")}</label>
+          <input
+            className="input"
+            type="date"
+            value={form.happened_at}
+            onChange={set("happened_at")}
+          />
+        </div>
+        <div className="field" style={{ marginBottom: 20 }}>
+          <label className="label">{t("finComment")}</label>
+          <textarea className="textarea" value={form.comment} onChange={set("comment")} />
+        </div>
+        <button className="btn btn-primary" style={{ width: "100%" }} disabled={guard.busy}>
+          {t("finTakePayment")}
+        </button>
+      </form>
+    </Modal>
   );
 }
 

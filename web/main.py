@@ -240,10 +240,13 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(DomainError)
     async def domain_error_handler(_request: Request, exc: DomainError):
-        return JSONResponse(
-            status_code=exc.http_status,
-            content={"error": {"code": exc.code, "message": exc.message}},
-        )
+        body = {"code": exc.code, "message": exc.message}
+        # `details` появляются только там, где отказ требует ВЫБОРА: «клиент
+        # нашёлся не один» без списка кандидатов — тупик. Ключ не добавляем
+        # пустым, чтобы форма ответа не менялась у остальных отказов.
+        if exc.details:
+            body["details"] = exc.details
+        return JSONResponse(status_code=exc.http_status, content={"error": body})
 
     @app.exception_handler(RequestValidationError)
     async def validation_error_handler(_request: Request, exc: RequestValidationError):

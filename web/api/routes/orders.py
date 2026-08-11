@@ -30,11 +30,26 @@ router = APIRouter(
 
 
 class OrderIn(BaseModel):
+    """Заказ на входе. Клиента можно назвать номером, почтой или именем.
+
+    Три поля вместо одного `client_id`, потому что у стойки его негде взять:
+    покупатель называет телефон, а не номер записи в базе. Дальше `order_service`
+    сам решает, привязать найденную карточку или завести новую, и на два
+    совпадения отвечает отказом со списком кандидатов, а не догадкой.
+    """
+
     kind: str
     client_id: int | None = None
     deal_id: int | None = None
     company_id: int | None = None
     client_name: str | None = None
+    client_phone: str | None = None
+    client_email: str | None = None
+    #: «Всё равно завести нового». Приходит вторым запросом после отказа
+    #: `client_ambiguous` — когда человек посмотрел кандидатов и решил, что ни
+    #: один из них не тот. Молчаливым умолчанием быть не может: тогда отказ
+    #: перестал бы что-либо останавливать.
+    client_create_new: bool = False
     locale: str | None = None
     note: str | None = None
 
@@ -102,8 +117,10 @@ def create_order(
     user: User = Depends(require_perm("orders", "create")),
     db: Session = Depends(get_db),
 ):
-    order = order_service.create(db, payload.model_dump(), user)
-    return schemas.order_out(order, [], amounts=True)
+    order, client_created = order_service.create(db, payload.model_dump(), user)
+    # «Заведён новый клиент» — часть ответа, а не догадка экрана по тому, был ли
+    # `client_id` в запросе: карточку могли и найти по номеру.
+    return {**schemas.order_out(order, [], amounts=True), "client_created": client_created}
 
 
 @router.get("/{order_id}")
