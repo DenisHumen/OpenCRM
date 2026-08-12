@@ -1255,13 +1255,18 @@ create_dirs() {
     # mysql создаётся всегда, даже на SQLite: пустой каталог не стоит ничего, а
     # созданный докером на лету принадлежал бы root — и служба базы, включённая
     # позже, упёрлась бы в права на своём же каталоге данных.
+    for _sub in data storage letsencrypt acme updates mysql; do
+        mkdir -p "$_home/$_sub"
+    done
     # Каталоги мониторинга создаются всегда, даже когда он выключен, — по той же
     # причине, что и mysql: созданный докером на лету принадлежал бы root, и
     # включённый позже Prometheus упёрся бы в права на своём же хранилище.
-    for _sub in data storage letsencrypt acme updates mysql \
-                monitoring/prometheus monitoring/grafana monitoring/alertmanager monitoring/loki; do
-        mkdir -p "$_home/$_sub"
-    done
+    #
+    # Отдельным вызовом, а не строкой в списке выше: этим службам мало
+    # существования каталога, им нужен ВЛАДЕЛЕЦ — compose запускает их от
+    # OPENCRM_UID, а `mkdir` здесь отработал бы от того, кто ставит, то есть под
+    # `sudo` от root. Подробности — у `own_monitoring_dirs`.
+    own_monitoring_dirs
     ok "$_home/{data,storage,letsencrypt,acme,updates,mysql,monitoring}"
 }
 
@@ -1696,7 +1701,39 @@ cmd_history() { need_install; autoupdate history -n "${1:-15}"; }
 # дотягивается и при снятом профиле.
 MONITORING_SERVICES="prometheus alertmanager node-exporter containers blackbox grafana loki promtail"
 
+# Каталоги состояния мониторинга: не только существование, но и ВЛАДЕЛЕЦ.
+#
+# Prometheus, Alertmanager, Grafana и Loki compose запускает от OPENCRM_UID:GID
+# (`user:` в docker-compose.yml), а каталоги под их данные создаёт `mkdir` от
+# того, кто запустил установку. Ставили под `sudo` — каталоги достались root, и
+# все четверо падают на первой же записи в своё же хранилище:
+#
+#   prometheus   open /prometheus/queries.active: permission denied → panic
+#   grafana      GF_PATHS_DATA='/var/lib/grafana' is not writable
+#   loki         mkdir /loki/rules: permission denied
+#
+# Снаружи это выглядит как «мониторинг не поднялся» и цикл перезапусков, без
+# единого слова про права. Данные приложения от этого не страдали только
+# потому, что `data` и `storage` чинит установщик отдельной строкой, а каталоги
+# мониторинга в тот список не попали.
+#
+# Владелец выставляется ПЕРЕД КАЖДЫМ подъёмом, а не один раз при установке:
+# так чинится и уже сломанная установка — той же командой, которой мониторинг
+# включали, без похода в консоль с `chown`.
+own_monitoring_dirs() {
+    _mhome=$(home_dir)
+    _muid=$(env_get "$DOCKER_ENV" OPENCRM_UID 2>/dev/null || true)
+    _mgid=$(env_get "$DOCKER_ENV" OPENCRM_GID 2>/dev/null || true)
+    [ -n "$_muid" ] || _muid=$(id -u)
+    [ -n "$_mgid" ] || _mgid=$(id -g)
+    for _msub in prometheus grafana alertmanager loki; do
+        $SUDO mkdir -p "$_mhome/monitoring/$_msub"
+        $SUDO chown -R "$_muid:$_mgid" "$_mhome/monitoring/$_msub"
+    done
+}
+
 monitoring_apply() {
+    own_monitoring_dirs
     run_painted compose up -d --remove-orphans
 }
 
