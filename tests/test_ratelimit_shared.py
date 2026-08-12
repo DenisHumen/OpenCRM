@@ -362,3 +362,86 @@ def test_posle_vozvrashcheniya_redis_healthz_perestayot_zhalovatsya(monkeypatch,
     # Одно удачное обращение к живому счётчику — и жалоба снята.
     SlidingWindowLimiter(5, 900, name="login").is_blocked("ivan@example.com")
     assert TestClient(app).get("/healthz").json()["redis"] == "ok"
+
+
+# --- переключатель между общим счётчиком и счётчиком в памяти -----------------
+#
+# ДЫРА, НАЙДЕННАЯ ЛОМАНИЕМ. Подмена `redis_client.configured()` на «всегда
+# ложь» не роняла ни одного теста во всём наборе — а это единственный
+# переключатель между общим счётчиком и счётчиком в памяти процесса. То есть
+# правка в одну строку молча возвращала продукт ровно к тому состоянию, ради
+# ухода от которого заводился Redis: восемь процессов, восемь независимых
+# счётчиков, порог защиты умножен на восемь, ни единой ошибки.
+#
+# Не ловилось потому, что все проверки выше подменяют `get_client` НАПРЯМУЮ, и
+# `configured()` в них не исполняется вовсе. Удобно для проверки самого
+# счётчика — и слепо ровно к тому месту, где решается, будет ли он общим.
+#
+# Поэтому две проверки ниже идут через НАСТОЯЩИЙ `get_client`, а подменяется в
+# них только то, что лежит за границей процесса: строка настроек и конструктор
+# клиента redis-py. Парой, а не по одной: «всегда ложь» ловит первая, «всегда
+# истина» — вторая, и выключить переключатель нельзя ни в ту, ни в другую
+# сторону.
+
+
+class _Nastroyki:
+    """Ровно то, что спрашивает `configured()`."""
+
+    def __init__(self, redis_url: str):
+        self.redis_url = redis_url
+
+
+@pytest.fixture
+def bez_klienta():
+    """Клиент кэшируется на процесс — забываем его до и после."""
+    redis_client.reset_client()
+    yield
+    redis_client.reset_client()
+
+
+def test_zadannyy_adres_daet_obshchiy_schyotchik(monkeypatch, bez_klienta):
+    """Адрес задан — счётчик общий, и это проверяется по последствию.
+
+    Не «`configured()` вернул True», а «два ограничителя разделили счётчик»:
+    проверка на возвращаемое значение переставала бы что-либо значить в тот
+    день, когда переключатель переедет в другое место.
+    """
+    hranilishche = FakeRedis()
+    monkeypatch.setattr(redis_client, "get_settings", lambda: _Nastroyki("redis://redis:6379/0"))
+    monkeypatch.setattr("redis.Redis.from_url", lambda *args, **kwargs: hranilishche)
+
+    pervyy = SlidingWindowLimiter(3, 900, name="proba")
+    vtoroy = SlidingWindowLimiter(3, 900, name="proba")
+    for _ in range(3):
+        pervyy.record_failure("ivan@example.com")
+
+    assert hranilishche.data, (
+        "ограничитель не пошёл в Redis вовсе, хотя адрес задан — счётчик остался "
+        "в памяти процесса, и порог защиты от подбора множится на число процессов"
+    )
+    assert vtoroy.is_blocked("ivan@example.com"), (
+        "второй процесс не видит попыток первого — общего счётчика нет"
+    )
+
+
+def test_pustoy_adres_ostavlyaet_schyotchik_v_pamyati(monkeypatch, bez_klienta):
+    """Парная проверка: без Redis приложение обязано подниматься.
+
+    Пустой адрес — единственный способ поднять систему без Redis: ноутбук
+    разработчика и этот самый набор тестов. Запретить его нельзя, а вот
+    незаметно перестать различать пустой и заданный — можно, и тогда набор
+    тестов начал бы падать на попытке дозвониться в никуда.
+    """
+    monkeypatch.setattr(redis_client, "get_settings", lambda: _Nastroyki("   "))
+
+    def ne_zvat(*args, **kwargs):
+        raise AssertionError("клиент Redis заводится при пустом адресе")
+
+    monkeypatch.setattr("redis.Redis.from_url", ne_zvat)
+
+    assert redis_client.get_client() is None
+    # И счётчик при этом работает — свой, в памяти процесса.
+    limiter = SlidingWindowLimiter(2, 900, name="proba")
+    limiter.record_failure("ivan@example.com")
+    limiter.record_failure("ivan@example.com")
+    assert limiter.is_blocked("ivan@example.com")

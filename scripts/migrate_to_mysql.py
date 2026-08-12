@@ -45,7 +45,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from sqlalchemy import Integer, create_engine, func, insert, inspect, select, text  # noqa: E402
+from sqlalchemy import Float, Integer, create_engine, func, insert, inspect, select, text  # noqa: E402
 
 from database import models  # noqa: E402,F401 — регистрирует таблицы в metadata
 from database import schema_check  # noqa: E402
@@ -81,6 +81,11 @@ def _svodka(engine, table) -> dict:
         for stolbec in stolbcy:
             svodka[stolbec.name] = c.execute(select(func.sum(stolbec))).scalar()
     return svodka
+
+
+def _rashodyatsya(bylo: dict, stalo: dict) -> bool:
+    """Разошлись ли итоги одной таблицы. Отдельно — чтобы спросить это по имени."""
+    return any(znachenie != stalo[kluch] for kluch, znachenie in bylo.items())
 
 
 def sverit(do, target, tablicy) -> list[str]:
@@ -119,6 +124,134 @@ def _po_poryadku(table):
     if len(kluchi) == 1:
         return zapros.order_by(kluchi[0])
     return zapros
+
+
+#: По сколько строк тянем при построчной сверке.
+#:
+#: Тысяча — это один круг по сети на тысячу строк и при этом десятки килобайт в
+#: памяти. Обе стороны читаются потоком и идут навстречу друг другу, поэтому
+#: память не зависит от размера таблицы вовсе: 2,7 млн строк проходят в том же
+#: объёме, что и тысяча.
+RAZMER_SVERKI = 1000
+
+#: Сколько расхождений называем поимённо, прежде чем сказать «и ещё столько-то».
+#:
+#: Список на миллион строк не читает никто, а первых пяти хватает, чтобы понять
+#: ЧТО случилось. Общее число при этом называется всегда — по нему видно
+#: разницу между «одна строка» и «половина таблицы».
+PREDEL_RASHOZHDENIY = 5
+
+
+def _sravnimye(table):
+    """Столбцы, которые можно сличать ПОБАЙТНО на двух разных движках.
+
+    Из сравнения выпадает ровно один вид — `Float`, и не по лени. `Float` без
+    указания точности компилируется в MySQL в `FLOAT`, то есть четыре байта
+    против восьми у SQLite: 0,3333333333 возвращается как 0,33333334. Разница
+    настоящая, но она есть у КАЖДОЙ такой колонки и на честном переносе тоже —
+    сверка краснела бы всегда и ровно поэтому была бы выключена первым же
+    действием. Ложная тревога хуже отсутствия тревог.
+
+    Остальное сходится побайтно, и это свойство схемы, а не удача:
+    `database/types.py` объявляет `DATETIME(6)` для всех колонок времени (иначе
+    MySQL округляет доли секунды), `ExactString` — побайтное сравнение для
+    токенов, `LongText` — `MEDIUMTEXT` вместо обрезающего `TEXT`. Строки при
+    этом приходят с обоих движков одинаковыми: их не сравнивает база, их
+    сравнивает Python.
+    """
+    return [c for c in table.c if not isinstance(c.type, Float)]
+
+
+def _potok(engine, table, stolbcy, poryadok):
+    """Строки таблицы потоком, в заданном порядке. Память не зависит от размера."""
+    zapros = select(*stolbcy).order_by(*poryadok)
+    with engine.connect() as c:
+        kursor = c.execution_options(stream_results=True).execute(zapros)
+        while True:
+            pachka = kursor.fetchmany(RAZMER_SVERKI)
+            if not pachka:
+                return
+            for stroka in pachka:
+                yield tuple(stroka)
+
+
+def _nazvat_stroku(table, stolbcy, stroka) -> str:
+    """Как называть строку в отчёте: по первичному ключу, если он один."""
+    kluchi = list(table.primary_key.columns)
+    if len(kluchi) == 1:
+        nomer = stroka[[c.name for c in stolbcy].index(kluchi[0].name)]
+        return f"{kluchi[0].name}={nomer}"
+    return "строка " + ", ".join(f"{c.name}={v!r}" for c, v in zip(stolbcy, stroka))[:120]
+
+
+def sverit_postrochno(source, target, table) -> list[str]:
+    """Сличает таблицу СТРОКА В СТРОКУ и называет расхождения поимённо.
+
+    **Зачем это поверх сумм.** Агрегатная сверка (число строк плюс сумма по
+    каждому целому столбцу) не видит порчу, которая сама себя компенсирует.
+    Проверено делом: одной заявке `+1`, другой `-1` — число строк то же, сумма
+    столбца та же, сверка зелёная, и сайт переключают на базу с двумя неверными
+    суммами. Тот же провал у любой перестановки значений между строками.
+
+    **Почему встречным ходом, а не двумя словарями.** Словарь «ключ → строка» на
+    2,7 млн записей — это сотни мегабайт в процессе, который в этот момент и так
+    держит два соединения к двум базам. Обе стороны читаются потоком в ОДНОМ
+    порядке (по первичному ключу), и указатели идут навстречу друг другу: память
+    постоянная, а расхождение называется в тот момент, когда встретилось.
+
+    **Отсюда же и польза для второй беды.** Строка, заведённая в CRM уже после
+    снятия копии, выглядит здесь как «есть в источнике, нет в цели» — и
+    называется по первичному ключу, а не как «строк стало на одну меньше». По
+    числу человек не поймёт, кого искать.
+    """
+    stolbcy = _sravnimye(table)
+    kluchi = list(table.primary_key.columns)
+    # Порядок обхода обязан быть одинаковым с обеих сторон и однозначным.
+    # Единственный первичный ключ даёт и то, и другое; составной или
+    # отсутствующий — берём все сравнимые столбцы, порядок от этого становится
+    # произвольным, но одинаковым.
+    poryadok = kluchi if len(kluchi) == 1 else stolbcy
+
+    imena = [c.name for c in stolbcy]
+    sleva = _potok(source, table, stolbcy, poryadok)
+    sprava = _potok(target, table, stolbcy, poryadok)
+
+    rashozhdenia: list[str] = []
+    vsego = 0
+
+    def skazat(chto: str) -> None:
+        nonlocal vsego
+        vsego += 1
+        if len(rashozhdenia) < PREDEL_RASHOZHDENIY:
+            rashozhdenia.append(chto)
+
+    a = next(sleva, None)
+    b = next(sprava, None)
+    odin_kluch = len(kluchi) == 1
+    while a is not None or b is not None:
+        if b is None or (a is not None and odin_kluch and a[0] < b[0]):
+            skazat(f"{table.name}: {_nazvat_stroku(table, stolbcy, a)} есть в источнике, в цели НЕТ")
+            a = next(sleva, None)
+        elif a is None or (odin_kluch and b[0] < a[0]):
+            skazat(f"{table.name}: {_nazvat_stroku(table, stolbcy, b)} есть в цели, а в источнике нет")
+            b = next(sprava, None)
+        else:
+            if a != b:
+                otlichiya = [
+                    f"{imya}: было {bylo!r}, стало {stalo!r}"
+                    for imya, bylo, stalo in zip(imena, a, b)
+                    if bylo != stalo
+                ]
+                skazat(
+                    f"{table.name}: {_nazvat_stroku(table, stolbcy, a)} — "
+                    + "; ".join(otlichiya)
+                )
+            a = next(sleva, None)
+            b = next(sprava, None)
+
+    if vsego > len(rashozhdenia):
+        rashozhdenia.append(f"{table.name}: и ещё {vsego - len(rashozhdenia)} расхождений")
+    return rashozhdenia
 
 
 def sverit_shemu(engine) -> list[str]:
@@ -225,7 +358,17 @@ def perenesti(source, target, *, razmer_pachki=RAZMER_PACHKI, tolko_proverka=Fal
         for stroka in rashozhdenia:
             print(f"  {stroka}")
     else:
-        print(f"Сошлось всё: {vsego} строк, суммы по целым столбцам совпали")
+        # Сказано ровно то, что проверено. Прежняя формулировка «сошлось всё»
+        # обещала больше: здесь сличаются ИТОГИ — число строк и суммы, — а они
+        # слепы к порче, которая сама себя компенсирует, и ничего не знают о
+        # том, что дописали в живую базу, пока шёл перенос. Оба вопроса
+        # закрывает отдельный заход `--verify`, и переезд признаётся удавшимся
+        # по нему, а не по этой строке.
+        print(
+            f"Итоги переноса сошлись: {vsego} строк, суммы по целым столбцам совпали."
+            "\nЭто ещё не годность базы: построчное сличение и сверка с ЖИВЫМ"
+            " источником — отдельным заходом --verify."
+        )
     return rashozhdenia
 
 
@@ -253,13 +396,24 @@ def _perenesti_tablicy(source, target, tablicy, do, razmer_pachki) -> None:
 
 
 def proverit(source, target) -> list[str]:
-    """Сверка без переноса: схема цели, число строк и суммы по каждой таблице.
+    """Сверка без переноса: схема цели и сличение ИСТОЧНИКА с целью строка в строку.
 
     Отдельный проход, а не «заодно с переносом», и это главное в нём. Проверка,
     которая выполняется только вместе с удачным действием, проверяет само
     действие, а не его итог: перенос мог отработать, а приложение — дописать в
     источник строку за то время, пока он шёл. Здесь отпечаток источника
     снимается ЗАНОВО, уже после переноса, и сравнивается с целью.
+
+    **Сверка идёт построчно, а не только по суммам, и это не педантизм.**
+    Агрегат (число строк плюс сумма по каждому целому столбцу) слеп к порче,
+    которая сама себя компенсирует: `+1` одной заявке и `−1` другой оставляют и
+    число строк, и сумму столбца прежними. Проверено делом — сверка объявила
+    годной базу с двумя неверными суммами.
+
+    Суммы при этом остаются и считаются ПЕРВЫМИ: они дёшевы, а из красного
+    агрегата сразу видно, какая таблица виновата. Построчный проход дороже (он
+    читает обе базы целиком) и потому идёт вторым — но идёт всегда, иначе он был
+    бы проверкой на удачу.
 
     Возвращает список расхождений; пустой — сошлось всё.
     """
@@ -272,13 +426,39 @@ def proverit(source, target) -> list[str]:
     seychas = {t.name: _svodka(source, t) for t in tablicy}
     vsego = sum(s["строк"] for s in seychas.values())
     rashozhdenia = sverit(seychas, target, tablicy)
+
+    # Разошедшийся итог говорит, В КАКОЙ таблице беда, но не в какой строке.
+    # «Строк было 21, стало 20» не отвечает на вопрос «кого искать», а искать
+    # придётся именно строку — заведённого во время переезда клиента, например.
+    # Поэтому по таблицам с красным итогом идём построчно СРАЗУ, а по остальным
+    # не идём вовсе: они уже сошлись, и полный проход по ним стоил бы чтения
+    # всей базы ради ничего.
+    spornye = [t for t in tablicy if rashozhdenia and _rashodyatsya(seychas[t.name], _svodka(target, t))]
+    if not rashozhdenia:
+        print(f"Итоги сошлись, сличаю построчно {vsego} строк", flush=True)
+        spornye = tablicy
+
+    for table in spornye:
+        rashozhdenia.extend(sverit_postrochno(source, target, table))
+        if len(rashozhdenia) > PREDEL_RASHOZHDENIY * 4:
+            rashozhdenia.append("...дальше не смотрю: расхождений слишком много")
+            break
     if rashozhdenia:
         return rashozhdenia
+
+    # Названо ровно то, что проверено, и назван ИСТОЧНИК: зелёный итог, за
+    # которым стоит сравнение с неподвижной копией, обещал бы про живую базу
+    # больше, чем проверил.
     print(
-        f"Сверка: схема сошлась с моделями, {vsego} строк в {len(tablicy)} таблицах,"
-        " число строк и суммы по целым столбцам совпали по каждой таблице"
+        f"Сверка: схема сошлась с моделями; источник {_bez_parolya(source)} и цель"
+        f" совпали построчно — {vsego} строк в {len(tablicy)} таблицах"
     )
     return []
+
+
+def _bez_parolya(engine) -> str:
+    """Адрес базы без пароля: сверка печатает его в лог установки."""
+    return engine.url.render_as_string(hide_password=True)
 
 
 def main() -> None:

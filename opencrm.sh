@@ -1247,6 +1247,47 @@ choose_database() {
 #: снимает её заново, а прежняя копия ничего не стоит — оригинал-то цел.
 MIGRATE_SNAPSHOT=/app/data/opencrm.db.pre-move
 
+# Шаг 0. Сайт закрывается на обслуживание — и это не вежливость, а условие
+# правдивости сверки.
+#
+# ПОЧЕМУ. Пока сайт работал, записанное ПОСЛЕ снятия копии оставалось в SQLite и
+# пропадало при переключении — молча, потому что сверка сравнивала копию с целью
+# и про живой файл сказать не могла ничего. Проверено делом: во время переноса
+# через экран CRM завели клиента, переезд объявил «число строк и суммы совпали
+# по каждой таблице» и «переезд завершён», а клиента в новой базе не оказалось.
+# Предупреждение на экране при этом было — и проиграло зелёному итогу, потому
+# что верят итогу.
+#
+# Из трёх возможных лекарств выбрано это. «Сверка перестаёт обещать больше, чем
+# проверила» (она теперь и правда сверяет ЖИВОЙ файл, см. migrate_verify) —
+# необходимо, но одного её мало: без закрытия она бы честно краснела на каждом
+# переезде, сделанном в рабочее время, и переезд стал бы невозможен. «Догоняющий
+# перенос» — второй путь доставки данных рядом с первым, и он всё равно не
+# закрывает окно: пока догоняем, пишут снова.
+#
+# Закрытие же убирает причину: писать в это время НЕКОМУ. Механизм в проекте уже
+# есть, тот самый, которым root закрывает сайт руками; здесь его дёргает скрипт.
+#
+# Оговорка названа вслух: root в закрытый сайт проходит (так устроен режим), и
+# запись, сделанная им самим во время переезда, по-прежнему не доедет — но
+# теперь её НАЗОВЁТ сверка, а не потеряет молча.
+migrate_maintenance() {
+    if [ "$1" = "on" ]; then
+        info "$(tr_ "закрываю сайт на время переноса" "closing the site for the duration of the move")"
+    else
+        info "$(tr_ "открываю сайт" "reopening the site")"
+    fi
+    # Отказ не смертелен и не должен останавливать переезд: сайт мог быть
+    # закрыт руками, приложение — перезапускаться. Молчать при этом нельзя,
+    # иначе «закрыли» превратилось бы в предположение.
+    if compose exec -T app python -m scripts.maintenance "$1" \
+        --note "$(tr_ "Переезд базы на MySQL" "Moving the database to MySQL")" >/dev/null 2>&1; then
+        return 0
+    fi
+    warn "$(tr_ "не удалось переключить режим обслуживания ($1)" "could not switch maintenance mode ($1)")"
+    return 1
+}
+
 # Шаг 1. MySQL и Redis поднимаются РЯДОМ с работающим сайтом.
 #
 # Именно рядом: службу app не трогаем вовсе. Она продолжает обслуживать людей с
@@ -1338,17 +1379,30 @@ migrate_copy_data() {
     return 0
 }
 
-# Шаг 5. Сверка отдельным заходом.
+# Шаг 5. Сверка отдельным заходом — и по ЖИВОМУ файлу, а не по копии.
 #
 # Отдельным — потому что проверка, которая выполняется только заодно с удачным
-# действием, проверяет действие, а не его итог. Здесь отпечаток источника
-# снимается ЗАНОВО и сравнивается с тем, что лежит в цели: схема с моделями,
-# число строк по каждой таблице, суммы по всем целым столбцам (деньги в
-# минорных единицах, количества в тысячных, ставки в базисных пунктах).
+# действием, проверяет действие, а не его итог.
+#
+# По живому файлу — потому что вопрос, на который переезд обязан ответить,
+# звучит «всё ли, что есть у людей, доехало», а не «доехало ли то, что мы
+# взяли». Сравнение копии с целью отвечает на второй и выдавалось за первый:
+# заведённый во время переноса клиент пропадал, а сверка была зелёная. Живой
+# файл при этом открывается ТОЛЬКО НА ЧТЕНИЕ (скрипт сам дописывает `mode=ro`),
+# так что испортить его сверка не может.
+#
+# Ложной тревоги, ради которой сверку когда-то увели на копию, больше нет:
+# сайт на это время закрыт (см. migrate_maintenance), и живой файл неподвижен.
+#
+# Сверяется: схема цели с моделями, число строк по каждой таблице, суммы по
+# всем целым столбцам (деньги в минорных единицах, количества в тысячных,
+# ставки в базисных пунктах) — и, поверх всего этого, СТРОКА В СТРОКУ. Итоги
+# слепы к порче, которая сама себя компенсирует: `+1` одной заявке и `−1`
+# другой оставляют и число строк, и сумму столбца прежними.
 migrate_verify() {
-    info "$(tr_ "сверяю: схема, строки по таблицам, суммы денег и остатков" "verifying: schema, per-table row counts, money and stock checksums")"
+    info "$(tr_ "сверяю живой файл с целью: схема, строки, суммы, построчно" "verifying the live file against the target: schema, rows, sums, row by row")"
     # shellcheck disable=SC2016  # то же: пароль внутри контейнера
-    migrate_run 'exec python scripts/migrate_to_mysql.py --source "sqlite:///$SNAP" --target "$OPENCRM_MIGRATE_TARGET_URL" --verify' || return 1
+    migrate_run 'exec python scripts/migrate_to_mysql.py --source "sqlite:////app/data/opencrm.db" --target "$OPENCRM_MIGRATE_TARGET_URL" --verify' || return 1
     return 0
 }
 
@@ -1415,36 +1469,52 @@ migrate_sqlite_to_mysql() {
         "    ${D}Сайт работает на SQLite всё это время и уйдёт с неё только после сверки.${R}" \
         "    ${D}The site runs on SQLite the whole time and leaves it only after verification.${R}")"
     say "$(tr_ \
-        "    ${D}Записанное ПОСЛЕ снятия копии останется в SQLite — переезжайте в тихую минуту.${R}" \
-        "    ${D}Anything written AFTER the snapshot stays in SQLite — move at a quiet moment.${R}")"
+        "    ${D}На время переноса сайт закрыт на обслуживание: писать в это время некому,${R}" \
+        "    ${D}The site is closed for maintenance while the data moves: nobody can write,${R}")"
+    say "$(tr_ \
+        "    ${D}поэтому «сошлось» — это факт, а не обещание. Сверка сравнивает ЖИВОЙ файл.${R}" \
+        "    ${D}so \"matched\" is a fact, not a promise. Verification compares the LIVE file.${R}")"
 
     if ! migrate_up_services; then
         migrate_failed "$(tr_ "MySQL не поднялась — ./opencrm.sh logs db" "MySQL did not come up — ./opencrm.sh logs db")"
         migrate_nothing_to_undo
         return 0
     fi
+
+    # Закрываем ДО снятия копии: копия, снятая с сайта, в который ещё пишут,
+    # расходится с живым файлом уже в момент своего создания.
+    migrate_maintenance on || true
+
     if ! migrate_snapshot_sqlite; then
+        migrate_maintenance off || true
         migrate_failed "$(tr_ "копию SQLite не удалось снять или прочитать" "the SQLite snapshot could not be taken or read back")"
         migrate_nothing_to_undo
         return 0
     fi
     if ! migrate_build_schema; then
+        migrate_maintenance off || true
         migrate_failed "$(tr_ "миграции на MySQL не прошли" "migrations did not go through on MySQL")"
         migrate_nothing_to_undo
         return 0
     fi
     if ! migrate_copy_data; then
+        migrate_maintenance off || true
         migrate_failed "$(tr_ "перенос данных оборвался" "the data transfer broke off")"
         migrate_nothing_to_undo
         return 0
     fi
     if ! migrate_verify; then
+        migrate_maintenance off || true
         migrate_failed "$(tr_ "сверка не сошлась — на такую базу переключаться нельзя" "verification did not match — switching to that database is not allowed")"
         migrate_nothing_to_undo
         return 0
     fi
 
     if switch_to_mysql; then
+        # Открываем ПОСЛЕ переключения: между сверкой и переключением сайт
+        # по-прежнему на файле, и запись, сделанная в эту щель, снова осталась
+        # бы в SQLite — с той разницей, что теперь про неё бы никто не сказал.
+        migrate_maintenance off || true
         MIGRATE_RESULT=ok
         ok "$(tr_ "переезд завершён: сайт работает на MySQL, схема сошлась" "move complete: the site runs on MySQL and the schema matches")"
         info "$(tr_ "файл SQLite не тронут и лежит на месте: $(home_dir)/data/opencrm.db" "the SQLite file is untouched and still there: $(home_dir)/data/opencrm.db")"
@@ -1453,6 +1523,7 @@ migrate_sqlite_to_mysql() {
 
     # Единственная ветка, где что-то надо вернуть: URL уже переписан.
     rollback_to_sqlite
+    migrate_maintenance off || true
     migrate_failed "$(tr_ "сайт не поднялся на новой базе" "the site did not come up on the new database")"
     return 0
 }

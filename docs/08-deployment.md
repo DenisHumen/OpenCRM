@@ -13,7 +13,7 @@
 opencrm.sh                # мастер установки и меню управления (POSIX sh, без зависимостей)
 docker/
 ├── Dockerfile            # этапы: node собирает фронтенд → app (python:3.12-slim + ffmpeg) → tests
-├── entrypoint.sh         # страховочная копия SQLite → alembic upgrade head → uvicorn
+├── entrypoint.sh         # страховочная копия базы (SQLite и MySQL) → alembic upgrade head → uvicorn
 ├── docker-compose.yml    # app (target: app, healthcheck на /healthz) + nginx + certbot + мониторинг
 ├── .env.example          # переменные компоуза: домен, каталог данных, UID/GID
 ├── nginx/
@@ -52,6 +52,8 @@ scripts/
 ├── restore.sh            # восстановление (текущая БД откладывается в сторону, не затирается)
 ├── purge_deleted.py      # окончательная очистка мягко удалённого (карантин 30 дней, --dry-run)
 ├── reset_root.py         # смена email/пароля root, восстановление доступа
+├── snapshot_db.py        # копия MySQL перед миграциями (клиента mysqldump в образе нет)
+├── maintenance.py        # режим обслуживания из командной строки (нужен переезду)
 └── migrate_to_mysql.py   # перенос данных при переезде на MySQL
 ```
 
@@ -253,7 +255,8 @@ SIGTERM, а для nginx это fast shutdown — 1-3 секунды не заг
 
 ```
 ~/opencrm/
-├── data/         SQLite-база (+ копия *.pre-migrate перед каждой миграцией)
+├── data/         база (+ копия перед каждой миграцией: *.pre-migrate-<ревизия>
+│                 у SQLite, mysql.pre-migrate-<ревизия>.sql у MySQL)
 ├── storage/      медиа досок, файлы клиентов, брендинг, аватары
 ├── letsencrypt/  сертификаты и приватные ключи
 ├── acme/         webroot для http-01-проверки
@@ -393,7 +396,11 @@ NAT. Цена вопроса мала: `Accept: application/vnd.github.sha` во
 
 - **Бэкап строго до `deploy`.** Миграции накатывает `entrypoint.sh` при старте
   контейнера, и вперёд они необратимы: откат одного лишь кода оставил бы старое
-  приложение против новой схемы.
+  приложение против новой схемы. Вторая, независимая копия снимается самим
+  `entrypoint.sh` — по адресу той базы, с которой работаем: SQLite копируется
+  файлом, MySQL выгружается в `mysql.pre-migrate-<ревизия>.sql`
+  (`scripts/snapshot_db.py`). Не снялась — контейнер не поднимается: миграции
+  вперёд необратимы, и откатывать было бы нечем.
 - **Health-check не про контейнер.** «Поднялся» ничего не доказывает: `/healthz`
   ходит в базу, а smoke-запросы (`OPENCRM_UPDATE_SMOKE_URLS`) проверяют, что
   страницы действительно отдаются через nginx.
