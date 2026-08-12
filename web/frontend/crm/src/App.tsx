@@ -24,6 +24,7 @@ import { DocumentCard } from "./screens/DocumentCard";
 import { Documents } from "./screens/Documents";
 import { Files } from "./screens/Files";
 import { Mail } from "./screens/Mail";
+import { Monitoring } from "./screens/Monitoring";
 import { Templates } from "./screens/Templates";
 import { Mailboxes } from "./screens/Mailboxes";
 import { ProductCard } from "./screens/ProductCard";
@@ -257,6 +258,16 @@ export default function App() {
           <Route element={<ModuleRoute module="telephony" />}>
             <Route element={<PermRoute perm="telephony.view" />}>
               <Route path="/calls" element={<Calls />} />
+            </Route>
+          </Route>
+          {/* Мониторинг живёт по адресу `/server`, а НЕ по `/monitoring`:
+              последний перехватывает nginx (`location = /monitoring` отдаёт 301
+              на `/monitoring/`, то есть в Grafana). Переход внутри SPA работал
+              бы, а F5, закладка и ссылка из письма уводили бы в панель —
+              поломка тихая и вылезла бы только на боевом. */}
+          <Route element={<ModuleRoute module="monitoring" />}>
+            <Route element={<PermRoute perm="monitoring.view" />}>
+              <Route path="/server" element={<Monitoring />} />
             </Route>
           </Route>
           <Route path="/profile" element={<Profile />} />

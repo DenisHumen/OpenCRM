@@ -1,7 +1,13 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from core.services import audit_service, files_service, maintenance_service, storage_service
+from core.services import (
+    audit_service,
+    files_service,
+    maintenance_service,
+    monitoring_service,
+    storage_service,
+)
 from database.models import User
 from database.models.audit import SOURCE_MANUAL
 from web.api import schemas
@@ -81,3 +87,20 @@ def schema_status(_: User = Depends(require_perm("settings", "manage"))):
 
         report = schema_check.check(engine)
     return report.as_dict()
+
+
+@router.get("/monitoring")
+async def monitoring_status(_: User = Depends(require_perm("monitoring", "view"))):
+    """Состояние стека наблюдения и пути к панели.
+
+    Право `monitoring.view` даёт правильный порядок «блок включён → есть право»
+    даром: проверка блока стоит внутри `require_perm`, поэтому при выключенном
+    мониторинге сюда приходит `module_disabled`, а не «нет права». Своё право, а
+    не `settings.manage`, — чтобы дежурного по серверу можно было пустить к
+    панели, не отдавая ему логотип сайта и переключатели блоков.
+
+    Отдельная ручка, а не поле в `/modules`: там отвечают на вопрос «нажат ли
+    флажок в базе», и ответ обязан быть мгновенным — его ждёт каждое меню. Здесь
+    ходят по сети к соседним контейнерам, и это разговор на секунду.
+    """
+    return await monitoring_service.status()
