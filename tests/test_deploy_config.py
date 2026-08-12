@@ -340,8 +340,13 @@ def test_several_workers_on_sqlite_are_refused_not_attempted():
     assert "OPENCRM_WORKERS" in complaints, "приложение молча берётся за невозможное"
     assert "MySQL" in complaints, "отказ не подсказывает выход"
 
-    # На MySQL несколько процессов законны — запрет не должен мешать переезду.
-    on_mysql = Settings(workers=4, db_url="mysql+pymysql://user:pass@host/opencrm")
+    # На MySQL с общим счётчиком несколько процессов законны — запрет не должен
+    # мешать переезду.
+    on_mysql = Settings(
+        workers=4,
+        db_url="mysql+pymysql://user:pass@host/opencrm",
+        redis_url="redis://:pass@redis:6379/0",
+    )
     assert not any("OPENCRM_WORKERS" in line for line in on_mysql.config_errors())
 
     # И один процесс на SQLite — обычная установка, к ней вопросов нет.

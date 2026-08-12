@@ -35,7 +35,7 @@ webhook_router = APIRouter(prefix="/telephony", tags=["telephony"])
 # разговоров — это единицы запросов в секунду. Всё, что выше, — либо шторм от
 # сломавшейся станции, либо чужой перебор подписи; и то и другое лучше
 # притормозить, чем разбирать по логам.
-webhook_limiter = SlidingWindowLimiter(600, 60)
+webhook_limiter = SlidingWindowLimiter(600, 60, name="webhook")
 
 # Значения фильтров журнала проверяются списком, как в почте
 # (`web/api/routes/mail.py`), но список берётся из модели, а не переписывается

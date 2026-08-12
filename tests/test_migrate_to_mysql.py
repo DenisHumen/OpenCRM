@@ -20,7 +20,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from database import models  # noqa: F401 — наполняет metadata
 from database.session import Base
-from scripts.migrate_to_mysql import _svodka, perenesti, sverit
+from scripts.migrate_to_mysql import (
+    _po_poryadku,
+    _svodka,
+    perenesti,
+    proverit,
+    sverit,
+    sverit_shemu,
+)
 
 REVIZIA = "test-revision-0001"
 
@@ -123,3 +130,89 @@ def test_poterya_stroki_ne_prohodit_molcha(istochnik, tmp_path):
 
     rashozhdenia = sverit(do, cel, tablicy)
     assert any("site_settings.строк" in s for s in rashozhdenia), rashozhdenia
+
+
+# --- сверка отдельным заходом -------------------------------------------------
+
+
+def test_sverka_otdelnym_zahodom_shoditsya_posle_perenosa(istochnik, tmp_path):
+    """`--verify` снимает отпечаток источника ЗАНОВО и сравнивает с целью.
+
+    Отдельный заход нужен по существу: проверка, выполняющаяся только вместе с
+    удачным переносом, проверяет само действие, а не его итог. Именно на её
+    зелёном исходе установщик признаёт переезд удавшимся и только после этого
+    переписывает OPENCRM_DB_URL.
+    """
+    cel = _baza(tmp_path, "dst.db")
+    assert perenesti(istochnik, cel) == []
+    assert proverit(istochnik, cel) == []
+
+
+def test_sverka_lovit_poteryannuyu_stroku(istochnik, tmp_path):
+    """Молчаливая потеря строки — худшее, что может случиться при переносе.
+
+    Проверяем ту самую беду: перенос прошёл, а потом из цели пропала строка.
+    Сверка обязана это назвать — иначе приложение переключат на базу, в которой
+    чего-то нет, и обнаружат это через месяц.
+    """
+    cel = _baza(tmp_path, "dst.db")
+    perenesti(istochnik, cel)
+    nastroyki = Base.metadata.tables["site_settings"]
+    with cel.begin() as c:
+        c.execute(nastroyki.delete().where(nastroyki.c.key == "клюё-7"))
+
+    rashozhdenia = proverit(istochnik, cel)
+    assert rashozhdenia, "потеря строки прошла сверку молча"
+    assert any("site_settings" in stroka for stroka in rashozhdenia)
+
+
+def test_sverka_lovit_nedostachu_v_sheme(istochnik, tmp_path):
+    """Совпадение ревизий alembic — НЕ то же самое, что сошедшаяся схема.
+
+    Ревизия говорит, какие шаги отмечены выполненными; схема — что из них
+    получилось. Расходятся они ровно в том случае, ради которого всё
+    затевается: миграция прошла наполовину, успела отметиться и оставила
+    таблицу без колонки. Такую базу нельзя объявлять годной.
+    """
+    cel = _baza(tmp_path, "dst.db")
+    perenesti(istochnik, cel)
+    with cel.begin() as c:
+        c.execute(text("ALTER TABLE site_settings DROP COLUMN updated_at"))
+
+    assert sverit_shemu(cel), "нехватка колонки не замечена"
+    assert proverit(istochnik, cel), "сверка пропустила базу с недостающей колонкой"
+
+
+def test_oborvavshiysya_perenos_ne_vydayotsya_za_udachnyy(istochnik, tmp_path, monkeypatch):
+    """Отказ посередине оставляет цель наполовину заполненной.
+
+    Схема в такой базе сходится, `/healthz` зелёный, и переключённое на неё
+    приложение показало бы пустую CRM, ничем не отличимую от исправной. Молчать
+    об этом нельзя: код возврата обязан быть ненулевым, а вызывающий — остаться
+    на SQLite.
+    """
+    cel = _baza(tmp_path, "dst.db")
+
+    import scripts.migrate_to_mysql as skript
+
+    def upast(*args, **kwargs):
+        raise RuntimeError("соединение с целью потеряно")
+
+    monkeypatch.setattr(skript, "_perenesti_tablicy", upast)
+    rashozhdenia = skript.perenesti(istochnik, cel)
+    assert rashozhdenia, "оборвавшийся перенос объявлен удачным"
+    assert any("оборвал" in stroka for stroka in rashozhdenia)
+
+
+def test_vyborka_idyot_v_ustoychivom_poryadke():
+    """У `finance_operations` есть ссылка на саму себя (`corrects_id`).
+
+    Порядок вставки внутри таблицы держался ровно на том, что SQLite отдаёт
+    строки в порядке rowid, а поправка всегда старше поправляемой. Явного
+    порядка не было вовсе: смена плана выборки уронила бы перенос на внешнем
+    ключе — не сразу и не воспроизводимо.
+    """
+    tablica = Base.metadata.tables["finance_operations"]
+    zapros = str(_po_poryadku(tablica))
+    assert "ORDER BY" in zapros, "выборка идёт в произвольном порядке"
+    assert "finance_operations.id" in zapros

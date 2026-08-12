@@ -106,7 +106,8 @@ def test_healthz_govorit_pro_skhemu(base_client):
     """
     answer = base_client.get("/healthz")
     assert answer.status_code == 200
-    assert answer.json() == {"status": "ok", "schema": "ok"}
+    assert answer.json()["status"] == "ok"
+    assert answer.json()["schema"] == "ok"
 
 
 def test_podrobnyy_otchyot_zakryt_pravom(root_client, manager_client):

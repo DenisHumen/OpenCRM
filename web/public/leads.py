@@ -51,7 +51,7 @@ router = APIRouter(prefix="/api/v1/public", tags=["public"])
 #: не молча.
 LEAD_MAX_PER_IP = 30
 LEAD_WINDOW_SECONDS = 600
-lead_limiter = SlidingWindowLimiter(LEAD_MAX_PER_IP, LEAD_WINDOW_SECONDS)
+lead_limiter = SlidingWindowLimiter(LEAD_MAX_PER_IP, LEAD_WINDOW_SECONDS, name="lead")
 
 
 class LeadIn(BaseModel):

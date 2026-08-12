@@ -197,6 +197,17 @@ def check_pin(
             {"site": site, "t": strings, "token": token, "error": strings["pin_rate_limited"]},
             status_code=429,
         )
+    except errors.LimiterUnavailableError:
+        # Счётчик попыток недоступен — PIN не проверяем вовсе. Пустить сюда без
+        # счётчика значит отдать четырёхзначный PIN на перебор без предела,
+        # причём именно тогда, когда за системой никто не смотрит. Текст берём
+        # тот же, что у «слишком часто»: посетителю нужно подождать и повторить,
+        # а чем именно занята мастерская — не его дело.
+        return templates.TemplateResponse(
+            request, "pin.html",
+            {"site": site, "t": strings, "token": token, "error": strings["pin_rate_limited"]},
+            status_code=503,
+        )
     if not ok:
         return templates.TemplateResponse(
             request, "pin.html",
@@ -378,9 +389,18 @@ def document_status(number: str, request: Request, db: Session = Depends(get_db)
     # пропущенных обращений; отметка перед проверкой отняла бы у человека одно
     # из них ни за что.
     visitor = client_ip(request)
-    if document_limiter.is_blocked(visitor):
-        return _closed_page(request, db, status_code=429, busy=True)
-    document_limiter.record_failure(visitor)
+    # Общего счётчика нет — отвечаем «занято, попробуйте позже», а не пускаем.
+    # Довод целиком — в шапке `core/ratelimit.py`: не имея счётчика,
+    # ограничитель не отличит перебор номеров бланков от первого обращения, и
+    # «пропустить всех» означает выгрузить чужие заказы, пока Redis лежит.
+    # Здесь это страница, а не JSON, поэтому ошибка ловится на месте: человеку
+    # с телефоном у квитанции нужен понятный текст, а не тело ответа.
+    try:
+        if document_limiter.is_blocked(visitor):
+            return _closed_page(request, db, status_code=429, busy=True)
+        document_limiter.record_failure(visitor)
+    except errors.LimiterUnavailableError:
+        return _closed_page(request, db, status_code=503, busy=True)
 
     try:
         doc = document_service.by_number(db, number)

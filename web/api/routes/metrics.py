@@ -393,9 +393,48 @@ def _collect_started(out: Metrics) -> None:
         help_text="Когда стартовал процесс приложения (unix-время).",
     )
 
+def _collect_ratelimiter(out: Metrics) -> None:
+    """Жив ли общий счётчик попыток.
+
+    Две метрики, а не одна, и обе нужны. `opencrm_ratelimiter_shared` отвечает
+    на вопрос «счётчик вообще общий?»: ноль означает, что он лежит в памяти
+    процесса, и при нескольких процессах порог защиты от подбора молча
+    умножается на их число. `opencrm_ratelimiter_unavailable_total` считает
+    случаи, когда до Redis не достучались, — по нему видно аварию, которую
+    иначе пришлось бы искать в логах: вход в этот момент отвечает 503.
+    """
+    from core import ratelimit, redis_client
+
+    out.add(
+        "opencrm_ratelimiter_shared",
+        1 if redis_client.configured() else 0,
+        help_text="1 — счётчик попыток общий на все процессы, 0 — в памяти процесса.",
+    )
+    out.add(
+        "opencrm_ratelimiter_unavailable_total",
+        ratelimit.unavailable_total(),
+        help_text="Сколько раз ограничитель не достучался до общего счётчика.",
+        kind="counter",
+    )
+    # Живой опрос Redis стоит ЗДЕСЬ, а не в `/healthz`, и это разница по цене
+    # ошибки. `/healthz` опрашивает docker каждые десять секунд с потолком в
+    # пять, и медленный ответ означает «контейнер приложения нездоров» — то
+    # есть авария соседней службы роняла бы сайт (с остановленным контейнером
+    # разрешение имени в этот потолок не укладывается, проверено). Здесь
+    # медленный ответ стоит одного пропущенного среза метрик, и это правильная
+    # цена за то, чтобы про лежащий Redis узнать без единого входа на сайт.
+    if redis_client.configured():
+        out.add(
+            "opencrm_redis_up",
+            1 if redis_client.ping() else 0,
+            help_text="1 — Redis отвечает на ping, 0 — нет.",
+        )
+
+
 COLLECTORS = (
     _collect_build,
     _collect_started,
+    _collect_ratelimiter,
     _collect_schema,
     _collect_database,
     _collect_storage,

@@ -180,6 +180,10 @@ const en = {
   monTargets: "Watched targets",
   monTargetsUp: "{up} of {total} answer",
   monTargetsDown: "silent: {list}",
+  monSite: "Site probe",
+  monSiteNone: "No address",
+  monSiteBlind:
+    "The probe runs from this same server: it sees nginx, TLS and the application, but not the router. Lose the port forwarding and the site goes down for the whole world while this page stays green — only an outside watcher closes that, GET /healthz in UptimeRobot or any equivalent.",
   monAlerts: "Alerts right now",
   monAlertsQuiet: "Quiet",
   monChannel: "Alert channel",
@@ -1231,6 +1235,10 @@ const ru: typeof en = {
   monTargets: "Цели наблюдения",
   monTargetsUp: "отвечают {up} из {total}",
   monTargetsDown: "молчат: {list}",
+  monSite: "Проверка сайта",
+  monSiteNone: "Адрес не задан",
+  monSiteBlind:
+    "Проверка идёт с этого же сервера: она видит nginx, TLS и приложение, но не видит роутер. Отвалится проброс портов — сайт ляжет для всего мира, а здесь останется зелено; закрывает это только наблюдатель со стороны: GET /healthz в UptimeRobot или любом аналоге.",
   monAlerts: "Тревоги сейчас",
   monAlertsQuiet: "Тихо",
   monChannel: "Канал оповещений",

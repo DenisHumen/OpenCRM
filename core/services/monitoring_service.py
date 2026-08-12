@@ -55,6 +55,12 @@ ALERTMANAGER_STATUS = "http://alertmanager:9093/api/v2/status"
 #: правило про долю ответов 5xx: считать её не по чему.
 LOGS_JOB = "nginx-logs"
 
+#: Задание внешней проверки сайта. Его метка `instance` — единственное место,
+#: откуда приложение вообще может узнать, ПО КАКОМУ адресу его проверяют:
+#: `docker/.env` контейнеру приложения не примонтирован и примонтирован не будет
+#: (там же лежат пароль панели и токен Telegram).
+SITE_JOB = "site"
+
 #: Сколько ждём каждую пробу. Все службы стоят рядом, в той же сети, и отвечают
 #: за миллисекунды; секунда с небольшим — это уже «не отвечает», а не «медленно».
 #: Держать больше нельзя: экран ждёт человека, а не наоборот.
@@ -103,6 +109,13 @@ def _blank() -> dict[str, Any]:
         "panel": {"path": PANEL_PATH, "state": "no_answer"},
         "grafana": {"reachable": False, "version": None},
         "targets": {"reachable": False, "up": 0, "total": 0, "down": []},
+        # Куда идёт внешняя проверка сайта и проходит ли она. Отдельной строкой,
+        # а не пунктом в `targets`: за NAT сервер не дозванивается до
+        # собственного публичного адреса, проверку переводят на локальный — и
+        # тогда она перестаёт видеть роутер. Сказать об этом обязан экран, иначе
+        # отвалившийся проброс портов кладёт сайт для всего мира при зелёном
+        # мониторинге.
+        "site": {"url": None, "up": None},
         "alerts": {"reachable": False, "firing": []},
         "channel": {"reachable": False, "configured": None},
         "logs": {"on": None},
@@ -226,16 +239,26 @@ async def _probe_targets(client: httpx.AsyncClient, report: dict[str, Any]) -> N
     up = 0
     jobs: set[str] = set()
     zhivye: set[str] = set()
+    site_url: str | None = None
+    site_up: bool | None = None
     for target in active:
         if not isinstance(target, dict):
             continue
-        job = str((target.get("labels") or {}).get("job") or "?")
+        labels = target.get("labels") or {}
+        job = str(labels.get("job") or "?")
         jobs.add(job)
-        if target.get("health") == "up":
+        zdorov = target.get("health") == "up"
+        if zdorov:
             up += 1
             zhivye.add(job)
         elif job not in down:
             down.append(job)
+        if job == SITE_JOB:
+            # Целей у задания две (`/healthz` и `/`), адрес у них общий —
+            # показываем его без пути, иначе строка на экране читается как
+            # «проверяется только healthz».
+            site_url = site_url or _origin(str(labels.get("instance") or ""))
+            site_up = zdorov if site_up is None else (site_up and zdorov)
 
     report["targets"] = {
         "reachable": True,
@@ -243,6 +266,7 @@ async def _probe_targets(client: httpx.AsyncClient, report: dict[str, Any]) -> N
         "total": len(active),
         "down": down,
     }
+    report["site"] = {"url": site_url, "up": site_up}
     # Поиск по логам — по ЖИВОЙ цели, а не по наличию задания в списке.
     #
     # Задание `nginx-logs` стоит в конфиге Prometheus безусловно: профиль
@@ -293,6 +317,16 @@ async def _probe_channel(client: httpx.AsyncClient, report: dict[str, Any]) -> N
         "reachable": True,
         "configured": ("telegram_configs" in config) if isinstance(config, str) else None,
     }
+
+
+def _origin(url: str) -> str | None:
+    """`https://site.example/healthz` → `https://site.example`. Пустое — это None."""
+    if not url:
+        return None
+    parts = urlsplit(url)
+    if not parts.scheme or not parts.netloc:
+        return url
+    return f"{parts.scheme}://{parts.netloc}"
 
 
 async def _json(client: httpx.AsyncClient, url: str) -> Any:

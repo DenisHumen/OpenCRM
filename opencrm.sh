@@ -823,6 +823,138 @@ sync_monitor_url() {
     env_set "$DOCKER_ENV" OPENCRM_MONITOR_URL "$_murl"
 }
 
+# Имя сайта из адреса проверки: без схемы, без порта, без пути.
+monitor_host() {
+    printf '%s' "${1:-}" | sed 's#^https\?://##; s#/.*##; s#:[0-9]*$##'
+}
+
+# Оговорка, без которой правка ниже опаснее болезни. Печатается на экране, а не
+# лежит в конце главы документации: человек, ставящий сервер, до документации
+# ещё не дошёл, а поверит он именно зелёной строчке.
+monitor_local_warning() {
+    warn "$(tr_ "проверка пойдёт по локальному адресу и роутер видеть НЕ будет" \
+                "the probe will go to the local address and will NOT see the router")"
+    say "$(tr_ "        Она видит nginx, TLS и приложение. Отвалится проброс портов — сайт" \
+             "        It sees nginx, TLS and the application. Lose the port forwarding and the site")"
+    say "$(tr_ "        ляжет для всего мира, а мониторинг останется зелёным." \
+             "        goes down for the whole world while monitoring stays green.")"
+    say "$(tr_ "        Закрывает это только наблюдатель со стороны: GET /healthz в UptimeRobot" \
+             "        Only an outside watcher closes that: GET /healthz in UptimeRobot")"
+    say "$(tr_ "        или любом аналоге. Пять минут настройки." \
+             "        or any equivalent. Five minutes of setup.")"
+}
+
+# Постучаться по адресу проверки С ЭТОГО СЕРВЕРА — и починить, если не вышло.
+#
+# ПОЧЕМУ ЭТО НАДО СПРАШИВАТЬ ДЕЛОМ, А НЕ ВЕРИТЬ НА СЛОВО. Адрес проверки выводится
+# из домена, а домен взят со слов человека. Единственная проверка, которая была
+# рядом (issue_certificate), сравнивает A-запись с внешним IP — и при NAT она как
+# раз ПРОХОДИТ: A-запись ведёт на роутер, роутер и есть наш публичный адрес.
+#
+# А сервер за NAT до собственного публичного имени не дозванивается: пакет уходит
+# на роутер, а развернуть его обратно внутрь (hairpin NAT) умеет не всякий.
+# Проверка тогда красная ВСЕГДА, правило SiteDown шлёт тревогу при полностью
+# живом сайте — и её перестают читать вместе с настоящими. Ложная тревога хуже
+# отсутствия тревог.
+#
+# Живой случай, 12 августа 2026: `curl https://sharebranding.xyz/healthz` с самого
+# сервера — отказ за 55 мс, `probe_success{job=site}` ноль у обеих целей, сайт при
+# этом работает и владелец это уже проверил глазами.
+#
+# Лечение — пара OPENCRM_MONITOR_HOST/OPENCRM_MONITOR_IP: она уезжает в
+# `extra_hosts` контейнера blackbox, то есть в его /etc/hosts. Имя остаётся тем
+# же, поэтому запрос идёт по имени, попадает в свой же nginx и получает ТОТ САМЫЙ
+# сертификат — проверять его можно по-честному, и `insecure_skip_verify` остаётся
+# выключенным. Подстановка серого адреса в сам URL так не умеет: сертификат
+# выписан на имя.
+#
+# Пара пишется ЦЕЛИКОМ или не пишется вовсе: имя без адреса молча уводит проверку
+# на 127.0.0.1 — это хуже, чем ничего, потому что выглядит настроенным.
+#
+# Зовётся из мест, где адрес мог поменяться И стек уже поднят (configure_monitoring,
+# `monitoring on`). В sync_monitor_url класть нельзя: её зовут из build_and_start
+# (стека ещё нет) и из start/restart — каждый запуск платил бы таймаутом.
+probe_monitor_url() {
+    _pmurl=$(env_get "$DOCKER_ENV" OPENCRM_MONITOR_URL 2>/dev/null || true)
+    [ -n "$_pmurl" ] || return 0
+    _pmhost=$(monitor_host "$_pmurl")
+    [ -n "$_pmhost" ] || return 0
+
+    # По голому IP проверять нечего: hairpin — беда имени, а не адреса.
+    case "$_pmhost" in
+        *[!0-9.]*) ;;
+        *) return 0 ;;
+    esac
+
+    _pmname=$(env_get "$DOCKER_ENV" OPENCRM_MONITOR_HOST 2>/dev/null || true)
+    _pmip=$(env_get "$DOCKER_ENV" OPENCRM_MONITOR_IP 2>/dev/null || true)
+
+    # Пара уже стоит и стоит для ЭТОГО имени — значит вопрос задавали, ответ
+    # получили. Проверять с хоста бессмысленно: подмена живёт в контейнере, а не
+    # здесь, и curl отсюда снова упрётся в тот же hairpin.
+    if [ -n "$_pmname" ] && [ "$_pmname" = "$_pmhost" ] && [ -n "$_pmip" ]; then
+        ok "$(tr_ "проверка сайта: $_pmhost по локальному адресу $_pmip" \
+                  "site probe: $_pmhost via the local address $_pmip")"
+        monitor_local_warning
+        return 0
+    fi
+
+    # `-k`: сертификат тут ни при чём, спрашиваем только «доезжает ли запрос».
+    # Его настоящую проверку делает blackbox, и она остаётся строгой.
+    if curl -fsS -k --max-time 8 -o /dev/null "$_pmurl/healthz" 2>/dev/null; then
+        # Достучались. Осталась одна опасность — прошлая пара от прошлого домена:
+        # она бы увела проверку чужого имени неизвестно куда.
+        if [ -n "$_pmname" ] && [ "$_pmname" != "$_pmhost" ]; then
+            env_set "$DOCKER_ENV" OPENCRM_MONITOR_HOST ""
+            env_set "$DOCKER_ENV" OPENCRM_MONITOR_IP ""
+            info "$(tr_ "снял подмену адреса от прежнего домена $_pmname" "dropped the address override left from the previous domain $_pmname")"
+        fi
+        ok "$(tr_ "адрес проверки отвечает отсюда: $_pmurl" "the probe address answers from here: $_pmurl")"
+        return 0
+    fi
+
+    _pmdns=$(domain_ip "$_pmhost")
+    if [ -z "$_pmdns" ]; then
+        warn "$(tr_ "адрес $_pmurl отсюда недоступен, и имя $_pmhost не резолвится вовсе" \
+                    "$_pmurl is unreachable from here, and the name $_pmhost does not resolve at all")"
+        say "$(tr_ "        Проверка будет краснеть всегда, а тревога «сайт лёг» — приходить при живом сайте." \
+                 "        The probe will stay red and the \"site is down\" alert will arrive on a healthy site.")"
+        say "$(tr_ "        Поправьте домен: ./opencrm.sh domain" "        Fix the domain: ./opencrm.sh domain")"
+        return 0
+    fi
+
+    _pmpub=$(public_ip)
+    if [ -n "$_pmpub" ] && [ "$_pmdns" = "$_pmpub" ]; then
+        warn "$(tr_ "отсюда не дозвониться до собственного публичного адреса — это hairpin NAT" \
+                    "this server cannot reach its own public address — that is hairpin NAT")"
+        say "$(tr_ "        $_pmhost ведёт на $_pmdns, это и есть адрес наружу у этого сервера," \
+                 "        $_pmhost points at $_pmdns, which is this server's own address to the world,")"
+        say "$(tr_ "        но роутер не разворачивает пакет обратно внутрь. Сайт при этом жив." \
+                 "        but the router does not turn the packet back inside. The site itself is fine.")"
+    else
+        warn "$(tr_ "адрес $_pmurl отсюда не отвечает (имя ведёт на $_pmdns)" \
+                    "$_pmurl does not answer from here (the name points at $_pmdns)")"
+    fi
+    say "$(tr_ "        Оставить как есть — значит получать ложную тревогу «сайт лёг» вечно." \
+             "        Leaving it as is means a false \"site is down\" alert forever.")"
+
+    _pmlan=$(lan_ip)
+    _pmanswer=$(ask "$(tr_ "    Адрес этого сервера в локальной сети (Enter — оставить как есть)" \
+                           "    This server's address on the local network (Enter — leave as is)")" "$_pmlan")
+    if [ -z "$_pmanswer" ]; then
+        warn "$(tr_ "проверка сайта останется красной; поправить — ./opencrm.sh monitoring" \
+                    "the site probe will stay red; fix it with ./opencrm.sh monitoring")"
+        return 0
+    fi
+
+    # Пара пишется обеими строками сразу — половина хуже, чем ничего.
+    env_set "$DOCKER_ENV" OPENCRM_MONITOR_HOST "$_pmhost"
+    env_set "$DOCKER_ENV" OPENCRM_MONITOR_IP "$_pmanswer"
+    ok "$(tr_ "проверка пойдёт на $_pmhost по адресу $_pmanswer — по имени, значит с настоящим сертификатом" \
+              "the probe will go to $_pmhost at $_pmanswer — by name, so with the real certificate")"
+    monitor_local_warning
+}
+
 configure_domain() {
     step "$(tr_ "Домен" "Domain")"
     _current=$(env_get "$DOCKER_ENV" OPENCRM_DOMAIN 2>/dev/null || true)
@@ -906,10 +1038,45 @@ configure_app_env() {
     fi
 }
 
+# Общий счётчик попыток: адрес и пароль.
+#
+# Спрашивать нечего — служба поднимается всегда и наружу не смотрит, поэтому
+# пароль генерируется, как у базы, и кладётся в те же два места по тому же
+# правилу: контейнеру — в docker/.env, приложению — внутрь URL в config/.env.
+#
+# Почему всегда, а не «если выбрали MySQL»: без общего счётчика защита от
+# подбора живёт в памяти процесса, и на любой установке, где однажды поставят
+# OPENCRM_WORKERS больше единицы, порог молча умножится на число процессов.
+# Поднимать Redis только вместе с MySQL значило бы завести два разных поведения
+# защиты и проверять из них одно.
+#
+# Уже настроенное не трогаем: смена пароля Redis сама по себе безвредна (в нём
+# лежат счётчики за последние 15 минут), но разъехавшиеся половины пары дают
+# приложение, которое отвечает 503 на вход, — а это уже лежащий сайт.
+configure_redis() {
+    step "$(tr_ "Общий счётчик попыток (Redis)" "Shared attempt counter (Redis)")"
+
+    _redis_pass=$(env_get "$DOCKER_ENV" OPENCRM_REDIS_PASSWORD 2>/dev/null || true)
+    if [ -z "$_redis_pass" ]; then
+        # Алфавит A-Za-z0-9 обязателен по той же причине, что и у базы: пароль
+        # уезжает внутрь URL, а `@`, `:` и `/` разобрали бы его на части.
+        _redis_pass=$(gen_secret 32)
+        env_set "$DOCKER_ENV" OPENCRM_REDIS_PASSWORD "$_redis_pass"
+    fi
+    env_set "$APP_ENV" OPENCRM_REDIS_URL "redis://:$_redis_pass@redis:6379/0"
+    ok "$(tr_ "контейнер redis, пароль записан в оба файла" "container redis, password stored in both files")"
+    info "$(tr_ "без него защита от подбора пароля и PIN работает только в одном процессе" "without it brute-force protection only works within a single process")"
+}
+
 # Установка на MySQL с уже населённой SQLite: переносить ли данные. Ответ берут
 # при выборе базы, а сам перенос идёт много позже — после того, как стек
-# поднялся и миграции построили схему в новой базе.
+# поднялся.
 MIGRATE_FROM_SQLITE=0
+
+#: Чем кончился переезд: skipped | ok | failed. Итог установки обязан его
+#: назвать: «OpenCRM развёрнут» поверх несостоявшегося переезда — это зелёная
+#: строка, за которой человек не пойдёт смотреть, что там на самом деле.
+MIGRATE_RESULT=skipped
 
 # Выбор базы.
 #
@@ -982,8 +1149,7 @@ choose_database() {
     # charset=utf8mb4 в URL — вторая половина той же защиты, что и настройка
     # сервера: без неё соединение договаривается о трёхбайтном utf8, и эмодзи
     # в заметке клиента обрывают вставку на полуслове.
-    env_set "$APP_ENV" OPENCRM_DB_URL \
-        "mysql+pymysql://opencrm:$_db_pass@db:3306/opencrm?charset=utf8mb4"
+    _target_url="mysql+pymysql://opencrm:$_db_pass@db:3306/opencrm?charset=utf8mb4"
     ok "$(tr_ "MySQL: контейнер db, пароль сгенерирован и записан" "MySQL: container db, password generated and stored")"
     info "$(tr_ "данные базы: $(home_dir)/mysql" "database files: $(home_dir)/mysql")"
 
@@ -1000,53 +1166,349 @@ choose_database() {
             "        Файл SQLite при переносе открывается только на чтение и не меняется." \
             "        The SQLite file is opened read-only during the move and is not changed.")"
         say "$(tr_ \
-            "        Пока он цел, возврат стоит одной строки: OPENCRM_DB_URL в config/.env" \
-            "        While it is intact, going back costs one line: OPENCRM_DB_URL in config/.env")"
+            "        Сайт до самого конца работает на нём: адрес базы переписывается" \
+            "        The site keeps running on it to the very end: the database URL is")"
         say "$(tr_ \
-            "        обратно на sqlite:////app/data/opencrm.db и ./opencrm.sh restart" \
-            "        back to sqlite:////app/data/opencrm.db and ./opencrm.sh restart")"
+            "        только после того, как перенос сверен. Осечка — остаёмся на SQLite." \
+            "        rewritten only after the move is verified. Any slip — we stay on SQLite.")"
         if confirm "$(tr_ "    Перенести данные после запуска?" "    Move the data once the stack is up?")" y; then
             MIGRATE_FROM_SQLITE=1
+            # ГЛАВНОЕ МЕСТО ВСЕГО ПЕРЕЕЗДА: OPENCRM_DB_URL здесь НЕ трогается.
+            #
+            # Раньше он переписывался ровно тут, за десяток шагов до самого
+            # переноса, — и всё это время сайт работал на пустой MySQL, где
+            # миграции построили схему и посеяли умолчания. `/healthz` при
+            # этом зелёный, `schema_check` доволен, а человек видит пустую
+            # CRM. То есть переключение происходило ДО того, как переезд
+            # признан удачным, и любая осечка требовала возврата руками.
+            #
+            # Теперь адрес цели кладётся ОТДЕЛЬНОЙ переменной, а боевой
+            # OPENCRM_DB_URL остаётся на SQLite. Его перепишет
+            # `switch_to_mysql` последним действием — после копии, миграций,
+            # переноса и сверки. Пока этого не случилось, откатывать нечего:
+            # приложение и не уходило с файла.
+            #
+            # Побочная польза: непустая OPENCRM_MIGRATE_TARGET_URL при
+            # OPENCRM_DB_URL на sqlite — это и есть отметка «переезд начат и
+            # не доведён». Её показывает `./opencrm.sh doctor`.
+            env_set "$APP_ENV" OPENCRM_MIGRATE_TARGET_URL "$_target_url"
+            env_set "$APP_ENV" OPENCRM_DB_URL "sqlite:////app/data/opencrm.db"
+            info "$(tr_ "сайт остаётся на SQLite до конца переезда" "the site stays on SQLite until the move is done")"
         else
             info "$(tr_ "перенос пропущен — сайт поднимется на пустой базе" "move skipped — the site will come up on an empty database")"
+            env_set "$APP_ENV" OPENCRM_DB_URL "$_target_url"
         fi
+    else
+        # Переносить нечего — установка с нуля. Здесь переключать сразу
+        # можно и нужно: терять нечего, а лишний шаг только удлинил бы
+        # установку и завёл бы второй, почти не проверяемый путь.
+        env_set "$APP_ENV" OPENCRM_DB_URL "$_target_url"
     fi
 }
 
-# Перенос данных из SQLite в MySQL — уже после того, как стек поднялся.
+# ==========================================================================
+# Переезд SQLite → MySQL
+# ==========================================================================
 #
-# Раньше нельзя: схему в новой базе строят миграции из entrypoint.sh, а до
-# первого старта её там нет вовсе. Скрипт переноса на это и рассчитан — он
-# сверяет ревизии обеих баз и сам чистит цель от того, что насеяли миграции.
+# ГЛАВНОЕ ТРЕБОВАНИЕ, ИЗ КОТОРОГО ВЫВЕДЕНО ВСЁ ОСТАЛЬНОЕ: если переезд не
+# удался, боевой сервер ПРОДОЛЖАЕТ РАБОТАТЬ на местной базе. Не «вернём
+# руками», а продолжает — сам собой, потому что с неё и не уходил.
+#
+# Отсюда порядок, где каждый шаг обратим, и одно решение, которое делает
+# обратимость бесплатной: **OPENCRM_DB_URL переписывается ПОСЛЕДНИМ действием**,
+# а не первым.
+#
+#   1. поднять MySQL и Redis РЯДОМ с работающим сайтом;
+#   2. снять копию SQLite и проверить её ЧТЕНИЕМ, а не фактом создания файла;
+#   3. построить схему в MySQL отдельным заходом (не боевым приложением);
+#   4. перенести данные ИЗ КОПИИ;
+#   5. сверить: схема с моделями, число строк по каждой таблице, суммы по
+#      деньгам и количествам;
+#   6. только теперь переписать OPENCRM_DB_URL и пересоздать приложение;
+#   7. дождаться сайта и сошедшейся схемы.
+#
+# На шагах 1-5 откатывать НЕЧЕГО: приложение всё это время работает на файле,
+# и «откат» состоит в том, чтобы ничего не делать. Осечка на шаге 6-7 —
+# единственное место, где нужно действие, и его делает `rollback_to_sqlite`
+# сама, без человека.
+#
+# ПОЧЕМУ ПЕРЕНОС ИДЁТ ИЗ КОПИИ, А НЕ ИЗ ЖИВОГО ФАЙЛА. Сайт во время переезда
+# работает, то есть живой файл меняется под руками. Сверка «строк было столько
+# же» по такому источнику даёт ложную тревогу на честном переносе: пока шли
+# данные, кто-то завёл клиента. Копия неподвижна, поэтому сверка отвечает на
+# вопрос точно. Цена названа вслух в ходе установки: то, что записано ПОСЛЕ
+# снятия копии, останется в SQLite, и переезд затевают в тихую минуту.
+#
+# Живой файл при этом не открывается на запись ни разу: копию снимает
+# `sqlite3 .backup` (он читатель), а скрипт переноса открывает источник с
+# `mode=ro`. Испортить его переезд не может ни при каком исходе.
+
+#: Копия, с которой идёт перенос. Имя постоянное: повторная попытка переезда
+#: снимает её заново, а прежняя копия ничего не стоит — оригинал-то цел.
+MIGRATE_SNAPSHOT=/app/data/opencrm.db.pre-move
+
+# Шаг 1. MySQL и Redis поднимаются РЯДОМ с работающим сайтом.
+#
+# Именно рядом: службу app не трогаем вовсе. Она продолжает обслуживать людей с
+# файла, пока соседний контейнер создаёт каталог данных (на медленном диске это
+# минуты).
+migrate_up_services() {
+    info "$(tr_ "поднимаю MySQL и Redis рядом с работающим сайтом" "bringing MySQL and Redis up next to the running site")"
+    run_painted compose up -d db redis || return 1
+    # Ждём именно ГОТОВНОСТИ ПРИНИМАТЬ TCP, а не «контейнер создан». Сокет у
+    # MySQL отвечает раньше, чем сервер начинает слушать порт, — на этом уже
+    # обжигались, см. healthcheck службы db в docker-compose.yml.
+    _mtry=60
+    while [ "$_mtry" -gt 0 ]; do
+        # shellcheck disable=SC2016  # раскрытие внутри контейнера: пароль не должен попасть в ps на хосте
+        if compose exec -T db sh -c 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysqladmin ping -h 127.0.0.1 -P 3306 --protocol=TCP --silent' >/dev/null 2>&1; then
+            ok "$(tr_ "MySQL принимает соединения" "MySQL accepts connections")"
+            return 0
+        fi
+        _mtry=$((_mtry - 1))
+        sleep 3
+    done
+    return 1
+}
+
+# Шаг 2. Копия SQLite, проверенная ЧТЕНИЕМ.
+#
+# «Файл создался» ничего не доказывает: копия нужного размера и полностью
+# нечитаемая выглядит точно так же. Поэтому по копии выполняется
+# `PRAGMA integrity_check` (он обходит все страницы) и настоящий запрос к
+# данным. Ровно этого не хватало резервным копиям, пока их никто не проверял.
+migrate_snapshot_sqlite() {
+    info "$(tr_ "снимаю копию SQLite и читаю её" "taking an SQLite snapshot and reading it back")"
+    # shellcheck disable=SC2016  # $SNAP раскрывается внутри контейнера, где и лежит файл
+    run_painted compose exec -T -e SNAP="$MIGRATE_SNAPSHOT" app sh -c '
+        set -e
+        rm -f "$SNAP"
+        sqlite3 /app/data/opencrm.db ".backup '"'"'$SNAP'"'"'"
+        test -s "$SNAP"
+        celost=$(sqlite3 "$SNAP" "PRAGMA integrity_check;" | head -n 1)
+        if [ "$celost" != "ok" ]; then
+            echo "копия нечитаема: PRAGMA integrity_check вернул $celost" >&2
+            exit 1
+        fi
+        skolko=$(sqlite3 "$SNAP" "SELECT count(*) FROM users;")
+        if [ "$skolko" -lt 1 ]; then
+            echo "в копии нет ни одного пользователя — читается, но пуста" >&2
+            exit 1
+        fi
+        echo "копия прочитана: целостность ok, пользователей $skolko"
+    ' || return 1
+    return 0
+}
+
+# Все три следующих шага идут ОДНОРАЗОВЫМ контейнером (`compose run --rm`), а
+# не заходом в работающий (`compose exec`), и это не стиль.
+#
+# Найдено живым прогоном. Адрес цели лежит в config/.env, а `env_file` compose
+# читает в момент СОЗДАНИЯ контейнера: приложение поднялось раньше, чем мы
+# записали строку, и внутри него переменной просто нет. `alembic upgrade head`
+# получил пустой OPENCRM_DB_URL и упал на разборе URL. Пересоздавать ради этого
+# боевой контейнер нельзя — он в этот момент обслуживает людей с файла, а
+# одноразовый читает config/.env заново и живёт полминуты.
+#
+# `--no-deps`: зависимости уже подняты шагом 1, и повторное ожидание здоровья
+# MySQL стоило бы минуты на пустом месте.
+migrate_run() {
+    # shellcheck disable=SC2016  # переменные раскрываются ВНУТРИ контейнера: пароль не должен попасть в ps на хосте
+    run_painted compose run --rm --no-deps -e SNAP="$MIGRATE_SNAPSHOT" \
+        --entrypoint sh app -c "$1"
+}
+
+# Шаг 3. Схема в MySQL — отдельным заходом.
+#
+# Миграции гоняются НЕ боевым приложением: оно в этот момент работает с файлом
+# и переключать его ради построения схемы значило бы сделать ровно то, чего мы
+# избегаем.
+migrate_build_schema() {
+    info "$(tr_ "строю схему в MySQL миграциями" "building the MySQL schema with migrations")"
+    # shellcheck disable=SC2016  # URL с паролем раскрывается ВНУТРИ контейнера, а не на хосте
+    migrate_run 'OPENCRM_DB_URL="$OPENCRM_MIGRATE_TARGET_URL" exec python -m alembic upgrade head' || return 1
+    return 0
+}
+
+# Шаг 4. Перенос данных из копии.
+migrate_copy_data() {
+    info "$(tr_ "переношу данные" "moving the data")"
+    # shellcheck disable=SC2016  # то же: пароль внутри контейнера
+    migrate_run 'exec python scripts/migrate_to_mysql.py --source "sqlite:///$SNAP" --target "$OPENCRM_MIGRATE_TARGET_URL"' || return 1
+    return 0
+}
+
+# Шаг 5. Сверка отдельным заходом.
+#
+# Отдельным — потому что проверка, которая выполняется только заодно с удачным
+# действием, проверяет действие, а не его итог. Здесь отпечаток источника
+# снимается ЗАНОВО и сравнивается с тем, что лежит в цели: схема с моделями,
+# число строк по каждой таблице, суммы по всем целым столбцам (деньги в
+# минорных единицах, количества в тысячных, ставки в базисных пунктах).
+migrate_verify() {
+    info "$(tr_ "сверяю: схема, строки по таблицам, суммы денег и остатков" "verifying: schema, per-table row counts, money and stock checksums")"
+    # shellcheck disable=SC2016  # то же: пароль внутри контейнера
+    migrate_run 'exec python scripts/migrate_to_mysql.py --source "sqlite:///$SNAP" --target "$OPENCRM_MIGRATE_TARGET_URL" --verify' || return 1
+    return 0
+}
+
+# Шаг 6-7. Переключение и проверка, что сайт правда работает на новой базе.
+#
+# Единственное место во всём переезде, где OPENCRM_DB_URL меняется, и стоит оно
+# после сверки. Пересоздание контейнера обязательно: `compose up -d` при
+# изменении одного лишь env_file контейнер НЕ пересоздаёт, и приложение
+# продолжило бы работать со старым значением — молча.
+switch_to_mysql() {
+    _target=$(env_get "$APP_ENV" OPENCRM_MIGRATE_TARGET_URL 2>/dev/null || true)
+    [ -n "$_target" ] || return 1
+    info "$(tr_ "перевожу приложение на MySQL" "switching the application to MySQL")"
+    env_set "$APP_ENV" OPENCRM_DB_URL "$_target"
+    run_painted compose up -d --force-recreate app || return 1
+    wait_health 90 || return 1
+    # Сайт отвечает — этого мало. Спрашиваем и схему: `/healthz` отдаёт её
+    # отдельным полем, и приложение с несошедшейся схемой не поднялось бы
+    # вовсе, но проверить дешевле, чем поверить.
+    _hz=$(curl -fsS --max-time 5 http://127.0.0.1/healthz 2>/dev/null || true)
+    case "$_hz" in
+        *'"schema":"ok"'*) ;;
+        *) return 1 ;;
+    esac
+    # Переезд признан удачным — снимаем отметку «переезд начат и не доведён».
+    env_set "$APP_ENV" OPENCRM_MIGRATE_TARGET_URL ""
+    return 0
+}
+
+# Возврат на SQLite. Без человека, без вопросов, без «выполните команду».
+#
+# Зовётся ровно из одного места — из неудачи шага 6-7, потому что только там
+# приложение уже успело уйти с файла. Всё остальное в этом переезде обратимо
+# тем, что оно ничего не меняло.
+rollback_to_sqlite() {
+    warn "$(tr_ "возвращаю сайт на SQLite" "putting the site back on SQLite")"
+    env_set "$APP_ENV" OPENCRM_DB_URL "sqlite:////app/data/opencrm.db"
+    run_painted compose up -d --force-recreate app || true
+    if wait_health 120; then
+        ok "$(tr_ "сайт снова работает на SQLite, данные на месте" "the site is back on SQLite, the data is intact")"
+        return 0
+    fi
+    warn "$(tr_ "сайт не ответил и после возврата — ./opencrm.sh logs app" "no answer even after going back — ./opencrm.sh logs app")"
+    return 1
+}
+
+# Осечка: назвать причину и запомнить исход.
+#
+# Исход запоминается нарочно. Прежде функция переезда завершалась НУЛЁМ при
+# любом исходе, и установка ехала дальше — выпускала сертификат, включала
+# автообновление и печатала «OpenCRM развёрнут» поверх несостоявшегося
+# переезда. Зелёный итог поверх красного шага — это не оптимизм, это способ
+# не узнать о поломке.
+migrate_failed() {
+    MIGRATE_RESULT=failed
+    warn "$(tr_ "переезд не удался: $1" "the move failed: $1")"
+}
+
 migrate_sqlite_to_mysql() {
     [ "$MIGRATE_FROM_SQLITE" = "1" ] || return 0
-    step "$(tr_ "Перенос данных SQLite → MySQL" "Moving the data SQLite → MySQL")"
+    step "$(tr_ "Переезд SQLite → MySQL" "Moving SQLite → MySQL")"
 
-    # URL раскрывается ВНУТРИ контейнера, а не подставляется здесь: иначе пароль
-    # базы попал бы в командную строку docker и стал виден в `ps` любому
-    # пользователю сервера.
-    # shellcheck disable=SC2016  # одинарные кавычки здесь и есть защита: см. выше
-    if run_painted compose exec -T app sh -c 'exec python scripts/migrate_to_mysql.py --source "sqlite:////app/data/opencrm.db" --target "$OPENCRM_DB_URL"'; then
-        run_painted compose restart app
-        if wait_health 90; then
-            ok "$(tr_ "данные перенесены, сайт отвечает" "data moved, the site is answering")"
-        else
-            warn "$(tr_ "данные перенесены, но сайт не ответил — ./opencrm.sh logs app" "data moved, but the site did not answer — ./opencrm.sh logs app")"
-        fi
-        say "$(tr_ \
-            "        Файл SQLite не тронут. Что-то не так — верните OPENCRM_DB_URL" \
-            "        The SQLite file is untouched. If anything is off, put OPENCRM_DB_URL")"
-        say "$(tr_ \
-            "        в config/.env на sqlite:////app/data/opencrm.db и ./opencrm.sh restart" \
-            "        in config/.env back to sqlite:////app/data/opencrm.db and ./opencrm.sh restart")"
-    else
-        warn "$(tr_ "перенос не удался — сайт остаётся на пустой MySQL" "the move failed — the site stays on an empty MySQL")"
-        say "$(tr_ \
-            "        Исходная база не тронута: верните OPENCRM_DB_URL в config/.env" \
-            "        The source database is untouched: put OPENCRM_DB_URL in config/.env")"
-        say "$(tr_ \
-            "        на sqlite:////app/data/opencrm.db и ./opencrm.sh restart — всё вернётся." \
-            "        back to sqlite:////app/data/opencrm.db and ./opencrm.sh restart — everything returns.")"
+    say "$(tr_ \
+        "    ${D}Сайт работает на SQLite всё это время и уйдёт с неё только после сверки.${R}" \
+        "    ${D}The site runs on SQLite the whole time and leaves it only after verification.${R}")"
+    say "$(tr_ \
+        "    ${D}Записанное ПОСЛЕ снятия копии останется в SQLite — переезжайте в тихую минуту.${R}" \
+        "    ${D}Anything written AFTER the snapshot stays in SQLite — move at a quiet moment.${R}")"
+
+    if ! migrate_up_services; then
+        migrate_failed "$(tr_ "MySQL не поднялась — ./opencrm.sh logs db" "MySQL did not come up — ./opencrm.sh logs db")"
+        migrate_nothing_to_undo
+        return 0
+    fi
+    if ! migrate_snapshot_sqlite; then
+        migrate_failed "$(tr_ "копию SQLite не удалось снять или прочитать" "the SQLite snapshot could not be taken or read back")"
+        migrate_nothing_to_undo
+        return 0
+    fi
+    if ! migrate_build_schema; then
+        migrate_failed "$(tr_ "миграции на MySQL не прошли" "migrations did not go through on MySQL")"
+        migrate_nothing_to_undo
+        return 0
+    fi
+    if ! migrate_copy_data; then
+        migrate_failed "$(tr_ "перенос данных оборвался" "the data transfer broke off")"
+        migrate_nothing_to_undo
+        return 0
+    fi
+    if ! migrate_verify; then
+        migrate_failed "$(tr_ "сверка не сошлась — на такую базу переключаться нельзя" "verification did not match — switching to that database is not allowed")"
+        migrate_nothing_to_undo
+        return 0
+    fi
+
+    if switch_to_mysql; then
+        MIGRATE_RESULT=ok
+        ok "$(tr_ "переезд завершён: сайт работает на MySQL, схема сошлась" "move complete: the site runs on MySQL and the schema matches")"
+        info "$(tr_ "файл SQLite не тронут и лежит на месте: $(home_dir)/data/opencrm.db" "the SQLite file is untouched and still there: $(home_dir)/data/opencrm.db")"
+        return 0
+    fi
+
+    # Единственная ветка, где что-то надо вернуть: URL уже переписан.
+    rollback_to_sqlite
+    migrate_failed "$(tr_ "сайт не поднялся на новой базе" "the site did not come up on the new database")"
+    return 0
+}
+
+# Сообщение для шагов 1-5: возвращать нечего, и это не фигура речи.
+migrate_nothing_to_undo() {
+    say "$(tr_ \
+        "        Откатывать нечего: OPENCRM_DB_URL всё это время оставался на SQLite," \
+        "        There is nothing to undo: OPENCRM_DB_URL stayed on SQLite the whole time,")"
+    say "$(tr_ \
+        "        сайт с неё не уходил и продолжает работать. Повторить: ./opencrm.sh migrate-mysql" \
+        "        the site never left it and keeps working. Retry: ./opencrm.sh migrate-mysql")"
+}
+
+# Переезд на уже работающей установке — главный сценарий этой задачи.
+#
+# Установку ради него запускать не надо: она донастраивает всё подряд, а здесь
+# нужен один шаг. Все проверки те же, что в мастере, включая то, что при
+# неудаче сайт остаётся на SQLite сам собой.
+cmd_migrate_mysql() {
+    need_install
+    if [ "$(db_engine)" = "mysql" ]; then
+        ok "$(tr_ "установка уже работает на MySQL — переезжать некуда" "this installation already runs on MySQL — nowhere to move")"
+        return 0
+    fi
+    if [ ! -f "$(home_dir)/data/opencrm.db" ]; then
+        die "$(tr_ "файла базы SQLite нет: $(home_dir)/data/opencrm.db" "there is no SQLite database file: $(home_dir)/data/opencrm.db")"
+    fi
+
+    step "$(tr_ "Переезд на MySQL" "Moving to MySQL")"
+    # Пароли и профиль могли остаться с прерванной попытки — тогда берём их, а
+    # не заводим новые: у поднятой базы пользователь уже создан с прежним
+    # паролем, и новый дал бы «access denied» на первом же соединении.
+    _db_pass=$(env_get "$DOCKER_ENV" OPENCRM_DB_PASSWORD 2>/dev/null || true)
+    if [ -z "$_db_pass" ]; then
+        _db_pass=$(gen_secret 32)
+        env_set "$DOCKER_ENV" OPENCRM_DB_PASSWORD "$_db_pass"
+        env_set "$DOCKER_ENV" OPENCRM_DB_ROOT_PASSWORD "$(gen_secret 32)"
+    fi
+    env_set "$DOCKER_ENV" OPENCRM_DB_NAME opencrm
+    env_set "$DOCKER_ENV" OPENCRM_DB_USER opencrm
+    compose_profile mysql on
+    mkdir -p "$(home_dir)/mysql"
+    env_set "$APP_ENV" OPENCRM_MIGRATE_TARGET_URL \
+        "mysql+pymysql://opencrm:$_db_pass@db:3306/opencrm?charset=utf8mb4"
+    configure_redis
+
+    if ! confirm "$(tr_ "    Начать переезд? Сайт остаётся на SQLite до самого конца" "    Start the move? The site stays on SQLite until the very end")" y; then
+        info "$(tr_ "отменено" "cancelled")"
+        return 0
+    fi
+
+    MIGRATE_FROM_SQLITE=1
+    migrate_sqlite_to_mysql
+    if [ "$MIGRATE_RESULT" != "ok" ]; then
+        die "$(tr_ "переезд не состоялся — сайт работает на SQLite, как и работал" "the move did not happen — the site runs on SQLite, just as before")"
     fi
 }
 
@@ -1169,6 +1631,10 @@ configure_monitoring() {
 
     seed_grafana_password
     sync_monitor_url
+    # Адрес проверки — единственная настройка мониторинга, которую не видно
+    # глазами: неверная выглядит точно так же, как верная, а узнают о ней по
+    # тревоге при живом сайте. Поэтому спрашиваем делом, а не словом.
+    probe_monitor_url
 
     if sync_alert_channel; then
         ok "$(tr_ "тревоги пойдут в тот же Telegram, что и сообщения об обновлениях" "alerts will go to the same Telegram as the update messages")"
@@ -1590,6 +2056,16 @@ show_summary() {
             fi
             ;;
     esac
+    if [ "$MIGRATE_RESULT" = "failed" ]; then
+        say ""
+        warn "$(tr_ "ПЕРЕЕЗД НА MySQL НЕ СОСТОЯЛСЯ — сайт работает на SQLite" "THE MOVE TO MySQL DID NOT HAPPEN — the site runs on SQLite")"
+        say "$(tr_ \
+            "        Данные целы и на месте, ничего восстанавливать не нужно." \
+            "        The data is intact and in place, nothing needs restoring.")"
+        say "$(tr_ \
+            "        Причина названа выше. Повторить: ./opencrm.sh migrate-mysql" \
+            "        The reason is named above. Retry: ./opencrm.sh migrate-mysql")"
+    fi
     say ""
     say "$(tr_ "  Дальше всё делается через меню: ${B}./opencrm.sh${R}" "  Everything else is done from the menu: ${B}./opencrm.sh${R}")"
     say ""
@@ -1613,6 +2089,9 @@ cmd_install() {
     install_python
     configure_docker_env
     configure_app_env
+    # Строго после configure_app_env и ДО выбора базы: адрес общего счётчика
+    # нужен любой установке, а не только той, что переезжает на MySQL.
+    configure_redis
     # Строго после configure_app_env: config/.env к этому моменту уже создан, и
     # выбор базы дописывается в него, а не создаёт файл мимо шаблона.
     choose_database
@@ -1620,8 +2099,9 @@ cmd_install() {
     create_dirs
     build_and_start
     check_health
-    # После check_health: перенос идёт в живую базу, схему в которой построили
-    # миграции при первом старте приложения.
+    # После check_health, и это важно: к этому моменту сайт УЖЕ РАБОТАЕТ — на
+    # SQLite. Переезд идёт рядом с работающим сайтом и уводит его с файла
+    # только после сверки; осечка на любом шаге до неё не требует ничего.
     migrate_sqlite_to_mysql
     issue_certificate
     setup_firewall
@@ -1840,6 +2320,27 @@ monitoring_panel_hint() {
              "    Dashboard: ${_phurl}/monitoring/   (login admin)")"
     say "$(tr_ "    Пароль:   строка OPENCRM_GRAFANA_PASSWORD в docker/.env; сменить — ./opencrm.sh monitoring password" \
              "    Password:  the OPENCRM_GRAFANA_PASSWORD line in docker/.env; change it with ./opencrm.sh monitoring password")"
+    # Второй вход — мимо nginx, портом 9080. Он публикуется всегда, но привязан к
+    # адресу: по умолчанию 127.0.0.1, то есть снаружи не виден никому. Печатаем
+    # оба ответа на «хочу в панель напрямую», чтобы вместо них не завели третий —
+    # `9080:3000` на все интерфейсы.
+    _phbind=$(env_get "$DOCKER_ENV" OPENCRM_GRAFANA_BIND 2>/dev/null || true)
+    [ -n "$_phbind" ] || _phbind="127.0.0.1"
+    if [ "$_phbind" = "127.0.0.1" ] || [ "$_phbind" = "localhost" ]; then
+        # `lan_ip` возвращает пустую строку с НУЛЕВЫМ кодом, поэтому проверяется
+        # значение, а не `||`: иначе в примере вышло бы «user@» без адреса.
+        _phlan=$(lan_ip)
+        [ -n "$_phlan" ] || _phlan="server"
+        say "$(tr_ "    Напрямую: только с самого сервера, порт 9080. С чужой машины — туннелем:" \
+                 "    Direct:   from this server only, port 9080. From another machine — a tunnel:")"
+        say "$(tr_ "              ssh -L 9080:127.0.0.1:9080 $(id -un)@${_phlan}   затем http://localhost:9080/" \
+                 "              ssh -L 9080:127.0.0.1:9080 $(id -un)@${_phlan}   then http://localhost:9080/")"
+        say "$(tr_ "              Вход из локальной сети — строка OPENCRM_GRAFANA_BIND в docker/.env" \
+                 "              For local-network access set OPENCRM_GRAFANA_BIND in docker/.env")"
+    else
+        say "$(tr_ "    Напрямую: http://${_phbind}:9080/   (без TLS — только для локальной сети или VPN)" \
+                 "    Direct:   http://${_phbind}:9080/   (no TLS — local network or VPN only)")"
+    fi
 }
 
 cmd_monitoring() {
@@ -1861,6 +2362,10 @@ cmd_monitoring() {
             fi
             seed_grafana_password
             sync_monitor_url
+            # До monitoring_apply: пара «имя-адрес» уезжает в описание контейнера
+            # blackbox, и записанная после него подхватилась бы только следующим
+            # `up`, то есть неизвестно когда.
+            probe_monitor_url
             sync_alert_channel || warn "$(tr_ "канал Telegram не настроен — тревоги никуда не пойдут" "no Telegram channel — alerts will go nowhere")"
             monitoring_apply
             ok "$(tr_ "включён" "on")"
@@ -2391,6 +2896,28 @@ cmd_doctor() {
         probe "$(tr_ "база" "database")" 1 "SQLite ($(home_dir)/data/opencrm.db)"
     fi
 
+    # Непустой адрес цели при базе на SQLite — это след НЕЗАВЕРШЁННОГО
+    # переезда. Отдельного состояния «переезжаем» в системе нет и не нужно:
+    # сайт всё это время работает, данные целы, — но человек должен знать,
+    # что начатое не доведено, иначе он узнает об этом через месяц.
+    if [ "$(db_engine)" != "mysql" ] && [ -n "$(env_get "$APP_ENV" OPENCRM_MIGRATE_TARGET_URL 2>/dev/null || true)" ]; then
+        probe "$(tr_ "переезд" "move")" 0 "$(tr_ "начат и не доведён — сайт работает на SQLite; повторить: ./opencrm.sh migrate-mysql" "started and not finished — the site runs on SQLite; retry: ./opencrm.sh migrate-mysql")"
+    fi
+
+    # Общий счётчик попыток. Строка стоит рядом с базой не случайно: это
+    # вторая половина переезда на MySQL. Без неё несколько рабочих процессов
+    # означают порог защиты от подбора, умноженный на их число, — без единой
+    # ошибки, без следа в логах и с виду работающей защитой.
+    case "$(curl -fsS --max-time 3 http://127.0.0.1/healthz 2>/dev/null || true)" in
+        *'"redis":"ok"'*)
+            probe "$(tr_ "счётчик попыток" "attempt counter")" 1 "$(tr_ "общий на все процессы (redis)" "shared across processes (redis)")" ;;
+        *'"redis":"down"'*)
+            probe "$(tr_ "счётчик попыток" "attempt counter")" 0 "$(tr_ "redis не отвечает — вход и PIN сейчас отдают 503; ./opencrm.sh logs redis" "redis does not answer — sign-in and PIN return 503 right now; ./opencrm.sh logs redis")" ;;
+        *'"redis":"off"'*)
+            probe "$(tr_ "счётчик попыток" "attempt counter")" 0 "$(tr_ "OPENCRM_REDIS_URL пуст — защита от подбора работает только в одном процессе" "OPENCRM_REDIS_URL is empty — brute-force protection only works within one process")" ;;
+        *) ;;
+    esac
+
     # Схема базы — тот самый вопрос «переживёт ли прод обновление». Спрашиваем
     # само приложение: оно снимает сверку на старте и без неё не поднимается,
     # поэтому ответ здесь не пересчитывается и стоит один запрос.
@@ -2470,14 +2997,37 @@ cmd_doctor() {
             probe "$(tr_ "тревоги" "alerts")" 0 "$(tr_ "канал не настроен — о поломке узнают глазами; ./opencrm.sh monitoring" "no channel — breakage will be spotted by eye; ./opencrm.sh monitoring")"
         fi
 
-        # Проверка сайта обязана идти по внешнему адресу. По внутреннему она
+        # Проверка сайта обязана идти по ИМЕНИ САЙТА. По внутреннему адресу она
         # зелёная и тогда, когда nginx не поднялся, а 443 никто не слушает, —
         # то есть ровно в том случае, ради которого всё затевалось.
+        #
+        # Строка соседствовала с образцовой пробой панели и при этом проверяла
+        # НЕПУСТОТУ СТРОКИ, а не достижимость. За NAT непустая строка означала
+        # вечно красную проверку и вечную ложную тревогу. Теперь спрашиваем.
         _murl=$(env_get "$DOCKER_ENV" OPENCRM_MONITOR_URL 2>/dev/null || true)
-        if [ -n "$_murl" ]; then
+        _mhost=$(env_get "$DOCKER_ENV" OPENCRM_MONITOR_HOST 2>/dev/null || true)
+        _mip=$(env_get "$DOCKER_ENV" OPENCRM_MONITOR_IP 2>/dev/null || true)
+        if [ -z "$_murl" ]; then
+            probe "$(tr_ "проверка сайта" "site probe")" 0 "$(tr_ "адрес не задан — проверка пойдёт изнутри сети и не увидит 443; ./opencrm.sh monitoring" "no address — the probe will run from inside the network and will not see 443; ./opencrm.sh monitoring")"
+        elif [ -n "$_mhost" ] && [ -z "$_mip" ]; then
+            # Полупустая пара — самая тихая из поломок: compose разбирается, стек
+            # поднимается, а проверка уходит на 127.0.0.1 внутри своего же
+            # контейнера, где не отвечает никто.
+            probe "$(tr_ "проверка сайта" "site probe")" 0 "$(tr_ "имя $_mhost подменено без адреса — проверка уходит в никуда; ./opencrm.sh monitoring" "the name $_mhost is overridden without an address — the probe goes nowhere; ./opencrm.sh monitoring")"
+        elif [ -z "$_mhost" ] && [ -n "$_mip" ]; then
+            probe "$(tr_ "проверка сайта" "site probe")" 0 "$(tr_ "адрес $_mip задан без имени — подмена не действует; ./opencrm.sh monitoring" "the address $_mip is set without a name — the override does nothing; ./opencrm.sh monitoring")"
+        elif [ -n "$_mhost" ] && [ "$_mhost" != "$(monitor_host "$_murl")" ]; then
+            probe "$(tr_ "проверка сайта" "site probe")" 0 "$(tr_ "подменено имя $_mhost, а проверяется $_murl — подмена не действует; ./opencrm.sh monitoring" "the override is for $_mhost while the probe goes to $_murl — it does nothing; ./opencrm.sh monitoring")"
+        elif [ -n "$_mhost" ]; then
+            probe "$(tr_ "проверка сайта" "site probe")" 1 "$_murl → $_mip $(tr_ "(локально: nginx, TLS и приложение видны, роутер — нет)" "(locally: nginx, TLS and the app are seen, the router is not)")"
+            say "$(tr_ "      ${D}отвалится проброс портов — сайт ляжет для всех, а здесь останется зелено;${R}" \
+                     "      ${D}lose the port forwarding and the site goes down for everyone while this stays green;${R}")"
+            say "$(tr_ "      ${D}закрывает это только наблюдатель со стороны: GET /healthz в UptimeRobot${R}" \
+                     "      ${D}only an outside watcher closes that: GET /healthz in UptimeRobot${R}")"
+        elif curl -fsS -k --max-time 8 -o /dev/null "$_murl/healthz" 2>/dev/null; then
             probe "$(tr_ "проверка сайта" "site probe")" 1 "$_murl"
         else
-            probe "$(tr_ "проверка сайта" "site probe")" 0 "$(tr_ "адрес не задан — проверка пойдёт изнутри сети и не увидит 443; ./opencrm.sh monitoring" "no address — the probe will run from inside the network and will not see 443; ./opencrm.sh monitoring")"
+            probe "$(tr_ "проверка сайта" "site probe")" 0 "$(tr_ "$_murl отсюда не отвечает — за NAT так и бывает (hairpin), и тревога придёт при живом сайте; ./opencrm.sh monitoring" "$_murl does not answer from here — usual behind NAT (hairpin), and the alert will fire on a healthy site; ./opencrm.sh monitoring")"
         fi
     fi
 
@@ -2662,6 +3212,7 @@ menu() {
         menu_item 14 "$(tr_ "Диагностика" "Diagnostics")"
         menu_item 15 "$(tr_ "Починка прав (после запуска под sudo)" "Repair ownership (after running under sudo)")"
         menu_item 16 "$(tr_ "Мониторинг и оповещения" "Monitoring and alerts")"
+        menu_item 17 "$(tr_ "Переезд на MySQL" "Move to MySQL")"
         say ""
         menu_item 0  "$(tr_ "Выход" "Exit")"
         say ""
@@ -2683,6 +3234,7 @@ menu() {
             14) cmd_doctor ;;
             15) cmd_repair ;;
             16) cmd_monitoring ;;
+            17) cmd_migrate_mysql ;;
             0|q|Q|"") say ""; exit 0 ;;
             *)  warn "$(tr_ "нет такого пункта" "no such item")" ;;
         esac
@@ -2715,6 +3267,9 @@ OpenCRM v$VERSION — установка и управление
   ./opencrm.sh repair             починка прав после запуска под sudo
   ./opencrm.sh monitoring [on|off|logs|password|reload]
                                   мониторинг, оповещения и панель /monitoring/
+  ./opencrm.sh migrate-mysql      переезд на MySQL; сайт остаётся на SQLite,
+                                  пока перенос не сверен, а осечка не требует
+                                  ничего — он с файла и не уходил
 
 Флаги установки (для неинтерактивного запуска):
   --domain example.com   домен сайта; --domain "" — работать по IP без HTTPS
@@ -2772,6 +3327,7 @@ main() {
         doctor)     cmd_doctor ;;
         repair)     cmd_repair ;;
         monitoring) cmd_monitoring "${1:-}" ;;
+        migrate-mysql) cmd_migrate_mysql ;;
         "")
             if installed; then menu; else cmd_install; fi
             ;;
