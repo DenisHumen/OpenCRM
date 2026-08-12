@@ -341,8 +341,17 @@ def test_redis_ne_smotrit_naruzhu_i_pod_parolem():
     redis = _sluzhba_redis()
     assert "ports:" not in redis, "порт Redis опубликован наружу"
     assert "expose:" in redis
-    assert "--requirepass" in redis, "Redis пускает без пароля"
-    assert "OPENCRM_REDIS_PASSWORD" in redis
+    # Проверяется АРГУМЕНТ КОМАНДЫ целиком, а не вхождение строки. Найдено
+    # нарочной поломкой сторожа: переименование `--requirepass` в
+    # `--requirepass-OTKLYUCHENO` (redis такой ключ не знает и пускает без
+    # пароля) оставляло проверку зелёной — искомая строка в новом имени есть.
+    # Тот же приём уже стоит рядом у `--maxmemory-policy`, и по той же причине.
+    assert "      - --requirepass\n" in redis, "Redis пускает без пароля"
+    # И пароль должен приезжать следующей строкой, непустым. Пустая подстановка
+    # для redis означает «пароль не задан» — то есть ту же дыру видом сбоку.
+    assert "      - --requirepass\n      - ${OPENCRM_REDIS_PASSWORD" in redis, (
+        "за --requirepass идёт не пароль из docker/.env"
+    )
 
 
 def test_u_redis_est_potolok_pamyati_i_vytesnenie():
@@ -439,6 +448,28 @@ def test_url_bazy_perepisyvaetsya_posle_sverki_a_ne_do():
     perenos = _perenos()
     # Единственное место, где боевой адрес меняется на MySQL.
     assert 'env_set "$APP_ENV" OPENCRM_DB_URL "$_target"' in perenos
+
+    # И оно ЕДИНСТВЕННОЕ, а не просто последнее. Найдено нарочной поломкой
+    # сторожа: строка `env_set "$APP_ENV" OPENCRM_DB_URL "$(env_get …
+    # OPENCRM_MIGRATE_TARGET_URL)"`, приписанная ПЕРЕД сверкой, не роняла ни
+    # одного теста — порядок объявления функций от неё не менялся, а проверялся
+    # именно он. Между тем это ровно та беда, ради которой раздел и переписан:
+    # сайт уезжает на пустую MySQL до того, как переезд признан удачным.
+    #
+    # Считаем присваивания боевому адресу во всём разделе переезда: их ровно
+    # два — переключение в `switch_to_mysql` и возврат на файл в
+    # `rollback_to_sqlite`. Третье означает, что адрес меняют где-то ещё.
+    prisvoeniya = perenos.count('env_set "$APP_ENV" OPENCRM_DB_URL')
+    assert prisvoeniya == 2, (
+        "боевой адрес базы переписывается в разделе переезда "
+        f"{prisvoeniya} раз(а) вместо двух (переключение и возврат) — "
+        "где-то он меняется мимо switch_to_mysql"
+    )
+    vozvrat = perenos[perenos.index("rollback_to_sqlite() {"):]
+    assert 'env_set "$APP_ENV" OPENCRM_DB_URL "sqlite:' in vozvrat, (
+        "второе присваивание — не возврат на SQLite; проверка выше считает не то"
+    )
+
     perekluchenie = perenos.index('env_set "$APP_ENV" OPENCRM_DB_URL "$_target"')
     for shag in ("migrate_up_services", "migrate_snapshot_sqlite", "migrate_build_schema",
                  "migrate_copy_data", "migrate_verify"):
@@ -450,6 +481,33 @@ def test_url_bazy_perepisyvaetsya_posle_sverki_a_ne_do():
     assert poryadok.index("migrate_verify") < poryadok.index("switch_to_mysql"), (
         "переключаемся на новую базу, не сверив перенос"
     )
+
+
+def test_pereezd_zhdyot_gotovnosti_mysql_prinimat_soedineniya():
+    """«Контейнер создан» — не то же самое, что «сервер слушает порт».
+
+    Сокет MySQL отвечает раньше, чем сервер начинает принимать TCP, и на этом в
+    проекте уже обжигались (потому у службы `db` и есть healthcheck по TCP).
+    Здесь ждать обязан сам переезд: шаг «построить схему» идёт одноразовым
+    контейнером сразу следом, и без ожидания первая же миграция падает на
+    «connection refused» — а выглядит это как «миграции на MySQL не прошли», то
+    есть причина называется неверно.
+
+    Найдено нарочной поломкой сторожа: замена `mysqladmin ping` на `true`
+    оставляла весь набор зелёным.
+    """
+    podyom = _perenos()
+    podyom = podyom[podyom.index("migrate_up_services() {"):]
+    podyom = podyom[: podyom.index("\n}\n")]
+    odnoy = _odnoy_strokoy(podyom)
+    assert "mysqladmin ping" in odnoy, "переезд не проверяет, что MySQL принимает соединения"
+    assert "--protocol=TCP" in odnoy, (
+        "проверка идёт через сокет: он отвечает раньше, чем сервер слушает порт"
+    )
+    # И это именно ОЖИДАНИЕ, а не одна попытка: каталог данных на медленном
+    # диске создаётся минутами.
+    assert "while" in podyom and "sleep" in podyom, "ожидания нет — спросили один раз"
+    assert "return 1" in podyom, "не дождавшись, шаг объявляет себя удачным"
 
 
 def test_kopiya_sqlite_proveryaetsya_chteniem():
@@ -508,6 +566,60 @@ def test_neudavshiysya_pereezd_ne_pryachetsya_za_zelyonym_itogom():
     itog = text[text.index("show_summary() {"):]
     itog = itog[: itog.index("\ncmd_install() {")]
     assert "MIGRATE_RESULT" in itog, "итог установки молчит о несостоявшемся переезде"
+
+
+def test_na_vremya_perenosa_sayt_zakryt_na_obsluzhivanie():
+    """Записанное во время переезда пропадало молча, а сверка была зелёная.
+
+    Проверено делом: пока шёл перенос, через экран CRM завели клиента; переезд
+    сказал «число строк и суммы совпали по каждой таблице» и «переезд
+    завершён»; после переключения этого клиента в новой базе не оказалось.
+    Предупреждение на экране было, но зелёный итог ему противоречил, а верят
+    итогу.
+
+    Лечится не предупреждением, а тем, что писать в это время НЕКОМУ: сайт
+    закрывается на обслуживание до снятия копии и открывается после
+    переключения. Тогда «сошлось» перестаёт быть обещанием и становится фактом.
+    """
+    perenos = _perenos()
+    assert "migrate_maintenance() {" in perenos, "режим обслуживания на время переноса не включается"
+
+    poryadok = perenos[perenos.index("migrate_sqlite_to_mysql() {"):]
+    vkl = poryadok.index("migrate_maintenance on")
+    assert vkl < poryadok.index("migrate_snapshot_sqlite"), (
+        "копия снимается с сайта, в который в этот момент ещё пишут"
+    )
+    # Открыть обратно обязан КАЖДЫЙ исход, включая неудачные: закрытый сайт,
+    # оставшийся закрытым из-за осечки переезда, — это простой на ровном месте,
+    # и заметит его не тот, кто переезжал, а клиент.
+    posle_zakrytiya = poryadok[vkl:]
+    kuski = posle_zakrytiya.split("migrate_failed")
+    for nomer, kusok in enumerate(kuski[:-1], start=1):
+        assert "migrate_maintenance off" in kusok, (
+            f"осечка №{nomer} после закрытия оставляет сайт закрытым навсегда"
+        )
+    hvost = poryadok[poryadok.index("if switch_to_mysql; then"):]
+    assert "migrate_maintenance off" in hvost, "после удачного переезда сайт не открыли"
+
+
+def test_sverka_sravnivaet_zhivoy_fayl_a_ne_kopiyu():
+    """Сверка по копии не может сказать про живую базу ничего.
+
+    Перенос идёт ИЗ КОПИИ — так и надо, копия неподвижна и оригинал не
+    открывается на запись. Но сверять с целью надо ЖИВОЙ файл: только это
+    отвечает на вопрос «всё ли, что есть у людей, доехало». Сравнение копии с
+    целью отвечает на другой вопрос — «дошло ли то, что мы взяли», — и зелёный
+    ответ на него выдавался за первый.
+    """
+    perenos = _perenos()
+    kopirovanie = perenos[perenos.index("migrate_copy_data() {"):]
+    kopirovanie = kopirovanie[: kopirovanie.index("\n}\n")]
+    assert '--source "sqlite:///$SNAP"' in kopirovanie, "перенос перестал идти из копии"
+
+    sverka = perenos[perenos.index("migrate_verify() {"):]
+    sverka = sverka[: sverka.index("\n}\n")]
+    assert "$SNAP" not in sverka, "сверка по-прежнему сравнивает копию с целью"
+    assert "sqlite:////app/data/opencrm.db" in sverka, "сверка не берёт живой файл"
 
 
 def test_pereezd_est_otdelnoy_komandoy():

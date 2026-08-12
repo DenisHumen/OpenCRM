@@ -134,34 +134,79 @@ fi
 # момента и до старта приложения посетитель видит именно «обновляем базу».
 write_state running migrate ""
 
-if [ -f "$DB_FILE" ]; then
-    # Ревизию читаем прямо из базы, а не через `alembic current`: тот поднимает
-    # всё окружение приложения ради одной строки, а здесь важна скорость старта.
-    CURRENT="$(sqlite3 "$DB_FILE" "SELECT version_num FROM alembic_version" 2>/dev/null || echo none)"
-    [ -n "$CURRENT" ] || CURRENT=none
-    SNAPSHOT="$DB_FILE.pre-migrate-$CURRENT"
-    if [ -f "$SNAPSHOT" ]; then
-        echo "[opencrm] копия перед миграциями уже есть: $SNAPSHOT"
-    else
-        sqlite3 "$DB_FILE" ".backup '$SNAPSHOT'"
-        echo "[opencrm] снята копия перед миграциями: $SNAPSHOT"
-    fi
-    # Держим последние пять: копии тяжёлые, а нужны только недавние — к
-    # позапрошлогодней ревизии никто не возвращается.
-    # shellcheck disable=SC2012  # имена копий делает этот же скрипт: ревизия alembic,
-    # то есть буквы и цифры. Ни пробелов, ни переводов строки в них не бывает, а
-    # `find -printf`, которым обычно советуют заменять, есть только у GNU.
-    ls -1t "$DB_FILE".pre-migrate-* 2>/dev/null | tail -n +6 | xargs -r rm -f
-fi
+WORKERS="${OPENCRM_WORKERS:-1}"
+DB_URL="${OPENCRM_DB_URL:-sqlite}"
+REDIS_URL="${OPENCRM_REDIS_URL:-}"
+
+# Копию снимаем ПО ТОМУ АДРЕСУ, ПО КОТОРОМУ РАБОТАЕМ, а не по наличию файла.
+#
+# Прежде здесь стояло `if [ -f "$DB_FILE" ]`, и на установке, переехавшей на
+# MySQL, это давало худший из возможных исходов: файл SQLite после переезда
+# остаётся лежать на месте (его нарочно не трогают), поэтому условие
+# срабатывало — и снималась копия БАЗЫ, КОТОРОЙ НИКТО НЕ ПОЛЬЗУЕТСЯ, а следом
+# шли миграции по MySQL. Ровно это и видно в журнале запуска стенда. Копии
+# рабочей базы при этом не было вовсе, то есть неудачное обновление откатывало
+# код, а базу откатывать было нечем.
+case "$DB_URL" in
+    mysql*)
+        # Ревизию и дамп берёт python: клиента MySQL в этом образе нет и не
+        # будет (обоснование — в шапке scripts/snapshot_db.py), а `sqlite3`
+        # здесь бесполезен по очевидной причине.
+        CURRENT="$(python -m scripts.snapshot_db revision 2>/dev/null || echo none)"
+        [ -n "$CURRENT" ] || CURRENT=none
+        SNAPSHOT="$DB_DIR/mysql.pre-migrate-$CURRENT.sql"
+        if [ -f "$SNAPSHOT" ]; then
+            echo "[opencrm] копия перед миграциями уже есть: $SNAPSHOT"
+        else
+            # Через временный файл: дамп, оборванный на полпути (кончилось
+            # место, убили контейнер), — это обычный текстовый файл, и от
+            # готовой копии он неотличим ничем, кроме отсутствующего хвоста.
+            # Пока он называется `.part`, следующий старт его не примет.
+            if python -m scripts.snapshot_db dump "$SNAPSHOT.part"; then
+                mv -f "$SNAPSHOT.part" "$SNAPSHOT"
+                echo "[opencrm] снята копия перед миграциями: $SNAPSHOT"
+            else
+                rm -f "$SNAPSHOT.part"
+                echo "[opencrm] не удалось снять копию базы перед миграциями." >&2
+                echo "Дальше идти нельзя: миграции вперёд необратимы, и откатывать" >&2
+                echo "неудачное обновление было бы нечем." >&2
+                write_state failed migrate "копия базы перед миграциями не снялась — см. логи контейнера"
+                exit 1
+            fi
+        fi
+        # shellcheck disable=SC2012  # имена копий делает этот же скрипт: ревизия
+        # alembic, то есть буквы и цифры. Ни пробелов, ни переводов строки.
+        ls -1t "$DB_DIR"/mysql.pre-migrate-*.sql 2>/dev/null | tail -n +6 | xargs -r rm -f
+        ;;
+    *)
+        if [ -f "$DB_FILE" ]; then
+            # Ревизию читаем прямо из базы, а не через `alembic current`: тот
+            # поднимает всё окружение приложения ради одной строки, а здесь
+            # важна скорость старта.
+            CURRENT="$(sqlite3 "$DB_FILE" "SELECT version_num FROM alembic_version" 2>/dev/null || echo none)"
+            [ -n "$CURRENT" ] || CURRENT=none
+            SNAPSHOT="$DB_FILE.pre-migrate-$CURRENT"
+            if [ -f "$SNAPSHOT" ]; then
+                echo "[opencrm] копия перед миграциями уже есть: $SNAPSHOT"
+            else
+                sqlite3 "$DB_FILE" ".backup '$SNAPSHOT'"
+                echo "[opencrm] снята копия перед миграциями: $SNAPSHOT"
+            fi
+            # Держим последние пять: копии тяжёлые, а нужны только недавние — к
+            # позапрошлогодней ревизии никто не возвращается.
+            # shellcheck disable=SC2012  # имена копий делает этот же скрипт: ревизия alembic,
+            # то есть буквы и цифры. Ни пробелов, ни переводов строки в них не бывает, а
+            # `find -printf`, которым обычно советуют заменять, есть только у GNU.
+            ls -1t "$DB_FILE".pre-migrate-* 2>/dev/null | tail -n +6 | xargs -r rm -f
+        fi
+        ;;
+esac
 
 # Несколько рабочих процессов на SQLite не работают: писатель у неё один на всю
 # базу, и два процесса не поднимаются вовсе — падают на создании схемы и посеве
 # умолчаний с «database is locked». Проверено живьём. Приложение говорит об этом
 # и само, но здесь значение известно точно, а сказать лучше до миграций, чем
 # после трёх минут ожидания.
-WORKERS="${OPENCRM_WORKERS:-1}"
-DB_URL="${OPENCRM_DB_URL:-sqlite}"
-REDIS_URL="${OPENCRM_REDIS_URL:-}"
 if [ "$WORKERS" -gt 1 ] 2>/dev/null; then
     case "$DB_URL" in
         sqlite*)

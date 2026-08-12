@@ -216,3 +216,144 @@ def test_vyborka_idyot_v_ustoychivom_poryadke():
     zapros = str(_po_poryadku(tablica))
     assert "ORDER BY" in zapros, "выборка идёт в произвольном порядке"
     assert "finance_operations.id" in zapros
+
+
+# --- построчная сверка --------------------------------------------------------
+#
+# Агрегатная сверка (число строк + суммы по целым столбцам) не видит порчу,
+# которая сама себя компенсирует. Проверено делом: одной заявке `+1`, другой
+# `-1` — число строк то же, сумма столбца та же, сверка зелёная, и сайт
+# переключают на базу с двумя неверными суммами.
+
+TOVARY = Base.metadata.tables["products"]
+
+
+@pytest.fixture()
+def istochnik_s_tovarami(tmp_path):
+    """База с деньгами в колонках: на них и ставится опыт с компенсацией."""
+    engine = _baza(tmp_path, "src-tovary.db")
+    with engine.begin() as c:
+        c.execute(
+            insert(TOVARY),
+            [
+                {"name": f"Товар {n}", "unit": "pcs", "price_minor": 1000 + n, "note": ""}
+                for n in range(1, 21)
+            ],
+        )
+    return engine
+
+
+def test_kompensiruyushchaya_porcha_ne_prohodit_sverku(istochnik_s_tovarami, tmp_path):
+    """+1 одной строке и −1 другой: итог тот же, данные врут.
+
+    Ровно этот опыт и был поставлен руками: агрегатная сверка объявила базу
+    годной, а в ней лежали две неверные суммы. Здесь она обязана назвать обе.
+    """
+    cel = _baza(tmp_path, "dst.db")
+    assert perenesti(istochnik_s_tovarami, cel) == []
+    assert proverit(istochnik_s_tovarami, cel) == []
+
+    with cel.begin() as c:
+        c.execute(TOVARY.update().where(TOVARY.c.id == 1).values(price_minor=TOVARY.c.price_minor + 1))
+        c.execute(TOVARY.update().where(TOVARY.c.id == 2).values(price_minor=TOVARY.c.price_minor - 1))
+
+    # Агрегат по-прежнему сходится — это и есть суть находки.
+    do = {t.name: _svodka(istochnik_s_tovarami, t) for t in Base.metadata.sorted_tables}
+    assert sverit(do, cel, [TOVARY]) == [], "опыт поставлен неверно: агрегат уже разошёлся"
+
+    rashozhdenia = proverit(istochnik_s_tovarami, cel)
+    assert rashozhdenia, "компенсирующая порча прошла сверку молча"
+    slitno = " ".join(rashozhdenia)
+    assert "products" in slitno and "price_minor" in slitno, rashozhdenia
+    assert "id=1" in slitno and "id=2" in slitno, ("сверка не назвала строки поимённо", rashozhdenia)
+
+
+def test_sverka_nazyvaet_nedovezyonnuyu_stroku_poimenno(istochnik_s_tovarami, tmp_path):
+    """Записанное после снятия копии — это строка, которой в цели нет.
+
+    Так пропал заведённый во время переезда клиент: перенос шёл из копии, а
+    сверка сравнивала ту же копию с целью и про живой файл сказать не могла
+    ничего. Теперь сверке дают живой источник, и она обязана назвать не только
+    «строк стало меньше», но и КАКУЮ строку не довезли: по числу человек не
+    поймёт, кого искать.
+    """
+    cel = _baza(tmp_path, "dst.db")
+    perenesti(istochnik_s_tovarami, cel)
+
+    # Так выглядит клиент, заведённый через экран CRM уже после снятия копии.
+    with istochnik_s_tovarami.begin() as c:
+        c.execute(insert(TOVARY), {"id": 777, "name": "Заведён во время переезда", "unit": "pcs", "note": ""})
+
+    rashozhdenia = proverit(istochnik_s_tovarami, cel)
+    assert rashozhdenia, "запись, сделанная во время переезда, потерялась молча"
+    slitno = " ".join(rashozhdenia)
+    assert "products" in slitno and "id=777" in slitno, rashozhdenia
+
+
+def test_chestnyy_perenos_ne_krasneet(istochnik_s_tovarami, tmp_path):
+    """Парная проверка: без неё «сверку» легко доделать до вечно красной.
+
+    Вечно красная сверка не строже — она просто отключает переезд, и первым же
+    действием её выключат.
+    """
+    cel = _baza(tmp_path, "dst.db")
+    assert perenesti(istochnik_s_tovarami, cel) == []
+    assert proverit(istochnik_s_tovarami, cel) == []
+    assert proverit(istochnik_s_tovarami, cel) == [], "сверка не должна ничего менять"
+
+
+# --- источник открывается только на чтение ------------------------------------
+
+
+def test_istochnik_otkryvaetsya_tolko_na_chtenie(istochnik_s_tovarami, tmp_path, monkeypatch):
+    """Свойство, на котором держится обратимость всего переезда.
+
+    Пока SQLite-файл цел, неудавшийся переезд стоит одной строки в конфиге:
+    вернуть `OPENCRM_DB_URL` на sqlite и перезапуститься. Испорченный стоит
+    восстановления из копии, то есть потерянного дня.
+
+    Держится это на одной строке в `main()` — приписке `mode=ro&uri=true` к
+    адресу источника. Проверки выше зовут `perenesti`/`proverit` напрямую и
+    мимо неё проходят: найдено нарочной поломкой сторожа — снятие приписки не
+    роняло ни одного теста.
+
+    Поэтому здесь зовётся именно `main()`, и проверяется не текст адреса, а
+    поведение: по соединению, которое он завёл, запись обязана быть отвергнута
+    самой базой.
+    """
+    import scripts.migrate_to_mysql as skript
+
+    put_istochnika = tmp_path / "src-tovary.db"
+    assert put_istochnika.is_file(), "фикстура положила базу в другое место"
+    cel = _baza(tmp_path, "dst.db")
+
+    zavedennye = []
+    nastoyashchiy = skript.create_engine
+
+    def zapomnit(url, *args, **kwargs):
+        engine = nastoyashchiy(url, *args, **kwargs)
+        zavedennye.append(engine)
+        return engine
+
+    monkeypatch.setattr(skript, "create_engine", zapomnit)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "migrate_to_mysql.py",
+            "--source", f"sqlite:///{put_istochnika.as_posix()}",
+            "--target", str(cel.url),
+            "--check-only",
+        ],
+    )
+
+    skript.main()
+
+    assert zavedennye, "main() не завёл ни одного движка"
+    source = zavedennye[0]
+    with pytest.raises(Exception) as beda:
+        with source.begin() as c:
+            c.execute(text("INSERT INTO site_settings (key, value) VALUES ('порча', 'x')"))
+    assert "readonly" in str(beda.value).lower(), (
+        "исходная база открыта на ЗАПИСЬ: неудачный переезд перестал быть "
+        f"бесплатным. Отказ был другой: {beda.value}"
+    )
