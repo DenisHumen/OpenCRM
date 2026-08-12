@@ -1025,6 +1025,7 @@ migrate_sqlite_to_mysql() {
     # URL раскрывается ВНУТРИ контейнера, а не подставляется здесь: иначе пароль
     # базы попал бы в командную строку docker и стал виден в `ps` любому
     # пользователю сервера.
+    # shellcheck disable=SC2016  # одинарные кавычки здесь и есть защита: см. выше
     if run_painted compose exec -T app sh -c 'exec python scripts/migrate_to_mysql.py --source "sqlite:////app/data/opencrm.db" --target "$OPENCRM_DB_URL"'; then
         run_painted compose restart app
         if wait_health 90; then
@@ -1839,6 +1840,9 @@ cmd_monitoring() {
 # согласованного снимка данных и НЕ блокирует работу. Без него mysqldump берёт
 # блокировку чтения на все таблицы, и сайт на время копии встаёт.
 dump_mysql() {
+    # shellcheck disable=SC2016  # пароль обязан раскрыться ВНУТРИ контейнера:
+    # подставленный здесь, он попал бы в командную строку docker и стал виден
+    # в `ps` любому пользователю сервера.
     compose exec -T db sh -c 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" exec mysqldump --single-transaction --routines --triggers --no-tablespaces --default-character-set=utf8mb4 -u root "$MYSQL_DATABASE"' > "$1"
 }
 
@@ -1918,6 +1922,7 @@ cmd_restore() {
         # Заливаем клиентом из образа базы, по той же причине, что и дамп.
         # Пароль опять разворачивается внутри контейнера.
         info "$(tr_ "заливаю дамп" "loading the dump")"
+        # shellcheck disable=SC2016  # пароль раскрывается внутри контейнера, см. dump_mysql
         if ! compose exec -T db sh -c 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" exec mysql --default-character-set=utf8mb4 -u root "$MYSQL_DATABASE"' < "$_db"; then
             run_painted compose up -d
             die "$(tr_ "дамп не залился — прежняя база осталась как была, её копия в $_before" "the dump did not load — the previous database is unchanged, its copy is at $_before")"

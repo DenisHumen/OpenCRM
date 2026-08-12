@@ -109,15 +109,25 @@ def test_done_tasks_leave_the_open_lists(manager_client):
 
 
 def test_undated_tasks_do_not_push_overdue_ones_down(manager_client):
-    """Задача без срока не должна оттеснять просроченную наверх списка."""
+    """Задача без срока не должна оттеснять просроченную наверх списка.
+
+    Сравниваются позиции СВОИХ двух задач, а не место в общем списке. База у
+    тестов одна на всю сессию, и «моя запись первая» — это утверждение не про
+    сортировку, а про то, что соседи не успели ничего завести. Такая проверка
+    держится ровно до первого нового теста с просроченной задачей и падает
+    потом в чужом файле, где искать её никто не станет.
+    """
     now = datetime.now(timezone.utc)
-    manager_client.post(TASKS, json={"title": "Когда-нибудь"})
+    bez_sroka = manager_client.post(TASKS, json={"title": "Когда-нибудь"}).json()
     dated = manager_client.post(
         TASKS, json={"title": "Срочное", "due_at": iso(now - timedelta(days=1))}
     ).json()
 
-    items = manager_client.get(f"{TASKS}?scope=open").json()["items"]
-    assert items[0]["id"] == dated["id"], "бессрочная задача оказалась выше просроченной"
+    poryadok = [t["id"] for t in manager_client.get(f"{TASKS}?scope=open").json()["items"]]
+    assert dated["id"] in poryadok and bez_sroka["id"] in poryadok, "задачи не попали в список"
+    assert poryadok.index(dated["id"]) < poryadok.index(bez_sroka["id"]), (
+        "бессрочная задача оказалась выше просроченной"
+    )
 
 
 def test_summary_counts_what_the_navigation_shows(manager_client):
