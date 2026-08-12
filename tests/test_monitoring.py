@@ -556,3 +556,77 @@ def test_doli_otvetov_schitayutsya_po_zhurnalu_nginx():
     assert "promtail_custom_opencrm_nginx_responses_total" in rules, (
         "правило про долю 5xx считает по другому имени, чем то, которое рождается"
     )
+
+
+def test_u_kazhdogo_khranilishcha_est_vladelets():
+    """Каталог под данные службы обязан достаться тому, от кого она работает.
+
+    Это тот отказ, который свалил стек на боевом сервере 12 августа 2026.
+    Prometheus, Alertmanager, Grafana и Loki compose запускает от `OPENCRM_UID`
+    (`user:` у каждой), а каталоги под их данные создаёт `mkdir` от того, кто
+    запустил установку, — под `sudo` это root. Дальше все четверо падают на
+    первой же записи в собственное хранилище:
+
+        prometheus   open /prometheus/queries.active: permission denied → panic
+        grafana      GF_PATHS_DATA='/var/lib/grafana' is not writable
+        loki         mkdir /loki/rules: permission denied
+
+    Снаружи это выглядит как «мониторинг не поднялся» и цикл перезапусков, и
+    про права там нет ни слова. Данные приложения уцелели только потому, что
+    `data` и `storage` установщик чинит отдельной строкой, — а каталоги
+    мониторинга в тот список не попали.
+
+    Сторож механический: берём из compose ВСЕ каталоги, которые монтируются из
+    `$OPENCRM_HOME/monitoring/`, и требуем, чтобы каждый был назван в
+    `own_monitoring_dirs`. Пятая служба со своим хранилищем, добавленная
+    завтра, обязана попасть в тот же список — иначе она повторит эту историю
+    ровно так же молча.
+    """
+    compose = _read(COMPOSE)
+    script = _script()
+
+    # Из compose приезжают и монтирования конфигов из чекаута (`./monitoring/…`),
+    # у них нет своего состояния. Оставляем только те, что идут из дома
+    # состояния. Ищем построчно, а не одним выражением: путь записан как
+    # `${OPENCRM_HOME:-${HOME}/opencrm}`, и вложенная скобка ломает любую
+    # попытку описать его регулярным выражением коротко.
+    iz_doma = set()
+    for _stroka in compose.splitlines():
+        if "OPENCRM_HOME" not in _stroka or "/monitoring/" not in _stroka:
+            continue
+        _sovpalo = re.search(r"/monitoring/([a-z-]+):", _stroka)
+        if _sovpalo:
+            iz_doma.add(_sovpalo.group(1))
+    assert iz_doma, "в compose не нашлось ни одного каталога состояния мониторинга"
+
+    telo = re.search(r"own_monitoring_dirs\(\)\s*\{(.+?)\n\}", script, re.S)
+    assert telo, "функция own_monitoring_dirs пропала — чинить владельца стало некому"
+    nazvany = set(re.findall(r"[a-z-]+", telo.group(1)))
+
+    zabyty = sorted(iz_doma - nazvany)
+    assert not zabyty, (
+        "каталоги состояния есть в compose, но им не выставляют владельца: "
+        + ", ".join(zabyty)
+        + ". Служба упадёт на первой записи в своё же хранилище."
+    )
+
+    assert "chown" in telo.group(1), (
+        "own_monitoring_dirs только создаёт каталоги — а падало именно на владельце"
+    )
+
+
+def test_vladelets_vystavlyaetsya_pered_kazhdym_podyomom():
+    """Починка обязана срабатывать и на уже сломанной установке.
+
+    Один раз при установке — мало: мониторинг включают позже, и человек с
+    поднятым стеком должен чинить его той же командой, которой включал, а не
+    походом в консоль с `chown`. Поэтому владелец выставляется перед каждым
+    подъёмом, а не единожды.
+    """
+    script = _script()
+    telo = re.search(r"monitoring_apply\(\)\s*\{(.+?)\n\}", script, re.S)
+    assert telo, "monitoring_apply пропала"
+    assert "own_monitoring_dirs" in telo.group(1), (
+        "перед подъёмом стека владельца никто не чинит — сломанная установка "
+        "останется сломанной после `./opencrm.sh monitoring on`"
+    )
