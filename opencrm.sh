@@ -1293,7 +1293,7 @@ apply_env_change() {
     fi
 }
 
-# Попросить nginx перечитать конфиг.
+# Попросить nginx перечитать конфиг — с повторным рендером шаблона.
 #
 # Файлы nginx примонтированы из чекаута, а не лежат в образе: `git pull` меняет
 # их на диске мгновенно. Но `compose up -d --build` пересоздаёт только те службы,
@@ -1301,16 +1301,39 @@ apply_env_change() {
 # другое, и он продолжает работать с конфигом, прочитанным при своём запуске.
 # Сам он за файлами не следит.
 #
-# Проверено репетицией обновления: compose тронул только `app`, а nginx ещё
-# долго раздавал старые правила. Само оно чинится циклом перезагрузки раз в
-# шесть часов (продление сертификата), но полагаться на «когда-нибудь за шесть
-# часов» при обновлении нельзя.
+# ПОЧЕМУ ЗДЕСЬ СКРИПТ, А НЕ `nginx -s reload`. Голый reload перечитывает уже
+# отрендеренный `default.conf` и его include-ы, но заново подставить домен в
+# шаблон он не умеет. Значит правки `http.conf.template`/`https.conf.template`
+# им не применяются ВООБЩЕ НИКОГДА. На боевом это кончилось так: include
+# дописали в шаблон, а ссылку на него — в locations.inc; include не приехал,
+# ссылка приехала, и nginx стал отвергать конфиг целиком на каждом reload. Пять
+# суток — потому что ошибка глушилась `>/dev/null 2>&1 || true`. Разбор и выбор
+# «перечитывание против перезапуска» — в шапке docker/nginx/reload.sh.
 #
 # Перезагрузка мягкая: начатые запросы дорабатываются, порты не переоткрываются,
-# простоя нет. Молчаливая: nginx может быть не поднят вовсе (у кого-то свой
-# снаружи), и ронять из-за этого удавшееся обновление незачем.
+# простоя нет; неудачный конфиг не применяется, и работает прежний.
+#
+# Не смертельная, но и не молчаливая. Не смертельная — nginx может быть не
+# поднят вовсе (у кого-то свой снаружи), и ронять из-за этого удавшуюся
+# установку незачем. Не молчаливая — ровно молчание и стоило проекту пяти
+# суток с открытыми наружу метриками и адресами клиентов в логах.
+# Три попытки, потому что зовут эту функцию сразу после `compose up -d`: контейнер
+# уже создан, а мастер nginx мог ещё не подняться, и `compose exec` в это окно
+# отвечает отказом. Без повторов установка ругалась бы на ровном месте — а
+# предупреждение, которое врёт, читать перестают ровно так же, как молчание.
 reload_nginx() {
-    compose exec -T nginx nginx -s reload >/dev/null 2>&1 || true
+    _rl_try=3
+    while [ "$_rl_try" -gt 0 ]; do
+        if _rl_out=$(compose exec -T nginx sh /opencrm/reload.sh 2>&1); then
+            return 0
+        fi
+        _rl_try=$((_rl_try - 1))
+        [ "$_rl_try" -eq 0 ] || sleep 2
+    done
+    warn "$(tr_ "nginx не перечитал конфиг — правки шаблонов и путь /monitoring/ не применились" \
+                "nginx did not re-read its config — template changes and /monitoring/ are not applied")"
+    printf '%s\n' "$_rl_out" | sed 's/^/        /'
+    return 0
 }
 
 build_and_start() {
@@ -1410,7 +1433,14 @@ issue_certificate() {
         # процесса, поэтому контейнер приложения пересоздаётся, а не просто ждёт.
         env_set "$APP_ENV" OPENCRM_BASE_URL "https://$_domain"
         apply_env_change
-        run_painted compose restart nginx
+        # Раньше здесь был `compose restart nginx`, и он был обязателен: выбор
+        # шаблона (443 или только 80) делался единственный раз, при старте
+        # контейнера, а reload перечитал бы тот же отрендеренный файл. Ценой был
+        # единственный штатный простой сайта во всём сценарии установки —
+        # 1-3 секунды отказа соединения, без заглушки: её отдаёт сам nginx.
+        # Теперь шаблон выбирает reload.sh, и по тому же признаку — файлу
+        # fullchain.pem. Перезапуск стал не нужен, простой ушёл.
+        reload_nginx
         ok "$(tr_ "HTTPS включён, cookie получили флаг Secure, продление идёт само" "HTTPS is on, cookies got the Secure flag, renewal runs by itself")"
     else
         warn "$(tr_ "certbot не справился — сайт остаётся на HTTP" "certbot failed — the site stays on HTTP")"
@@ -1732,9 +1762,37 @@ own_monitoring_dirs() {
     done
 }
 
+# Поднять (или снять) службы мониторинга И ОБЯЗАТЕЛЬНО дать об этом знать nginx.
+#
+# Без последней строки включение мониторинга не делало ровно ничего видимого.
+# Панель у Grafana своего порта не имеет намеренно (`expose`, а не `ports`):
+# единственный вход — через nginx, путь /monitoring/. А nginx про этот путь
+# узнаёт из конфига, который он прочитал при своём запуске, — то есть, возможно,
+# полгода назад. `compose up -d` его не пересоздаёт: у службы не меняются ни
+# образ, ни описание. Проверено на боевом: контейнеры поднялись, все восемь
+# здоровы, а /monitoring/ отвечал так, будто мониторинг выключен.
+#
+# ПЕРЕЧИТЫВАНИЕ, А НЕ ПЕРЕЗАПУСК — и вот цена обоих, вслух.
+#
+# `compose restart nginx` — это SIGTERM процессу nginx, то есть FAST SHUTDOWN:
+# рабочие процессы гибнут немедленно, начатые запросы не доигрываются. Снаружи
+# 1-3 секунды НЕ страницы обслуживания, а отказа соединения — заглушку отдаёт
+# сам nginx, и пока его нет, отдавать её некому. Рвутся загрузки файлов (лимит
+# тела 220 МБ), теряется кэш TLS-сессий. И главная беда: `nginx -t` в entrypoint
+# стоит под `set -e` при `restart: unless-stopped` — неудачный конфиг здесь
+# означает не «не применилось», а лежащий сайт в цикле перезапусков.
+#
+# `nginx -s reload` — SIGHUP: старые рабочие доигрывают начатые запросы, сокеты
+# не переоткрываются, простоя нет вовсе. Неудачный конфиг просто не применяется.
+# Раньше единственным доводом за перезапуск было то, что reload не рендерит
+# шаблон заново; теперь это делает reload.sh, и довод исчез.
+#
+# Платить простоем за включение мониторинга — тем более не то: мониторинг
+# заводят, чтобы сайт лежал реже, а не чтобы уронить его при включении.
 monitoring_apply() {
     own_monitoring_dirs
     run_painted compose up -d --remove-orphans
+    reload_nginx
 }
 
 monitoring_remove() {
@@ -1754,6 +1812,34 @@ monitoring_state() {
         _mstate="$(tr_ "выключен" "off")"
     fi
     printf '%s' "$_mstate"
+}
+
+# Куда идти смотреть панель — печатается и после включения, и на экране
+# состояния, одним текстом.
+#
+# Включённый блок обязан ЗАЖИГАТЬ что-то видимое. Раньше `monitoring on`
+# заканчивалось словом «включён», и человек оставался без адреса: панель у
+# Grafana своего порта не имеет намеренно, найти её угадыванием нельзя.
+#
+# Пароль здесь НЕ печатается. Он и так лежит в docker/.env с правами 600, а
+# вывод команды уходит в историю оболочки, в скроллбек и в чужой лог, если
+# команду запускали из автоматизации. Печатать его один раз при генерации
+# (`show_summary`) — это осознанное исключение; повторять при каждом включении
+# значило бы разложить пароль от карты всей системы по всем логам сразу.
+monitoring_panel_hint() {
+    _phurl=$(env_get "$DOCKER_ENV" OPENCRM_MONITOR_URL 2>/dev/null || true)
+    [ -n "$_phurl" ] || _phurl=$(env_get "$APP_ENV" OPENCRM_BASE_URL 2>/dev/null || true)
+    if [ -z "$_phurl" ]; then
+        # Домена нет — запуск по IP в локальной сети. `lan_ip` возвращает пустую
+        # строку с нулевым кодом, поэтому проверяется значение, а не `||`.
+        _phip=$(lan_ip)
+        [ -n "$_phip" ] || _phip="127.0.0.1"
+        _phurl="http://$_phip"
+    fi
+    say "$(tr_ "    Панель:   ${_phurl}/monitoring/   (логин admin)" \
+             "    Dashboard: ${_phurl}/monitoring/   (login admin)")"
+    say "$(tr_ "    Пароль:   строка OPENCRM_GRAFANA_PASSWORD в docker/.env; сменить — ./opencrm.sh monitoring password" \
+             "    Password:  the OPENCRM_GRAFANA_PASSWORD line in docker/.env; change it with ./opencrm.sh monitoring password")"
 }
 
 cmd_monitoring() {
@@ -1778,6 +1864,7 @@ cmd_monitoring() {
             sync_alert_channel || warn "$(tr_ "канал Telegram не настроен — тревоги никуда не пойдут" "no Telegram channel — alerts will go nowhere")"
             monitoring_apply
             ok "$(tr_ "включён" "on")"
+            monitoring_panel_hint
             return 0
             ;;
         off)
@@ -1793,6 +1880,11 @@ cmd_monitoring() {
             # их сами раз в пять минут (см. entrypoint.sh каждой). Эта команда —
             # для тех случаев, когда ждать не хочется.
             run_painted compose restart prometheus alertmanager
+            # nginx — в том же списке, и это не для симметрии: путь /monitoring/
+            # описан в ЕГО конфиге, и пока он не перечитан, панель недостижима
+            # при полностью здоровой Grafana. Мягко, без простоя (см.
+            # reload_nginx).
+            reload_nginx
             ok "$(tr_ "конфиги и правила перечитаны" "configs and rules re-read")"
             return 0
             ;;
@@ -1824,8 +1916,7 @@ cmd_monitoring() {
 
     say "$(tr_ "    Состояние: $(monitoring_state)" "    State: $(monitoring_state)")"
     if compose_profile_enabled monitoring; then
-        _murl=$(env_get "$DOCKER_ENV" OPENCRM_MONITOR_URL 2>/dev/null || true)
-        say "$(tr_ "    Панель:    ${_murl}/monitoring/  (логин admin)" "    Dashboard: ${_murl}/monitoring/  (login admin)")"
+        monitoring_panel_hint
         if [ -n "$(env_get "$DOCKER_ENV" OPENCRM_MONITORING_TELEGRAM_TOKEN 2>/dev/null || true)" ]; then
             say "$(tr_ "    Тревоги:   Telegram, чат $(env_get "$DOCKER_ENV" OPENCRM_MONITORING_TELEGRAM_CHAT)" "    Alerts:    Telegram, chat $(env_get "$DOCKER_ENV" OPENCRM_MONITORING_TELEGRAM_CHAT)")"
         else
@@ -2341,10 +2432,36 @@ cmd_doctor() {
             probe "$(tr_ "мониторинг" "monitoring")" 0 "$(tr_ "профиль включён, а контейнеров нет — ./opencrm.sh monitoring on" "profile is on but there are no containers — ./opencrm.sh monitoring on")"
         fi
 
+        # «Панель открывается?» — ВОПРОСОМ К ПАНЕЛИ, а не по наличию пароля.
+        #
+        # Прежде здесь стояла проверка непустого OPENCRM_GRAFANA_PASSWORD, и она
+        # рапортовала «закрыта паролем» ровно в том случае, ради которого
+        # диагностику и запускают: контейнеры здоровы, пароль на месте, а панель
+        # недостижима, потому что nginx работает с конфигом, отрендеренным до
+        # появления пути /monitoring/. На боевом это продержалось пять суток.
+        #
+        # Идём тем же путём, что и человек, — через nginx на 127.0.0.1. Редирект
+        # проходится (`-L`): при включённом HTTPS порт 80 отвечает 301 на
+        # https://, а сертификат выписан на домен, не на адрес, поэтому `-k`.
+        # Проверка не про TLS, она про то, доезжает ли запрос до Grafana.
+        _panel=$(curl -sk -L --max-redirs 5 --max-time 8 http://127.0.0.1/monitoring/ 2>/dev/null || true)
+        case "$_panel" in
+            *[Gg]rafana*)
+                probe "$(tr_ "панель" "dashboard")" 1 "$(tr_ "открывается: /monitoring/, логин admin" "opens at /monitoring/, login admin")" ;;
+            *"Monitoring is switched off"*)
+                probe "$(tr_ "панель" "dashboard")" 0 "$(tr_ "nginx отвечает «выключено», а профиль включён — ./opencrm.sh monitoring on" "nginx answers \"switched off\" while the profile is on — ./opencrm.sh monitoring on")" ;;
+            "")
+                probe "$(tr_ "панель" "dashboard")" 0 "$(tr_ "/monitoring/ не отвечает вовсе — поднят ли nginx: ./opencrm.sh logs nginx" "/monitoring/ does not answer at all — is nginx up: ./opencrm.sh logs nginx")" ;;
+            *)
+                probe "$(tr_ "панель" "dashboard")" 0 "$(tr_ "по /monitoring/ отвечает не панель: nginx работает со старым конфигом — ./opencrm.sh monitoring reload" "/monitoring/ is answered by something other than the dashboard: nginx runs an old config — ./opencrm.sh monitoring reload")" ;;
+        esac
+
+        # Пароль — отдельной строкой: панель может открываться и при пустом
+        # пароле, и это худший из исходов, а не лучший.
         if [ -n "$(env_get "$DOCKER_ENV" OPENCRM_GRAFANA_PASSWORD 2>/dev/null || true)" ]; then
-            probe "$(tr_ "панель" "dashboard")" 1 "$(tr_ "закрыта паролем" "password protected")"
+            probe "$(tr_ "пароль панели" "dashboard password")" 1 "$(tr_ "задан (docker/.env)" "set (docker/.env)")"
         else
-            probe "$(tr_ "панель" "dashboard")" 0 "$(tr_ "пароль пуст — Grafana пустит по admin/admin; ./opencrm.sh monitoring password" "password is empty — Grafana will accept admin/admin; ./opencrm.sh monitoring password")"
+            probe "$(tr_ "пароль панели" "dashboard password")" 0 "$(tr_ "пуст — Grafana пустит по admin/admin; ./opencrm.sh monitoring password" "empty — Grafana will accept admin/admin; ./opencrm.sh monitoring password")"
         fi
 
         if [ -n "$(env_get "$DOCKER_ENV" OPENCRM_MONITORING_TELEGRAM_TOKEN 2>/dev/null || true)" ]; then

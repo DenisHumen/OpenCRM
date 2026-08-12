@@ -16,11 +16,16 @@
 приложения не должен расти ради тестов.
 """
 
+import asyncio
 import importlib
 import re
 from pathlib import Path
 
+import httpx
 import pytest
+
+from core.services import monitoring_service
+from tests.conftest import API as API_PREFIX
 
 ROOT = Path(__file__).resolve().parent.parent
 COMPOSE = ROOT / "docker" / "docker-compose.yml"
@@ -629,4 +634,384 @@ def test_vladelets_vystavlyaetsya_pered_kazhdym_podyomom():
     assert "own_monitoring_dirs" in telo.group(1), (
         "перед подъёмом стека владельца никто не чинит — сломанная установка "
         "останется сломанной после `./opencrm.sh monitoring on`"
+    )
+
+
+# --- включение блока обязано что-то ЗАЖИГАТЬ ---------------------------------
+#
+# Правило проекта: выключенный блок исчезает целиком, включённый — появляется.
+# У мониторинга единственное видимое проявление — панель на /monitoring/, и
+# ведёт туда nginx. Который про этот путь узнаёт из конфига, прочитанного при
+# своём запуске, — то есть, возможно, полгода назад.
+
+
+def _vetka_monitoringa(script: str, name: str) -> str:
+    """Одна ветка `case` внутри `cmd_monitoring` — целиком, до своего `;;`."""
+    telo = re.search(r"\ncmd_monitoring\(\) \{(.+?)\n\}", script, re.S)
+    assert telo, "cmd_monitoring пропала"
+    vetka = re.search(rf"\n        {name}\)\n(.*?)\n            ;;", telo.group(1), re.S)
+    assert vetka, f"в cmd_monitoring нет ветки {name}"
+    return vetka.group(1)
+
+
+def test_vklyuchenie_monitoringa_daet_nginx_uznat_o_paneli():
+    """Живой случай 12 августа 2026: все восемь контейнеров подняты и здоровы, а
+    /monitoring/ отвечает так, будто мониторинг выключен.
+
+    Причина не в мониторинге. `compose up -d` не пересоздаёт nginx — у него не
+    меняются ни образ, ни описание службы, — а сам он за файлами не следит.
+    Значит включение обязано попросить его перечитать конфиг; иначе панель
+    заработает «когда-нибудь», а человек об этом не узнает никак.
+    """
+    script = _script()
+    telo = re.search(r"monitoring_apply\(\)\s*\{(.+?)\n\}", script, re.S)
+    assert telo, "monitoring_apply пропала"
+    assert "reload_nginx" in telo.group(1), (
+        "включение мониторинга не даёт nginx узнать о пути /monitoring/ — "
+        "панель останется недостижимой при полностью здоровой Grafana"
+    )
+    # Все ветки команды проходят через monitoring_apply — значит и включение, и
+    # выключение, и переключение логов.
+    for vetka in ("on", "off", "logs"):
+        assert "monitoring_apply" in _vetka_monitoringa(script, vetka), (
+            f"ветка {vetka} поднимает стек мимо monitoring_apply и остаётся без reload_nginx"
+        )
+
+
+def test_vyklyuchenie_ostavlyaet_vnyatnoe_vyklyucheno_a_ne_502():
+    """Выключение — та же беда с другой стороны.
+
+    Пока nginx помнит конфиг с работающим `proxy_pass` в Grafana, снятой уже
+    поимённо, /monitoring/ отдаёт 502 вместо честного «Monitoring is switched
+    off». Внятный ответ описан в locations.inc и применяется тем же
+    перечитыванием.
+    """
+    script = _script()
+    vetka = _vetka_monitoringa(script, "off")
+    assert "monitoring_remove" in vetka, "контейнеры не снимаются"
+    assert "monitoring_apply" in vetka, "выключение идёт мимо monitoring_apply"
+    # Цепочка целиком: off → monitoring_apply → reload_nginx. Без последнего
+    # звена nginx помнит рабочий proxy_pass в снятую Grafana и отдаёт 502.
+    primenenie = re.search(r"monitoring_apply\(\)\s*\{(.+?)\n\}", script, re.S)
+    assert primenenie and "reload_nginx" in primenenie.group(1), (
+        "после снятия контейнеров nginx не перечитывает конфиг — /monitoring/ будет отдавать 502 "
+        "вместо честного «Monitoring is switched off»"
+    )
+    # Сам внятный ответ обязан существовать в конфиге.
+    config = _read(LOCATIONS)
+    assert "@opencrm_monitoring_off" in config
+    assert "Monitoring is switched off" in config
+
+
+def test_posle_vklyucheniya_chelovek_uznayot_adres_paneli_no_ne_parol():
+    """Панель у Grafana своего порта не имеет намеренно — угадать адрес нельзя.
+
+    Значит включение обязано его назвать: адрес сайта плюс /monitoring/ и логин
+    admin. Пароль — не печатать: он лежит в docker/.env с правами 600, а вывод
+    команды уходит в историю оболочки и в чужие логи.
+    """
+    script = _script()
+    assert "monitoring_panel_hint" in _vetka_monitoringa(script, "on"), (
+        "включение заканчивается словом «включён» и не говорит, куда идти смотреть"
+    )
+
+    telo = re.search(r"monitoring_panel_hint\(\)\s*\{(.+?)\n\}", script, re.S)
+    assert telo, "подсказки с адресом панели нет"
+    hint = telo.group(1)
+    assert "/monitoring/" in hint, "в подсказке нет адреса панели"
+    assert "admin" in hint, "в подсказке нет логина"
+    assert "OPENCRM_GRAFANA_PASSWORD" in hint, "не сказано, где взять пароль"
+    # Значение пароля не разворачивается: в подсказке только имя переменной и
+    # команда смены. `env_get … OPENCRM_GRAFANA_PASSWORD` здесь означал бы
+    # печать самого пароля.
+    assert not re.search(r"env_get[^\n]*OPENCRM_GRAFANA_PASSWORD", hint), (
+        "подсказка достаёт и печатает сам пароль"
+    )
+
+
+def test_doctor_proveryaet_panel_zaprosom_a_ne_obeshchaniem():
+    """Строка «панель» обязана отвечать на вопрос «открывается?».
+
+    Прежняя проверка смотрела на непустой OPENCRM_GRAFANA_PASSWORD и потому
+    рапортовала «закрыта паролем» ровно тогда, когда панель была недостижима:
+    контейнеры здоровы, пароль на месте, nginx работает с конфигом, в котором
+    пути /monitoring/ ещё нет. Именно это и продержалось пять суток.
+    """
+    script = _script()
+    telo = re.search(r"cmd_doctor\(\)\s*\{(.+?)\n\}", script, re.S)
+    assert telo, "cmd_doctor пропала"
+    body = telo.group(1)
+    assert re.search(r"curl[^\n]*/monitoring/", body), (
+        "диагностика не ходит на /monitoring/ — про доступность панели она только обещает"
+    )
+    # Ответ разбирается по существу: панель, честное «выключено» и всё
+    # остальное — это три разных диагноза, а не один.
+    assert "Monitoring is switched off" in body, (
+        "диагностика не отличает честное «выключено» от протухшего конфига nginx"
+    )
+
+
+# --- то же обещание со стороны интерфейса ------------------------------------
+#
+# Предыдущий раздел чинит путь к панели на сервере. Здесь — вторая половина той
+# же жалобы: «включаю Мониторинг в модулях, а на сайте ничего не меняется».
+# Так и было: `monitoring` оставался единственным блоком системы, включение
+# которого не зажигало ни пункта меню, ни экрана, ни ссылки, — а единственное,
+# что он закрывал (`/api/v1/metrics`), снаружи не видно вовсе (nginx: deny all).
+#
+# Проверки читают `.tsx` как текст — тем же приёмом и с тем же разменом, что в
+# `tests/test_screens.py`: собранного фронтенда в прогоне нет, а правило простое
+# и проверяется чтением.
+
+CRM = ROOT / "web" / "frontend" / "crm" / "src"
+SIDEBAR = CRM / "components" / "Sidebar.tsx"
+APP = CRM / "App.tsx"
+SCREEN = CRM / "screens" / "Monitoring.tsx"
+I18N = CRM / "lib" / "i18n.ts"
+
+#: Адрес экрана. Именно `/server`, и это не вкусовщина — см. проверку ниже.
+SCREEN_PATH = "/server"
+
+
+def _perevody(key: str) -> list[str]:
+    """Значения ключа в обеих редакциях словаря — английской и русской."""
+    found = re.findall(rf'^  {key}:\s*\n?\s*"((?:[^"\\]|\\.)*)"', _read(I18N), re.M)
+    assert len(found) == 2, (
+        f"ключ {key} обязан быть в обеих редакциях i18n.ts, а найдено {len(found)}"
+    )
+    return found
+
+
+def test_vklyuchennyy_blok_zazhigaet_punkt_menyu():
+    """Пункт меню закрыт блоком И правом и ведёт на свой экран.
+
+    Отбор в сайдбаре один на все пункты (`allowed`), поэтому достаточно, чтобы у
+    пункта стояли оба поля: выключенный блок и нехватка права убирают его тем же
+    правилом, каким убирают склад и почту.
+
+    Право своё, а не `settings.manage`: карта сервера менеджеру не нужна, а
+    дежурному по серверу нужна — и выдать её ролью, не отдавая заодно логотип
+    сайта и переключатели блоков, можно только отдельным правом.
+    """
+    sidebar = _read(SIDEBAR)
+    punkt = re.search(r"\{[^{}]*module:\s*\"monitoring\"[^{}]*\}", sidebar)
+    assert punkt, "включение блока «Мониторинг» не зажигает пункта меню"
+    body = punkt.group(0)
+    assert 'perm: "monitoring.view"' in body, (
+        "пункт «Мониторинг» открыт всем, кто видит «Админ», — карта сервера не для менеджера"
+    )
+    assert f'to: "{SCREEN_PATH}"' in body, f"пункт ведёт не на {SCREEN_PATH}"
+    assert SCREEN.exists(), "экрана, на который ведёт пункт меню, нет"
+
+
+def test_ekran_zakryt_i_blokom_i_pravom_v_tom_zhe_poryadke():
+    """Порядок обёрток тот же, что порядок проверок на сервере: блок, потом право."""
+    marshrut = re.search(
+        r'<Route element=\{<ModuleRoute module="monitoring" />\}>(.*?)</Route>',
+        _read(APP),
+        re.S,
+    )
+    assert marshrut, "маршрут экрана не закрыт блоком monitoring"
+    inside = marshrut.group(1)
+    assert '<PermRoute perm="monitoring.view" />' in inside, (
+        "маршрут закрыт блоком, но не правом: закладка откроет карту сервера кому угодно"
+    )
+    assert f'path="{SCREEN_PATH}"' in inside
+
+
+def test_ekran_ne_stoit_na_adrese_kotoryy_zabiraet_nginx():
+    """`/monitoring` принадлежит nginx, и экрану там не место.
+
+    `location = /monitoring { return 301 /monitoring/; }` уводит в Grafana.
+    Клиентская навигация внутри React сработала бы, а F5, закладка и ссылка из
+    письма — нет: экран открывался бы через раз, и обнаружилось бы это только на
+    боевом сервере.
+    """
+    config = _read(LOCATIONS)
+    assert "location = /monitoring {" in config and "return 301 /monitoring/;" in config, (
+        "перехвата больше нет — проверка смотрит не туда"
+    )
+    for path in (APP, SIDEBAR):
+        text = _read(path)
+        assert 'to: "/monitoring"' not in text, f"{path.name}: пункт уводит в Grafana, а не на экран"
+        assert 'path="/monitoring"' not in text, (
+            f"{path.name}: маршрут SPA встал под перехват nginx"
+        )
+
+
+def test_chelovek_znaet_chto_otkroet_i_chto_u_nego_sprosyat():
+    """Панель — чужая программа со своим входом.
+
+    Нажавший «Открыть панель» впервые упирается в форму пароля, которого у него
+    нет на руках; сказать об этом обязан экран, а не догадка. Сам пароль при этом
+    не печатается нигде: он уезжает только в контейнер Grafana, приложению его не
+    передают.
+    """
+    screen = _read(SCREEN)
+    assert 'target="_blank"' in screen and 'rel="noreferrer"' in screen, (
+        "ссылка на панель открывается поверх CRM — из чужой программы обратно не вернуться"
+    )
+    for value in _perevody("monSignIn"):
+        assert "admin" in value, "не сказано, под каким логином пустят"
+        assert "OPENCRM_GRAFANA_PASSWORD" in value, "не сказано, где взять пароль"
+    for value in _perevody("monOpensWhat"):
+        assert "/monitoring/" in value, "не сказано, что именно откроется"
+
+
+# --- ручка состояния ---------------------------------------------------------
+
+
+@pytest.fixture()
+def blok_monitoringa(root_client):
+    """Переключатель блока, возвращающий состояние обратно.
+
+    Состояние блоков глобальное и переживает файл, а база у проверок общая:
+    оставленный включённым мониторинг заставил бы посторонние проверки ходить по
+    сети к несуществующим именам.
+    """
+    from core.services import monitoring_service
+
+    listed = root_client.get(f"{API_PREFIX}/modules").json()["items"]
+    bylo = next(item["enabled"] for item in listed if item["key"] == MODULE_KEY)
+
+    def pereklyuchit(enabled: bool) -> None:
+        # Отчёт кэшируется на несколько секунд: без сброса вторая проверка
+        # отвечала бы за первую.
+        monitoring_service.invalidate()
+        response = root_client.post(f"{API_PREFIX}/modules/{MODULE_KEY}", json={"enabled": enabled})
+        assert response.status_code == 200, response.text
+
+    yield pereklyuchit
+    pereklyuchit(bylo)
+
+
+def test_sostoyanie_zakryto_snachala_blokom_a_potom_pravom(
+    root_client, manager_client, blok_monitoringa
+):
+    """Выключенный блок отвечает «блок выключен», а не «нет права».
+
+    Порядок задан `require_perm` и переставлять его нельзя: иначе владелец пойдёт
+    искать несуществующую ошибку в матрице доступов вместо того, чтобы включить
+    переключатель.
+    """
+    put = f"{API_PREFIX}/system/monitoring"
+
+    blok_monitoringa(False)
+    zakryto = root_client.get(put)
+    assert zakryto.status_code == 403
+    assert zakryto.json()["error"]["code"] == "module_disabled"
+
+    blok_monitoringa(True)
+    otkaz = manager_client.get(put)
+    assert otkaz.status_code == 403, otkaz.text
+    assert otkaz.json()["error"]["code"] == "permission_denied"
+    assert "monitoring.view" in otkaz.json()["error"]["message"]
+
+    otvet = root_client.get(put)
+    assert otvet.status_code == 200, otvet.text
+    telo = otvet.json()
+    assert set(telo) == {
+        "checked_at",
+        "panel",
+        "grafana",
+        "targets",
+        "alerts",
+        "channel",
+        "logs",
+    }
+    assert telo["panel"]["path"] == "/monitoring/"
+    # Секретов в ответе нет и быть не может: приложению их не передают.
+    assert "password" not in otvet.text.lower()
+
+
+def test_nedostupnyy_stek_eto_stroka_a_ne_pyatisotka(root_client, blok_monitoringa):
+    """В прогоне имён `nginx`, `grafana` и `prometheus` не существует вовсе.
+
+    Ровно то же бывает и на живой машине: мониторинг выключен, контейнеров нет.
+    Отчёт о наблюдении, отвечающий 500 из-за этого, — наблюдение, выключившее
+    само себя; вдобавок перебор всех GET-адресов в `test_modules.py` требует,
+    чтобы ни один адрес не отвечал пятисоткой.
+    """
+    blok_monitoringa(True)
+    otvet = root_client.get(f"{API_PREFIX}/system/monitoring")
+    assert otvet.status_code == 200, otvet.text
+    telo = otvet.json()
+    assert telo["panel"]["state"] in ("open", "off", "stale", "no_answer")
+    # Форма ответа одна при любом исходе: ключ не исчезает, а приходит с честным
+    # «не отвечает».
+    assert isinstance(telo["grafana"]["reachable"], bool)
+    assert isinstance(telo["targets"]["down"], list)
+    assert telo["logs"]["on"] in (True, False, None)
+
+
+# --- три беды, которые снаружи выглядят одинаково ----------------------------
+#
+# Самая ценная часть отчёта — разбор ответа на `/monitoring/`. Ради него всё и
+# затевалось: «стек не поднят» и «nginx работает по старому конфигу» человек не
+# различает ничем, и второе продержалось на боевом пять суток. Разбор проверяем
+# подставным транспортом httpx — без единого контейнера и без сети.
+
+
+def _razbor(handler) -> str:
+    async def run() -> str:
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(handler), follow_redirects=False
+        ) as client:
+            return await monitoring_service._panel_answer(client, "http")
+
+    return asyncio.run(run())
+
+
+def test_put_k_paneli_razlichaet_bedy_kotorye_snaruzhi_odinakovy():
+    spa = (
+        '<!doctype html><html><head><title>OpenCRM</title></head>'
+        '<body><div id="root"></div></body></html>'
+    )
+
+    # Grafana без сессии уводит на свою форму входа — путь работает.
+    grafana = _razbor(lambda _r: httpx.Response(302, headers={"location": "/monitoring/login"}))
+    assert grafana == "open"
+
+    # Конфиг свежий, контейнеров нет: locations.inc отвечает внятным «выключено».
+    vyklyucheno = _razbor(
+        lambda _r: httpx.Response(503, text="Monitoring is switched off (./opencrm.sh monitoring)")
+    )
+    assert vyklyucheno == "off"
+
+    # Живой случай 12 августа: блока /monitoring/ в конфиге нет, запрос ушёл в
+    # `location /`, приложение отдало SPA — снаружи неотличимо от «выключено».
+    assert _razbor(lambda _r: httpx.Response(200, text=spa)) == "stale"
+    assert _razbor(lambda _r: httpx.Response(200, text="<html><body>Grafana</body></html>")) == "open"
+
+    def net_svyazi(_request):
+        raise httpx.ConnectError("no such host")
+
+    assert _razbor(net_svyazi) == "no_answer"
+
+
+def test_proba_prohodit_redirekt_nginxa_s_http_na_https():
+    """При включённом TLS порт 80 отвечает 301 — и это не ответ Grafana.
+
+    Схему нарочно не берём из `base_url`: он говорит, каким сайт объявлен наружу,
+    а нужен тот конфиг, с которым nginx работает на самом деле.
+    """
+
+    def handler(request):
+        if request.url.scheme == "http":
+            return httpx.Response(
+                301, headers={"location": f"https://{request.url.host}/monitoring/"}
+            )
+        return httpx.Response(302, headers={"location": "/monitoring/login"})
+
+    report = monitoring_service._blank()
+
+    async def run() -> None:
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(handler), follow_redirects=False
+        ) as client:
+            await monitoring_service._probe_panel(client, report)
+
+    asyncio.run(run())
+    assert report["panel"]["state"] == "open", (
+        "проба остановилась на редиректе nginx и объявила рабочую панель недостижимой"
     )

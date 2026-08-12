@@ -551,6 +551,26 @@ button { font-family: var(--sans); }
 .module-about { color: var(--muted); font-size: 12.5px; line-height: 1.5; }
 .module-why { color: var(--faint); font-size: 11.5px; line-height: 1.5; }
 
+/* Мониторинг: строка состояния «подпись — ответ».
+   Не `.list-row` и не `.module-row`: обе подсвечиваются под мышью и стоят с
+   курсором-указателем, то есть обещают нажатие. Здесь нажимать нечего — строка
+   отвечает на вопрос, а не ведёт куда-то.
+   На узком окне подпись уезжает над ответом: колонка в 150px и текст «nginx
+   работает по старому конфигу» рядом не помещаются, а именно этот текст и есть
+   то, ради чего экран открыли. */
+.state-row {
+  display: flex; align-items: flex-start; gap: 13px;
+  padding: 13px 16px; border-bottom: 1px solid var(--line);
+}
+.state-row:last-child { border-bottom: none; }
+.state-name { flex: none; width: 150px; color: var(--muted); font-size: 12.5px; padding-top: 2px; }
+.state-value { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+.state-note { color: var(--faint); font-size: 11.5px; line-height: 1.5; word-break: break-word; }
+@media (max-width: 560px) {
+  .state-row { flex-direction: column; gap: 6px; }
+  .state-name { width: auto; padding-top: 0; }
+}
+
 /* Компактный список бланков внутри карточки сделки */
 .doc-mini-list { display: flex; flex-direction: column; }
 .doc-mini {

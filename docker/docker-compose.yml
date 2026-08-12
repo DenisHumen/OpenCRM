@@ -195,6 +195,10 @@ services:
     volumes:
       - ./nginx/templates:/opencrm/templates:ro
       - ./nginx/entrypoint.sh:/opencrm/entrypoint.sh:ro
+      # Рендер + проверка + мягкое перечитывание конфига. Отдельным файлом,
+      # потому что его зовут трое: сам entrypoint при старте, его же фоновый
+      # цикл и хост (`./opencrm.sh`, обновление) через `compose exec`.
+      - ./nginx/reload.sh:/opencrm/reload.sh:ro
       # страница на время, пока приложения нет (обновление, миграции, перезапуск)
       - ./nginx/maintenance:/opencrm/maintenance:ro
       - ${OPENCRM_HOME:-${HOME}/opencrm}/storage:/srv/storage:ro

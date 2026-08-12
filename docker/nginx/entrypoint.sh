@@ -5,45 +5,54 @@
 # получить их можно только когда nginx уже отвечает на 80 (проверка http-01).
 # Поэтому конфиг не статичный: нет сертификата — поднимаемся на одном 80 и
 # отдаём каталог проверки; появился — включаем 443 и редирект с 80.
+#
+# Сам рендер и проверка живут в reload.sh — ОДНИМ файлом на старт, на фоновый
+# цикл и на внешние вызовы. Пока их было два (envsubst здесь, голый
+# `nginx -s reload` у всех остальных), правки шаблонов применялись только
+# пересозданием контейнера, то есть практически никогда. Разбор — в шапке
+# reload.sh.
 set -e
 
 DOMAIN="${OPENCRM_DOMAIN:-_}"
 LIVE_DIR="/etc/letsencrypt/live/${DOMAIN}"
-TARGET="/etc/nginx/conf.d/default.conf"
 
 mkdir -p /var/www/certbot
 
+# Здесь остались только подсказки человеку. Выбор шаблона делает reload.sh — и
+# делает по тому же признаку, файлу fullchain.pem.
 if [ "$DOMAIN" != "_" ] && [ -f "${LIVE_DIR}/fullchain.pem" ]; then
-    TEMPLATE="/opencrm/templates/https.conf.template"
     echo "[opencrm-nginx] сертификат для ${DOMAIN} найден — включаю HTTPS"
+elif [ "$DOMAIN" = "_" ]; then
+    echo "[opencrm-nginx] OPENCRM_DOMAIN не задан — работаю по HTTP (годится для сети и по IP)"
 else
-    TEMPLATE="/opencrm/templates/http.conf.template"
-    if [ "$DOMAIN" = "_" ]; then
-        echo "[opencrm-nginx] OPENCRM_DOMAIN не задан — работаю по HTTP (годится для сети и по IP)"
-    else
-        echo "[opencrm-nginx] сертификата для ${DOMAIN} ещё нет — работаю по HTTP."
-        # --entrypoint обязателен: entrypoint сервиса certbot — цикл продления,
-        # а `run` подменяет команду, а не его. Без флага выпуск просто виснет.
-        echo "[opencrm-nginx] выпустить: docker compose run --rm --entrypoint certbot certbot certonly \\"
-        echo "[opencrm-nginx]     --webroot -w /var/www/certbot -d ${DOMAIN} --agree-tos --no-eff-email --email ВАША@ПОЧТА"
-        echo "[opencrm-nginx] после выпуска: docker compose restart nginx"
-    fi
+    echo "[opencrm-nginx] сертификата для ${DOMAIN} ещё нет — работаю по HTTP."
+    # --entrypoint обязателен: entrypoint сервиса certbot — цикл продления,
+    # а `run` подменяет команду, а не его. Без флага выпуск просто виснет.
+    echo "[opencrm-nginx] выпустить: docker compose run --rm --entrypoint certbot certbot certonly \\"
+    echo "[opencrm-nginx]     --webroot -w /var/www/certbot -d ${DOMAIN} --agree-tos --no-eff-email --email ВАША@ПОЧТА"
+    echo "[opencrm-nginx] после выпуска ничего делать не нужно: сертификат подхватится сам"
 fi
 
-# Одинарные кавычки здесь обязательны и не опечатка: envsubst принимает СПИСОК
-# переменных, которые ему разрешено подставлять. Раскрой его оболочка — список
-# стал бы пустым, и envsubst заменил бы вообще всё, включая $host и $uri из
-# конфига nginx.
-# shellcheck disable=SC2016
-envsubst '${OPENCRM_DOMAIN}' < "$TEMPLATE" > "$TARGET"
-nginx -t
+# Старт: рендер и проверка есть, сигнала нет — слать его пока некому.
+# Под `set -e`, то есть неудачная проверка = контейнер не поднялся. Так и надо:
+# молча стартовать с конфигом, который не разбирается, хуже.
+sh /opencrm/reload.sh render
 
-# Продлённый сертификат — это новый файл на диске, но уже запущенный nginx
-# продолжит отдавать старый, пока его не попросят перечитать конфиг. Сертификат
-# живёт 90 дней, обновляется за 30 — перечитывать раз в 6 часов с запасом хватает.
+# Что меняется на диске без ведома nginx: продлённый сертификат (новый файл),
+# правки шаблонов и include-ов (их подменяет `git checkout` при обновлении).
+# Сам nginx за файлами не следит, а `docker compose up -d` его не пересоздаёт —
+# у него не меняются ни образ, ни описание службы.
+#
+# Пять минут, а не шесть часов, и это тот же период, что у Prometheus и
+# Alertmanager в этом же проекте: такт опроса автообновления. Правка начинает
+# действовать не позже, чем через один такой такт после деплоя, — а не
+# «когда-нибудь в течение шести часов».
+#
+# `if-changed`: сигнал уходит, только когда конфиг или include-ы правда
+# изменились. Иначе это 288 перезагрузок в сутки на ровном месте.
 while :; do
-    sleep 6h
-    nginx -s reload 2>/dev/null || true
+    sleep 300
+    sh /opencrm/reload.sh if-changed || true
 done &
 
 exec nginx -g 'daemon off;'
