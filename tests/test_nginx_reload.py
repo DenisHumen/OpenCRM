@@ -31,6 +31,7 @@ include-ы. Отсюда:
 расти ради тестов (тот же приём, что в `test_deploy_config.py`).
 """
 
+import ast
 import re
 from pathlib import Path
 
@@ -45,6 +46,7 @@ LOCATIONS = TEMPLATES / "locations.inc"
 LOGGING_INC = TEMPLATES / "logging.inc"
 COMPOSE = ROOT / "docker" / "docker-compose.yml"
 SCRIPT = ROOT / "opencrm.sh"
+UPDATER = ROOT / "deploy" / "updater.py"
 
 
 def _read(path: Path) -> str:
@@ -81,6 +83,34 @@ def _telo(script: str, name: str) -> str:
     found = re.search(rf"\n{name}\(\) \{{(.+?)\n\}}", script, re.S)
     assert found, f"функция {name} пропала"
     return found.group(1)
+
+
+def _kod_python(path: Path) -> str:
+    """Только исполняемый код Python: докстроки выброшены, аргументы склеены.
+
+    Тот же довод, что у `_kod` для sh, и та же ловушка с другой стороны:
+    докстроки в этом проекте разбирают ровно те грабли, про которые тесты, и
+    содержат `nginx -s reload` дословно — по тексту файла проверка «этого здесь
+    нет» запретила бы объяснять, почему так делать нельзя.
+
+    Кавычки и запятые убираются, чтобы разложенная по аргументам команда
+    (`"exec", "-T", "nginx", "-s", "reload"`) искалась так же, как её пишут в
+    оболочке.
+    """
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        telo = getattr(node, "body", None)
+        if not isinstance(telo, list) or not telo:
+            continue
+        pervyy = telo[0]
+        if (
+            isinstance(pervyy, ast.Expr)
+            and isinstance(pervyy.value, ast.Constant)
+            and isinstance(pervyy.value.value, str)
+        ):
+            # Пустой список тела недопустим — ставим заглушку вместо докстроки.
+            node.body = telo[1:] or [ast.Pass()]
+    return ast.unparse(ast.fix_missing_locations(tree)).replace("'", "").replace(", ", " ")
 
 
 # --- рендер живёт в одном месте ----------------------------------------------
@@ -165,6 +195,50 @@ def test_vse_kto_prosit_nginx_perechitat_zovut_skript():
     )
     assert "nginx -s reload" not in script, (
         "в opencrm.sh остался голый сигнал — он не применит правки шаблонов"
+    )
+
+
+def test_obnovlenie_zovyot_tot_zhe_skript_chto_i_ustanovshchik():
+    """Сторож выше читал ТОЛЬКО opencrm.sh — и потому ничего не заметил.
+
+    Установщик переехал на `reload.sh`, а обновлятор остался с голым сигналом, и
+    ни один тест не покраснел: `deploy/updater.py` не проверял никто. Разошлись
+    они молча и разошлись бы снова.
+
+    Цена расхождения именно здесь выше, чем где-либо: обновление — единственный
+    момент, когда конфиг на диске меняется сам. Голый `nginx -s reload` при этом
+    не рендерит шаблон заново И завершается нулём, не дождавшись разбора конфига:
+    мастер конфиг отвергает, а шаг рапортует успех. Провала не существует в
+    терминах кода — ровно поэтому пять суток никто ничего не знал.
+    """
+    kod = _kod_python(UPDATER)
+    assert "/opencrm/reload.sh" in kod, (
+        "обновление просит перечитать конфиг без повторного рендера — "
+        "правки шаблонов не применятся, а отвергнутый конфиг сойдёт за удачу"
+    )
+    assert "nginx -s reload" not in kod, (
+        "в deploy/updater.py остался голый сигнал"
+    )
+
+
+def test_provalennoe_perechityvanie_vidno_v_uvedomlenii():
+    """Молчащая ошибка — та же беда, которую здесь чинили.
+
+    Шаг не смертельный (у кого-то свой nginx снаружи), и это правильно. Но «не
+    смертельный» превратилось в «незаметный»: результат клался в `detail` только
+    на провале, а сам провал терялся под заголовком «OpenCRM обновлён».
+    Механически: результат перечитывания обязан попадать в шаг при ЛЮБОМ исходе,
+    а сообщение — называть провалившиеся шаги вместе с их detail.
+    """
+    kod = _kod_python(UPDATER)
+    shag = re.search(r"steps\.append\(Step\(nginx-reload[^\n]*", kod)
+    assert shag, "шаг nginx-reload больше не заводится — доложить о нём будет нечем"
+    assert "result.tail" in shag.group(0), (
+        "вывод перечитывания не попадает в шаг: ни в истории, ни в уведомлении "
+        "причины не будет"
+    )
+    assert "step.name" in kod and "step.detail" in kod, (
+        "уведомление перестало называть провалившиеся шаги"
     )
 
 

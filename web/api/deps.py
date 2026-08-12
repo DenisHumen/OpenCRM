@@ -15,11 +15,14 @@ CSRF_COOKIE = "opencrm_csrf"
 CSRF_HEADER = "x-csrf-token"
 
 _settings = get_settings()
+# Имя — это отсек в общем хранилище. Без него подбор PIN и перебор номеров
+# бланков считались бы в один счётчик: ключ у обоих — хэш адреса посетителя, и
+# совпадали бы они не иногда, а всегда.
 login_limiter = SlidingWindowLimiter(
-    _settings.login_max_attempts, _settings.login_lockout_minutes * 60
+    _settings.login_max_attempts, _settings.login_lockout_minutes * 60, name="login"
 )
 pin_limiter = SlidingWindowLimiter(
-    _settings.pin_max_attempts, _settings.pin_lockout_minutes * 60
+    _settings.pin_max_attempts, _settings.pin_lockout_minutes * 60, name="pin"
 )
 
 #: Сколько раз с одного адреса можно спросить состояние заказа по номеру.
@@ -39,7 +42,7 @@ pin_limiter = SlidingWindowLimiter(
 DOCUMENT_STATUS_MAX_LOOKUPS = 20
 DOCUMENT_STATUS_WINDOW_SECONDS = 600
 document_limiter = SlidingWindowLimiter(
-    DOCUMENT_STATUS_MAX_LOOKUPS, DOCUMENT_STATUS_WINDOW_SECONDS
+    DOCUMENT_STATUS_MAX_LOOKUPS, DOCUMENT_STATUS_WINDOW_SECONDS, name="document"
 )
 
 

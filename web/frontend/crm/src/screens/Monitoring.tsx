@@ -13,6 +13,7 @@ interface MonitoringStatus {
   panel: { path: string; state: string };
   grafana: { reachable: boolean; version: string | null };
   targets: { reachable: boolean; up: number; total: number; down: string[] };
+  site: { url: string | null; up: boolean | null };
   alerts: { reachable: boolean; firing: { name: string; severity: string }[] };
   channel: { reachable: boolean; configured: boolean | null };
   logs: { on: boolean | null };
@@ -103,7 +104,7 @@ export function Monitoring() {
 
   if (!status) return <ScreenLoading error={failure} onRetry={() => void load()} />;
 
-  const { panel, grafana, targets, alerts, channel, logs } = status;
+  const { panel, grafana, targets, site, alerts, channel, logs } = status;
 
   return (
     <div className="page page-narrow">
@@ -171,6 +172,21 @@ export function Monitoring() {
               ? t("monTargetsDown", { list: targets.down.join(", ") })
               : undefined
           }
+        />
+        {/* Куда идёт внешняя проверка — и, главное, чего она не видит.
+            Строка стоит сразу за целями: адрес берётся из их же метки.
+
+            Оговорка про роутер здесь, а не в конце главы документации, и это
+            не педантизм. Сервер за NAT не дозванивается до собственного
+            публичного адреса, поэтому проверку переводят на локальный — и она
+            перестаёт видеть роутер. Отвалится проброс портов, сайт ляжет для
+            всего мира, а этот экран останется зелёным. Человек обязан знать
+            границу того, что ему обещают. */}
+        <StateRow
+          name={t("monSite")}
+          chip={site.url ?? t("monSiteNone")}
+          good={site.up === true}
+          note={site.url ? t("monSiteBlind") : undefined}
         />
         <StateRow
           name={t("monAlerts")}

@@ -1280,13 +1280,21 @@ def test_nginx_is_asked_to_reread_its_config_after_a_deploy(tmp_path):
     и nginx продолжал раздавать `/media/` прямо с диска, хотя новый конфиг на
     диске уже проксировал этот путь в приложение. Починка, закрывшая файлы
     витрины после отзыва ссылки, молча не действовала.
+
+    Зовётся ИМЕННО скрипт: голый `nginx -s reload` не рендерит шаблон заново и,
+    что хуже, завершается нулём, не дождавшись разбора конфига. Разбор — в шапке
+    `docker/nginx/reload.sh`.
     """
     updater = make_updater(tmp_path)
 
     outcome = updater.run_once()
 
     assert outcome.status == STATUS_DEPLOYED
-    assert updater.shell.ran("exec -T nginx nginx -s reload")
+    assert updater.shell.ran("exec -T nginx sh /opencrm/reload.sh")
+    assert not updater.shell.ran("nginx -s reload"), (
+        "обновление снова шлёт голый сигнал: правки шаблонов не применятся, "
+        "а отвергнутый конфиг вернёт код 0 и сойдёт за удачу"
+    )
     assert step_names(outcome).index("deploy") < step_names(outcome).index("nginx-reload")
     assert step_names(outcome).index("nginx-reload") < step_names(outcome).index("health")
 
@@ -1298,7 +1306,7 @@ def test_a_missing_nginx_does_not_fail_the_update(tmp_path):
     незачем: приложение обновилось, сайт живой.
     """
     shell = FakeShell()
-    shell.fail("exec -T nginx nginx -s reload")
+    shell.fail("reload.sh")
     updater = make_updater(tmp_path, shell=shell)
 
     outcome = updater.run_once()
@@ -1306,3 +1314,32 @@ def test_a_missing_nginx_does_not_fail_the_update(tmp_path):
     assert outcome.status == STATUS_DEPLOYED
     reload_step = next(s for s in outcome.steps if s.name == "nginx-reload")
     assert reload_step.ok is False
+
+
+def test_a_failed_reload_is_named_in_the_message_even_when_the_update_worked(tmp_path):
+    """Не смертельный шаг — не значит незаметный.
+
+    Пять суток боевой сервер работал со старым конфигом nginx: метрики были
+    открыты наружу, в журнал попадали адреса клиентов и ссылки `/b/<токен>`.
+    Никто не знал потому, что перечитывание падало молча — шаг не смертельный,
+    и о его провале не говорил ни один канал. Уведомление об удавшемся
+    обновлении обязано называть провалившийся шаг И его причину: заголовок
+    «OpenCRM обновлён» читают как «всё хорошо».
+    """
+    shell = FakeShell()
+    shell.fail("reload.sh", err="nginx: [emerg] unknown log format \"opencrm_json\"")
+    updater = make_updater(tmp_path, shell=shell)
+
+    outcome = updater.run_once()
+
+    assert outcome.status == STATUS_DEPLOYED, "провал перечитывания не валит обновление"
+    reload_step = next(s for s in outcome.steps if s.name == "nginx-reload")
+    assert "unknown log format" in reload_step.detail, (
+        "причина провала не попала в detail шага — в истории её тоже не будет"
+    )
+
+    message = updater.notifier.messages[0]
+    assert "nginx-reload" in message, "об упавшем перечитывании сообщение молчит"
+    assert "unknown log format" in message, (
+        "шаг назван, а причина нет — идти смотреть придётся вслепую"
+    )

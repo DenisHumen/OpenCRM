@@ -10,6 +10,7 @@ from sqlalchemy import inspect, text
 from sqlalchemy.exc import OperationalError, ProgrammingError
 
 from config.settings import generate_secret_hint, get_settings
+from core import ratelimit, redis_client
 from core.exceptions import DomainError
 # Подписки на события грузятся при первом же событии сами, но импорт здесь
 # оставлен нарочно: опечатка в обработчике должна ронять запуск приложения, а
@@ -192,22 +193,33 @@ async def lifespan(app: FastAPI):
     # `/healthz` опрашивает докер каждые несколько секунд.
     app.state.schema_report = _assert_schema_matches()
     db = SessionLocal()
+    # Посев умолчаний идёт под общим замком.
+    #
+    # При нескольких рабочих процессах они поднимаются разом и сеют разом.
+    # Четыре посева из пяти соседа терпят: они опираются на уникальный индекс
+    # (`core/uniqueness.insert_or_ignore` и родня). Пятый — склад «Основной» —
+    # опереться не на что: уникального индекса на названии склада нет, и
+    # `count_alive() > 0` отвечает «ноль» обоим процессам сразу. В базе
+    # появляются два склада «Основной», после чего инвариант «ровно один
+    # основной» выполняется наперегонки. Замок стоит вокруг всего блока, а не
+    # вокруг одного склада: остальные четыре тоже перестают крутить откаты.
     try:
-        created = auth_service.bootstrap_root(db)
-        settings_service.seed_defaults(db)
-        # Система без единой роли не может принять сотрудника: он вошёл бы в
-        # CRM без единого раздела. Кладём должность по умолчанию — как воронку.
-        permissions_service.seed_defaults(db)
-        # Пустая воронка означает пустую доску сделок на первом же экране —
-        # причину закрыть вкладку. Кладём универсальный набор, менять его на
-        # отраслевой можно одним нажатием в настройках.
-        pipeline_service.seed_defaults(db)
-        # Склад без единого места не примет ни одного прихода. На боевом
-        # сервере его кладёт миграция; здесь страховка для базы, поднятой
-        # `create_all`, и для той, где склады почистили руками.
-        warehouse_service.seed_defaults(db)
-        users_repo.purge_expired_sessions(db)
-        db.commit()
+        with redis_client.startup_lock("seed"):
+            created = auth_service.bootstrap_root(db)
+            settings_service.seed_defaults(db)
+            # Система без единой роли не может принять сотрудника: он вошёл бы в
+            # CRM без единого раздела. Кладём должность по умолчанию — как воронку.
+            permissions_service.seed_defaults(db)
+            # Пустая воронка означает пустую доску сделок на первом же экране —
+            # причину закрыть вкладку. Кладём универсальный набор, менять его на
+            # отраслевой можно одним нажатием в настройках.
+            pipeline_service.seed_defaults(db)
+            # Склад без единого места не примет ни одного прихода. На боевом
+            # сервере его кладёт миграция; здесь страховка для базы, поднятой
+            # `create_all`, и для той, где склады почистили руками.
+            warehouse_service.seed_defaults(db)
+            users_repo.purge_expired_sessions(db)
+            db.commit()
         if created is not None:
             print(
                 f"[opencrm] создан root-аккаунт: {created.email} "
@@ -355,7 +367,32 @@ def create_app() -> FastAPI:
         finally:
             db.close()
         report = getattr(app.state, "schema_report", None)
-        return {"status": "ok", "schema": "ok" if report is None or report.ok else "mismatch"}
+        # Состояние Redis показываем строкой, но код ответа им НЕ меняем, и это
+        # решение, а не недосмотр. На `/healthz` завязаны две вещи, которые
+        # умеют только одно — заменить контейнер приложения: проверка здоровья
+        # docker и откат обновления (`deploy/updater.py`). Ни то, ни другое не
+        # чинит лежащий Redis, зато откат исправного обновления из-за соседней
+        # службы — это лишний простой на ровном месте. Приложение здесь и правда
+        # здорово; сломано другое, и говорят об этом метрика
+        # `opencrm_ratelimiter_unavailable_total`, тревога и строка ниже.
+        #
+        # И САМ REDIS ЗДЕСЬ НЕ ОПРАШИВАЕТСЯ. Проверено живьём: с остановленным
+        # контейнером разрешение имени `redis` не укладывается в пятисекундный
+        # потолок проверки здоровья, `/healthz` отваливается по таймауту — и
+        # docker объявляет нездоровым ПРИЛОЖЕНИЕ. Получилась бы ровно та связка,
+        # которой этот абзац и избегает: авария соседней службы роняет сайт.
+        # Поэтому ответ берётся по факту работы ограничителя (были ли отказы за
+        # последнюю минуту), а живой опрос стоит в `/api/v1/metrics`, где
+        # медленный ответ стоит одного пропущенного среза, а не перезапуска.
+        if not redis_client.configured():
+            redis_state = "off"
+        else:
+            redis_state = "down" if ratelimit.recently_unavailable() else "ok"
+        return {
+            "status": "ok",
+            "schema": "ok" if report is None or report.ok else "mismatch",
+            "redis": redis_state,
+        }
 
     # CRM SPA: собранный фронтенд (web/frontend/crm/dist).
     # Catch-all регистрируется последним — все API/публичные роуты имеют приоритет.

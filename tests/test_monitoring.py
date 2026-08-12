@@ -231,18 +231,103 @@ def test_metrics_ne_khodit_v_bazu(metrics_module):
 # --- наружу ничего не опубликовано -------------------------------------------
 
 
-def test_monitoring_ne_publikuet_ni_odnogo_porta():
+#: Службы, которым публикация порта БЕЗ привязки к адресу разрешена. Ровно одна:
+#: nginx и есть сайт, он обязан слушать на всех интерфейсах.
+PORTY_NA_VES_SVET = {"nginx"}
+
+#: Адреса, привязка к которым равна её отсутствию.
+VES_SVET = {"0.0.0.0", "::", "*", ""}
+
+
+def _publikatsii(compose: str) -> dict[str, list[str]]:
+    """Что каждая служба публикует на хост: {служба: [строка порта, ...]}.
+
+    Разбор построчный, а не YAML-парсером — по тому же доводу, что и во всём
+    файле: словарь зависимостей приложения не должен расти ради тестов.
+    """
+    naydeno: dict[str, list[str]] = {}
+    sluzhba = ""
+    v_portakh = False
+    for stroka in compose.splitlines():
+        imya = re.match(r"^  (\S+):\s*$", stroka)
+        if imya:
+            sluzhba = imya.group(1)
+            v_portakh = False
+            continue
+        if re.match(r"^    ports:\s*$", stroka):
+            v_portakh = True
+            continue
+        if v_portakh:
+            zapis = re.match(r'^      - "([^"]+)"\s*$', stroka)
+            if zapis:
+                naydeno.setdefault(sluzhba, []).append(zapis.group(1))
+                continue
+            if stroka.strip() and not stroka.startswith("      "):
+                v_portakh = False
+    return naydeno
+
+
+def _podstanovka(zapis: str) -> str:
+    """`${VAR:-127.0.0.1}` → `127.0.0.1`, `${VAR}` → пустота.
+
+    То же, что делает compose на установке, где docker/.env пуст, — а это самая
+    частая установка и есть. Проверять надо ДЕЙСТВУЮЩЕЕ значение: умолчание
+    `0.0.0.0` открывает панель всему свету ровно так же, как отсутствие привязки.
+    """
+    zapis = re.sub(r"\$\{[A-Za-z_][A-Za-z0-9_]*:-([^}]*)\}", r"\1", zapis)
+    return re.sub(r"\$\{[A-Za-z_][A-Za-z0-9_]*\}", "", zapis)
+
+
+def test_port_publikuetsya_tolko_s_privyazkoy_k_adresu():
     """Открытая панель мониторинга — это карта всей системы, выданная любому.
 
-    Единственная служба с публикацией портов — nginx: через него и только через
-    него виден весь сайт, включая Grafana на /monitoring/.
+    Прежний сторож считал блоки `ports:` и требовал ровно один, у nginx. Довод
+    был верен ровно наполовину: он верен для публикации НА ВЕСЬ СВЕТ
+    (`9080:3000` слушает на всех интерфейсах — панель без TLS и мимо
+    единственной точки входа достаётся любому сканеру), но не для привязки к
+    частному адресу за NAT. Заказчику нужен вход по http://10.0.0.130:9080/ из
+    локальной сети, и запрещать это нечем.
+
+    Поэтому запрет переехал с самого факта публикации на её ФОРМУ: у каждой
+    опубликованной строки обязан быть явный адрес, и он не имеет права быть
+    «любым». Ослабив сторожа в одном, обязаны сделать его строже в остальном —
+    прежняя проверка `"3000:" not in compose` прошла бы мимо
+    `"${OPENCRM_GRAFANA_BIND:-127.0.0.1}:9080:3000"` и стала бы мёртвой.
     """
     compose = _read(COMPOSE)
-    assert compose.count("\n    ports:") == 1, (
-        "порты публикует не только nginx — мониторинг обязан ходить через него"
+    publikuyut = _publikatsii(compose)
+
+    assert "grafana" in publikuyut, "порт панели пропал — вход в неё остался один, через nginx"
+
+    for sluzhba, zapisi in publikuyut.items():
+        if sluzhba in PORTY_NA_VES_SVET:
+            continue
+        for zapis in zapisi:
+            # Считаем ДЕЙСТВУЮЩЕЕ значение, с раскрытыми умолчаниями: правка
+            # `${OPENCRM_GRAFANA_BIND:-0.0.0.0}` обязана ронять проверку, а по
+            # тексту с переменной она выглядела бы привязкой.
+            chasti = _podstanovka(zapis).split(":")
+            assert len(chasti) == 3, (
+                f"{sluzhba}: «{zapis}» публикуется без привязки к адресу — "
+                "это все интерфейсы сразу, то есть весь интернет"
+            )
+            adres = chasti[0]
+            assert adres not in VES_SVET, (
+                f"{sluzhba}: «{zapis}» привязан к {adres or 'пустоте'} — это тот же весь свет"
+            )
+
+    # Умолчание — только петля, и названо явно: «привязка обязательна» не должна
+    # держаться на том, что никто не тронул одно значение в docker/.env.example.
+    assert "${OPENCRM_GRAFANA_BIND:-127.0.0.1}" in compose, (
+        "умолчание привязки панели больше не 127.0.0.1"
     )
-    for port in ("3000:", "9090:", "9093:", "9100:", "9115:", "3100:", "8080:"):
-        assert f'"{port}' not in compose, f"наружу опубликован порт {port}"
+
+    # Остальные службы мониторинга не публикуют ничего вовсе — им и через nginx
+    # ходить незачем, они разговаривают только внутри сети compose.
+    for sluzhba in SERVICES:
+        if sluzhba == "grafana":
+            continue
+        assert sluzhba not in publikuyut, f"наружу опубликован порт службы {sluzhba}"
 
 
 def test_grafana_zakryta_parolem_iz_okruzheniya():
@@ -446,6 +531,116 @@ def test_proverka_sayta_idet_snaruzhi():
     )
     # Адрес приходит снаружи, из docker/.env, и его туда кладёт установщик.
     assert "OPENCRM_MONITOR_URL" in _script()
+
+
+def test_za_nat_proverka_idyot_po_imeni_a_ne_po_seromu_adresu():
+    """Сервер за NAT не дозванивается до собственного публичного адреса.
+
+    Живой случай 12 августа: частный адрес 10.0.0.130, имя ведёт на роутер,
+    порты проброшены внутрь — и `curl https://<домен>/healthz` с самого сервера
+    отказывает за 55 мс. Правило SiteDown в такой установке не может пройти
+    НИКОГДА: тревога приходит при полностью живом сайте, и её перестают читать
+    вместе с настоящими.
+
+    Лечение обязано быть именно таким: имя остаётся в цели, а ведёт на локальный
+    адрес записью в /etc/hosts контейнера проверки. Подстановка серого адреса в
+    сам URL так не умеет — сертификат выписан на имя, и проверка его либо
+    покраснеет, либо (что хуже) будет отключена.
+    """
+    compose = _read(COMPOSE)
+    blok = compose.split("\n  blackbox:", 1)[1].split("\n  grafana:")[0]
+    assert "extra_hosts:" in blok, (
+        "проверке нечем узнать, что имя сайта живёт по локальному адресу — "
+        "за NAT она будет красной всегда"
+    )
+    zapis = re.search(r'^\s+- "([^"]+)"\s*$', blok.split("extra_hosts:", 1)[1], re.M)
+    assert zapis, "запись extra_hosts не найдена"
+    # Делим по границе `}:${`, а не по первому двоеточию: оно стоит внутри самой
+    # подстановки `${ИМЯ:-умолчание}`.
+    para = re.fullmatch(r"(\$\{[^}]+\}):(\$\{[^}]+\})", zapis.group(1))
+    assert para, (
+        f"«{zapis.group(1)}»: запись обязана быть парой переменных «имя:адрес», "
+        "иначе локальный адрес прописан в репозиторий"
+    )
+    imya, adres = para.group(1), para.group(2)
+
+    # Обе половины с НЕПУСТЫМ умолчанием. Проверено вживую (docker compose v5.3.1):
+    # пустое значение даёт не «мониторинг не поднялся», а отказ РАЗБОРА ФАЙЛА
+    # («invalid additional host, missing IP»), причём независимо от профилей. То
+    # есть на любой установке без мониторинга — а он выключен по умолчанию —
+    # переставал бы подниматься сайт целиком. Это ровно то, что запрещает
+    # CLAUDE.md: выключенный блок обязан исчезать, не задевая остальных.
+    for chast in (imya, adres):
+        umolchanie = re.fullmatch(r"\$\{[A-Z_]+:-([^}]*)\}", chast)
+        assert umolchanie, f"«{chast}»: не переменная с умолчанием"
+        assert umolchanie.group(1), (
+            "пустое умолчание в extra_hosts валит разбор ВСЕГО compose-файла, "
+            "включая установки без мониторинга"
+        )
+
+    # Смысл приёма — в том, что сертификат проверяется по-настоящему.
+    blackbox = _read(MONITORING / "blackbox" / "blackbox.yml")
+    assert "insecure_skip_verify: false" in blackbox, (
+        "проверка сертификата отключена — просроченный или чужой станет невидим, "
+        "а ради этого всё и затевалось"
+    )
+
+    # Цель остаётся именем, а не адресом: иначе сертификат не сойдётся.
+    prometheus = _read(PROMETHEUS)
+    site = prometheus.split("job_name: site", 1)[1].split("job_name:")[0]
+    assert "__SITE_URL__" in site and not re.search(r"\d+\.\d+\.\d+\.\d+", site), (
+        "в цель проверки подставлен адрес вместо имени — сертификат к нему не подойдёт"
+    )
+
+
+def test_ustanovshchik_stuchitsya_po_adresu_a_ne_verit_na_slovo():
+    """Корень ложной тревоги: адрес спросили и поверили.
+
+    Достижимость проверялась ровно одним способом — сравнением A-записи с
+    внешним IP (`issue_certificate`), а при NAT оно как раз ПРОХОДИТ: A-запись
+    ведёт на роутер, роутер и есть наш публичный адрес. Hairpin оставался
+    невидимым, и `doctor` рядом проверял НЕПУСТОТУ СТРОКИ, стоя в пятнадцати
+    строках от образцовой пробы панели запросом.
+
+    То же правило, по которому в проекте живёт doctor: проверкой, а не
+    обещанием.
+    """
+    script = _script()
+    assert "probe_monitor_url()" in script, "проверка достижимости адреса не заведена"
+    telo = re.search(r"\nprobe_monitor_url\(\) \{(.+?)\n\}", script, re.S)
+    assert telo, "функция probe_monitor_url пропала"
+    telo = telo.group(1)
+    assert "curl" in telo, "адрес проверяется без единого запроса — это снова слово, а не дело"
+    assert "OPENCRM_MONITOR_HOST" in telo and "OPENCRM_MONITOR_IP" in telo, (
+        "нечем предложить локальный адрес: пара для extra_hosts не пишется"
+    )
+    assert "lan_ip" in telo, "локальный адрес не предлагается — человеку придётся угадывать"
+
+    # Зовётся оттуда, где стек уже поднят и адрес мог смениться.
+    nastroyka = re.search(r"\nconfigure_monitoring\(\) \{(.+?)\n\}", script, re.S)
+    assert nastroyka and "probe_monitor_url" in nastroyka.group(1), (
+        "установщик снова верит адресу на слово"
+    )
+
+
+def test_pro_nevidimyy_router_skazano_na_ekrane_a_ne_v_kontse_glavy():
+    """Оговорка, без которой лечение опаснее болезни.
+
+    Проверка по локальному адресу видит nginx, TLS и приложение — но не видит
+    роутер. Отвалится проброс портов, и сайт ляжет для всего мира, пока
+    мониторинг остаётся зелёным. Человек обязан узнать это там, где включает, а
+    не в конце главы документации, до которой дойдёт не он и не сегодня.
+    """
+    script = _script()
+    assert "monitor_local_warning()" in script, "оговорки про роутер нет в установщике"
+    telo = re.search(r"\nmonitor_local_warning\(\) \{(.+?)\n\}", script, re.S).group(1)
+    assert "роутер" in telo and "router" in telo, "оговорка не в обеих редакциях"
+    assert "UptimeRobot" in telo, "не назван способ закрыть эту дыру"
+
+    # И на экране мониторинга — той же мыслью, обеими редакциями.
+    for value in _perevody("monSiteBlind"):
+        assert "UptimeRobot" in value, "экран не называет, чем закрывается слепое пятно"
+    assert "monSiteBlind" in _read(SCREEN), "оговорка объявлена, но экран её не показывает"
 
 
 def test_kanal_trevog_tot_zhe_bot_chto_u_obnovleniy():
@@ -915,6 +1110,7 @@ def test_sostoyanie_zakryto_snachala_blokom_a_potom_pravom(
         "panel",
         "grafana",
         "targets",
+        "site",
         "alerts",
         "channel",
         "logs",
