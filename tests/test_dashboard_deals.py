@@ -8,7 +8,7 @@
 
 from datetime import datetime, timedelta, timezone
 
-from tests.conftest import API
+from tests.conftest import API, make_manager
 from tests.test_deals import DEALS, make_client
 
 DASH = f"{API}/dashboard"
@@ -204,30 +204,40 @@ def test_funnel_counts_follow_the_deals(manager_client):
     assert count_of(open_stage["key"]) == before + 1
 
 
-def test_dashboard_shows_my_tasks_not_everyones(manager_client, root_client):
+def test_dashboard_shows_my_tasks_not_everyones(root_client):
     """«С чего начать» — вопрос про свои задачи. Общий список фирмы на него
-    не отвечает."""
-    mine = manager_client.post(
-        TASKS, json={"title": "Позвонить своему", "due_at": skoro()}
-    ).json()
+    не отвечает.
+
+    Сотрудник заводится СВОЙ, а не берётся общий: на дашборде мало места, список
+    обрезан, и задачи, накопленные соседними тестами у общего менеджера, просто
+    вытесняют заведённую здесь — проверка падает, ничего не проверив. У нового
+    человека список пуст, и утверждение «моя показана, чужая нет» становится
+    точным при любом порядке файлов.
+    """
+    svoy = make_manager(root_client, "dash-mytasks@test.local")
+    mine = svoy.post(TASKS, json={"title": "Позвонить своему", "due_at": skoro()}).json()
     stranger = root_client.post(
         TASKS, json={"title": "Чужая забота", "due_at": skoro()}
     ).json()
 
-    titles = [t["id"] for t in manager_client.get(DASH).json()["my_tasks"]]
+    titles = [t["id"] for t in svoy.get(DASH).json()["my_tasks"]]
     assert mine["id"] in titles
     assert stranger["id"] not in titles, "на дашборде показались чужие задачи"
 
 
-def test_undated_task_does_not_crowd_out_todays(manager_client):
+def test_undated_task_does_not_crowd_out_todays(root_client):
     """На дашборде мало места, и занимать его бессрочным «когда-нибудь»
-    нельзя: список «на сегодня» перестаёт быть списком на сегодня."""
-    dated = manager_client.post(
-        TASKS, json={"title": "Сегодня до обеда", "due_at": skoro()}
-    ).json()
-    undated = manager_client.post(TASKS, json={"title": "Когда-нибудь потом"}).json()
+    нельзя: список «на сегодня» перестаёт быть списком на сегодня.
 
-    shown = manager_client.get(DASH).json()["my_tasks"]
+    Сотрудник тоже свой — по той же причине, что и у соседа выше: у общего
+    менеджера обрезанный список к этому моменту занят чужими задачами, и
+    «показалась ли моя» перестаёт быть вопросом про сортировку.
+    """
+    svoy = make_manager(root_client, "dash-undated@test.local")
+    dated = svoy.post(TASKS, json={"title": "Сегодня до обеда", "due_at": skoro()}).json()
+    undated = svoy.post(TASKS, json={"title": "Когда-нибудь потом"}).json()
+
+    shown = svoy.get(DASH).json()["my_tasks"]
     ids = [task["id"] for task in shown]
     assert dated["id"] in ids, "задача со сроком не показалась — проверять нечего"
     assert undated["id"] not in ids
