@@ -1211,3 +1211,59 @@ def test_proba_prohodit_redirekt_nginxa_s_http_na_https():
     assert report["panel"]["state"] == "open", (
         "проба остановилась на редиректе nginx и объявила рабочую панель недостижимой"
     )
+
+
+# --- размер базы: спрашивается по-разному, но спрашивается всегда ------------
+#
+# На MySQL метрика `opencrm_database_size_bytes` ПРОСТО ИСЧЕЗАЛА. Молчание было
+# выбрано осознанно — ноль на графике неотличим от «база исчезла», — но спросить
+# сервер было нечем: ответ лежит внутри него, а запросы живут только в
+# `database/`. После переезда на MySQL это молчание стало бы вечным: за ростом
+# базы перестал бы следить кто бы то ни было ровно на том движке, где она растёт.
+
+
+def test_razmer_bazy_na_sqlite_beryotsya_iz_fayla(root_client, blok_monitoringa):
+    """У файловой базы ответ лежит в файловой системе — там и берём."""
+    blok_monitoringa(True)
+    otvet = root_client.get(f"{API_PREFIX}/metrics")
+    assert otvet.status_code == 200
+    assert "opencrm_database_size_bytes" in otvet.text, (
+        "размер файловой базы пропал из метрик"
+    )
+
+
+def test_razmer_bazy_na_ne_mysql_ne_pridumyvaetsya():
+    """`None`, а не ноль: ноль на графике выглядит как «база исчезла».
+
+    Набор гоняется на SQLite, поэтому здесь проверяется сторона отказа —
+    репозиторий обязан молчать про чужой движок, а не отдавать выдумку.
+    """
+    from database.repositories import engine_info
+    from database.session import SessionLocal
+
+    db = SessionLocal()
+    try:
+        assert engine_info.database_size_bytes(db) is None
+    finally:
+        db.close()
+
+
+def test_na_mysql_razmer_sprashivaetsya_zaprosom_a_ne_molchaniem():
+    """Живого MySQL в наборе нет, поэтому стережём связку, а не число.
+
+    Ровно эта связка и отсутствовала: сборщик метрик выходил на первой строке,
+    если движок не SQLite, и другого пути у размера не было вовсе.
+    """
+    istochnik = Path("web/api/routes/metrics.py").read_text(encoding="utf-8")
+    sborshchik = istochnik[istochnik.index("def _collect_database("):]
+    sborshchik = sborshchik[: sborshchik.index("\ndef ")]
+    assert "engine_info.database_size_bytes" in sborshchik, (
+        "на не-SQLite размер снова неоткуда взять — метрика исчезнет после переезда"
+    )
+    # И запрос при этом остаётся в database/: маршрут его не собирает сам.
+    # (Слово `information_schema` в тексте подсказки к метрике — это проза, а не
+    # запрос, поэтому ищем именно конструкции сборки запроса.)
+    for zapreshcheno in ("select(", "db.execute", "text("):
+        assert zapreshcheno not in sborshchik, (
+            f"запрос переехал в маршрут ({zapreshcheno}) — это нарушение границы базы"
+        )

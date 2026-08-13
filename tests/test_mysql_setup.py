@@ -632,3 +632,43 @@ def test_pereezd_est_otdelnoy_komandoy():
     assert "cmd_migrate_mysql() {" in text
     assert "migrate-mysql) cmd_migrate_mysql ;;" in text, "команда не разбирается"
     assert "migrate-mysql" in text[text.index("usage() {"):], "команды нет в справке"
+
+
+def test_mysql_stoit_umolchaniem():
+    """Новая установка обязана вставать на том, на чём система будет работать.
+
+    Прежде умолчанием была SQLite, и довод был честный: ничего не требует, на
+    нагрузке одной студии не уступает. Но он отвечал не на тот вопрос — SQLite
+    допускает ровно одного писателя, а значит установка, начатая «попроще»,
+    рано или поздно упирается в переезд, то есть в закрытый сайт и самую
+    опасную операцию, какая в проекте есть.
+
+    Проверяется и подсказанный ответ, и то, куда ведёт МОЛЧАНИЕ: `ask` при
+    `--yes` возвращает умолчание, а установку так и запускают в скриптах.
+    """
+    text = _script()
+    vybor = text[text.index("choose_database() {"): text.index("# ====")]
+
+    assert 'menu_item 1 "$(tr_ "MySQL (по умолчанию)"' in vybor, (
+        "первым пунктом снова не MySQL"
+    )
+    assert '_pick=$(ask "$(tr_ "    Выбор" "    Choice")" "1")' in vybor, (
+        "подсказанный ответ съехал — а именно его берёт --yes"
+    )
+    # Ветка выхода из выбора ровно одна, и она про SQLite: всё остальное,
+    # включая молчание и опечатку, обязано уходить в MySQL.
+    assert "2|sqlite|SQLite|SQLITE|s)" in vybor, "SQLite перестала быть вторым пунктом"
+    assert "*)" not in vybor.split("case \"$_pick\" in")[1].split("esac")[0], (
+        "в разборе ответа снова появился catch-all — он уведёт умолчание не туда"
+    )
+
+
+def test_sqlite_ostayotsya_vozmozhnoy():
+    """Умолчание сменилось, а выбор — нет: на машине с малой памятью SQLite
+    по-прежнему законна, и отнимать её нельзя, пока код SQLite вообще жив."""
+    text = _script()
+    vybor = text[text.index("choose_database() {"): text.index("# ====")]
+    assert 'env_set "$APP_ENV" OPENCRM_DB_URL "sqlite:////app/data/opencrm.db"' in vybor
+    assert "compose_profile mysql off" in vybor, (
+        "выбрав SQLite, установка оставит в стеке никому не нужный сервер базы"
+    )
