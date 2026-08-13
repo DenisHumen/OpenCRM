@@ -375,3 +375,41 @@ def test_osmotr_idyot_do_zakrytiya_sayta():
     assert "--target" not in osmotr, (
         "осмотру передают цель — значит он потребует поднятой MySQL там, где она не нужна"
     )
+
+
+def test_pereezd_i_obsluzhivanie_est_v_menyu():
+    """Меню — единственная дверь для того, кто командами не пользуется.
+
+    Переезд и режим обслуживания — ровно те два действия, за которыми человек
+    приходит в самый неудобный момент: первое он делает один раз в жизни,
+    второе — когда сайт закрыт, а он этого не видит (владелец проходит по
+    устройству режима и видит сайт рабочим).
+    """
+    text = source()
+    menyu = text[text.index("menu() {") : text.index("usage() {")]
+    for punkt, komanda in (
+        ("Переезд на MySQL", "cmd_migrate_mysql"),
+        ("Режим обслуживания", "menu_maintenance"),
+    ):
+        assert punkt in menyu, f"пункт «{punkt}» пропал из меню"
+        assert komanda in menyu, f"пункт «{punkt}» есть, а вызова {komanda} нет"
+
+    # Номера пунктов и разбор ответа обязаны сойтись: пункт, который печатается,
+    # но не разбирается, отвечает «нет такого пункта».
+    import re
+
+    napechatano = set(re.findall(r"menu_item (\d+)\s", menyu))
+    razobrano = set(re.findall(r"^\s*(\d+)\)", menyu, re.MULTILINE))
+    propali = napechatano - razobrano - {"0"}
+    assert not propali, f"пункты печатаются, но не разбираются: {sorted(propali)}"
+
+
+def test_menyu_obsluzhivaniya_snachala_govorit_kak_seychas():
+    """Человек приходит сюда, НЕ ЗНАЯ, закрыт ли сайт, — с этого и начинаем."""
+    text = source()
+    fn = text[text.index("menu_maintenance() {") :]
+    fn = fn[: fn.index("\n}\n")]
+    assert "scripts.maintenance status" in fn, "меню не показывает, как сейчас"
+    assert fn.index("status") < fn.index("menu_item 1"), (
+        "выбор предлагается раньше, чем сказано текущее состояние"
+    )

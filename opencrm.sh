@@ -2815,6 +2815,26 @@ probe() {
 # Работает тем же сервисом, что и переключатель в настройках
 # (`scripts/maintenance.py` → `core/services/maintenance_mode.py`), а не второй
 # его разновидностью: два способа закрыть сайт однажды разошлись бы.
+# Тот же режим из меню. Сначала показываем, как сейчас, и только потом
+# предлагаем переключить: человек приходит сюда, НЕ ЗНАЯ, закрыт ли сайт, —
+# именно этого знания ему и не хватало, раз он видит сайт рабочим.
+menu_maintenance() {
+    need_install
+    step "$(tr_ "Режим обслуживания" "Maintenance mode")"
+    if ! compose exec -T app python -m scripts.maintenance status; then
+        die "$(tr_ "приложение не отвечает — ./opencrm.sh logs app" "the application is not answering — ./opencrm.sh logs app")"
+    fi
+    say ""
+    menu_item 1 "$(tr_ "Открыть сайт" "Open the site")"
+    menu_item 2 "$(tr_ "Закрыть сайт на обслуживание" "Close the site for maintenance")"
+    say ""
+    _mm=$(ask "$(tr_ "  Выбор" "  Choice")" "1")
+    case "$_mm" in
+        2) cmd_maintenance on ;;
+        *) cmd_maintenance off ;;
+    esac
+}
+
 cmd_maintenance() {
     need_install
     case "$1" in
@@ -3414,6 +3434,11 @@ menu() {
         menu_item 15 "$(tr_ "Починка прав (после запуска под sudo)" "Repair ownership (after running under sudo)")"
         menu_item 16 "$(tr_ "Мониторинг и оповещения" "Monitoring and alerts")"
         menu_item 17 "$(tr_ "Переезд на MySQL" "Move to MySQL")"
+        # Пункт нужен ровно тому, кто в беде: сайт закрыт оборванным переездом,
+        # владелец проходит по устройству режима и видит сайт рабочим, а команду
+        # `./opencrm.sh maintenance off` в этот момент никто не вспоминает —
+        # человек открывает меню. Поэтому здесь, а не только в справке.
+        menu_item 18 "$(tr_ "Режим обслуживания: закрыть / открыть сайт" "Maintenance mode: close / open the site")"
         say ""
         menu_item 0  "$(tr_ "Выход" "Exit")"
         say ""
@@ -3436,6 +3461,7 @@ menu() {
             15) cmd_repair ;;
             16) cmd_monitoring ;;
             17) cmd_migrate_mysql ;;
+            18) menu_maintenance ;;
             0|q|Q|"") say ""; exit 0 ;;
             *)  warn "$(tr_ "нет такого пункта" "no such item")" ;;
         esac
