@@ -316,6 +316,74 @@ def sverit_postrochno(source, target, table) -> list[str]:
     return rashozhdenia
 
 
+def nayti_sirot(source) -> list[str]:
+    """Строки, чей внешний ключ показывает в пустоту. Пустой список — таких нет.
+
+    **Зачем это вообще существует.** SQLite следит за ключами только когда его
+    попросят: приложение просит (`PRAGMA foreign_keys=ON` в
+    `database/session.py`), а миграции — НЕТ и не могут, потому что alembic в
+    batch-режиме пересоздаёт таблицы, и включённые ключи ломают этот приём. То
+    есть окно, в котором сирота может завестись, у боевой базы открыто, пусть и
+    узкое.
+
+    MySQL таким снисхождением не страдает. Найдено живым прогоном: перенос
+    доходил до `deals`, получал `1452 Cannot add or update a child row` и падал
+    ПОСРЕДИНЕ — сайт к этому времени уже закрыт на обслуживание, а цель
+    наполовину заполнена. Исход не страшный (источник открыт только на чтение,
+    приложение с него не уходило), но дорогой: люди видели закрытый сайт, а
+    человек у консоли — сообщение MySQL про имя ограничения вместо имени беды.
+
+    Поэтому вопрос задаётся ПЕРВЫМ и ТОЛЬКО ИСТОЧНИКУ: ни цели, ни поднятой
+    MySQL, ни закрытого сайта для него не нужно. Отказ здесь не стоит никому
+    ничего.
+
+    Список ключей берётся из моделей, а не из схемы файла: у старой базы
+    ограничение могло быть не создано вовсе, и спрашивать её же о том, что
+    проверять, значило бы поверить ей на слово.
+    """
+    bedy: list[str] = []
+    with source.connect() as c:
+        for table in Base.metadata.sorted_tables:
+            for stolbec in table.c:
+                for kluch in stolbec.foreign_keys:
+                    roditel = kluch.column
+                    # NULL — это «связи нет», и она законна: ограничение молчит
+                    # на NULL в обеих базах.
+                    est_roditel = (
+                        select(roditel)
+                        .where(roditel == stolbec)
+                        .exists()
+                    )
+                    # Называем и строку, и значение, в которое она показывает:
+                    # по первому её находят, по второму видно, что именно
+                    # пропало (один удалённый клиент или половина таблицы).
+                    kluchi = list(table.primary_key.columns)
+                    chey = kluchi[0] if len(kluchi) == 1 else stolbec
+                    siroty = (
+                        select(chey, stolbec)
+                        .where(stolbec.is_not(None))
+                        .where(~est_roditel)
+                        .limit(PREDEL_RASHOZHDENIY)
+                    )
+                    naydeno = list(c.execute(siroty))
+                    if not naydeno:
+                        continue
+                    skolko = c.execute(
+                        select(func.count())
+                        .select_from(table)
+                        .where(stolbec.is_not(None))
+                        .where(~est_roditel)
+                    ).scalar_one()
+                    primery = ", ".join(
+                        f"{chey.name}={svoy} -> {chuzhoy}" for svoy, chuzhoy in naydeno
+                    )
+                    bedy.append(
+                        f"{table.name}.{stolbec.name} -> {roditel.table.name}.{roditel.name}: "
+                        f"{skolko} строк ссылаются на несуществующие (например: {primery})"
+                    )
+    return bedy
+
+
 def sverit_shemu(engine) -> list[str]:
     """Сходится ли схема цели с моделями. Пустой список — сошлась.
 
@@ -333,6 +401,22 @@ def sverit_shemu(engine) -> list[str]:
 def perenesti(source, target, *, razmer_pachki=RAZMER_PACHKI, tolko_proverka=False):
     """Переносит данные и возвращает список расхождений (пустой — всё сошлось)."""
     tablicy = list(Base.metadata.sorted_tables)
+
+    # 0. Сироты — ПЕРВЫМ вопросом, потому что он самый дешёвый и задаётся одному
+    #    источнику. MySQL за ключами следит, SQLite — только когда его попросят,
+    #    и на пути миграций его никто не просит (см. `nayti_sirot`). Спросив это
+    #    здесь, мы меняем «упало посреди переноса при закрытом сайте, MySQL
+    #    ругается именем ограничения» на «не начали вовсе и назвали строки».
+    siroty = nayti_sirot(source)
+    if siroty:
+        raise SystemExit(
+            "В исходной базе есть строки, ссылающиеся в пустоту:\n  "
+            + "\n  ".join(siroty)
+            + "\n\nMySQL такие строки не примет, а SQLite их принял: за ключами он"
+            "\nследит только по просьбе, и на пути миграций его об этом не просят."
+            "\nПереносить нечего до тех пор, пока это не разобрано — иначе перенос"
+            "\nвстанет посередине. Источник не тронут, сайт работает как работал."
+        )
 
     # 1. Схемы обязаны совпадать. Разные ревизии — разный набор колонок, и
     #    перенос либо упадёт на полпути, либо (хуже) молча не довезёт то, чего
@@ -526,7 +610,15 @@ def _bez_parolya(engine) -> str:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Перенос данных SQLite → MySQL")
     parser.add_argument("--source", required=True, help="URL исходной БД (SQLite)")
-    parser.add_argument("--target", required=True, help="URL целевой БД (MySQL)")
+    # Не required: у `--preflight` цели нет и быть не должно — весь смысл в том,
+    # чтобы спросить это ДО того, как MySQL вообще поднята.
+    parser.add_argument("--target", help="URL целевой БД (MySQL)")
+    parser.add_argument(
+        "--preflight",
+        action="store_true",
+        help="только осмотреть ИСТОЧНИК: нет ли строк, ссылающихся в пустоту. "
+        "Цель не нужна, ничего не пишется, сайт закрывать не надо",
+    )
     parser.add_argument(
         "--batch", type=int, default=RAZMER_PACHKI, help=f"строк за раз (по умолчанию {RAZMER_PACHKI})"
     )
@@ -552,6 +644,24 @@ def main() -> None:
         istochnik = f"sqlite:///file:{put}?mode=ro&uri=true"
 
     source = create_engine(istochnik)
+
+    # Осмотр источника — до всего остального и без цели вовсе.
+    if args.preflight:
+        siroty = nayti_sirot(source)
+        if siroty:
+            print("В исходной базе есть строки, ссылающиеся в пустоту:")
+            for stroka in siroty:
+                print(f"  {stroka}")
+            print(
+                "\nMySQL такие строки не примет. Переезд начинать нельзя: он встал"
+                " бы\nпосередине, при уже закрытом сайте. Источник не тронут."
+            )
+            raise SystemExit(1)
+        print("Внешние ключи в источнике целы: строк, ссылающихся в пустоту, нет")
+        return
+
+    if not args.target:
+        parser.error("нужен --target (он не нужен только для --preflight)")
     target = create_engine(args.target)
 
     # Сверка отдельным заходом. Зовётся установщиком ПОСЛЕ переноса и ДО
