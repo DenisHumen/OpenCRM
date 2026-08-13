@@ -22,6 +22,7 @@ from database import models  # noqa: F401 — наполняет metadata
 from database.session import Base
 from scripts.migrate_to_mysql import (
     _po_poryadku,
+    nayti_sirot,
     _svodka,
     perenesti,
     proverit,
@@ -494,3 +495,81 @@ def test_odinakovye_logicheskie_ne_krasneyut(istochnik_s_tovarami, tmp_path):
     with istochnik_s_tovarami.begin() as c:
         c.execute(text("UPDATE products SET is_service = 1 WHERE id = 4"))
     assert proverit(istochnik_s_tovarami, cel) == []
+
+
+# --- строки, ссылающиеся в пустоту ---------------------------------------------
+#
+# Найдено живым прогоном переезда на настоящем докере. Перенос доходил до
+# `deals`, получал от MySQL `1452 Cannot add or update a child row` и падал
+# ПОСЕРЕДИНЕ: сайт к этому времени уже закрыт на обслуживание, цель наполовину
+# заполнена, а в логе — имя ограничения вместо имени беды.
+#
+# Возможно это потому, что SQLite следит за внешними ключами только по просьбе.
+# Приложение просит (`PRAGMA foreign_keys=ON` в `database/session.py`), а
+# миграции НЕ просят и не могут: alembic в batch-режиме пересоздаёт таблицы, и
+# включённые ключи ломают этот приём. Окно узкое, но открытое.
+#
+# Правило: спрашиваем это ПЕРВЫМ и у одного источника — ни цели, ни поднятой
+# MySQL, ни закрытого сайта для вопроса не нужно.
+
+ZAYAVKI = Base.metadata.tables["deals"]
+KLIENTY = Base.metadata.tables["clients"]
+
+
+def test_sirota_ostanavlivaet_perenos_do_pervoy_zapisi(tmp_path):
+    """Заявка на несуществующего клиента: не начинаем вовсе и называем строку."""
+    istochnik = _baza(tmp_path, "src-sirota.db")
+    with istochnik.begin() as c:
+        # foreign_keys у SQLite по умолчанию выключены — ровно так сирота и
+        # заводится в жизни, поэтому опыт ставится без всяких ухищрений.
+        c.execute(insert(KLIENTY), {"name": "Настоящий клиент"})
+        c.execute(insert(ZAYAVKI), {"title": "На живого", "client_id": 1, "stage": "new"})
+        c.execute(insert(ZAYAVKI), {"title": "В пустоту", "client_id": 999, "stage": "new"})
+    cel = _baza(tmp_path, "dst.db")
+
+    with pytest.raises(SystemExit) as beda:
+        perenesti(istochnik, cel)
+
+    skazano = str(beda.value)
+    assert "deals.client_id" in skazano, skazano
+    assert "999" in skazano, "не названа строка, из-за которой всё встало"
+    # И главное: в цели не появилось НИ ОДНОЙ строки — переносить не начинали.
+    with cel.connect() as c:
+        assert c.execute(select(func.count()).select_from(KLIENTY)).scalar_one() == 0
+
+
+def test_celye_kluchi_ne_meshayut_perenosu(tmp_path):
+    """Парная проверка: на целой базе осмотр обязан молчать.
+
+    Без неё проверку легко «починить» до того, что она откажет всегда, — а
+    отказавший всегда переезд ничем не лучше не проверяющего.
+    """
+    istochnik = _baza(tmp_path, "src-celaya.db")
+    with istochnik.begin() as c:
+        c.execute(insert(KLIENTY), {"name": "Клиент"})
+        c.execute(insert(ZAYAVKI), {"title": "На живого", "client_id": 1, "stage": "new"})
+        # NULL — законная связь: ограничение молчит на нём в обеих базах.
+        # Берём необязательную ссылку (у заявки клиент обязателен).
+        c.execute(insert(KLIENTY), {"name": "Клиент без начальника", "manager_id": None})
+    cel = _baza(tmp_path, "dst.db")
+
+    assert nayti_sirot(istochnik) == []
+    assert perenesti(istochnik, cel) == []
+    assert proverit(istochnik, cel) == []
+
+
+def test_osmotr_nazyvaet_vse_svyazi_a_ne_pervuyu(tmp_path):
+    """Разбирать такое приходится целиком, а не по одной находке за прогон."""
+    istochnik = _baza(tmp_path, "src-mnogo.db")
+    with istochnik.begin() as c:
+        c.execute(insert(KLIENTY), {"name": "Клиент"})
+        c.execute(insert(ZAYAVKI), [{"title": "В пустоту", "client_id": 777, "stage": "new"},
+                                    {"title": "И эта", "client_id": 778, "stage": "new"}])
+        c.execute(insert(KLIENTY), {"name": "Клиент без начальника", "manager_id": 404})
+
+    naydeno = nayti_sirot(istochnik)
+
+    slitno = " ".join(naydeno)
+    assert "deals.client_id" in slitno, naydeno
+    assert "clients.manager_id" in slitno, naydeno
+    assert "2 строк" in slitno, "не сказано, сколько именно строк в первой связи"

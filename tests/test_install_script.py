@@ -340,3 +340,38 @@ def test_maintenance_can_be_lifted_from_the_command_line():
     komanda = komanda[: komanda.index("\n}\n")]
     assert "scripts.maintenance" in komanda, "команда не пользуется общим сервисом режима"
     assert "maintenance) cmd_maintenance" in text, "команда не подключена к разбору аргументов"
+
+
+def test_osmotr_idyot_do_zakrytiya_sayta():
+    """Беда, которую находит осмотр, делает переезд невозможным целиком.
+
+    Найдено живым прогоном на настоящем докере: перенос доходил до `deals`,
+    получал от MySQL «1452 Cannot add or update a child row» и падал ПОСЕРЕДИНЕ
+    — сайт к этому времени уже закрыт на обслуживание, цель наполовину
+    заполнена, а в логе имя ограничения вместо имени беды.
+
+    Вопрос «нет ли строк, ссылающихся в пустоту» задаётся одному источнику: ни
+    MySQL, ни копии, ни закрытого сайта для него не нужно. Значит и стоять он
+    обязан до всего этого — иначе отказ стоит людям простоя на ровном месте.
+    """
+    text = source()
+    perenos = text[text.index("migrate_sqlite_to_mysql() {") :]
+    perenos = perenos[: perenos.index("\n}\n")]
+    assert "migrate_preflight" in perenos, "осмотр источника в переезде не зовётся вовсе"
+    assert perenos.index("migrate_preflight") < perenos.index("migrate_maintenance on"), (
+        "осмотр идёт ПОСЛЕ закрытия сайта — отказ на нём стоит людям простоя"
+    )
+    assert perenos.index("migrate_preflight") < perenos.index("migrate_snapshot_sqlite"), (
+        "осмотр идёт после снятия копии — лишняя работа перед заведомым отказом"
+    )
+    assert perenos.index("migrate_preflight") < perenos.index("migrate_up_services"), (
+        "осмотр идёт после подъёма MySQL: на медленном диске VPS первый старт "
+        "создаёт каталог данных минутами, и всё это перед заведомым отказом"
+    )
+
+    osmotr = text[text.index("migrate_preflight() {") :]
+    osmotr = osmotr[: osmotr.index("\n}\n")]
+    assert "--preflight" in osmotr, "осмотр зовёт что-то другое, а не проверку источника"
+    assert "--target" not in osmotr, (
+        "осмотру передают цель — значит он потребует поднятой MySQL там, где она не нужна"
+    )
