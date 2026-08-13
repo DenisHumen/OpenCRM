@@ -50,6 +50,8 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import PlainTextResponse
 
 from config.settings import BASE_DIR, get_settings
+from database.repositories import engine_info
+from database.session import SessionLocal
 from web.api.deps import require_module
 
 # Блок мониторинга закрывает этот маршрут целиком: выключенный блок исчезает и
@@ -199,14 +201,30 @@ def _collect_schema(out: Metrics) -> None:
 
 
 def _collect_database(out: Metrics) -> None:
-    """Размер базы — только для файловой.
+    """Размер базы — на обоих движках, но спрашивается он по-разному.
 
-    На MySQL размер лежит внутри сервера, и спросить его можно лишь запросом,
-    а запросы живут в `database/` (CLAUDE.md, раздел 3). Врать нулём хуже, чем
-    молчать: ноль на графике выглядит как «база исчезла».
+    У SQLite ответ лежит в файловой системе, у MySQL — внутри сервера, и там его
+    берёт репозиторий (`database/repositories/engine_info.py`): запросы живут
+    только в `database/` (CLAUDE.md, раздел 3).
+
+    Прежде на MySQL метрика просто ИСЧЕЗАЛА — молчание было выбрано осознанно
+    (ноль на графике неотличим от «база исчезла»), но спросить сервер тогда было
+    нечем. После переезда это молчание стало бы вечным: за ростом базы перестал
+    бы следить кто бы то ни было ровно на том движке, где она и растёт.
     """
     settings = get_settings()
     if not settings.db_url.startswith("sqlite"):
+        db = SessionLocal()
+        try:
+            razmer = engine_info.database_size_bytes(db)
+        finally:
+            db.close()
+        if razmer:
+            out.add(
+                "opencrm_database_size_bytes",
+                razmer,
+                help_text="Размер базы вместе с индексами (оценка information_schema).",
+            )
         return
     try:
         path = _sqlite_path(settings.db_url)

@@ -220,11 +220,30 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Копия базы MySQL перед миграциями")
     podkomandy = parser.add_subparsers(dest="komanda", required=True)
     podkomandy.add_parser("revision", help="ревизия alembic в базе (или none)")
+    podkomandy.add_parser(
+        "ping",
+        help="отвечает ли сервер базы: код 0 — да, 1 — нет. Ничего не читает и "
+        "не пишет",
+    )
     dump = podkomandy.add_parser("dump", help="снять копию в файл")
     dump.add_argument("fayl")
     args = parser.parse_args()
 
     engine = _engine()
+    # `ping` существует ради одного: отличить «сервер ещё не слушает порт» от
+    # «с базой беда». Точка входа без этого различения принимала первое за
+    # второе и убивала контейнер — см. `zhdat_bazu` в docker/entrypoint.sh.
+    #
+    # Молча и без подробностей: зовётся он в цикле ожидания, и десяток
+    # трассировок в журнале старта только мешали бы разбирать настоящую беду.
+    if args.komanda == "ping":
+        try:
+            with engine.connect() as c:
+                c.execute(text("SELECT 1"))
+        except Exception:  # noqa: BLE001 — любая причина здесь значит «ещё нет»
+            return 1
+        return 0
+
     if args.komanda == "revision":
         print(revizia(engine))
         return 0

@@ -368,3 +368,105 @@ def test_metka_kopii_odna_i_ta_zhe_v_oboih_mestah():
     assert METKA == SNAPSHOT_MARK, (
         "метка конца копии разъехалась между scripts/snapshot_db.py и deploy/updater.py"
     )
+
+
+# --- гонка старта: приложение поднимается раньше базы -------------------------
+#
+# `depends_on: condition: service_healthy` действует только на `compose up`. Ни
+# `docker restart`, ни перезагрузка машины, ни `restart: unless-stopped` его не
+# соблюдают — контейнеры поднимаются разом.
+#
+# Поймано живьём на стенде с MySQL: приложение стартовало первым, получало
+# `(2003, "Can't connect to MySQL server on 'db' (Connection refused)")`, и точка
+# входа принимала это за «копию снять не удалось» — печатала «дальше идти
+# нельзя» и выходила с кодом 1. Контейнер уходил в петлю перезапусков, сайт лежал
+# всё это время. Обычная перезагрузка машины превращалась в аварию, и только на
+# MySQL: у файловой базы такой гонки нет вовсе.
+
+
+def _stend_s_ozhidaniem(tmp_path: Path, otvetit_s_popytki: int) -> dict:
+    """Стенд, где `ping` отвечает не сразу: база «поднимается» не мгновенно."""
+    stend = _stend(tmp_path, db_url=MYSQL_URL, sqlite_fayl=False)
+    schyot = tmp_path / "ping.schyot"
+    schyot.write_text("0", encoding="utf-8")
+    _polozhit(
+        Path(stend["env"]["PATH"].split(os.pathsep)[0]) / "python",
+        "#!/bin/sh\n"
+        f'echo "python $*" >> "{stend["sled"].as_posix()}"\n'
+        'case "$3" in\n'
+        "    ping)\n"
+        f'        n=$(cat "{schyot.as_posix()}")\n'
+        "        n=$((n + 1))\n"
+        f'        echo "$n" > "{schyot.as_posix()}"\n'
+        f"        [ \"$n\" -ge {otvetit_s_popytki} ] || exit 1\n"
+        "        ;;\n"
+        f"    revision) echo {REVIZIA} ;;\n"
+        f"    heads) echo '{GOLOVA} (head)' ;;\n"
+        '    dump) echo "дамп" > "$4" ;;\n'
+        "esac\n"
+        "exit 0\n",
+    )
+    stend["schyot"] = schyot
+    return stend
+
+
+@needs_sh
+def test_zhdyot_bazu_a_ne_umiraet(tmp_path):
+    """База ответила с третьей попытки — старт обязан продолжиться, а не упасть."""
+    stend = _stend_s_ozhidaniem(tmp_path, otvetit_s_popytki=3)
+
+    itog = _zapustit(stend)
+
+    assert itog.returncode == 0, itog.stderr
+    assert "жду, пока база начнёт отвечать" in itog.stdout, itog.stdout
+    assert _kopii(stend), "копия не снялась — старт свернул не туда после ожидания"
+    # И главное: «не удалось снять копию» не печаталось вовсе.
+    assert "не удалось снять копию" not in itog.stdout + itog.stderr
+
+
+@needs_sh
+def test_bazu_sprashivayut_do_lyubykh_resheniy(tmp_path):
+    """Порядок важен: ревизию спрашивают ПОСЛЕ того, как база ответила.
+
+    Иначе `revision` падает на отказе соединения, `CURRENT` становится `none`,
+    и копия снимается под неверным именем — на каждом таком старте заново.
+    """
+    stend = _stend_s_ozhidaniem(tmp_path, otvetit_s_popytki=2)
+
+    _zapustit(stend)
+
+    sled = stend["sled"].read_text(encoding="utf-8")
+    assert sled.index("ping") < sled.index("revision"), (
+        "ревизию спрашивают раньше, чем база ответила"
+    )
+    assert "snapshot_db revision" in sled
+
+
+@needs_sh
+def test_baza_kotoraya_ne_podnyalas_vovse_govorit_ob_etom(tmp_path):
+    """Парная проверка: ждать вечно нельзя, молчать о лежащей базе — тем более."""
+    stend = _stend_s_ozhidaniem(tmp_path, otvetit_s_popytki=999)
+    stend["env"]["OPENCRM_DB_WAIT_TRIES"] = "2"
+
+    itog = _zapustit(stend)
+
+    assert itog.returncode == 1
+    assert "база не ответила" in itog.stderr, itog.stderr
+    assert "logs db" in itog.stderr, "человеку не сказано, куда смотреть"
+    assert _kopii(stend) == [], "копия снималась при неотвечающей базе"
+
+
+@needs_sh
+def test_na_sqlite_ozhidaniya_net(tmp_path):
+    """У файловой базы гонки нет вовсе — и ждать нечего.
+
+    Лишнее ожидание на SQLite стоило бы двух секунд на каждом старте и
+    появилось бы ровно там, где проблемы не существует.
+    """
+    stend = _stend(tmp_path, db_url="sqlite:////app/data/opencrm.db", sqlite_fayl=True)
+
+    itog = _zapustit(stend)
+
+    assert itog.returncode == 0, itog.stderr
+    assert "жду, пока база" not in itog.stdout
+    assert "snapshot_db ping" not in stend["sled"].read_text(encoding="utf-8")
