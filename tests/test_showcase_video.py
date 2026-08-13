@@ -67,3 +67,22 @@ def test_video_work_still_opens_in_lightbox(manager_client, mp4_bytes):
     assert 'data-index="0"' in page
     # в лайтбоксе плеер создаётся скриптом с controls и звуком
     assert 'el.controls = true' in page
+
+
+def test_video_has_no_fragment_to_choose(manager_client, mp4_bytes):
+    """У ролика на плитке показан постер — выбирать по вертикали нечего.
+
+    Правило обрезки (`layout.is_cropped`) видео не касается: круг ▶ стоит ровно
+    там, где встала бы плашка «открыть целиком», и два обещания в одной точке
+    спорили бы друг с другом. Служба отказывает по той же причине.
+    """
+    board = manager_client.post(f"{API}/boards", json={"title": "Фрагмент ролика"}).json()
+    work = manager_client.post(
+        f"{API}/boards/{board['id']}/works",
+        files={"file": ("clip.mp4", mp4_bytes, "video/mp4")},
+    ).json()
+    rejected = manager_client.patch(
+        f"{API}/boards/{board['id']}/works/{work['id']}", json={"preview_focus": 0.5}
+    )
+    assert rejected.status_code == 422
+    assert rejected.json()["error"]["code"] == "not_a_croppable_work"

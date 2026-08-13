@@ -1,9 +1,14 @@
-"""Длинные работы: лонгриды и инфографика на витрине.
+"""Обрезка работ на витрине и всё, что осталось от «длинных работ».
 
-Отдельной сетки у них больше нет — лонгрид занимает такое же место композиции,
-как любая другая работа, и показывает выбранный менеджером фрагмент. Производные
-при этом ограничиваются по ширине (иначе от лонгрида 1:10 в `card.webp` осталось
-бы ~80px ширины).
+Правило обрезки одно на обе стороны — витрину и редактор в CRM: работа обрезана,
+когда она вытянутее своего места композиции (`layout.is_cropped`). Порога «эта
+картинка длинная» в нём нет: обрезка зависит не от того, какая картинка, а от
+того, в какое место она попала.
+
+`media_service.LONG_RATIO` при этом жив, но отвечает на другой вопрос — как
+обработать сам файл: производные вытянутых изображений ужимаются по ширине
+(иначе от лонгрида 1:10 в `card.webp` осталось бы ~80px ширины), а в лайтбоксе
+такая работа листается прокруткой.
 """
 
 import pytest
@@ -13,7 +18,7 @@ from PIL import Image
 from core.services import media_service
 from tests.conftest import API, png_bytes
 from web.main import app
-from web.public.layout import cropped_indexes
+from web.public.layout import cropped_indexes, phone_cropped_indexes
 
 
 # --- производные: ужимаем ширину, а не длину ---
@@ -51,14 +56,135 @@ def test_long_image_threshold(size, long):
     assert media_service.is_long_image(*size) is long
 
 
-def test_cropped_indexes_ignores_video_and_unknown_sizes():
+# --- одно правило: работа обрезана своим местом, а не своей вытянутостью ---
+
+def test_the_same_work_is_whole_in_one_place_and_cropped_in_the_next():
+    """Три одинаковых работы, три места разной формы — три разных ответа.
+
+    Портрет 2:3 порог «длинной картинки» не проходит и раньше считался
+    помещающимся всегда. Но первое место композиции само вертикальное (~1:1.5),
+    а второе и третье — широкие: там у портрета срезано больше трети высоты.
+    Отсюда и жалоба «в одному частково видно назву, а в іншому кінчики ледь».
+    """
+    works = [{"kind": "image", "width": 1000, "height": 1500} for _ in range(3)]
+    assert cropped_indexes(works) == {1, 2}
+
+
+@pytest.mark.parametrize(
+    "height, cropped",
+    [
+        (1495, False),  # ровно под место
+        (1510, False),  # на процент выше места — глазу не видно, мигать нечему
+        (1560, True),   # срезано больше допуска
+        (3000, True),
+    ],
+)
+def test_tolerance_keeps_a_work_made_for_its_place_whole(height, cropped):
+    """Место — округлённое число, стороны работы — целые: точного равенства не бывает.
+
+    Первое место композиции ~1:1.4954. Работа, сделанная под него, разойдётся с
+    ним на сотые — и без допуска получала бы размытие и «VIEW FULL» из-за
+    невидимых глазу двух пикселей, а от пересчёта места мигала бы туда-сюда.
+    """
     works = [
-        {"kind": "image", "width": 400, "height": 4000},
+        {"kind": "image", "width": 1000, "height": height},
+        {"kind": "image", "width": 1000, "height": 1495},  # чтобы мест стало два
+    ]
+    assert (0 in cropped_indexes(works)) is cropped
+
+
+def test_a_work_wider_than_its_place_is_not_called_cropped():
+    """Широкую работу место режет по бокам — но это не «продолжение снизу».
+
+    Подсказка на витрине — размытие по нижнему срезу и выбор фрагмента по
+    вертикали. Широкой работе они сказали бы неправду, поэтому правило говорит
+    только про высоту. Если понадобится — это отдельный разговор со своим
+    инструментом, а не тихое расширение этого правила.
+    """
+    # второе место широкое (~1.34), работа 3:1 ещё шире
+    works = [{"kind": "image", "width": 1000, "height": 1495},
+             {"kind": "image", "width": 3000, "height": 1000}]
+    assert cropped_indexes(works) == set()
+
+
+def test_video_and_unknown_sizes_are_not_cropped():
+    """У видео на плитке своё обещание — круг ▶ ровно там, где встала бы плашка.
+
+    А без сторон работы пропорцию не с чем сравнивать: гадать вместо ответа
+    нельзя.
+    """
+    works = [
+        {"kind": "image", "width": 1000, "height": 2000},
         {"kind": "video", "width": 400, "height": 4000},
         {"kind": "image", "width": None, "height": None},
-        {"kind": "image", "width": 900, "height": 1600},  # 9:16 — в место влезает
     ]
     assert cropped_indexes(works) == {0}
+
+
+def test_phone_has_one_place_for_everyone():
+    """На телефоне композиции нет — там режет только предел высоты кадра.
+
+    Иначе работа, которую резало место композиции, на телефоне была бы видна
+    целиком, а плашка «открыть целиком» всё равно обещала бы продолжение.
+    """
+    works = [
+        {"kind": "image", "width": 1000, "height": 1500},
+        {"kind": "image", "width": 1000, "height": 1500},
+        {"kind": "image", "width": 400, "height": 2400},
+    ]
+    assert cropped_indexes(works) == {1, 2}
+    assert phone_cropped_indexes(works) == {2}
+
+
+def test_showcase_offers_view_full_exactly_to_the_cropped(manager_client):
+    """Кнопка — ровно у тех, у кого есть что показать сверх видимого."""
+    board = manager_client.post(f"{API}/boards", json={"title": "Портреты"}).json()
+    for index in range(3):
+        upload = manager_client.post(
+            f"{API}/boards/{board['id']}/works",
+            files={"file": (f"{index}.png", png_bytes(size=(1000, 1500)), "image/png")},
+        )
+        assert upload.status_code == 202, upload.text
+    manager_client.patch(f"{API}/boards/{board['id']}", json={"is_published": True})
+    share = manager_client.post(f"{API}/boards/{board['id']}/shares", json={}).json()
+
+    page = TestClient(app).get(f"/b/{share['token']}").text
+    # первое место композиции вертикальное — та же работа в нём видна целиком
+    assert page.count('class="tile is-cropped') == 2
+    assert page.count('class="tile"') == 1
+    assert page.count('class="more"') == 2
+    assert page.count('<div class="glass">') == 2
+    # телефон эти работы покажет целиком: композиции там нет
+    assert 'class="tile is-cropped is-tall"' not in page
+
+
+def test_showcase_says_nothing_to_a_work_seen_whole(manager_client):
+    """Работа в пропорциях своего места: ни плашки, ни размытия, ни обещания."""
+    board = manager_client.post(f"{API}/boards", json={"title": "Ровно в место"}).json()
+    manager_client.post(
+        f"{API}/boards/{board['id']}/works",
+        files={"file": ("wide.png", png_bytes(size=(640, 480)), "image/png")},
+    )
+    manager_client.patch(f"{API}/boards/{board['id']}", json={"is_published": True})
+    share = manager_client.post(f"{API}/boards/{board['id']}/shares", json={}).json()
+
+    page = TestClient(app).get(f"/b/{share['token']}").text
+    assert 'class="tile"' in page
+    assert 'class="tile is-cropped' not in page
+    assert 'class="more"' not in page
+    assert "View full" not in page
+
+
+def test_editor_hears_the_verdict_from_the_server(manager_client):
+    """Правило живёт на сервере: редактор его не повторяет, а читает готовым."""
+    board = manager_client.post(f"{API}/boards", json={"title": "Редактор"}).json()
+    for index in range(3):
+        manager_client.post(
+            f"{API}/boards/{board['id']}/works",
+            files={"file": (f"{index}.png", png_bytes(size=(1000, 1500)), "image/png")},
+        )
+    detail = manager_client.get(f"{API}/boards/{board['id']}").json()
+    assert [w["is_cropped"] for w in detail["works"]] == [False, True, True]
 
 
 # --- srcset: плитка не должна тянуть `card`, когда мала́ ---
@@ -111,7 +237,7 @@ def test_long_and_short_works_share_one_composition(manager_client):
 
     page = TestClient(app).get(f"/b/{share['token']}").text
     assert page.count('class="module"') == 1
-    assert page.count('class="tile is-long"') == 1
+    assert page.count('class="tile is-cropped') == 1
     assert page.count('class="tile"') == 1
     # обрезка прикрыта размытием, и видно, что работу можно открыть целиком
     assert page.count('<div class="glass">') == 1
@@ -134,7 +260,7 @@ def test_a_board_of_long_works_is_one_composition(manager_client, count):
 
     page = TestClient(app).get(f"/b/{share['token']}").text
     assert page.count('class="module"') == 1
-    assert page.count('class="tile is-long"') == count
+    assert page.count('class="tile is-cropped') == count
 
 
 # --- выбор фрагмента ---
@@ -176,18 +302,34 @@ def test_fragment_resets_to_the_top(manager_client):
     assert manager_client.patch(path, json={"preview_focus": None}).json()["preview_focus"] is None
 
 
-def test_short_work_has_nothing_to_choose(manager_client):
-    """Обычная картинка помещается в своё место целиком — окно двигать негде."""
+def test_work_that_fits_its_place_has_nothing_to_choose(manager_client):
+    """Работа в пропорциях своего места видна целиком — выбирать нечего."""
     board = manager_client.post(f"{API}/boards", json={"title": "Короткая"}).json()
-    work = manager_client.post(
+    manager_client.post(
         f"{API}/boards/{board['id']}/works",
         files={"file": ("wide.png", png_bytes(size=(640, 480)), "image/png")},
+    )
+    detail = manager_client.get(f"{API}/boards/{board['id']}").json()
+    assert detail["works"][0]["is_cropped"] is False
+
+
+def test_fragment_is_chosen_for_a_work_cropped_by_its_place(manager_client):
+    """Портрет 2:3 в широком месте срезан — и подвинуть окно обязано быть чем.
+
+    Раньше служба отвечала «not_a_long_work»: работа не проходила порог
+    вытянутости, хотя место срезало ей треть высоты. Это и есть жалоба
+    «поправить было нечем».
+    """
+    board = manager_client.post(f"{API}/boards", json={"title": "Портрет"}).json()
+    work = manager_client.post(
+        f"{API}/boards/{board['id']}/works",
+        files={"file": ("portrait.png", png_bytes(size=(1000, 1500)), "image/png")},
     ).json()
-    rejected = manager_client.patch(
+    saved = manager_client.patch(
         f"{API}/boards/{board['id']}/works/{work['id']}", json={"preview_focus": 0.5}
     )
-    assert rejected.status_code == 422
-    assert rejected.json()["error"]["code"] == "not_a_long_work"
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["preview_focus"] == 0.5
 
 
 def test_showcase_shows_the_chosen_fragment(manager_client):

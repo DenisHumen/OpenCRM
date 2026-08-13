@@ -112,7 +112,7 @@
 | DELETE | `/boards/{id}` | 👤 | Мягкое удаление; все ссылки доски перестают открываться |
 | POST | `/boards/{id}/works` | 👤 | Загрузка файла работы (multipart). Ответ `202` + `work` со `status=processing` |
 | GET | `/boards/{id}/works/{work_id}` | 👤 | Одна работа (поллинг статуса обработки) |
-| PATCH | `/boards/{id}/works/{work_id}` | 👤 | `title`, `description`, `project_url` (только `http(s)`, иначе `422 bad_project_url`), `preview_focus` — видимый фрагмент длинной работы (0…1): только у длинных картинок (иначе `422 not_a_long_work`), значение подрезается до диапазона, `null` возвращает показ от верха |
+| PATCH | `/boards/{id}/works/{work_id}` | 👤 | `title`, `description`, `project_url` (только `http(s)`, иначе `422 bad_project_url`), `preview_focus` — видимый фрагмент работы (0…1): только у картинок с известными сторонами (иначе `422 not_a_croppable_work`), значение подрезается до диапазона, `null` возвращает показ от верха |
 | PUT | `/boards/{id}/works/order` | 👤 | Новый порядок: `{"work_ids": [5, 2, 9, ...]}` (drag-and-drop) |
 | DELETE | `/boards/{id}/works/{work_id}` | 👤 | Удалить работу и её файлы |
 
