@@ -510,7 +510,7 @@
       </a>
       {% endif %}
     </div>
-    <h1 class="serif">{{ board.title }}</h1>
+    <h1>{{ board.title }}</h1>
     {% if board.description %}<p class="desc">{{ board.description }}</p>{% endif %}
     {% if site.showcase_show_meta == '1' %}
     <div class="meta">{{ works|length }} {{ t.works if works|length != 1 else t.work }} · {{ t.updated }} {{ board.updated_at.strftime('%d.%m.%Y') }}</div>
@@ -593,7 +593,7 @@
 
   {% if site.showcase_show_footer == '1' %}
   <footer>
-    {% if site.brand_name %}<div class="studio serif">{{ site.brand_name }}</div>{% endif %}
+    {% if site.brand_name %}<div class="studio">{{ site.brand_name }}</div>{% endif %}
     {% if site.brand_tagline %}<div class="tagline">{{ site.brand_tagline }}</div>{% endif %}
     <div class="contacts">
       {% if site.contact_email %}<a href="mailto:{{ site.contact_email }}">{{ site.contact_email }}</a>{% endif %}

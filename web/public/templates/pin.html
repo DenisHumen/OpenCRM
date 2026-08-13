@@ -45,7 +45,7 @@
 {% block content %}
 <div class="pin-screen">
   {{ brand_mark(site) }}
-  <h1 class="serif">{{ t.pin_title }}</h1>
+  <h1>{{ t.pin_title }}</h1>
   <div class="hint">{{ t.pin_hint }}</div>
   <form class="pin-form" method="post" action="/b/{{ token }}/pin" id="pin-form">
     <div class="cells{% if error %} error{% endif %}" id="cells">
