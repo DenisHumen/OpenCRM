@@ -45,7 +45,18 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from sqlalchemy import Float, Integer, create_engine, func, insert, inspect, select, text  # noqa: E402
+from sqlalchemy import (  # noqa: E402
+    Boolean,
+    Float,
+    Integer,
+    create_engine,
+    func,
+    insert,
+    inspect,
+    select,
+    text,
+    type_coerce,
+)
 
 from database import models  # noqa: E402,F401 — регистрирует таблицы в metadata
 from database import schema_check  # noqa: E402
@@ -142,15 +153,31 @@ RAZMER_SVERKI = 1000
 PREDEL_RASHOZHDENIY = 5
 
 
-def _sravnimye(table):
-    """Столбцы, которые можно сличать ПОБАЙТНО на двух разных движках.
+#: Относительный допуск при сличении дробных столбцов.
+#:
+#: `Float` без указания точности компилируется в MySQL в `FLOAT` — четыре байта
+#: против восьми у SQLite, — и 0,3333333333 возвращается оттуда как 0,33333334.
+#: Разница настоящая и есть у КАЖДОЙ такой колонки на честном переносе тоже,
+#: поэтому побайтное сравнение здесь краснело бы всегда.
+#:
+#: Прежде из-за этого дробные столбцы выбрасывались из сличения ЦЕЛИКОМ, и это
+#: была дыра, объявленная вслух, но всё равно дыра: проверено делом на
+#: настоящем переезде — `works.duration_sec` 12.5 в источнике против 99999.5 в
+#: цели и `preview_focus` 0.25 против 0.99 давали ЗЕЛЁНУЮ сверку.
+#:
+#: Допуск закрывает обе стороны сразу: 1e-6 — это на порядок грубее точности
+#: четырёхбайтного числа (около семи значащих цифр) и на много порядков тоньше
+#: любой порчи, которую стоит ловить. 0,33333334 против 0,3333333333 проходит,
+#: 0,99 против 0,25 — нет.
+DOPUSK_FLOAT = 1e-6
 
-    Из сравнения выпадает ровно один вид — `Float`, и не по лени. `Float` без
-    указания точности компилируется в MySQL в `FLOAT`, то есть четыре байта
-    против восьми у SQLite: 0,3333333333 возвращается как 0,33333334. Разница
-    настоящая, но она есть у КАЖДОЙ такой колонки и на честном переносе тоже —
-    сверка краснела бы всегда и ровно поэтому была бы выключена первым же
-    действием. Ложная тревога хуже отсутствия тревог.
+
+def _sravnimye(table):
+    """Столбцы для построчного сличения — ВСЕ до одного.
+
+    Раньше отсюда выпадали дробные (см. `DOPUSK_FLOAT`), и это был единственный
+    объявленный слепой участок. Теперь не выпадает ни один: как сравнивать
+    каждый вид, решает `_ravno`, а «не сравнивать вовсе» не решает никто.
 
     Остальное сходится побайтно, и это свойство схемы, а не удача:
     `database/types.py` объявляет `DATETIME(6)` для всех колонок времени (иначе
@@ -159,12 +186,43 @@ def _sravnimye(table):
     этом приходят с обоих движков одинаковыми: их не сравнивает база, их
     сравнивает Python.
     """
-    return [c for c in table.c if not isinstance(c.type, Float)]
+    return list(table.c)
+
+
+def _kak_chitat(stolbec):
+    """Как ЧИТАТЬ столбец при сличении.
+
+    `Boolean` читается СЫРЫМ ЦЕЛЫМ, и это вторая дыра, найденная делом, — та,
+    что не была объявлена нигде. У логической колонки область истинности из
+    двух значений, а хранится она числом: `products.is_service` = 1 в источнике
+    против 2 в цели — обе стороны SQLAlchemy превращает в `True`, и разницы не
+    видит ни построчное сличение, ни суммы (по `Boolean` их и не берут).
+    Значение вне области истинности молча проезжает переезд насквозь и остаётся
+    в базе, из которой потом вычитают отчёты.
+
+    `type_coerce`, а не `cast`: SQL здесь не меняется вовсе, меняется только
+    разбор ответа на стороне Python — снимается преобразователь `Boolean`.
+    Диалектных веток это не заводит, а `ORDER BY` и план запроса не трогает.
+    """
+    if isinstance(stolbec.type, Boolean):
+        return type_coerce(stolbec, Integer).label(stolbec.name)
+    return stolbec
+
+
+def _ravno(stolbec, bylo, stalo) -> bool:
+    """Считать ли два значения одного столбца совпавшими."""
+    if isinstance(stolbec.type, Float):
+        if bylo is None or stalo is None:
+            return bylo is None and stalo is None
+        # Допуск относительный, с полом в единицу: у нуля и долей единицы
+        # относительная мера вырождается, а абсолютная 1e-6 для них как раз.
+        return abs(bylo - stalo) <= DOPUSK_FLOAT * max(abs(bylo), abs(stalo), 1.0)
+    return bylo == stalo
 
 
 def _potok(engine, table, stolbcy, poryadok):
     """Строки таблицы потоком, в заданном порядке. Память не зависит от размера."""
-    zapros = select(*stolbcy).order_by(*poryadok)
+    zapros = select(*[_kak_chitat(c) for c in stolbcy]).order_by(*poryadok)
     with engine.connect() as c:
         kursor = c.execution_options(stream_results=True).execute(zapros)
         while True:
@@ -237,15 +295,19 @@ def sverit_postrochno(source, target, table) -> list[str]:
             b = next(sprava, None)
         else:
             if a != b:
+                # Побайтное неравенство — только повод присмотреться: у дробных
+                # оно бывает и на честном переносе (см. `DOPUSK_FLOAT`).
+                # Расхождением называем то, что не прошло `_ravno`.
                 otlichiya = [
                     f"{imya}: было {bylo!r}, стало {stalo!r}"
-                    for imya, bylo, stalo in zip(imena, a, b)
-                    if bylo != stalo
+                    for stolbec, imya, bylo, stalo in zip(stolbcy, imena, a, b)
+                    if not _ravno(stolbec, bylo, stalo)
                 ]
-                skazat(
-                    f"{table.name}: {_nazvat_stroku(table, stolbcy, a)} — "
-                    + "; ".join(otlichiya)
-                )
+                if otlichiya:
+                    skazat(
+                        f"{table.name}: {_nazvat_stroku(table, stolbcy, a)} — "
+                        + "; ".join(otlichiya)
+                    )
             a = next(sleva, None)
             b = next(sprava, None)
 

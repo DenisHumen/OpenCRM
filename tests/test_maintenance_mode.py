@@ -115,6 +115,34 @@ def test_healthz_stays_green_while_closed(closed):
     assert TestClient(app).get("/healthz").status_code == 200
 
 
+def test_healthz_govorit_chto_sayt_zakryt(closed):
+    """Закрытый сайт не имеет права выглядеть здоровым.
+
+    Режим включает не только человек: его закрывает и открывает переезд базы
+    (`migrate_maintenance` в opencrm.sh). Оборванный переезд оставлял сайт
+    закрытым НАВСЕГДА, и не видел этого никто — `/healthz` отвечал
+    `status ok, schema ok, redis ok`, докер, автообновление и мониторинг
+    молчали. Люди при этом видели разное: сотрудник — 503 даже на чтение
+    списка клиентов, публичная главная — 503, а владелец проходит по
+    устройству режима и ВИДИТ РАБОЧИЙ САЙТ. То есть единственный, кто может
+    открыть, беды и не замечал.
+
+    Код ответа поле не меняет — иначе docker пустил бы контейнер по кругу
+    перезапусков поверх объявленных работ, а откат обновления сносил бы
+    исправный деплой.
+    """
+    otvet = TestClient(app).get("/healthz")
+    assert otvet.status_code == 200
+    assert otvet.json()["maintenance"] == "on", "закрытый сайт выглядит полностью здоровым"
+
+
+def test_healthz_govorit_chto_sayt_otkryt(root_client):
+    """Обратная сторона: поле обязано и молчать, когда молчать положено."""
+    root_client.post(MAINT, json={"enabled": False})
+    maintenance_mode.invalidate()
+    assert TestClient(app).get("/healthz").json()["maintenance"] == "off"
+
+
 def test_note_is_dropped_when_the_site_reopens(root_client):
     root_client.post(MAINT, json={"enabled": True, "note": "вернёмся к 14:00"})
     root_client.post(MAINT, json={"enabled": False})

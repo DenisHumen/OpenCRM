@@ -18,6 +18,7 @@ from core.exceptions import DomainError
 from core import subscriptions  # noqa: F401
 from core.services import (
     auth_service,
+    maintenance_mode,
     permissions_service,
     pipeline_service,
     settings_service,
@@ -364,6 +365,25 @@ def create_app() -> FastAPI:
         db = SessionLocal()
         try:
             db.execute(text("SELECT 1"))
+            # Закрытый сайт не имеет права выглядеть здоровым.
+            #
+            # Режим обслуживания включает не только человек: его включает и
+            # снимает переезд базы (`migrate_maintenance` в opencrm.sh). Убитый
+            # посреди переноса переезд оставляет сайт закрытым НАВСЕГДА, и
+            # проверено делом, что этого не видит НИКТО: `/healthz` отвечал
+            # `status ok, schema ok, redis ok`, докер, автообновление и
+            # мониторинг молчали. Люди при этом видели разное: обычный
+            # сотрудник — 503 даже на чтение списка клиентов, публичная главная
+            # — 503, а владелец проходит по устройству режима и ВИДИТ РАБОЧИЙ
+            # САЙТ. То есть тот единственный, кто может починить, беды не видел.
+            #
+            # Кода ответа поле не меняет — по той же причине, что и `redis`
+            # ниже: на 200 завязаны проверка здоровья docker и откат
+            # обновления, а они умеют одно — заменить контейнер приложения.
+            # Закрытый сайт этим не чинится (режим лежит в базе и переживёт
+            # замену), зато цикл перезапусков поверх обслуживания — это
+            # настоящая авария вместо объявленной.
+            maintenance = "on" if maintenance_mode.state(db)["enabled"] else "off"
         finally:
             db.close()
         report = getattr(app.state, "schema_report", None)
@@ -392,6 +412,7 @@ def create_app() -> FastAPI:
             "status": "ok",
             "schema": "ok" if report is None or report.ok else "mismatch",
             "redis": redis_state,
+            "maintenance": maintenance,
         }
 
     # CRM SPA: собранный фронтенд (web/frontend/crm/dist).

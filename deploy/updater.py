@@ -107,6 +107,36 @@ PROGRESS_STEPS = ("backup", "build", "migrate", "start", "health")
 # отрезает docker/entrypoint.sh, чтобы правило было одно на обоих писателей.
 PROGRESS_ERROR_LIMIT = 200
 
+# Метка конца дампа MySQL. Ровно та же строка, что пишет и проверяет
+# `scripts/snapshot_db.py` (`METKA`), и повторена она здесь НАРОЧНО: пакет
+# `deploy/` работает на хосте и не имеет права импортировать код приложения
+# (см. шапку пакета — ни `core`, ни `web`, ни `scripts`). Чтобы удвоение не
+# разъехалось молча, за совпадением следит `tests/test_pre_migrate_snapshot.py`.
+SNAPSHOT_MARK = "-- opencrm snapshot complete"
+
+# Сколько хвоста читаем в поисках метки. Дамп — гигабайты; метка идёт последней
+# строкой, и читать ради неё весь файл незачем.
+SNAPSHOT_TAIL_BYTES = 4096
+
+
+def _celaya(put: Path) -> bool:
+    """Дочитана ли копия до метки конца.
+
+    Оборванный дамп (кончилось место, убили контейнер) — это обычный текстовый
+    файл, и негодность у него не видна ничем, кроме отсутствующего хвоста. Ровно
+    этого не хватало резервным копиям, пока их никто не читал.
+    """
+    try:
+        razmer = put.stat().st_size
+        if not razmer:
+            return False
+        with put.open("rb") as f:
+            f.seek(max(0, razmer - SNAPSHOT_TAIL_BYTES))
+            hvost = f.read().decode("utf-8", "replace")
+    except OSError:
+        return False
+    return SNAPSHOT_MARK in hvost
+
 
 class _Stop(Exception):
     """Шаг провалился; что делать дальше, решает `_deploy` по флагу `touched`."""
@@ -451,7 +481,26 @@ class Updater:
         )
 
     def _snapshot(self, steps: list[Step], target: str) -> Path | None:
-        """Копия базы перед миграциями. Без неё деплой не едет."""
+        """Копия базы перед миграциями. Без неё деплой не едет.
+
+        **Копия снимается по тому адресу, ПО КОТОРОМУ РАБОТАЕМ**, а не по
+        наличию файла. Прежде здесь стоял один-единственный путь — файл SQLite,
+        — и на установке, переехавшей на MySQL, это давало худший из исходов:
+        файл после переезда остаётся лежать НАРОЧНО (к нему возвращаются, если
+        переезд не удался), поэтому `source.exists()` истинно, шаг `backup`
+        отчитывался успехом и клал в снимок 179 МБ базы, которой никто не
+        пользуется, — а `_restore_db` при откате перезаписывал тот же ненужный
+        файл и тоже отчитывался успехом. Рабочая MySQL при этом не была ни
+        скопирована, ни возвращена. Это хуже отсутствия копии: отсутствие видно,
+        а зелёный отчёт обманывает.
+
+        Точку входа (`docker/entrypoint.sh`) починили тем же правилом раньше;
+        здесь оно повторяется, потому что копии две и они независимы — эта
+        снимается ДО подмены контейнера, та внутри него перед миграциями.
+        """
+        if self.config.db_is_mysql:
+            return self._snapshot_mysql(steps, target)
+
         source = self.config.db_file
         if not source.exists():
             steps.append(Step("backup", True, "базы ещё нет — первый деплой"))
@@ -486,6 +535,59 @@ class Updater:
             steps.append(Step("backup", False, str(failure)))
             raise _Stop(f"не удалось снять копию базы: {failure}") from failure
         steps.append(Step("backup", True, f"{destination.name} (копия файла, контейнер не отвечал)"))
+        return destination
+
+    def _snapshot_mysql(self, steps: list[Step], target: str) -> Path:
+        """Дамп MySQL перед миграциями — тем же кодом, что и в точке входа.
+
+        Клиента `mysqldump` в образе приложения нет и не будет (разбор — в шапке
+        `scripts/snapshot_db.py`), поэтому дамп пишет сам проект, на `pymysql`.
+        Зовём его заходом в работающий контейнер приложения: адрес базы и пароль
+        лежат в его окружении, а на хосте их быть не должно.
+
+        Дамп сначала ложится в каталог данных (он подключён в контейнер), и
+        только оттуда переезжает в каталог состояния — ровно как горячая копия
+        SQLite строкой выше.
+
+        Отсутствие копии здесь — это СТОП, а не предупреждение: миграции вперёд
+        необратимы, и откатывать неудачное обновление было бы нечем.
+        """
+        destination = self.config.state_dir / f"pre-update-{target[:12]}.sql"
+        inside = f"/app/data/{destination.name}"
+        landed = self.config.data_dir / destination.name
+        try:
+            self.config.state_dir.mkdir(parents=True, exist_ok=True)
+            destination.unlink(missing_ok=True)
+            landed.unlink(missing_ok=True)
+        except OSError as failure:
+            steps.append(Step("backup", False, str(failure)))
+            raise _Stop(f"не удалось подготовить место под копию базы: {failure}") from failure
+
+        result = self._compose(
+            "exec", "-T", "app", "python", "-m", "scripts.snapshot_db", "dump", inside,
+            timeout=self.config.snapshot_timeout,
+        )
+        if not result.ok or not landed.exists():
+            landed.unlink(missing_ok=True)
+            steps.append(Step("backup", False, result.tail(6) or "дамп не появился"))
+            raise _Stop(f"не удалось снять копию базы MySQL: {result.tail(4)}")
+
+        try:
+            shutil.move(str(landed), str(destination))
+        except OSError as failure:
+            steps.append(Step("backup", False, str(failure)))
+            raise _Stop(f"не удалось убрать копию базы в {self.config.state_dir}: {failure}") from failure
+
+        # Годность проверяем САМИ, а не только по коду возврата. Оборванный дамп
+        # — обычный текстовый файл, и негодность у него не видна ничем, кроме
+        # отсутствующего хвоста; а между «снял» и «положил» стоит ещё и
+        # перенос между каталогами.
+        if not _celaya(destination):
+            steps.append(Step("backup", False, f"{destination.name}: нет метки конца"))
+            raise _Stop(f"копия {destination.name} снята не до конца — метки конца в ней нет")
+
+        razmer = destination.stat().st_size
+        steps.append(Step("backup", True, f"{destination.name} ({razmer} Б, MySQL)"))
         return destination
 
     def _reload_nginx(self, steps: list[Step]) -> None:
@@ -616,6 +718,8 @@ class Updater:
 
     def _restore_db(self, snapshot: Path) -> str:
         """Вернуть базу из снимка. Пустая строка — получилось."""
+        if self.config.db_is_mysql:
+            return self._restore_mysql(snapshot)
         target = self.config.db_file
         stamp = time.strftime("%Y%m%d-%H%M%S")
         try:
@@ -633,6 +737,57 @@ class Updater:
                     shutil.copy2(sidecar, target.with_name(target.name + suffix))
         except OSError as failure:
             return str(failure)
+        return ""
+
+    def _restore_mysql(self, snapshot: Path) -> str:
+        """Залить дамп обратно в MySQL. Пустая строка — получилось.
+
+        Клиент `mysql` живёт в образе базы, поэтому дамп отдаётся ему на вход
+        заходом в службу `db` — тем же способом, каким восстанавливают обычные
+        копии (`scripts/backup.sh`, шапка `scripts/snapshot_db.py`).
+
+        Порядок внутри важен, и каждый шаг здесь отвечает на «а если нет»:
+
+        1. **Проверяем метку конца ДО заливки.** Оборванный дамп не отличим от
+           целого ничем другим, а залитый наполовину он оставит базу в состоянии
+           хуже исходного — с частью таблиц от старой схемы и частью от новой.
+        2. **Сначала снимаем дамп ТЕКУЩЕГО состояния.** У SQLite неудачная база
+           откладывается файлом (`*.failed-update-*`) — здесь то же самое стоит
+           одного дампа. В ней данные за время неудавшегося обновления, и
+           разбираться с ними будет человек. Шаг не смертельный: не вышло —
+           сказали и поехали дальше, потому что вернуть рабочую базу важнее.
+        """
+        if not self.config.mysql_db:
+            return "не разобрать имя базы из OPENCRM_DB_URL — заливать дамп некуда"
+        if not _celaya(snapshot):
+            return f"копия {snapshot.name} оборвана (нет метки конца) — заливать её нельзя"
+
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        otlozhennaya = self.config.state_dir / f"failed-update-{stamp}.sql"
+        # Контейнер приложения на этот момент уже остановлен (`rollback-stop`),
+        # поэтому дамп снимает ОДНОРАЗОВЫЙ контейнер из того же образа: он
+        # читает `config/.env` заново и живёт полминуты.
+        self._compose(
+            "run", "--rm", "--no-deps", "--entrypoint", "sh", "app", "-c",
+            f"python -m scripts.snapshot_db dump /app/data/{otlozhennaya.name}",
+            timeout=self.config.snapshot_timeout,
+        )
+        upala = self.config.data_dir / otlozhennaya.name
+        if upala.exists():
+            try:
+                shutil.move(str(upala), str(otlozhennaya))
+            except OSError as failure:
+                self.log(f"не удалось отложить неудачную базу: {failure}")
+
+        result = self._compose(
+            "exec", "-T", self.config.db_service, "sh", "-c",
+            # Пароль раскрывается ВНУТРИ контейнера: в `ps` на хосте ему не место.
+            f'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql -uroot {self.config.mysql_db}',
+            stdin=snapshot,
+            timeout=self.config.snapshot_timeout,
+        )
+        if not result.ok:
+            return f"заливка дампа в MySQL не удалась: {result.tail(4)}"
         return ""
 
     # --- ход обновления для страницы обслуживания ---
@@ -702,11 +857,12 @@ class Updater:
             ["git", *options, "-C", str(self.config.project_dir), *args], timeout=300
         )
 
-    def _compose(self, *args: str, timeout: float | None = None) -> Result:
+    def _compose(self, *args: str, timeout: float | None = None, stdin: Path | None = None) -> Result:
         return self.shell.run(
             ["docker", "compose", "-f", str(self.config.compose_file), *args],
             cwd=self.config.project_dir,
             timeout=timeout,
+            stdin=stdin,
         )
 
     def _step(self, steps: list[Step], name: str, result: Result, fatal: bool = True) -> Result:

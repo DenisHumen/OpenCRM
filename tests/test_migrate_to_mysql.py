@@ -357,3 +357,140 @@ def test_istochnik_otkryvaetsya_tolko_na_chtenie(istochnik_s_tovarami, tmp_path,
         "исходная база открыта на ЗАПИСЬ: неудачный переезд перестал быть "
         f"бесплатным. Отказ был другой: {beda.value}"
     )
+
+
+# --- сверку обманывали двумя способами, оба проверены делом --------------------
+#
+# Компенсирующая порча (выше) была первой из трёх. Две оставшиеся нашлись на
+# настоящем переезде (стенд, MySQL 8, 300 299 строк) и обе давали ЗЕЛЁНУЮ
+# сверку на испорченной базе:
+#
+#   1. ДРОБНЫЕ выпадали из построчного сличения целиком: `duration_sec` 12.5 в
+#      источнике против 99999.5 в цели — сверка молчала. В коде это было
+#      объявлено осознанно (`Float` в MySQL — четыре байта против восьми у
+#      SQLite, побайтное сравнение краснело бы всегда), но объявленная дыра
+#      остаётся дырой. Лекарство — допуск, а не исключение из сравнения.
+#
+#   2. ЗНАЧЕНИЕ ВНЕ ОБЛАСТИ ИСТИННОСТИ не было объявлено НИГДЕ: `is_service` = 1
+#      в источнике против 2 в цели. Обе стороны SQLAlchemy читает как `True`,
+#      сумм по логическим столбцам не берут вовсе — разницы не видел никто.
+#
+# Каждая проверка идёт ПАРОЙ со своей противоположностью: сверка, которая
+# краснеет всегда, не строже — её выключат первым же действием.
+
+RABOTY = Base.metadata.tables["works"]
+DOSKI = Base.metadata.tables["boards"]
+
+
+@pytest.fixture()
+def istochnik_s_drobnymi(tmp_path):
+    """Доска с работами: дробные живут только здесь (длительность и кадрирование)."""
+    engine = _baza(tmp_path, "src-raboty.db")
+    with engine.begin() as c:
+        c.execute(insert(DOSKI), {"id": 1, "title": "Доска", "description": ""})
+        c.execute(
+            insert(RABOTY),
+            [
+                {
+                    "id": n,
+                    "board_id": 1,
+                    "work_uid": f"uid-{n}",
+                    "kind": "video",
+                    "title": f"Работа {n}",
+                    "description": "",
+                    "project_url": "",
+                    "sort_order": n * 10,
+                    "status": "ready",
+                    "original_name": f"{n}.mp4",
+                    "mime": "video/mp4",
+                    "size_bytes": 1000 + n,
+                    # 1/3 нарочно: именно на таком числе четырёхбайтный FLOAT в
+                    # MySQL и расходится с восьмибайтным в SQLite.
+                    "duration_sec": 12.5 + n / 3,
+                    "preview_focus": 0.25,
+                }
+                for n in range(1, 6)
+            ],
+        )
+    return engine
+
+
+def test_sverka_lovit_porchu_v_drobnom_stolbtse(istochnik_s_drobnymi, tmp_path):
+    """12.5 против 99999.5 — сверка обязана назвать столбец и строку."""
+    cel = _baza(tmp_path, "dst.db")
+    assert perenesti(istochnik_s_drobnymi, cel) == []
+    assert proverit(istochnik_s_drobnymi, cel) == []
+
+    with cel.begin() as c:
+        c.execute(RABOTY.update().where(RABOTY.c.id == 2).values(duration_sec=99999.5))
+        c.execute(RABOTY.update().where(RABOTY.c.id == 3).values(preview_focus=0.99))
+
+    rashozhdenia = proverit(istochnik_s_drobnymi, cel)
+    assert rashozhdenia, "дробные столбцы снова выпали из сличения"
+    slitno = " ".join(rashozhdenia)
+    assert "duration_sec" in slitno and "id=2" in slitno, rashozhdenia
+    assert "preview_focus" in slitno and "id=3" in slitno, rashozhdenia
+
+
+def test_okruglenie_chetyryohbaytnogo_float_ne_krasneet(istochnik_s_drobnymi, tmp_path):
+    """Парная проверка: то самое, из-за чего дробные когда-то и выбросили.
+
+    MySQL возвращает 0,3333333333 как 0,33333334 на ЧЕСТНОМ переносе тоже.
+    Сверка, краснеющая на каждом переезде, не строже — она просто выключена.
+    """
+    cel = _baza(tmp_path, "dst.db")
+    assert perenesti(istochnik_s_drobnymi, cel) == []
+
+    # Так выглядит то же самое число, доехавшее через четыре байта.
+    import struct
+
+    with cel.begin() as c:
+        for stroka in c.execute(select(RABOTY.c.id, RABOTY.c.duration_sec)).all():
+            urezannoe = struct.unpack("f", struct.pack("f", stroka.duration_sec))[0]
+            c.execute(
+                RABOTY.update().where(RABOTY.c.id == stroka.id).values(duration_sec=urezannoe)
+            )
+
+    assert proverit(istochnik_s_drobnymi, cel) == [], (
+        "сверка краснеет на обычной потере точности FLOAT — её выключат первым же действием"
+    )
+
+
+def test_sverka_lovit_znachenie_vne_oblasti_istinnosti(istochnik_s_tovarami, tmp_path):
+    """1 против 2: обе стороны читаются как «истина», а данные разные.
+
+    Найдено делом и не было объявлено нигде. Сумм по логическим столбцам не
+    берут, побайтного сравнения после разбора в `bool` не остаётся — значение
+    вне области истинности проезжало переезд насквозь.
+    """
+    # Обе стороны обязаны читаться как «истина», иначе опыт не про то: 0 против
+    # 2 поймала бы и прежняя сверка, потому что это False против True.
+    with istochnik_s_tovarami.begin() as c:
+        c.execute(text("UPDATE products SET is_service = 1 WHERE id = 3"))
+    cel = _baza(tmp_path, "dst.db")
+    assert perenesti(istochnik_s_tovarami, cel) == []
+    assert proverit(istochnik_s_tovarami, cel) == []
+
+    # Мимо ORM и мимо типа: ровно так это и выглядит в живой базе.
+    with cel.begin() as c:
+        c.execute(text("UPDATE products SET is_service = 2 WHERE id = 3"))
+    with cel.connect() as c:
+        assert c.execute(text("SELECT is_service FROM products WHERE id = 3")).scalar() == 2
+    with istochnik_s_tovarami.connect() as c:
+        assert c.execute(text("SELECT is_service FROM products WHERE id = 3")).scalar() == 1
+
+    rashozhdenia = proverit(istochnik_s_tovarami, cel)
+    assert rashozhdenia, "значение вне области истинности прошло сверку молча"
+    slitno = " ".join(rashozhdenia)
+    assert "is_service" in slitno and "id=3" in slitno, rashozhdenia
+
+
+def test_odinakovye_logicheskie_ne_krasneyut(istochnik_s_tovarami, tmp_path):
+    """Парная проверка к предыдущей: 0 и 1 обязаны сходиться молча."""
+    cel = _baza(tmp_path, "dst.db")
+    assert perenesti(istochnik_s_tovarami, cel) == []
+    with cel.begin() as c:
+        c.execute(text("UPDATE products SET is_service = 1 WHERE id = 4"))
+    with istochnik_s_tovarami.begin() as c:
+        c.execute(text("UPDATE products SET is_service = 1 WHERE id = 4"))
+    assert proverit(istochnik_s_tovarami, cel) == []

@@ -53,6 +53,10 @@ class FakeShell:
         self.effects: list = []
         self.head = OLD
         self.dirty = ""
+        #: Что и с каким файлом на входе звали. Возврат базы MySQL — это
+        #: заливка дампа клиенту `mysql` на stdin, и без записи этого аргумента
+        #: «откат сработал» нельзя отличить от «команда позвана впустую».
+        self.stdins: list[tuple[str, str]] = []
 
     def fail(self, needle: str, err: str = "boom"):
         self.rules.append((needle, 1, "", err))
@@ -60,9 +64,11 @@ class FakeShell:
     def effect(self, needle: str, action):
         self.effects.append((needle, action))
 
-    def run(self, argv, cwd=None, timeout=None):
+    def run(self, argv, cwd=None, timeout=None, stdin=None):
         line = " ".join(str(part) for part in argv)
         self.calls.append(line)
+        if stdin is not None:
+            self.stdins.append((line, str(stdin)))
         for needle, action in self.effects:
             if needle in line:
                 action()
@@ -1116,6 +1122,175 @@ def test_the_failed_database_is_kept_aside(tmp_path):
     assert config.db_file.read_bytes() == blob("было")
 
 
+# --- база на MySQL: копия и возврат ------------------------------------------
+#
+# ПОЧЕМУ ЭТО ОТДЕЛЬНЫМ РАЗДЕЛОМ. Правило номер один — «обновление не имеет
+# права оставить базу без пути назад» — держалось на одной строке:
+# `config.db_file.exists()`. На установке, переехавшей на MySQL, эта строка
+# отвечает ПРАВДУ и означает ЛОЖЬ: файл SQLite после переезда остаётся лежать
+# нарочно (к нему возвращаются, если переезд не удался), поэтому шаг `backup`
+# отчитывался успехом, сняв копию базы, которой никто не пользуется, а откат
+# «удавался», перезаписав тот же ненужный файл. MySQL не трогалась ничем.
+#
+# Проверено делом на живой MySQL-установке: копия — 179 МБ брошенного файла с
+# 20 701 клиентом против 20 721 в рабочей базе. Зелёный отчёт при отсутствующей
+# копии хуже, чем отсутствие копии: отсутствие видно.
+
+MYSQL_URL = "mysql+pymysql://opencrm:parol@db:3306/opencrm?charset=utf8mb4"
+
+#: Хвост, по которому и только по которому копия считается снятой целиком.
+#: Ту же строку пишет `scripts/snapshot_db.py` — за совпадением следит
+#: `tests/test_pre_migrate_snapshot.py`.
+METKA_DAMPA = "-- opencrm snapshot complete: таблиц 37, строк 2700347"
+
+
+def mysql_config(tmp_path, **extra) -> UpdateConfig:
+    """Установка, работающая на MySQL, с БРОШЕННЫМ файлом SQLite рядом."""
+    config = make_config(tmp_path, OPENCRM_UPDATE_DB_URL=MYSQL_URL, **extra)
+    config.db_file.write_bytes(blob("брошенный SQLite, которым никто не пользуется"))
+    return config
+
+
+def damp_snimaetsya(config, shell, celyy: bool = True):
+    """Подставной `snapshot_db dump`: кладёт файл туда, куда его попросили."""
+
+    def sdelat():
+        put = shell.calls[-1].rsplit("/app/data/", 1)[1].split()[0]
+        soderzhimoe = "INSERT INTO clients VALUES (1);\n"
+        if celyy:
+            soderzhimoe += METKA_DAMPA + "\n"
+        (config.data_dir / put).write_text(soderzhimoe, encoding="utf-8")
+
+    return sdelat
+
+
+def test_kopiya_na_mysql_snimaetsya_dampom_a_ne_broshennym_faylom(tmp_path):
+    config = mysql_config(tmp_path)
+    shell = FakeShell()
+    shell.effect("scripts.snapshot_db dump", damp_snimaetsya(config, shell))
+    updater = make_updater(tmp_path, config=config, shell=shell)
+
+    outcome = updater.run_once()
+
+    assert outcome.status == STATUS_DEPLOYED
+    assert shell.ran("scripts.snapshot_db dump"), "копия MySQL не снималась вовсе"
+    assert not shell.ran("sqlite3"), "снималась копия базы, с которой не работают"
+    kopiya = config.state_dir / f"pre-update-{NEW[:12]}.sql"
+    assert kopiya.is_file(), "дампа нет в каталоге состояния — откатывать нечем"
+    assert METKA_DAMPA in kopiya.read_text(encoding="utf-8")
+
+
+def test_bez_kopii_mysql_deploy_ne_nachinaetsya(tmp_path):
+    """Миграции вперёд необратимы: нет копии — нет и подмены контейнера."""
+    config = mysql_config(tmp_path)
+    shell = FakeShell()
+    shell.fail("scripts.snapshot_db dump", "Errno 28 No space left on device")
+    updater = make_updater(tmp_path, config=config, shell=shell)
+
+    outcome = updater.run_once()
+
+    assert outcome.status == STATUS_ABORTED
+    assert not shell.ran("up -d --build"), "живой сайт тронули без копии базы"
+    backup = next(step for step in outcome.steps if step.name == "backup")
+    assert not backup.ok
+
+
+def test_oborvannyy_damp_ne_schitaetsya_snyatoy_kopiey(tmp_path):
+    """Дамп без метки конца — обычный текстовый файл, годным он не бывает."""
+    config = mysql_config(tmp_path)
+    shell = FakeShell()
+    shell.effect("scripts.snapshot_db dump", damp_snimaetsya(config, shell, celyy=False))
+    updater = make_updater(tmp_path, config=config, shell=shell)
+
+    outcome = updater.run_once()
+
+    assert outcome.status == STATUS_ABORTED
+    assert "метки конца" in outcome.reason
+    assert not shell.ran("up -d --build")
+
+
+def test_otkat_na_mysql_zalivaet_damp_v_bazu(tmp_path):
+    """Возврат — это заливка дампа клиенту `mysql`, а не запись в чужой файл."""
+    config = mysql_config(tmp_path)
+    shell = FakeShell()
+    shell.effect("scripts.snapshot_db dump", damp_snimaetsya(config, shell))
+    updater = make_updater(
+        tmp_path, config=config, shell=shell, probe=FakeProbe(health=(False, True))
+    )
+
+    outcome = updater.run_once()
+
+    assert outcome.status == STATUS_ROLLED_BACK
+    kopiya = config.state_dir / f"pre-update-{NEW[:12]}.sql"
+    zalivki = [(line, put) for line, put in shell.stdins if "mysql -uroot opencrm" in line]
+    assert zalivki, "дамп в MySQL не заливался — база осталась после миграций нового кода"
+    assert zalivki[0][1] == str(kopiya), "залили не ту копию"
+    assert "exec -T db" in zalivki[0][0], "клиент mysql живёт в контейнере базы, не приложения"
+    vozvrat = next(step for step in outcome.steps if step.name == "rollback-db")
+    assert vozvrat.ok
+    assert config.db_file.read_bytes() == blob(
+        "брошенный SQLite, которым никто не пользуется"
+    ), "откат перезаписал файл, к которому база не имеет отношения"
+
+
+def test_otkat_na_mysql_ne_zalivaet_oborvannuyu_kopiyu(tmp_path):
+    """Дамп, залитый наполовину, оставит базу хуже, чем она есть сейчас."""
+    config = mysql_config(tmp_path)
+    shell = FakeShell()
+    shell.effect("scripts.snapshot_db dump", damp_snimaetsya(config, shell))
+    updater = make_updater(
+        tmp_path, config=config, shell=shell, probe=FakeProbe(health=(False, True))
+    )
+    # Копия испортилась между снятием и откатом — место на диске кончилось уже
+    # после неё, а обрезанный хвост виден только чтением.
+    shell.effect(
+        "up -d --build",
+        once(
+            lambda: (config.state_dir / f"pre-update-{NEW[:12]}.sql").write_text(
+                "INSERT INTO clients VALUES (1);\n", encoding="utf-8"
+            )
+        ),
+    )
+
+    outcome = updater.run_once()
+
+    assert not any(line for line, _ in shell.stdins if "mysql -uroot" in line)
+    vozvrat = next(step for step in outcome.steps if step.name == "rollback-db")
+    assert not vozvrat.ok and "оборвана" in vozvrat.detail
+
+
+def test_neudachnaya_baza_mysql_otkladyvaetsya_v_storonu(tmp_path):
+    """У SQLite неудачная база откладывается файлом — здесь тем же дампом.
+
+    В ней данные за время неудавшегося обновления, и разбираться с ними будет
+    человек.
+    """
+    config = mysql_config(tmp_path)
+    shell = FakeShell()
+    shell.effect("scripts.snapshot_db dump", damp_snimaetsya(config, shell))
+    updater = make_updater(
+        tmp_path, config=config, shell=shell, probe=FakeProbe(health=(False, True))
+    )
+
+    updater.run_once()
+
+    otlozheno = list(config.state_dir.glob("failed-update-*.sql"))
+    assert len(otlozheno) == 1, "состояние базы на момент отката потеряно молча"
+
+
+def test_na_sqlite_damp_mysql_ne_snimaetsya(tmp_path):
+    """Ветвление обязано работать в обе стороны, иначе оно не ветвление."""
+    config = make_config(tmp_path)
+    config.db_file.write_bytes(blob("живая база SQLite"))
+    shell = FakeShell()
+    updater = make_updater(tmp_path, config=config, shell=shell)
+
+    updater.run_once()
+
+    assert not shell.ran("scripts.snapshot_db"), "на SQLite звали дампер MySQL"
+    assert shell.ran("sqlite3")
+
+
 def test_a_build_failure_leaves_the_database_alone(tmp_path):
     """Сборка упала — старое приложение всё это время работало и принимало записи.
 
@@ -1343,3 +1518,47 @@ def test_a_failed_reload_is_named_in_the_message_even_when_the_update_worked(tmp
     assert "unknown log format" in message, (
         "шаг назван, а причина нет — идти смотреть придётся вслепую"
     )
+
+
+def test_imya_bazy_beryotsya_iz_config_env(tmp_path):
+    """Адрес базы обновлятор читает там же, где его читает контейнер.
+
+    Пакет `deploy` работает на хосте и настроек приложения не тянет (см. шапку
+    пакета), поэтому `config/.env` разбирается своими силами — тем же файлом,
+    который compose отдаёт контейнеру через `env_file`.
+    """
+    repo = tmp_path / "repo"
+    (repo / "config").mkdir(parents=True)
+    (repo / "config" / ".env").write_text(
+        "# комментарий\nOPENCRM_SECRET_KEY=x\n"
+        f"OPENCRM_DB_URL={MYSQL_URL}\n",
+        encoding="utf-8",
+    )
+    config = UpdateConfig.from_env(
+        {"OPENCRM_HOME": str(tmp_path / "home"), "OPENCRM_UPDATE_PROJECT_DIR": str(repo)}
+    )
+
+    assert config.db_is_mysql is True
+    assert config.mysql_db == "opencrm"
+
+
+def test_stranno_nazvannaya_baza_ne_edet_v_komandnuyu_stroku(tmp_path):
+    """Имя базы уезжает в командную строку клиента `mysql`, и оно проверяется.
+
+    Пустое имя означает внятный отказ отката, а не подстановку чего попало в
+    чужую команду.
+    """
+    config = UpdateConfig.from_env(
+        {
+            "OPENCRM_HOME": str(tmp_path),
+            "OPENCRM_UPDATE_DB_URL": "mysql+pymysql://u:p@db:3306/opencrm;rm -rf /",
+        }
+    )
+    assert config.db_is_mysql is True
+    assert config.mysql_db == ""
+
+
+def test_na_sqlite_imya_bazy_pusto(tmp_path):
+    config = UpdateConfig.from_env({"OPENCRM_HOME": str(tmp_path)})
+    assert config.db_is_mysql is False
+    assert config.mysql_db == ""

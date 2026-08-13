@@ -125,6 +125,7 @@ Everything is available as commands too — for cron and scripts:
 ./opencrm.sh backup
 ./opencrm.sh firewall        # inspect and repair the ufw rules
 ./opencrm.sh doctor          # environment check for when something is off
+./opencrm.sh maintenance off # reopen the site if an interrupted move closed it
 ```
 
 ### While the site is updating

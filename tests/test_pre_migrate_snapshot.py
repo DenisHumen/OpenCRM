@@ -34,13 +34,17 @@ needs_sh = pytest.mark.skipif(shutil.which("sh") is None, reason="нужен POS
 #: ней — так повторный старт на той же ревизии ничего не переписывает.
 REVIZIA = "b2c8e4f1a396"
 
+#: Голова миграций по умолчанию — ДРУГАЯ ревизия, то есть накатывать есть что.
+#: Это обычное состояние старта после обновления, и копия в нём обязательна.
+GOLOVA = "d4e1a83c2f60"
+
 
 def _polozhit(put: Path, soderzhimoe: str) -> None:
     put.write_text(soderzhimoe, encoding="utf-8", newline="\n")
     put.chmod(put.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
 
 
-def _stend(tmp_path: Path, *, db_url: str, sqlite_fayl: bool) -> dict:
+def _stend(tmp_path: Path, *, db_url: str, sqlite_fayl: bool, golova: str = GOLOVA) -> dict:
     """Каталог с подставными python/sqlite3 и следом их вызовов."""
     dannye = tmp_path / "data"
     dannye.mkdir()
@@ -62,6 +66,9 @@ def _stend(tmp_path: Path, *, db_url: str, sqlite_fayl: bool) -> dict:
         f'echo "python $*" >> "{sled.as_posix()}"\n'
         'case "$3" in\n'
         f"    revision) echo {REVIZIA} ;;\n"
+        # `python -m alembic heads` — этим точка входа спрашивает, есть ли что
+        # накатывать. Голова, совпавшая с ревизией базы, означает «нечего».
+        f"    heads) echo '{golova} (head)' ;;\n"
         '    dump) echo "дамп" > "$4" ;;\n'
         "esac\n"
         "exit 0\n",
@@ -212,4 +219,152 @@ def test_na_sqlite_vsyo_kak_bylo(tmp_path):
     assert ".backup" in sled, "копия SQLite снимается больше не через .backup"
     assert "scripts.snapshot_db" not in sled, (
         "на SQLite зовётся дампер MySQL — лишний путь, который никто не проверит"
+    )
+
+
+# --- копия нужна ПЕРЕД МИГРАЦИЯМИ, а не на каждом старте ----------------------
+#
+# РАЗМЕН, названный вслух и решённый здесь. Копия стоит дорого: замерено на
+# живой MySQL — 2,7 млн строк это 84,86 с и дамп на 1,2 ГБ, полный старт до
+# первого 200 на `/healthz` — 89,55 с. Против этого стоит потолок ожидания у
+# автообновления: 30 попыток × 4 с = 120 с, из которых копия забирает 85. Порог,
+# за которым ИСПРАВНОЕ обновление начнёт откатываться само, — около 3,6 млн
+# строк на быстром железе; на боевом VPS с медленным диском он ближе.
+#
+# Вторая половина того же размена: нехватка места ТЕПЕРЬ ГАСИТ САЙТ ВОВСЕ.
+# Проверено на каталоге данных в 20 МБ — дамп падает с ENOSPC, точка входа
+# выходит с кодом 1, uvicorn не стартует ни разу. До появления копии на MySQL
+# нехватка места подняться не мешала. А забить диск проще всего этими самыми
+# копиями.
+#
+# Лекарство из самого устройства: копия нужна ПЕРЕД МИГРАЦИЯМИ. Ревизия базы
+# уже голова — накатывать нечего, портить нечему, возвращаться не к чему.
+# Обычный перезапуск контейнера перестаёт стоить полутора минут и гигабайта, а
+# копия снимается ровно на том старте, ради которого её и заводили.
+
+
+@needs_sh
+def test_bez_migraciy_kopiya_ne_snimaetsya(tmp_path):
+    """Ревизия уже голова — накатывать нечего, и копия не нужна."""
+    stend = _stend(tmp_path, db_url=MYSQL_URL, sqlite_fayl=False, golova=REVIZIA)
+
+    itog = _zapustit(stend)
+
+    assert itog.returncode == 0, itog.stderr
+    assert _kopii(stend) == [], "копия снята там, где мигрировать нечего"
+    assert "scripts.snapshot_db dump" not in stend["sled"].read_text(encoding="utf-8")
+    assert "миграций к накату нет" in itog.stdout, itog.stdout
+
+
+@needs_sh
+def test_bez_migraciy_kopiya_ne_snimaetsya_i_na_sqlite(tmp_path):
+    """Правило одно на обе базы, иначе оно не правило."""
+    stend = _stend(
+        tmp_path, db_url="sqlite:////app/data/opencrm.db", sqlite_fayl=True, golova=REVIZIA
+    )
+
+    itog = _zapustit(stend)
+
+    assert itog.returncode == 0, itog.stderr
+    assert _kopii(stend) == [], "копия снята там, где мигрировать нечего"
+    assert ".backup" not in stend["sled"].read_text(encoding="utf-8")
+
+
+@needs_sh
+def test_est_chto_nakatyvat_kopiya_snimaetsya(tmp_path):
+    """Парная проверка: «дешевле» не значит «без копии».
+
+    Без неё починку легко доделать до того, что копия перестанет сниматься
+    вовсе, и правило номер один держалось бы на честном слове.
+    """
+    stend = _stend(tmp_path, db_url=MYSQL_URL, sqlite_fayl=False, golova="sovsem-drugaya")
+
+    itog = _zapustit(stend)
+
+    assert itog.returncode == 0, itog.stderr
+    assert _kopii(stend), "накатывать есть что, а копии нет — откатывать нечем"
+
+
+@needs_sh
+def test_nevnyatnaya_golova_ne_otmenyaet_kopiyu(tmp_path):
+    """Не смогли узнать голову — снимаем копию, как раньше.
+
+    Незнание не повод пропустить копию: цена ошибки здесь несимметрична —
+    лишняя копия стоит места, отсутствующая стоит данных.
+    """
+    stend = _stend(tmp_path, db_url=MYSQL_URL, sqlite_fayl=False)
+    # alembic, который ничего не ответил (нет каталога версий, чужая ошибка).
+    _polozhit(
+        Path(stend["env"]["PATH"].split(os.pathsep)[0]) / "python",
+        "#!/bin/sh\n"
+        'case "$3" in\n'
+        f"    revision) echo {REVIZIA} ;;\n"
+        "    heads) exit 1 ;;\n"
+        '    dump) echo "дамп" > "$4" ;;\n'
+        "esac\n"
+        "exit 0\n",
+    )
+
+    itog = _zapustit(stend)
+
+    assert itog.returncode == 0, itog.stderr
+    assert _kopii(stend), "голову прочитать не смогли — а копию всё равно пропустили"
+
+
+@needs_sh
+def test_dve_golovy_ne_otmenyayut_kopiyu(tmp_path):
+    """Незакрытое ветвление миграций: «уже голова» в таком дереве не определить."""
+    stend = _stend(tmp_path, db_url=MYSQL_URL, sqlite_fayl=False)
+    _polozhit(
+        Path(stend["env"]["PATH"].split(os.pathsep)[0]) / "python",
+        "#!/bin/sh\n"
+        'case "$3" in\n'
+        f"    revision) echo {REVIZIA} ;;\n"
+        f"    heads) printf '%s (head)\n%s (head)\n' {REVIZIA} drugaya ;;\n"
+        '    dump) echo "дамп" > "$4" ;;\n'
+        "esac\n"
+        "exit 0\n",
+    )
+
+    itog = _zapustit(stend)
+
+    assert itog.returncode == 0, itog.stderr
+    assert _kopii(stend), "при двух головах копию пропустили"
+
+
+@needs_sh
+def test_ogryzok_dampa_ot_proshloy_revizii_ubiraetsya(tmp_path):
+    """Оборванный дамп прошлой ревизии не убирал никто.
+
+    Чистка ищет `mysql.pre-migrate-*.sql` — под маску `.part` огрызок не
+    попадает, а имя у него своё, так что следующий старт его и не перезапишет.
+    Проверено: 200 МБ мусора пережили перезапуск контейнера.
+    """
+    stend = _stend(tmp_path, db_url=MYSQL_URL, sqlite_fayl=False)
+    ogryzok = stend["data"] / "mysql.pre-migrate-starayarevizia.sql.part"
+    ogryzok.write_text("оборванный дамп", encoding="utf-8")
+
+    _zapustit(stend)
+
+    assert not ogryzok.exists(), "огрызок прошлой ревизии лежит вечно и ест диск"
+
+
+# --- метка конца копии названа в двух местах и обязана совпадать --------------
+
+
+def test_metka_kopii_odna_i_ta_zhe_v_oboih_mestah():
+    """Дамп признаётся годным по хвосту, и проверяют его двое.
+
+    `scripts/snapshot_db.py` пишет метку и проверяет её сразу после снятия;
+    `deploy/updater.py` проверяет ту же метку у копии, которую держит на хосте.
+    Импортировать первый из второго нельзя — пакет `deploy` работает вне
+    контейнера и не тянет код приложения, — поэтому строка удвоена нарочно.
+    Разъехавшись, эти двое дали бы худшее: годная копия, объявленная негодной,
+    и остановленное из-за этого обновление.
+    """
+    from deploy.updater import SNAPSHOT_MARK
+    from scripts.snapshot_db import METKA
+
+    assert METKA == SNAPSHOT_MARK, (
+        "метка конца копии разъехалась между scripts/snapshot_db.py и deploy/updater.py"
     )
