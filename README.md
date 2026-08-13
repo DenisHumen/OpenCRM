@@ -130,6 +130,7 @@ cd /opt/OpenCRM && ./opencrm.sh
 ./opencrm.sh backup
 ./opencrm.sh firewall        # посмотреть и починить правила ufw
 ./opencrm.sh doctor          # проверка окружения, когда что-то не так
+./opencrm.sh maintenance off # открыть сайт, если его закрыл оборванный переезд
 ```
 
 ### Пока сайт обновляется

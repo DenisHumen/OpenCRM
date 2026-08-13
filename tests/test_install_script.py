@@ -276,3 +276,67 @@ def test_repair_leaves_certificates_alone():
     assert 'chown -R "$_want_uid:$_want_gid" "$_want_home"\n' not in repair, (
         "рекурсивный chown всего состояния заденет ключи сертификата"
     )
+
+
+# --- оборванный переезд не имеет права оставить сайт закрытым ------------------
+#
+# Перенос базы идёт при ЗАКРЫТОМ сайте: писать в это время некому, и потому
+# «сверка сошлась» — факт, а не обещание. Цена этого решения — окно, в котором
+# оборванный скрипт оставляет сайт закрытым навсегда.
+#
+# Проверено убийством дерева переезда на середине переноса: режим обслуживания
+# остался включён, `/healthz` отвечал `status ok, schema ok, redis ok`, и не
+# видел беды никто — ни докер, ни автообновление, ни мониторинг. Сотрудник при
+# этом получал 503 даже на ЧТЕНИЕ списка клиентов, публичная главная отвечала
+# 503, а владелец проходил по устройству режима и видел РАБОЧИЙ САЙТ.
+#
+# Отсюда две проверки. Перехват сигналов закрывает обычные обрывы (Ctrl+C,
+# `kill`, закрытая ssh-сессия), видимость — все остальные, включая `kill -9` и
+# выдернутое питание, от которых перехват не спасает вовсе.
+
+
+def test_the_move_traps_signals_and_reopens_the_site():
+    """Без перехвата Ctrl+C посреди переноса закрывает сайт навсегда."""
+    text = source()
+    assert "trap " in text, "в скрипте нет ни одного перехвата сигналов"
+    perehvat = text[text.index("migrate_trap() {") : text.index("migrate_trap() {") + 600]
+    for signal in ("EXIT", "INT", "TERM", "HUP"):
+        assert signal in perehvat, f"сигнал {signal} не перехватывается"
+    assert "migrate_cleanup" in perehvat, "перехват ничего не снимает"
+
+    uborka = text[text.index("migrate_cleanup() {") : text.index("migrate_trap() {")]
+    assert "migrate_maintenance off" in uborka, "уборка не открывает сайт обратно"
+
+
+def test_the_trap_is_armed_before_the_site_is_closed():
+    """Сигнал между «поставили перехват» и «закрыли» оставил бы сайт закрытым."""
+    text = source()
+    perenos = text[text.index("migrate_sqlite_to_mysql() {") :]
+    perenos = perenos[: perenos.index("\n}\n")]
+    assert "migrate_trap" in perenos, "перехват при переезде не ставится вовсе"
+    assert perenos.index("migrate_trap") < perenos.index("migrate_maintenance on"), (
+        "перехват ставится ПОСЛЕ закрытия сайта — окно между ними ничем не закрыто"
+    )
+
+
+def test_doctor_says_the_site_is_closed():
+    """Закрытый сайт обязан быть видно там, куда смотрят при разборе аварии.
+
+    Перехват не спасает от `kill -9` и от отключения питания, поэтому видимость
+    важнее самого перехвата: без неё единственный, кто может открыть сайт, о
+    беде не узнаёт — он-то в закрытый сайт как раз проходит.
+    """
+    text = source()
+    doctor = text[text.index("cmd_doctor() {") : text.index("why_down() {")]
+    assert '"maintenance":"on"' in doctor, "диагностика не спрашивает про режим обслуживания"
+    assert '"maintenance":"off"' in doctor, "диагностика молчит и когда сайт открыт"
+
+
+def test_maintenance_can_be_lifted_from_the_command_line():
+    """Открыть сайт должно быть можно с сервера, а не только из закрытой CRM."""
+    text = source()
+    assert "cmd_maintenance() {" in text, "нет команды снятия режима с сервера"
+    komanda = text[text.index("cmd_maintenance() {") :]
+    komanda = komanda[: komanda.index("\n}\n")]
+    assert "scripts.maintenance" in komanda, "команда не пользуется общим сервисом режима"
+    assert "maintenance) cmd_maintenance" in text, "команда не подключена к разбору аргументов"

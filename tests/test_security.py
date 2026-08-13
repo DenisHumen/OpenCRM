@@ -262,15 +262,34 @@ def _make_owner(root_client, email: str):
 
 
 def _duel(strike, first, second):
-    """Оба удара одновременно. Возвращает {имя: код ответа}."""
+    """Оба удара одновременно. Возвращает {имя: код ответа или причина отказа}.
+
+    **Единственное место во всём наборе, где два запроса идут по-настоящему
+    разом.** Значит и единственное, чей исход не определён заранее, — а
+    непойманное исключение в потоке не видит НИКТО: поток умирает молча,
+    запись об ударе просто не появляется, и разбор красного прогона начинается
+    с вопроса «а сколько ударов вообще было».
+
+    Отказ SQLite «database is locked» прилетает сюда именно исключением, а не
+    ответом: общего обработчика для неожиданных ошибок у приложения нет
+    (`web/main.py` объявляет только `DomainError` и `RequestValidationError`), а
+    `TestClient` по умолчанию пробрасывает серверную ошибку наружу. Поэтому
+    исключение записывается как исход удара, а не теряется.
+
+    Отказ обоим — законный исход (см. проверки ниже), поэтому он здесь не
+    ошибка. Ошибка — молчание о нём.
+    """
     import threading
 
-    codes: dict[str, int] = {}
+    codes: dict[str, object] = {}
     at_once = threading.Barrier(2)
 
     def go(name, client, target):
         at_once.wait()
-        codes[name] = strike(client, target)
+        try:
+            codes[name] = strike(client, target)
+        except Exception as beda:  # noqa: BLE001 — исход удара, а не наша ошибка
+            codes[name] = f"исключение: {beda!r}"
 
     threads = [
         threading.Thread(target=go, args=("first", first[1], second[0])),
@@ -344,6 +363,9 @@ def test_two_owners_demoting_each_other_leave_one_standing(root_client):
         # выигрывал, — а этого никто не обещал, и тест начинает мигать.
         survivors = _root_ids()
         assert survivors, f"владельцев не осталось вовсе, ответы: {codes}"
+        # Оба удара обязаны быть НАЗВАНЫ. Пропавшая запись означает умерший в
+        # тишине поток, и тогда две проверки ниже смотрят на половину дуэли.
+        assert set(codes) == {"first", "second"}, f"об ударе не отчитались: {codes}"
         passed = [code for code in codes.values() if code == 200]
         assert len(passed) <= 1, f"прошли оба, система осталась бы без владельца: {codes}"
     finally:
@@ -370,6 +392,9 @@ def test_two_owners_deleting_each_other_leave_one_standing(root_client):
         # выигрывал, — а этого никто не обещал, и тест начинает мигать.
         survivors = _root_ids()
         assert survivors, f"владельцев не осталось вовсе, ответы: {codes}"
+        # Оба удара обязаны быть НАЗВАНЫ. Пропавшая запись означает умерший в
+        # тишине поток, и тогда две проверки ниже смотрят на половину дуэли.
+        assert set(codes) == {"first", "second"}, f"об ударе не отчитались: {codes}"
         passed = [code for code in codes.values() if code == 200]
         assert len(passed) <= 1, f"прошли оба, система осталась бы без владельца: {codes}"
     finally:

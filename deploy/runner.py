@@ -38,13 +38,31 @@ class Shell:
     def __init__(self, log=None) -> None:
         self._log = log or (lambda _message: None)
 
-    def run(self, argv, cwd: Path | None = None, timeout: float | None = None) -> Result:
+    def run(
+        self,
+        argv,
+        cwd: Path | None = None,
+        timeout: float | None = None,
+        stdin: Path | None = None,
+    ) -> Result:
+        """`stdin` — файл на вход команде.
+
+        Нужен ровно для одного: вернуть базу MySQL из дампа. Клиент `mysql`
+        живёт в образе базы, а не приложения, и штатный способ залить дамп —
+        отдать его этому клиенту на вход (`compose exec -T db … < файл`), ровно
+        как это описано в шапке `scripts/snapshot_db.py`. Читать гигабайтный
+        дамп в память ради `input=` нельзя, поэтому именно файл.
+        """
         argv = tuple(str(part) for part in argv)
-        self._log("$ " + " ".join(argv))
+        self._log("$ " + " ".join(argv) + (f" < {stdin}" if stdin else ""))
+        istochnik = None
         try:
+            if stdin is not None:
+                istochnik = open(stdin, "rb")  # noqa: SIM115 — закрываем в finally
             done = subprocess.run(
                 argv,
                 cwd=str(cwd) if cwd else None,
+                stdin=istochnik,
                 capture_output=True,
                 text=True,
                 timeout=timeout,
@@ -55,6 +73,9 @@ class Shell:
             return Result(argv, 124, "", f"команда не уложилась в {timeout} c")
         except OSError as error:
             return Result(argv, 127, "", str(error))
+        finally:
+            if istochnik is not None:
+                istochnik.close()
         return Result(argv, done.returncode, done.stdout or "", done.stderr or "")
 
 
