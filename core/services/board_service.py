@@ -210,14 +210,30 @@ def update_work(db: Session, board_id: int, work_id: int, data: dict) -> Work:
 def _apply_preview_crop(work: Work, data: dict) -> None:
     """Выбранный менеджером фрагмент работы: 0 — верх картинки, 1 — низ.
 
-    Двигать окно есть смысл только у длинной картинки — короткая помещается в
-    своё место композиции целиком. `null` возвращает работу к показу от верха.
+    `null` возвращает работу к показу от верха.
+
+    Обрезана работа или нет — решает её место в композиции витрины
+    (`web/public/layout.py`, `is_cropped`), и раньше здесь стоял порог
+    вытянутости: короткая картинка «помещается в место целиком». Это неправда —
+    мест в композиции семь, и формы у них разные, — и именно на этом отказе
+    ломалась жалоба «работа обрезана, а поправить нечем».
+
+    По месту служба всё же не судит, и намеренно. Место работы зависит от
+    соседей: добавили работу, переставили, удалили — и та же работа переехала в
+    место другой формы. Судить по нему значило бы, что один и тот же PATCH то
+    проходит, то нет, а сохранённое вчера значение назавтра оказывается
+    «недопустимым». Служба хранит выбор, композиция решает, применять ли его.
+
+    Отказ остаётся там, где фрагмент не из чего выбирать в принципе: у видео в
+    плитке показан постер, а без сторон работы не построить ни окна обрезки, ни
+    самого суждения об обрезке.
     """
     if "preview_focus" not in data:
         return
-    if not media_service.is_long_image(work.width, work.height):
+    if work.kind != "image" or not work.width or not work.height:
         raise errors.ValidationError(
-            "Preview crop applies to long images only", code="not_a_long_work"
+            "Preview crop applies to images with known dimensions",
+            code="not_a_croppable_work",
         )
     focus = data["preview_focus"]
     work.preview_focus = None if focus is None else round(max(0.0, min(1.0, float(focus))), 4)

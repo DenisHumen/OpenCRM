@@ -550,10 +550,10 @@ const en = {
   projectLink: "Project link",
   projectLinkHint:
     "Where this work leads on the showcase: hovering it shows a “View case” button. Leave empty — the work just opens in the viewer.",
-  // обрезка превью длинной работы
+  // обрезка превью работы, которую срезало её место в композиции витрины
   cropPreview: "Crop preview",
   cropPreviewHint:
-    "A long work does not fit the showcase whole, so only a fragment is shown — the client opens the rest with a click. Choose which fragment that is.",
+    "This work is taller than the place it takes on the showcase, so the client sees only a fragment of it — the rest opens with a click. Choose which fragment that is.",
   cropWindow: "Fragment",
   cropWindowHint:
     "Drag the frame along the work. Its shape is the shape of the place this work takes on the showcase — you choose which part lands there.",
@@ -1586,10 +1586,10 @@ const ru: typeof en = {
   projectLink: "Ссылка на проект",
   projectLinkHint:
     "Куда ведёт работа на витрине: при наведении появляется кнопка «View case». Оставьте пустым — работа просто откроется в просмотрщике.",
-  // обрезка превью длинной работы
+  // обрезка превью работы, которую срезало её место в композиции витрины
   cropPreview: "Обрезать превью",
   cropPreviewHint:
-    "Длинная работа не помещается на витрине целиком, поэтому показывается только фрагмент — остальное клиент откроет кликом. Выберите, какой именно.",
+    "Эта работа выше места, которое занимает на витрине, поэтому клиент видит только её фрагмент — остальное откроется кликом. Выберите, какой именно.",
   cropWindow: "Фрагмент",
   cropWindowHint:
     "Перетащите рамку вдоль работы. Её форма — это форма места, которое работа занимает на витрине; вы выбираете, какой кусок туда попадёт.",

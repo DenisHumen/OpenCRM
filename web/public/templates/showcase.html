@@ -266,15 +266,16 @@
   }
   .tile img.loaded { opacity: 1; }
 
-  /* --- длинная работа (лонгрид, инфографика) ---
-     Форму места задаёт обрезка, выбранная менеджером в редакторе (--crop), а
-     --focus говорит, какой участок работы в это место попал: 0% — от самого
-     верха, 100% — до самого низа. Картинка показана во всю ширину — обрезка по
-     центру, как в обычной плитке, оставила бы от лонгрида случайную полосу.
-     Нижний край уходит под «жидкое стекло» — полосу растущего размытия с
-     затемнением к цвету фона: край обрезки не читается как обрыв, и видно, что
-     работа длиннее. */
-  .tile.is-long img { object-position: 50% var(--focus, 0%); }
+  /* --- работа, которую срезало её место ---
+     «Длинная работа» тут ни при чём: обрезка зависит не от того, какая
+     картинка, а от того, в какое место композиции она попала (правило —
+     `layout.is_cropped`). --focus говорит, какой участок работы в это место
+     попал: 0% — от самого верха, 100% — до самого низа. Картинка показана во
+     всю ширину — обрезка по центру, как в обычной плитке, оставила бы от
+     лонгрида случайную полосу. Нижний край уходит под «жидкое стекло» — полосу
+     растущего размытия с затемнением к цвету фона: край обрезки не читается как
+     обрыв, и видно, что работа продолжается. */
+  .tile.is-cropped img { object-position: 50% var(--focus, 0%); }
   .tile .glass {
     position: absolute; left: 0; right: 0; bottom: 0; height: 20%;
     pointer-events: none; z-index: 3;
@@ -313,13 +314,13 @@
     transition: background-color 250ms ease, box-shadow 250ms ease,
                 transform 260ms cubic-bezier(0.22, 0.61, 0.36, 1), opacity 200ms ease;
   }
-  .tile.is-long:hover .more, .tile.is-long:focus-visible .more {
+  .tile.is-cropped:hover .more, .tile.is-cropped:focus-visible .more {
     background: #F5F4EF; transform: translate(-50%, -50%) scale(1);
     box-shadow: 0 0 0 1px rgba(22, 21, 20, 0.7), 0 14px 30px -12px rgba(22, 21, 20, 0.8);
   }
   /* затемнение под кнопкой — то же, что у кнопки кейса: на пёстрой работе
      светлая плашка иначе теряется */
-  .tile.is-long:hover .shade, .tile.is-long:focus-visible .shade { opacity: 0.42; }
+  .tile.is-cropped:hover .shade, .tile.is-cropped:focus-visible .shade { opacity: 0.42; }
   /* у работы со ссылкой на проект наведение отдано кнопке кейса — две плашки
      разом спорили бы друг с другом */
   .tile.has-case.is-on .more { opacity: 0; }
@@ -419,14 +420,19 @@
     }
     .tile { position: static; width: 100%; height: auto; transform: none; }
     .tile .frame { position: relative; inset: auto; aspect-ratio: var(--nat); box-shadow: none; }
-    /* лонгрид и на телефоне обрезается: в собственных пропорциях он занял бы
-       десяток экранов прокрутки. 1:1.6 — самое высокое место композиции, так
+    /* высокая работа обрезается и здесь: в собственных пропорциях лонгрид занял
+       бы десяток экранов прокрутки. 1:1.6 — самое высокое место композиции, так
        что фрагмент виден примерно тот же, что и на большом экране */
-    .tile.is-long .frame { aspect-ratio: 1 / 1.6; }
+    .tile.is-tall .frame { aspect-ratio: 1 / 1.6; }
     /* ховера на телефоне нет — затемнение и кнопка «открыть целиком» просто
        видны всегда, иначе обрезанную работу нечем отличить от целой */
-    .tile.is-long .shade { opacity: 0.32; }
-    .tile.is-long .more { transform: translate(-50%, -50%) scale(1); background: #F5F4EF; }
+    .tile.is-tall .shade { opacity: 0.32; }
+    .tile.is-tall .more { transform: translate(-50%, -50%) scale(1); background: #F5F4EF; }
+    /* А работу, которую резало только место композиции, телефон показывает
+       целиком — и обещать ей «продолжение внизу» не за что */
+    .tile.is-cropped:not(.is-tall) .glass,
+    .tile.is-cropped:not(.is-tall) .more { display: none; }
+    .tile.is-cropped:not(.is-tall):not(.has-case) .shade { opacity: 0; }
     .tile .caption { opacity: 1; }
     /* ховера на телефоне нет — иначе ссылка на проект была бы недостижима,
        поэтому кнопка кейса просто видна всегда */
@@ -522,16 +528,19 @@
   <div class="module" style="--ar: {{ module.ratio }}; --span: {{ module.span }}; --row: {{ module.row }}">
     {% for tile in module.tiles %}
     {% set w = works[tile.index] %}
-    {% set is_long = tile.index in cropped %}
+    {% set is_cropped = tile.index in cropped %}
+    {# is-tall — та же работа глазами телефона: там композиции нет, и обрезает
+       только предел высоты кадра. Всегда подмножество is-cropped #}
+    {% set is_tall = tile.index in cropped_on_phone %}
     {# форму места задаёт композиция, а --focus говорит, какой участок работы в
        неё попал (0% — от верха, 100% — до низа). Работа, которая в место не
        влезла, получает размытие на срезе и кнопку «открыть целиком» #}
-    <figure class="tile{% if w.project_url %} has-case{% endif %}{% if is_long %} is-long{% endif %}"
+    <figure class="tile{% if w.project_url %} has-case{% endif %}{% if is_cropped %} is-cropped{% endif %}{% if is_tall %} is-tall{% endif %}"
             data-index="{{ tile.index }}" tabindex="0" role="button"
             aria-label="{{ w.title or t.work }}"
             style="--x: {{ tile.x }}%; --y: {{ tile.y }}%; --w: {{ tile.w }}%; --h: {{ tile.h }}%; --z: {{ tile.z }};
                    --nat: {% if w.width and w.height %}{{ w.width }} / {{ w.height }}{% elif w.kind == 'video' %}16 / 10{% else %}1 / 1{% endif %};
-                   {% if is_long %}--focus: {{ ((w.preview_focus or 0) * 100)|round(2) }}%;{% endif %}
+                   {% if is_cropped %}--focus: {{ ((w.preview_focus or 0) * 100)|round(2) }}%;{% endif %}
                    animation-delay: {{ [120 + tile.index * 60, 900]|min }}ms">
       <div class="frame">
         {% if w.blurhash %}<canvas class="bh" width="32" height="32" data-blurhash="{{ w.blurhash }}"></canvas>{% endif %}
@@ -557,8 +566,8 @@
         {% endif %}
         {# затемнение общее для кнопки кейса и кнопки «открыть целиком»:
            два слоя поверх одной картинки только гасили бы друг друга #}
-        {% if is_long or w.project_url %}<div class="shade"></div>{% endif %}
-        {% if is_long %}
+        {% if is_cropped or w.project_url %}<div class="shade"></div>{% endif %}
+        {% if is_cropped %}
         <div class="glass"></div>
         {# обрезанную работу легко принять за целую — кнопка говорит, что под
            обрезкой есть продолжение и его открывает клик #}
@@ -721,8 +730,10 @@
   const counter = document.getElementById("lb-counter");
   let current = -1;
 
-  // та же граница, что на сервере (media_service.LONG_RATIO): такая работа
-  // открывается прокруткой, а не вписывается в высоту экрана
+  // Здесь другой вопрос, не «обрезана ли работа местом»: в лайтбоксе места нет,
+  // есть экран. Такая работа открывается прокруткой, а не вписывается в высоту
+  // экрана — граница та же, по которой сервер ужимает производные по ширине
+  // (media_service.LONG_RATIO).
   const LONG_RATIO = 2.5;
   const isLong = (w) => w.kind === "image" && w.width && w.height && w.height >= w.width * LONG_RATIO;
 

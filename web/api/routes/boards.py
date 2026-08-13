@@ -55,9 +55,17 @@ def get_board(
     # форма места каждой работы на витрине — редактору обрезки, чтобы рамка
     # фрагмента совпадала с тем, что увидит клиент. Композицию собирают только
     # готовые работы, поэтому необработанные места пока не занимают.
+    #
+    # Здесь же — ответ на вопрос «обрезана ли работа». Правило зависит от
+    # композиции, а её знает только сервер: редактор не повторяет условие, а
+    # читает готовый ответ (`layout.is_cropped`). Тем же правилом рисуется
+    # витрина, поэтому карточка в CRM и плитка у клиента не разойдутся.
     ready = [w for w in data["works"] if w["status"] == "ready"]
     for work, ratio in zip(ready, layout.place_ratios(len(ready))):
         work["place_ratio"] = ratio
+        work["is_cropped"] = layout.is_cropped(
+            work["kind"], work["width"], work["height"], ratio
+        )
     data["shares"] = [
         schemas.share_out(link, share_service.share_stats(db, link)) for link in links
     ]
