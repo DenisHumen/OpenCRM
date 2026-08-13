@@ -86,3 +86,23 @@ def test_video_has_no_fragment_to_choose(manager_client, mp4_bytes):
     )
     assert rejected.status_code == 422
     assert rejected.json()["error"]["code"] == "not_a_croppable_work"
+
+
+def test_video_keeps_the_centre_to_the_play_circle(manager_client, mp4_bytes):
+    """Плашки «открыть целиком» у ролика нет — в центре кадра уже стоит ▶.
+
+    Кнопку получила каждая картинка, и соблазн раздать её вообще всем велик.
+    Но у видео центр кадра занят кругом воспроизведения: два знака в одной
+    точке спорили бы, а обещание у них одно и то же — «откроется крупно».
+    """
+    board = manager_client.post(f"{API}/boards", json={"title": "Центр ролика"}).json()
+    manager_client.post(
+        f"{API}/boards/{board['id']}/works",
+        files={"file": ("clip.mp4", mp4_bytes, "video/mp4")},
+    )
+    manager_client.patch(f"{API}/boards/{board['id']}", json={"is_published": True})
+    share = manager_client.post(f"{API}/boards/{board['id']}/shares", json={}).json()
+
+    page = TestClient(app).get(f"/b/{share['token']}").text
+    assert 'class="play"' in page
+    assert 'class="more"' not in page

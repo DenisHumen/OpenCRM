@@ -136,8 +136,15 @@ def test_phone_has_one_place_for_everyone():
     assert phone_cropped_indexes(works) == {2}
 
 
-def test_showcase_offers_view_full_exactly_to_the_cropped(manager_client):
-    """Кнопка — ровно у тех, у кого есть что показать сверх видимого."""
+def test_showcase_offers_view_full_to_every_image(manager_client):
+    """Кнопка — у каждой картинки, размытие среза — только у обрезанной.
+
+    Три одинаковых работы попадают в места разной формы: в первом, вертикальном,
+    работа видна целиком, в двух других срезана. Раньше кнопка была ровно у
+    срезанных — и в одном ряду у соседних карточек она то была, то нет, хотя
+    клик открывал обе. Теперь «открыть целиком» обещано всем: на плитке работа
+    занимает долю экрана, в лайтбоксе — всю величину.
+    """
     board = manager_client.post(f"{API}/boards", json={"title": "Портреты"}).json()
     for index in range(3):
         upload = manager_client.post(
@@ -152,14 +159,19 @@ def test_showcase_offers_view_full_exactly_to_the_cropped(manager_client):
     # первое место композиции вертикальное — та же работа в нём видна целиком
     assert page.count('class="tile is-cropped') == 2
     assert page.count('class="tile"') == 1
-    assert page.count('class="more"') == 2
+    # кнопка у всех трёх, размытие среза — только у двух срезанных
+    assert page.count('class="more"') == 3
     assert page.count('<div class="glass">') == 2
     # телефон эти работы покажет целиком: композиции там нет
     assert 'class="tile is-cropped is-tall"' not in page
 
 
-def test_showcase_says_nothing_to_a_work_seen_whole(manager_client):
-    """Работа в пропорциях своего места: ни плашки, ни размытия, ни обещания."""
+def test_showcase_promises_no_continuation_to_a_work_seen_whole(manager_client):
+    """Работа в пропорциях своего места: кнопка есть, размытия среза нет.
+
+    Кнопка говорит «откроется крупно» — это правда для любой работы. Размытие
+    говорит «под срезом есть продолжение» — целой работе оно соврало бы.
+    """
     board = manager_client.post(f"{API}/boards", json={"title": "Ровно в место"}).json()
     manager_client.post(
         f"{API}/boards/{board['id']}/works",
@@ -171,8 +183,9 @@ def test_showcase_says_nothing_to_a_work_seen_whole(manager_client):
     page = TestClient(app).get(f"/b/{share['token']}").text
     assert 'class="tile"' in page
     assert 'class="tile is-cropped' not in page
-    assert 'class="more"' not in page
-    assert "View full" not in page
+    assert '<div class="glass">' not in page
+    assert page.count('class="more"') == 1
+    assert "View full" in page
 
 
 def test_editor_hears_the_verdict_from_the_server(manager_client):
@@ -239,9 +252,9 @@ def test_long_and_short_works_share_one_composition(manager_client):
     assert page.count('class="module"') == 1
     assert page.count('class="tile is-cropped') == 1
     assert page.count('class="tile"') == 1
-    # обрезка прикрыта размытием, и видно, что работу можно открыть целиком
+    # обрезка прикрыта размытием — только она; кнопка у обеих работ
     assert page.count('<div class="glass">') == 1
-    assert page.count('class="more"') == 1
+    assert page.count('class="more"') == 2
     assert "View full" in page
 
 

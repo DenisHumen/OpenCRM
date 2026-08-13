@@ -314,13 +314,13 @@
     transition: background-color 250ms ease, box-shadow 250ms ease,
                 transform 260ms cubic-bezier(0.22, 0.61, 0.36, 1), opacity 200ms ease;
   }
-  .tile.is-cropped:hover .more, .tile.is-cropped:focus-visible .more {
+  .tile:hover .more, .tile:focus-visible .more {
     background: #F5F4EF; transform: translate(-50%, -50%) scale(1);
     box-shadow: 0 0 0 1px rgba(22, 21, 20, 0.7), 0 14px 30px -12px rgba(22, 21, 20, 0.8);
   }
   /* затемнение под кнопкой — то же, что у кнопки кейса: на пёстрой работе
      светлая плашка иначе теряется */
-  .tile.is-cropped:hover .shade, .tile.is-cropped:focus-visible .shade { opacity: 0.42; }
+  .tile:hover .shade, .tile:focus-visible .shade { opacity: 0.42; }
   /* у работы со ссылкой на проект наведение отдано кнопке кейса — две плашки
      разом спорили бы друг с другом */
   .tile.has-case.is-on .more { opacity: 0; }
@@ -424,15 +424,16 @@
        бы десяток экранов прокрутки. 1:1.6 — самое высокое место композиции, так
        что фрагмент виден примерно тот же, что и на большом экране */
     .tile.is-tall .frame { aspect-ratio: 1 / 1.6; }
-    /* ховера на телефоне нет — затемнение и кнопка «открыть целиком» просто
-       видны всегда, иначе обрезанную работу нечем отличить от целой */
+    /* Ховера на телефоне нет: кнопка «открыть целиком» и затемнение под ней
+       просто видны всегда — и у каждой картинки, как на большом экране. Без
+       затемнения светлая плашка тонет на светлой работе, а доводить её
+       наведением здесь нечем. */
+    .tile .more { transform: translate(-50%, -50%) scale(1); background: #F5F4EF; }
+    .tile .shade { opacity: 0.26; }
     .tile.is-tall .shade { opacity: 0.32; }
-    .tile.is-tall .more { transform: translate(-50%, -50%) scale(1); background: #F5F4EF; }
     /* А работу, которую резало только место композиции, телефон показывает
        целиком — и обещать ей «продолжение внизу» не за что */
-    .tile.is-cropped:not(.is-tall) .glass,
-    .tile.is-cropped:not(.is-tall) .more { display: none; }
-    .tile.is-cropped:not(.is-tall):not(.has-case) .shade { opacity: 0; }
+    .tile.is-cropped:not(.is-tall) .glass { display: none; }
     .tile .caption { opacity: 1; }
     /* ховера на телефоне нет — иначе ссылка на проект была бы недостижима,
        поэтому кнопка кейса просто видна всегда */
@@ -564,13 +565,22 @@
              sizes="(max-width: 719px) 100vw, calc({{ (tile.w / 100)|round(4) }} * min({{ module.span }} * (min(2100px, 96vw) - 80px), (100vh - 112px) / {{ module.row }}))"{% endif %}
              onload="this.classList.add('loaded')">
         {% endif %}
-        {# затемнение общее для кнопки кейса и кнопки «открыть целиком»:
-           два слоя поверх одной картинки только гасили бы друг друга #}
-        {% if is_cropped or w.project_url %}<div class="shade"></div>{% endif %}
-        {% if is_cropped %}
-        <div class="glass"></div>
-        {# обрезанную работу легко принять за целую — кнопка говорит, что под
-           обрезкой есть продолжение и его открывает клик #}
+        {# затемнение общее для кнопки кейса и кнопки «открыть целиком»: два
+           слоя поверх одной картинки только гасили бы друг друга. Раз кнопка
+           теперь у каждой картинки — затемнение тоже у каждой #}
+        {% if w.kind != 'video' or w.project_url %}<div class="shade"></div>{% endif %}
+        {# размытие среза осталось за обрезкой: оно обещает продолжение,
+           которого у целой работы нет #}
+        {% if is_cropped %}<div class="glass"></div>{% endif %}
+        {# Кнопка — у КАЖДОЙ картинки, а не только у обрезанной. Обрезанной она
+           говорит «под срезом есть продолжение», целой — «открывается крупно».
+           Второе не пустое обещание: в лайтбоксе работа видна во всю величину,
+           а на плитке — в долю экрана. Раньше кнопки не было там, где работа
+           влезла целиком, и у соседних карточек одного ряда она то была, то
+           нет — при том, что клик открывал обе.
+           У видео своей кнопки нет намеренно: в центре кадра уже стоит круг
+           воспроизведения, и два знака в одной точке спорили бы. #}
+        {% if w.kind != 'video' %}
         <div class="more">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m7 6 5 5 5-5"></path><path d="m7 13 5 5 5-5"></path></svg>
           {{ t.view_full }}
