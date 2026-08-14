@@ -1,3 +1,4 @@
+import pytest
 from fastapi.testclient import TestClient
 
 from tests.conftest import API, login, register
@@ -177,3 +178,24 @@ def test_double_click_on_request_access_is_a_conflict_not_a_crash():
     assert stolen, "перехвата не случилось — тест ничего не проверил"
     assert response.status_code == 409, response.text
     assert response.json()["error"]["code"] == "email_taken"
+
+
+def test_povtornoe_chtenie_vidit_soseda():
+    """Уровень изоляции — условие правильности, а не настройка.
+
+    Приём «вставили, получили отказ, перечитали — правда ли занято»
+    (`core/uniqueness.py`) держит на себе четыре места: регистрацию, название
+    должности, артикул склада и номер бланка. При REPEATABLE READ перечитывание
+    не видит соседа, зафиксировавшего строку, — и отказ базы уходит наверх
+    пятисоткой там, где система отработала верно.
+
+    Проверяется сам движок, а не поведение: на файловой базе такого уровня нет
+    вовсе, и опыт был бы бессмысленным.
+    """
+    from database.session import engine
+
+    if engine.dialect.name != "mysql":
+        pytest.skip("уровень изоляции проверяется на MySQL")
+    with engine.connect() as c:
+        uroven = c.exec_driver_sql("SELECT @@transaction_isolation").scalar()
+    assert uroven.replace("-", " ").upper() == "READ COMMITTED", uroven
