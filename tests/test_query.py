@@ -7,7 +7,7 @@
 
 import pytest
 from sqlalchemy import select
-from sqlalchemy.dialects import mysql, sqlite
+from sqlalchemy.dialects import mysql
 
 from database.models import Client
 from database.query import (
@@ -191,35 +191,6 @@ def test_sovpadenie_ne_pereskakivaet_granitsu_polya(db):
     assert svoi("грнцРомашка") == [nuzhnyy.id]
 
 
-def test_v_migratsii_lower_znaet_kirillitsu(tmp_path):
-    """Ловушка, которая проявляется один раз — на боевом обновлении.
-
-    `database/migrations/env.py` строит СВОЙ движок через `engine_from_config`,
-    мимо `_make_engine`, поэтому подмены `lower()` там нет и встроенная функция
-    знает только ASCII. Миграция, заполняющая `search_text` одним `UPDATE` с
-    `lower()`, оставила бы «БРУСНИКУ» заглавной на всей уже населённой базе — и
-    карточка перестала бы находиться молча.
-
-    Заметить это ни по времени, ни по остальным тестам нельзя: они гоняются на
-    базе, которую построил тот же движок, а данные в неё кладёт приложение.
-    """
-    from sqlalchemy import create_engine, func, select as sa_select
-
-    from database.session import unicode_registr_dlya
-
-    engine = create_engine(f"sqlite:///{tmp_path / 'lower.db'}")
-    try:
-        with engine.connect() as connection:
-            assert connection.scalar(sa_select(func.lower("БРУСНИКА"))) == "БРУСНИКА", (
-                "встроенный lower() внезапно знает кириллицу — проверка потеряла смысл"
-            )
-            unicode_registr_dlya(connection)
-            assert connection.scalar(sa_select(func.lower("БРУСНИКА"))) == "брусника"
-            assert connection.scalar(sa_select(func.upper("брусника"))) == "БРУСНИКА"
-    finally:
-        engine.dispose()
-
-
 # --- шаблоны в том, что ввёл человек ----------------------------------------
 
 
@@ -287,18 +258,20 @@ def test_escape_like_stavit_svoy_znak_pervym():
     assert escape_like("/%") == "///%"
 
 
-def test_ekranirovanie_odinakovo_na_oboikh_dvizhkakh():
-    """`ESCAPE '\\'` на MySQL читается по-разному в зависимости от режима сервера.
+def test_znak_ekranirovaniya_ne_obratnaya_kosaya():
+    """Обратная косая читается по-разному в зависимости от режима сервера.
 
-    Знак выбран так, чтобы оба диалекта собрали одно и то же выражение: иначе
-    поиск, проверенный на SQLite, поведёт себя иначе в бою на MySQL — и заметить
-    это будет нечем, потому что ошибки не случится, просто найдётся не то.
+    `ESCAPE '\\'` означает разное при `NO_BACKSLASH_ESCAPES` и без него, а режим
+    задаётся на сервере и меняется не нами. Ошибки при этом не случится: поиск
+    просто найдёт не то, и молча. Поэтому знак выбран посторонний.
     """
-    stmt = select(Client.id).where(contains(Client.name, "a_b"))
-    sqlite_sql = str(stmt.compile(dialect=sqlite.dialect()))
-    mysql_sql = str(stmt.compile(dialect=mysql.dialect()))
-    assert "ESCAPE '/'" in sqlite_sql
-    assert "ESCAPE '/'" in mysql_sql
+    sql = str(
+        select(Client.id)
+        .where(contains(Client.name, "a_b"))
+        .compile(dialect=mysql.dialect())
+    )
+    assert "ESCAPE '/'" in sql
+    assert "\\" not in sql
 
 
 # --- все репозитории пользуются общим ---------------------------------------
@@ -394,3 +367,47 @@ def test_schyotchik_ne_sortiruet(db):
     assert counting, "запрос на количество не найден"
     for statement in counting:
         assert "ORDER BY" not in statement.upper(), f"счётчик сортирует: {statement}"
+
+
+# --- тип итога агрегата ------------------------------------------------------
+
+
+def test_sum_v_mysql_prihodit_decimal(db):
+    """Замер самой ловушки: `SUM()` отдаёт `Decimal`, а не целое.
+
+    Проверка нужна не ради `as_int`, а ради того, ЧТО она утверждает про базу.
+    Пока набор шёл на файле, тот же запрос давал `int`, и все подписи
+    репозиториев (`-> int`) были правдой сами собой. На MySQL это перестало быть
+    правдой молча — и первым сломался показ остатка склада, потому что
+    `format_quantity` собирает строку через `f"{frac:03d}"`, а `Decimal` такой
+    формат не принимает.
+
+    Развалится этот тест ровно в одном случае: драйвер начнёт приводить итог
+    сам. Тогда `as_int` станет лишним — но узнать об этом надо здесь, а не по
+    исчезнувшей ошибке.
+    """
+    from decimal import Decimal
+
+    from sqlalchemy import func
+
+    from database.models import StockMove
+    from database.query import as_int
+
+    syroy = db.scalar(select(func.coalesce(func.sum(StockMove.quantity_milli), 0)))
+    assert isinstance(syroy, Decimal), f"итог приехал {type(syroy).__name__}"
+    assert isinstance(as_int(syroy), int)
+
+
+def test_as_int_ne_teryaet_znachenie():
+    """Приведение обязано быть точным: остаток и деньги — целые, и целые точные."""
+    from decimal import Decimal
+
+    from database.query import as_int
+
+    assert as_int(None) == 0
+    assert as_int(0) == 0
+    assert as_int(Decimal("85000")) == 85000
+    assert as_int(Decimal("-100")) == -100
+    # Целое проходит насквозь, а не через строку: подпись обещает `int`, и
+    # вызывающему всё равно, каким движком посчитан итог.
+    assert as_int(42) == 42 and isinstance(as_int(42), int)

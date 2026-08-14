@@ -50,8 +50,10 @@ ENTRYPOINT ["/entrypoint.sh"]
 
 # --- этап 3: тесты (в боевой образ не попадает) ---
 # Автообновление гоняет их на новом коде до того, как тронет живой сайт:
-#     docker build --target tests -f docker/Dockerfile .
-# Красные тесты — ненулевой код возврата сборки, деплой не начинается.
+#     docker compose -f docker/docker-compose.tests.yml up --build #         --abort-on-container-exit --exit-code-from tests
+# Красные тесты — ненулевой код возврата, деплой не начинается. Сам этап только
+# готовит окружение: pytest запускают снаружи, рядом с настоящей базой (почему —
+# в конце файла).
 # Отдельным этапом, а не в этапе `app`, чтобы pytest и сами тесты не ехали в
 # продакшен; поэтому же compose собирает строго `target: app`.
 FROM app AS tests
@@ -95,4 +97,10 @@ COPY opencrm.sh ./
 RUN apt-get update \
     && apt-get install -y --no-install-recommends git \
     && rm -rf /var/lib/apt/lists/*
-RUN pip install pytest && python -m pytest
+# Прогона здесь больше НЕТ, и это не упрощение. Набор гоняется против настоящей
+# MySQL, а во время сборки сети между контейнерами не существует вовсе — сервера
+# базы образу не видно. Поэтому этап только готовит окружение, а запускают его
+# снаружи, где база уже поднята: docker/docker-compose.tests.yml.
+#
+# Оставить `python -m pytest` здесь значило бы красную сборку на каждом деплое.
+RUN pip install pytest

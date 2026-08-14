@@ -46,7 +46,6 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import mysql
 
 from database.query import SEARCH_SEP
-from database.session import unicode_registr_dlya
 
 
 revision: str = "d3b8c05f1e2a"
@@ -141,13 +140,6 @@ def upgrade() -> None:
         )
 
     bind = op.get_bind()
-    # Без этой строки `lower()` в двух UPDATE ниже знает только ASCII: свой
-    # движок alembic строит через `engine_from_config`, мимо `_make_engine`, и
-    # подписчика с подменой на нём нет. «БРУСНИКА» осталась бы заглавной на всей
-    # уже населённой базе, и карточка перестала бы находиться — молча, ровно на
-    # том обновлении, ради которого всё делается.
-    unicode_registr_dlya(bind)
-
     # По одному UPDATE на таблицу. Построчного обхода через ORM здесь быть не
     # может: 200 000 клиентов и 400 000 заявок — это минуты вместо секунд, а
     # обновление на боевом сервере ждёт эту миграцию до старта приложения.

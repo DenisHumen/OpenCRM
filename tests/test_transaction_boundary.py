@@ -19,8 +19,6 @@
 значит чинить бесконечно.
 """
 
-import sqlite3
-
 import pytest
 from fastapi import Depends, FastAPI
 from fastapi.responses import JSONResponse
@@ -30,7 +28,7 @@ from sqlalchemy.orm import Session
 
 from core import exceptions as errors
 from database.models import Client
-from database.session import SessionLocal, engine, tochka_otkata
+from database.session import SessionLocal
 from web.api.deps import get_db
 
 IMYA_OTKAZ = "Клиент-которого-не-должно-быть"
@@ -85,67 +83,6 @@ def test_otkaz_ne_ostavlyaet_poloviny_zapisi(klient):
         "запрос ответил отказом, но строка осталась в базе — значит исключение "
         "не дошло до get_db и вместо отката случился commit"
     )
-
-
-def _vtoroe_soedinenie() -> sqlite3.Connection:
-    """Отдельное соединение с той же базой — «сосед», работающий одновременно.
-
-    Таймаут короткий нарочно: нам нужен быстрый ответ «занято», а не ожидание.
-    """
-    return sqlite3.connect(engine.url.database, timeout=0.2)
-
-
-def test_tochka_otkata_beryot_zamok_zapisi_zaranee(base_client):
-    """Точка отката объявляет намерение писать — и берёт блокировку сразу.
-
-    Апгрейд-дедлок: `SAVEPOINT` открывает транзакцию, внутри неё случается
-    чтение, транзакция получает снимок базы, а следующая за ним запись обязана
-    повыситься до писателя. Если сосед за это время что-то записал, повышение
-    невозможно, и SQLite отвечает «занято» НЕМЕДЛЕННО, не выжидая
-    `busy_timeout`: ждать бессмысленно, ни одна сторона не уступит. Наружу это
-    выходит пятисоткой, и таймаутом не лечится — таймаут тут ни при чём.
-
-    Воспроизведено на настоящем uvicorn: четыре потока с событиями АТС под
-    одним `call_id` роняли `sqlite3.OperationalError: database is locked`.
-    После починки те же 4×12 запросов проходят все.
-
-    Здесь проверяется само лекарство: пока идёт запись под точкой отката,
-    соседу есть чего ждать, а не на что наткнуться.
-    """
-    db = SessionLocal()
-    try:
-        with tochka_otkata(db):
-            sosed = _vtoroe_soedinenie()
-            try:
-                with pytest.raises(sqlite3.OperationalError):
-                    sosed.execute("BEGIN IMMEDIATE")
-            finally:
-                sosed.close()
-    finally:
-        db.rollback()
-        db.close()
-
-
-def test_chtenie_nikogo_ne_zapiraet(base_client):
-    """Парная проверка: читающие запросы обязаны идти параллельно.
-
-    Без неё «починку» легко доделать до блокировки на весь запрос — и тогда
-    все записи в CRM начнут ждать загрузки файла на доску или ответа от АТС,
-    потому что и то, и другое случается внутри запроса до записи. Это медленнее,
-    чем было до починки, и незаметнее, чем пятисотка.
-    """
-    db = SessionLocal()
-    try:
-        db.execute(select(func.count()).select_from(Client)).scalar()
-        sosed = _vtoroe_soedinenie()
-        try:
-            sosed.execute("BEGIN IMMEDIATE")
-            sosed.rollback()
-        finally:
-            sosed.close()
-    finally:
-        db.rollback()
-        db.close()
 
 
 def test_udachnyy_zapros_vsyo_zhe_sokhranyaet(klient):

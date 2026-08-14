@@ -1,5 +1,20 @@
-"""Интеграционные тесты гоняются против настоящего приложения:
-временная SQLite-БД и временный storage на каждый прогон."""
+"""Интеграционные тесты гоняются против настоящего приложения: настоящая MySQL
+и временный storage на каждый прогон.
+
+**Почему настоящая, а не файл.** База у продукта одна — MySQL, и набор обязан
+гоняться на ней же. Пока он шёл на файле, зелёный прогон ничего не обещал:
+одинаковость двух движков — предположение, и оно уже подводило. На файле
+проходила проверка двойного нажатия «Запросить доступ», а на MySQL она давала
+500. На файле держалась защита «последний владелец», а на MySQL двое владельцев
+снимали root друг с друга разом и запирали систему насмерть. Обе беды были на
+боевом сервере всё это время, и не видел их только набор.
+
+Адрес берётся из `OPENCRM_TEST_DB_URL`. Поднять базу под набор:
+
+    docker compose -f docker/docker-compose.tests.yml up --build \
+        --abort-on-container-exit --exit-code-from tests
+
+Она эфемерная: данные в tmpfs, после прогона не остаётся ничего."""
 
 import io
 import os
@@ -8,17 +23,35 @@ from pathlib import Path
 
 import pytest
 
+_PODSKAZKA = "\n".join((
+    "Набор гоняется против настоящей MySQL — другой базы у продукта нет.",
+    "Задайте OPENCRM_TEST_DB_URL или поднимите базу вместе с набором:",
+    "    docker compose -f docker/docker-compose.tests.yml up --build \\",
+    "        --abort-on-container-exit --exit-code-from tests",
+))
+
+
+def _adres_bazy() -> str:
+    url = os.environ.get("OPENCRM_TEST_DB_URL", "").strip()
+    if not url:
+        raise RuntimeError(f"OPENCRM_TEST_DB_URL не задан.\n{_PODSKAZKA}")
+    if not url.startswith("mysql"):
+        # Отдельная проверка, потому что ошибка эта тихая: набор на чужом
+        # движке бывает ЗЕЛЁНЫМ и ничего при этом не обещает.
+        raise RuntimeError(f"OPENCRM_TEST_DB_URL={url!r} — не MySQL.\n{_PODSKAZKA}")
+    return url
+
+
 # Окружение — до импорта приложения (настройки кэшируются)
 _TMP = Path(tempfile.mkdtemp(prefix="opencrm-test-"))
 os.environ.update(
     {
         "OPENCRM_ENV": "test",
         "OPENCRM_SECRET_KEY": "test-secret-key",
-        # Адрес базы для набора. Берётся из окружения, если задан: так один и
-        # тот же набор гоняется и против настоящей MySQL, и (пока) против файла.
-        "OPENCRM_DB_URL": os.environ.get(
-            "OPENCRM_TEST_DB_URL", f"sqlite:///{(_TMP / 'test.db').as_posix()}"
-        ),
+        # Адрес базы для набора — только снаружи. Умолчания тут нет намеренно:
+        # любое сочинённое значение означало бы «прогон пошёл не туда, куда
+        # думал человек», а такой прогон хуже несостоявшегося.
+        "OPENCRM_DB_URL": _adres_bazy(),
         "OPENCRM_STORAGE_DIR": str(_TMP / "storage"),
         # Каталог данных — там копии и служебные файлы. Своим именем, а не
         # выведенным из пути к файлу базы: база живёт в сервере, а не в файле.
@@ -160,3 +193,47 @@ def root_client(base_client) -> TestClient:
 @pytest.fixture(scope="session")
 def manager_client(root_client) -> TestClient:
     return make_manager(root_client, "manager@test.local")
+
+
+@pytest.fixture
+def chistaya_baza(request):
+    """Пустая база на том же сервере — для проверок, которым нужна СВОЯ схема.
+
+    Таких проверок хватает: сверка схемы с моделями, откат миграции и накат её
+    заново, поведение при недостающей таблице. Все они портят схему нарочно, и
+    делать это в базе набора нельзя — соседние проверки идут следом.
+
+    Раньше каждая из них строила себе базу файлом рядом (`sqlite:///tmp/...`).
+    Это было удобно и почти бесполезно: сверялась схема, собранная ДРУГИМ
+    движком, а расхождение с боевым как раз и есть то, что эти проверки ищут.
+    `deals.stage` был VARCHAR(20) в миграции против String(32) в модели, и
+    файловая база этого не видела вовсе.
+
+    Теперь база настоящая — отдельная схема на том же сервере, со своим именем
+    по имени проверки. Убирается она в любом исходе: остаться на сервере после
+    красного прогона она не должна, иначе следующий начнётся на чужих остатках.
+    """
+    from sqlalchemy import create_engine, text
+
+    osnovnoy = os.environ["OPENCRM_DB_URL"]
+    koren, _, hvost = osnovnoy.rpartition("/")
+    imya_bazy, _, parametry = hvost.partition("?")
+    # Имя по проверке — чтобы в разборе аварии было видно, чья база осталась,
+    # если убрать её всё же не вышло. MySQL держит 64 знака.
+    ochischennoe = "".join(z if z.isalnum() else "_" for z in request.node.name)
+    svoyo = f"t_{ochischennoe}"[:64]
+    sluzhebnyy = create_engine(f"{koren}/{imya_bazy}?{parametry}" if parametry else osnovnoy)
+    try:
+        with sluzhebnyy.connect() as soedinenie:
+            soedinenie.execute(text(f"DROP DATABASE IF EXISTS {svoyo}"))
+            soedinenie.execute(text(
+                f"CREATE DATABASE {svoyo} "
+                "CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci"
+            ))
+            soedinenie.commit()
+        yield f"{koren}/{svoyo}?{parametry}" if parametry else f"{koren}/{svoyo}"
+    finally:
+        with sluzhebnyy.connect() as soedinenie:
+            soedinenie.execute(text(f"DROP DATABASE IF EXISTS {svoyo}"))
+            soedinenie.commit()
+        sluzhebnyy.dispose()

@@ -2,8 +2,7 @@
 
 Главное здесь то же, что у своих юрлиц: **основной склад ровно один**, и
 держится это запросами, а не частичным уникальным индексом. Причина та же —
-система рассчитана на переезд SQLite → MySQL, а частичных индексов в MySQL нет
-вовсе. Обычный UNIQUE на колонку не заменяет их ничем: он запретил бы двум
+частичных индексов в MySQL нет вовсе. Обычный UNIQUE на колонку не заменяет их ничем: он запретил бы двум
 складам одновременно НЕ быть основными, то есть сделал бы невозможным
 нормальный случай.
 
@@ -21,7 +20,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from database.models import StockMove, StockTransfer, Warehouse
-from database.query import page_of
+from database.query import as_int, page_of
 
 
 def get(db: Session, warehouse_id: int, include_deleted: bool = False) -> Warehouse | None:
@@ -112,6 +111,12 @@ def nonzero_stock(db: Session, warehouse_id: int) -> list[tuple[int, int]]:
 
     Ненулевые — с обеих сторон: минус на складе означает, что расход занесли, а
     приход забыли, и закрывать такой склад тем более рано.
+
+    `as_int` — потому что `SUM()` в MySQL возвращает `Decimal`, а в подписи
+    стоит целое. Сегодня отказ про непустой склад читает только длину списка, но
+    остаток здесь — тот же остаток, что и везде, и приезжать он обязан таким же:
+    иначе первый, кто решит назвать в отказе цифры, получит пятисотку на
+    `format_quantity`. Разбор — в докстроке `query.as_int`.
     """
     total = func.coalesce(func.sum(StockMove.quantity_milli), 0)
     rows = db.execute(
@@ -120,7 +125,7 @@ def nonzero_stock(db: Session, warehouse_id: int) -> list[tuple[int, int]]:
         .group_by(StockMove.product_id)
         .having(total != 0)
     ).all()
-    return [(product_id, amount) for product_id, amount in rows]
+    return [(product_id, as_int(amount)) for product_id, amount in rows]
 
 
 def names_of(db: Session, warehouse_ids) -> dict[int, str]:
