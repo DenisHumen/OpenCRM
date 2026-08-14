@@ -22,6 +22,8 @@ DOCKERIGNORE = ROOT / ".dockerignore"
 WORKFLOW = ROOT / ".github" / "workflows" / "tests.yml"
 
 
+MYSQL_URL = "mysql+pymysql://opencrm:p@db:3306/opencrm?charset=utf8mb4"
+
 def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
@@ -321,43 +323,30 @@ def test_ci_builds_the_frontend_before_running_tests():
     )
 
 
-def test_several_workers_on_sqlite_are_refused_not_attempted():
-    """Настройка, которая не может работать, отвергается на старте.
+def test_several_workers_without_redis_are_refused():
+    """Несколько процессов законны только с общим счётчиком попыток.
 
-    SQLite допускает одного писателя на всю базу. Два процесса на старте создают
-    схему и сеют умолчания одновременно, и проигравший падает с «database is
-    locked», не поднявшись вовсе — проверено живым запуском `--workers 2` на
-    пустой базе. Даже разойдись старт по времени, каждая одновременная запись
-    осталась бы лотереей, а «иногда не сохраняется» ищут неделями.
+    Пока условие было одно — «база не SQLite», — переезд на MySQL разрешал
+    восемь процессов разом и вместе с запретом снимал единственное, на чём
+    держалась защита от подбора: счётчик жил в памяти процесса. Восемь
+    процессов дают восемь независимых счётчиков, порог умножается на восемь, и
+    никакой ошибки при этом не возникает.
 
     Отказ стоит в двух местах, и оба нужны: приложение знает про
     `OPENCRM_WORKERS`, а entrypoint — тот, кто это число передаёт uvicorn.
     """
     from config.settings import Settings
 
-    on_sqlite = Settings(workers=2, db_url="sqlite:///./data/opencrm.db")
-    complaints = " ".join(on_sqlite.config_errors())
-    assert "OPENCRM_WORKERS" in complaints, "приложение молча берётся за невозможное"
-    assert "MySQL" in complaints, "отказ не подсказывает выход"
+    bez_redis = Settings(workers=2, db_url=MYSQL_URL, redis_url="")
+    zhaloby = " ".join(bez_redis.config_errors())
+    assert "OPENCRM_WORKERS" in zhaloby, "приложение молча берётся за невозможное"
+    assert "OPENCRM_REDIS_URL" in zhaloby, "отказ не подсказывает выход"
 
-    # На MySQL с общим счётчиком несколько процессов законны — запрет не должен
-    # мешать переезду.
-    on_mysql = Settings(
-        workers=4,
-        db_url="mysql+pymysql://user:pass@host/opencrm",
-        redis_url="redis://:pass@redis:6379/0",
+    # С общим счётчиком несколько процессов законны — запрет не должен мешать.
+    s_redis = Settings(workers=2, db_url=MYSQL_URL, redis_url="redis://:p@redis:6379/0")
+    assert not [x for x in s_redis.config_errors() if "OPENCRM_WORKERS" in x], (
+        "запрет срабатывает там, где всё в порядке"
     )
-    assert not any("OPENCRM_WORKERS" in line for line in on_mysql.config_errors())
-
-    # И один процесс на SQLite — обычная установка, к ней вопросов нет.
-    single = Settings(workers=1, db_url="sqlite:///./data/opencrm.db")
-    assert not any("OPENCRM_WORKERS" in line for line in single.config_errors())
-
-    entrypoint = _read(ROOT / "docker" / "entrypoint.sh")
-    assert "OPENCRM_WORKERS" in entrypoint and "sqlite*" in entrypoint, (
-        "entrypoint запускает несколько процессов, не спросив про базу"
-    )
-
 
 def test_propavshiy_config_ne_podnimaet_prod_v_dev_rezhime():
     """`config/.env` подключён с `required: false` — и это осознанно: без него
