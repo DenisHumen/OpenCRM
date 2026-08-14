@@ -20,7 +20,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from database.models import Document, DocumentEvent, DocumentLine
-from database.query import contains, page_of
+from database.query import as_int, contains, page_of
 
 
 def get(db: Session, document_id: int) -> Document | None:
@@ -213,7 +213,9 @@ def promised(db: Session, kind: str, statuses, product_ids=None) -> dict[int, in
         if not product_ids:
             return {}
         stmt = stmt.where(DocumentLine.product_id.in_(product_ids))
-    return {product_id: total for product_id, total in db.execute(stmt).all()}
+    # `as_int` — `SUM()` в MySQL возвращает `Decimal`, а количество в проекте
+    # целое в тысячных; разбор — в докстроке `query.as_int`.
+    return {product_id: as_int(total) for product_id, total in db.execute(stmt).all()}
 
 
 def add_line(db: Session, line: DocumentLine) -> DocumentLine:
