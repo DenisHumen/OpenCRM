@@ -1,8 +1,26 @@
 """Сообщение об исходе обновления в Telegram.
 
-Текст отправляется без `parse_mode`: в сообщение попадает заголовок коммита, а
-там сплошь `_`, `*` и backticks — с разметкой Telegram отбивал бы такие
-сообщения ошибкой, и об упавшем деплое никто бы не узнал.
+--------------------------------------------------------------------------
+Почему HTML, а не MarkdownV2, и почему разметка вообще вернулась
+--------------------------------------------------------------------------
+
+Разметка тут когда-то была выключена целиком, и повод был настоящий: в текст
+попадает заголовок коммита, а там сплошь `_`, `*` и backticks. В MarkdownV2
+экранировать надо ВОСЕМНАДЦАТЬ символов (``_*[]()~`>#+-=|{}.!``), любой
+пропущенный — и Telegram отбивает сообщение целиком с `can't parse entities`.
+То есть об упавшем деплое не узнаёт никто именно потому, что сообщение было
+подробным. Лечение тогда выбрали грубое — снять разметку совсем.
+
+В HTML экранировать надо ТРИ символа: `&`, `<`, `>`. Ни один из них не
+встречается ни в заголовках коммитов, ни в путях, ни в командах — а если
+встретится, `_ekranirovat` его переведёт. Поэтому причина, по которой разметку
+снимали, в HTML не действует.
+
+**И всё равно есть запасной путь.** Telegram отбивает сообщение по разбору
+разметки кодом 400. Получив его, отправляем то же самое ПЛОСКИМ текстом, без
+`parse_mode`. Свойство, ради которого это написано, простое: ошибка в
+оформлении не имеет права заглушить сообщение об аварии. Красивое сообщение —
+удобство, дошедшее — необходимость.
 
 Не настроен токен — молчим. Уведомление приятно, но обновление не должно
 зависеть от доступности мессенджера.
@@ -10,11 +28,37 @@
 
 from __future__ import annotations
 
+import html
+import json
+import re
 import urllib.error
 import urllib.parse
 import urllib.request
 
 API = "https://api.telegram.org"
+
+#: Предел Telegram — 4096 символов, и считает он их ПОСЛЕ разбора разметки.
+#: Берём с запасом: у обрезанного по живому тегу сообщения разметка не
+#: разбирается, и оно отбивается целиком.
+PREDEL = 3800
+
+#: Теги, которые снимаем при откате на плоский текст.
+_TEG = re.compile(r"<[^>]+>")
+
+
+def ekranirovat(text: str) -> str:
+    """Текст, пригодный для вставки в HTML-разметку Telegram.
+
+    Через `html.escape` с `quote=False`: кавычки внутри текста сообщения
+    экранировать не нужно (мы не строим атрибуты из пользовательских строк), а
+    `&quot;` в заголовке коммита читался бы как мусор.
+    """
+    return html.escape(text or "", quote=False)
+
+
+def bez_razmetki(text: str) -> str:
+    """То же сообщение, но плоским текстом — для запасного пути."""
+    return html.unescape(_TEG.sub("", text))
 
 
 class Silent:
@@ -22,7 +66,7 @@ class Silent:
 
     configured = False
 
-    def send(self, text: str) -> bool:  # noqa: ARG002
+    def send(self, text: str, *, tiho: bool = False) -> bool:  # noqa: ARG002
         return False
 
 
@@ -35,14 +79,33 @@ class Telegram:
         self.timeout = timeout
         self._open = opener or urllib.request.urlopen
 
-    def send(self, text: str) -> bool:
-        payload = urllib.parse.urlencode(
-            {
-                "chat_id": self.chat_id,
-                "text": text[:4000],  # лимит Telegram — 4096 символов
-                "disable_web_page_preview": "true",
-            }
-        ).encode("utf-8")
+    def send(self, text: str, *, tiho: bool = False) -> bool:
+        """Отправить сообщение. `tiho` — без звука на телефоне.
+
+        Беззвучно уходит то, что читают утром: удачное обновление ночью — не
+        повод будить. Всё, что требует человека, звучит.
+        """
+        text = text[:PREDEL]
+        if self._otpravit(text, html_razmetka=True, tiho=tiho):
+            return True
+        # Разметка не разобралась (или Telegram передумал) — то же самое, но
+        # плоским текстом. Молчание здесь было бы худшим из исходов.
+        return self._otpravit(bez_razmetki(text), html_razmetka=False, tiho=tiho)
+
+    def _otpravit(self, text: str, *, html_razmetka: bool, tiho: bool) -> bool:
+        polya = {
+            "chat_id": self.chat_id,
+            "text": text,
+            # `link_preview_options` вместо устаревшего
+            # `disable_web_page_preview`: ссылка на коммит развернулась бы
+            # карточкой репозитория на пол-экрана и утопила бы сам текст.
+            "link_preview_options": json.dumps({"is_disabled": True}),
+        }
+        if html_razmetka:
+            polya["parse_mode"] = "HTML"
+        if tiho:
+            polya["disable_notification"] = "true"
+        payload = urllib.parse.urlencode(polya).encode("utf-8")
         request = urllib.request.Request(f"{API}/bot{self.token}/sendMessage", data=payload)
         request.add_header("Content-Type", "application/x-www-form-urlencoded")
         try:
