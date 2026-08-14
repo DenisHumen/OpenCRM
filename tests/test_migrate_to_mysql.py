@@ -11,10 +11,11 @@ MySQL стережёт `test_mysql_portability.py`.
 """
 
 import sys
+from datetime import datetime
 from pathlib import Path
 
 import pytest
-from sqlalchemy import create_engine, func, insert, select, text
+from sqlalchemy import DateTime, create_engine, func, insert, select, text
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -573,3 +574,85 @@ def test_osmotr_nazyvaet_vse_svyazi_a_ne_pervuyu(tmp_path):
     assert "deals.client_id" in slitno, naydeno
     assert "clients.manager_id" in slitno, naydeno
     assert "2 строк" in slitno, "не сказано, сколько именно строк в первой связи"
+
+
+# --- хозяйственные отметки: их сравнивать нельзя -------------------------------
+#
+# Поймано на БОЕВОМ переезде. Сверка встала на этом:
+#
+#   users:         id=1 — last_seen_at: было 07:30:20, стало 07:28:20
+#   user_sessions: id=5 — last_seen_at: было 07:30:20, стало 07:28:20
+#
+# Источник новее цели ровно на время переноса. Причина не в переносе:
+# `auth_service` пишет `last_seen_at` на ЛЮБОМ запросе вошедшего, а root проходит
+# в закрытый сайт по устройству режима обслуживания. Достаточно открытой вкладки
+# CRM у того, кто переезд и запускает, — и сверка не сойдётся НИКОГДА.
+
+LYUDI = Base.metadata.tables["users"]
+
+
+def test_prisutstvie_ne_valit_pereezd(tmp_path):
+    """Тикнувшее присутствие — не потеря данных, и переезд оно валить не должно."""
+    istochnik = _baza(tmp_path, "src-prisut.db")
+    with istochnik.begin() as c:
+        c.execute(insert(LYUDI), {"email": "a@b.c", "password_hash": "x", "name": "Кто-то",
+                                  "last_seen_at": datetime(2026, 8, 14, 7, 28, 20)})
+    cel = _baza(tmp_path, "dst.db")
+    assert perenesti(istochnik, cel) == []
+    assert proverit(istochnik, cel) == []
+
+    # Человек не сделал ничего — просто держал вкладку открытой.
+    with istochnik.begin() as c:
+        c.execute(LYUDI.update().where(LYUDI.c.id == 1).values(
+            last_seen_at=datetime(2026, 8, 14, 7, 30, 20)))
+
+    assert proverit(istochnik, cel) == [], (
+        "переезд снова валится на присутствии — а оно обязано меняться у всякого,"
+        " кто ведёт переезд с открытой CRM"
+    )
+
+
+def test_v_toy_zhe_tablice_nastoyashchaya_porcha_lovitsya(tmp_path):
+    """Парная проверка: послабление ровно на одну колонку, а не на таблицу.
+
+    Без неё «починку» легко доделать до того, что сверка перестанет смотреть на
+    `users` вовсе — и подменённая почта администратора проедет молча.
+    """
+    istochnik = _baza(tmp_path, "src-pochta.db")
+    with istochnik.begin() as c:
+        c.execute(insert(LYUDI), {"email": "a@b.c", "password_hash": "x", "name": "Кто-то"})
+    cel = _baza(tmp_path, "dst.db")
+    assert perenesti(istochnik, cel) == []
+
+    with cel.begin() as c:
+        c.execute(LYUDI.update().where(LYUDI.c.id == 1).values(email="chuzhoy@zloumyshlennik.ru"))
+
+    rashozhdenia = proverit(istochnik, cel)
+    slitno = " ".join(rashozhdenia)
+    assert "email" in slitno and "id=1" in slitno, rashozhdenia
+
+
+def test_spisok_hozyaystvennyh_ne_mozhet_rasti_kuda_popalo():
+    """Список — не место для денег, количеств и ключей.
+
+    Проверка механическая нарочно: список правит человек, а цена ошибки здесь —
+    молча проехавшая порча ровно в той величине, ради которой сверка и есть.
+    """
+    from scripts.migrate_to_mysql import HOZYAYSTVENNYE
+
+    assert HOZYAYSTVENNYE, "список опустел — значит послабление сняли не думая"
+    for imya_tablicy, imya_stolbca in HOZYAYSTVENNYE:
+        table = Base.metadata.tables[imya_tablicy]
+        stolbec = table.c[imya_stolbca]
+        assert not stolbec.primary_key, f"{imya_tablicy}.{imya_stolbca}: это ключ"
+        assert not stolbec.foreign_keys, f"{imya_tablicy}.{imya_stolbca}: это связь"
+        assert not stolbec.unique, f"{imya_tablicy}.{imya_stolbca}: колонка уникальна"
+        for hvost in ("_minor", "_milli", "_bp"):
+            assert not imya_stolbca.endswith(hvost), (
+                f"{imya_tablicy}.{imya_stolbca}: деньги, количества и ставки сверяются всегда"
+            )
+        # Величина без истории — это отметка времени. Строка или число здесь
+        # означали бы, что послабление дали чему-то другому.
+        assert isinstance(stolbec.type, DateTime), (
+            f"{imya_tablicy}.{imya_stolbca}: не отметка времени — обоснуйте отдельно"
+        )
