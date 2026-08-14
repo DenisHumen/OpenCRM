@@ -601,6 +601,19 @@ services:
       GF_USERS_ALLOW_SIGN_UP: "false"
       GF_AUTH_ANONYMOUS_ENABLED: "false"
       GF_AUTH_BASIC_ENABLED: "true"
+      # Cookie сессии панели — только по HTTPS. Замерено: без этой строки она
+      # уходит без признака `Secure`, то есть браузер отправит её и по http —
+      # хватит одного случайного перехода по ссылке без буквы «s».
+      #
+      # Значение переменной, а не жёсткое "true", и это не перестраховка:
+      # панель открывают и напрямую по `127.0.0.1:9080` (туннелем с чужой
+      # машины, см. OPENCRM_GRAFANA_BIND). Там схема http, и с жёстким `Secure`
+      # вход не состоялся бы вовсе — человек вводил бы верный пароль и
+      # возвращался на форму, без единого сообщения о причине.
+      GF_SECURITY_COOKIE_SECURE: ${OPENCRM_GRAFANA_COOKIE_SECURE:-true}
+      GF_SECURITY_COOKIE_SAMESITE: lax
+      # Своей защиты содержимого у панели нет по умолчанию вовсе.
+      GF_SECURITY_CONTENT_SECURITY_POLICY: "true"
       # Grafana живёт на подпути того же домена — своего порта наружу у неё нет.
       GF_SERVER_ROOT_URL: ${OPENCRM_MONITOR_URL:-http://localhost}/monitoring/
       GF_SERVER_SERVE_FROM_SUB_PATH: "true"

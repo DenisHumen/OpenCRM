@@ -8,7 +8,13 @@ from sqlalchemy.orm import Session
 from config.settings import get_settings
 from core import exceptions as errors
 from core.security import tokens
-from core.services import board_service, media_service, settings_service, share_service
+from core.services import (
+    board_service,
+    media_service,
+    modules_service,
+    settings_service,
+    share_service,
+)
 from database.repositories import boards as boards_repo
 from web.api import schemas
 from web.api.deps import client_ip, document_limiter, get_db, pin_limiter
@@ -126,6 +132,14 @@ def _closed_page(request: Request, db: Session, *, status_code: int = 404, busy:
 
 @router.get("/b/{token}")
 def showcase(token: str, request: Request, db: Session = Depends(get_db)):
+    # Блок досок выключили — публичные пути обязаны исчезнуть вместе с ним.
+    # Правило проекта: выключенный блок исчезает ЦЕЛИКОМ, а не только из меню.
+    # Иначе «выключил доски» означало бы лишь «убрал из интерфейса», а ранее
+    # разосланные ссылки продолжали бы отдавать работы клиента всему интернету —
+    # то есть ровно то, ради прекращения чего блок и выключают.
+    if not modules_service.is_enabled(db, "boards"):
+        return _closed_page(request, db)
+
     resolved = share_service.resolve_public(db, token)
     if resolved is None:
         return _closed_page(request, db)
@@ -185,6 +199,14 @@ def check_pin(
     pin: str = Form(default=""),
     db: Session = Depends(get_db),
 ):
+    # Блок досок выключили — публичные пути обязаны исчезнуть вместе с ним.
+    # Правило проекта: выключенный блок исчезает ЦЕЛИКОМ, а не только из меню.
+    # Иначе «выключил доски» означало бы лишь «убрал из интерфейса», а ранее
+    # разосланные ссылки продолжали бы отдавать работы клиента всему интернету —
+    # то есть ровно то, ради прекращения чего блок и выключают.
+    if not modules_service.is_enabled(db, "boards"):
+        return _closed_page(request, db)
+
     resolved = share_service.resolve_public(db, token)
     if resolved is None:
         return _closed_page(request, db)
@@ -235,6 +257,16 @@ def check_pin(
 
 @router.get("/b/{token}/data")
 def showcase_data(token: str, request: Request, db: Session = Depends(get_db)):
+    # Блок досок выключили — публичные пути обязаны исчезнуть вместе с ним.
+    # Правило проекта: выключенный блок исчезает ЦЕЛИКОМ, а не только из меню.
+    # Иначе «выключил доски» означало бы лишь «убрал из интерфейса», а ранее
+    # разосланные ссылки продолжали бы отдавать работы клиента всему интернету —
+    # то есть ровно то, ради прекращения чего блок и выключают.
+    if not modules_service.is_enabled(db, "boards"):
+        return JSONResponse(
+            {"error": {"code": "not_found", "message": "Not found"}}, status_code=404
+        )
+
     resolved = share_service.resolve_public(db, token)
     if resolved is None:
         return JSONResponse(
@@ -293,6 +325,14 @@ def _is_staff(request: Request, db: Session) -> bool:
 
 @router.get("/media/{work_uid}/{filename}")
 def media_file(work_uid: str, filename: str, request: Request, db: Session = Depends(get_db)):
+    # Блок досок выключили — публичные пути обязаны исчезнуть вместе с ним.
+    # Правило проекта: выключенный блок исчезает ЦЕЛИКОМ, а не только из меню.
+    # Иначе «выключил доски» означало бы лишь «убрал из интерфейса», а ранее
+    # разосланные ссылки продолжали бы отдавать работы клиента всему интернету —
+    # то есть ровно то, ради прекращения чего блок и выключают.
+    if not modules_service.is_enabled(db, "boards"):
+        return JSONResponse({"error": {"code": "not_found", "message": "Not found"}}, status_code=404)
+
     # Путь собирает и проверяет `media_service.public_file`: он сверяет
     # ИТОГОВЫЙ путь с каталогом работ, а не перебирает запрещённые кусочки
     # имени. Разбор — в докстроке той функции.
@@ -374,7 +414,7 @@ def document_status(number: str, request: Request, db: Session = Depends(get_db)
     сделано: ключ обесценит все уже напечатанные квитанции, а решать, менять ли
     бумагу на руках у клиентов, не программисту.
     """
-    from core.services import document_service, modules_service
+    from core.services import document_service
     from web.public.document_strings import strings_for
 
     # Блок бланков выключили — снаружи это должно выглядеть так же, как

@@ -46,28 +46,34 @@ access_log /var/log/nginx/access.log opencrm_json;
 location /media/ {
     set $opencrm_media app;
     proxy_pass http://$opencrm_media:8000;
-    proxy_set_header Host $host;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
-    proxy_read_timeout 120s;
+    include /opencrm/templates/proxy-headers.inc;
     error_page 502 503 504 =503 /__opencrm-maintenance;
 }
 
 # Логотип и картинка для соцсетей. Тот же разговор про SVG, что и у медиа, плюс
 # `nosniff`, которого здесь не было вовсе: без него браузер вправе решить, что
 # «logo.png» на самом деле документ, и обойтись с ним соответственно.
+#
+# `frame-ancestors 'none'` в политике не для красоты: `default-src 'none'` его
+# НЕ ЗАМЕНЯЕТ — у `frame-ancestors` отката к `default-src` нет по устройству
+# самой CSP. Без него логотип и аватар вставляются рамкой в чужую страницу, и
+# `sandbox` этому не мешает: он глушит скрипт ВНУТРИ файла, а не запрещает файлу
+# оказаться в чужой рамке.
+#
+# `include headers.inc` обязателен: у блока есть свои `add_header`, а значит
+# заголовки уровня `server` он НЕ наследует (разбор — в самом headers.inc).
 location /branding/ {
     alias /srv/storage/branding/;
+    include /opencrm/templates/headers.inc;
     add_header Cache-Control "public, max-age=3600";
-    add_header X-Content-Type-Options nosniff always;
-    add_header Content-Security-Policy "default-src 'none'; img-src 'self'; media-src 'self'; style-src 'unsafe-inline'; sandbox" always;
+    add_header Content-Security-Policy "default-src 'none'; img-src 'self'; media-src 'self'; style-src 'unsafe-inline'; frame-ancestors 'none'; sandbox" always;
 }
 
 location /avatars/ {
     alias /srv/storage/avatars/;
+    include /opencrm/templates/headers.inc;
     add_header Cache-Control "public, max-age=86400";
-    add_header X-Content-Type-Options nosniff always;
-    add_header Content-Security-Policy "default-src 'none'; img-src 'self'; media-src 'self'; style-src 'unsafe-inline'; sandbox" always;
+    add_header Content-Security-Policy "default-src 'none'; img-src 'self'; media-src 'self'; style-src 'unsafe-inline'; frame-ancestors 'none'; sandbox" always;
 }
 
 # Шрифты витрины лежат внутри образа, их отдаёт приложение — оно же ставит
@@ -90,6 +96,25 @@ location = /api/v1/metrics {
     deny all;
 }
 
+# И то же самое префиксом, потому что точного совпадения оказалось мало.
+#
+# Проверено запросами по живому nginx: `//api/v1/metrics`, `/api/v1/./metrics`,
+# `/api/v1/foo/../metrics`, `/api/v1%2fmetrics` и строка запроса упираются в
+# запрет — их nginx приводит к тому же пути ещё до выбора блока. А вот
+# `/api/v1/metrics/` (со слэшем на конце) точному совпадению НЕ РАВЕН и уходит в
+# приложение. Сегодня это безопасно по случайности: Starlette отвечает на него
+# перенаправлением обратно на `/api/v1/metrics`, то есть на запрет, — но
+# `redirect_slashes` это настройка фреймворка, а не наше решение, и молчаливо
+# менять её вправе любое обновление зависимостей. Граница сети не должна
+# зависеть от такой мелочи.
+#
+# `^~`, а не регулярное выражение: префикс с этим знаком отменяет поиск по
+# регуляркам вовсе, то есть ничего не стоит остальным запросам и не может
+# перехватить чужой блок.
+location ^~ /api/v1/metrics {
+    deny all;
+}
+
 # Grafana — на том же домене, отдельным путём и под своим паролем.
 #
 # Своего порта наружу у неё нет намеренно (docker-compose.yml, `expose` вместо
@@ -100,16 +125,45 @@ location = /monitoring {
     return 301 /monitoring/;
 }
 
+# Отдельный блок ровно на страницу входа в панель.
+#
+# У самой Grafana защиты от подбора нет: ни задержки после промаха, ни
+# блокировки учётной записи. Замерено на живом стенде — сорок попыток входа за
+# 0.2 секунды, все 401 и ни одного препятствия. Числа ограничителя и разбор,
+# почему они не мешают владельцу, — в hardening.inc.
+#
+# Блок стоит ВЫШЕ `/monitoring/`, но порядок здесь ни при чём: точное совпадение
+# (`=`) выигрывает у любого префикса, где бы оно ни лежало. Написано рядом ради
+# чтения.
+location = /monitoring/login {
+    limit_req zone=opencrm_panel_login burst=10 nodelay;
+    limit_req zone=opencrm_basic_auth burst=5 nodelay;
+    set $opencrm_grafana_login grafana;
+    proxy_pass http://$opencrm_grafana_login:3000;
+    include /opencrm/templates/proxy-headers.inc;
+    error_page 502 503 504 = @opencrm_monitoring_off;
+}
+
 location /monitoring/ {
+    # Подбор пароля через `Authorization: Basic` идёт МИМО страницы входа — он
+    # стучится прямо в `/monitoring/api/...`. Считаются только запросы с этим
+    # заголовком (у остальных ключ пуст, а пустой ключ nginx не учитывает),
+    # поэтому обычная работа с панелью по cookie сюда не попадает вовсе.
+    limit_req zone=opencrm_basic_auth burst=5 nodelay;
+
     # Переменная и резолвер — по той же причине, что у приложения: контейнер
     # мониторинга пересоздаётся при обновлении, и записанное литералом имя
     # осталось бы указывать на адрес, которого больше нет.
+    #
+    # Своих `add_header` здесь НЕТ, и это не упущение. Grafana сама ставит
+    # `X-Frame-Options: deny`, `X-Content-Type-Options` и `Cache-Control: no-store`
+    # (снято с живого стенда), а `Referrer-Policy` и HSTS наследуются с уровня
+    # `server`. Допиши сюда хоть один `add_header` — и унаследованные пропадут
+    # ЦЕЛИКОМ: панель, открытая в интернет, останется без HSTS, а заметить это
+    # чтением конфига нельзя. Разбор правила — в headers.inc.
     set $opencrm_grafana grafana;
     proxy_pass http://$opencrm_grafana:3000;
-    proxy_set_header Host $host;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
-    proxy_read_timeout 120s;
+    include /opencrm/templates/proxy-headers.inc;
 
     # Мониторинг выключен — служб нет в стеке вовсе (профиль compose), и имя
     # `grafana` не резолвится. Отдаём внятное «выключено» вместо страницы
@@ -121,18 +175,43 @@ location /monitoring/ {
 location @opencrm_monitoring_off {
     default_type text/plain;
     charset utf-8;
+    include /opencrm/templates/headers.inc;
     add_header Cache-Control "no-store" always;
-    add_header X-Content-Type-Options nosniff always;
     return 503 "Monitoring is switched off (./opencrm.sh monitoring)\n";
+}
+
+# Два входа в CRM со своим ограничителем потока.
+#
+# Ограничитель у приложения есть, и он остаётся главным — но считает он ПО
+# АДРЕСУ ПОЧТЫ (5 промахов на учётную запись за 15 минут). Поток с одного места
+# он не ограничивает вовсе: тысяча запросов в секунду по тысяче разных адресов
+# почты не упирается ни во что. У «Запросить доступ» своего ограничителя нет
+# совсем, а каждый запрос с новым адресом считает bcrypt и добавляет строку в
+# базу. Здесь закрывается ровно поток; подбор по-прежнему считает приложение.
+# Числа и обоснование — в hardening.inc.
+#
+# `error_page` тот же, что у корня: иначе во время обновления вход отвечал бы
+# голым «502 Bad Gateway» вместо страницы обслуживания.
+location = /api/v1/auth/login {
+    limit_req zone=opencrm_crm_login burst=20 nodelay;
+    set $opencrm_login app;
+    proxy_pass http://$opencrm_login:8000;
+    include /opencrm/templates/proxy-headers.inc;
+    error_page 502 503 504 =503 /__opencrm-maintenance;
+}
+
+location = /api/v1/auth/register {
+    limit_req zone=opencrm_crm_register burst=6 nodelay;
+    set $opencrm_register app;
+    proxy_pass http://$opencrm_register:8000;
+    include /opencrm/templates/proxy-headers.inc;
+    error_page 502 503 504 =503 /__opencrm-maintenance;
 }
 
 location / {
     set $opencrm_app app;
     proxy_pass http://$opencrm_app:8000;
-    proxy_set_header Host $host;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
-    proxy_read_timeout 120s;
+    include /opencrm/templates/proxy-headers.inc;
 
     # Пока приложение не отвечает — обновление, миграции, перезапуск — вместо
     # nginx'ового «502 Bad Gateway» показываем страницу обслуживания.
@@ -157,7 +236,7 @@ location = /__opencrm-maintenance {
     # файл. Заодно charset: на странице есть кириллица.
     default_type text/html;
     charset utf-8;
+    include /opencrm/templates/headers.inc;
     add_header Retry-After 30 always;
     add_header Cache-Control "no-store" always;
-    add_header X-Content-Type-Options nosniff always;
 }

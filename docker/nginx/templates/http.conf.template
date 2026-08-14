@@ -5,6 +5,9 @@
 # Формат журнала доступа: на уровне http, потому что `log_format` и `map` в
 # server-блоке не живут. По этим строкам мониторинг считает доли ответов.
 include /opencrm/templates/logging.inc;
+# Ограничители потока на входах и переменная HSTS. Тоже уровень http: `map` и
+# `limit_req_zone` в server-блоке не живут.
+include /opencrm/templates/hardening.inc;
 
 server {
     listen 80;
@@ -12,8 +15,9 @@ server {
 
     client_max_body_size 220m;
 
-    add_header X-Content-Type-Options nosniff always;
-    add_header Referrer-Policy strict-origin-when-cross-origin always;
+    # Один файл на оба шаблона. HSTS здесь не появится: `$opencrm_hsts` пуст по
+    # обычному HTTP, а `add_header` с пустым значением nginx не выводит.
+    include /opencrm/templates/headers.inc;
 
     # проверка Let's Encrypt: каталог общий с контейнером certbot
     location /.well-known/acme-challenge/ {
