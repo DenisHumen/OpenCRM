@@ -73,6 +73,62 @@ from core.security import passwords  # noqa: E402
 passwords.BCRYPT_ROUNDS = 4  # быстрые хэши в тестах
 
 
+def _ochistit_bazu() -> None:
+    """Прогон начинается с ПУСТОЙ базы. Иначе второй прогон невозможен.
+
+    Пока набор гонялся на файле, это свойство было даровым: каждый прогон
+    получал свой временный файл. С общей MySQL оно исчезло — и исчезло молча,
+    потому что один прогон подряд по-прежнему зелёный.
+
+    Вылезло на CI, где набор гоняется дважды: прямым порядком файлов и обратным
+    (обратный ловит тесты, которые роняют не себя, а соседа). Первый прогон
+    меняет root'у пароль — смена при первом входе обязательна и проверяется, —
+    второй стартует на той же базе, и `root-initial-pw` больше не подходит.
+    826 ошибок «Invalid email or password», и ни одна не про то, что сломано.
+
+    Чистится содержимое, а не база целиком: `DROP DATABASE` требует прав уровня
+    сервера, а они есть не у всякого, кому дали базу под тесты.
+
+    **Отказ по имени базы — не перестраховка.** Этот код стирает всё, что
+    найдёт. Единственное, что стоит между ним и чужими данными, — переменная
+    окружения, а опечатка в ней стоила бы боевой базы. Поэтому имя обязано
+    содержать `test`, и никакое соглашение вместо проверки тут не годится.
+    """
+    from sqlalchemy import create_engine, text
+
+    url = os.environ["OPENCRM_DB_URL"]
+    imya = url.rsplit("/", 1)[-1].split("?")[0]
+    if "test" not in imya.lower():
+        raise RuntimeError(
+            f"база {imya!r} не похожа на тестовую, а набор стирает её содержимое.\n"
+            "Имя обязано содержать «test» — это единственное, что отделяет прогон "
+            "от чужих данных.\n" + _PODSKAZKA
+        )
+
+    engine = create_engine(url)
+    try:
+        with engine.begin() as soedinenie:
+            tablitsy = [
+                row[0]
+                for row in soedinenie.execute(text(
+                    "SELECT table_name FROM information_schema.tables "
+                    "WHERE table_schema = DATABASE() AND table_type = 'BASE TABLE'"
+                ))
+            ]
+            if not tablitsy:
+                return
+            # Внешние ключи выключаются на время сноса: порядок удаления иначе
+            # пришлось бы вычислять по графу связей, а он меняется с каждой
+            # миграцией. Признак возвращается на месте, соединение уходит в пул
+            # как было.
+            soedinenie.execute(text("SET FOREIGN_KEY_CHECKS = 0"))
+            for tablitsa in tablitsy:
+                soedinenie.execute(text(f"DROP TABLE IF EXISTS `{tablitsa}`"))
+            soedinenie.execute(text("SET FOREIGN_KEY_CHECKS = 1"))
+    finally:
+        engine.dispose()
+
+
 def _build_schema_with_migrations() -> None:
     """Схему тестовой базы поднимают МИГРАЦИИ, а не `create_all`.
 
@@ -96,6 +152,7 @@ def _build_schema_with_migrations() -> None:
     command.upgrade(config, "head")
 
 
+_ochistit_bazu()
 _build_schema_with_migrations()
 
 from fastapi.testclient import TestClient  # noqa: E402
