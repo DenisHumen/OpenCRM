@@ -76,7 +76,7 @@ write_state() {   # фаза шаг причина
     # идёт, значит его начал обновлятор» неверен ровно на нас самих: свой же
     # предыдущий шаг («миграции») выглядит для следующего («старт») точно так
     # же, и обычный перезапуск на втором шаге объявил бы себя обновлением. На
-    # запуске с подставными python и sqlite3 он это и делал.
+    # запуске с подставным python он это и делал.
     _scope="restart"
     if grep -q '"phase"[[:space:]]*:[[:space:]]*"running"' "$STATE_FILE" 2>/dev/null; then
         _started=$(sed -n 's/.*"started_at"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
@@ -222,8 +222,7 @@ if ! zhdat_bazu; then
     exit 1
 fi
 # Ревизию и дамп берёт python: клиента MySQL в этом образе нет и не
-# будет (обоснование — в шапке scripts/snapshot_db.py), а `sqlite3`
-# здесь бесполезен по очевидной причине.
+# будет — обоснование в шапке scripts/snapshot_db.py.
 CURRENT="$(python -m scripts.snapshot_db revision 2>/dev/null || echo none)"
 [ -n "$CURRENT" ] || CURRENT=none
 SNAPSHOT="$DB_DIR/mysql.pre-migrate-$CURRENT.sql"

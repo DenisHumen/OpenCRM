@@ -16,6 +16,9 @@ os.environ.update(
         "OPENCRM_SECRET_KEY": "test-secret-key",
         "OPENCRM_DB_URL": f"sqlite:///{(_TMP / 'test.db').as_posix()}",
         "OPENCRM_STORAGE_DIR": str(_TMP / "storage"),
+        # Каталог данных — там копии и служебные файлы. Своим именем, а не
+        # выведенным из пути к файлу базы: база живёт в сервере, а не в файле.
+        "OPENCRM_DATA_DIR": str(_TMP / "data"),
         "OPENCRM_BASE_URL": "http://testserver",
         "OPENCRM_ROOT_EMAIL": "root@test.local",
         "OPENCRM_ROOT_PASSWORD": "root-initial-pw",
