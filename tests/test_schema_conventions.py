@@ -190,7 +190,7 @@ def test_models_and_migrations_do_not_diverge():
     )
 
 
-def test_every_migration_can_be_rolled_back(tmp_path):
+def test_every_migration_can_be_rolled_back(chistaya_baza):
     """Круг: наверх, вниз до пустоты, снова наверх.
 
     Откат нужен ровно один раз — когда обновление на сервере встало посередине
@@ -213,7 +213,7 @@ def test_every_migration_can_be_rolled_back(tmp_path):
     from alembic.migration import MigrationContext
     from sqlalchemy import create_engine
 
-    url = f"sqlite:///{tmp_path / 'roundtrip.db'}"
+    url = chistaya_baza
     config = Config("alembic.ini")
     config.set_main_option("sqlalchemy.url", url)
     config.attributes["configure_logger"] = False
@@ -251,7 +251,7 @@ def test_every_migration_can_be_rolled_back(tmp_path):
     )
 
 
-def test_migratsiya_zapolnyaet_sklejku_tak_zhe_kak_prilozhenie(tmp_path):
+def test_migratsiya_zapolnyaet_sklejku_tak_zhe_kak_prilozhenie(chistaya_baza):
     """Склейку `search_text` собирают двое, и они обязаны собирать одинаковую.
 
     Миграция заполняет уже населённую базу одним `UPDATE` средствами SQL, а
@@ -272,7 +272,7 @@ def test_migratsiya_zapolnyaet_sklejku_tak_zhe_kak_prilozhenie(tmp_path):
 
     from database.query import search_norm
 
-    url = f"sqlite:///{tmp_path / 'sklejka.db'}"
+    url = chistaya_baza
     config = Config("alembic.ini")
     config.set_main_option("sqlalchemy.url", url)
     config.attributes["configure_logger"] = False
@@ -336,7 +336,7 @@ def test_migratsiya_zapolnyaet_sklejku_tak_zhe_kak_prilozhenie(tmp_path):
     )
 
 
-def test_running_migrations_does_not_silence_the_application_log(tmp_path):
+def test_running_migrations_does_not_silence_the_application_log(chistaya_baza):
     """Прогон миграций не выключает журнал приложения.
 
     `logging.config.fileConfig` по умолчанию глушит все логгеры, созданные до
@@ -357,7 +357,7 @@ def test_running_migrations_does_not_silence_the_application_log(tmp_path):
     talker = logging.getLogger("opencrm.events")
 
     config = Config("alembic.ini")
-    config.set_main_option("sqlalchemy.url", f"sqlite:///{tmp_path / 'quiet.db'}")
+    config.set_main_option("sqlalchemy.url", chistaya_baza)
     command.upgrade(config, "head")
 
     assert not talker.disabled, "миграции выключили журнал событий"

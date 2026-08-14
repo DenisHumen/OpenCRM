@@ -11,6 +11,29 @@ on:
 jobs:
   pytest:
     runs-on: ubuntu-latest
+    # База поднимается службой, а не файлом рядом. Другой базы у продукта нет,
+    # и набор на чужом движке бывает зелёным, ничего при этом не обещая: обе
+    # беды, найденные за последний заход (500 на двойном нажатии и запертая
+    # насмерть система без владельцев), были на боевом сервере всё время и не
+    # видел их только набор — потому что гонялся на файле.
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: testy
+          MYSQL_DATABASE: opencrm_test
+        ports: ["3306:3306"]
+        # По TCP, а не через сокет: сокет отвечает РАНЬШЕ, чем сервер начинает
+        # слушать порт (первый запуск поднимает временный сервер, чтобы создать
+        # базу). Без этого набор стартует в пустоту на быстрой машине.
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -P 3306 --protocol=TCP --silent -ptesty"
+          --health-interval=3s
+          --health-timeout=5s
+          --health-retries=20
+          --health-start-period=60s
+    env:
+      OPENCRM_TEST_DB_URL: "mysql+pymysql://root:testy@127.0.0.1:3306/opencrm_test?charset=utf8mb4"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

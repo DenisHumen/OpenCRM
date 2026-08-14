@@ -13,6 +13,30 @@ from database.session import Base, engine
 from tests.conftest import API
 
 
+def snesti_tablitsu(dvigatel, imya: str) -> None:
+    """Снести таблицу вместе со ссылками на неё — нарочно, ради проверки.
+
+    Проверкам ниже нужна база, в которой таблицы НЕ ХВАТАЕТ. Взять такую можно
+    только снеся её, а `warehouses` держат ссылки из движений и переездов:
+    голый `DROP TABLE` MySQL отвергает («cannot drop table referenced by a
+    foreign key constraint»), и падала на этом сама проверка, а не то, что она
+    проверяет.
+
+    Снимаем проверку ключей ровно на время сноса. Это не поблажка тесту: база
+    без таблицы и с висящими на неё ссылками — как раз то состояние, в котором
+    оказывается сервер после оборванной миграции или ручной правки, и описывают
+    эти проверки именно его. Возвращаем признак на месте: соединение уходит
+    обратно в пул, и оставить на нём выключенные ключи значит испортить
+    соседей.
+    """
+    with dvigatel.begin() as soedinenie:
+        soedinenie.execute(text("SET FOREIGN_KEY_CHECKS = 0"))
+        try:
+            soedinenie.execute(text(f"DROP TABLE {imya}"))
+        finally:
+            soedinenie.execute(text("SET FOREIGN_KEY_CHECKS = 1"))
+
+
 def test_zhivaya_baza_shoditsya_s_modelyami():
     """Основная проверка: на рабочей базе расхождений нет.
 
@@ -26,14 +50,14 @@ def test_zhivaya_baza_shoditsya_s_modelyami():
     assert report.revision, "база не отмечена ни одной миграцией"
 
 
-def test_propavshaya_kolonka_zamechena(tmp_path):
+def test_propavshaya_kolonka_zamechena(chistaya_baza):
     """Именно этот случай `create_all` не ловил никогда.
 
     Новую таблицу он создаёт, а колонку в существующую — нет. Расхождение
     молчит до первого запроса к полю, и падает там, где выглядит поломкой
     раздела, а не схемы.
     """
-    url = f"sqlite:///{tmp_path / 'gap.db'}"
+    url = chistaya_baza
     other = create_engine(url)
     Base.metadata.create_all(other)
     with other.begin() as connection:
@@ -45,25 +69,24 @@ def test_propavshaya_kolonka_zamechena(tmp_path):
     assert "products.note" in report.summary()
 
 
-def test_propavshaya_tablitsa_zamechena(tmp_path):
-    url = f"sqlite:///{tmp_path / 'notable.db'}"
+def test_propavshaya_tablitsa_zamechena(chistaya_baza):
+    url = chistaya_baza
     other = create_engine(url)
     Base.metadata.create_all(other)
-    with other.begin() as connection:
-        connection.execute(text("DROP TABLE warehouses"))
+    snesti_tablitsu(other, "warehouses")
 
     report = schema_check.check(other)
     assert not report.ok
     assert "warehouses" in report.missing_tables
 
 
-def test_lishnee_ne_schitaetsya_polomkoy(tmp_path):
+def test_lishnee_ne_schitaetsya_polomkoy(chistaya_baza):
     """Лишняя таблица — обычно след отката, и запретить её значит запретить откат.
 
     Откат — главный способ починки: обновление, у которого нельзя вернуться
     назад, страшнее любой лишней таблицы.
     """
-    url = f"sqlite:///{tmp_path / 'extra.db'}"
+    url = chistaya_baza
     other = create_engine(url)
     Base.metadata.create_all(other)
     with other.begin() as connection:
@@ -77,14 +100,14 @@ def test_lishnee_ne_schitaetsya_polomkoy(tmp_path):
     assert "alembic_version" not in report.extra_tables
 
 
-def test_pustaya_baza_otlichaetsya_ot_naselyonnoy(tmp_path):
+def test_pustaya_baza_otlichaetsya_ot_naselyonnoy(chistaya_baza):
     """От этого различия зависит, чем поднимать схему.
 
     Пустую можно построить `create_all` и отметить как «на последней миграции».
     Населённую — только провести миграциями: `create_all` не добавляет колонок и
     потому оставил бы расхождение вместо того, чтобы его закрыть.
     """
-    url = f"sqlite:///{tmp_path / 'fresh.db'}"
+    url = chistaya_baza
     other = create_engine(url)
     assert schema_check.is_empty(other)
 
@@ -121,7 +144,7 @@ def test_podrobnyy_otchyot_zakryt_pravom(root_client, manager_client):
     assert manager_client.get(f"{API}/system/schema").status_code == 403
 
 
-def test_migratsii_dovodyat_pustuyu_bazu_do_modeley(tmp_path):
+def test_migratsii_dovodyat_pustuyu_bazu_do_modeley(chistaya_baza):
     """Путь сервера целиком: пустой файл → `alembic upgrade head` → сходится.
 
     Это и есть обещание автоматического обновления. Ломается оно ровно тогда,
@@ -131,7 +154,7 @@ def test_migratsii_dovodyat_pustuyu_bazu_do_modeley(tmp_path):
     from alembic import command
     from alembic.config import Config
 
-    url = f"sqlite:///{(tmp_path / 'byhand.db').as_posix()}"
+    url = chistaya_baza
     config = Config("alembic.ini")
     config.set_main_option("sqlalchemy.url", url)
     command.upgrade(config, "head")
@@ -150,7 +173,7 @@ def _head_revision() -> str:
     return ScriptDirectory.from_config(Config("alembic.ini")).get_current_head()
 
 
-def test_sklad_est_srazu_posle_migratsiy(tmp_path):
+def test_sklad_est_srazu_posle_migratsiy(chistaya_baza):
     """Миграция обязана оставить хотя бы один склад.
 
     Без места система не примет ни одного прихода, а взяться ему после
@@ -160,7 +183,7 @@ def test_sklad_est_srazu_posle_migratsiy(tmp_path):
     from alembic import command
     from alembic.config import Config
 
-    url = f"sqlite:///{(tmp_path / 'places.db').as_posix()}"
+    url = chistaya_baza
     config = Config("alembic.ini")
     config.set_main_option("sqlalchemy.url", url)
     command.upgrade(config, "head")
@@ -174,7 +197,7 @@ def test_sklad_est_srazu_posle_migratsiy(tmp_path):
     assert sum(1 for _, is_default in rows if is_default) == 1
 
 
-def test_baza_sobrannaya_mimo_migratsiy_otmechaetsya(tmp_path, monkeypatch):
+def test_baza_sobrannaya_mimo_migratsiy_otmechaetsya(chistaya_baza, monkeypatch):
     """Так выглядит база, построенная прежним безусловным `create_all`.
 
     Гнать по ней миграции с нуля нельзя — первая же упрётся в «table
@@ -188,7 +211,7 @@ def test_baza_sobrannaya_mimo_migratsiy_otmechaetsya(tmp_path, monkeypatch):
     from alembic.config import Config
     import web.main as main
 
-    url = f"sqlite:///{(tmp_path / 'unstamped.db').as_posix()}"
+    url = chistaya_baza
     other = create_engine(url)
     Base.metadata.create_all(other)
     assert schema_check.current_revision(other) is None
@@ -201,7 +224,7 @@ def test_baza_sobrannaya_mimo_migratsiy_otmechaetsya(tmp_path, monkeypatch):
     assert schema_check.current_revision(other) == head, "база осталась неотмеченной"
 
 
-def test_baza_mimo_migratsiy_i_ne_shoditsya_ostanavlivaet(tmp_path, monkeypatch):
+def test_baza_mimo_migratsiy_i_ne_shoditsya_ostanavlivaet(chistaya_baza, monkeypatch):
     """Чинить вслепую нечего: неизвестно, каких шагов не хватает.
 
     Молчаливая догадка здесь опаснее честной остановки — она отметила бы как
@@ -211,11 +234,10 @@ def test_baza_mimo_migratsiy_i_ne_shoditsya_ostanavlivaet(tmp_path, monkeypatch)
 
     import web.main as main
 
-    url = f"sqlite:///{(tmp_path / 'broken.db').as_posix()}"
+    url = chistaya_baza
     other = create_engine(url)
     Base.metadata.create_all(other)
-    with other.begin() as connection:
-        connection.execute(text("DROP TABLE warehouses"))
+    snesti_tablitsu(other, "warehouses")
 
     monkeypatch.setattr(main, "engine", other)
     with pytest.raises(RuntimeError) as failure:

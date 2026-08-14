@@ -58,13 +58,22 @@ services:
       target: tests
     environment:
       # Адрес базы для набора. Тот же шов, которым набор гоняют вручную
-      # (tests/conftest.py): без переменной он пошёл бы на файл, а нам нужен
-      # именно сервер — ровно тот, на котором работает боевой.
+      # (tests/conftest.py): без этой переменной он не стартует вовсе — и это
+      # правильно, потому что прогон не на той базе бывает зелёным и ничего при
+      # этом не обещает.
       OPENCRM_TEST_DB_URL: mysql+pymysql://root:testy@db-test:3306/opencrm_test?charset=utf8mb4
       PYTHONDONTWRITEBYTECODE: "1"
     depends_on:
       db-test:
         condition: service_healthy
+    # Точка входа подменяется, а не только команда, и это не придирка.
+    # `entrypoint.sh` в этом образе аргументы дальше НЕ передаёт: он кончается
+    # `exec python -m uvicorn ...` и командой из compose не интересуется вовсе.
+    # Без этой строки ворота поднимали бы веб-сервер вместо набора — и молча,
+    # потому что pytest в выводе просто не появился бы. Проверено живьём:
+    # контейнер уходил в проверки боевого окружения из точки входа и падал на
+    # правах каталога данных, ни одного теста не запустив.
+    entrypoint: ["python"]
     # `-p no:cacheprovider`: писать .pytest_cache в образ незачем, а на
     # read-only слоях это ещё и отказ.
-    command: python -m pytest -q -p no:cacheprovider
+    command: ["-m", "pytest", "-q", "-p", "no:cacheprovider"]

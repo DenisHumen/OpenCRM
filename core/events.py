@@ -31,7 +31,6 @@ from core import modules
 from core.services import modules_service
 from database.models import User
 from database.models.audit import SOURCES, SOURCE_MANUAL
-from database.session import vzyat_zamok_zapisi
 
 logger = logging.getLogger("opencrm.events")
 
@@ -308,9 +307,6 @@ def _run_observer(sub: Subscriber, event: Event) -> None:
     Дальше отказ едет вверх и отменяет всё целиком — как отменил бы участник
     первого уровня.
     """
-    # Замок записи — до точки отката: SAVEPOINT сам открывает транзакцию,
-    # и без этого она осталась бы читающей (разбор в database/session.py).
-    vzyat_zamok_zapisi(event.db)
     savepoint = event.db.begin_nested()
     try:
         sub.handler(event)
