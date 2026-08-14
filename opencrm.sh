@@ -1068,598 +1068,25 @@ configure_redis() {
     info "$(tr_ "без него защита от подбора пароля и PIN работает только в одном процессе" "without it brute-force protection only works within a single process")"
 }
 
-# Установка на MySQL с уже населённой SQLite: переносить ли данные. Ответ берут
-# при выборе базы, а сам перенос идёт много позже — после того, как стек
-# поднялся.
-MIGRATE_FROM_SQLITE=0
-
-#: Чем кончился переезд: skipped | ok | failed. Итог установки обязан его
-#: назвать: «OpenCRM развёрнут» поверх несостоявшегося переезда — это зелёная
-#: строка, за которой человек не пойдёт смотреть, что там на самом деле.
-MIGRATE_RESULT=skipped
-
-# Выбор базы.
+# База — только MySQL. Выбора больше нет, и это решение, а не упрощение.
 #
-# ПО УМОЛЧАНИЮ MYSQL. Прежде умолчанием была SQLite, и довод в её пользу был
-# честный: ничего не требует, лежит одним файлом и на нагрузке одной студии не
-# уступает никому. Но он отвечал не на тот вопрос. SQLite допускает ровно
-# одного писателя, поэтому на ней невозможен второй рабочий процесс
-# (docker/entrypoint.sh отказывается стартовать), а значит невозможно и всё,
-# что за ним стоит. Установка, начатая «попроще», рано или поздно упирается в
-# переезд — то есть в закрытый сайт и в самую опасную операцию, какая в проекте
-# есть. Дешевле поставить сразу то, на чём система будет работать.
+# SQLite допускала ровно одного писателя, поэтому на ней был невозможен второй
+# рабочий процесс, а значит невозможно и всё, что за ним стоит. Установка,
+# начатая «попроще», рано или поздно упиралась в переезд — то есть в закрытый
+# сайт и самую опасную операцию, какая в проекте была. Теперь её нет вовсе:
+# ставим сразу то, на чём система работает.
 #
-# Redis при этом обязателен в обоих случаях и поднимается всегда (см.
-# configure_redis): в нём общий на все процессы счётчик попыток входа и PIN.
-#
-# Цена названа вслух: контейнер MySQL — это образ около 600 МБ и порядка 400 МБ
-# памяти сверх сайта. На машине, где памяти меньше двух гигабайт, выбор SQLite
-# остаётся законным и никуда не делся — он просто перестал быть умолчанием.
-#
-# Спрашивается один раз. Повторный запуск установки на уже настроенной MySQL не
-# переспрашивает и ничего не перегенерирует: ответ «SQLite» увёл бы работающий
-# сайт на пустой файл, а новый пароль разошёлся бы с пользователем, который в
-# базе уже создан, — и приложение перестало бы к ней подключаться.
-choose_database() {
+# Redis обязателен рядом (configure_redis): в нём общий на все процессы счётчик
+# попыток входа и PIN.
+nastroit_mysql() {
     step "$(tr_ "База данных" "Database")"
 
-    if [ "$(db_engine)" = "mysql" ]; then
-        ok "$(tr_ "уже настроена MySQL — не трогаю" "already running on MySQL — leaving it alone")"
-        return 0
-    fi
-
-    say "$(tr_ \
-        "    ${D}MySQL — отдельный контейнер рядом: на ней работают несколько${R}" \
-        "    ${D}MySQL — a container alongside: it is what lets the site run on${R}")"
-    say "$(tr_ \
-        "    ${D}рабочих процессов, её обслуживают привычными средствами, и${R}" \
-        "    ${D}several worker processes, is administered with the usual tools,${R}")"
-    say "$(tr_ \
-        "    ${D}переезжать с неё потом никуда не придётся. Около 400 МБ памяти.${R}" \
-        "    ${D}and needs no move later. Costs about 400 MB of memory.${R}")"
-    say "$(tr_ \
-        "    ${D}SQLite — один файл, ставить нечего, но рабочий процесс только${R}" \
-        "    ${D}SQLite — a single file, nothing to install, but exactly one${R}")"
-    say "$(tr_ \
-        "    ${D}один: разумно на машине, где памяти меньше двух гигабайт.${R}" \
-        "    ${D}worker process: reasonable on a machine with under 2 GB of RAM.${R}")"
-    say ""
-    menu_item 1 "$(tr_ "MySQL (по умолчанию)" "MySQL (default)")"
-    menu_item 2 "$(tr_ "SQLite" "SQLite")"
-    _pick=$(ask "$(tr_ "    Выбор" "    Choice")" "1")
-
-    case "$_pick" in
-        2|sqlite|SQLite|SQLITE|s)
-            # Абсолютный путь, а не относительный из шаблона: приложение,
-            # alembic и entrypoint.sh запускаются из разных рабочих каталогов,
-            # и относительный URL однажды укажет на пустой файл рядом.
-            env_set "$APP_ENV" OPENCRM_DB_URL "sqlite:////app/data/opencrm.db"
-            # Снятый профиль — это «службы базы в стеке нет». Снимаем явно, а не
-            # оставляем строку отсутствовать: установку запускают и поверх
-            # прежней, и там COMPOSE_PROFILES=mysql могло остаться с прошлого
-            # раза — тогда рядом молча поднялся бы никому не нужный сервер.
-            #
-            # Снимается ровно `mysql`, а не весь список: рядом в нём живёт
-            # решение про мониторинг, и затирать его выбором базы нельзя.
-            compose_profile mysql off
-            ok "$(tr_ "SQLite: $(home_dir)/data/opencrm.db" "SQLite: $(home_dir)/data/opencrm.db")"
-            return 0
-            ;;
-    esac
-
-    # Пароль генерируется, а не спрашивается, и это не мелочь: спрошенный пароль
-    # базы человек придумывает за минуту и повторяет от сервера к серверу. Руками
-    # его всё равно никто не вводит — он нужен ровно двум контейнерам, и оба
-    # берут его из файла.
+    # Повторный запуск установки пароль НЕ перегенерирует: у поднятой базы
+    # пользователь уже создан с прежним, и новый дал бы «access denied» на
+    # первом же соединении.
     #
-    # Алфавит gen_secret (A-Za-z0-9) здесь ещё и обязателен: пароль уезжает
-    # внутрь URL, а `@`, `:` и `/` разобрали бы его на части.
-    _db_pass=$(gen_secret 32)
-    _db_root=$(gen_secret 32)
-
-    env_set "$DOCKER_ENV" OPENCRM_DB_NAME opencrm
-    env_set "$DOCKER_ENV" OPENCRM_DB_USER opencrm
-    env_set "$DOCKER_ENV" OPENCRM_DB_PASSWORD "$_db_pass"
-    env_set "$DOCKER_ENV" OPENCRM_DB_ROOT_PASSWORD "$_db_root"
-    compose_profile mysql on
-    # charset=utf8mb4 в URL — вторая половина той же защиты, что и настройка
-    # сервера: без неё соединение договаривается о трёхбайтном utf8, и эмодзи
-    # в заметке клиента обрывают вставку на полуслове.
-    _target_url="mysql+pymysql://opencrm:$_db_pass@db:3306/opencrm?charset=utf8mb4"
-    ok "$(tr_ "MySQL: контейнер db, пароль сгенерирован и записан" "MySQL: container db, password generated and stored")"
-    info "$(tr_ "данные базы: $(home_dir)/mysql" "database files: $(home_dir)/mysql")"
-
-    # Уже есть SQLite с данными — молчать об этом нельзя: сайт поднимется на
-    # пустой MySQL и будет выглядеть так, будто всё пропало.
-    if [ -f "$(home_dir)/data/opencrm.db" ]; then
-        say ""
-        warn "$(tr_ "рядом лежит база SQLite с данными" "there is an SQLite database with data next to it")"
-        say "$(tr_ \
-            "        Перенести её в MySQL можно тем же скриптом, что и всегда" \
-            "        It can be moved into MySQL by the usual script")"
-        say "        ${D}scripts/migrate_to_mysql.py${R}"
-        say "$(tr_ \
-            "        Файл SQLite при переносе открывается только на чтение и не меняется." \
-            "        The SQLite file is opened read-only during the move and is not changed.")"
-        say "$(tr_ \
-            "        Сайт до самого конца работает на нём: адрес базы переписывается" \
-            "        The site keeps running on it to the very end: the database URL is")"
-        say "$(tr_ \
-            "        только после того, как перенос сверен. Осечка — остаёмся на SQLite." \
-            "        rewritten only after the move is verified. Any slip — we stay on SQLite.")"
-        if confirm "$(tr_ "    Перенести данные после запуска?" "    Move the data once the stack is up?")" y; then
-            MIGRATE_FROM_SQLITE=1
-            # ГЛАВНОЕ МЕСТО ВСЕГО ПЕРЕЕЗДА: OPENCRM_DB_URL здесь НЕ трогается.
-            #
-            # Раньше он переписывался ровно тут, за десяток шагов до самого
-            # переноса, — и всё это время сайт работал на пустой MySQL, где
-            # миграции построили схему и посеяли умолчания. `/healthz` при
-            # этом зелёный, `schema_check` доволен, а человек видит пустую
-            # CRM. То есть переключение происходило ДО того, как переезд
-            # признан удачным, и любая осечка требовала возврата руками.
-            #
-            # Теперь адрес цели кладётся ОТДЕЛЬНОЙ переменной, а боевой
-            # OPENCRM_DB_URL остаётся на SQLite. Его перепишет
-            # `switch_to_mysql` последним действием — после копии, миграций,
-            # переноса и сверки. Пока этого не случилось, откатывать нечего:
-            # приложение и не уходило с файла.
-            #
-            # Побочная польза: непустая OPENCRM_MIGRATE_TARGET_URL при
-            # OPENCRM_DB_URL на sqlite — это и есть отметка «переезд начат и
-            # не доведён». Её показывает `./opencrm.sh doctor`.
-            env_set "$APP_ENV" OPENCRM_MIGRATE_TARGET_URL "$_target_url"
-            env_set "$APP_ENV" OPENCRM_DB_URL "sqlite:////app/data/opencrm.db"
-            info "$(tr_ "сайт остаётся на SQLite до конца переезда" "the site stays on SQLite until the move is done")"
-        else
-            info "$(tr_ "перенос пропущен — сайт поднимется на пустой базе" "move skipped — the site will come up on an empty database")"
-            env_set "$APP_ENV" OPENCRM_DB_URL "$_target_url"
-        fi
-    else
-        # Переносить нечего — установка с нуля. Здесь переключать сразу
-        # можно и нужно: терять нечего, а лишний шаг только удлинил бы
-        # установку и завёл бы второй, почти не проверяемый путь.
-        env_set "$APP_ENV" OPENCRM_DB_URL "$_target_url"
-    fi
-}
-
-# ==========================================================================
-# Переезд SQLite → MySQL
-# ==========================================================================
-#
-# ГЛАВНОЕ ТРЕБОВАНИЕ, ИЗ КОТОРОГО ВЫВЕДЕНО ВСЁ ОСТАЛЬНОЕ: если переезд не
-# удался, боевой сервер ПРОДОЛЖАЕТ РАБОТАТЬ на местной базе. Не «вернём
-# руками», а продолжает — сам собой, потому что с неё и не уходил.
-#
-# Отсюда порядок, где каждый шаг обратим, и одно решение, которое делает
-# обратимость бесплатной: **OPENCRM_DB_URL переписывается ПОСЛЕДНИМ действием**,
-# а не первым.
-#
-#   1. поднять MySQL и Redis РЯДОМ с работающим сайтом;
-#   2. снять копию SQLite и проверить её ЧТЕНИЕМ, а не фактом создания файла;
-#   3. построить схему в MySQL отдельным заходом (не боевым приложением);
-#   4. перенести данные ИЗ КОПИИ;
-#   5. сверить: схема с моделями, число строк по каждой таблице, суммы по
-#      деньгам и количествам;
-#   6. только теперь переписать OPENCRM_DB_URL и пересоздать приложение;
-#   7. дождаться сайта и сошедшейся схемы.
-#
-# На шагах 1-5 откатывать НЕЧЕГО: приложение всё это время работает на файле,
-# и «откат» состоит в том, чтобы ничего не делать. Осечка на шаге 6-7 —
-# единственное место, где нужно действие, и его делает `rollback_to_sqlite`
-# сама, без человека.
-#
-# ПОЧЕМУ ПЕРЕНОС ИДЁТ ИЗ КОПИИ, А НЕ ИЗ ЖИВОГО ФАЙЛА. Сайт во время переезда
-# работает, то есть живой файл меняется под руками. Сверка «строк было столько
-# же» по такому источнику даёт ложную тревогу на честном переносе: пока шли
-# данные, кто-то завёл клиента. Копия неподвижна, поэтому сверка отвечает на
-# вопрос точно. Цена названа вслух в ходе установки: то, что записано ПОСЛЕ
-# снятия копии, останется в SQLite, и переезд затевают в тихую минуту.
-#
-# Живой файл при этом не открывается на запись ни разу: копию снимает
-# `sqlite3 .backup` (он читатель), а скрипт переноса открывает источник с
-# `mode=ro`. Испортить его переезд не может ни при каком исходе.
-
-#: Копия, с которой идёт перенос. Имя постоянное: повторная попытка переезда
-#: снимает её заново, а прежняя копия ничего не стоит — оригинал-то цел.
-MIGRATE_SNAPSHOT=/app/data/opencrm.db.pre-move
-
-# Шаг 0. Сайт закрывается на обслуживание — и это не вежливость, а условие
-# правдивости сверки.
-#
-# ПОЧЕМУ. Пока сайт работал, записанное ПОСЛЕ снятия копии оставалось в SQLite и
-# пропадало при переключении — молча, потому что сверка сравнивала копию с целью
-# и про живой файл сказать не могла ничего. Проверено делом: во время переноса
-# через экран CRM завели клиента, переезд объявил «число строк и суммы совпали
-# по каждой таблице» и «переезд завершён», а клиента в новой базе не оказалось.
-# Предупреждение на экране при этом было — и проиграло зелёному итогу, потому
-# что верят итогу.
-#
-# Из трёх возможных лекарств выбрано это. «Сверка перестаёт обещать больше, чем
-# проверила» (она теперь и правда сверяет ЖИВОЙ файл, см. migrate_verify) —
-# необходимо, но одного её мало: без закрытия она бы честно краснела на каждом
-# переезде, сделанном в рабочее время, и переезд стал бы невозможен. «Догоняющий
-# перенос» — второй путь доставки данных рядом с первым, и он всё равно не
-# закрывает окно: пока догоняем, пишут снова.
-#
-# Закрытие же убирает причину: писать в это время НЕКОМУ. Механизм в проекте уже
-# есть, тот самый, которым root закрывает сайт руками; здесь его дёргает скрипт.
-#
-# Оговорка названа вслух: root в закрытый сайт проходит (так устроен режим), и
-# запись, сделанная им самим во время переезда, по-прежнему не доедет — но
-# теперь её НАЗОВЁТ сверка, а не потеряет молча.
-#: Непусто — сайт закрыт НАМИ и открыть его обязаны тоже мы.
-#: Ставится удачным `migrate_maintenance on`, снимается удачным `off`.
-MIGRATE_CLOSED=""
-
-migrate_maintenance() {
-    if [ "$1" = "on" ]; then
-        info "$(tr_ "закрываю сайт на время переноса" "closing the site for the duration of the move")"
-    else
-        info "$(tr_ "открываю сайт" "reopening the site")"
-    fi
-    # Отказ не смертелен и не должен останавливать переезд: сайт мог быть
-    # закрыт руками, приложение — перезапускаться. Молчать при этом нельзя,
-    # иначе «закрыли» превратилось бы в предположение.
-    if compose exec -T app python -m scripts.maintenance "$1" \
-        --note "$(tr_ "Переезд базы на MySQL" "Moving the database to MySQL")" >/dev/null 2>&1; then
-        if [ "$1" = "on" ]; then MIGRATE_CLOSED=1; else MIGRATE_CLOSED=""; fi
-        return 0
-    fi
-    warn "$(tr_ "не удалось переключить режим обслуживания ($1)" "could not switch maintenance mode ($1)")"
-    return 1
-}
-
-# Перехват сигналов: оборванный переезд не имеет права оставить сайт закрытым.
-#
-# ПОЧЕМУ ЭТО ПОНАДОБИЛОСЬ. Перенос идёт при закрытом сайте (см. выше), и до
-# этой правки в скрипте не было НИ ОДНОГО перехвата: Ctrl+C, `kill`, закрытая
-# ssh-сессия или systemd, гасящий процесс, оставляли режим обслуживания
-# включённым навсегда. Проверено убийством дерева переезда на середине
-# переноса — режим остался включён.
-#
-# Что видели люди: обычный сотрудник получал 503 даже на ЧТЕНИЕ списка
-# клиентов, публичная главная отвечала 503, а владелец проходил по устройству
-# режима и видел РАБОЧИЙ САЙТ. То есть единственный, кто мог починить, беды и
-# не видел.
-#
-# Перехват НЕ закрывает вопрос целиком, и это сказано вслух: от `kill -9` и от
-# выдернутого питания он не спасает. Поэтому рядом стоит видимость — поле
-# `maintenance` в `/healthz` (web/main.py) и строка «обслуживание» в
-# `cmd_doctor` ниже. Видимость важнее перехвата: закрытый сайт обязан
-# выглядеть закрытым, кто бы его ни закрыл и как бы ни оборвался переезд.
-migrate_cleanup() {
-    [ -n "$MIGRATE_CLOSED" ] || return 0
-    warn "$(tr_ "переезд оборван — снимаю режим обслуживания" "the move was interrupted — lifting maintenance mode")"
-    migrate_maintenance off || true
-}
-
-# Ставится один раз, перед закрытием сайта, и дальше висит до конца работы
-# скрипта: снимать перехват незачем, при пустом MIGRATE_CLOSED он не делает
-# ничего. Код возврата у сигналов — 128 + номер, как принято в оболочках.
-migrate_trap() {
-    trap 'migrate_cleanup' EXIT
-    trap 'migrate_cleanup; exit 130' INT
-    trap 'migrate_cleanup; exit 143' TERM
-    trap 'migrate_cleanup; exit 129' HUP
-}
-
-# Шаг 1. MySQL и Redis поднимаются РЯДОМ с работающим сайтом.
-#
-# Именно рядом: службу app не трогаем вовсе. Она продолжает обслуживать людей с
-# файла, пока соседний контейнер создаёт каталог данных (на медленном диске это
-# минуты).
-migrate_up_services() {
-    info "$(tr_ "поднимаю MySQL и Redis рядом с работающим сайтом" "bringing MySQL and Redis up next to the running site")"
-    run_painted compose up -d db redis || return 1
-    # Ждём именно ГОТОВНОСТИ ПРИНИМАТЬ TCP, а не «контейнер создан». Сокет у
-    # MySQL отвечает раньше, чем сервер начинает слушать порт, — на этом уже
-    # обжигались, см. healthcheck службы db в docker-compose.yml.
-    _mtry=60
-    while [ "$_mtry" -gt 0 ]; do
-        # shellcheck disable=SC2016  # раскрытие внутри контейнера: пароль не должен попасть в ps на хосте
-        if compose exec -T db sh -c 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysqladmin ping -h 127.0.0.1 -P 3306 --protocol=TCP --silent' >/dev/null 2>&1; then
-            ok "$(tr_ "MySQL принимает соединения" "MySQL accepts connections")"
-            return 0
-        fi
-        _mtry=$((_mtry - 1))
-        sleep 3
-    done
-    return 1
-}
-
-# Шаг 1б. Осмотр источника — ДО закрытия сайта.
-#
-# Спрашивается ровно одно: нет ли строк, ссылающихся в пустоту. MySQL за
-# внешними ключами следит всегда, SQLite — только когда его попросят, а на пути
-# миграций его никто не просит (alembic в batch-режиме пересоздаёт таблицы, и
-# включённые ключи ломают этот приём).
-#
-# Найдено живым прогоном: перенос доходил до `deals`, получал от MySQL
-# «1452 Cannot add or update a child row» и падал ПОСЕРЕДИНЕ. Исход не
-# страшный — источник открыт только на чтение, приложение с него не уходило, —
-# но дорогой: сайт к этому времени уже закрыт на обслуживание, цель наполовину
-# заполнена, а человек у консоли читает имя ограничения вместо имени беды.
-#
-# Здесь же это стоит одного запроса к файлу: ни MySQL, ни закрытого сайта, ни
-# копии для него не нужно. Отказ на этом шаге не стоит никому ничего.
-migrate_preflight() {
-    info "$(tr_ "осматриваю базу: нет ли строк, ссылающихся в пустоту" "inspecting the database: any rows pointing at nothing")"
-    migrate_run 'exec python scripts/migrate_to_mysql.py --source "sqlite:////app/data/opencrm.db" --preflight' || return 1
-    return 0
-}
-
-# Шаг 2. Копия SQLite, проверенная ЧТЕНИЕМ.
-#
-# «Файл создался» ничего не доказывает: копия нужного размера и полностью
-# нечитаемая выглядит точно так же. Поэтому по копии выполняется
-# `PRAGMA integrity_check` (он обходит все страницы) и настоящий запрос к
-# данным. Ровно этого не хватало резервным копиям, пока их никто не проверял.
-migrate_snapshot_sqlite() {
-    info "$(tr_ "снимаю копию SQLite и читаю её" "taking an SQLite snapshot and reading it back")"
-    # shellcheck disable=SC2016  # $SNAP раскрывается внутри контейнера, где и лежит файл
-    run_painted compose exec -T -e SNAP="$MIGRATE_SNAPSHOT" app sh -c '
-        set -e
-        rm -f "$SNAP"
-        sqlite3 /app/data/opencrm.db ".backup '"'"'$SNAP'"'"'"
-        test -s "$SNAP"
-        celost=$(sqlite3 "$SNAP" "PRAGMA integrity_check;" | head -n 1)
-        if [ "$celost" != "ok" ]; then
-            echo "копия нечитаема: PRAGMA integrity_check вернул $celost" >&2
-            exit 1
-        fi
-        skolko=$(sqlite3 "$SNAP" "SELECT count(*) FROM users;")
-        if [ "$skolko" -lt 1 ]; then
-            echo "в копии нет ни одного пользователя — читается, но пуста" >&2
-            exit 1
-        fi
-        echo "копия прочитана: целостность ok, пользователей $skolko"
-    ' || return 1
-    return 0
-}
-
-# Все три следующих шага идут ОДНОРАЗОВЫМ контейнером (`compose run --rm`), а
-# не заходом в работающий (`compose exec`), и это не стиль.
-#
-# Найдено живым прогоном. Адрес цели лежит в config/.env, а `env_file` compose
-# читает в момент СОЗДАНИЯ контейнера: приложение поднялось раньше, чем мы
-# записали строку, и внутри него переменной просто нет. `alembic upgrade head`
-# получил пустой OPENCRM_DB_URL и упал на разборе URL. Пересоздавать ради этого
-# боевой контейнер нельзя — он в этот момент обслуживает людей с файла, а
-# одноразовый читает config/.env заново и живёт полминуты.
-#
-# `--no-deps`: зависимости уже подняты шагом 1, и повторное ожидание здоровья
-# MySQL стоило бы минуты на пустом месте.
-# `-T` — не мелочь и не стиль. `compose run` по умолчанию выделяет контейнеру
-# псевдотерминал и ради этого переводит НАШ терминал в сырой режим. Обычно docker
-# возвращает его как было, но здесь вывод уходит в пайп (`run_painted … | paint`),
-# и возврат срабатывает не всегда.
-#
-# Поймано на боевом: после переезда меню отрисовывалось целиком и вставало на
-# `read` — ввод перестал быть построчным, `read` не дожидался перевода строки, а
-# Ctrl+C не доходил как сигнал, потому что ISIG в сыром режиме выключен. Со
-# стороны это выглядит как зависший скрипт, из которого нельзя выйти; человеку
-# оставалось переподключиться по ssh.
-#
-# Терминал этой команде не нужен вовсе: внутри неё `sh -c` с готовой строкой.
-migrate_run() {
-    # shellcheck disable=SC2016  # переменные раскрываются ВНУТРИ контейнера: пароль не должен попасть в ps на хосте
-    run_painted compose run --rm --no-deps -T -e SNAP="$MIGRATE_SNAPSHOT" \
-        --entrypoint sh app -c "$1"
-}
-
-# Шаг 3. Схема в MySQL — отдельным заходом.
-#
-# Миграции гоняются НЕ боевым приложением: оно в этот момент работает с файлом
-# и переключать его ради построения схемы значило бы сделать ровно то, чего мы
-# избегаем.
-migrate_build_schema() {
-    info "$(tr_ "строю схему в MySQL миграциями" "building the MySQL schema with migrations")"
-    # shellcheck disable=SC2016  # URL с паролем раскрывается ВНУТРИ контейнера, а не на хосте
-    migrate_run 'OPENCRM_DB_URL="$OPENCRM_MIGRATE_TARGET_URL" exec python -m alembic upgrade head' || return 1
-    return 0
-}
-
-# Шаг 4. Перенос данных из копии.
-migrate_copy_data() {
-    info "$(tr_ "переношу данные" "moving the data")"
-    # shellcheck disable=SC2016  # то же: пароль внутри контейнера
-    migrate_run 'exec python scripts/migrate_to_mysql.py --source "sqlite:///$SNAP" --target "$OPENCRM_MIGRATE_TARGET_URL"' || return 1
-    return 0
-}
-
-# Шаг 5. Сверка отдельным заходом — и по ЖИВОМУ файлу, а не по копии.
-#
-# Отдельным — потому что проверка, которая выполняется только заодно с удачным
-# действием, проверяет действие, а не его итог.
-#
-# По живому файлу — потому что вопрос, на который переезд обязан ответить,
-# звучит «всё ли, что есть у людей, доехало», а не «доехало ли то, что мы
-# взяли». Сравнение копии с целью отвечает на второй и выдавалось за первый:
-# заведённый во время переноса клиент пропадал, а сверка была зелёная. Живой
-# файл при этом открывается ТОЛЬКО НА ЧТЕНИЕ (скрипт сам дописывает `mode=ro`),
-# так что испортить его сверка не может.
-#
-# Ложной тревоги, ради которой сверку когда-то увели на копию, больше нет:
-# сайт на это время закрыт (см. migrate_maintenance), и живой файл неподвижен.
-#
-# Сверяется: схема цели с моделями, число строк по каждой таблице, суммы по
-# всем целым столбцам (деньги в минорных единицах, количества в тысячных,
-# ставки в базисных пунктах) — и, поверх всего этого, СТРОКА В СТРОКУ. Итоги
-# слепы к порче, которая сама себя компенсирует: `+1` одной заявке и `−1`
-# другой оставляют и число строк, и сумму столбца прежними.
-migrate_verify() {
-    info "$(tr_ "сверяю живой файл с целью: схема, строки, суммы, построчно" "verifying the live file against the target: schema, rows, sums, row by row")"
-    # shellcheck disable=SC2016  # то же: пароль внутри контейнера
-    migrate_run 'exec python scripts/migrate_to_mysql.py --source "sqlite:////app/data/opencrm.db" --target "$OPENCRM_MIGRATE_TARGET_URL" --verify' || return 1
-    return 0
-}
-
-# Шаг 6-7. Переключение и проверка, что сайт правда работает на новой базе.
-#
-# Единственное место во всём переезде, где OPENCRM_DB_URL меняется, и стоит оно
-# после сверки. Пересоздание контейнера обязательно: `compose up -d` при
-# изменении одного лишь env_file контейнер НЕ пересоздаёт, и приложение
-# продолжило бы работать со старым значением — молча.
-switch_to_mysql() {
-    _target=$(env_get "$APP_ENV" OPENCRM_MIGRATE_TARGET_URL 2>/dev/null || true)
-    [ -n "$_target" ] || return 1
-    info "$(tr_ "перевожу приложение на MySQL" "switching the application to MySQL")"
-    env_set "$APP_ENV" OPENCRM_DB_URL "$_target"
-    run_painted compose up -d --force-recreate app || return 1
-    wait_health 90 || return 1
-    # Сайт отвечает — этого мало. Спрашиваем и схему: `/healthz` отдаёт её
-    # отдельным полем, и приложение с несошедшейся схемой не поднялось бы
-    # вовсе, но проверить дешевле, чем поверить.
-    _hz=$(curl -fsS --max-time 5 http://127.0.0.1/healthz 2>/dev/null || true)
-    case "$_hz" in
-        *'"schema":"ok"'*) ;;
-        *) return 1 ;;
-    esac
-    # Переезд признан удачным — снимаем отметку «переезд начат и не доведён».
-    env_set "$APP_ENV" OPENCRM_MIGRATE_TARGET_URL ""
-    return 0
-}
-
-# Возврат на SQLite. Без человека, без вопросов, без «выполните команду».
-#
-# Зовётся ровно из одного места — из неудачи шага 6-7, потому что только там
-# приложение уже успело уйти с файла. Всё остальное в этом переезде обратимо
-# тем, что оно ничего не меняло.
-rollback_to_sqlite() {
-    warn "$(tr_ "возвращаю сайт на SQLite" "putting the site back on SQLite")"
-    env_set "$APP_ENV" OPENCRM_DB_URL "sqlite:////app/data/opencrm.db"
-    run_painted compose up -d --force-recreate app || true
-    if wait_health 120; then
-        ok "$(tr_ "сайт снова работает на SQLite, данные на месте" "the site is back on SQLite, the data is intact")"
-        return 0
-    fi
-    warn "$(tr_ "сайт не ответил и после возврата — ./opencrm.sh logs app" "no answer even after going back — ./opencrm.sh logs app")"
-    return 1
-}
-
-# Осечка: назвать причину и запомнить исход.
-#
-# Исход запоминается нарочно. Прежде функция переезда завершалась НУЛЁМ при
-# любом исходе, и установка ехала дальше — выпускала сертификат, включала
-# автообновление и печатала «OpenCRM развёрнут» поверх несостоявшегося
-# переезда. Зелёный итог поверх красного шага — это не оптимизм, это способ
-# не узнать о поломке.
-migrate_failed() {
-    MIGRATE_RESULT=failed
-    warn "$(tr_ "переезд не удался: $1" "the move failed: $1")"
-}
-
-migrate_sqlite_to_mysql() {
-    [ "$MIGRATE_FROM_SQLITE" = "1" ] || return 0
-    step "$(tr_ "Переезд SQLite → MySQL" "Moving SQLite → MySQL")"
-
-    say "$(tr_ \
-        "    ${D}Сайт работает на SQLite всё это время и уйдёт с неё только после сверки.${R}" \
-        "    ${D}The site runs on SQLite the whole time and leaves it only after verification.${R}")"
-    say "$(tr_ \
-        "    ${D}На время переноса сайт закрыт на обслуживание: писать в это время некому,${R}" \
-        "    ${D}The site is closed for maintenance while the data moves: nobody can write,${R}")"
-    say "$(tr_ \
-        "    ${D}поэтому «сошлось» — это факт, а не обещание. Сверка сравнивает ЖИВОЙ файл.${R}" \
-        "    ${D}so \"matched\" is a fact, not a promise. Verification compares the LIVE file.${R}")"
-
-    # Осмотр — САМЫМ ПЕРВЫМ. Беда, которую он находит, делает переезд
-    # невозможным целиком, а сам вопрос задаётся одному лишь файлу: ни MySQL,
-    # ни закрытого сайта для него не нужно (`--no-deps` в migrate_run). Значит
-    # и платить за них перед заведомым отказом незачем — на медленном диске VPS
-    # первый старт MySQL создаёт каталог данных минутами и оставляет его после
-    # себя.
-    if ! migrate_preflight; then
-        migrate_failed "$(tr_ "в базе есть строки, ссылающиеся в пустоту — см. список выше" "the database has rows pointing at nothing — see the list above")"
-        migrate_nothing_to_undo
-        return 0
-    fi
-
-    if ! migrate_up_services; then
-        migrate_failed "$(tr_ "MySQL не поднялась — ./opencrm.sh logs db" "MySQL did not come up — ./opencrm.sh logs db")"
-        migrate_nothing_to_undo
-        return 0
-    fi
-
-    # Закрываем ДО снятия копии: копия, снятая с сайта, в который ещё пишут,
-    # расходится с живым файлом уже в момент своего создания. Перехват ставим
-    # ещё раньше закрытия — иначе сигнал, пришедший между двумя строками,
-    # оставил бы сайт закрытым.
-    migrate_trap
-    migrate_maintenance on || true
-
-    if ! migrate_snapshot_sqlite; then
-        migrate_maintenance off || true
-        migrate_failed "$(tr_ "копию SQLite не удалось снять или прочитать" "the SQLite snapshot could not be taken or read back")"
-        migrate_nothing_to_undo
-        return 0
-    fi
-    if ! migrate_build_schema; then
-        migrate_maintenance off || true
-        migrate_failed "$(tr_ "миграции на MySQL не прошли" "migrations did not go through on MySQL")"
-        migrate_nothing_to_undo
-        return 0
-    fi
-    if ! migrate_copy_data; then
-        migrate_maintenance off || true
-        migrate_failed "$(tr_ "перенос данных оборвался" "the data transfer broke off")"
-        migrate_nothing_to_undo
-        return 0
-    fi
-    if ! migrate_verify; then
-        migrate_maintenance off || true
-        migrate_failed "$(tr_ "сверка не сошлась — на такую базу переключаться нельзя" "verification did not match — switching to that database is not allowed")"
-        migrate_nothing_to_undo
-        return 0
-    fi
-
-    if switch_to_mysql; then
-        # Открываем ПОСЛЕ переключения: между сверкой и переключением сайт
-        # по-прежнему на файле, и запись, сделанная в эту щель, снова осталась
-        # бы в SQLite — с той разницей, что теперь про неё бы никто не сказал.
-        migrate_maintenance off || true
-        MIGRATE_RESULT=ok
-        ok "$(tr_ "переезд завершён: сайт работает на MySQL, схема сошлась" "move complete: the site runs on MySQL and the schema matches")"
-        info "$(tr_ "файл SQLite не тронут и лежит на месте: $(home_dir)/data/opencrm.db" "the SQLite file is untouched and still there: $(home_dir)/data/opencrm.db")"
-        return 0
-    fi
-
-    # Единственная ветка, где что-то надо вернуть: URL уже переписан.
-    rollback_to_sqlite
-    migrate_maintenance off || true
-    migrate_failed "$(tr_ "сайт не поднялся на новой базе" "the site did not come up on the new database")"
-    return 0
-}
-
-# Сообщение для шагов 1-5: возвращать нечего, и это не фигура речи.
-migrate_nothing_to_undo() {
-    say "$(tr_ \
-        "        Откатывать нечего: OPENCRM_DB_URL всё это время оставался на SQLite," \
-        "        There is nothing to undo: OPENCRM_DB_URL stayed on SQLite the whole time,")"
-    say "$(tr_ \
-        "        сайт с неё не уходил и продолжает работать. Повторить: ./opencrm.sh migrate-mysql" \
-        "        the site never left it and keeps working. Retry: ./opencrm.sh migrate-mysql")"
-}
-
-# Переезд на уже работающей установке — главный сценарий этой задачи.
-#
-# Установку ради него запускать не надо: она донастраивает всё подряд, а здесь
-# нужен один шаг. Все проверки те же, что в мастере, включая то, что при
-# неудаче сайт остаётся на SQLite сам собой.
-cmd_migrate_mysql() {
-    need_install
-    if [ "$(db_engine)" = "mysql" ]; then
-        ok "$(tr_ "установка уже работает на MySQL — переезжать некуда" "this installation already runs on MySQL — nowhere to move")"
-        return 0
-    fi
-    if [ ! -f "$(home_dir)/data/opencrm.db" ]; then
-        die "$(tr_ "файла базы SQLite нет: $(home_dir)/data/opencrm.db" "there is no SQLite database file: $(home_dir)/data/opencrm.db")"
-    fi
-
-    step "$(tr_ "Переезд на MySQL" "Moving to MySQL")"
-    # Пароли и профиль могли остаться с прерванной попытки — тогда берём их, а
-    # не заводим новые: у поднятой базы пользователь уже создан с прежним
-    # паролем, и новый дал бы «access denied» на первом же соединении.
+    # Алфавит gen_secret (A-Za-z0-9) обязателен: пароль уезжает внутрь URL, а
+    # `@`, `:` и `/` разобрали бы его на части.
     _db_pass=$(env_get "$DOCKER_ENV" OPENCRM_DB_PASSWORD 2>/dev/null || true)
     if [ -z "$_db_pass" ]; then
         _db_pass=$(gen_secret 32)
@@ -1668,23 +1095,14 @@ cmd_migrate_mysql() {
     fi
     env_set "$DOCKER_ENV" OPENCRM_DB_NAME opencrm
     env_set "$DOCKER_ENV" OPENCRM_DB_USER opencrm
-    compose_profile mysql on
-    mkdir -p "$(home_dir)/mysql"
-    env_set "$APP_ENV" OPENCRM_MIGRATE_TARGET_URL \
-        "mysql+pymysql://opencrm:$_db_pass@db:3306/opencrm?charset=utf8mb4"
-    configure_redis
-
-    if ! confirm "$(tr_ "    Начать переезд? Сайт остаётся на SQLite до самого конца" "    Start the move? The site stays on SQLite until the very end")" y; then
-        info "$(tr_ "отменено" "cancelled")"
-        return 0
-    fi
-
-    MIGRATE_FROM_SQLITE=1
-    migrate_sqlite_to_mysql
-    if [ "$MIGRATE_RESULT" != "ok" ]; then
-        die "$(tr_ "переезд не состоялся — сайт работает на SQLite, как и работал" "the move did not happen — the site runs on SQLite, just as before")"
-    fi
+    # charset=utf8mb4 в URL — вторая половина той же защиты, что и настройка
+    # сервера: без неё соединение договаривается о трёхбайтном utf8, и эмодзи
+    # в заметке клиента обрывают вставку на полуслове.
+    env_set "$APP_ENV" OPENCRM_DB_URL "mysql+pymysql://opencrm:$_db_pass@db:3306/opencrm?charset=utf8mb4"
+    ok "$(tr_ "MySQL: контейнер db, пароль записан" "MySQL: container db, password stored")"
+    info "$(tr_ "данные базы: $(home_dir)/mysql" "database files: $(home_dir)/mysql")"
 }
+
 
 # --------------------------------------------------------------------------
 # Мониторинг
@@ -2234,16 +1652,6 @@ show_summary() {
             fi
             ;;
     esac
-    if [ "$MIGRATE_RESULT" = "failed" ]; then
-        say ""
-        warn "$(tr_ "ПЕРЕЕЗД НА MySQL НЕ СОСТОЯЛСЯ — сайт работает на SQLite" "THE MOVE TO MySQL DID NOT HAPPEN — the site runs on SQLite")"
-        say "$(tr_ \
-            "        Данные целы и на месте, ничего восстанавливать не нужно." \
-            "        The data is intact and in place, nothing needs restoring.")"
-        say "$(tr_ \
-            "        Причина названа выше. Повторить: ./opencrm.sh migrate-mysql" \
-            "        The reason is named above. Retry: ./opencrm.sh migrate-mysql")"
-    fi
     say ""
     say "$(tr_ "  Дальше всё делается через меню: ${B}./opencrm.sh${R}" "  Everything else is done from the menu: ${B}./opencrm.sh${R}")"
     say ""
@@ -2272,15 +1680,11 @@ cmd_install() {
     configure_redis
     # Строго после configure_app_env: config/.env к этому моменту уже создан, и
     # выбор базы дописывается в него, а не создаёт файл мимо шаблона.
-    choose_database
+    nastroit_mysql
     configure_domain
     create_dirs
     build_and_start
     check_health
-    # После check_health, и это важно: к этому моменту сайт УЖЕ РАБОТАЕТ — на
-    # SQLite. Переезд идёт рядом с работающим сайтом и уводит его с файла
-    # только после сверки; осечка на любом шаге до неё не требует ничего.
-    migrate_sqlite_to_mysql
     issue_certificate
     setup_firewall
     setup_backups
@@ -3122,14 +2526,6 @@ cmd_doctor() {
         probe "$(tr_ "база" "database")" 1 "SQLite ($(home_dir)/data/opencrm.db)"
     fi
 
-    # Непустой адрес цели при базе на SQLite — это след НЕЗАВЕРШЁННОГО
-    # переезда. Отдельного состояния «переезжаем» в системе нет и не нужно:
-    # сайт всё это время работает, данные целы, — но человек должен знать,
-    # что начатое не доведено, иначе он узнает об этом через месяц.
-    if [ "$(db_engine)" != "mysql" ] && [ -n "$(env_get "$APP_ENV" OPENCRM_MIGRATE_TARGET_URL 2>/dev/null || true)" ]; then
-        probe "$(tr_ "переезд" "move")" 0 "$(tr_ "начат и не доведён — сайт работает на SQLite; повторить: ./opencrm.sh migrate-mysql" "started and not finished — the site runs on SQLite; retry: ./opencrm.sh migrate-mysql")"
-    fi
-
     # Общий счётчик попыток. Строка стоит рядом с базой не случайно: это
     # вторая половина переезда на MySQL. Без неё несколько рабочих процессов
     # означают порог защиты от подбора, умноженный на их число, — без единой
@@ -3479,12 +2875,11 @@ menu() {
         menu_item 14 "$(tr_ "Диагностика" "Diagnostics")"
         menu_item 15 "$(tr_ "Починка прав (после запуска под sudo)" "Repair ownership (after running under sudo)")"
         menu_item 16 "$(tr_ "Мониторинг и оповещения" "Monitoring and alerts")"
-        menu_item 17 "$(tr_ "Переезд на MySQL" "Move to MySQL")"
         # Пункт нужен ровно тому, кто в беде: сайт закрыт оборванным переездом,
         # владелец проходит по устройству режима и видит сайт рабочим, а команду
         # `./opencrm.sh maintenance off` в этот момент никто не вспоминает —
         # человек открывает меню. Поэтому здесь, а не только в справке.
-        menu_item 18 "$(tr_ "Режим обслуживания: закрыть / открыть сайт" "Maintenance mode: close / open the site")"
+        menu_item 17 "$(tr_ "Режим обслуживания: закрыть / открыть сайт" "Maintenance mode: close / open the site")"
         say ""
         menu_item 0  "$(tr_ "Выход" "Exit")"
         say ""
@@ -3506,8 +2901,7 @@ menu() {
             14) cmd_doctor ;;
             15) cmd_repair ;;
             16) cmd_monitoring ;;
-            17) cmd_migrate_mysql ;;
-            18) menu_maintenance ;;
+            17) menu_maintenance ;;
             0|q|Q|"") say ""; exit 0 ;;
             *)  warn "$(tr_ "нет такого пункта" "no such item")" ;;
         esac
@@ -3542,10 +2936,7 @@ OpenCRM v$VERSION — установка и управление
                                   мониторинг, оповещения и панель /monitoring/
   ./opencrm.sh maintenance [on|off|status]
                                   режим обслуживания: закрыть сайт или открыть
-                                  обратно, если его закрыл оборванный переезд
-  ./opencrm.sh migrate-mysql      переезд на MySQL; сайт остаётся на SQLite,
-                                  пока перенос не сверен, а осечка не требует
-                                  ничего — он с файла и не уходил
+                                  обратно, если нужно закрыть его руками
 
 Флаги установки (для неинтерактивного запуска):
   --domain example.com   домен сайта; --domain "" — работать по IP без HTTPS
@@ -3603,7 +2994,6 @@ main() {
         doctor)     cmd_doctor ;;
         repair)     cmd_repair ;;
         monitoring) cmd_monitoring "${1:-}" ;;
-        migrate-mysql) cmd_migrate_mysql ;;
         maintenance) cmd_maintenance "${1:-status}" ;;
         "")
             if installed; then menu; else cmd_install; fi

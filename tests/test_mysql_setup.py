@@ -19,6 +19,9 @@ ROOT = Path(__file__).resolve().parent.parent
 COMPOSE = ROOT / "docker" / "docker-compose.yml"
 SCRIPT = ROOT / "opencrm.sh"
 
+#: Перевод строки под рукой: литералы с ним в тестах читаются хуже.
+NL = chr(10)
+
 pytestmark = pytest.mark.skipif(
     not COMPOSE.exists() or not SCRIPT.exists(), reason="обвязки развёртывания рядом нет"
 )
@@ -30,6 +33,17 @@ def _compose() -> str:
 
 def _script() -> str:
     return SCRIPT.read_text(encoding="utf-8")
+
+
+def _telo(imya: str) -> str:
+    """Тело функции оболочки по имени — от заголовка до закрывающей скобки.
+
+    Отдельным помощником, потому что литерал с переводами строк в каждом
+    тесте читается хуже и ломается от любой перестановки.
+    """
+    text = _script()
+    kusok = text[text.index(f"{imya}() {{"):]
+    return kusok[: kusok.index(NL + "}" + NL)]
 
 
 def _odnoy_strokoy(kusok: str) -> str:
@@ -67,24 +81,18 @@ def _sluzhba_redis() -> str:
 # --- служба базы --------------------------------------------------------------
 
 
-def test_baza_zhivyot_pod_profilem():
-    """При выборе SQLite службы базы не должно быть в стеке вовсе.
+def test_baza_podnimaetsya_vsegda_bez_profilya():
+    """База обязательна, как и redis, — значит профиля у неё быть не должно.
 
-    «Опишем и не будем запускать» здесь не работает: `compose up -d` поднимает
-    все описанные службы. Лишний сервер MySQL съедает под себя полгигабайта
-    памяти на машине, где вся база лежит одним файлом, — а такие машины у этого
-    продукта основные.
+    Пока выбор между SQLite и MySQL существовал, служба стояла под профилем:
+    лишний сервер съедал полгигабайта там, где база лежала одним файлом. Выбора
+    больше нет, и профиль превратился бы в способ поднять сайт без базы вовсе.
     """
-    assert 'profiles: ["mysql"]' in _sluzhba_db(), "служба базы поднимается всегда"
-    # Профиль включается строкой в docker/.env, которую пишет установщик;
-    # без неё выбор MySQL остался бы словами в конфиге.
-    #
-    # Пишется он **по одному имени**, а не значением целиком. В COMPOSE_PROFILES
-    # рядом живёт решение про мониторинг, и запись вида
-    # `env_set ... COMPOSE_PROFILES mysql` затирала бы его молча — а обратная
-    # запись так же молча выносила бы из стека саму базу.
-    assert "compose_profile mysql on" in _script()
-    assert "compose_profile mysql off" in _script(), "выбор SQLite не снимает профиль базы"
+    assert "profiles:" not in _sluzhba_db(), "служба базы снова под профилем"
+    # И установщик её профиль больше не включает: включать нечего.
+    assert "compose_profile mysql" not in _script(), (
+        "установщик всё ещё правит профиль базы — а профиля больше нет"
+    )
 
 
 def test_proverka_zdorovya_idyot_po_tcp():
@@ -167,47 +175,72 @@ def test_url_bazy_ne_perekryvaetsya_compose_om():
     )
 
 
-# --- выбор базы при установке -------------------------------------------------
+# --- база при установке: только MySQL -----------------------------------------
+#
+# Выбора больше нет. SQLite допускала ровно одного писателя, поэтому на ней был
+# невозможен второй рабочий процесс, а значит установка, начатая «попроще»,
+# рано или поздно упиралась в переезд — в закрытый сайт и самую опасную
+# операцию, какая в проекте была. Её убрали вместе с самим переездом.
 
 
-def test_vybor_bazy_est_i_vyzyvaetsya_pri_ustanovke():
+def test_baza_nastraivaetsya_i_vyzyvaetsya_pri_ustanovke():
     text = _script()
-    assert "choose_database()" in text, "базу больше не выбирают"
+    assert "nastroit_mysql()" in text, "настройка базы пропала"
     ustanovka = text[text.index("cmd_install() {"): text.index("need_install() {")]
-    assert "choose_database" in ustanovka, "выбор базы выпал из мастера установки"
-    # Строго после configure_app_env: раньше config/.env ещё не создан, и выбор
+    assert "nastroit_mysql" in ustanovka, "настройка базы выпала из мастера установки"
+    # Строго после configure_app_env: раньше config/.env ещё не создан, и адрес
     # ушёл бы в файл мимо шаблона.
-    assert ustanovka.index("configure_app_env") < ustanovka.index("choose_database")
+    assert ustanovka.index("configure_app_env") < ustanovka.index("nastroit_mysql")
+
+
+def test_pro_sqlite_nichego_ne_sprashivayut():
+    """Вопроса больше нет — и подсказанного ответа тоже.
+
+    Пока вопрос стоял, `--yes` брал умолчание, и одна перестановка пунктов
+    меняла бы то, на чём поднимется установка.
+    """
+    nastroyka = _telo("nastroit_mysql")
+    assert "ask " not in nastroyka, "про базу снова спрашивают"
+    assert "sqlite" not in nastroyka.lower(), "SQLite вернулась в настройку базы"
 
 
 def test_parol_bazy_generiruetsya_a_ne_sprashivaetsya():
     """Спрошенный пароль базы придумывают за минуту и повторяют от сервера к
     серверу. Руками его всё равно никто не вводит — он нужен двум контейнерам,
     и оба берут его из файла."""
-    text = _script()
-    vybor = text[text.index("choose_database() {"): text.index("migrate_sqlite_to_mysql() {")]
-    assert "gen_secret" in vybor, "пароль базы больше не генерируется"
+    nastroyka = _telo("nastroit_mysql")
+    assert "gen_secret" in nastroyka, "пароль базы больше не генерируется"
     for zapros in ("Пароль базы", "Database password", "OPENCRM_DB_PASSWORD\"" ):
-        assert f'ask "{zapros}' not in vybor, "пароль базы снова спрашивают у человека"
+        assert f'ask "{zapros}' not in nastroyka, "пароль базы снова спрашивают у человека"
 
 
 def test_parol_popadaet_v_oba_fayla():
     """Пароль нужен двоим: контейнеру базы (docker/.env) и приложению (внутри
     OPENCRM_DB_URL в config/.env). Записать в один — получить «access denied»
     на первом же старте."""
-    text = _script()
-    vybor = text[text.index("choose_database() {"): text.index("migrate_sqlite_to_mysql() {")]
-    assert 'env_set "$DOCKER_ENV" OPENCRM_DB_PASSWORD' in vybor
-    assert 'env_set "$DOCKER_ENV" OPENCRM_DB_ROOT_PASSWORD' in vybor
-    # Целиком одной строкой: адрес с паролем собирается в `_target_url`, и
-    # проверка «оно где-то встречается» пропускала бы пропажу самого пароля.
+    nastroyka = _telo("nastroit_mysql")
+    assert 'env_set "$DOCKER_ENV" OPENCRM_DB_PASSWORD' in nastroyka
+    assert 'env_set "$DOCKER_ENV" OPENCRM_DB_ROOT_PASSWORD' in nastroyka
+    # Целиком одной строкой: проверка «оно где-то встречается» пропускала бы
+    # пропажу самого пароля из адреса.
     assert (
-        '_target_url="mysql+pymysql://opencrm:$_db_pass@db:3306/opencrm?charset=utf8mb4"'
-    ) in _odnoy_strokoy(vybor), "пароль не попадает в адрес базы"
-    # И этот адрес обязан доехать до config/.env — либо сразу (ставим с нуля),
-    # либо отложенной целью переезда.
-    assert 'env_set "$APP_ENV" OPENCRM_DB_URL "$_target_url"' in vybor
-    assert 'env_set "$APP_ENV" OPENCRM_MIGRATE_TARGET_URL "$_target_url"' in vybor
+        'env_set "$APP_ENV" OPENCRM_DB_URL "mysql+pymysql://opencrm:$_db_pass@db:3306/opencrm?charset=utf8mb4"'
+    ) in _odnoy_strokoy(nastroyka), "пароль не попадает в адрес базы"
+
+
+def test_povtornaya_ustanovka_ne_pereseivaet_parol():
+    """У поднятой базы пользователь уже создан с прежним паролем.
+
+    Новый дал бы «access denied» на первом же соединении — и выглядело бы это
+    как сломавшаяся база, а не как повторный запуск установки.
+    """
+    nastroyka = _telo("nastroit_mysql")
+    assert 'env_get "$DOCKER_ENV" OPENCRM_DB_PASSWORD' in nastroyka, (
+        "прежний пароль не читается — повторная установка сломает доступ к базе"
+    )
+    assert 'if [ -z "$_db_pass" ]; then' in nastroyka, (
+        "новый пароль сеется без проверки, есть ли прежний"
+    )
 
 
 def test_docker_env_zakryvaetsya_pravami():
@@ -216,33 +249,6 @@ def test_docker_env_zakryvaetsya_pravami():
     text = _script()
     nastroyka = text[text.index("configure_docker_env() {"): text.index("create_dirs() {")]
     assert 'chmod 600 "$DOCKER_ENV"' in nastroyka, "docker/.env остаётся читаемым всем"
-
-
-def test_povtornaya_ustanovka_ne_perespravshivaet_pro_bazu():
-    """Ответ «SQLite» на работающей MySQL увёл бы сайт на пустой файл, а новый
-    пароль разошёлся бы с пользователем, который в базе уже создан."""
-    text = _script()
-    vybor = text[text.index("choose_database() {"): text.index("migrate_sqlite_to_mysql() {")]
-    assert 'if [ "$(db_engine)" = "mysql" ]; then' in vybor
-    assert "return 0" in vybor
-
-
-def test_perenos_predlagaetsya_i_pro_otkat_skazano():
-    """Переезд затевают на живой системе, и главное в нём — что он обратим.
-
-    Пока файл SQLite цел, возврат ничего не стоит. Не сказать об этом — значит
-    превратить обратимый шаг в необратимый на вид.
-    """
-    text = _script()
-    vybor = text[text.index("choose_database() {"): text.index("# ====")]
-    assert "migrate_to_mysql.py" in vybor, "перенос не предлагают"
-    assert "только на чтение" in vybor, "не сказано, что исходная база не меняется"
-    perenos = _perenos()
-    assert "sqlite:////app/data/opencrm.db" in perenos, "не сказано, чем откатываться"
-    # Перенос идёт после того, как стек поднялся и сайт проверен: он всё это
-    # время работает на SQLite и уходит с неё последним действием переезда.
-    ustanovka = text[text.index("cmd_install() {"): text.index("need_install() {")]
-    assert ustanovka.index("check_health") < ustanovka.index("migrate_sqlite_to_mysql")
 
 
 def test_parol_ne_uezzhaet_v_komandnuyu_stroku_hosta():
@@ -255,13 +261,6 @@ def test_parol_ne_uezzhaet_v_komandnuyu_stroku_hosta():
     damp = text[text.index("dump_mysql() {"):]
     damp = damp[: damp.index("\n}\n")]
     assert "$MYSQL_ROOT_PASSWORD" in damp
-
-    # У переезда то же правило: во всех четырёх заходах в контейнер адрес цели
-    # берётся из окружения контейнера, а не подставляется оболочкой хоста.
-    perenos = _perenos()
-    assert perenos.count("$OPENCRM_MIGRATE_TARGET_URL") >= 3, (
-        "адрес цели с паролем подставляется на хосте"
-    )
     # Признак ошибки: значение раскрыто оболочкой хоста в двойных кавычках
     # прямо в команду docker.
     assert 'exec -T db sh -c "' not in text, "пароль раскрывается на хосте"
@@ -412,263 +411,3 @@ def test_ustanovshchik_pishet_parol_redis_v_oba_fayla():
     assert ustanovka.index("configure_redis") < ustanovka.index("build_and_start")
 
 
-# --- переезд, который не роняет прод ------------------------------------------
-
-
-def _perenos() -> str:
-    """Кусок скрипта со всей процедурой переезда."""
-    text = _script()
-    return text[text.index("MIGRATE_SNAPSHOT="): text.index("\n# Мониторинг\n")]
-
-
-def test_url_bazy_perepisyvaetsya_posle_sverki_a_ne_do():
-    """Самое главное во всём переезде.
-
-    Прежде OPENCRM_DB_URL переписывался при ВЫБОРЕ базы — за десяток шагов до
-    самого переноса. Всё это время сайт работал на пустой MySQL: схему в ней
-    построили миграции, умолчания посеял старт, `/healthz` зелёный, а человек
-    видит пустую CRM. То есть переключение происходило ДО того, как переезд
-    признан удачным, и любая осечка требовала возврата руками.
-
-    Теперь переключение — последнее действие, и стоит оно после сверки.
-    """
-    text = _script()
-    # Половина первая: ВЫБОР базы не трогает боевой адрес, когда переезд впереди.
-    # Ровно здесь он и переписывался — за десяток шагов до самого переноса.
-    vybor = text[text.index("choose_database() {"): text.index("# ====")]
-    posle_soglasiya = vybor[vybor.index("MIGRATE_FROM_SQLITE=1"):]
-    posle_soglasiya = posle_soglasiya[: posle_soglasiya.index("else")]
-    assert 'env_set "$APP_ENV" OPENCRM_DB_URL "sqlite:////app/data/opencrm.db"' in posle_soglasiya, (
-        "согласились на переезд — и сайт тут же уехал на пустую MySQL, за десяток "
-        "шагов до переноса"
-    )
-    assert 'OPENCRM_DB_URL "$_target_url"' not in posle_soglasiya
-
-    # Половина вторая: в самой процедуре переключение стоит после сверки.
-    perenos = _perenos()
-    # Единственное место, где боевой адрес меняется на MySQL.
-    assert 'env_set "$APP_ENV" OPENCRM_DB_URL "$_target"' in perenos
-
-    # И оно ЕДИНСТВЕННОЕ, а не просто последнее. Найдено нарочной поломкой
-    # сторожа: строка `env_set "$APP_ENV" OPENCRM_DB_URL "$(env_get …
-    # OPENCRM_MIGRATE_TARGET_URL)"`, приписанная ПЕРЕД сверкой, не роняла ни
-    # одного теста — порядок объявления функций от неё не менялся, а проверялся
-    # именно он. Между тем это ровно та беда, ради которой раздел и переписан:
-    # сайт уезжает на пустую MySQL до того, как переезд признан удачным.
-    #
-    # Считаем присваивания боевому адресу во всём разделе переезда: их ровно
-    # два — переключение в `switch_to_mysql` и возврат на файл в
-    # `rollback_to_sqlite`. Третье означает, что адрес меняют где-то ещё.
-    prisvoeniya = perenos.count('env_set "$APP_ENV" OPENCRM_DB_URL')
-    assert prisvoeniya == 2, (
-        "боевой адрес базы переписывается в разделе переезда "
-        f"{prisvoeniya} раз(а) вместо двух (переключение и возврат) — "
-        "где-то он меняется мимо switch_to_mysql"
-    )
-    vozvrat = perenos[perenos.index("rollback_to_sqlite() {"):]
-    assert 'env_set "$APP_ENV" OPENCRM_DB_URL "sqlite:' in vozvrat, (
-        "второе присваивание — не возврат на SQLite; проверка выше считает не то"
-    )
-
-    perekluchenie = perenos.index('env_set "$APP_ENV" OPENCRM_DB_URL "$_target"')
-    for shag in ("migrate_up_services", "migrate_snapshot_sqlite", "migrate_build_schema",
-                 "migrate_copy_data", "migrate_verify"):
-        assert perenos.index(f"{shag}() {{") < perekluchenie, (
-            f"шаг {shag} описан ПОСЛЕ переключения базы"
-        )
-    # И в порядке вызова тоже: сверка строго перед переключением.
-    poryadok = perenos[perenos.index("migrate_sqlite_to_mysql() {"):]
-    assert poryadok.index("migrate_verify") < poryadok.index("switch_to_mysql"), (
-        "переключаемся на новую базу, не сверив перенос"
-    )
-
-
-def test_pereezd_zhdyot_gotovnosti_mysql_prinimat_soedineniya():
-    """«Контейнер создан» — не то же самое, что «сервер слушает порт».
-
-    Сокет MySQL отвечает раньше, чем сервер начинает принимать TCP, и на этом в
-    проекте уже обжигались (потому у службы `db` и есть healthcheck по TCP).
-    Здесь ждать обязан сам переезд: шаг «построить схему» идёт одноразовым
-    контейнером сразу следом, и без ожидания первая же миграция падает на
-    «connection refused» — а выглядит это как «миграции на MySQL не прошли», то
-    есть причина называется неверно.
-
-    Найдено нарочной поломкой сторожа: замена `mysqladmin ping` на `true`
-    оставляла весь набор зелёным.
-    """
-    podyom = _perenos()
-    podyom = podyom[podyom.index("migrate_up_services() {"):]
-    podyom = podyom[: podyom.index("\n}\n")]
-    odnoy = _odnoy_strokoy(podyom)
-    assert "mysqladmin ping" in odnoy, "переезд не проверяет, что MySQL принимает соединения"
-    assert "--protocol=TCP" in odnoy, (
-        "проверка идёт через сокет: он отвечает раньше, чем сервер слушает порт"
-    )
-    # И это именно ОЖИДАНИЕ, а не одна попытка: каталог данных на медленном
-    # диске создаётся минутами.
-    assert "while" in podyom and "sleep" in podyom, "ожидания нет — спросили один раз"
-    assert "return 1" in podyom, "не дождавшись, шаг объявляет себя удачным"
-
-
-def test_kopiya_sqlite_proveryaetsya_chteniem():
-    """«Файл создался» ничего не доказывает.
-
-    Копия нужного размера и полностью нечитаемая выглядит точно так же.
-    Поэтому по копии идёт `PRAGMA integrity_check` (он обходит все страницы) и
-    настоящий запрос к данным.
-    """
-    snimok = _perenos()
-    snimok = snimok[snimok.index("migrate_snapshot_sqlite() {"):]
-    snimok = snimok[: snimok.index("\n}\n")]
-    assert ".backup" in snimok, "копия не снимается"
-    # Именно ВЫЗОВ, а не упоминание: та же фраза стоит в тексте отказа, и
-    # проверка на слово оставалась зелёной, когда сама проверка целостности из
-    # кода исчезала. Найдено нарочной поломкой сторожа.
-    assert 'sqlite3 "$SNAP" "PRAGMA integrity_check;"' in snimok, (
-        "копия принимается по факту существования файла, а не по чтению"
-    )
-    assert 'sqlite3 "$SNAP" "SELECT count(*) FROM users;"' in snimok, (
-        "данные из копии не читаются ни разу"
-    )
-
-
-def test_lyubaya_osechka_ostavlyaet_sayt_na_sqlite():
-    """Требование заказчика целиком: осечка — и прод продолжает работать.
-
-    Проверяется двумя половинами. Первая: на шагах 1-5 возвращать нечего, и
-    скрипт говорит об этом прямо, а не предлагает команду. Вторая: единственная
-    ветка, где приложение уже ушло с файла (шаг 6-7), возвращает его САМА.
-    """
-    perenos = _perenos()
-    for shag in ("migrate_up_services", "migrate_snapshot_sqlite", "migrate_build_schema",
-                 "migrate_copy_data", "migrate_verify"):
-        assert f"if ! {shag}; then" in perenos, f"шаг {shag} не проверяется на отказ"
-    assert perenos.count("migrate_nothing_to_undo") >= 6, (
-        "не про каждую осечку сказано, что откатывать нечего"
-    )
-    # Возврат — действие скрипта, а не инструкция человеку.
-    otkat = perenos[perenos.index("rollback_to_sqlite() {"):]
-    otkat = otkat[: otkat.index("\n}\n")]
-    assert 'env_set "$APP_ENV" OPENCRM_DB_URL "sqlite:////app/data/opencrm.db"' in otkat
-    assert "compose up -d --force-recreate app" in otkat, "возврат не перезапускает приложение"
-    assert "wait_health" in otkat, "после возврата не проверяют, что сайт ожил"
-    # И зовётся он именно из неудачи переключения.
-    hvost = perenos[perenos.index("if switch_to_mysql; then"):]
-    assert "rollback_to_sqlite" in hvost
-
-
-def test_neudavshiysya_pereezd_ne_pryachetsya_za_zelyonym_itogom():
-    """Прежде функция переезда завершалась нулём при любом исходе, и установка
-    ехала дальше: сертификат, автообновление, «OpenCRM развёрнут» — поверх
-    несостоявшегося переезда."""
-    text = _script()
-    assert "MIGRATE_RESULT=failed" in text, "исход переезда нигде не запоминается"
-    itog = text[text.index("show_summary() {"):]
-    itog = itog[: itog.index("\ncmd_install() {")]
-    assert "MIGRATE_RESULT" in itog, "итог установки молчит о несостоявшемся переезде"
-
-
-def test_na_vremya_perenosa_sayt_zakryt_na_obsluzhivanie():
-    """Записанное во время переезда пропадало молча, а сверка была зелёная.
-
-    Проверено делом: пока шёл перенос, через экран CRM завели клиента; переезд
-    сказал «число строк и суммы совпали по каждой таблице» и «переезд
-    завершён»; после переключения этого клиента в новой базе не оказалось.
-    Предупреждение на экране было, но зелёный итог ему противоречил, а верят
-    итогу.
-
-    Лечится не предупреждением, а тем, что писать в это время НЕКОМУ: сайт
-    закрывается на обслуживание до снятия копии и открывается после
-    переключения. Тогда «сошлось» перестаёт быть обещанием и становится фактом.
-    """
-    perenos = _perenos()
-    assert "migrate_maintenance() {" in perenos, "режим обслуживания на время переноса не включается"
-
-    poryadok = perenos[perenos.index("migrate_sqlite_to_mysql() {"):]
-    vkl = poryadok.index("migrate_maintenance on")
-    assert vkl < poryadok.index("migrate_snapshot_sqlite"), (
-        "копия снимается с сайта, в который в этот момент ещё пишут"
-    )
-    # Открыть обратно обязан КАЖДЫЙ исход, включая неудачные: закрытый сайт,
-    # оставшийся закрытым из-за осечки переезда, — это простой на ровном месте,
-    # и заметит его не тот, кто переезжал, а клиент.
-    posle_zakrytiya = poryadok[vkl:]
-    kuski = posle_zakrytiya.split("migrate_failed")
-    for nomer, kusok in enumerate(kuski[:-1], start=1):
-        assert "migrate_maintenance off" in kusok, (
-            f"осечка №{nomer} после закрытия оставляет сайт закрытым навсегда"
-        )
-    hvost = poryadok[poryadok.index("if switch_to_mysql; then"):]
-    assert "migrate_maintenance off" in hvost, "после удачного переезда сайт не открыли"
-
-
-def test_sverka_sravnivaet_zhivoy_fayl_a_ne_kopiyu():
-    """Сверка по копии не может сказать про живую базу ничего.
-
-    Перенос идёт ИЗ КОПИИ — так и надо, копия неподвижна и оригинал не
-    открывается на запись. Но сверять с целью надо ЖИВОЙ файл: только это
-    отвечает на вопрос «всё ли, что есть у людей, доехало». Сравнение копии с
-    целью отвечает на другой вопрос — «дошло ли то, что мы взяли», — и зелёный
-    ответ на него выдавался за первый.
-    """
-    perenos = _perenos()
-    kopirovanie = perenos[perenos.index("migrate_copy_data() {"):]
-    kopirovanie = kopirovanie[: kopirovanie.index("\n}\n")]
-    assert '--source "sqlite:///$SNAP"' in kopirovanie, "перенос перестал идти из копии"
-
-    sverka = perenos[perenos.index("migrate_verify() {"):]
-    sverka = sverka[: sverka.index("\n}\n")]
-    assert "$SNAP" not in sverka, "сверка по-прежнему сравнивает копию с целью"
-    assert "sqlite:////app/data/opencrm.db" in sverka, "сверка не берёт живой файл"
-
-
-def test_pereezd_est_otdelnoy_komandoy():
-    """Переезд затевают на РАБОТАЮЩЕЙ установке, а не при первой.
-
-    Гонять ради него всю установку — значит донастраивать заодно домен,
-    сертификат и мониторинг там, где нужен один шаг.
-    """
-    text = _script()
-    assert "cmd_migrate_mysql() {" in text
-    assert "migrate-mysql) cmd_migrate_mysql ;;" in text, "команда не разбирается"
-    assert "migrate-mysql" in text[text.index("usage() {"):], "команды нет в справке"
-
-
-def test_mysql_stoit_umolchaniem():
-    """Новая установка обязана вставать на том, на чём система будет работать.
-
-    Прежде умолчанием была SQLite, и довод был честный: ничего не требует, на
-    нагрузке одной студии не уступает. Но он отвечал не на тот вопрос — SQLite
-    допускает ровно одного писателя, а значит установка, начатая «попроще»,
-    рано или поздно упирается в переезд, то есть в закрытый сайт и самую
-    опасную операцию, какая в проекте есть.
-
-    Проверяется и подсказанный ответ, и то, куда ведёт МОЛЧАНИЕ: `ask` при
-    `--yes` возвращает умолчание, а установку так и запускают в скриптах.
-    """
-    text = _script()
-    vybor = text[text.index("choose_database() {"): text.index("# ====")]
-
-    assert 'menu_item 1 "$(tr_ "MySQL (по умолчанию)"' in vybor, (
-        "первым пунктом снова не MySQL"
-    )
-    assert '_pick=$(ask "$(tr_ "    Выбор" "    Choice")" "1")' in vybor, (
-        "подсказанный ответ съехал — а именно его берёт --yes"
-    )
-    # Ветка выхода из выбора ровно одна, и она про SQLite: всё остальное,
-    # включая молчание и опечатку, обязано уходить в MySQL.
-    assert "2|sqlite|SQLite|SQLITE|s)" in vybor, "SQLite перестала быть вторым пунктом"
-    assert "*)" not in vybor.split("case \"$_pick\" in")[1].split("esac")[0], (
-        "в разборе ответа снова появился catch-all — он уведёт умолчание не туда"
-    )
-
-
-def test_sqlite_ostayotsya_vozmozhnoy():
-    """Умолчание сменилось, а выбор — нет: на машине с малой памятью SQLite
-    по-прежнему законна, и отнимать её нельзя, пока код SQLite вообще жив."""
-    text = _script()
-    vybor = text[text.index("choose_database() {"): text.index("# ====")]
-    assert 'env_set "$APP_ENV" OPENCRM_DB_URL "sqlite:////app/data/opencrm.db"' in vybor
-    assert "compose_profile mysql off" in vybor, (
-        "выбрав SQLite, установка оставит в стеке никому не нужный сервер базы"
-    )

@@ -44,7 +44,6 @@ ALLOWED = {
     # Скрипты обслуживания запускаются руками, поштучно и мимо приложения:
     # перенос на MySQL по определению работает с чужой схемой, а сброс root'а
     # чинит базу, в которую иначе не войти.
-    "scripts/migrate_to_mysql.py",
     "scripts/reset_root.py",
     "scripts/reprocess_media.py",
     "scripts/purge_deleted.py",
