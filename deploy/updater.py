@@ -8,8 +8,9 @@
 2. **Проверки GitHub.** Тот же коммит уже прогнан в Actions; красный туда и
    приехал красным, и тратить на него полчаса сборки на боевом VPS незачем.
 3. **Тесты.** Гоняются на *новом* коде до того, как живой сайт вообще тронут:
-   собирается образ `--target tests`, pytest внутри него. Красные тесты — деплой
-   не начинался, посетители ничего не заметили.
+   образ `--target tests` поднимается рядом со СВОЕЙ базой
+   (`docker/docker-compose.tests.yml`), pytest внутри него. Красные тесты —
+   деплой не начинался, посетители ничего не заметили.
 4. **Настройки.** Тесты знают, что код исправен, но не знают, заработает ли он
    *здесь*: `config/.env` в репозиторий не входит. Новый код собирается и
    спрашивается о своих требованиях (`python -m config.selfcheck`) — тоже до
@@ -404,9 +405,13 @@ class Updater:
             self._step(
                 steps,
                 "deploy",
-                self._compose("up", "-d", "--build", timeout=self.config.build_timeout),
+                self._compose(
+                    "up", "-d", "--build", "--remove-orphans",
+                    timeout=self.config.build_timeout,
+                ),
             )
             migrated = True
+            self._peresobrat_izmenyonnye(steps, previous, target)
             self._reload_nginx(steps)
             self._progress("health")
             self._health(steps, "health")
@@ -468,23 +473,45 @@ class Updater:
     def _checks(self, steps: list[Step]) -> None:
         """Тесты нового кода — до того, как живой сайт тронут.
 
-        Гоняются в образе (`--target tests`), а не на хосте: на боевом сервере
-        нет ни venv проекта, ни pytest, зато есть docker — тот же самый, которым
-        через минуту собирается боевой образ.
+        Гоняются в контейнере, а не на хосте: на боевом сервере нет ни venv
+        проекта, ни pytest, зато есть docker — тот же самый, которым через
+        минуту собирается боевой образ.
+
+        Прежде это была одна строка — `docker build --target tests`, — и pytest
+        шёл прямо в слое сборки. Так больше нельзя: набор гоняется против
+        настоящей MySQL, а во время сборки сети между контейнерами не
+        существует вовсе, сервера базы образу не видно.
+
+        Отсюда отдельный compose-файл. Он поднимает СВОЮ базу — не боевую: своё
+        имя проекта, своя сеть, данные в памяти. Перепутать с боевым стеком
+        нельзя даже опечаткой, а после прогона не остаётся ничего.
+
+        `--exit-code-from tests` — чтобы код возврата был кодом pytest, а не
+        компоуза: иначе красный набор проехал бы дальше зелёным. `--build` тут
+        законен (в отличие от `run --build`, см. `_config_check`): у `up` этот
+        флаг был всегда.
         """
         if not self.config.run_checks:
             steps.append(Step("tests", True, "пропущены (OPENCRM_UPDATE_RUN_CHECKS=0)"))
             return
-        dockerfile = self.config.project_dir / "docker" / "Dockerfile"
-        self._step(
-            steps,
-            "tests",
-            self.shell.run(
-                ["docker", "build", "--target", "tests", "-f", str(dockerfile), "."],
-                cwd=self.config.project_dir,
-                timeout=self.config.checks_timeout,
-            ),
+        compose_tests = self.config.project_dir / "docker" / "docker-compose.tests.yml"
+        result = self.shell.run(
+            [
+                "docker", "compose", "-f", str(compose_tests), "up", "--build",
+                "--abort-on-container-exit", "--exit-code-from", "tests",
+            ],
+            cwd=self.config.project_dir,
+            timeout=self.config.checks_timeout,
         )
+        # Убрать за собой надо в любом исходе: `up` оставляет остановленные
+        # контейнеры и том tmpfs, и следующий прогон начался бы на чужих
+        # остатках. Код возврата уборки не важен — важен код набора.
+        self.shell.run(
+            ["docker", "compose", "-f", str(compose_tests), "down", "-v", "--remove-orphans"],
+            cwd=self.config.project_dir,
+            timeout=300,
+        )
+        self._step(steps, "tests", result)
 
     def _config_check(self, steps: list[Step]) -> None:
         """Поднимется ли новый код на ЭТОЙ машине — до того, как сайт тронут.
@@ -507,10 +534,11 @@ class Updater:
         значений приложение получает мимо файла.
 
         `--entrypoint python` тут обязателен, а не для красоты: `run` подменяет
-        команду, но НЕ точку входа, а точка входа образа — `entrypoint.sh`,
-        который первым делом ждёт базу и накатывает миграции. Без флага
-        «безобидная проверка настроек» мигрировала бы боевую базу до снятия
-        копии и раньше своей очереди.
+        команду, но НЕ точку входа, а точка входа образа — `entrypoint.sh`. Он
+        ждёт базу, накатывает миграции и кончается `exec python -m uvicorn`,
+        аргументы дальше не передавая вовсе. Без флага «безобидная проверка
+        настроек» мигрировала бы боевую базу раньше своей очереди и подняла бы
+        второй веб-сервер, а самой проверки не случилось бы ни разу.
 
         `--no-deps` — чтобы не поднять заодно базу и redis: проверка их не
         трогает. `-T` — потому что демон работает без терминала.
@@ -547,6 +575,88 @@ class Updater:
                 "новый код не поднимется с нынешними настройками: "
                 f"{result.tail(6)}"
             )
+
+    def _peresobrat_izmenyonnye(self, steps: list[Step], previous: str, target: str) -> None:
+        """Пересоздать службы, у которых изменился примонтированный файл.
+
+        **Дыра, которую это закрывает.** `up -d` пересоздаёт контейнер, когда
+        изменилось ОПИСАНИЕ службы: образ, переменные, список томов. Содержимое
+        файла, лежащего внутри тома, для compose не изменение вовсе — он его не
+        читает. А половина обвязки живёт именно так: точка входа Alertmanager,
+        точка входа Prometheus, шаблоны nginx, конфиг promtail, правила
+        blackbox. Все они примонтированы из чекаута.
+
+        Значит правка такого файла доезжала на сервер и **не применялась**.
+        Приложение обновлялось, а Alertmanager продолжал работать скриптом
+        недельной давности — и заметить это было нечем: контейнер здоров, лог
+        чист, версия кода новая. Ровно так починка дублирующихся сообщений
+        приехала бы на сервер и не подействовала.
+
+        Часть служб перечитывает себя сама (Grafana берёт дашборды раз в минуту,
+        Prometheus и Alertmanager перерисовывают конфиг раз в пять минут), но
+        перечитывает она ДАННЫЕ, а не собственный запускающий скрипт: процесс в
+        контейнере стартовал старым и таким останется до пересоздания.
+
+        **Список служб не ведётся руками — его называет сам compose.**
+        `config --format json` отдаёт разложенное описание вместе с точками
+        монтирования, и пересечение этого списка с `git diff` даёт ответ. Список,
+        выписанный руками, устарел бы на первом же новом томе, и устарел бы
+        молча — то есть завёл бы ту же беду обратно.
+
+        Не фатально: пересоздание — улучшение, а не условие работоспособности.
+        Упади оно, сайт уже поднят и здоров, и валить из-за этого обновление с
+        откатом базы было бы лечением тяжелее болезни.
+        """
+        if not previous or previous == target:
+            return
+
+        izmeneno = self._git("diff", "--name-only", previous, target)
+        if not izmeneno.ok:
+            steps.append(Step("recreate", True, "нечего сравнить: git diff молчит"))
+            return
+        fayly = {line.strip() for line in izmeneno.out.splitlines() if line.strip()}
+        if not fayly:
+            return
+
+        opisanie = self._compose("config", "--format", "json", timeout=120)
+        if not opisanie.ok:
+            steps.append(Step("recreate", False, opisanie.tail(4)))
+            return
+        try:
+            razobrano = json.loads(opisanie.out)
+        except ValueError as beda:
+            steps.append(Step("recreate", False, f"описание стека не разобралось: {beda}"))
+            return
+
+        koren = self.config.project_dir.resolve()
+        zadety: set[str] = set()
+        for imya, sluzhba in (razobrano.get("services") or {}).items():
+            for tom in sluzhba.get("volumes") or []:
+                if tom.get("type") != "bind":
+                    continue
+                istochnik = Path(tom.get("source", ""))
+                try:
+                    otnositelno = istochnik.resolve().relative_to(koren).as_posix()
+                except (ValueError, OSError):
+                    continue  # том вне чекаута — обновление его не привозит
+                # Монтируют и файл, и целый каталог: и то, и другое задето, если
+                # изменившийся путь совпал или лежит внутри.
+                if any(f == otnositelno or f.startswith(otnositelno + "/") for f in fayly):
+                    zadety.add(imya)
+
+        if not zadety:
+            return
+        imena = sorted(zadety)
+        self.log(f"примонтированные файлы изменились — пересоздаю: {', '.join(imena)}")
+        self._step(
+            steps,
+            "recreate",
+            self._compose(
+                "up", "-d", "--force-recreate", "--no-deps", *imena,
+                timeout=self.config.build_timeout,
+            ),
+            fatal=False,
+        )
 
     def _snapshot(self, steps: list[Step], target: str) -> Path:
         """Копия базы перед миграциями — тем же кодом, что и в точке входа.
@@ -889,24 +999,41 @@ class Updater:
         znachok, zagolovok, tiho = ishod
         e = notify.ekranirovat
 
-        # --- шапка: что случилось и с чем ---
-        stroki = [f"{znachok} <b>{e(zagolovok)}</b>"]
-
-        # Репозиторий и ветка — одной строкой мелким шрифтом. Ссылку на коммит
-        # вешаем на сам номер: карточку предпросмотра мы всё равно погасили, а
-        # нажать на семь символов проще, чем копировать их глазами.
-        adres = f"{self.config.repo}@{self.config.branch}"
-        stroki.append(f"<code>{e(adres)}</code>")
-
-        if outcome.to_sha:
-            bylo = (outcome.from_sha or "")[:12] or "—"
-            stalo = outcome.to_sha[:12]
-            ssylka = f"https://github.com/{self.config.repo}/commit/{outcome.to_sha}"
-            stroki.append(
-                f"<code>{e(bylo)}</code> → <a href=\"{e(ssylka)}\"><code>{e(stalo)}</code></a>"
-            )
+        # --- первая строка: она же и всё, что видно в списке чатов ---
+        #
+        # Заголовок исхода и заголовок коммита стоят вместе намеренно. «✅
+        # Обновлено» отвечает на половину вопроса; вторая половина — «чем
+        # именно», и без неё чат приходится открывать всегда. Значок впереди
+        # отвечает на главное — идти смотреть или нет.
+        zaglavie = f"{znachok} <b>{e(zagolovok)}</b>"
         if outcome.summary:
-            stroki.append(f"<i>{e(outcome.summary)}</i>")
+            zaglavie += f" · <b>{e(outcome.summary)}</b>"
+        stroki = [zaglavie]
+
+        # Вторая строка — откуда и что приехало, и она же ссылка.
+        #
+        # Ссылка ведёт на СРАВНЕНИЕ, а не на один коммит: между двумя
+        # обновлениями в ветку обычно попадает несколько коммитов, и страница
+        # одного последнего показывает не то, что приехало. Когда предыдущего
+        # номера нет (первый деплой), сравнивать не с чем — тогда коммит.
+        # Карточку предпросмотра мы гасим в `notify`, поэтому ссылка не съедает
+        # пол-экрана.
+        adres = f"{self.config.repo}@{self.config.branch}"
+        stroka = f"<code>{e(adres)}</code>"
+        if outcome.to_sha:
+            bylo = (outcome.from_sha or "")[:12]
+            stalo = outcome.to_sha[:12]
+            if bylo:
+                podpis = f"{bylo} → {stalo}"
+                ssylka = (
+                    f"https://github.com/{self.config.repo}"
+                    f"/compare/{outcome.from_sha}...{outcome.to_sha}"
+                )
+            else:
+                podpis = stalo
+                ssylka = f"https://github.com/{self.config.repo}/commit/{outcome.to_sha}"
+            stroka += f" · <a href=\"{e(ssylka)}\"><code>{e(podpis)}</code></a>"
+        stroki.append(stroka)
 
         # --- причина: главное, ради чего сообщение читают ---
         if outcome.reason:
@@ -941,11 +1068,36 @@ class Updater:
             stroki.append("")
             stroki.append(self._hod_shagov(outcome))
 
-        # --- подвал: сколько заняло ---
+        # --- подвал: сколько заняло и не устарело ли само сообщение ---
         stroki.append("")
         stroki.append(f"<i>{e(_dlitelnost(outcome.seconds))}</i>")
+        if self._sam_ustarel(outcome):
+            stroki.append(
+                "<i>♻️ Обновление задело код самого обновлятора: служба сейчас "
+                "перезапустится, а это сообщение написано ещё прежней её версией. "
+                "Правки в оформлении уведомлений видны со следующего обновления.</i>"
+            )
 
         self.notifier.send("\n".join(stroki), tiho=tiho and not upali)
+
+    def _sam_ustarel(self, outcome: Outcome) -> bool:
+        """Написано ли это сообщение кодом, который обновление только что заменило.
+
+        Так и есть всегда, когда обновление везёт правку `deploy/`: Python
+        загрузил модули при старте демона, сообщение об исходе собирает
+        `_notify` из памяти, а на диске уже лежит новый код. Дальше `watch`
+        увидит это же расхождение (`_self_changed`) и выйдет, systemd поднимет
+        службу заново — но сообщение к тому моменту уже отправлено СТАРЫМ
+        оформлением.
+
+        Со стороны это выглядит как «обновление приехало, а ничего не
+        изменилось», и объяснить это нечем, кроме как сказав прямо. Молчание
+        здесь стоит дороже строчки: владелец идёт искать поломку там, где её
+        нет.
+        """
+        if outcome.status != STATUS_DEPLOYED:
+            return False
+        return self._self_changed(outcome.from_sha)
 
     def _hod_shagov(self, outcome: Outcome) -> str:
         """Все шаги одной сворачиваемой цитатой.

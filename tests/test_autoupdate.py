@@ -61,6 +61,10 @@ class FakeShell:
     def fail(self, needle: str, err: str = "boom"):
         self.rules.append((needle, 1, "", err))
 
+    def otvet(self, needle: str, out: str) -> None:
+        """Удачный ответ с заданным выводом — для `git diff` и `compose config`."""
+        self.rules.append((needle, 0, out, ""))
+
     def effect(self, needle: str, action):
         self.effects.append((needle, action))
 
@@ -867,7 +871,7 @@ def test_the_tests_run_before_the_live_site_is_touched(tmp_path):
 
     updater.run_once()
 
-    checks = next(i for i, call in enumerate(updater.shell.calls) if "--target tests" in call)
+    checks = next(i for i, call in enumerate(updater.shell.calls) if "docker-compose.tests.yml" in call)
     deploy = next(i for i, call in enumerate(updater.shell.calls) if "up -d --build" in call)
     assert checks < deploy
 
@@ -929,7 +933,7 @@ def test_local_edits_can_be_overridden_on_purpose(tmp_path):
 
 def test_red_tests_never_reach_the_live_site(tmp_path):
     shell = FakeShell()
-    shell.fail("--target tests", err="2 failed")
+    shell.fail("docker-compose.tests.yml up", err="2 failed")
     updater = make_updater(tmp_path, shell=shell)
 
     outcome = updater.run_once()
@@ -1026,7 +1030,7 @@ def test_checks_can_be_switched_off(tmp_path):
     outcome = updater.run_once()
 
     assert outcome.status == STATUS_DEPLOYED
-    assert not updater.shell.ran("--target tests")
+    assert not updater.shell.ran("docker-compose.tests.yml")
     tests_step = next(step for step in outcome.steps if step.name == "tests")
     assert "пропущены" in tests_step.detail
 
@@ -1608,6 +1612,96 @@ def test_dlitelnost_chitaetsya_glazami():
     assert _dlitelnost(3725) == "1 ч 02 мин"
 
 
+def test_pervaya_stroka_nazyvaet_i_ishod_i_chto_priehalo(tmp_path):
+    """В списке чатов Telegram показывает начало сообщения — и только его.
+
+    «✅ Обновлено» отвечает на половину вопроса: обновлено-то чем? Вторую
+    половину — заголовок коммита — приходилось искать, открыв чат, а открывают
+    его не всегда и не сразу.
+    """
+    updater = make_updater(tmp_path)
+    updater.run_once()
+
+    pervaya = updater.notifier.plain[0].splitlines()[0]
+    assert "Обновлено" in pervaya, "первая строка не называет исход"
+    assert "feat: новая витрина" in pervaya, (
+        "первая строка не называет, что именно приехало"
+    )
+
+
+def test_ssylka_vedyot_na_sravnenie_a_ne_na_odin_kommit(tmp_path):
+    """Между двумя обновлениями в ветку попадает несколько коммитов.
+
+    Страница последнего из них показывает не то, что приехало, — а приехали
+    все. Сравнение показывает ровно разницу между тем, что было на сервере, и
+    тем, что стало.
+    """
+    updater = make_updater(tmp_path)
+    updater.run_once()
+
+    soobshchenie = updater.notifier.messages[0]
+    assert f"/compare/{OLD}...{NEW}" in soobshchenie, "ссылки на сравнение нет"
+    assert f"{OLD[:12]} → {NEW[:12]}" in soobshchenie, "не видно, что с чем сравнивать"
+
+
+def test_pervyy_deploy_ssylaetsya_na_kommit_a_ne_na_pustotu(tmp_path):
+    """Сравнивать не с чем, когда предыдущего номера нет вовсе.
+
+    `.../compare/...abc` — битый адрес, и жать по нему человек будет ровно в
+    тот момент, когда что-то пошло не так.
+    """
+    config = make_config(tmp_path)
+    shell = FakeShell()
+    shell.head = ""  # чекаут без истории: `rev-parse HEAD` молчит
+    updater = make_updater(tmp_path, config=config, shell=shell)
+
+    updater._deploy("", NEW)
+
+    soobshchenie = updater.notifier.messages[0]
+    assert "/compare/" not in soobshchenie, "сравнение с пустотой ведёт в никуда"
+    assert f"/commit/{NEW}" in soobshchenie
+
+
+def test_soobshchenie_priznayotsya_chto_napisano_starym_kodom(tmp_path):
+    """Жалоба владельца: «обновление приехало, а оформление прежнее».
+
+    Так и есть, и это не поломка. Python читает исходники один раз, при импорте;
+    сообщение об исходе собирает код, загруженный при старте демона, а на диске
+    к этому моменту лежит уже новый. Дальше `watch` увидит расхождение и выйдет,
+    systemd поднимет службу заново — но сообщение уже ушло старым оформлением.
+
+    Объяснить это нечем, кроме как сказав прямо. Молчание здесь стоит дороже
+    строчки: владелец идёт искать поломку там, где её нет.
+    """
+    shell = FakeShell()
+    shell.rules.append(("diff --name-only", 0, "deploy/updater.py\nweb/main.py\n", ""))
+    shell.effect("checkout --detach", lambda: setattr(shell, "head", NEW))
+    updater = make_updater(tmp_path, shell=shell)
+
+    updater.run_once()
+
+    ploskiy = updater.notifier.plain[0]
+    assert "перезапустится" in ploskiy, (
+        "сообщение молчит о том, что написано кодом, который уже заменён"
+    )
+    assert "следующего обновления" in ploskiy
+
+
+def test_chuzhaya_pravka_ne_rozhdaet_opravdaniy(tmp_path):
+    """Обратная сторона: обычное обновление не должно ничего объяснять.
+
+    Оговорка, приходящая с каждым сообщением, перестаёт читаться в тот же день.
+    """
+    shell = FakeShell()
+    shell.rules.append(("diff --name-only", 0, "web/main.py\ncore/services/deal_service.py\n", ""))
+    shell.effect("checkout --detach", lambda: setattr(shell, "head", NEW))
+    updater = make_updater(tmp_path, shell=shell)
+
+    updater.run_once()
+
+    assert "перезапустится" not in updater.notifier.plain[0]
+
+
 def test_prichina_ne_povtoryaetsya_trizhdy(tmp_path):
     """Причина, шаг и список ходов не должны твердить одно и то же подряд.
 
@@ -1627,3 +1721,109 @@ def test_prichina_ne_povtoryaetsya_trizhdy(tmp_path):
     )
     # Имя упавшего шага при этом названо — иначе непонятно, где встало.
     assert "✗ deploy" in do_citaty
+
+
+# --- правка внутри примонтированного файла ---------------------------------
+#
+# Compose пересоздаёт контейнер по изменившемуся ОПИСАНИЮ службы и не читает
+# того, что лежит внутри томов. А половина обвязки живёт именно там: точки входа
+# Alertmanager и Prometheus, шаблоны nginx, конфиг promtail. Их правка доезжала
+# на сервер и не применялась — контейнер здоров, лог чист, код новый, поведение
+# прежнее.
+
+OPISANIE_STEKA = json.dumps({
+    "services": {
+        "app": {"volumes": [{"type": "volume", "source": "storage"}]},
+        "alertmanager": {"volumes": [
+            {"type": "bind", "source": "PROEKT/docker/monitoring/alertmanager/entrypoint.sh"},
+        ]},
+        "nginx": {"volumes": [
+            {"type": "bind", "source": "PROEKT/docker/nginx/templates"},
+        ]},
+        "grafana": {"volumes": [{"type": "bind", "source": "/var/lib/opencrm/grafana"}]},
+    }
+})
+
+
+def _stek(shell, config, izmeneno: str) -> None:
+    """Подсказать поддельной оболочке, что изменилось и как устроен стек."""
+    shell.otvet("diff --name-only", izmeneno)
+    shell.otvet("config --format json", OPISANIE_STEKA.replace(
+        "PROEKT", config.project_dir.as_posix()
+    ))
+
+
+def test_pravka_v_primontirovannom_fayle_peresozdayot_sluzhbu(tmp_path):
+    """Иначе Alertmanager неделю работает скриптом, который уже исправлен."""
+    config = make_config(tmp_path)
+    shell = FakeShell()
+    _stek(shell, config, "docker/monitoring/alertmanager/entrypoint.sh\nweb/main.py\n")
+    updater = make_updater(tmp_path, config=config, shell=shell)
+
+    outcome = updater.run_once()
+
+    assert outcome.status == STATUS_DEPLOYED
+    peresozdanie = [c for c in shell.calls if "--force-recreate" in c]
+    assert len(peresozdanie) == 1, shell.calls
+    assert "alertmanager" in peresozdanie[0], peresozdanie[0]
+    assert "nginx" not in peresozdanie[0], "пересоздано лишнее"
+
+
+def test_pravka_vnutri_primontirovannogo_kataloga_tozhe_schitaetsya(tmp_path):
+    """Монтируют и файл, и целый каталог — второе не должно проскакивать."""
+    config = make_config(tmp_path)
+    shell = FakeShell()
+    _stek(shell, config, "docker/nginx/templates/https.conf.template\n")
+    updater = make_updater(tmp_path, config=config, shell=shell)
+
+    updater.run_once()
+
+    peresozdanie = [c for c in shell.calls if "--force-recreate" in c]
+    assert len(peresozdanie) == 1 and "nginx" in peresozdanie[0], shell.calls
+
+
+def test_bez_pravki_v_tomakh_nichego_ne_peresozdayotsya(tmp_path):
+    """Пересоздание не бесплатно: это простой службы. Зря его делать нельзя."""
+    config = make_config(tmp_path)
+    shell = FakeShell()
+    _stek(shell, config, "web/main.py\ncore/services/deal_service.py\n")
+    updater = make_updater(tmp_path, config=config, shell=shell)
+
+    updater.run_once()
+
+    assert not shell.ran("--force-recreate"), shell.calls
+
+
+def test_neudachnoe_peresozdanie_ne_valit_podnyatyy_sayt(tmp_path):
+    """Сайт уже поднят и здоров — откатывать базу из-за этого шага нельзя.
+
+    Пересоздание службы обвязки — улучшение, а не условие работоспособности.
+    Валить обновление здесь значило бы лечить насморк ампутацией.
+    """
+    config = make_config(tmp_path)
+    shell = FakeShell()
+    _stek(shell, config, "docker/monitoring/alertmanager/entrypoint.sh\n")
+    shell.fail("--force-recreate", err="no space left on device")
+    updater = make_updater(tmp_path, config=config, shell=shell)
+
+    outcome = updater.run_once()
+
+    assert outcome.status == STATUS_DEPLOYED
+    recreate = next(step for step in outcome.steps if step.name == "recreate")
+    assert recreate.ok is False
+    assert "no space" in recreate.detail
+
+
+def test_ischeznuvshaya_sluzhba_ne_ostayotsya_rabotat(tmp_path):
+    """Служба, убранная из compose, иначе живёт на сервере вечно.
+
+    `up -d` без `--remove-orphans` про неё не знает: в описании её больше нет, а
+    контейнер продолжает занимать память и порт. Установщик это давно делает
+    (`monitoring_apply`), обновление — не делало.
+    """
+    updater = make_updater(tmp_path)
+
+    updater.run_once()
+
+    podnyatie = next(c for c in updater.shell.calls if "up -d --build" in c)
+    assert "--remove-orphans" in podnyatie, podnyatie
