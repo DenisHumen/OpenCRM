@@ -143,8 +143,8 @@ def test_stage_key_columns_are_as_wide_as_the_reference(table_name, column_name)
     соседней таблице `deal_stage_changes`. Проверка написана потому, что нашла
     вторую половину той же ошибки, а не про запас.
 
-    Цена расхождения не в падении: SQLite длину не проверяет, MySQL в нестрогом
-    режиме молча обрежет. Отчёт по воронке склеивает `to_stage` с
+    Цена расхождения не в падении: MySQL в нестрогом режиме молча обрежет
+    строку до объявленной длины. Отчёт по воронке склеивает `to_stage` с
     `pipeline_stages.key`; обрезанный ключ не склеится ни с чем, и этап покажет
     ноль входов, ничем себя не выдав.
     """
@@ -168,8 +168,7 @@ def test_models_and_migrations_do_not_diverge():
     сервере» перестают быть одним утверждением.
 
     Так уже было: `deals.stage` был VARCHAR(20) в миграции против String(32) в
-    модели. SQLite длину VARCHAR не проверяет, поэтому весь набор тестов
-    молчал, а на MySQL ключ этапа длиннее двадцати символов обрезался бы, и
+    модели, и ключ этапа длиннее двадцати символов обрезался бы на записи — а
     заявка переставала попадать в свою колонку.
 
     Проверка та же, что делает `alembic check`, но она стоит в наборе — а
@@ -261,10 +260,10 @@ def test_migratsiya_zapolnyaet_sklejku_tak_zhe_kak_prilozhenie(chistaya_baza):
     журнал: просто часть карточек не находится.
 
     Мест, где они могут разойтись, ровно три, и все три проверяются здесь:
-    приведение регистра (в миграции `lower()` знает только ASCII, если не
-    подставить свою функцию), склейка с NULL (в обоих движках она даёт NULL
-    целиком) и перевод строки внутри значения (описание с абзацами завело бы в
-    склейку лишнюю границу поля).
+    приведение регистра (`LOWER()` в SQL и `str.lower()` в Python — разные
+    реализации одного правила), склейка с NULL (в SQL она даёт NULL целиком) и
+    перевод строки внутри значения (описание с абзацами завело бы в склейку
+    лишнюю границу поля).
     """
     from alembic import command
     from alembic.config import Config
@@ -381,3 +380,84 @@ def test_running_migrations_does_not_silence_the_application_log(chistaya_baza):
         talker.removeHandler(ear)
 
     assert heard == ["подписчик упал"], "после миграций ошибки не доходят до журнала"
+
+
+# --- форма отката: индексы перед сносом таблицы -------------------------------
+
+
+def test_otkat_ne_snimaet_indeksy_pered_snosom_tablitsy():
+    """Снимать индексы перед `drop_table` нельзя — и это не про опрятность.
+
+    MySQL не даёт снять индекс, по которому проверяется внешний ключ: отказ 1553
+    «Cannot drop index: needed in a foreign key constraint». Свой служебный
+    индекс СУБД убирает сама, как только появляется годный явный, — то есть наш
+    `ix_*` И ЕСТЬ индекс ключа. Автогенератор alembic пишет снятие индексов,
+    потому что писал он это под движок, которому порядок был безразличен.
+
+    Стоило это дорого: откат ломался на ТРИНАДЦАТИ шагах из тридцати двух,
+    начиная с первого же от головы. То есть вернуть схему на боевом сервере было
+    нечем — а по правилу №1 откат это главный способ починки, и на него
+    опирается автообновление.
+
+    Проверка смотрит на ФОРМУ, а не на исход, и в этом её смысл. Круг
+    «вверх — вниз — вверх» (`test_every_migration_can_be_rolled_back`) ловит
+    только те миграции, где внешний ключ на индексе УЖЕ есть. Там, где его пока
+    нет, тот же порядок лежит миной: добавят ключ — и откат сломается молча, в
+    миграции, которую никто не трогал.
+
+    Разбор целиком записан в откате `e4451c527c34`.
+    """
+    import ast
+    from pathlib import Path as Put
+
+    versions = Put(__file__).resolve().parent.parent / "database" / "migrations" / "versions"
+    vinovnye = []
+    for put in sorted(versions.glob("*.py")):
+        derevo = ast.parse(put.read_text(encoding="utf-8"))
+        spusk = next(
+            (uzel for uzel in derevo.body
+             if isinstance(uzel, ast.FunctionDef) and uzel.name == "downgrade"),
+            None,
+        )
+        if spusk is None:
+            continue
+
+        snosimye = {
+            uzel.args[0].value
+            for uzel in ast.walk(spusk)
+            if isinstance(uzel, ast.Call)
+            and isinstance(uzel.func, ast.Attribute)
+            and uzel.func.attr == "drop_table"
+            and uzel.args
+            and isinstance(uzel.args[0], ast.Constant)
+        }
+        if not snosimye:
+            continue
+
+        for uzel in ast.walk(spusk):
+            if not isinstance(uzel, ast.With):
+                continue
+            for punkt in uzel.items:
+                zov = punkt.context_expr
+                if not (isinstance(zov, ast.Call)
+                        and isinstance(zov.func, ast.Attribute)
+                        and zov.func.attr == "batch_alter_table"
+                        and zov.args
+                        and isinstance(zov.args[0], ast.Constant)):
+                    continue
+                tablitsa = zov.args[0].value
+                if tablitsa not in snosimye:
+                    continue
+                snimayut_indeks = any(
+                    isinstance(vnutri, ast.Call)
+                    and isinstance(vnutri.func, ast.Attribute)
+                    and vnutri.func.attr == "drop_index"
+                    for vnutri in ast.walk(uzel)
+                )
+                if snimayut_indeks:
+                    vinovnye.append(f"{put.name}: {tablitsa}")
+
+    assert not vinovnye, (
+        "откат снимает индексы у таблицы, которую тут же сносит целиком — "
+        "на внешнем ключе это отказ MySQL 1553:\n  " + "\n  ".join(vinovnye)
+    )

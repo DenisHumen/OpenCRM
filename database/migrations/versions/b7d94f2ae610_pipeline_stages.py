@@ -84,9 +84,11 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    with op.batch_alter_table('pipeline_stages', schema=None) as batch_op:
-        batch_op.drop_index(batch_op.f('ix_pipeline_stages_is_archived'))
-        batch_op.drop_index(batch_op.f('ix_pipeline_stages_sort_order'))
-        batch_op.drop_index(batch_op.f('ix_pipeline_stages_kind'))
-        batch_op.drop_index(batch_op.f('ix_pipeline_stages_key'))
+    # Индексы перед `drop_table` не снимаются — таблица уносит их сама. Правило
+    # общее на все миграции проекта, и держится оно не на аккуратности: MySQL не
+    # даёт снять индекс, по которому проверяется внешний ключ (отказ 1553), и
+    # такой порядок ломал откат на тринадцати шагах разом. Здесь внешних ключей
+    # на этих индексах нет, поэтому падения не было, — но форма та же, и первый
+    # же добавленный ключ превратил бы её в отказ. Разбор — в откате
+    # `e4451c527c34`.
     op.drop_table('pipeline_stages')
