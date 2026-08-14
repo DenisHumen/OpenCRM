@@ -241,3 +241,36 @@ def test_modeli_ne_importiruyutsya_radi_zaprosa(area):
             if isinstance(node, ast.ImportFrom) and (node.module or "") == "database.query":
                 guilty.append(f"{rel}:{node.lineno}")
     assert guilty == [], "database.query — для репозиториев, не для сервисов:\n" + "\n".join(guilty)
+
+
+# --- набор стирает базу перед прогоном ---------------------------------------
+
+
+def test_nabor_otkazyvaetsya_stirat_nechistovuyu_bazu(monkeypatch):
+    """Единственное, что отделяет `DROP TABLE` от боевой базы, — имя в переменной.
+
+    `tests/conftest.py` сносит содержимое базы перед миграциями: без этого
+    второй прогон подряд невозможен (root уже сменил пароль, и вход отдаёт 401 —
+    именно так CI и упал). Но приём этот стирает всё, что найдёт, а указывают
+    ему на базу переменной окружения. Опечатка в ней стоила бы боевых данных, и
+    остановить её больше нечему.
+
+    Поэтому имя обязано содержать «test». Проверка механическая, а не
+    соглашение: соглашение живёт до первого спешащего дня.
+    """
+    import pytest
+
+    from tests.conftest import _ochistit_bazu
+
+    monkeypatch.setenv("OPENCRM_DB_URL", "mysql+pymysql://root:x@db:3306/opencrm")
+    with pytest.raises(RuntimeError) as otkaz:
+        _ochistit_bazu()
+    assert "не похожа на тестовую" in str(otkaz.value)
+
+    # А на честном имени проверка пропускает — иначе она запрещала бы всё.
+    monkeypatch.setenv("OPENCRM_DB_URL", "mysql+pymysql://root:x@нет-такого:3306/opencrm_test")
+    with pytest.raises(Exception) as beda:
+        _ochistit_bazu()
+    assert "не похожа на тестовую" not in str(beda.value), (
+        "имя с «test» отвергнуто — до попытки подключения дело не дошло"
+    )
