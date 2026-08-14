@@ -14,11 +14,18 @@ PROD = {
     # умножает порог на число процессов. Поэтому адрес входит в набор «боевой
     # конфиг, к которому претензий нет».
     "redis_url": "redis://:pass@redis:6379/0",
+    # Адрес базы — часть «боевого конфига, к которому претензий нет»: без него
+    # приложение не работает вовсе, и умолчания у него нет намеренно.
+    "db_url": "mysql+pymysql://opencrm:pass@db:3306/opencrm?charset=utf8mb4",
 }
 
 
 def _settings(**overrides) -> Settings:
-    # _env_file=None: тест не должен зависеть от локального config/.env
+    # `_env_file=None` отменяет чтение файла, но НЕ окружения: pydantic читает
+    # его всегда, а набор задаёт там и адрес базы, и адрес Redis. Поэтому всё,
+    # что проверка хочет видеть пустым, обязано приезжать сюда явным доводом —
+    # иначе она молча прочитает настоящее значение и пройдёт, ничего не
+    # проверив. Ровно на этом один сторож здесь уже покраснел.
     return Settings(_env_file=None, **{**PROD, **overrides})
 
 
@@ -48,8 +55,34 @@ def test_valid_production_config_has_no_errors():
 
 
 def test_dev_config_never_blocks_startup():
-    dev = Settings(_env_file=None, env="dev", secret_key="", ip_hash_salt="")
+    """Разработка не спотыкается о требования, которые про безопасность.
+
+    Адрес базы при этом обязателен и здесь: без него приложение не работает ни
+    в каком окружении, и проверка его стоит ДО отсечки по окружению — она не
+    про безопасность, а про невозможность. Поэтому адрес в наборе есть, а
+    пустые ключ и соль — нет: именно их разработке прощают.
+    """
+    dev = Settings(
+        _env_file=None, env="dev", secret_key="", ip_hash_salt="",
+        db_url="mysql+pymysql://opencrm:pass@db:3306/opencrm?charset=utf8mb4",
+    )
     assert dev.config_errors() == []
+
+
+def test_v_razrabotke_pustoy_adres_bazy_tozhe_ne_proshchayetsya():
+    """Парная к предыдущей: снисхождение к dev не должно расползаться.
+
+    Пустой адрес — это не «работаем как есть», а «не работаем вовсе»:
+    `create_engine("")` падает на импорте. Сказать об этом строкой лучше, чем
+    выдать след стека из недр SQLAlchemy.
+
+    `db_url=""` задаётся ЯВНО, и это не лишнее слово: `_env_file=None` отменяет
+    чтение файла, но не окружения, а в окружении набора адрес базы стоит всегда
+    (`tests/conftest.py`). Без явного значения проверка молча читала бы боевой
+    адрес и проходила бы, ничего не проверив.
+    """
+    dev = Settings(_env_file=None, env="dev", secret_key="", ip_hash_salt="", db_url="")
+    assert any("OPENCRM_DB_URL" in message for message in dev.config_errors())
 
 
 def test_placeholder_base_url_warns():
@@ -81,3 +114,41 @@ def test_plain_http_site_does_not_mark_cookies_secure():
 def test_the_flag_follows_the_address_not_the_environment_name():
     assert _settings(env="dev", base_url="https://studio.site").cookies_secure is True
     assert _settings(env="production", base_url="http://studio.site").cookies_secure is False
+
+
+# --- адрес базы --------------------------------------------------------------
+
+
+def test_pustoy_adres_bazy_ostanavlivaet_start():
+    """Ворота обновления спрашивают об этом ДО подмены живого контейнера.
+
+    Проверка эта уже была написана однажды и **молча не применилась** —
+    скриптовая правка не нашла якорь, а докстрока рядом и документация всё это
+    время утверждали, что проверка есть. Снаружи это выглядело хуже, чем её
+    отсутствие: `python -m config.selfcheck` отвечал «настройки сошлись» на
+    пустом адресе, обновление подменяло контейнер, и приложение умирало уже
+    после подмены — на импорте `database/session.py`, где `create_engine("")`.
+    То есть 502 и откат вместо дешёвого отказа до начала работ.
+
+    Отсюда и сторож: то, на что опираются ворота деплоя, обязано краснеть, а не
+    держаться на памяти о том, что «это вроде добавляли».
+    """
+    errors = _settings(db_url="").config_errors()
+    assert any("OPENCRM_DB_URL" in message for message in errors), errors
+
+
+def test_chuzhoy_dvizhok_ostanavlivaet_start():
+    """База у продукта одна. Файловый адрес — след прошлого, а не выбор.
+
+    Молчать тут нельзя вдвойне: на чужом адресе движок остаётся без
+    `READ COMMITTED` и без `SET time_zone='+00:00'` — обоих условий
+    правильности, описанных в `database/session.py`. Приложение при этом
+    поднимется и будет врать временами и отказами по уникальности.
+    """
+    errors = _settings(db_url="sqlite:///data/opencrm.db").config_errors()
+    assert any("MySQL" in message for message in errors), errors
+
+
+def test_boevoy_adres_bazy_prinimaetsya():
+    """Парная проверка: иначе «отказывать всегда» тоже прошло бы обе прошлые."""
+    assert _settings().config_errors() == []
