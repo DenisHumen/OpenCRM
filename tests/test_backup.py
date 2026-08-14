@@ -382,15 +382,15 @@ def test_skript_bekapa_zovyot_proverku():
     assert '"$DB_COPY"' in vyzov, f"проверка смотрит не на снятую копию: {vyzov}"
 
 
-def test_skript_bekapa_umeet_obe_bazy():
-    """Копия обязана сниматься одинаково полноценно и на SQLite, и на MySQL.
+def test_skript_bekapa_snimaet_damp():
+    """База одна, и способ снять копию один — дамп.
 
-    Система, переехавшая на MySQL, не имеет права тихо остаться без копий
-    вовсе — а именно это и происходит, когда скрипт знает только про файл.
+    Ветка про файл ушла вместе с самой SQLite. Проверка осталась ради того же:
+    система не имеет права тихо остаться без копий вовсе.
     """
     operatory = _sh_operatory(Path("scripts/backup.sh").read_text(encoding="utf-8"))
-    assert "mysqldump" in operatory, "MySQL перестала попадать в копию"
-    assert ".backup" in operatory, "SQLite перестала попадать в копию"
+    assert "mysqldump" in operatory, "база перестала попадать в копию"
+    assert ".backup" not in operatory, "вернулась ветка копирования файла"
     # --single-transaction — не украшение: без него mysqldump берёт блокировку
     # чтения на все таблицы, и сайт на время снятия копии встаёт.
     assert "--single-transaction" in operatory, "дамп снова блокирует работу сайта"

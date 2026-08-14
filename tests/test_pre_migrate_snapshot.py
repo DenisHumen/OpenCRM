@@ -34,6 +34,8 @@ needs_sh = pytest.mark.skipif(shutil.which("sh") is None, reason="нужен POS
 #: ней — так повторный старт на той же ревизии ничего не переписывает.
 REVIZIA = "b2c8e4f1a396"
 
+MYSQL_URL = "mysql+pymysql://opencrm:parol@db:3306/opencrm?charset=utf8mb4"
+
 #: Голова миграций по умолчанию — ДРУГАЯ ревизия, то есть накатывать есть что.
 #: Это обычное состояние старта после обновления, и копия в нём обязательна.
 GOLOVA = "d4e1a83c2f60"
@@ -44,7 +46,7 @@ def _polozhit(put: Path, soderzhimoe: str) -> None:
     put.chmod(put.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
 
 
-def _stend(tmp_path: Path, *, db_url: str, sqlite_fayl: bool, golova: str = GOLOVA) -> dict:
+def _stend(tmp_path: Path, *, db_url: str = MYSQL_URL, golova: str = GOLOVA) -> dict:
     """Каталог с подставными python/sqlite3 и следом их вызовов."""
     dannye = tmp_path / "data"
     dannye.mkdir()
@@ -53,9 +55,6 @@ def _stend(tmp_path: Path, *, db_url: str, sqlite_fayl: bool, golova: str = GOLO
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     sled = tmp_path / "sled.txt"
-
-    if sqlite_fayl:
-        (dannye / "opencrm.db").write_text("не настоящая база", encoding="utf-8")
 
     # python: пишет в след свои аргументы, отвечает ревизией и «снимает» дамп,
     # создавая названный файл. Настоящий дамп здесь не нужен — проверяется
@@ -73,26 +72,11 @@ def _stend(tmp_path: Path, *, db_url: str, sqlite_fayl: bool, golova: str = GOLO
         "esac\n"
         "exit 0\n",
     )
-    # sqlite3: отдаёт ревизию и «снимает» копию, создавая файл.
-    _polozhit(
-        bin_dir / "sqlite3",
-        "#!/bin/sh\n"
-        f'echo "sqlite3 $*" >> "{sled.as_posix()}"\n'
-        "case \"$2\" in\n"
-        f"    *alembic_version*) echo {REVIZIA} ;;\n"
-        "    .backup*)\n"
-        "        put=$(echo \"$2\" | sed \"s/^.backup '//;s/'$//\")\n"
-        "        echo копия > \"$put\"\n"
-        "        ;;\n"
-        "esac\n"
-        "exit 0\n",
-    )
-
     okruzhenie = dict(os.environ)
     okruzhenie.update(
         {
             "PATH": bin_dir.as_posix() + os.pathsep + os.environ.get("PATH", ""),
-            "OPENCRM_DB_FILE": (dannye / "opencrm.db").as_posix(),
+            "OPENCRM_DATA_DIR": dannye.as_posix(),
             "OPENCRM_STORAGE_DIR": hranilishche.as_posix(),
             "OPENCRM_DB_URL": db_url,
             "OPENCRM_WORKERS": "1",
@@ -117,13 +101,10 @@ def _kopii(stend: dict) -> list[str]:
     return sorted(p.name for p in stend["data"].iterdir() if "pre-migrate" in p.name)
 
 
-MYSQL_URL = "mysql+pymysql://opencrm:parol@db:3306/opencrm?charset=utf8mb4"
-
-
 @needs_sh
 def test_na_mysql_kopiya_snimaetsya(tmp_path):
     """Главная проверка находки: на MySQL копии не было вовсе."""
-    stend = _stend(tmp_path, db_url=MYSQL_URL, sqlite_fayl=False)
+    stend = _stend(tmp_path)
 
     itog = _zapustit(stend)
 
@@ -141,7 +122,7 @@ def test_na_mysql_kopiya_snimaetsya(tmp_path):
 @needs_sh
 def test_kopiya_mysql_snimaetsya_do_migracij(tmp_path):
     """Копия ПОСЛЕ миграций — это снимок уже испорченного состояния."""
-    stend = _stend(tmp_path, db_url=MYSQL_URL, sqlite_fayl=False)
+    stend = _stend(tmp_path)
 
     _zapustit(stend)
 
@@ -159,7 +140,7 @@ def test_povtornyy_start_ne_zatiraet_kopiyu(tmp_path):
     в том числе тем перезапуском, который случается уже ПОСЛЕ неудачной
     миграции. К моменту, когда беду замечают, возвращаться уже не к чему.
     """
-    stend = _stend(tmp_path, db_url=MYSQL_URL, sqlite_fayl=False)
+    stend = _stend(tmp_path)
     _zapustit(stend)
     kopii = _kopii(stend)
     assert len(kopii) == 1, kopii
@@ -181,7 +162,7 @@ def test_neudachnaya_kopiya_ostanavlivaet_zapusk(tmp_path):
     выглядит обычным, а откатить его нечем. Причина при этом обязана попасть на
     страницу обслуживания: контейнер в этот момент единственный, кто её знает.
     """
-    stend = _stend(tmp_path, db_url=MYSQL_URL, sqlite_fayl=False)
+    stend = _stend(tmp_path)
     # python, который не смог снять дамп.
     _polozhit(
         Path(stend["env"]["PATH"].split(os.pathsep)[0]) / "python",
@@ -200,26 +181,6 @@ def test_neudachnaya_kopiya_ostanavlivaet_zapusk(tmp_path):
         Path(stend["env"]["OPENCRM_STORAGE_DIR"]) / "branding" / "update-state.json"
     ).read_text(encoding="utf-8")
     assert '"phase":"failed"' in sostoyanie, sostoyanie
-
-
-@needs_sh
-def test_na_sqlite_vsyo_kak_bylo(tmp_path):
-    """Парная проверка: чинили MySQL — не сломали SQLite.
-
-    Без неё «починку» легко доделать до того, что копия на SQLite перестанет
-    сниматься вовсе, и правило номер один переедет с одной базы на другую.
-    """
-    stend = _stend(tmp_path, db_url="sqlite:////app/data/opencrm.db", sqlite_fayl=True)
-
-    itog = _zapustit(stend)
-
-    assert itog.returncode == 0, itog.stderr
-    assert _kopii(stend) == [f"opencrm.db.pre-migrate-{REVIZIA}"], _kopii(stend)
-    sled = stend["sled"].read_text(encoding="utf-8")
-    assert ".backup" in sled, "копия SQLite снимается больше не через .backup"
-    assert "scripts.snapshot_db" not in sled, (
-        "на SQLite зовётся дампер MySQL — лишний путь, который никто не проверит"
-    )
 
 
 # --- копия нужна ПЕРЕД МИГРАЦИЯМИ, а не на каждом старте ----------------------
@@ -246,7 +207,7 @@ def test_na_sqlite_vsyo_kak_bylo(tmp_path):
 @needs_sh
 def test_bez_migraciy_kopiya_ne_snimaetsya(tmp_path):
     """Ревизия уже голова — накатывать нечего, и копия не нужна."""
-    stend = _stend(tmp_path, db_url=MYSQL_URL, sqlite_fayl=False, golova=REVIZIA)
+    stend = _stend(tmp_path, db_url=MYSQL_URL, golova=REVIZIA)
 
     itog = _zapustit(stend)
 
@@ -257,27 +218,13 @@ def test_bez_migraciy_kopiya_ne_snimaetsya(tmp_path):
 
 
 @needs_sh
-def test_bez_migraciy_kopiya_ne_snimaetsya_i_na_sqlite(tmp_path):
-    """Правило одно на обе базы, иначе оно не правило."""
-    stend = _stend(
-        tmp_path, db_url="sqlite:////app/data/opencrm.db", sqlite_fayl=True, golova=REVIZIA
-    )
-
-    itog = _zapustit(stend)
-
-    assert itog.returncode == 0, itog.stderr
-    assert _kopii(stend) == [], "копия снята там, где мигрировать нечего"
-    assert ".backup" not in stend["sled"].read_text(encoding="utf-8")
-
-
-@needs_sh
 def test_est_chto_nakatyvat_kopiya_snimaetsya(tmp_path):
     """Парная проверка: «дешевле» не значит «без копии».
 
     Без неё починку легко доделать до того, что копия перестанет сниматься
     вовсе, и правило номер один держалось бы на честном слове.
     """
-    stend = _stend(tmp_path, db_url=MYSQL_URL, sqlite_fayl=False, golova="sovsem-drugaya")
+    stend = _stend(tmp_path, db_url=MYSQL_URL, golova="sovsem-drugaya")
 
     itog = _zapustit(stend)
 
@@ -292,7 +239,7 @@ def test_nevnyatnaya_golova_ne_otmenyaet_kopiyu(tmp_path):
     Незнание не повод пропустить копию: цена ошибки здесь несимметрична —
     лишняя копия стоит места, отсутствующая стоит данных.
     """
-    stend = _stend(tmp_path, db_url=MYSQL_URL, sqlite_fayl=False)
+    stend = _stend(tmp_path)
     # alembic, который ничего не ответил (нет каталога версий, чужая ошибка).
     _polozhit(
         Path(stend["env"]["PATH"].split(os.pathsep)[0]) / "python",
@@ -314,7 +261,7 @@ def test_nevnyatnaya_golova_ne_otmenyaet_kopiyu(tmp_path):
 @needs_sh
 def test_dve_golovy_ne_otmenyayut_kopiyu(tmp_path):
     """Незакрытое ветвление миграций: «уже голова» в таком дереве не определить."""
-    stend = _stend(tmp_path, db_url=MYSQL_URL, sqlite_fayl=False)
+    stend = _stend(tmp_path)
     _polozhit(
         Path(stend["env"]["PATH"].split(os.pathsep)[0]) / "python",
         "#!/bin/sh\n"
@@ -340,7 +287,7 @@ def test_ogryzok_dampa_ot_proshloy_revizii_ubiraetsya(tmp_path):
     попадает, а имя у него своё, так что следующий старт его и не перезапишет.
     Проверено: 200 МБ мусора пережили перезапуск контейнера.
     """
-    stend = _stend(tmp_path, db_url=MYSQL_URL, sqlite_fayl=False)
+    stend = _stend(tmp_path)
     ogryzok = stend["data"] / "mysql.pre-migrate-starayarevizia.sql.part"
     ogryzok.write_text("оборванный дамп", encoding="utf-8")
 
@@ -386,7 +333,7 @@ def test_metka_kopii_odna_i_ta_zhe_v_oboih_mestah():
 
 def _stend_s_ozhidaniem(tmp_path: Path, otvetit_s_popytki: int) -> dict:
     """Стенд, где `ping` отвечает не сразу: база «поднимается» не мгновенно."""
-    stend = _stend(tmp_path, db_url=MYSQL_URL, sqlite_fayl=False)
+    stend = _stend(tmp_path)
     schyot = tmp_path / "ping.schyot"
     schyot.write_text("0", encoding="utf-8")
     _polozhit(
@@ -454,19 +401,3 @@ def test_baza_kotoraya_ne_podnyalas_vovse_govorit_ob_etom(tmp_path):
     assert "база не ответила" in itog.stderr, itog.stderr
     assert "logs db" in itog.stderr, "человеку не сказано, куда смотреть"
     assert _kopii(stend) == [], "копия снималась при неотвечающей базе"
-
-
-@needs_sh
-def test_na_sqlite_ozhidaniya_net(tmp_path):
-    """У файловой базы гонки нет вовсе — и ждать нечего.
-
-    Лишнее ожидание на SQLite стоило бы двух секунд на каждом старте и
-    появилось бы ровно там, где проблемы не существует.
-    """
-    stend = _stend(tmp_path, db_url="sqlite:////app/data/opencrm.db", sqlite_fayl=True)
-
-    itog = _zapustit(stend)
-
-    assert itog.returncode == 0, itog.stderr
-    assert "жду, пока база" not in itog.stdout
-    assert "snapshot_db ping" not in stend["sled"].read_text(encoding="utf-8")

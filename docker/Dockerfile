@@ -12,7 +12,7 @@ ENV PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1
 
 # ffmpeg — постеры и метаданные видео
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg sqlite3 \
+    && apt-get install -y --no-install-recommends ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

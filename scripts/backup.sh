@@ -6,10 +6,8 @@
 # Cron (на хосте):  0 3 * * *  /path/to/OpenCRM/scripts/backup.sh
 # Для Docker-томов запускать внутри контейнера app либо примонтировав тома.
 #
-# **База копируется тем способом, каким работает.** SQLite — файлом через
-# `.backup`, MySQL — дампом `mysqldump --single-transaction`. Копия обязана
-# сниматься одинаково полноценно в обоих случаях: система, переехавшая на
-# MySQL, не должна тихо остаться без копий вовсе.
+# **База копируется дампом `mysqldump --single-transaction`** — с одного
+# согласованного снимка и без блокировки работы.
 #
 # **Копия включает ключ шифрования, и это осознанно.** Без OPENCRM_SECRET_KEY
 # восстановленная база наполовину мертва: пароли почтовых ящиков зашифрованы им
@@ -26,7 +24,6 @@
 set -eu
 
 DB_URL="${OPENCRM_DB_URL:-sqlite}"
-DB_FILE="${OPENCRM_DB_FILE:-/app/data/opencrm.db}"
 STORAGE_DIR="${OPENCRM_STORAGE_DIR:-/app/storage}"
 BACKUP_DIR="${OPENCRM_BACKUP_DIR:-/app/data/backups}"
 
@@ -115,18 +112,9 @@ snyat_dump() {
     rm -f "$_cnf"
 }
 
-# 1) база — тем способом, каким она работает
-case "$DB_URL" in
-    mysql*)
-        DB_COPY="$BACKUP_DIR/daily/db-$STAMP.sql"
-        snyat_dump "$DB_COPY"
-        ;;
-    *)
-        # SQLite: .backup даёт консистентную копию на горячую
-        DB_COPY="$BACKUP_DIR/daily/db-$STAMP.db"
-        sqlite3 "$DB_FILE" ".backup '$DB_COPY'"
-        ;;
-esac
+# 1) база — дампом. База одна, и ветка одна.
+DB_COPY="$BACKUP_DIR/daily/db-$STAMP.sql"
+snyat_dump "$DB_COPY"
 
 # 2) storage: полный архив (файлы неизменяемые, дельта не критична для MVP)
 tar -czf "$BACKUP_DIR/daily/storage-$STAMP.tar.gz" -C "$STORAGE_DIR" .
