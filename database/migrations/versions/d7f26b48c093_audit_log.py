@@ -63,8 +63,8 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    with op.batch_alter_table("audit_events", schema=None) as batch_op:
-        batch_op.drop_index("ix_audit_events_actor")
-        batch_op.drop_index("ix_audit_events_entity")
-        batch_op.drop_index(batch_op.f("ix_audit_events_created_at"))
+    # Индексы отдельно не снимаем — их уносит `drop_table`, а на MySQL снятие
+    # индекса под живым внешним ключом отвергается (1553). Разбор — в откате
+    # `e4451c527c34`. Здесь на это упирался `ix_audit_events_actor`: он и есть
+    # индекс под ключ на `users` — о чём сказано парой строк выше, при создании.
     op.drop_table("audit_events")

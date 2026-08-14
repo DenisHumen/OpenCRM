@@ -179,19 +179,13 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_index("ix_finance_budgets_period", table_name="finance_budgets")
+    # Индексы отдельно не снимаем — их уносит `drop_table`, а на MySQL снятие
+    # индекса под живым внешним ключом отвергается (1553). Разбор — в откате
+    # `e4451c527c34`. Здесь на это упирался `ix_finance_ops_category_happened`:
+    # он же и есть индекс под ключ на `finance_categories`.
     op.drop_table("finance_budgets")
-
-    op.drop_index("ix_finance_ops_happened_amount", table_name="finance_operations")
-    op.drop_index("ix_finance_ops_category_happened", table_name="finance_operations")
-    op.drop_index("ix_finance_operations_author_id", table_name="finance_operations")
-    op.drop_index("ix_finance_operations_company_id", table_name="finance_operations")
-    op.drop_index("ix_finance_operations_client_id", table_name="finance_operations")
-    op.drop_index("ix_finance_operations_deal_id", table_name="finance_operations")
     op.drop_table("finance_operations")
 
     # Статьи — последними: на них ссылались обе таблицы выше, и RESTRICT не дал
     # бы снести справочник раньше того, что на него смотрит.
-    op.drop_index("ix_finance_categories_direction_name", table_name="finance_categories")
-    op.drop_index("ix_finance_categories_deleted_at", table_name="finance_categories")
     op.drop_table("finance_categories")

@@ -19,10 +19,12 @@ Create Date: 2026-08-11 10:00:00.000000
 без спроса — и владелец увидит это не раньше, чем сведёт кассу. Таблица
 создаётся пустой; «упаковка 80 / доставка 150» заводит человек на экране.
 
-Откат снимает индексы, внешние ключи, колонки и таблицу. Порядок обратный
-подъёму, и в нём есть одно жёсткое место: ссылку `finance_operations.rule_id`
-надо снять ДО того, как сносить `finance_rules`, — она стоит на RESTRICT, и
-иначе снос упрётся в неё.
+Откат снимает внешние ключи, индексы, колонки и таблицу — **именно в таком
+порядке**, а не обратно подъёму. Жёстких мест два: ссылку
+`finance_operations.rule_id` надо снять ДО сноса `finance_rules` (она на
+RESTRICT), а все три ссылки — до снятия индексов, потому что MySQL не даёт
+снять индекс, по которому проверяется живой внешний ключ. Подробности — в самом
+`downgrade`.
 """
 from typing import Sequence, Union
 
@@ -122,21 +124,28 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_index("ix_finance_ops_document", table_name="finance_operations")
-    op.drop_index("ix_finance_operations_corrects_id", table_name="finance_operations")
-    op.drop_index("ix_finance_operations_rule_id", table_name="finance_operations")
-
-    op.drop_index("ix_finance_rules_active_sort", table_name="finance_rules")
-    op.drop_index("ix_finance_rules_deleted_at", table_name="finance_rules")
-    op.drop_index("ix_finance_rules_source_category_id", table_name="finance_rules")
-    op.drop_index("ix_finance_rules_category_id", table_name="finance_rules")
-
-    # Ссылки снимаются вместе с колонками, и обязательно ДО сноса `finance_rules`:
+    # Ссылки — ПЕРВЫМИ, до индексов, и обязательно ДО сноса `finance_rules`:
     # `rule_id` стоит на RESTRICT.
+    #
+    # Порядок «сначала индексы» здесь и стоял, и на MySQL откат вставал первой
+    # же строкой: `Cannot drop index 'ix_finance_ops_document': needed in a
+    # foreign key constraint` (1553). Индекс под внешним ключом у MySQL один, и
+    # это как раз наш составной: свой служебный, заведённый при создании ключа,
+    # СУБД убирает, как только появляется годный явный. Снять его при живом
+    # ключе она не даёт вовсе. Разбор целиком — в откате `e4451c527c34`.
     with op.batch_alter_table("finance_operations") as batch:
         batch.drop_constraint("fk_finance_ops_corrects", type_="foreignkey")
         batch.drop_constraint("fk_finance_ops_document", type_="foreignkey")
         batch.drop_constraint("fk_finance_ops_rule", type_="foreignkey")
+
+    # Индексы — только у таблицы, которая переживёт откат. Снимаем их явно, а не
+    # надеемся на снос колонок: `ix_finance_ops_document` составной, и от него
+    # остался бы огрызок по (category_id, amount_minor).
+    op.drop_index("ix_finance_ops_document", table_name="finance_operations")
+    op.drop_index("ix_finance_operations_corrects_id", table_name="finance_operations")
+    op.drop_index("ix_finance_operations_rule_id", table_name="finance_operations")
+
+    with op.batch_alter_table("finance_operations") as batch:
         batch.drop_column("correction")
         batch.drop_column("corrects_id")
         batch.drop_column("document_id")
@@ -144,4 +153,5 @@ def downgrade() -> None:
         batch.drop_column("rate_bp")
         batch.drop_column("rule_id")
 
+    # Индексы самих правил уходят вместе с таблицей.
     op.drop_table("finance_rules")

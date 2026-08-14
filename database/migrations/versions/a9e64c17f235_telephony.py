@@ -122,16 +122,9 @@ def downgrade() -> None:
         batch_op.drop_index(batch_op.f('ix_clients_phone_norm'))
         batch_op.drop_column('phone_norm')
 
-    with op.batch_alter_table('phone_calls', schema=None) as batch_op:
-        batch_op.drop_index(batch_op.f('ix_phone_calls_note_id'))
-        batch_op.drop_index(batch_op.f('ix_phone_calls_user_id'))
-        batch_op.drop_index(batch_op.f('ix_phone_calls_deal_id'))
-        batch_op.drop_index(batch_op.f('ix_phone_calls_client_id'))
-        batch_op.drop_index(batch_op.f('ix_phone_calls_outcome'))
-        batch_op.drop_index(batch_op.f('ix_phone_calls_started_at'))
-        batch_op.drop_index(batch_op.f('ix_phone_calls_to_number_norm'))
-        batch_op.drop_index(batch_op.f('ix_phone_calls_from_number_norm'))
-        batch_op.drop_index(batch_op.f('ix_phone_calls_external_id'))
+    # Индексы журнала отдельно не снимаем — их уносит `drop_table`, а на MySQL
+    # снятие индекса под живым внешним ключом отвергается (1553). Разбор — в
+    # откате `e4451c527c34`. Здесь на это упирался `ix_phone_calls_note_id`.
     op.drop_table('phone_calls')
 
     # Записи ленты, созданные звонками, остаются: это часть истории общения с

@@ -55,6 +55,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_index("ix_product_barcodes_product_id", table_name="product_barcodes")
-    op.drop_index("ix_product_barcodes_code", table_name="product_barcodes")
+    # Индексы отдельно не снимаем — их уносит `drop_table`, а на MySQL снятие
+    # индекса под живым внешним ключом отвергается (1553). Разбор — в откате
+    # `e4451c527c34`. Здесь на это упирался `ix_product_barcodes_product_id`.
     op.drop_table("product_barcodes")

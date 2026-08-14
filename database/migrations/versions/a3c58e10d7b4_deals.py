@@ -77,16 +77,9 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    with op.batch_alter_table('deal_stage_changes', schema=None) as batch_op:
-        batch_op.drop_index(batch_op.f('ix_deal_stage_changes_changed_at'))
-        batch_op.drop_index(batch_op.f('ix_deal_stage_changes_deal_id'))
+    # Индексы отдельно не снимаем — их уносит `drop_table`, а на MySQL снятие
+    # индекса под живым внешним ключом отвергается (1553). Разбор — в откате
+    # `e4451c527c34`. Здесь на это упирались `ix_deal_stage_changes_deal_id` и
+    # `ix_deals_client_id`.
     op.drop_table('deal_stage_changes')
-
-    with op.batch_alter_table('deals', schema=None) as batch_op:
-        for name in (
-            'ix_deals_deleted_at', 'ix_deals_created_at', 'ix_deals_closed_at',
-            'ix_deals_due_at', 'ix_deals_sort_order', 'ix_deals_stage',
-            'ix_deals_manager_id', 'ix_deals_client_id', 'ix_deals_title',
-        ):
-            batch_op.drop_index(batch_op.f(name))
     op.drop_table('deals')
