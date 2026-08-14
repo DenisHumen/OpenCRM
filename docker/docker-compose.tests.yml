@@ -1,0 +1,70 @@
+name: opencrm-tests
+
+# Ворота деплоя: набор тестов против НАСТОЯЩЕЙ базы.
+#
+# Пока база была файлом, тесты гонялись прямо в сборке образа
+# (`docker build --target tests` — pytest в слое). Так больше нельзя: во время
+# сборки сети между контейнерами нет, а набору нужен сервер базы.
+#
+# Отсюда отдельный файл. Он поднимает СВОЮ MySQL — не боевую:
+#
+#   - своё имя проекта (`opencrm-tests`), то есть своя сеть и свои имена
+#     контейнеров: перепутать с боевым стеком нельзя даже опечаткой;
+#   - данные в tmpfs, то есть в памяти. Ничего не остаётся на диске, чистить
+#     нечего, и повторный прогон всегда начинается с пустой базы;
+#   - крошечный буфер и выключенный performance_schema: замерено — 330 МиБ
+#     против ~700 у настроек по умолчанию. Контейнер живёт минуты, ровно на
+#     время проверки, и на VPS это терпимо.
+#
+# Гейт зовёт это так:
+#     docker compose -f docker/docker-compose.tests.yml up \
+#         --abort-on-container-exit --exit-code-from tests
+# и получает код возврата самого pytest.
+
+services:
+  db-test:
+    image: mysql:8.0
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+      # Память вместо диска: набор пишет много и коротко, а сохранности здесь
+      # не нужно вовсе — база живёт один прогон.
+      - --innodb-buffer-pool-size=128M
+      - --innodb-flush-method=O_DIRECT_NO_FSYNC
+      - --performance-schema=0
+      # Пароль тут не секрет и не может им быть: контейнер живёт минуты в своей
+      # сети, наружу не смотрит и данных не хранит. Прятать его в файл значило
+      # бы завести ещё одно место, где что-то может разъехаться.
+      - --skip-log-bin
+    environment:
+      MYSQL_ROOT_PASSWORD: testy
+      MYSQL_DATABASE: opencrm_test
+    tmpfs:
+      - /var/lib/mysql:rw,size=1g
+    healthcheck:
+      # По TCP, а не через сокет: сокет отвечает РАНЬШЕ, чем сервер начинает
+      # слушать порт (первый запуск поднимает временный сервер, чтобы создать
+      # базу). Тот же урок, что у боевой службы `db`.
+      test: ["CMD-SHELL", "MYSQL_PWD=testy mysqladmin ping -h 127.0.0.1 -P 3306 --protocol=TCP --silent"]
+      start_period: 60s
+      interval: 3s
+      timeout: 5s
+      retries: 20
+
+  tests:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      target: tests
+    environment:
+      # Адрес базы для набора. Тот же шов, которым набор гоняют вручную
+      # (tests/conftest.py): без переменной он пошёл бы на файл, а нам нужен
+      # именно сервер — ровно тот, на котором работает боевой.
+      OPENCRM_TEST_DB_URL: mysql+pymysql://root:testy@db-test:3306/opencrm_test?charset=utf8mb4
+      PYTHONDONTWRITEBYTECODE: "1"
+    depends_on:
+      db-test:
+        condition: service_healthy
+    # `-p no:cacheprovider`: писать .pytest_cache в образ незачем, а на
+    # read-only слоях это ещё и отказ.
+    command: python -m pytest -q -p no:cacheprovider

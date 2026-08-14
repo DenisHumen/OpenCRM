@@ -1232,13 +1232,19 @@ def test_razmer_bazy_sprashivaetsya_u_servera(tmp_path):
     от «база исчезла», отсутствие точки видно как отсутствие.
     """
     from database.repositories import engine_info
-    from database.session import SessionLocal
+    from database.session import SessionLocal, engine
 
     db = SessionLocal()
     try:
-        assert engine_info.database_size_bytes(db) is None
+        razmer = engine_info.database_size_bytes(db)
     finally:
         db.close()
+    if engine.dialect.name == "mysql":
+        assert razmer and razmer > 0, "сервер не сказал размер своей базы"
+    else:
+        # Чужой движок — молчание, а не выдумка: ноль на графике неотличим от
+        # «база исчезла», а отсутствие точки видно как отсутствие.
+        assert razmer is None
 
 def test_na_mysql_razmer_sprashivaetsya_zaprosom_a_ne_molchaniem():
     """Живого MySQL в наборе нет, поэтому стережём связку, а не число.
