@@ -14,7 +14,11 @@ os.environ.update(
     {
         "OPENCRM_ENV": "test",
         "OPENCRM_SECRET_KEY": "test-secret-key",
-        "OPENCRM_DB_URL": f"sqlite:///{(_TMP / 'test.db').as_posix()}",
+        # Адрес базы для набора. Берётся из окружения, если задан: так один и
+        # тот же набор гоняется и против настоящей MySQL, и (пока) против файла.
+        "OPENCRM_DB_URL": os.environ.get(
+            "OPENCRM_TEST_DB_URL", f"sqlite:///{(_TMP / 'test.db').as_posix()}"
+        ),
         "OPENCRM_STORAGE_DIR": str(_TMP / "storage"),
         "OPENCRM_BASE_URL": "http://testserver",
         "OPENCRM_ROOT_EMAIL": "root@test.local",
