@@ -15,7 +15,7 @@ Two worlds in one product:
 ## Principles
 
 - Backend in Python (FastAPI), frontend in React + TypeScript.
-- SQLite to start, with a clean path to MySQL (SQLAlchemy + Alembic).
+- MySQL 8 for the data, with Redis alongside; the schema is brought up to date by migrations on its own (SQLAlchemy + Alembic).
 - Work files live on the server, next to the application.
 - Clients never register — boards are reachable by link only, with an optional PIN and expiry date.
 - Staff sign up themselves; accounts are approved by root, the built-in superuser.
@@ -29,7 +29,7 @@ Everything lives in [docs](docs/README.md). **The documentation is written in Ru
 |---|---|
 | [01 — Overview](docs/01-overview.md) | Concept, roles, usage scenarios |
 | [02 — Architecture](docs/02-architecture.md) | Stack, directory layout, modules, media pipeline |
-| [03 — Database](docs/03-database.md) | Schema, tables, SQLite → MySQL migrations |
+| [03 — Database](docs/03-database.md) | Schema, tables, migrations |
 | [04 — API](docs/04-api.md) | REST API specification |
 | [05 — CRM design](docs/05-crm-design.md) | Design notes for the CRM interface |
 | [06 — Showcase design](docs/06-showcase-design.md) | Public showcase concept, animations, controls |

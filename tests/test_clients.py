@@ -39,8 +39,8 @@ def test_client_crud_and_search(manager_client):
 
 
 def test_search_is_case_insensitive_for_cyrillic(manager_client):
-    # SQLite сравнивает не-ASCII с учётом регистра, поэтому lower() подменён
-    # на Unicode-версию: без этого «брусника» не находила «Брусника»
+    # Регистр приводится заранее, одной `search_norm` на запись и на запрос:
+    # без этого «брусника» не находила «Брусника»
     created = _create(
         manager_client, name="Анна Ковалёва", company="Кофейня «Брусника»", tags=["Логотип"]
     )
