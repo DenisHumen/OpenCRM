@@ -279,23 +279,20 @@ def test_kopii_i_vosstanovlenie_vidyat_dampy():
     assert "db-*.sql" in vosstanovlenie, "дамп нельзя выбрать для восстановления"
 
 
-def test_kopiya_ot_chuzhoy_bazy_otvergaetsya_do_ostanovki_sayta():
-    """Дамп MySQL не заливается в SQLite, а файл SQLite — в MySQL.
+def test_chuzhaya_kopiya_otvergaetsya_do_ostanovki_sayta():
+    """Файл SQLite от прежней установки заливать некуда.
 
-    Сказать об этом до `compose stop app` дешевле, чем после: иначе сайт
-    остановлен, восстановление не состоялось, и человек остался с лежащим
+    Копии от старых времён лежат в том же каталоге, и выбрать такую можно по
+    ошибке. Сказать об этом до `compose stop app` дешевле, чем после: иначе
+    сайт остановлен, восстановление не состоялось, и человек остался с лежащим
     сайтом и без объяснения.
     """
     text = _script()
     vosstanovlenie = text[text.index("cmd_restore() {"): text.index("cmd_https()")]
-    # И сама сверка, и её место. Ветки `*.sql:sqlite` остаются на виду, даже
-    # если разбирать перестали то, что нужно, — поэтому проверяется и то, ЧТО
-    # подставляют в case.
-    assert 'case "$_db:$(db_engine)" in' in vosstanovlenie, "вид копии не сверяют с базой"
-    proverka = vosstanovlenie.index("*.sql:sqlite")
+    assert "*.db)" in vosstanovlenie, "вид копии не проверяется вовсе"
+    proverka = vosstanovlenie.index("*.db)")
     ostanovka = vosstanovlenie.index("compose stop app")
     assert proverka < ostanovka, "несовместимость замечают уже после остановки сайта"
-
 
 def test_bekap_snimaet_damp_v_konteynere_bazy():
     """Клиента mysqldump в образе приложения нет — он лежит в образе базы.

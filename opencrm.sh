@@ -760,18 +760,6 @@ home_dir() {
     printf '%s' "$_home"
 }
 
-# На чём работает установка: mysql или sqlite.
-#
-# Единственный признак — сам URL в config/.env. Отдельного флага «мы на MySQL»
-# нарочно нет: два источника правды о том, где лежат данные, рано или поздно
-# разъезжаются, и разъехавшись отправляют копию не в ту базу.
-db_engine() {
-    case "$(env_get "$APP_ENV" OPENCRM_DB_URL 2>/dev/null || true)" in
-        mysql*) printf 'mysql' ;;
-        *)      printf 'sqlite' ;;
-    esac
-}
-
 # --------------------------------------------------------------------------
 # Профили compose
 # --------------------------------------------------------------------------
@@ -1310,7 +1298,7 @@ configure_docker_env() {
 create_dirs() {
     step "$(tr_ "Каталоги состояния" "State directories")"
     _home=$(home_dir)
-    # mysql создаётся всегда, даже на SQLite: пустой каталог не стоит ничего, а
+    # mysql создаётся всегда: пустой каталог не стоит ничего, а
     # созданный докером на лету принадлежал бы root — и служба базы, включённая
     # позже, упёрлась бы в права на своём же каталоге данных.
     for _sub in data storage letsencrypt acme updates mysql; do
@@ -1621,11 +1609,7 @@ show_summary() {
     # Где лежат данные — то, что спрашивают первым, когда приходит время
     # копий, переезда или разбора аварии. Сказать один раз в конце установки
     # дешевле, чем потом выяснять по конфигам.
-    if [ "$(db_engine)" = "mysql" ]; then
-        say "$(tr_ "  База:   MySQL в контейнере db, данные в $(home_dir)/mysql" "  Database: MySQL in container db, files in $(home_dir)/mysql")"
-    else
-        say "$(tr_ "  База:   SQLite, $(home_dir)/data/opencrm.db" "  Database: SQLite, $(home_dir)/data/opencrm.db")"
-    fi
+    say "$(tr_ "  База:   MySQL в контейнере db, данные в $(home_dir)/mysql" "  Database: MySQL in container db, files in $(home_dir)/mysql")"
     if compose_profile_enabled monitoring; then
         say "$(tr_ "  Мониторинг: ${_url}/monitoring/  (логин admin)" "  Monitoring: ${_url}/monitoring/  (login admin)")"
         if [ -n "$MONITORING_PASSWORD_SHOWN" ]; then
@@ -2069,28 +2053,23 @@ dump_mysql() {
 cmd_backup() {
     need_install
     step "$(tr_ "Резервная копия" "Backup")"
-    if [ "$(db_engine)" = "mysql" ]; then
-        _incoming="$(home_dir)/data/backups/incoming.sql"
-        mkdir -p "$(home_dir)/data/backups"
-        info "$(tr_ "снимаю дамп MySQL" "taking the MySQL dump")"
-        if ! dump_mysql "$_incoming"; then
-            # Недоснятый дамп убираем сразу: файл, оставшийся от оборванного
-            # снятия, в следующий раз выглядел бы как готовая копия.
-            rm -f "$_incoming"
-            die "$(tr_ "не удалось снять дамп MySQL — ./opencrm.sh logs db" "could not take the MySQL dump — ./opencrm.sh logs db")"
-        fi
-        # Дальше всё как всегда: имя по дате, архив storage, ключ шифрования,
-        # ротация и проверка годности — это одно и то же для обеих баз и живёт
-        # в одном месте, в scripts/backup.sh.
-        #
-        # Путь передаётся такой, каким его видит контейнер приложения:
-        # $OPENCRM_HOME/data смонтирован в нём как /app/data (docker-compose.yml),
-        # то есть это тот же самый файл, что мы только что записали.
-        run_painted compose exec -T -e OPENCRM_DB_DUMP=/app/data/backups/incoming.sql \
-            app sh scripts/backup.sh
-    else
-        run_painted compose exec -T app sh scripts/backup.sh
+    _incoming="$(home_dir)/data/backups/incoming.sql"
+    mkdir -p "$(home_dir)/data/backups"
+    info "$(tr_ "снимаю дамп базы" "taking the database dump")"
+    if ! dump_mysql "$_incoming"; then
+        # Недоснятый дамп убираем сразу: файл, оставшийся от оборванного
+        # снятия, в следующий раз выглядел бы как готовая копия.
+        rm -f "$_incoming"
+        die "$(tr_ "не удалось снять дамп — ./opencrm.sh logs db" "could not take the dump — ./opencrm.sh logs db")"
     fi
+    # Дальше всё как всегда: имя по дате, архив storage, ключ шифрования,
+    # ротация и проверка годности — это живёт в одном месте, scripts/backup.sh.
+    #
+    # Путь передаётся такой, каким его видит контейнер приложения:
+    # $OPENCRM_HOME/data смонтирован в нём как /app/data (docker-compose.yml),
+    # то есть это тот же самый файл, что мы только что записали.
+    run_painted compose exec -T -e OPENCRM_DB_DUMP=/app/data/backups/incoming.sql \
+        app sh scripts/backup.sh
     ok "$(tr_ "готово: $(home_dir)/data/backups" "done: $(home_dir)/data/backups")"
 }
 
@@ -2100,7 +2079,7 @@ cmd_restore() {
     _dir="$(home_dir)/data/backups/daily"
     [ -d "$_dir" ] || die "$(tr_ "копий ещё нет ($_dir)" "no backups yet ($_dir)")"
     say ""
-    # Оба вида разом: db-ГГГГ-ММ-ДД.db — SQLite, db-ГГГГ-ММ-ДД.sql — дамп MySQL.
+    # Копии называются db-ГГГГ-ММ-ДД.sql — это дамп.
     # Список общий нарочно: базу меняли, а копии от прежней остались лежать
     # рядом, и прятать их значило бы объявить их несуществующими.
     # shellcheck disable=SC2012  # имена копий делает сам скрипт
@@ -2116,50 +2095,40 @@ cmd_restore() {
     [ -f "$_storage" ] || die "$(tr_ "нет пары к базе: $_storage" "no storage archive to match the database: $_storage")"
 
     # Копию от другой базы восстановить нельзя: дамп MySQL не заливается в
-    # SQLite, а файл SQLite не заливается в MySQL. Сказать об этом до
-    # остановки сайта дешевле, чем после.
-    case "$_db:$(db_engine)" in
-        *.sql:sqlite) die "$(tr_ "это дамп MySQL, а установка работает на SQLite" "this is a MySQL dump, but the installation runs on SQLite")" ;;
-        *.db:mysql)   die "$(tr_ "это файл SQLite, а установка работает на MySQL — перенос делает scripts/migrate_to_mysql.py" "this is an SQLite file, but the installation runs on MySQL — use scripts/migrate_to_mysql.py")" ;;
+    # Файл SQLite среди копий может остаться от прежних времён. Заливать его
+    # некуда, и сказать об этом надо ДО остановки сайта.
+    case "$_db" in
+        *.db) die "$(tr_ "это файл SQLite от прежней установки — заливать его некуда" "this is an SQLite file from an older installation — there is nowhere to load it")" ;;
     esac
 
     warn "$(tr_ "текущие данные будут заменены копией от $_stamp" "current data will be replaced by the backup from $_stamp")"
     confirm "$(tr_ "    Продолжить?" "    Continue?")" n || { info "$(tr_ "отменено" "cancelled")"; return 0; }
     run_painted compose stop app
 
-    if [ "$(db_engine)" = "mysql" ]; then
-        # Текущее состояние — в сторону, а не в /dev/null: то же правило, что и
-        # у SQLite в scripts/restore.sh, только вместо переименования файла
-        # приходится снимать дамп. Без него откат неудачного восстановления
-        # некуда делать.
-        _before="$(home_dir)/data/backups/db-before-restore-$(date +%Y%m%d-%H%M%S).sql"
-        info "$(tr_ "снимаю дамп текущей базы: $_before" "dumping the current database to $_before")"
-        if ! dump_mysql "$_before"; then
-            rm -f "$_before"
-            run_painted compose up -d
-            die "$(tr_ "не удалось снять дамп текущей базы — ничего не менял" "could not dump the current database — nothing was changed")"
-        fi
-        # Заливаем клиентом из образа базы, по той же причине, что и дамп.
-        # Пароль опять разворачивается внутри контейнера.
-        info "$(tr_ "заливаю дамп" "loading the dump")"
-        # shellcheck disable=SC2016  # пароль раскрывается внутри контейнера, см. dump_mysql
-        if ! compose exec -T db sh -c 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" exec mysql --default-character-set=utf8mb4 -u root "$MYSQL_DATABASE"' < "$_db"; then
-            run_painted compose up -d
-            die "$(tr_ "дамп не залился — прежняя база осталась как была, её копия в $_before" "the dump did not load — the previous database is unchanged, its copy is at $_before")"
-        fi
-        # storage восстанавливаем прежним путём, а базу приложению трогать
-        # нечем — она уже на месте.
-        run_painted compose run --rm -T --entrypoint sh -e OPENCRM_SKIP_DB=1 app scripts/restore.sh \
-            "/app/data/backups/daily/$(basename "$_db")" \
-            "/app/data/backups/daily/$(basename "$_storage")"
-    else
-        # --entrypoint sh обязателен: у образа ENTRYPOINT — это entrypoint.sh, и
-        # `compose run app <команда>` передаёт команду ему аргументами, а не вместо
-        # него. Без переопределения вместо восстановления поднимался бы uvicorn.
-        run_painted compose run --rm -T --entrypoint sh app scripts/restore.sh \
-            "/app/data/backups/daily/$(basename "$_db")" \
-            "/app/data/backups/daily/$(basename "$_storage")"
+    # Текущее состояние — в сторону, а не в /dev/null: без него откат
+    # неудачного восстановления делать некуда.
+    _before="$(home_dir)/data/backups/db-before-restore-$(date +%Y%m%d-%H%M%S).sql"
+    info "$(tr_ "снимаю дамп текущей базы: $_before" "dumping the current database to $_before")"
+    if ! dump_mysql "$_before"; then
+        rm -f "$_before"
+        run_painted compose up -d
+        die "$(tr_ "не удалось снять дамп текущей базы — ничего не менял" "could not dump the current database — nothing was changed")"
     fi
+    # Заливаем клиентом из образа базы, по той же причине, что и дамп.
+    # Пароль опять разворачивается внутри контейнера.
+    info "$(tr_ "заливаю дамп" "loading the dump")"
+    # shellcheck disable=SC2016  # пароль раскрывается внутри контейнера, см. dump_mysql
+    if ! compose exec -T db sh -c 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" exec mysql --default-character-set=utf8mb4 -u root "$MYSQL_DATABASE"' < "$_db"; then
+        run_painted compose up -d
+        die "$(tr_ "дамп не залился — прежняя база осталась как была, её копия в $_before" "the dump did not load — the previous database is unchanged, its copy is at $_before")"
+    fi
+    # storage восстанавливаем прежним путём, а базу приложению трогать нечем —
+    # она уже на месте.
+    #
+    # --entrypoint sh обязателен: у образа ENTRYPOINT — это entrypoint.sh, и
+    # `compose run app <команда>` передаёт команду ему аргументами, а не вместо
+    # него. Без переопределения вместо восстановления поднимался бы uvicorn.
+    run_painted compose run --rm -T --entrypoint sh -e OPENCRM_SKIP_DB=1 app scripts/restore.sh         "/app/data/backups/daily/$(basename "$_db")"         "/app/data/backups/daily/$(basename "$_storage")"
     run_painted compose up -d
     if wait_health 60; then
         ok "$(tr_ "восстановлено, сайт отвечает" "restored, the site is answering")"
@@ -2511,19 +2480,15 @@ cmd_doctor() {
         *)       probe "$(tr_ "права .env" ".env mode")" 0 "$(tr_ "$_mode — секреты видны всем; чинится ./opencrm.sh install" "$_mode — secrets readable by everyone; fixed by ./opencrm.sh install")" ;;
     esac
 
-    # На чём работает база и поднята ли она. Строка нужна не ради любопытства:
-    # почти всё остальное — от копий до восстановления — идёт разными путями
-    # для файла и для сервера, и первым делом надо знать, какой из них ваш.
-    if [ "$(db_engine)" = "mysql" ]; then
-        if compose ps db 2>/dev/null | grep -q "healthy"; then
-            probe "$(tr_ "база" "database")" 1 "MySQL ($(tr_ "контейнер db здоров" "container db is healthy"))"
-        elif compose ps db 2>/dev/null | grep -q "db"; then
-            probe "$(tr_ "база" "database")" 0 "MySQL ($(tr_ "контейнер db не здоров — ./opencrm.sh logs db" "container db is not healthy — ./opencrm.sh logs db"))"
-        else
-            probe "$(tr_ "база" "database")" 0 "$(tr_ "URL ведёт на MySQL, а службы db в стеке нет — проверьте COMPOSE_PROFILES в docker/.env" "the URL points at MySQL but there is no db service in the stack — check COMPOSE_PROFILES in docker/.env")"
-        fi
+    # Поднята ли база. Строка нужна не ради любопытства: почти всё остальное —
+    # от копий до восстановления — идёт через неё, и первым делом надо знать,
+    # жива ли она вообще.
+    if compose ps db 2>/dev/null | grep -q "healthy"; then
+        probe "$(tr_ "база" "database")" 1 "MySQL ($(tr_ "контейнер db здоров" "container db is healthy"))"
+    elif compose ps db 2>/dev/null | grep -q "db"; then
+        probe "$(tr_ "база" "database")" 0 "MySQL ($(tr_ "контейнер db не здоров — ./opencrm.sh logs db" "container db is not healthy — ./opencrm.sh logs db"))"
     else
-        probe "$(tr_ "база" "database")" 1 "SQLite ($(home_dir)/data/opencrm.db)"
+        probe "$(tr_ "база" "database")" 0 "$(tr_ "службы db в стеке нет — ./opencrm.sh logs db" "there is no db service in the stack — ./opencrm.sh logs db")"
     fi
 
     # Общий счётчик попыток. Строка стоит рядом с базой не случайно: это
@@ -2704,13 +2669,10 @@ cmd_doctor() {
         probe "$(tr_ "сеть сборки" "build network")" 0 "$(tr_ "контейнеры без DNS — обновление не соберётся; ./opencrm.sh firewall" "containers have no DNS — updates will not build; ./opencrm.sh firewall")"
     fi
 
-    # Оба вида: .db — файл SQLite, .sql — дамп MySQL. Смотреть только на .db
-    # значило бы на установке с MySQL всегда докладывать «ни одной копии» —
-    # ровно то сообщение, после которого перестают верить всей строке.
     # shellcheck disable=SC2012  # имена копий делает сам скрипт
-    _last=$(ls -1t "$(home_dir)"/data/backups/daily/db-*.db "$(home_dir)"/data/backups/daily/db-*.sql 2>/dev/null | head -n 1)
+    _last=$(ls -1t "$(home_dir)"/data/backups/daily/db-*.sql 2>/dev/null | head -n 1)
     if [ -n "$_last" ]; then
-        _stamp_last=$(basename "$_last" | sed 's/^db-//; s/\.db$//; s/\.sql$//')
+        _stamp_last=$(basename "$_last" | sed 's/^db-//; s/\.sql$//')
         probe "$(tr_ "копии" "backups")" 1 "$(tr_ "последняя" "latest"): $_stamp_last"
     else
         probe "$(tr_ "копии" "backups")" 0 "$(tr_ "ни одной копии — ./opencrm.sh backup" "none yet — ./opencrm.sh backup")"
