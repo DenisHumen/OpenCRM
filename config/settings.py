@@ -24,6 +24,10 @@ class Settings(BaseSettings):
     #: зашит в образ, и потерять его нельзя, не собрав другой образ.
     deployed: bool = False
     secret_key: str = DEV_SECRET_KEY
+    #: Адрес базы. Умолчание — файловое и годится ровно для тестов и для
+    #: первого запуска до установки: боевой адрес пишет `./opencrm.sh` в
+    #: config/.env, и без него приложение в production не поднимется вовсе
+    #: (см. `config_errors`).
     db_url: str = f"sqlite:///{(BASE_DIR / 'data' / 'opencrm.db').as_posix()}"
     #: Адрес Redis: общий счётчик попыток входа, PIN и потока заявок.
     #:
