@@ -413,3 +413,69 @@ def test_menyu_obsluzhivaniya_snachala_govorit_kak_seychas():
     assert fn.index("status") < fn.index("menu_item 1"), (
         "выбор предлагается раньше, чем сказано текущее состояние"
     )
+
+
+# --- терминал не должен оставаться сырым ---------------------------------------
+#
+# Поймано на боевом. `compose run` по умолчанию выделяет контейнеру
+# псевдотерминал и ради этого переводит НАШ терминал в сырой режим. Обычно
+# docker возвращает его как было, но вывод здесь уходит в пайп раскраски
+# (`run_painted … | paint`), и возврат срабатывает не всегда.
+#
+# После переезда меню отрисовывалось ЦЕЛИКОМ и вставало на `read`: ввод перестал
+# быть построчным, `read` не дожидался перевода строки, а Ctrl+C не доходил как
+# сигнал — ISIG в сыром режиме выключен. Со стороны неотличимо от зависшего
+# скрипта, выход один: переподключиться по ssh.
+
+
+def test_zahody_v_konteyner_ne_prosyat_terminal():
+    """`-T` у каждого `compose run`/`compose exec`: терминал им не нужен.
+
+    Проверка механическая и без списка исключений: список рядом с правилом
+    устаревает первым, а следующая команда без `-T` сломает ровно то же самое.
+    """
+    text = source()
+    bez_t = []
+    for nomer, stroka in enumerate(text.splitlines(), 1):
+        golaya = stroka.strip()
+        if golaya.startswith("#"):
+            continue
+        for komanda in ("compose run", "compose exec"):
+            if komanda not in golaya:
+                continue
+            # Строка может переноситься — берём её вместе с продолжением.
+            celaya = golaya
+            hvost = text.splitlines()[nomer:]
+            while celaya.endswith("\\") and hvost:
+                celaya = celaya[:-1] + " " + hvost.pop(0).strip()
+            if " -T " not in f" {celaya} ":
+                bez_t.append(f"{nomer}: {golaya[:90]}")
+    assert not bez_t, (
+        "заход в контейнер без -T просит псевдотерминал и оставляет наш "
+        "терминал сырым:\n  " + "\n  ".join(bez_t)
+    )
+
+
+def test_menyu_vozvrashchaet_terminal_kak_bylo():
+    """Меню — пострадавшая сторона, и обязано прибирать за любой командой.
+
+    Причину чинят выше, но исход «пришлось переподключаться по ssh» не должен
+    зависеть от аккуратности каждой отдельной команды.
+    """
+    text = source()
+    # Только исполняемые строки: `stty sane` упомянут в комментарии рядом —
+    # там объяснено, почему им не пользуются.
+    kod = "\n".join(s for s in text.splitlines() if not s.strip().startswith("#"))
+    assert "stty -g" in kod, "состояние терминала нигде не запоминается"
+    assert "stty sane" not in kod, (
+        "`stty sane` навязывает свои настройки тому, у кого они намеренно другие"
+    )
+    menyu = text[text.index("menu() {") : text.index("usage() {")]
+    assert "tty_zapomnit" in menyu, "меню не запоминает состояние терминала"
+    assert "tty_vernut" in menyu, "меню не возвращает состояние терминала"
+    assert menyu.index("tty_zapomnit") < menyu.index("while :;"), (
+        "состояние запоминается внутри цикла — то есть уже испорченным"
+    )
+    assert menyu.index("tty_vernut") < menyu.index("menu_header"), (
+        "терминал возвращают после отрисовки — прибирать надо ДО неё"
+    )
