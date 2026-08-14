@@ -1,24 +1,21 @@
 """Годна ли резервная копия к восстановлению. Ничего не восстанавливает.
 
 **Зачем это существует.** Копии, которые никто не проверял, — это не копии, а
-надежда. Обычная история: скрипт год пишет файлы, диск заполняется, `sqlite3
-.backup` начинает падать на полпути, а узнают об этом в день, когда база
+надежда. Обычная история: скрипт год пишет файлы, диск заполняется, дамп
+начинает обрываться на полпути, а узнают об этом в день, когда база
 понадобилась. Проверка стоит секунду и превращает «надеюсь, есть копия» в
 «копия открывается, в ней столько-то клиентов».
 
-Копия бывает двух видов, и вид определяется расширением: `.db` — файл SQLite,
-`.sql` — дамп MySQL. Проверки у них разные по устройству и **одинаковые по
-смыслу**: система, переехавшая на MySQL, не имеет права молча остаться с
-копиями, о годности которых никто не спрашивал.
+Копия одного вида — дамп `db-ГГГГ-ММ-ДД.sql`. Файл от прежней установки может
+ещё лежать в том же каталоге, и он называется негодным: читать чужой формат
+так, будто он свой, — способ узнать правду в самый неподходящий день.
 
 Проверяем ровно то, из-за чего копия оказывается негодной:
 
-1. **Копия дописана до конца.** У SQLite это `PRAGMA integrity_check`:
-   оборванный на середине `.backup` даёт файл, который выглядит как база, а
-   читается до первой битой страницы. У дампа MySQL признак другой и хуже
-   заметный — это обычный текст, и оборванный дамп ничем не отличается от
-   целого, кроме отсутствующего хвоста `-- Dump completed`. Залитый до места
-   обрыва, он оставит половину таблиц.
+1. **Копия дописана до конца.** Признак у дампа один и плохо заметный: это
+   обычный текст, и оборванный ничем не отличается от целого, кроме
+   отсутствующего хвоста `-- Dump completed`. Залитый до места обрыва, он
+   оставит половину таблиц.
 2. **Схема отмечена миграцией.** База без `alembic_version` не поднимется
    новым кодом: приложение не знает, чем её доводить (см.
    `database/schema_check.py`).
@@ -41,7 +38,6 @@ from __future__ import annotations
 
 import json
 import re
-import sqlite3
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -195,7 +191,7 @@ def _prochitat_dump(path: Path) -> tuple[set[str], dict[str, int], str | None, s
 
 
 def _proverit_dump(db_path: Path, report: dict, fail) -> None:
-    """Дамп MySQL. Смысл проверок тот же, что и у файла SQLite."""
+    """Дамп базы: дочитан ли до конца, отмечен ли миграцией, есть ли данные."""
     tablicy, stroki, revizia, poslednyaya = _prochitat_dump(db_path)
 
     if KHVOST_DUMPA not in poslednyaya:
@@ -225,50 +221,6 @@ def _proverit_dump(db_path: Path, report: dict, fail) -> None:
             fail(f"таблица {table} пуста — копия бесполезна")
 
 
-def _proverit_sqlite(db_path: Path, report: dict, fail) -> None:
-    """Файл SQLite."""
-    try:
-        db = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
-    except sqlite3.Error as error:
-        fail(f"база не открывается: {error}")
-        return
-
-    try:
-        # Оборванная копия роняет не `connect`, а первый же запрос: SQLite
-        # открывает файл лениво и спотыкается о битую страницу уже при чтении.
-        # Поймано первым прогоном — проверка падала с трассировкой вместо того,
-        # чтобы сказать «копия негодна», а падение в скрипте бэкапа читается
-        # как поломка бэкапа, а не как приговор копии.
-        integrity = db.execute("PRAGMA integrity_check").fetchone()[0]
-        if integrity != "ok":
-            fail(f"целостность: {integrity}")
-
-        tables = {row[0] for row in db.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        )}
-        if "alembic_version" not in tables:
-            fail("копия не отмечена миграцией — новый код не будет знать, чем её доводить")
-        else:
-            report["revision"] = db.execute("SELECT version_num FROM alembic_version").fetchone()[0]
-
-        for table in COUNT_TABLES:
-            if table in tables:
-                report["counts"][table] = db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
-
-        for table in MUST_HAVE_ROWS:
-            if table not in tables:
-                fail(f"в копии нет таблицы {table}")
-            elif not report["counts"].get(table):
-                # Файл есть, размер правдоподобный, внутри пусто — самый
-                # коварный случай: такую копию восстанавливают и обнаруживают,
-                # что войти в систему некому.
-                fail(f"таблица {table} пуста — копия бесполезна")
-    except sqlite3.Error as error:
-        fail(f"база не читается: {error}")
-    finally:
-        db.close()
-
-
 def verify(db_path: Path, storage_path: Path | None, secret_path: Path | None) -> dict:
     report: dict = {
         "checked_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -289,12 +241,15 @@ def verify(db_path: Path, storage_path: Path | None, secret_path: Path | None) -
 
     # Вид копии — по расширению, которое ставит scripts/backup.sh. Заглядывать
     # внутрь незачем: имя файла здесь и есть решение, принятое при снятии.
-    if db_path.suffix.lower() == ".sql":
-        report["engine"] = "mysql"
-        _proverit_dump(db_path, report, fail)
-    else:
-        report["engine"] = "sqlite"
-        _proverit_sqlite(db_path, report, fail)
+    #
+    # Чужой формат называем негодным, а не читаем «как получится»: файл от
+    # прежней установки лежит в том же каталоге, и выбрать его можно по ошибке.
+    if db_path.suffix.lower() != ".sql":
+        report["engine"] = "unknown"
+        fail(f"{db_path.name}: это не дамп базы — копии называются db-ГГГГ-ММ-ДД.sql")
+        return report
+    report["engine"] = "mysql"
+    _proverit_dump(db_path, report, fail)
 
     if storage_path is not None:
         report["storage"] = str(storage_path)

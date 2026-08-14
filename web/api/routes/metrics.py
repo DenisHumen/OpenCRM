@@ -83,31 +83,17 @@ DEPLOY_STATUSES = (
 
 
 def _data_dir() -> Path:
-    """Каталог состояния: там же база, там же копии.
+    """Каталог состояния: там копии и служебные файлы.
 
-    В контейнере это `/app/data` (том из docker-compose.yml), на ноутбуке —
-    `data/` рядом с репозиторием. Берётся из адреса базы, когда она файловая, и
-    иначе — от корня проекта: на MySQL файла базы нет, а копии `backup.sh`
-    кладёт в тот же `data/backups`.
+    В контейнере это `/app/data` (том из docker-compose.yml), на машине
+    разработчика — `data/` рядом с репозиторием, в тестах — временный каталог.
+    Имя берётся из окружения, а не выводится из адреса базы: база живёт в
+    сервере, и пути к ней не существует вовсе.
     """
-    url = get_settings().db_url
-    if url.startswith("sqlite"):
-        return _sqlite_path(url).parent
+    iz_okruzheniya = os.environ.get("OPENCRM_DATA_DIR", "").strip()
+    if iz_okruzheniya:
+        return Path(iz_okruzheniya)
     return Path(BASE_DIR) / "data"
-
-
-def _sqlite_path(url: str) -> Path:
-    """Файл базы из URL SQLAlchemy.
-
-    Третий слэш отделяет (всегда пустой) хост от пути, поэтому снимаем ровно
-    один: у `sqlite:///./data/x.db` не остаётся ничего лишнего, а у
-    `sqlite:////app/data/opencrm.db` остаётся ведущий слэш абсолютного пути.
-    Снимать все подряд (`lstrip`) нельзя — именно так абсолютный путь и
-    превращается в относительный, указывающий на несуществующий файл рядом.
-    """
-    tail = url.partition("://")[2]
-    return Path(tail[1:] if tail.startswith("/") else tail)
-
 
 def _updates_dir() -> Path:
     """Где лежит журнал обновлений.
@@ -201,50 +187,26 @@ def _collect_schema(out: Metrics) -> None:
 
 
 def _collect_database(out: Metrics) -> None:
-    """Размер базы — на обоих движках, но спрашивается он по-разному.
+    """Размер базы вместе с индексами.
 
-    У SQLite ответ лежит в файловой системе, у MySQL — внутри сервера, и там его
-    берёт репозиторий (`database/repositories/engine_info.py`): запросы живут
-    только в `database/` (CLAUDE.md, раздел 3).
+    Ответ лежит внутри сервера, и берёт его репозиторий
+    (`database/repositories/engine_info.py`): запросы живут только в
+    `database/` (CLAUDE.md, раздел 3).
 
-    Прежде на MySQL метрика просто ИСЧЕЗАЛА — молчание было выбрано осознанно
-    (ноль на графике неотличим от «база исчезла»), но спросить сервер тогда было
-    нечем. После переезда это молчание стало бы вечным: за ростом базы перестал
-    бы следить кто бы то ни было ровно на том движке, где она и растёт.
+    `None` вместо нуля намеренно: ноль на графике неотличим от «база исчезла», а
+    отсутствие точки видно как отсутствие.
     """
-    settings = get_settings()
-    if not settings.db_url.startswith("sqlite"):
-        db = SessionLocal()
-        try:
-            razmer = engine_info.database_size_bytes(db)
-        finally:
-            db.close()
-        if razmer:
-            out.add(
-                "opencrm_database_size_bytes",
-                razmer,
-                help_text="Размер базы вместе с индексами (оценка information_schema).",
-            )
-        return
+    db = SessionLocal()
     try:
-        path = _sqlite_path(settings.db_url)
-        if not path.is_file():
-            return
-        # Журнал WAL — часть базы, а не мусор рядом: в нём лежат последние
-        # записанные страницы. Без него размер занижен ровно на свежие данные.
-        total = path.stat().st_size
-        for suffix in ("-wal", "-shm"):
-            sidecar = path.with_name(path.name + suffix)
-            if sidecar.exists():
-                total += sidecar.stat().st_size
+        razmer = engine_info.database_size_bytes(db)
+    finally:
+        db.close()
+    if razmer:
         out.add(
             "opencrm_database_size_bytes",
-            total,
-            help_text="Размер файла базы вместе с журналом WAL.",
+            razmer,
+            help_text="Размер базы вместе с индексами (оценка information_schema).",
         )
-    except OSError:
-        return
-
 
 def _collect_storage(out: Metrics) -> None:
     """Диск и медиа — глазами того самого процесса, который пишет файлы.

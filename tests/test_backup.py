@@ -14,32 +14,11 @@
 """
 
 import os
-import sqlite3
 import subprocess
 import tarfile
 from pathlib import Path
 
 from scripts import verify_backup
-
-
-def good_db(path: Path, users: int = 1) -> Path:
-    """Правдоподобная копия: миграция отмечена, пользователи и настройки есть."""
-    db = sqlite3.connect(path)
-    db.executescript(
-        """
-        CREATE TABLE alembic_version (version_num VARCHAR(32) NOT NULL);
-        INSERT INTO alembic_version VALUES ('c3d9f2a71b58');
-        CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT);
-        CREATE TABLE site_settings (id INTEGER PRIMARY KEY, key TEXT);
-        INSERT INTO site_settings (key) VALUES ('currency');
-        CREATE TABLE clients (id INTEGER PRIMARY KEY);
-        """
-    )
-    for number in range(users):
-        db.execute("INSERT INTO users (email) VALUES (?)", (f"u{number}@example.com",))
-    db.commit()
-    db.close()
-    return path
 
 
 # Значения нарочно такие, на каких разваливается наивный подсчёт строк: скобки
@@ -52,6 +31,8 @@ KOVARNYE_NASTROYKI = (
     (4, "emoji_note", "витрина 🌿 работает"),
 )
 
+
+NL = chr(10)
 
 def good_dump(path: Path, users: int = 1, mnogostrochnyy: bool = False) -> Path:
     """Правдоподобный дамп MySQL — такой, какой выдаёт mysqldump.
@@ -109,7 +90,7 @@ def good_secret(path: Path) -> Path:
 
 def test_godnaya_kopiya_prohodit(tmp_path):
     report = verify_backup.verify(
-        good_db(tmp_path / "db.db", users=3),
+        good_dump(tmp_path / "db.sql", users=3),
         good_storage(tmp_path / "storage.tar.gz"),
         good_secret(tmp_path / "secret.env"),
     )
@@ -125,20 +106,19 @@ def test_godnaya_kopiya_prohodit(tmp_path):
 
 
 def test_oborvannaya_kopiya_zamechena(tmp_path):
-    """`.backup`, прерванный на полном диске, оставляет файл, который выглядит
-    как база и читается до первой битой страницы."""
-    path = good_db(tmp_path / "torn.db", users=400)
-    # Обрезаем файл, а не портим байты: именно так выглядит копия, снятие
-    # которой прервалось на полном диске. Обнулять середину бессмысленно —
-    # в маленькой базе это попадает в свободное место, и `integrity_check`
-    # честно отвечает «ok» (проверено первым прогоном).
+    """Дамп, прерванный на полном диске, — обычный текстовый файл.
+
+    От целого он не отличается ничем, кроме отсутствующего хвоста
+    `-- Dump completed`. Залитый до места обрыва, он оставит половину таблиц.
+    """
+    path = good_dump(tmp_path / "torn.sql", users=400)
     whole = path.read_bytes()
     path.write_bytes(whole[: len(whole) // 2])
 
     report = verify_backup.verify(path, None, None)
     assert not report["ok"], report
     assert any(
-        "целостность" in p or "не открывается" in p or "не читается" in p
+        "дописан" in p or "не дописан" in p or "хвост" in p or "конца" in p
         for p in report["problems"]
     ), report["problems"]
 
@@ -148,7 +128,7 @@ def test_pustaya_kopiya_zamechena(tmp_path):
 
     Такую копию восстанавливают и обнаруживают, что войти в систему некому.
     """
-    report = verify_backup.verify(good_db(tmp_path / "empty.db", users=0), None, None)
+    report = verify_backup.verify(good_dump(tmp_path / "empty.sql", users=0), None, None)
     assert not report["ok"]
     assert any("users" in p for p in report["problems"]), report["problems"]
 
@@ -156,11 +136,14 @@ def test_pustaya_kopiya_zamechena(tmp_path):
 def test_kopiya_bez_migratsii_zamechena(tmp_path):
     """База без `alembic_version` не поднимется новым кодом: он не знает, чем
     её доводить (см. `database/schema_check.py`)."""
-    path = good_db(tmp_path / "unstamped.db")
-    db = sqlite3.connect(path)
-    db.execute("DROP TABLE alembic_version")
-    db.commit()
-    db.close()
+    path = good_dump(tmp_path / "unstamped.sql")
+    # Убираем отметку прямо из текста дампа — так и выглядит копия, снятая с
+    # базы, которую миграции не касались.
+    bez_otmetki = [
+        s for s in path.read_text(encoding="utf-8").splitlines()
+        if "alembic_version" not in s
+    ]
+    path.write_text(NL.join(bez_otmetki) + NL, encoding="utf-8")
 
     report = verify_backup.verify(path, None, None)
     assert not report["ok"]
@@ -171,13 +154,13 @@ def test_bityy_arkhiv_zamechen(tmp_path):
     """Оглавление читаем без распаковки: место под неё может и не найтись."""
     broken = tmp_path / "storage.tar.gz"
     broken.write_text("это не архив", encoding="utf-8")
-    report = verify_backup.verify(good_db(tmp_path / "db.db"), broken, None)
+    report = verify_backup.verify(good_dump(tmp_path / "db.sql"), broken, None)
     assert not report["ok"]
     assert any("storage" in p for p in report["problems"]), report["problems"]
 
 
 def test_propavshiy_fayl_zamechen(tmp_path):
-    report = verify_backup.verify(tmp_path / "нет-такого.db", None, None)
+    report = verify_backup.verify(tmp_path / "нет-такого.sql", None, None)
     assert not report["ok"]
     assert any("нет" in p for p in report["problems"])
 
@@ -204,7 +187,7 @@ def test_vid_kopii_opredelyaetsya_rasshireniem(tmp_path):
     объявил бы годную копию негодной; файл SQLite, прочитанный как текст, — то
     же самое наоборот.
     """
-    assert verify_backup.verify(good_db(tmp_path / "a.db"), None, None)["engine"] == "sqlite"
+    assert verify_backup.verify(good_dump(tmp_path / "a.sql"), None, None)["engine"] == "mysql"
     assert verify_backup.verify(good_dump(tmp_path / "b.sql"), None, None)["engine"] == "mysql"
 
 
@@ -307,7 +290,7 @@ def test_kopiya_bez_klyucha_zamechena(tmp_path):
     config/.env на сгоревшем сервере, — это потеря навсегда, а не неудобство.
     """
     report = verify_backup.verify(
-        good_db(tmp_path / "db.db"), None, tmp_path / "secret.env"
+        good_dump(tmp_path / "db.sql"), None, tmp_path / "secret.env"
     )
     assert not report["ok"]
     assert any("ключ" in p for p in report["problems"]), report["problems"]
@@ -318,7 +301,7 @@ def test_pustoy_fayl_klyucha_zamechen(tmp_path):
     окружения. Проверка обязана отличать это от «ключ на месте»."""
     empty = tmp_path / "secret.env"
     empty.write_text("# ключей не досталось\n", encoding="utf-8")
-    report = verify_backup.verify(good_db(tmp_path / "db.db"), None, empty)
+    report = verify_backup.verify(good_dump(tmp_path / "db.sql"), None, empty)
     assert not report["ok"]
     assert any("ключа в нём нет" in p for p in report["problems"]), report["problems"]
 
@@ -331,7 +314,7 @@ def test_otchyot_ostayotsya_na_diske(tmp_path):
     понадобилась, и ответ должен лежать на диске, а не в чьей-то памяти."""
     daily = tmp_path / "backups" / "daily"
     daily.mkdir(parents=True)
-    code = verify_backup.main([str(good_db(daily / "db-2026-08-07.db"))])
+    code = verify_backup.main([str(good_dump(daily / "db-2026-08-07.sql"))])
     assert code == 0
 
     report = (tmp_path / "backups" / "last-check.json").read_text(encoding="utf-8")
@@ -347,7 +330,7 @@ def test_negodnaya_kopiya_daet_nenulevoy_kod(tmp_path):
     """
     daily = tmp_path / "backups" / "daily"
     daily.mkdir(parents=True)
-    assert verify_backup.main([str(good_db(daily / "db.db", users=0))]) == 1
+    assert verify_backup.main([str(good_dump(daily / "db.sql", users=0))]) == 1
 
 
 def _sh_operatory(text: str) -> str:

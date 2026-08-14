@@ -23,7 +23,7 @@
 # когда база понадобилась, — слишком поздно.
 set -eu
 
-DB_URL="${OPENCRM_DB_URL:-sqlite}"
+DB_URL="${OPENCRM_DB_URL:-}"
 STORAGE_DIR="${OPENCRM_STORAGE_DIR:-/app/storage}"
 BACKUP_DIR="${OPENCRM_BACKUP_DIR:-/app/data/backups}"
 

@@ -1224,21 +1224,12 @@ def test_proba_prohodit_redirekt_nginxa_s_http_na_https():
 # базы перестал бы следить кто бы то ни было ровно на том движке, где она растёт.
 
 
-def test_razmer_bazy_na_sqlite_beryotsya_iz_fayla(root_client, blok_monitoringa):
-    """У файловой базы ответ лежит в файловой системе — там и берём."""
-    blok_monitoringa(True)
-    otvet = root_client.get(f"{API_PREFIX}/metrics")
-    assert otvet.status_code == 200
-    assert "opencrm_database_size_bytes" in otvet.text, (
-        "размер файловой базы пропал из метрик"
-    )
+def test_razmer_bazy_sprashivaetsya_u_servera(tmp_path):
+    """Ответ лежит внутри сервера, и берёт его репозиторий.
 
-
-def test_razmer_bazy_na_ne_mysql_ne_pridumyvaetsya():
-    """`None`, а не ноль: ноль на графике выглядит как «база исчезла».
-
-    Набор гоняется на SQLite, поэтому здесь проверяется сторона отказа —
-    репозиторий обязан молчать про чужой движок, а не отдавать выдумку.
+    Набор гоняется на файловой базе, поэтому здесь проверяется сторона
+    молчания: чужой движок — `None`, а не выдумка. Ноль на графике неотличим
+    от «база исчезла», отсутствие точки видно как отсутствие.
     """
     from database.repositories import engine_info
     from database.session import SessionLocal
@@ -1248,7 +1239,6 @@ def test_razmer_bazy_na_ne_mysql_ne_pridumyvaetsya():
         assert engine_info.database_size_bytes(db) is None
     finally:
         db.close()
-
 
 def test_na_mysql_razmer_sprashivaetsya_zaprosom_a_ne_molchaniem():
     """Живого MySQL в наборе нет, поэтому стережём связку, а не число.

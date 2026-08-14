@@ -1,17 +1,12 @@
 #!/bin/sh
 # Восстановление OpenCRM из бэкапа.
-# Использование: restore.sh <db-YYYY-MM-DD.db|db-YYYY-MM-DD.sql> <storage-YYYY-MM-DD.tar.gz>
+# Использование: restore.sh <db-YYYY-MM-DD.sql> <storage-YYYY-MM-DD.tar.gz>
 # ВНИМАНИЕ: перезаписывает текущую базу и storage. Останавливайте приложение перед запуском.
-#
-# Копия базы бывает двух видов, и вид определяется расширением:
-#   .db   — файл SQLite, кладётся на место прежнего;
-#   .sql  — дамп MySQL, заливается клиентом mysql.
 set -eu
 
 DB_BACKUP="$1"
 STORAGE_BACKUP="$2"
-DB_URL="${OPENCRM_DB_URL:-sqlite}"
-DB_FILE="${OPENCRM_DB_FILE:-/app/data/opencrm.db}"
+DB_URL="${OPENCRM_DB_URL:-}"
 STORAGE_DIR="${OPENCRM_STORAGE_DIR:-/app/storage}"
 
 [ -f "$DB_BACKUP" ] || { echo "no db backup: $DB_BACKUP"; exit 1; }
@@ -28,10 +23,6 @@ if [ "${OPENCRM_SKIP_DB:-0}" = "1" ]; then
 else
     case "$DB_BACKUP" in
         *.sql)
-            case "$DB_URL" in
-                mysql*) ;;
-                *) echo "это дамп MySQL, а OPENCRM_DB_URL ведёт на SQLite"; exit 1 ;;
-            esac
             command -v mysql >/dev/null 2>&1 || {
                 echo "Дамп MySQL нечем заливать: клиента mysql здесь нет." >&2
                 echo "Восстанавливайте через ./opencrm.sh restore — он заливает дамп" >&2
@@ -90,24 +81,6 @@ else
             fi
             rm -f "$_cnf"
             ;;
-        *)
-            # текущее состояние — в сторону, а не в /dev/null.
-            #
-            # Явный if, а не `[ ] && mv`: цепочка здесь стоит последней в ветке
-            # case, её код возврата становится кодом всей ветки, и под `set -e`
-            # такая конструкция ронять скрипт на ровном месте уже умела (см. тот
-            # же урок в opencrm.sh:guard_root).
-            if [ -f "$DB_FILE" ]; then
-                mv "$DB_FILE" "$DB_FILE.before-restore-$STAMP"
-            fi
-
-            # База работает в journal_mode=WAL (database/session.py), и рядом остаются
-            # -wal/-shm от прежнего файла. Копию `.backup` они не описывают, но SQLite
-            # при открытии попробует доиграть их поверх — журнал прежней базы надо убрать.
-            rm -f "$DB_FILE-wal" "$DB_FILE-shm"
-
-            cp "$DB_BACKUP" "$DB_FILE"
-            ;;
     esac
 fi
 
@@ -118,7 +91,7 @@ tar -xzf "$STORAGE_BACKUP" -C "$STORAGE_DIR"
 # config/.env, а тот в контейнер не смонтирован, да и молча менять ключ
 # работающей системы нельзя — этим можно сделать нечитаемым то, что сейчас
 # читается. Говорим о нём словами, и это единственное, что тут уместно.
-SECRET_BACKUP="$(dirname "$DB_BACKUP")/secret-$(basename "$DB_BACKUP" | sed 's/^db-//; s/\.db$//; s/\.sql$//').env"
+SECRET_BACKUP="$(dirname "$DB_BACKUP")/secret-$(basename "$DB_BACKUP" | sed 's/^db-//; s/\.sql$//').env"
 if [ -f "$SECRET_BACKUP" ]; then
     echo ""
     echo "ВАЖНО: рядом лежит ключ от этой копии — $SECRET_BACKUP"
@@ -128,10 +101,7 @@ if [ -f "$SECRET_BACKUP" ]; then
 fi
 
 if [ "${OPENCRM_SKIP_DB:-0}" != "1" ]; then
-    case "$DB_BACKUP" in
-        *.sql) echo "restore done (MySQL)." ;;
-        *)     echo "restore done. Previous DB kept at $DB_FILE.before-restore-$STAMP" ;;
-    esac
+    echo "restore done."
 else
     echo "restore done (storage)."
 fi
