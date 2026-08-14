@@ -5,6 +5,7 @@ from core.utils import divide_money
 from database.models import Client, Deal, DealStageChange, PipelineStage
 from database.models.pipeline import CLOSED_KINDS, KIND_OPEN, KIND_WON
 from database.query import contains, contains_norm, page_of, page_without_total
+from database.repositories import pipeline as pipeline_repo
 
 
 def get(db: Session, deal_id: int, include_deleted: bool = False) -> Deal | None:
@@ -170,11 +171,22 @@ def money_summary(db: Session, since, only_manager_id: int | None = None) -> dic
     выручку всей фирмы. Спрятать чужие карточки и оставить их сумму — это не
     половина запрета, а его отсутствие: узнать оборот фирмы и было целью.
     """
+    # Ключи этапов вместо соединения со справочником — по той же причине, что и
+    # в отчётах: сводка отбирает заявки узким окном по `closed_at`, а
+    # соединение уводит план на справочник этапов. Разбор и замеры — в
+    # `pipeline_repo.kinds_by_key`. Справочник читается ОДИН раз на всю сводку:
+    # четыре запроса ниже спрашивают его об одном и том же.
+    kinds = pipeline_repo.kinds_by_key(db)
+
+    def keys_of(kind: str) -> list[str]:
+        return [key for key, k in kinds.items() if k == kind]
+
     def total(kind: str, closed_since=None) -> int:
-        query = (
-            select(func.coalesce(func.sum(Deal.amount), 0))
-            .join(PipelineStage, PipelineStage.key == Deal.stage)
-            .where(Deal.deleted_at.is_(None), PipelineStage.kind == kind)
+        keys = keys_of(kind)
+        if not keys:
+            return 0
+        query = select(func.coalesce(func.sum(Deal.amount), 0)).where(
+            Deal.deleted_at.is_(None), Deal.stage.in_(keys)
         )
         if only_manager_id is not None:
             query = query.where(Deal.manager_id == only_manager_id)
@@ -182,18 +194,18 @@ def money_summary(db: Session, since, only_manager_id: int | None = None) -> dic
             query = query.where(Deal.closed_at >= closed_since)
         return int(db.scalar(query) or 0)
 
+    won_keys = keys_of(KIND_WON)
+
     # Знаменатель среднего чека — сделки с НАЗВАННОЙ суммой. `count(amount)`
     # не считает NULL, и это здесь главное: «сумму ещё не назвали» — не то же
     # самое, что «работа бесплатная». Возьми в знаменатель все выигранные — и
     # каждая сделка без цены будет тихо занижать средний чек.
-    priced = (
-        select(func.count(Deal.amount))
-        .join(PipelineStage, PipelineStage.key == Deal.stage)
-        .where(
-            Deal.deleted_at.is_(None),
-            PipelineStage.kind == KIND_WON,
-            Deal.closed_at >= since,
-        )
+    # Пустой список ключей SQLAlchemy превращает в заведомо ложное условие — то
+    # есть «выигранных этапов нет» честно даёт ноль, а не всю таблицу.
+    priced = select(func.count(Deal.amount)).where(
+        Deal.deleted_at.is_(None),
+        Deal.stage.in_(won_keys),
+        Deal.closed_at >= since,
     )
     if only_manager_id is not None:
         priced = priced.where(Deal.manager_id == only_manager_id)
@@ -208,10 +220,9 @@ def money_summary(db: Session, since, only_manager_id: int | None = None) -> dic
     counted = (
         select(func.count())
         .select_from(Deal)
-        .join(PipelineStage, PipelineStage.key == Deal.stage)
         .where(
             Deal.deleted_at.is_(None),
-            PipelineStage.kind == KIND_WON,
+            Deal.stage.in_(won_keys),
             Deal.closed_at >= since,
         )
     )

@@ -16,8 +16,9 @@ from datetime import datetime
 from sqlalchemy import and_, case, func, select
 from sqlalchemy.orm import Session
 
-from database.models import Client, Deal, DealStageChange, PipelineStage
+from database.models import Client, Deal, DealStageChange
 from database.models.pipeline import CLOSED_KINDS, KIND_LOST
+from database.repositories import pipeline as pipeline_repo
 
 
 def _mine(only_manager_id: int | None):
@@ -49,6 +50,25 @@ def _my_clients(only_manager_id: int | None):
     прочитать целиком.
     """
     return () if only_manager_id is None else (Client.manager_id == only_manager_id,)
+
+
+def _closed_stages(db: Session) -> tuple[dict[str, str], list[str]]:
+    """Справочник «ключ → тип» и ключи закрытых этапов — одним чтением на отчёт.
+
+    Здесь кончилось соединение `deals JOIN pipeline_stages`. Отчёты отбирают
+    заявки узким окном по `closed_at` — месяц из трёх лет, два процента
+    таблицы, — и пока справочник стоял в запросе, планировщик норовил вести
+    отчёт от него: пять строк наружу и десятки тысяч заявок на каждую. Разбор и
+    замеры — в докстроке `pipeline_repo.kinds_by_key`.
+
+    Тип этапа после этого приписывается в Python, по ключу из той же выдачи.
+    Множество найденного не меняется ни на строку: `key` в справочнике
+    уникален, поэтому внутреннее соединение и `stage IN (ключи)` отбирают одно
+    и то же, а заявка с этапом, которого в справочнике нет, отсеивается и там,
+    и там.
+    """
+    kinds = pipeline_repo.kinds_by_key(db)
+    return kinds, [key for key, kind in kinds.items() if kind in CLOSED_KINDS]
 
 
 def stage_entries(
@@ -99,20 +119,24 @@ def closed_by_kind(
     воронка отвечает на «сколько прошло через шаг», а плитка «Выиграно» — на
     «сколько выиграли». Разные вопросы, и подписи у них обязаны быть разные.
     """
+    kinds, closed = _closed_stages(db)
+    if not closed:
+        return {}
     rows = db.execute(
-        select(PipelineStage.kind, func.count())
-        .select_from(Deal)
-        .join(PipelineStage, PipelineStage.key == Deal.stage)
+        select(Deal.stage, func.count())
         .where(
             Deal.deleted_at.is_(None),
             *_mine(only_manager_id),
-            PipelineStage.kind.in_(CLOSED_KINDS),
+            Deal.stage.in_(closed),
             Deal.closed_at >= start,
             Deal.closed_at < end,
         )
-        .group_by(PipelineStage.kind)
+        .group_by(Deal.stage)
     ).all()
-    return {kind: int(count or 0) for kind, count in rows}
+    itog: dict[str, int] = {}
+    for stage, count in rows:
+        itog[kinds[stage]] = itog.get(kinds[stage], 0) + int(count or 0)
+    return itog
 
 
 def money_by_month(
@@ -132,6 +156,9 @@ def money_by_month(
     """
     if not buckets:
         return {}
+    kinds, closed = _closed_stages(db)
+    if not closed:
+        return {}
 
     # CASE по границам месяцев: ANSI, переносится на MySQL без правок, и всё
     # ещё один запрос, а не по одному на месяц.
@@ -145,7 +172,7 @@ def money_by_month(
     rows = db.execute(
         select(
             bucket.label("bucket"),
-            PipelineStage.kind,
+            Deal.stage,
             func.count(),
             # count(amount) не считает NULL — и это здесь главное. «Сумму не
             # назвали» и «работа бесплатная» — разные состояния; взяв в
@@ -153,26 +180,29 @@ def money_by_month(
             func.count(Deal.amount),
             func.coalesce(func.sum(Deal.amount), 0),
         )
-        .join(PipelineStage, PipelineStage.key == Deal.stage)
         .where(
             Deal.deleted_at.is_(None),
             *_mine(only_manager_id),
-            PipelineStage.kind.in_(CLOSED_KINDS),
+            Deal.stage.in_(closed),
             Deal.closed_at >= buckets[0][0],
             Deal.closed_at < buckets[-1][1],
         )
-        .group_by(bucket, PipelineStage.kind)
+        .group_by(bucket, Deal.stage)
     ).all()
 
+    # Складываем этапы в тип уже здесь. Складывать приходится потому, что типов
+    # меньше, чем этапов: «Выдано» и «Оплачено» — оба `won`, и раньше их
+    # складывала группировка по `kind` в SQL. Сумма от места сложения не
+    # меняется, а план запроса — меняется сильно.
     result: dict[tuple[int, str], dict[str, int]] = {}
-    for index, kind, count, priced, total in rows:
+    for index, stage, count, priced, total in rows:
         if index is None:  # сделка вне всех месяцев — быть не должно, но и врать не будем
             continue
-        result[(int(index), kind)] = {
-            "count": int(count or 0),
-            "priced": int(priced or 0),
-            "total": int(total or 0),
-        }
+        klyuch = (int(index), kinds[stage])
+        yacheyka = result.setdefault(klyuch, {"count": 0, "priced": 0, "total": 0})
+        yacheyka["count"] += int(count or 0)
+        yacheyka["priced"] += int(priced or 0)
+        yacheyka["total"] += int(total or 0)
     return result
 
 
@@ -213,33 +243,36 @@ def closed_deals_by_source(
     перестать верить отчёту целиком. Деньги были получены; то, что карточку
     клиента потом убрали, их не отменяет.
     """
+    kinds, closed = _closed_stages(db)
+    if not closed:
+        return {}
     rows = db.execute(
         select(
             Client.source,
-            PipelineStage.kind,
+            Deal.stage,
             func.count(),
             func.count(Deal.amount),
             func.coalesce(func.sum(Deal.amount), 0),
         )
         .join(Client, Client.id == Deal.client_id)
-        .join(PipelineStage, PipelineStage.key == Deal.stage)
         .where(
             Deal.deleted_at.is_(None),
             *_mine(only_manager_id),
-            PipelineStage.kind.in_(CLOSED_KINDS),
+            Deal.stage.in_(closed),
             Deal.closed_at >= start,
             Deal.closed_at < end,
         )
-        .group_by(Client.source, PipelineStage.kind)
+        .group_by(Client.source, Deal.stage)
     ).all()
-    return {
-        (source, kind): {
-            "count": int(count or 0),
-            "priced": int(priced or 0),
-            "total": int(total or 0),
-        }
-        for source, kind, count, priced, total in rows
-    }
+    itog: dict[tuple[str | None, str], dict[str, int]] = {}
+    for source, stage, count, priced, total in rows:
+        yacheyka = itog.setdefault(
+            (source, kinds[stage]), {"count": 0, "priced": 0, "total": 0}
+        )
+        yacheyka["count"] += int(count or 0)
+        yacheyka["priced"] += int(priced or 0)
+        yacheyka["total"] += int(total or 0)
+    return itog
 
 
 def lost_reasons(
@@ -251,13 +284,15 @@ def lost_reasons(
     Пустая причина в список не попадает: строка «(не указано): 12» ничего не
     объясняет, а место занимает.
     """
+    poteryannye = pipeline_repo.keys_of_kinds(db, (KIND_LOST,))
+    if not poteryannye:
+        return []
     rows = db.execute(
         select(Deal.lost_reason, func.count())
-        .join(PipelineStage, PipelineStage.key == Deal.stage)
         .where(
             Deal.deleted_at.is_(None),
             *_mine(only_manager_id),
-            PipelineStage.kind == KIND_LOST,
+            Deal.stage.in_(poteryannye),
             Deal.lost_reason != "",
             Deal.closed_at >= start,
             Deal.closed_at < end,

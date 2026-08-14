@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, event
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text, event
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 
@@ -85,14 +85,6 @@ class Deal(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()
     )
-    # Индекса «живые, свежие сверху» здесь намеренно нет, хотя список заявок
-    # просит именно его и на тридцати тысячах строк сортирует всю выборку во
-    # временном дереве (12–17 мс на страницу). Составной `(deleted_at,
-    # updated_at)` этот запрос ускоряет в шестьдесят раз и ровно во столько же
-    # замедляет сводку и отчёты: статистика считает `deleted_at IS NULL`
-    # избирательным условием (среднее 60 строк на значение при настоящих
-    # 29 500), и планировщик тащит такой индекс в каждый запрос про живые
-    # записи. Разбор вариантов и замеры — в миграции f9b41c7e2d08.
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
 
     # Название и описание, склеенные и приведённые к нижнему регистру. Разбор
@@ -112,6 +104,50 @@ class Deal(Base):
     search_text: Mapped[str] = mapped_column(
         LongText, default="", server_default=text_default(), deferred=True
     )
+
+    # Три пары под три способа смотреть на заявки. Замеры — в миграции
+    # b3f18d5a2e47, там же «было/стало» по каждой.
+    #
+    # 1. Список: «живые, свежее сверху». Без пары — временное дерево на 394 000
+    #    строк ради пятидесяти (442 мс на первой странице, 651 мс на
+    #    пятидесятой), с парой — обратный проход по индексу (49 и 51 мс).
+    #
+    # 2. Колонка канбана: отбор по этапу и порядок ВНУТРИ колонки. Хвост
+    #    `id DESC` — не украшение: `by_stage` сортирует `sort_order ASC,
+    #    id DESC`, и без обратного хвоста MySQL берёт пересечение двух узких
+    #    индексов и всё равно сортирует 97 000 строк. Одна колонка: 185 → 3.5 мс,
+    #    вся доска (пять колонок плюс итоги) 1243 → 172 мс.
+    #
+    # 3. Счётчики и суммы по этапам (итоги над колонками доски, плитки сводки):
+    #    `amount` третьей колонкой делает индекс покрывающим, и запрос перестаёт
+    #    ходить в таблицу за каждым числом — `SUM(amount) GROUP BY stage`
+    #    357 → 72 мс, `COUNT(*) GROUP BY stage` 331 → 58 мс.
+    #
+    #    Третья пара обязана стоять ВМЕСТЕ со второй, а не вместо неё. Со
+    #    второй в одиночку планировщик берёт её же и на суммы — а `amount` в
+    #    ней нет, и он лезет в таблицу за каждым числом: 496 мс, то есть хуже,
+    #    чем было вовсе без индексов. Проверено замером.
+    #
+    # Пары 2 и 3 начинаются с `deleted_at` не для отбора, а чтобы не
+    # переманивать планы отчётов: любой индекс, у которого `stage` стоит
+    # первым, уводит отчёт от узкого окна по `closed_at` на обход этапов.
+    # Впрочем, сами отчёты с тех пор соединение со справочником не делают
+    # вовсе — см. `database/repositories/pipeline.kinds_by_key`.
+    #
+    # Объявлены ниже, а не в `__table_args__`: у одного из них хвост идёт по
+    # УБЫВАНИЮ, а убывание выражается только настоящей колонкой — строкой в
+    # `__table_args__` его не записать.
+
+
+Index("ix_deals_alive_updated", Deal.deleted_at, Deal.updated_at)
+Index(
+    "ix_deals_alive_stage_sort",
+    Deal.deleted_at,
+    Deal.stage,
+    Deal.sort_order,
+    Deal.id.desc(),
+)
+Index("ix_deals_alive_stage_amount", Deal.deleted_at, Deal.stage, Deal.amount)
 
 
 def _sklejka_zayavki(deal: "Deal") -> str:
