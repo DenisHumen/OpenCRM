@@ -1128,6 +1128,116 @@ seed_grafana_password() {
     env_set "$DOCKER_ENV" OPENCRM_GRAFANA_PASSWORD "$MONITORING_PASSWORD_SHOWN"
 }
 
+# --- Наблюдатель за базой -----------------------------------------------------
+#
+# У `db-exporter` свой пользователь в MySQL, и заводит его установщик. Иначе
+# получается худший из видов поломки: контейнер поднят, здоров, в цикл
+# перезапусков не уходит, тревог не шлёт — а метрик базы нет вовсе. Увидеть это
+# можно только открыв дашборд, то есть в тот единственный день, когда метрики
+# базы понадобились.
+#
+# Выключение мониторинга пользователя из базы НЕ убирает: включат обратно —
+# метрики пойдут сразу, а прав на данные у него нет и лежачий он ничего не
+# открывает.
+
+# Имя наблюдателя. Читается из docker/.env с тем же умолчанием, что стоит в
+# описании службы: разойдись эти двое — установщик завёл бы одного
+# пользователя, а экспортёр ходил бы в базу другим.
+db_exporter_user() {
+    _dxu=$(env_get "$DOCKER_ENV" OPENCRM_DB_EXPORTER_USER 2>/dev/null || true)
+    [ -n "$_dxu" ] || _dxu="opencrm_exporter"
+    printf '%s' "$_dxu"
+}
+
+# Пароль наблюдателя — ровно тем же способом, что пароль Grafana и пароль
+# MySQL: генерируется, кладётся в docker/.env с правами 600, в репозиторий не
+# попадает. Алфавит gen_secret (A-Za-z0-9) обязателен и здесь: пароль уезжает
+# внутрь SQL-литерала в одинарных кавычках.
+#
+# Существующий не трогаем никогда, и это строже, чем у Grafana: тот же пароль
+# записан ВНУТРИ БАЗЫ, у пользователя наблюдателя. Перегенерация на повторном
+# запуске развела бы половины пары — экспортёр получил бы «access denied», а
+# метрики базы пропали бы молча.
+#
+# Имя пользователя пишется в файл явно, а не остаётся на умолчании compose: так
+# видно, кого искать в `mysql.user`, и так его можно сменить, не правя описание
+# стека. Уже записанное имя при этом сохраняется — иначе установщик завёл бы
+# второго пользователя мимо того, которым ходит экспортёр.
+seed_db_exporter_password() {
+    env_set "$DOCKER_ENV" OPENCRM_DB_EXPORTER_USER "$(db_exporter_user)"
+    if [ -n "$(env_get "$DOCKER_ENV" OPENCRM_DB_EXPORTER_PASSWORD 2>/dev/null || true)" ]; then
+        return 0
+    fi
+    env_set "$DOCKER_ENV" OPENCRM_DB_EXPORTER_PASSWORD "$(gen_secret 32)"
+}
+
+# Завести наблюдателя в базе — или довести уже заведённого до записанного
+# пароля.
+#
+# Четыре запроса, и все повторяются без вреда, поэтому звать можно сколько
+# угодно раз:
+#
+#   CREATE USER IF NOT EXISTS — завести, когда его ещё нет;
+#   ALTER USER … IDENTIFIED BY — довести пароль до УЖЕ существующего. Без него
+#     пароль из docker/.env разошёлся бы с базой навсегда, и выглядело бы это
+#     как «мониторинг включён, а метрик базы нет»;
+#   два GRANT — права. Их ровно три: PROCESS, REPLICATION CLIENT и SELECT на
+#     performance_schema. Ни одной таблицы с данными клиентов наблюдателю не
+#     видно, и утёкший из логов пароль базу не открывает.
+#
+# MAX_USER_CONNECTIONS 3 — чтобы наблюдатель не съел последние соединения ровно
+# тогда, когда их не хватает и он нужнее всего.
+#
+# НИ ОДИН пароль не уезжает в командную строку хоста: рутовый разворачивается
+# внутри контейнера из его собственного окружения (как в dump_mysql), а пароль
+# наблюдателя уходит туда же СТАНДАРТНЫМ ВВОДОМ вместе с запросом — тем же
+# путём, каким заливается дамп в cmd_restore. В `ps` не видно ни того, ни
+# другого.
+grant_db_exporter() {
+    _dxp=$(env_get "$DOCKER_ENV" OPENCRM_DB_EXPORTER_PASSWORD 2>/dev/null || true)
+    [ -n "$_dxp" ] || return 1
+    _dxu=$(db_exporter_user)
+    # shellcheck disable=SC2016  # рутовый пароль обязан раскрыться ВНУТРИ контейнера
+    printf '%s\n' \
+        "CREATE USER IF NOT EXISTS '$_dxu'@'%' IDENTIFIED BY '$_dxp' WITH MAX_USER_CONNECTIONS 3;" \
+        "ALTER USER '$_dxu'@'%' IDENTIFIED BY '$_dxp' WITH MAX_USER_CONNECTIONS 3;" \
+        "GRANT PROCESS, REPLICATION CLIENT ON *.* TO '$_dxu'@'%';" \
+        "GRANT SELECT ON performance_schema.* TO '$_dxu'@'%';" \
+        | compose exec -T db sh -c 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" exec mysql -u root'
+}
+
+# Заведён ли наблюдатель В САМОЙ БАЗЕ: «1», «0» или пусто, когда спросить не у
+# кого. Спрашиваем базу, а не docker/.env: пароль в файле и пользователь в базе
+# — разные вещи, и расходятся они ровно в том случае, ради которого проверка и
+# нужна (мониторинг включали, пока база лежала).
+db_exporter_granted() {
+    # shellcheck disable=SC2016  # рутовый пароль обязан раскрыться ВНУТРИ контейнера
+    _dxq=$(printf "SELECT COUNT(*) FROM mysql.user WHERE user = '%s';\n" "$(db_exporter_user)" \
+        | compose exec -T db sh -c 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" exec mysql -N -B --connect-timeout=5 -u root' 2>/dev/null || true)
+    printf '%s' "$_dxq"
+}
+
+# Метрики базы при включении мониторинга.
+#
+# База в этот момент может быть ещё не поднята: при установке мониторинг
+# настраивается до сборки, а `monitoring on` поднимает стек сам. Поэтому
+# сначала ждём её готовности — тем же вопросом, каким её проверяет compose.
+#
+# Не дождались или запрос не прошёл — это НЕ повод завалить включение
+# мониторинга: тревоги, панель, метрики машины и проверка сайта работают и без
+# метрик базы. Поэтому предупреждение и ровно одна строка о том, чем доделать.
+setup_db_exporter() {
+    if wait_db 15 && grant_db_exporter; then
+        ok "$(tr_ "метрики базы: пользователь $(db_exporter_user) заведён" \
+                  "database metrics: user $(db_exporter_user) is in place")"
+        return 0
+    fi
+    warn "$(tr_ "метрики базы не заведены — база не ответила; остальной мониторинг работает" \
+                "database metrics are not set up — the database did not answer; the rest of monitoring works")"
+    say "$(tr_ "        Поднимется база — повторите ./opencrm.sh monitoring on; проверить — ./opencrm.sh doctor, строка «метрики базы»" \
+             "        Once the database is up run ./opencrm.sh monitoring on again; check it with ./opencrm.sh doctor, the \"database metrics\" line")"
+}
+
 # Канал оповещений. Бот берётся тот же, что у автообновления: он уже настроен, и
 # этот чат уже читают. Заводить второй значит завести второй, который читать
 # перестанут.
@@ -1166,6 +1276,7 @@ configure_monitoring() {
 
     if compose_profile_enabled monitoring; then
         seed_grafana_password
+        seed_db_exporter_password
         sync_alert_channel || true
         ok "$(tr_ "уже включён — не трогаю" "already on — leaving it alone")"
         return 0
@@ -1210,6 +1321,11 @@ configure_monitoring() {
     fi
 
     seed_grafana_password
+    # Пароль наблюдателя за базой — здесь же, ДО подъёма служб: экспортёр
+    # читает его при создании контейнера, и записанный позже подхватился бы
+    # только следующим `up`, то есть неизвестно когда. Самого пользователя
+    # заводим уже после сборки (cmd_install): базы к этой минуте ещё нет.
+    seed_db_exporter_password
     sync_monitor_url
     # Адрес проверки — единственная настройка мониторинга, которую не видно
     # глазами: неверная выглядит точно так же, как верная, а узнают о ней по
@@ -1403,6 +1519,27 @@ wait_health() {
             return 0
         fi
         _tries=$((_tries - 1))
+        sleep 2
+    done
+    return 1
+}
+
+# Готовность базы — тем же вопросом, каким проверяет её сам контейнер
+# (healthcheck в docker-compose.yml): подключением ПО TCP, а не по сокету.
+# Сокет отвечает раньше, чем сервер начинает слушать порт, и по нему база
+# объявляется готовой за секунды до того, как в неё можно зайти.
+#
+# Разбирать вывод `compose ps` было бы дешевле и неверно: в строке состояния
+# слово «healthy» лежит внутри «unhealthy», и больная база сошла бы за
+# здоровую — ровно в том случае, ради которого ожидание и написано.
+wait_db() {
+    _dbtries=${1:-15}
+    while [ "$_dbtries" -gt 0 ]; do
+        # shellcheck disable=SC2016  # пароль обязан раскрыться ВНУТРИ контейнера
+        if compose exec -T db sh -c 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" exec mysqladmin ping --protocol=TCP -u root' >/dev/null 2>&1; then
+            return 0
+        fi
+        _dbtries=$((_dbtries - 1))
         sleep 2
     done
     return 1
@@ -1679,6 +1816,10 @@ cmd_install() {
     if compose_profile_enabled monitoring; then
         step "$(tr_ "Запуск мониторинга" "Starting monitoring")"
         monitoring_apply
+        # Пользователь наблюдателя заводится ЗДЕСЬ, а не в configure_monitoring:
+        # там базы ещё нет вовсе (сборка идёт выше по списку), а здесь стек уже
+        # поднят и check_health дождался живого сайта — значит и базы.
+        setup_db_exporter
     fi
     show_summary
 }
@@ -1775,7 +1916,7 @@ cmd_history() { need_install; autoupdate history -n "${1:-15}"; }
 #
 # Названная поимённо служба поднимает свой профиль сама, поэтому `rm` до них
 # дотягивается и при снятом профиле.
-MONITORING_SERVICES="prometheus alertmanager node-exporter containers blackbox grafana loki promtail"
+MONITORING_SERVICES="prometheus alertmanager node-exporter containers blackbox db-exporter redis-exporter grafana loki promtail"
 
 # Каталоги состояния мониторинга: не только существование, но и ВЛАДЕЛЕЦ.
 #
@@ -1932,6 +2073,9 @@ cmd_monitoring() {
                 info "$(tr_ "памяти ${_total} МБ — логи не поднимаю (./opencrm.sh monitoring logs)" "memory is ${_total} MB — leaving logs off (./opencrm.sh monitoring logs)")"
             fi
             seed_grafana_password
+            # Тоже до monitoring_apply, и по той же причине: пароль наблюдателя
+            # уезжает в описание контейнера db-exporter.
+            seed_db_exporter_password
             sync_monitor_url
             # До monitoring_apply: пара «имя-адрес» уезжает в описание контейнера
             # blackbox, и записанная после него подхватилась бы только следующим
@@ -1939,6 +2083,13 @@ cmd_monitoring() {
             probe_monitor_url
             sync_alert_channel || warn "$(tr_ "канал Telegram не настроен — тревоги никуда не пойдут" "no Telegram channel — alerts will go nowhere")"
             monitoring_apply
+            # А пользователь в базе — ПОСЛЕ подъёма: `compose up -d` не
+            # возвращается, пока база не станет здоровой (у приложения стоит
+            # `condition: service_healthy`), поэтому здесь она уже отвечает.
+            # Команда идемпотентна, поэтому это же и способ починки: забыли
+            # завести пользователя, сменили пароль, переехали базой — повторный
+            # `monitoring on` доводит всё до записанного в docker/.env.
+            setup_db_exporter
             ok "$(tr_ "включён" "on")"
             monitoring_panel_hint
             return 0
@@ -1999,7 +2150,12 @@ cmd_monitoring() {
             warn "$(tr_ "тревоги никуда не уходят — Telegram не настроен" "alerts go nowhere — Telegram is not configured")"
         fi
         say ""
-        run_painted compose ps prometheus alertmanager grafana || true
+        # Экспортёры базы и Redis стоят в списке наравне с остальными: без них
+        # «мониторинг включён» означает половину дашборда, а пропажу самого
+        # контейнера иначе не видно ниоткуда. Строка здесь отвечает на вопрос
+        # «есть ли служба», а не «доходит ли она до базы» — второе спрашивает
+        # `./opencrm.sh doctor` строкой «метрики базы».
+        run_painted compose ps prometheus alertmanager db-exporter redis-exporter grafana || true
         say ""
         menu_item 1 "$(tr_ "Выключить мониторинг" "Turn monitoring off")"
         menu_item 2 "$(tr_ "Логи (Loki): включить / выключить" "Logs (Loki): on / off")"
@@ -2598,6 +2754,29 @@ cmd_doctor() {
             probe "$(tr_ "тревоги" "alerts")" 1 "Telegram"
         else
             probe "$(tr_ "тревоги" "alerts")" 0 "$(tr_ "канал не настроен — о поломке узнают глазами; ./opencrm.sh monitoring" "no channel — breakage will be spotted by eye; ./opencrm.sh monitoring")"
+        fi
+
+        # Метрики базы. Без пользователя в MySQL наблюдатель отдаёт `mysql_up 0`
+        # и молчит: контейнер здоров, в цикл перезапусков не уходит, тревоги не
+        # шлёт. Снаружи это неотличимо от работающего мониторинга, а на деле нет
+        # ни соединений, ни ожиданий замков, ни буферного пула — то есть всего
+        # того, по чему деградацию базы замечают до падения сайта.
+        #
+        # Спрашиваем базу, а не только файл: пароль в docker/.env и
+        # пользователь в MySQL расходятся именно в том случае, ради которого
+        # строка нужна (мониторинг включали, пока база лежала).
+        _dxuser=$(db_exporter_user)
+        if [ -z "$(env_get "$DOCKER_ENV" OPENCRM_DB_EXPORTER_PASSWORD 2>/dev/null || true)" ]; then
+            probe "$(tr_ "метрики базы" "database metrics")" 0 "$(tr_ "пароль наблюдателя не задан — метрик базы нет; ./opencrm.sh monitoring on" "no watcher password — there are no database metrics; ./opencrm.sh monitoring on")"
+        else
+            case "$(db_exporter_granted)" in
+                "")
+                    probe "$(tr_ "метрики базы" "database metrics")" 1 "$(tr_ "не проверить — база не отвечает" "cannot check — the database is not answering")" ;;
+                0)
+                    probe "$(tr_ "метрики базы" "database metrics")" 0 "$(tr_ "пользователь $_dxuser в базе не заведён — на дашборде «нет доступа к базе»; ./opencrm.sh monitoring on" "user $_dxuser does not exist in the database — the dashboard shows \"no access to the database\"; ./opencrm.sh monitoring on")" ;;
+                *)
+                    probe "$(tr_ "метрики базы" "database metrics")" 1 "$(tr_ "собираются под пользователем $_dxuser" "collected as user $_dxuser")" ;;
+            esac
         fi
 
         # Проверка сайта обязана идти по ИМЕНИ САЙТА. По внутреннему адресу она

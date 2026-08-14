@@ -204,6 +204,281 @@
       "targets": [
         {"refId": "A", "expr": "up", "instant": true, "format": "table"}
       ]
+    },
+
+    {
+      "id": 30,
+      "type": "row",
+      "title": "База MySQL",
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 30},
+      "panels": []
+    },
+    {
+      "id": 31,
+      "type": "stat",
+      "title": "Сбор метрик базы",
+      "description": "Отвечает ли mysqld-exporter и пускает ли его база. «Нет доступа к базе» означает, что пользователь наблюдателя не заведён или пароль в docker/.env разошёлся с базой — запрос на создание есть в docker/.env.example. «Экспортёра нет» — служба db-exporter не поднята (профиль monitoring выключен).",
+      "datasource": {"type": "prometheus", "uid": "opencrm-prometheus"},
+      "gridPos": {"h": 6, "w": 4, "x": 0, "y": 31},
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "экспортёра нет",
+          "mappings": [
+            {"type": "value", "options": {
+              "0": {"text": "нет доступа к базе", "color": "red", "index": 0},
+              "1": {"text": "собирается", "color": "green", "index": 1}
+            }}
+          ],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]}
+        },
+        "overrides": []
+      },
+      "options": {"colorMode": "background", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}},
+      "targets": [
+        {"refId": "A", "expr": "max(mysql_up)", "instant": true, "legendFormat": "база"}
+      ]
+    },
+    {
+      "id": 32,
+      "type": "timeseries",
+      "title": "Соединения к базе против потолка",
+      "description": "Упереться в max_connections — значит получить «too many connections» на каждом запросе сразу, без предупреждения. «Пик с запуска» показывает, насколько близко подходили, даже если в момент взгляда всё спокойно.",
+      "datasource": {"type": "prometheus", "uid": "opencrm-prometheus"},
+      "gridPos": {"h": 6, "w": 10, "x": 4, "y": 31},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {"fillOpacity": 10, "lineWidth": 1}
+        },
+        "overrides": [
+          {"matcher": {"id": "byName", "options": "потолок"}, "properties": [
+            {"id": "color", "value": {"mode": "fixed", "fixedColor": "red"}},
+            {"id": "custom.fillOpacity", "value": 0}
+          ]}
+        ]
+      },
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "none"}},
+      "targets": [
+        {"refId": "A", "expr": "max(mysql_global_status_threads_connected)", "legendFormat": "открыто"},
+        {"refId": "B", "expr": "max(mysql_global_status_threads_running)", "legendFormat": "работают"},
+        {"refId": "C", "expr": "max(mysql_global_status_max_used_connections)", "legendFormat": "пик с запуска"},
+        {"refId": "D", "expr": "max(mysql_global_variables_max_connections)", "legendFormat": "потолок"}
+      ]
+    },
+    {
+      "id": 33,
+      "type": "timeseries",
+      "title": "Запросов в секунду",
+      "datasource": {"type": "prometheus", "uid": "opencrm-prometheus"},
+      "gridPos": {"h": 6, "w": 10, "x": 14, "y": 31},
+      "fieldConfig": {"defaults": {"unit": "reqps", "min": 0, "custom": {"fillOpacity": 10, "lineWidth": 1}}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "single", "sort": "none"}},
+      "targets": [
+        {"refId": "A", "expr": "sum(rate(mysql_global_status_queries[5m]))", "legendFormat": "запросов"}
+      ]
+    },
+    {
+      "id": 34,
+      "type": "timeseries",
+      "title": "Ожидания замков InnoDB",
+      "description": "Растущие ожидания — первый признак того, что база не справляется, и он приходит задолго до отказов. «Ждут сейчас» больше нуля постоянно означает, что запросы стоят в очереди друг за другом.",
+      "datasource": {"type": "prometheus", "uid": "opencrm-prometheus"},
+      "gridPos": {"h": 6, "w": 6, "x": 0, "y": 37},
+      "fieldConfig": {"defaults": {"unit": "short", "min": 0, "custom": {"fillOpacity": 10, "lineWidth": 1}}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "none"}},
+      "targets": [
+        {"refId": "A", "expr": "sum(rate(mysql_global_status_innodb_row_lock_waits[5m])) * 60", "legendFormat": "ожиданий в минуту"},
+        {"refId": "B", "expr": "max(mysql_global_status_innodb_row_lock_current_waits)", "legendFormat": "ждут сейчас"}
+      ]
+    },
+    {
+      "id": 35,
+      "type": "timeseries",
+      "title": "Медленные запросы и обрывы",
+      "description": "Оба ряда — про то, чего пользователь не видит в ответе, но чувствует. Обрыв подключения (aborted_connects) — это запрос, который до базы не доехал вовсе.",
+      "datasource": {"type": "prometheus", "uid": "opencrm-prometheus"},
+      "gridPos": {"h": 6, "w": 6, "x": 6, "y": 37},
+      "fieldConfig": {"defaults": {"unit": "short", "min": 0, "custom": {"fillOpacity": 10, "lineWidth": 1}}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "none"}},
+      "targets": [
+        {"refId": "A", "expr": "sum(rate(mysql_global_status_slow_queries[5m])) * 60", "legendFormat": "медленных в минуту"},
+        {"refId": "B", "expr": "sum(rate(mysql_global_status_aborted_connects[5m])) * 60", "legendFormat": "обрывов в минуту"}
+      ]
+    },
+    {
+      "id": 36,
+      "type": "timeseries",
+      "title": "Буферный пул: занято против размера",
+      "description": "Занято считается страницами (`buffer_pool_pages{state=\"data\"}`), умноженными на размер страницы, — самой величины в байтах экспортёр не отдаёт. Упёрлось в размер и стоит там — базе не хватает памяти под горячие данные, и каждый следующий запрос идёт на диск.",
+      "datasource": {"type": "prometheus", "uid": "opencrm-prometheus"},
+      "gridPos": {"h": 6, "w": 6, "x": 12, "y": 37},
+      "fieldConfig": {
+        "defaults": {"unit": "bytes", "min": 0, "custom": {"fillOpacity": 10, "lineWidth": 1}},
+        "overrides": [
+          {"matcher": {"id": "byName", "options": "размер пула"}, "properties": [
+            {"id": "color", "value": {"mode": "fixed", "fixedColor": "red"}},
+            {"id": "custom.fillOpacity", "value": 0}
+          ]}
+        ]
+      },
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "none"}},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max(mysql_global_status_buffer_pool_pages{state=\"data\"}) * max(mysql_global_variables_innodb_page_size)",
+          "legendFormat": "занято"
+        },
+        {"refId": "B", "expr": "max(mysql_global_variables_innodb_buffer_pool_size)", "legendFormat": "размер пула"}
+      ]
+    },
+    {
+      "id": 37,
+      "type": "timeseries",
+      "title": "Попадания в буферный пул",
+      "description": "Доля чтений, обошедшихся без диска. Здоровая база держит выше 99%; провал вниз означает, что пул мал для нынешнего объёма данных.",
+      "datasource": {"type": "prometheus", "uid": "opencrm-prometheus"},
+      "gridPos": {"h": 6, "w": 6, "x": 18, "y": 37},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "max": 1,
+          "custom": {"fillOpacity": 10, "lineWidth": 1, "thresholdsStyle": {"mode": "line"}},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 0.99}]}
+        },
+        "overrides": []
+      },
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "single", "sort": "none"}},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "1 - sum(rate(mysql_global_status_innodb_buffer_pool_reads[5m])) / sum(rate(mysql_global_status_innodb_buffer_pool_read_requests[5m]))",
+          "legendFormat": "попаданий"
+        }
+      ]
+    },
+
+    {
+      "id": 40,
+      "type": "row",
+      "title": "Redis — общий счётчик попыток",
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 43},
+      "panels": []
+    },
+    {
+      "id": 41,
+      "type": "stat",
+      "title": "Сбор метрик Redis",
+      "datasource": {"type": "prometheus", "uid": "opencrm-prometheus"},
+      "description": "Не то же самое, что `opencrm_redis_up` на панели сайта: та метрика приходит от приложения и исчезает вместе с ним, а эта — от отдельного наблюдателя.",
+      "gridPos": {"h": 6, "w": 4, "x": 0, "y": 44},
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "экспортёра нет",
+          "mappings": [
+            {"type": "value", "options": {
+              "0": {"text": "не отвечает", "color": "red", "index": 0},
+              "1": {"text": "собирается", "color": "green", "index": 1}
+            }}
+          ],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]}
+        },
+        "overrides": []
+      },
+      "options": {"colorMode": "background", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}},
+      "targets": [
+        {"refId": "A", "expr": "max(redis_up)", "instant": true, "legendFormat": "redis"}
+      ]
+    },
+    {
+      "id": 42,
+      "type": "timeseries",
+      "title": "Память Redis против потолка",
+      "description": "Потолок задан изнутри (`maxmemory` в docker-compose.yml), и упереться в него не авария: политика allkeys-lru выбросит самые старые ключи. Важно другое — упереться и остаться там значит, что счётчики попыток входа живут меньше своего срока.",
+      "datasource": {"type": "prometheus", "uid": "opencrm-prometheus"},
+      "gridPos": {"h": 6, "w": 10, "x": 4, "y": 44},
+      "fieldConfig": {
+        "defaults": {"unit": "bytes", "min": 0, "custom": {"fillOpacity": 10, "lineWidth": 1}},
+        "overrides": [
+          {"matcher": {"id": "byName", "options": "потолок"}, "properties": [
+            {"id": "color", "value": {"mode": "fixed", "fixedColor": "red"}},
+            {"id": "custom.fillOpacity", "value": 0}
+          ]}
+        ]
+      },
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "none"}},
+      "targets": [
+        {"refId": "A", "expr": "max(redis_memory_used_bytes)", "legendFormat": "занято"},
+        {"refId": "B", "expr": "max(redis_memory_max_bytes)", "legendFormat": "потолок"}
+      ]
+    },
+    {
+      "id": 43,
+      "type": "timeseries",
+      "title": "Вытеснено ключей",
+      "description": "Каждый вытесненный ключ — это забытая попытка входа или PIN. Пока цифра нулевая, защита от подбора считает честно; выше нуля постоянно — значит порог тихо перестал держать, и это надо чинить памятью (OPENCRM_REDIS_MAXMEMORY), а не порогом.",
+      "datasource": {"type": "prometheus", "uid": "opencrm-prometheus"},
+      "gridPos": {"h": 6, "w": 10, "x": 14, "y": 44},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {"fillOpacity": 20, "lineWidth": 1, "thresholdsStyle": {"mode": "line"}},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}
+        },
+        "overrides": []
+      },
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "single", "sort": "none"}},
+      "targets": [
+        {"refId": "A", "expr": "sum(increase(redis_evicted_keys_total[5m]))", "legendFormat": "за 5 минут"}
+      ]
+    },
+    {
+      "id": 44,
+      "type": "timeseries",
+      "title": "Попадания и промахи",
+      "datasource": {"type": "prometheus", "uid": "opencrm-prometheus"},
+      "gridPos": {"h": 6, "w": 8, "x": 0, "y": 50},
+      "fieldConfig": {"defaults": {"unit": "ops", "min": 0, "custom": {"fillOpacity": 10, "lineWidth": 1}}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "none"}},
+      "targets": [
+        {"refId": "A", "expr": "sum(rate(redis_keyspace_hits_total[5m]))", "legendFormat": "попаданий"},
+        {"refId": "B", "expr": "sum(rate(redis_keyspace_misses_total[5m]))", "legendFormat": "промахов"}
+      ]
+    },
+    {
+      "id": 45,
+      "type": "timeseries",
+      "title": "Соединения к Redis",
+      "description": "«Отказано» больше нуля означает, что кто-то не смог подключиться вовсе, — а к Redis ходит защита от подбора, и её отказ отдаёт 503 на вход.",
+      "datasource": {"type": "prometheus", "uid": "opencrm-prometheus"},
+      "gridPos": {"h": 6, "w": 8, "x": 8, "y": 50},
+      "fieldConfig": {"defaults": {"unit": "short", "min": 0, "custom": {"fillOpacity": 10, "lineWidth": 1}}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "none"}},
+      "targets": [
+        {"refId": "A", "expr": "max(redis_connected_clients)", "legendFormat": "подключено"},
+        {"refId": "B", "expr": "max(redis_blocked_clients)", "legendFormat": "ждут ответа"},
+        {"refId": "C", "expr": "sum(increase(redis_rejected_connections_total[5m]))", "legendFormat": "отказано за 5 минут"}
+      ]
+    },
+    {
+      "id": 46,
+      "type": "timeseries",
+      "title": "Средняя задержка команды",
+      "description": "Время, потраченное Redis на команды, делённое на их число. Считается по счётчикам с меткой `cmd`, а не по перцентилям: перцентили дают ряд на каждую команду и квантиль, то есть сотни рядов ради цифры, которая и так видна.",
+      "datasource": {"type": "prometheus", "uid": "opencrm-prometheus"},
+      "gridPos": {"h": 6, "w": 8, "x": 16, "y": 50},
+      "fieldConfig": {"defaults": {"unit": "s", "min": 0, "custom": {"fillOpacity": 10, "lineWidth": 1}}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "single", "sort": "none"}},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(redis_commands_duration_seconds_total[5m])) / sum(rate(redis_commands_total[5m]))",
+          "legendFormat": "команда"
+        }
+      ]
     }
   ]
 }

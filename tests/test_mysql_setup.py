@@ -308,6 +308,254 @@ def test_bekap_snimaet_damp_v_konteynere_bazy():
     assert "scripts/backup.sh" in bekap, "копия перестала сниматься общим скриптом"
 
 
+# --- Наблюдатель за базой: пользователь для db-exporter ------------------------
+#
+# `db-exporter` ходит в MySQL под своим пользователем, и заводит его установщик.
+# Не заведён — экспортёр отдаёт `mysql_up 0`, оставаясь при этом ЗДОРОВЫМ
+# контейнером: ни цикла перезапусков, ни тревоги, ни строчки в логе. Снаружи
+# это неотличимо от работающего мониторинга, а на деле про базу нет ничего —
+# ни соединений, ни ожиданий замков, ни буферного пула. Узнают об этом в тот
+# единственный день, когда метрики базы понадобились.
+
+
+def _bez_kommentariev(kusok: str) -> str:
+    """Кусок скрипта без строк-комментариев.
+
+    Проверки порядка обязаны читать КОД, а не прозу рядом с ним. Комментарий
+    «тоже до monitoring_apply, и по той же причине» стоит выше самого вызова, и
+    сторож, ищущий вхождение имени, находил в нём первое упоминание и объявлял
+    порядок нарушенным на верном скрипте. Ровно так этот помощник и появился.
+    """
+    return NL.join(s for s in kusok.splitlines() if not s.strip().startswith("#"))
+
+
+def _kod(imya: str) -> str:
+    """Тело функции оболочки без комментариев."""
+    return _bez_kommentariev(_telo(imya))
+
+
+def _telo_monitoring_on() -> str:
+    """Ветка `on` команды `monitoring` — от заголовка функции до ветки `off`.
+
+    Конец ищется в ХВОСТЕ после заголовка, а не во всём файле: то же `off)` с
+    тем же отступом стоит выше, у автообновления, и поиск по целому тексту
+    возвращал бы кусок до него — то есть пустой. Найдено покраснением сторожа
+    на верном скрипте.
+    """
+    text = _script()
+    hvost = text[text.index("cmd_monitoring() {"):]
+    return _bez_kommentariev(hvost[: hvost.index(NL + "        off)")])
+
+
+def test_parol_nablyudatelya_generiruetsya_kak_ostalnye():
+    """Тем же способом, что пароль Grafana и пароль базы: генерируется,
+    ложится в docker/.env (права 600) и в репозиторий не попадает.
+
+    Спрошенный у человека пароль здесь не нужен никому: его читают ровно два
+    участника — экспортёр из docker/.env и сама база, куда его кладёт этот же
+    установщик.
+    """
+    seed = _kod("seed_db_exporter_password")
+    assert "gen_secret" in seed, "пароль наблюдателя больше не генерируется"
+    odnoy = _odnoy_strokoy(seed)
+    assert 'env_set "$DOCKER_ENV" OPENCRM_DB_EXPORTER_PASSWORD' in odnoy, (
+        "пароль наблюдателя не записывается в docker/.env"
+    )
+    assert 'env_set "$DOCKER_ENV" OPENCRM_DB_EXPORTER_USER' in odnoy, (
+        "имя наблюдателя не записывается в docker/.env — экспортёр возьмёт "
+        "умолчание compose, и разъехаться этим двоим будет негде только пока "
+        "умолчания совпадают"
+    )
+    assert "ask " not in seed, "пароль наблюдателя снова спрашивают у человека"
+
+
+def test_povtornyy_zapusk_ne_pereseivaet_parol_nablyudatelya():
+    """Тот же пароль записан ВНУТРИ базы, у пользователя наблюдателя.
+
+    Перегенерация на повторном запуске развела бы половины пары: экспортёр
+    получил бы «access denied», метрики базы исчезли бы с дашборда, и ни одна
+    тревога об этом не сказала бы — контейнер-то здоров.
+    """
+    seed = _kod("seed_db_exporter_password")
+    assert 'env_get "$DOCKER_ENV" OPENCRM_DB_EXPORTER_PASSWORD' in seed, (
+        "прежний пароль не читается — повторный запуск разведёт файл с базой"
+    )
+    assert seed.index("OPENCRM_DB_EXPORTER_PASSWORD") < seed.index("gen_secret"), (
+        "новый пароль сеется раньше, чем проверено наличие прежнего"
+    )
+
+
+def test_ustanovshchik_i_compose_govoryat_ob_odnom_polzovatele():
+    """Имя по умолчанию названо в двух местах, и разъехаться им нельзя.
+
+    Установщик завёл бы `opencrm_exporter`, а экспортёр ходил бы в базу кем-то
+    другим — и выглядело бы это ровно как незаведённый пользователь.
+    """
+    assert "${OPENCRM_DB_EXPORTER_USER:-opencrm_exporter}" in _compose(), (
+        "compose берёт имя наблюдателя не из OPENCRM_DB_EXPORTER_USER"
+    )
+    assert "OPENCRM_DB_EXPORTER_PASSWORD" in _compose(), (
+        "compose не передаёт экспортёру пароль из docker/.env"
+    )
+    imya = _kod("db_exporter_user")
+    assert 'env_get "$DOCKER_ENV" OPENCRM_DB_EXPORTER_USER' in imya
+    assert "opencrm_exporter" in imya, (
+        "умолчание в установщике разошлось с умолчанием в compose"
+    )
+
+
+def test_zapros_zavodit_polzovatelya_i_dovodit_parol():
+    """`CREATE USER IF NOT EXISTS` заводит нового, `ALTER USER` доводит пароль
+    до уже существующего.
+
+    Без `ALTER` смена пароля в docker/.env расходилась бы с базой навсегда:
+    новый пользователь не создаётся (он уже есть), старый остаётся со старым
+    паролем, и починить это установщиком стало бы нечем.
+    """
+    zapros = _odnoy_strokoy(_kod("grant_db_exporter"))
+    assert "CREATE USER IF NOT EXISTS" in zapros, "пользователь не заводится"
+    assert "ALTER USER" in zapros and "IDENTIFIED BY" in zapros, (
+        "пароль не доводится до уже существующего пользователя — смена пароля "
+        "в docker/.env останется незамеченной базой"
+    )
+
+
+def test_u_nablyudatelya_rovno_tri_prava():
+    """Ни одной таблицы с данными клиентов.
+
+    Утёкший из логов или из метрик пароль наблюдателя не должен открывать
+    базу. Права ровно те три, которые нужны mysqld-exporter, и ни одного
+    сверх.
+    """
+    zapros = _odnoy_strokoy(_kod("grant_db_exporter"))
+    assert "GRANT PROCESS, REPLICATION CLIENT ON *.*" in zapros
+    assert "GRANT SELECT ON performance_schema.*" in zapros
+    for lishnee in ("GRANT ALL", "SUPER", "WITH GRANT OPTION", "ON opencrm.*", "ON *.* TO"):
+        assert lishnee not in zapros.replace("GRANT PROCESS, REPLICATION CLIENT ON *.* TO", ""), (
+            f"наблюдателю выдано лишнее право: {lishnee}"
+        )
+    assert "MAX_USER_CONNECTIONS" in zapros, (
+        "нет потолка соединений — наблюдатель съест последние ровно тогда, "
+        "когда их не хватает и он нужнее всего"
+    )
+
+
+def test_paroli_ne_uezzhayut_v_komandnuyu_stroku_hosta():
+    """Аргументы процесса видит через `ps` любой пользователь сервера.
+
+    Рутовый пароль раскрывается ВНУТРИ контейнера из его собственного
+    окружения (как в dump_mysql), а пароль наблюдателя уходит туда же
+    стандартным вводом вместе с запросом — тем же путём, каким заливается дамп
+    при восстановлении.
+    """
+    zapros = _odnoy_strokoy(_kod("grant_db_exporter"))
+    assert "$MYSQL_ROOT_PASSWORD" in zapros, "рутовый пароль подставляется на хосте"
+    assert "| compose exec -T db" in zapros, (
+        "запрос уходит не стандартным вводом — значит попадает в аргументы"
+    )
+    posle = zapros[zapros.index("| compose exec"):]
+    assert "_dxp" not in posle, (
+        "пароль наблюдателя уехал в команду docker — его видно в `ps` на хосте"
+    )
+    # То же самое у проверки: она ходит в базу рутом и своего пароля не носит.
+    assert "$MYSQL_ROOT_PASSWORD" in _odnoy_strokoy(_kod("db_exporter_granted"))
+
+
+def test_polzovatel_zavoditsya_posle_podyoma_bazy_a_parol_do():
+    """Порядок здесь не косметика, и он разный для двух половин.
+
+    Пароль пишется ДО подъёма служб: экспортёр читает его при СОЗДАНИИ
+    контейнера, и записанный позже подхватился бы только следующим `up`, то
+    есть неизвестно когда. Пользователь заводится ПОСЛЕ: до подъёма базы
+    просто нет — при установке сборка идёт ниже по списку.
+    """
+    on = _telo_monitoring_on()
+    assert on.index("seed_db_exporter_password") < on.index("monitoring_apply"), (
+        "пароль пишется после подъёма — контейнер экспортёра останется с прежним"
+    )
+    assert on.index("monitoring_apply") < on.index("setup_db_exporter"), (
+        "пользователя заводят раньше, чем поднята база"
+    )
+
+    text = _script()
+    ustanovka = text[text.index("cmd_install() {"): text.index("need_install() {")]
+    assert "setup_db_exporter" in ustanovka, (
+        "установка включает мониторинг, но пользователя наблюдателя не заводит"
+    )
+    assert ustanovka.index("build_and_start") < ustanovka.index("setup_db_exporter"), (
+        "пользователя заводят до сборки — базы в этот момент ещё нет"
+    )
+
+
+def test_lezhachaya_baza_ne_valit_vklyuchenie_monitoringa():
+    """Тревоги, панель, метрики машины и проверка сайта работают и без метрик
+    базы. Уронить из-за недоступной базы включение мониторинга целиком значило
+    бы обменять всё на часть.
+
+    Но и промолчать нельзя: не заведённый пользователь ничем себя не выдаёт.
+    """
+    setup = _kod("setup_db_exporter")
+    assert "wait_db" in setup, "готовности базы не ждут вовсе"
+    assert "die " not in setup, "недоступная база валит включение мониторинга"
+    assert "warn " in setup, "о незаведённых метриках базы молчат"
+    assert "monitoring on" in setup, "не сказано, чем это доделать"
+
+
+def test_gotovnost_bazy_sprashivaetsya_po_tcp_a_ne_po_stroke_sostoyaniya():
+    """Сокет отвечает раньше, чем сервер начинает слушать порт, — та же
+    ловушка, из-за которой проверка здоровья в compose ходит по TCP.
+
+    А в строке `compose ps` слово «healthy» лежит внутри «unhealthy»: проверка
+    на вхождение считала бы больную базу здоровой ровно тогда, когда ожидание
+    и написано.
+    """
+    zhdyom = _kod("wait_db")
+    assert "--protocol=TCP" in zhdyom, "готовность базы спрашивают через сокет"
+    assert "compose ps" not in zhdyom, (
+        "готовность определяется разбором строки состояния — «unhealthy» "
+        "содержит «healthy»"
+    )
+
+
+def test_doctor_vidit_nezavedyonnye_metriki_bazy():
+    """Иначе «пользователя забыли завести» видно только тому, кто откроет
+    дашборд и прочтёт там «нет доступа к базе».
+
+    Спрашивается САМА БАЗА: пароль в docker/.env и пользователь в MySQL —
+    разные вещи, и расходятся они ровно в том случае, ради которого строка
+    нужна (мониторинг включали, пока база лежала).
+    """
+    text = _script()
+    doctor = text[text.index("cmd_doctor() {"): text.index("why_down() {")]
+    assert 'tr_ "метрики базы"' in doctor, "в диагностике нет строки про метрики базы"
+    kusok = doctor[doctor.index('tr_ "метрики базы"'): doctor.index('tr_ "проверка сайта"')]
+    assert "db_exporter_granted" in kusok, (
+        "строка верит docker/.env, а не базе — не заведённый пользователь "
+        "останется зелёным"
+    )
+    assert "./opencrm.sh monitoring on" in kusok, "не сказано, чем это чинить"
+    # Три исхода различаются: не задан пароль, не заведён пользователь и
+    # «спросить не у кого». Слитые в один, они врали бы при лежачей базе.
+    assert "не заведён" in kusok
+    assert "не проверить" in kusok
+
+
+def test_sostoyanie_monitoringa_pokazyvaet_eksportyory():
+    """Экран состояния — то место, куда идут с вопросом «что с мониторингом».
+
+    Пока в списке стояли только prometheus, alertmanager и grafana, пропажу
+    самого контейнера экспортёра нельзя было увидеть ниоткуда: профиль
+    включён, панель открывается, а половины дашборда нет.
+    """
+    text = _script()
+    mon = text[text.index("cmd_monitoring() {"): text.index("dump_mysql() {")]
+    stroki = [s for s in mon.splitlines() if "compose ps" in s and not s.strip().startswith("#")]
+    assert stroki, "экран состояния больше не показывает контейнеры мониторинга"
+    assert "db-exporter" in stroki[0] and "redis-exporter" in stroki[0], (
+        "экспортёров базы и Redis нет в списке служб на экране состояния"
+    )
+
+
 # --- Redis: служба, которая не выключается ------------------------------------
 
 

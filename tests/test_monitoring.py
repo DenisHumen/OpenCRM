@@ -19,6 +19,8 @@
 import asyncio
 import importlib
 import re
+import shutil
+import subprocess
 from pathlib import Path
 
 import httpx
@@ -50,6 +52,8 @@ SERVICES = (
     "node-exporter",
     "containers",
     "blackbox",
+    "db-exporter",
+    "redis-exporter",
     "grafana",
     "loki",
     "promtail",
@@ -67,7 +71,7 @@ def _script() -> str:
 
     Внутри образа его нет: Dockerfile копирует только то, что нужно приложению.
     А тесты гоняются и там — их прогоняет автообновление перед каждым деплоем
-    (`docker build --target tests`). Поэтому проверки установщика в образе
+    (образ `--target tests` рядом с базой). Поэтому проверки установщика в образе
     пропускаются, а не краснеют: красный тест, который никто не может починить,
     приучает не смотреть на цвет.
     """
@@ -480,6 +484,102 @@ def test_pravila_perechityvayutsya_bez_peresozdaniya_kontenera():
         assert "sleep 300" in entrypoint, f"{name} перечитывает конфиг слишком редко"
 
 
+def test_prometheus_perechityvaet_pravila_bezuslovno():
+    """У Prometheus сигнал уходит КАЖДЫЙ раз, и это не забывчивость.
+
+    Соседний Alertmanager сравнивает готовый конфиг со старым и молчит, пока
+    тот не изменился (см. проверку ниже — там за этим стоит лишнее сообщение в
+    чате). Повторить приём здесь нельзя: из шаблона тут рождается только
+    `prometheus.yml`, а файлы правил монтируются как есть и в сравнение не
+    попадают вовсе. Сравнивающий Prometheus не заметил бы НИ ОДНОЙ правки
+    правил, и новое правило после обновления не начало бы действовать никогда —
+    отказ, который виден только по несработавшей тревоге.
+    """
+    entrypoint = _read(MONITORING / "prometheus" / "entrypoint.sh")
+    telo = entrypoint.split("while :; do", 1)[1].split("done", 1)[0]
+    assert "kill -HUP 1" in telo
+    for uslovie in ("if ", "cmp", "diff"):
+        assert uslovie not in telo, (
+            "перезагрузка Prometheus стала условной — правки правил перестанут "
+            "применяться, потому что правила не проходят через шаблон"
+        )
+    # И причина записана рядом, иначе следующий читатель «починит» это обратно.
+    assert "правила" in entrypoint and "alertmanager" in entrypoint
+
+
+def _kusok(text: str, nachalo: str, konets: str) -> str:
+    return text.split(nachalo, 1)[1].split(konets, 1)[0]
+
+
+def test_alertmanager_shlyot_signal_tolko_pri_nastoyashchem_rasxozhdenii(tmp_path):
+    """Второй источник лишних сообщений, и он тише первого.
+
+    Перечитывание шло каждые пять минут БЕЗУСЛОВНО. Перезагрузка конфига в
+    Alertmanager останавливает диспетчер и поднимает новый: всё, что было в
+    полёте, обрывается вместе со старым контекстом, а отметка «это уже
+    отправляли» кладётся в журнал уведомлений ТОЛЬКО после успешной отправки.
+    Оборванная на полпути отправка — это доставленное сообщение без отметки, и
+    новый диспетчер шлёт то же самое второй раз. Период перезагрузки (5 минут)
+    совпадает с `group_interval`, поэтому совпадение систематическое, а не
+    случайное — так и приходили два одинаковых «всё в порядке» подряд.
+
+    Сторож не текстовый: тело цикла и функция `render` берутся из самого файла
+    и выполняются настоящей оболочкой. Уберут сравнение — сигналов станет
+    четыре вместо одного, и проверка покраснеет.
+    """
+    if not shutil.which("sh"):
+        pytest.skip("нет /bin/sh — проверять оболочкой нечем")
+
+    entrypoint = _read(MONITORING / "alertmanager" / "entrypoint.sh")
+    render = re.search(r"\nrender\(\) \{\n(.*?)\n\}\n", entrypoint, re.S)
+    assert render, "функция render пропала — проверка смотрит не туда"
+    tsikl = re.search(r"while :; do\n(.*?)\n    done", entrypoint, re.S)
+    assert tsikl, "цикл перечитывания пропал"
+
+    shablon = tmp_path / "shablon.yml"
+    shablon.write_text(
+        "bot_token: __TELEGRAM_TOKEN__\nchat_id: __TELEGRAM_CHAT__\napi_url: __TELEGRAM_API__\n",
+        encoding="utf-8",
+    )
+    signaly = tmp_path / "signaly"
+
+    scenariy = f"""
+TOKEN=t
+CHAT=c
+API=a
+TEMPLATE={shablon}
+TARGET={tmp_path}/gotovyy.yml
+NOVYY={tmp_path}/gotovyy.yml.new
+sleep() {{ :; }}
+kill() {{ echo HUP >> {signaly}; }}
+render() {{
+{render.group(1)}
+}}
+render "$TARGET"
+for _ in 1 2; do
+{tsikl.group(1)}
+done
+echo "# правка шаблона" >> "$TEMPLATE"
+for _ in 1 2; do
+{tsikl.group(1)}
+done
+"""
+    zapusk = subprocess.run(
+        ["sh", "-c", scenariy], capture_output=True, text=True, timeout=60
+    )
+    assert zapusk.returncode == 0, zapusk.stderr
+
+    poslano = signaly.read_text(encoding="utf-8").split() if signaly.exists() else []
+    assert poslano == ["HUP"], (
+        "сигналов должно быть ровно два состояния: молчание, пока конфиг тот же, "
+        f"и один сигнал на настоящую правку. Получено: {poslano!r}"
+    )
+    # А правка при этом действительно доехала до готового конфига.
+    assert "# правка шаблона" in (tmp_path / "gotovyy.yml").read_text(encoding="utf-8")
+    # Черновик за собой убран: мусор в /tmp контейнера копился бы вечно.
+    assert not (tmp_path / "gotovyy.yml.new").exists()
+
+
 # --- оповещения --------------------------------------------------------------
 
 
@@ -673,6 +773,500 @@ def test_alertmanager_podnimaetsya_i_bez_kanala():
     entrypoint = _read(MONITORING / "alertmanager" / "entrypoint.sh")
     assert "alertmanager-silent.yml" in entrypoint
     assert (MONITORING / "alertmanager" / "alertmanager-silent.yml").is_file()
+
+
+# --- «тревога» — «всё в порядке» — «тревога»: гистерезис ----------------------
+
+
+#: Тревоги, которым гистерезис НЕ нужен, и почему именно. Список закрытый и
+#: проверяется в обе стороны: у названных здесь `keep_firing_for` быть не
+#: должно, у всех остальных — обязан. Смысл двусторонности в том, что новое
+#: правило нельзя завести молча: либо оно умеет качаться вокруг порога и
+#: получает гистерезис, либо его вносят сюда, объяснив, почему не умеет.
+BEZ_GISTEREZISA = {
+    "CertificateExpiringSoon": "счётчик дней идёт только вниз; вверх — один раз, продлением",
+    "BackupTooOld": "возраст копии растёт монотонно, гаснет от появления новой",
+    "BackupBroken": "меняется раз в сутки, в момент снятия копии",
+    "DeployRolledBack": "гаснет по своему часовому окну — гистерезис спорил бы с замыслом",
+}
+
+
+def _pravila_blokami() -> dict[str, str]:
+    """{имя тревоги: её кусок текста}."""
+    rules = _read(RULES)
+    bloki = {}
+    for kusok in re.split(r"\n      - alert: ", rules)[1:]:
+        bloki[kusok.splitlines()[0].strip()] = kusok
+    return bloki
+
+
+def _vyrazhenie(block: str) -> str:
+    """Условие правила (`expr:`) одной строкой — включая свёрнутые (`>-`).
+
+    Свёрнутый блок YAML склеивает строки ПРОБЕЛОМ, поэтому и здесь склейка
+    пробелом: разбор обязан видеть ровно то выражение, которое увидит Prometheus.
+    """
+    stroki = block.splitlines()
+    for nomer, stroka in enumerate(stroki):
+        sovpalo = re.match(r"^        expr:\s*(.*)$", stroka)
+        if not sovpalo:
+            continue
+        hvost = sovpalo.group(1).strip()
+        if hvost and hvost not in (">-", ">", "|", "|-"):
+            return hvost
+        kuski = []
+        for dalshe in stroki[nomer + 1 :]:
+            if dalshe.strip() and not dalshe.startswith("          "):
+                break
+            kuski.append(dalshe.strip())
+        return " ".join(k for k in kuski if k)
+    raise AssertionError(f"у правила {stroki[0].strip()} нет условия")
+
+
+def _annotatsii(block: str) -> dict[str, str]:
+    """Аннотации правила, склеенные из свёрнутых (`>-`) кусков в одну строку."""
+    if "annotations:" not in block:
+        return {}
+    naydeno: dict[str, str] = {}
+    tekushchiy = ""
+    for stroka in block.split("annotations:", 1)[1].splitlines():
+        klyuch = re.match(r"^          (\w+):(.*)$", stroka)
+        if klyuch:
+            tekushchiy = klyuch.group(1)
+            naydeno[tekushchiy] = klyuch.group(2).strip()
+        elif tekushchiy and stroka.strip():
+            naydeno[tekushchiy] += " " + stroka.strip()
+    return naydeno
+
+
+def test_u_kachayushchihsya_trevog_est_gisterezis():
+    """Мигание порога приучает не читать быстрее, чем ложная тревога.
+
+    Живой случай: доля 4xx весь день ходила вокруг сорока процентов, и в чат
+    приходило «тревога» — «всё в порядке» — «тревога» — «всё в порядке», при
+    том что поломки не было ни разу. `for:` держит только ВХОД в тревогу, а
+    выход из неё мгновенный; `keep_firing_for` и есть недостающая половина.
+    """
+    bloki = _pravila_blokami()
+    assert len(bloki) >= 25, "правил стало подозрительно мало — разбор смотрит не туда"
+    for imya, block in bloki.items():
+        est = bool(re.search(r"^\s+keep_firing_for: ", block, re.M))
+        if imya in BEZ_GISTEREZISA:
+            assert not est, (
+                f"{imya} назван в списке исключений ({BEZ_GISTEREZISA[imya]}), "
+                "но гистерезис у него всё-таки стоит — список врёт"
+            )
+        else:
+            assert est, (
+                f"{imya}: нет keep_firing_for. Показатель, ходящий вокруг порога, "
+                "будет слать «тревога» — «всё в порядке» по кругу. Если он так не "
+                "умеет — впишите его в BEZ_GISTEREZISA и объясните, почему"
+            )
+
+
+# --- число в сообщении -------------------------------------------------------
+
+
+#: Тревоги, у которых `$value` осмыслен и обязан стоять в первой строке.
+#: Остальные меряют «ноль или один» (лежит / нездоров / не совпало), и число в
+#: них не сказало бы ничего.
+S_CHISLOM = (
+    "SiteSlow",
+    "HighErrorRate",
+    "HighClientErrorRate",
+    "CertificateExpiringSoon",
+    "DiskAlmostFull",
+    "HostMemoryLow",
+    "HostSwapping",
+    "ContainerRestartLoop",
+    "BackupTooOld",
+    "RateLimiterUnavailable",
+    "DatabaseConnectionsHigh",
+    "DatabaseLockWaits",
+    "DatabaseSlowQueries",
+    "DatabaseBufferPoolMisses",
+    "RedisEvictingKeys",
+    "RedisMemoryNearLimit",
+)
+
+
+def test_chislo_stoit_v_pervoy_stroke_a_ne_v_podrobnostyah():
+    """«Доля 4xx — 63%» и «доля 4xx выше 40%» стоят одинаково, а решения по ним
+    разные. Первая строка сообщения собирается из `summary` — значит и число
+    живёт там, а не в описании, куда надо разворачивать."""
+    bloki = _pravila_blokami()
+    for imya in S_CHISLOM:
+        assert imya in bloki, f"правило {imya} исчезло — список смотрит не туда"
+        summary = _annotatsii(bloki[imya]).get("summary", "")
+        assert "$value" in summary, (
+            f"{imya}: в заголовке нет самого числа — человек узнаёт только то, "
+            "что порог перейдён, и идёт смотреть ради одной цифры"
+        )
+
+
+def test_doli_pechatayutsya_protsentami_a_ne_dolyami():
+    """Отказ, который врал в сто раз и молчал об этом.
+
+    Выражения вроде `avail / size` дают ДОЛЮ: 0.08, а не 8. Привычное
+    `printf "%.1f%%"` печатало из неё «0.1%», а `printf "%.0f%%"` из доли
+    пятисоток 0.07 — честный «0%». То есть сообщение про кончающийся диск
+    пугало вдесятеро сильнее правды, а сообщение про сыплющиеся ошибки —
+    успокаивало. Проверено `promtool test rules` на выдуманных рядах:
+    8% свободного места давали ровно «Свободно 0.1%».
+
+    `humanizePercentage` умножает на сто сам.
+    """
+    rules = _read(RULES)
+    plohie = re.findall(r"\{\{[^}]*\$value[^}]*printf[^}]*%%[^}]*\}\}", rules)
+    assert not plohie, (
+        "доля печатается через printf с процентом — она уедет в текст в сто раз "
+        f"меньше настоящей: {plohie}"
+    )
+    bloki = _pravila_blokami()
+    for imya in (
+        "HighErrorRate",
+        "HighClientErrorRate",
+        "DiskAlmostFull",
+        "HostMemoryLow",
+        "DatabaseConnectionsHigh",
+        "DatabaseBufferPoolMisses",
+        "RedisMemoryNearLimit",
+    ):
+        summary = _annotatsii(bloki[imya]).get("summary", "")
+        assert "humanizePercentage" in summary, f"{imya}: доля печатается не процентами"
+
+
+def test_dolyu_vidno_po_samomu_vyrazheniyu_a_ne_po_spisku_ruchkoy():
+    """Тот же запрет, но без списка имён — и потому он не устареет.
+
+    Список выше стережёт правила, которые УЖЕ написаны; беда приходит со
+    следующим. Признак доли механический: в выражении есть деление, а порог, с
+    которым сравнивают, лежит строго между нулём и единицей — то есть это не
+    секунды, не дни и не штуки, а именно доля. Такому правилу `humanizePercentage`
+    обязателен, потому что `printf "%.1f%%"` напечатает из 0.85 — «0.9%».
+
+    Ровно этот отказ и чинили: «Свободно 0.1%» вместо «8%». Проверено
+    `promtool test rules` на выдуманных рядах и здесь, и тогда.
+    """
+    for imya, block in _pravila_blokami().items():
+        expr = _vyrazhenie(block)
+        if "/" not in expr:
+            continue
+        porogi = [float(p) for p in re.findall(r"[<>]=?\s*([0-9]*\.?[0-9]+)", expr)]
+        if not any(0 < p < 1 for p in porogi):
+            continue
+        summary = _annotatsii(block).get("summary", "")
+        assert "humanizePercentage" in summary, (
+            f"{imya}: выражение даёт долю (порог {porogi}), а в заголовке её печатают "
+            f"иначе — число уедет в сообщение в сто раз меньше настоящего"
+        )
+
+
+# --- база и Redis: правило обязано быть способно сработать --------------------
+#
+# Здесь стережётся отказ, у которого нет ни одного внешнего признака: правило
+# написано, `promtool check rules` его принял, в списке тревог оно есть — а ряда,
+# по которому оно считает, в хранилище нет и не будет. Такая тревога молчит
+# всегда и одинаково: и когда всё хорошо, и когда база задыхается.
+
+
+#: Поводы про базу и Redis. Все — `warning`, и это разделение труда, а не
+#: осторожность: про ЛЕЖАЩУЮ базу скажет `SiteDown` (без неё приложение не
+#: отвечает вовсе), а здесь про запас, который кончается при живом сайте.
+POVODY_KHRANILISHCH = {
+    "DatabaseConnectionsHigh": "соединений к базе больше 80% от потолка",
+    "DatabaseLockWaits": "запросы стоят в очереди за блокировками строк",
+    "DatabaseSlowQueries": "медленные запросы идут потоком",
+    "DatabaseBufferPoolMisses": "рабочий набор базы не помещается в память",
+    "DatabaseMetricsUnavailable": "наблюдатель не подключается к базе",
+    "RedisEvictingKeys": "Redis выбрасывает ключи, то есть теряет счётчики попыток",
+    "RedisMemoryNearLimit": "Redis занял больше 90% своего потолка памяти",
+}
+
+#: Приставка имени метрики → задание сбора, у которого стоит отбор `keep`.
+OTBOR = (("mysql_", "mysql"), ("redis_", "redis"))
+
+#: Счётчики: растут от старта сервера и не убывают. Сравнивать их с порогом
+#: напрямую нельзя — один медленный запрос в прошлом месяце навсегда сделал бы
+#: `slow_queries > 0` истиной, а тревогу — вечной.
+SCHYOTCHIKI = (
+    "mysql_global_status_slow_queries",
+    "mysql_global_status_innodb_row_lock_waits",
+    "mysql_global_status_innodb_buffer_pool_reads",
+    "mysql_global_status_innodb_buffer_pool_read_requests",
+    "redis_evicted_keys_total",
+)
+
+
+def _keep_spisok(job: str) -> str:
+    """Отбор `keep` задания сбора: какие ряды экспортёра доезжают до хранилища."""
+    config = _read(PROMETHEUS)
+    assert f"job_name: {job}\n" in config, f"в шаблоне Prometheus нет задания {job!r}"
+    kusok = config.split(f"job_name: {job}\n", 1)[1].split("- job_name:", 1)[0]
+    sovpalo = re.search(r"^([ ]*)regex: >-\n", kusok, re.M)
+    assert sovpalo, f"у задания {job} нет списка keep — экспортёр зальёт в хранилище всё"
+    # Тело свёрнутого блока — строки с отступом БОЛЬШИМ, чем у самого ключа, до
+    # первой пустой строки. Границу считаем отступом, а не «непробельным
+    # символом»: `\s` съедает и перевод строки, и такой разбор утаскивает в
+    # выражение соседние комментарии файла.
+    otstup = len(sovpalo.group(1))
+    kuski = []
+    for stroka in kusok[sovpalo.end() :].splitlines():
+        if not stroka.strip():
+            break
+        if len(stroka) - len(stroka.lstrip()) <= otstup:
+            break
+        kuski.append(stroka.strip())
+    otbor = " ".join(kuski)
+    # Свёрнутый блок YAML склеивает строки ПРОБЕЛОМ. Перенос внутри регулярного
+    # выражения оставил бы в нём пробел, и оно перестало бы совпадать с чем бы то
+    # ни было — то есть до хранилища не доехал бы НИ ОДИН ряд этого экспортёра.
+    assert " " not in otbor, (
+        f"список keep задания {job} разбит переносом: свёрнутый блок `>-` склеит "
+        f"строки пробелом, и отбор перестанет совпадать с любым именем"
+    )
+    return otbor
+
+
+def test_metrika_kazhdogo_pravila_dodet_cherez_otbor():
+    """Худший вид тревоги — та, что не может сработать никогда.
+
+    У заданий `mysql` и `redis` стоит жёсткий `metric_relabel_configs` с `keep`:
+    из 992 рядов mysqld-exporter и 300 рядов redis_exporter (замерено запросом к
+    живым контейнерам) до хранилища доезжает около двух десятков — иначе одна
+    служба удвоила бы объём и уткнулась в потолок 512 МБ раньше, чем истекут
+    пятнадцать дней хранения.
+
+    Отсюда правило: имя, названное в тревоге, обязано пройти этот отбор. Не
+    прошло — ряда в хранилище нет, условие не выполняется никогда, и тревога
+    молчит ОДИНАКОВО при исправной и при задыхающейся базе. Ни `promtool check
+    rules`, ни глаз человека этого не видят: правило выглядит написанным.
+
+    Соседний `test_monitoring_dashboards.py` держит ту же связку со стороны
+    панелей; здесь — со стороны тревог, а это половина важнее: на панель ходят,
+    заподозрив неладное, а тревога и есть то, чем неладное узнаётся.
+    """
+    otbory = {job: _keep_spisok(job) for _pristavka, job in OTBOR}
+    naydeno = 0
+
+    for imya, block in _pravila_blokami().items():
+        expr = _vyrazhenie(block)
+        for metrika in sorted(set(re.findall(r"\b(?:mysql|redis)_[a-z0-9_]+", expr))):
+            job = next((j for pristavka, j in OTBOR if metrika.startswith(pristavka)), None)
+            assert job, f"{imya}: метрику {metrika} никто не собирает"
+            naydeno += 1
+            assert re.fullmatch(otbory[job], metrika), (
+                f"{imya}: метрика {metrika} не проходит отбор `keep` задания {job!r} — "
+                f"ряда в хранилище не будет, и правило не сработает НИКОГДА. Допишите "
+                f"её в metric_relabel_configs в prometheus.yml.template"
+            )
+
+    assert naydeno >= 10, (
+        "правила перестали ссылаться на метрики базы и Redis — проверка стережёт пустоту"
+    )
+
+
+def test_povody_pro_bazu_i_redis_est_i_ne_zvenyat_nochyu():
+    """Второй половине обещания — важность.
+
+    Alertmanager разводит важность по приёмникам: `critical` звенит, `warning`
+    приходит молча. Предупреждение о кончающемся запасе, разбудившее ночью,
+    научит выключать звук всему чату — а выключенный звук чата это выключенный
+    звук и у настоящей аварии тоже.
+    """
+    bloki = _pravila_blokami()
+    for imya, povod in POVODY_KHRANILISHCH.items():
+        assert imya in bloki, f"пропал повод «{povod}»"
+        assert re.search(r"^\s+severity: warning\s*$", bloki[imya], re.M), (
+            f"{imya} («{povod}») стал звенеть ночью. Про лежащую базу скажет SiteDown; "
+            f"это правило — про запас, который кончается при живом сайте"
+        )
+
+
+def test_schyotchiki_ot_starta_beryutsya_prirostom():
+    """Счётчик, сравнённый с порогом напрямую, даёт вечную тревогу.
+
+    `mysql_global_status_slow_queries` и `redis_evicted_keys_total` живут от
+    старта сервера и не обнуляются. Условие `> 0` по такому счётчику,
+    выполнившись однажды, останется истинным до перезапуска — то есть месяцами,
+    и различить по нему «идёт прямо сейчас» от «случалось когда-то» нельзя.
+    Тот же урок уже стоил перевода `RateLimiterUnavailable` на `increase`.
+    """
+    for imya, block in _pravila_blokami().items():
+        expr = _vyrazhenie(block)
+        for schyotchik in SCHYOTCHIKI:
+            for sovpalo in re.finditer(re.escape(schyotchik), expr):
+                do = expr[: sovpalo.start()]
+                assert re.search(r"(?:rate|increase)\(\s*$", do), (
+                    f"{imya}: счётчик {schyotchik} сравнивается напрямую, а он растёт от "
+                    f"старта сервера. Тревога, выполнившись однажды, будет гореть вечно "
+                    f"и перестанет что-либо означать. Нужен rate() или increase()"
+                )
+
+
+def test_dolya_ot_potolka_ne_delitsya_na_nol():
+    """Правило, горящее с первой секунды, — это выключенное правило.
+
+    Потолок памяти Redis настраивается (`OPENCRM_REDIS_MAXMEMORY`), и значение
+    `0` означает «без потолка». На такой установке `used / max` даёт `+Inf`,
+    `+Inf > 0.9` — истина, и тревога загорается сразу и навсегда, при полностью
+    здоровом Redis. Оговорка в условии стоит именно от этого; проверено
+    `promtool test rules` рядом с нулевым потолком: тревоги нет.
+    """
+    expr = _vyrazhenie(_pravila_blokami()["RedisMemoryNearLimit"])
+    # Ноль и ничего больше: без «не цифра дальше» выражение `> 0` находилось бы
+    # внутри самого порога `> 0.9`, и снятая оговорка прошла бы незамеченной.
+    # Поймано снятием починки: сторож остался зелёным на сломанном правиле.
+    assert re.search(r"redis_memory_max_bytes\s*>\s*0(?![.\d])", expr), (
+        "исчезла оговорка про нулевой потолок: на установке без maxmemory деление "
+        "даст +Inf, и тревога загорится навсегда с первой секунды"
+    )
+
+
+# --- оформление сообщения о тревоге ------------------------------------------
+
+
+def _poluchateli() -> dict[str, str]:
+    """{имя приёмника: его кусок текста} из шаблона alertmanager."""
+    template = _read(ALERTMANAGER)
+    hvost = template.split("\nreceivers:", 1)[1]
+    naydeno = {}
+    for sovpalo in re.finditer(r"\n  - name: (\S+)\n(.*?)(?=\n  - name: |\Z)", hvost, re.S):
+        naydeno[sovpalo.group(1)] = sovpalo.group(2)
+    return naydeno
+
+
+def _telo_soobshcheniya() -> str:
+    """Текст шаблона сообщения — блочный скаляр под ключом `message:`."""
+    stroki = _read(ALERTMANAGER).splitlines()
+    nachalo = next(i for i, s in enumerate(stroki) if s.strip().startswith("message: &"))
+    otstup = len(stroki[nachalo]) - len(stroki[nachalo].lstrip())
+    telo = []
+    for stroka in stroki[nachalo + 1 :]:
+        if stroka.strip() and (len(stroka) - len(stroka.lstrip())) <= otstup:
+            break
+        telo.append(stroka.strip())
+    assert telo, "тело сообщения не нашлось — разбор смотрит не туда"
+    return "\n".join(telo)
+
+
+def test_dannye_ekraniruyutsya_rovno_odin_raz():
+    """Единственная защита от потери сообщения об аварии — и её легко удвоить.
+
+    Запасного пути у Alertmanager нет: неразобранная разметка — это 400 и
+    выброшенное сообщение, то есть об аварии не узнают именно потому, что
+    сообщение было подробным. Защита тут одна, и она встроенная: при
+    `parse_mode: HTML` Alertmanager рендерит текст через `html/template`, а тот
+    экранирует ПОДСТАНОВКИ, не трогая литеральные `<b>` шаблона.
+
+    Проверено живьём на v0.28.0 (та же версия, что в docker-compose.yml),
+    заглушкой вместо Telegram: описание `less< more> amp&` доехало как
+    `less&lt; more&gt; amp&amp;`, а без `parse_mode` — как есть.
+
+    Отсюда обе половины проверки. `parse_mode: HTML` обязан быть у каждого
+    приёмника — без него экранирования не будет вовсе. А ручная цепочка
+    `reReplaceAll` — запрещена: она ложится ПОД встроенную, и `<script>`
+    доезжает как `&amp;lt;script&amp;gt;`. Ровно так и было.
+    """
+    poluchateli = _poluchateli()
+    assert poluchateli, "приёмники не разобрались"
+    for imya, blok in poluchateli.items():
+        assert re.search(r"^\s+parse_mode: HTML\s*$", blok, re.M), (
+            f"{imya}: без parse_mode: HTML подстановки перестанут экранироваться, "
+            "а теги — работать"
+        )
+
+    telo = _telo_soobshcheniya()
+    assert "reReplaceAll" not in telo, (
+        "в шаблоне снова ручное экранирование: поверх него ляжет встроенное, и "
+        "текст тревоги приедет мусором вида &amp;lt;script&amp;gt;"
+    )
+
+
+def test_pervaya_stroka_otvechaet_idti_li_smotret():
+    """В списке чатов видно только начало сообщения.
+
+    Прежняя первая строка — «🔴 Тревога (1)» — отвечала на «горит ли», но не на
+    «что именно» и не на «вставать ли сейчас». Открывать чат приходилось всегда,
+    в том числе ночью и в том числе ради предупреждения, которое подождёт до
+    утра.
+    """
+    telo = _telo_soobshcheniya()
+    # Объявления переменных ничего не печатают и в счёт первой строки не идут.
+    stroki = [s for s in telo.splitlines() if not s.startswith("{{- $")]
+    pervaya = stroki[0]
+
+    for znachok in ("🔴", "🟢"):
+        assert znachok in pervaya, f"в первой строке нет значка состояния {znachok}"
+    for znachok in ("🆘", "⚠️"):
+        assert znachok in pervaya, (
+            f"в первой строке нет значка важности {znachok} — «вставать сейчас» и "
+            "«посмотреть утром» выглядят одинаково"
+        )
+    assert "Annotations.summary" in pervaya, (
+        "первая строка не называет, ЧТО случилось: в списке чатов сообщение "
+        "неотличимо от любого другого"
+    )
+    # И время жизни тревоги: «не отвечает две минуты» и «не отвечает два часа» —
+    # разные новости.
+    assert "since" in telo and "humanizeDuration" in telo, (
+        "не сказано, сколько тревога висит"
+    )
+
+
+def test_vazhnost_reshaet_zvenet_li_telefon():
+    """Предупреждение, звенящее ночью, учит выключать звук всему чату.
+
+    А выключенный звук чата — это выключенный звук и у аварии тоже. Поэтому
+    важность разведена по приёмникам: критическое звенит, предупреждение
+    приходит значком.
+    """
+    template = _read(ALERTMANAGER)
+    marshruty = template.split("routes:", 1)[1].split("\nreceivers:", 1)[0]
+    kriticheskiy = marshruty.split('severity="critical"', 1)[1].split("- matchers", 1)[0]
+    preduprezhdenie = marshruty.split('severity="warning"', 1)[1]
+
+    gromkiy = re.search(r"receiver: (\S+)", kriticheskiy).group(1)
+    tikhiy = re.search(r"receiver: (\S+)", preduprezhdenie).group(1)
+    assert gromkiy != tikhiy, "важность больше не решает, звенеть ли телефону"
+
+    poluchateli = _poluchateli()
+    assert "disable_notifications: false" in poluchateli[gromkiy], (
+        "критическое перестало звенеть — а разбудить оно обязано"
+    )
+    assert "disable_notifications: true" in poluchateli[tikhiy], (
+        "предупреждение снова звенит"
+    )
+    # Текст у обоих один и тот же — якорем, а не копией: разъехавшиеся копии
+    # означали бы, что половина тревог оформлена по-старому.
+    assert "message: *" in poluchateli[tikhiy], (
+        "шаблон сообщения размножен копией — копии разъедутся молча"
+    )
+
+
+def test_sledstvie_ne_shlyot_vtorogo_soobshcheniya():
+    """Лежащий сайт зажигает полдюжины правил, а чинят одну поломку.
+
+    Шесть сообщений об одном событии читаются как одно, и в следующий раз
+    читается только первое. Инхибиция гасит следствия, у которых нет ни своего
+    знания, ни своего действия.
+    """
+    template = _read(ALERTMANAGER)
+    assert "inhibit_rules:" in template, "следствия снова шлют свои сообщения"
+    blok = template.split("inhibit_rules:", 1)[1].split("\nroute:", 1)[0]
+    assert 'alertname="SiteDown"' in blok, "падение сайта ничего не гасит"
+
+    # Каждое имя, названное в инхибиции, обязано существовать правилом.
+    # Переименованная тревога иначе тихо перестала бы гаситься.
+    rules = _read(RULES)
+    nazvany = set()
+    for gruppa in re.findall(r'alertname=~?"([^"]+)"', blok):
+        nazvany.update(gruppa.split("|"))
+    assert nazvany, "инхибиция не ссылается ни на одно правило"
+    for imya in sorted(nazvany):
+        assert f"- alert: {imya}" in rules, (
+            f"инхибиция ссылается на несуществующее правило {imya} — строка мертва"
+        )
 
 
 # --- логи --------------------------------------------------------------------

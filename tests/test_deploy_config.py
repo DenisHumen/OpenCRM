@@ -401,3 +401,58 @@ def test_kopiya_pered_migratsiyami_ne_zatiraetsya():
     # Ровно одного файла `.pre-migrate` больше нет — иначе старое поведение
     # вернулось бы вместе со строкой, которую забыли убрать.
     assert ".backup '$DB_FILE.pre-migrate'" not in entrypoint
+
+
+# --- ворота деплоя ---
+
+COMPOSE_TESTS = ROOT / "docker" / "docker-compose.tests.yml"
+
+
+def test_vorota_podmenyayut_tochku_vhoda_a_ne_tolko_komandu():
+    """Иначе ворота поднимут веб-сервер вместо набора — и молча.
+
+    `compose` подменяет команду, но НЕ точку входа, а точка входа образа —
+    `docker/entrypoint.sh`. Он аргументы дальше не передаёт вовсе: ждёт базу,
+    накатывает миграции и кончается `exec python -m uvicorn`. То есть `command:`
+    в службе `tests` без `entrypoint:` отбрасывается целиком.
+
+    Поймано живьём: контейнер ворот ушёл в проверки боевого окружения из точки
+    входа, упал на правах каталога данных и не запустил ни одного теста. Молчание
+    тут особенно дорого — «тесты прошли» и «тесты не запускались» выглядят на
+    воротах одинаково, а за воротами живой сайт.
+    """
+    text = _read(COMPOSE_TESTS)
+    tests_block = text.split("  tests:", 1)[1]
+    assert "entrypoint:" in tests_block, (
+        "у службы tests нет entrypoint: — набор не запустится, а ворота этого "
+        "не заметят"
+    )
+
+
+def test_vorota_beryot_kod_vozvrata_u_nabora():
+    """Без `--exit-code-from tests` красный набор проехал бы зелёным.
+
+    `compose up` отдаёт свой код, а не код службы: контейнер, упавший на
+    провалившемся тесте, — это для компоуза обычное завершение. Флаг называет,
+    чей код считать ответом.
+    """
+    text = _read(COMPOSE_TESTS)
+    assert "--exit-code-from tests" in text, (
+        "в подсказке к запуску нет --exit-code-from tests"
+    )
+    updater = _read(ROOT / "deploy" / "updater.py")
+    assert '"--exit-code-from", "tests"' in updater, (
+        "обновление зовёт ворота без --exit-code-from tests"
+    )
+
+
+def test_baza_vorot_ne_boevaya():
+    """Набор портит схему нарочно — делать это в боевой базе нельзя.
+
+    Своё имя проекта даёт свою сеть и свои имена контейнеров: перепутать со
+    стеком сайта нельзя даже опечаткой. Данные в tmpfs — после прогона не
+    остаётся ничего.
+    """
+    text = _read(COMPOSE_TESTS)
+    assert "name: opencrm-tests" in text, "у ворот нет своего имени проекта"
+    assert "tmpfs:" in text, "база ворот пишет на диск, а должна в память"

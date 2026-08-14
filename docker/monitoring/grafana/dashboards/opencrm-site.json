@@ -11,12 +11,147 @@
   "editable": false,
   "panels": [
     {
+      "id": 20,
+      "type": "stat",
+      "title": "Требует внимания сейчас",
+      "description": "Сколько правил из docker/monitoring/prometheus/rules сработало прямо сейчас. «Спокойно» на зелёном — ни одного: это ОТВЕТ, а не отсутствие данных, поэтому в запросе стоит `or vector(0)`. Пустой панели здесь быть не может.",
+      "datasource": {"type": "prometheus", "uid": "opencrm-prometheus"},
+      "gridPos": {"h": 6, "w": 6, "x": 0, "y": 0},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "noValue": "Спокойно",
+          "mappings": [
+            {"type": "value", "options": {"0": {"text": "Спокойно", "color": "green", "index": 0}}}
+          ],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "auto",
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}
+      },
+      "targets": [
+        {"refId": "A", "expr": "count(ALERTS{alertstate=\"firing\"}) or vector(0)", "instant": true, "legendFormat": "тревог"}
+      ]
+    },
+    {
+      "id": 21,
+      "type": "table",
+      "title": "Действующие тревоги",
+      "description": "Пустая таблица означает «всё спокойно»: ряд ALERTS существует только пока тревога горит. Столбец «Висит» считается от ALERTS_FOR_STATE — это момент, когда условие сработало, то есть выдержка `for` в него входит. Текст берётся из подстановки по имени правила: новое правило без подстановки уронит tests/test_monitoring_dashboards.py, а не покажет пустую клетку.",
+      "datasource": {"type": "prometheus", "uid": "opencrm-prometheus"},
+      "gridPos": {"h": 6, "w": 18, "x": 6, "y": 0},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "(time() - ALERTS_FOR_STATE) and ignoring(alertstate) ALERTS{alertstate=\"firing\"}",
+          "instant": true,
+          "format": "table"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {"Time": true, "installation": true, "job": true, "__name__": true, "alertstate": true},
+            "renameByName": {
+              "severity": "Важность",
+              "alertname": "Что случилось",
+              "instance": "Где",
+              "service": "Служба",
+              "Value": "Висит"
+            },
+            "indexByName": {"severity": 0, "alertname": 1, "instance": 2, "service": 3, "Value": 4}
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "Спокойно",
+          "custom": {"align": "auto", "cellOptions": {"type": "auto"}, "filterable": false}
+        },
+        "overrides": [
+          {
+            "matcher": {"id": "byName", "options": "Важность"},
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {"type": "value", "options": {
+                    "critical": {"text": "критично", "color": "red", "index": 0},
+                    "warning": {"text": "внимание", "color": "orange", "index": 1}
+                  }}
+                ]
+              },
+              {"id": "custom.cellOptions", "value": {"type": "color-background"}},
+              {"id": "custom.width", "value": 110}
+            ]
+          },
+          {
+            "matcher": {"id": "byName", "options": "Висит"},
+            "properties": [
+              {"id": "unit", "value": "s"},
+              {"id": "decimals", "value": 0},
+              {"id": "custom.width", "value": 120}
+            ]
+          },
+          {
+            "matcher": {"id": "byName", "options": "Что случилось"},
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {"type": "value", "options": {
+                    "SiteDown": {"text": "Сайт не отвечает снаружи (SiteDown)", "index": 0},
+                    "SiteSlow": {"text": "Сайт отвечает дольше 3 секунд (SiteSlow)", "index": 1},
+                    "CertificateExpiringSoon": {"text": "Сертификат истекает, продление не сработало (CertificateExpiringSoon)", "index": 2},
+                    "HighErrorRate": {"text": "Доля ответов 5xx выше 5% (HighErrorRate)", "index": 3},
+                    "HighClientErrorRate": {"text": "Доля ответов 4xx выше 40% (HighClientErrorRate)", "index": 4},
+                    "DiskAlmostFull": {"text": "На диске меньше 10% свободного места (DiskAlmostFull)", "index": 5},
+                    "HostMemoryLow": {"text": "Свободной памяти меньше 10% (HostMemoryLow)", "index": 6},
+                    "HostSwapping": {"text": "Машина активно уходит в подкачку (HostSwapping)", "index": 7},
+                    "ContainerRestartLoop": {"text": "Контейнер перезапускается по кругу (ContainerRestartLoop)", "index": 8},
+                    "ContainerUnhealthy": {"text": "Контейнер нездоров: проверка не проходит (ContainerUnhealthy)", "index": 9},
+                    "BackupTooOld": {"text": "Резервная копия не снималась больше суток (BackupTooOld)", "index": 10},
+                    "BackupBroken": {"text": "Последняя резервная копия негодна (BackupBroken)", "index": 11},
+                    "DeployRolledBack": {"text": "Обновление откатилось (DeployRolledBack)", "index": 12},
+                    "DatabaseSchemaMismatch": {"text": "Схема базы разошлась с моделями (DatabaseSchemaMismatch)", "index": 13},
+                    "RateLimiterUnavailable": {"text": "Счётчик попыток недоступен, вход отвечает 503 (RateLimiterUnavailable)", "index": 14},
+                    "RedisDown": {"text": "Redis не отвечает (RedisDown)", "index": 15},
+                    "RateLimiterNotShared": {"text": "Счётчик попыток не общий на процессы (RateLimiterNotShared)", "index": 16},
+                    "UploadsBlocked": {"text": "Загрузка файлов остановлена нехваткой места (UploadsBlocked)", "index": 17},
+                    "DatabaseConnectionsHigh": {"text": "Соединений к базе больше 80% от потолка (DatabaseConnectionsHigh)", "index": 18},
+                    "DatabaseLockWaits": {"text": "Запросы стоят в очереди за блокировками строк (DatabaseLockWaits)", "index": 19},
+                    "DatabaseSlowQueries": {"text": "Медленные запросы идут потоком (DatabaseSlowQueries)", "index": 20},
+                    "DatabaseBufferPoolMisses": {"text": "База перестала помещаться в память: чтения идут на диск (DatabaseBufferPoolMisses)", "index": 21},
+                    "DatabaseMetricsUnavailable": {"text": "Метрики базы не собираются: наблюдатель не подключается (DatabaseMetricsUnavailable)", "index": 22},
+                    "RedisEvictingKeys": {"text": "Redis выбрасывает ключи: счётчики попыток входа теряются (RedisEvictingKeys)", "index": 23},
+                    "RedisMemoryNearLimit": {"text": "Redis занял больше 90% потолка памяти (RedisMemoryNearLimit)", "index": 24}
+                  }},
+                  {"type": "regex", "options": {"pattern": "(.*)", "result": {"text": "$1", "index": 99}}}
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "sortBy": [{"displayName": "Важность", "desc": false}]
+      }
+    },
+    {
       "id": 1,
       "type": "stat",
       "title": "Сайт снаружи",
       "description": "Проверка идёт по публичному адресу через nginx и настоящий 443. Проверка изнутри контейнера была бы зелёной и тогда, когда снаружи не отвечает никто.",
       "datasource": {"type": "prometheus", "uid": "opencrm-prometheus"},
-      "gridPos": {"h": 5, "w": 5, "x": 0, "y": 0},
+      "gridPos": {"h": 5, "w": 5, "x": 0, "y": 6},
       "fieldConfig": {
         "defaults": {
           "mappings": [
@@ -41,7 +176,7 @@
       "type": "stat",
       "title": "Ответ снаружи",
       "datasource": {"type": "prometheus", "uid": "opencrm-prometheus"},
-      "gridPos": {"h": 5, "w": 5, "x": 5, "y": 0},
+      "gridPos": {"h": 5, "w": 5, "x": 5, "y": 6},
       "fieldConfig": {
         "defaults": {
           "unit": "s",
@@ -60,7 +195,7 @@
       "title": "Сертификат",
       "description": "Дней до истечения. Продление идёт само; меньше 14 дней означает, что оно сломано.",
       "datasource": {"type": "prometheus", "uid": "opencrm-prometheus"},
-      "gridPos": {"h": 5, "w": 5, "x": 10, "y": 0},
+      "gridPos": {"h": 5, "w": 5, "x": 10, "y": 6},
       "fieldConfig": {
         "defaults": {
           "unit": "d",
@@ -81,7 +216,7 @@
       "title": "Последняя копия",
       "description": "Сколько прошло с момента снятия. Больше суток — таймер не отработал.",
       "datasource": {"type": "prometheus", "uid": "opencrm-prometheus"},
-      "gridPos": {"h": 5, "w": 5, "x": 15, "y": 0},
+      "gridPos": {"h": 5, "w": 5, "x": 15, "y": 6},
       "fieldConfig": {
         "defaults": {
           "unit": "s",
@@ -100,7 +235,7 @@
       "type": "stat",
       "title": "Размер базы",
       "datasource": {"type": "prometheus", "uid": "opencrm-prometheus"},
-      "gridPos": {"h": 5, "w": 4, "x": 20, "y": 0},
+      "gridPos": {"h": 5, "w": 4, "x": 20, "y": 6},
       "fieldConfig": {"defaults": {"unit": "bytes", "noValue": "MySQL"}, "overrides": []},
       "options": {"colorMode": "none", "graphMode": "area", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}},
       "targets": [
@@ -112,7 +247,7 @@
       "type": "timeseries",
       "title": "Время ответа снаружи",
       "datasource": {"type": "prometheus", "uid": "opencrm-prometheus"},
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 5},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 11},
       "fieldConfig": {
         "defaults": {"unit": "s", "custom": {"fillOpacity": 10, "lineWidth": 1}},
         "overrides": []
@@ -128,7 +263,7 @@
       "title": "Запросы в секунду по классам ответа",
       "description": "Считается по журналу nginx (promtail). Только он видит 502: приложение о них не знает, его в этот момент нет.",
       "datasource": {"type": "prometheus", "uid": "opencrm-prometheus"},
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 5},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 11},
       "fieldConfig": {
         "defaults": {"unit": "reqps", "custom": {"fillOpacity": 30, "lineWidth": 1, "stacking": {"mode": "normal", "group": "A"}}},
         "overrides": [
@@ -152,7 +287,7 @@
       "title": "Доля ошибок сервера (5xx)",
       "description": "Порог правила SiteErrorRate — 5%.",
       "datasource": {"type": "prometheus", "uid": "opencrm-prometheus"},
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 13},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 19},
       "fieldConfig": {
         "defaults": {
           "unit": "percentunit",
@@ -177,7 +312,7 @@
       "title": "Время ответа nginx: медиана и 95-й процентиль",
       "description": "Медиана говорит, как живётся обычному запросу; 95-й — сколько ждут те, кому не повезло. Средним пользоваться нельзя: один десятисекундный отчёт вытягивает его весь.",
       "datasource": {"type": "prometheus", "uid": "opencrm-prometheus"},
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 13},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 19},
       "fieldConfig": {"defaults": {"unit": "s", "custom": {"fillOpacity": 5, "lineWidth": 1}}, "overrides": []},
       "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "none"}},
       "targets": [
@@ -199,7 +334,7 @@
       "title": "Последний деплой",
       "description": "Единица стоит у того статуса, которым кончилась последняя попытка обновления. Подробности — ./opencrm.sh history.",
       "datasource": {"type": "prometheus", "uid": "opencrm-prometheus"},
-      "gridPos": {"h": 7, "w": 8, "x": 0, "y": 21},
+      "gridPos": {"h": 7, "w": 8, "x": 0, "y": 27},
       "fieldConfig": {"defaults": {}, "overrides": []},
       "options": {"showHeader": true},
       "targets": [
@@ -207,12 +342,62 @@
       ]
     },
     {
+      "id": 22,
+      "type": "stat",
+      "title": "Строк от приложения за сутки",
+      "description": "СЧЁТЧИК ЖИЗНИ соседней панели. Пустая панель ошибок читается двояко — «ошибок нет» или «до нас не доезжают логи», — и второе выглядит спокойнее первого, хотя означает слепоту. Здесь считаются ВСЕ строки приложения, любого уровня: число есть — логи идут, панель ошибок честно пуста; «логи не идут» — сломан или выключен путь до Loki, и молчание панели ошибок ничего не значит.",
+      "datasource": {"type": "loki", "uid": "opencrm-loki"},
+      "gridPos": {"h": 4, "w": 4, "x": 8, "y": 27},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "noValue": "логи не идут",
+          "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]}
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}
+      },
+      "targets": [
+        {"refId": "A", "expr": "sum(count_over_time({service=\"app\"}[24h]))", "queryType": "instant", "legendFormat": "строк"}
+      ]
+    },
+    {
+      "id": 23,
+      "type": "stat",
+      "title": "Ошибок за сутки",
+      "description": "Тот же отбор, что и у панели справа. Читать вместе с соседней сверху: «нет ошибок» на зелёном при живом счётчике строк — это спокойствие; при «логи не идут» — это ничего не значащая пустота.",
+      "datasource": {"type": "loki", "uid": "opencrm-loki"},
+      "gridPos": {"h": 3, "w": 4, "x": 8, "y": 31},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "noValue": "нет ошибок",
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}
+      },
+      "targets": [
+        {"refId": "A", "expr": "sum(count_over_time({service=\"app\", level=~\"error|critical|traceback\"}[24h]))", "queryType": "instant", "legendFormat": "ошибок"}
+      ]
+    },
+    {
       "id": 11,
       "type": "logs",
       "title": "Ошибки приложения",
-      "description": "Пусто и написано «источник не отвечает» — значит профиль monitoring-logs выключен.",
+      "description": "Отбор идёт по метке `level`, которую проставляет promtail. Значения приведены к нижнему регистру в самом конвейере — без этого метка принимала вид `ERROR`, `Traceback`, `WARNING`, а селектор Loki сравнивает точно, и панель молчала при любых ошибках. Пусто и написано «источник не отвечает» — значит профиль monitoring-logs выключен. Пусто без надписи — смотреть на счётчик строк слева: он отличает «ошибок нет» от «логи не доезжают».",
       "datasource": {"type": "loki", "uid": "opencrm-loki"},
-      "gridPos": {"h": 7, "w": 16, "x": 8, "y": 21},
+      "gridPos": {"h": 7, "w": 12, "x": 12, "y": 27},
       "options": {"showTime": true, "wrapLogMessage": true, "sortOrder": "Descending", "enableLogDetails": true},
       "targets": [
         {"refId": "A", "expr": "{service=\"app\", level=~\"error|critical|traceback\"}"}
@@ -223,7 +408,7 @@
       "type": "logs",
       "title": "Журнал nginx",
       "datasource": {"type": "loki", "uid": "opencrm-loki"},
-      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 28},
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 34},
       "options": {"showTime": true, "wrapLogMessage": true, "sortOrder": "Descending", "enableLogDetails": true},
       "targets": [
         {"refId": "A", "expr": "{service=\"nginx\"}"}
