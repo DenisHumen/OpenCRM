@@ -150,12 +150,15 @@ def downgrade() -> None:
     не разрушалось: роль добавлялась рядом со старым признаком, а не вместо
     него.
     """
-    op.drop_index("ix_users_role_id", table_name="users")
+    # Ссылка снимается ДО индекса: на MySQL индекс, по которому проверяется
+    # внешний ключ, снять нельзя (отказ 1553), и откат вставал ровно здесь, на
+    # `ix_users_role_id`. Разбор — в откате `e4451c527c34`.
     with op.batch_alter_table("users") as batch:
         batch.drop_constraint("fk_users_role_id", type_="foreignkey")
+    op.drop_index("ix_users_role_id", table_name="users")
+    with op.batch_alter_table("users") as batch:
         batch.drop_column("role_id")
 
-    op.drop_index("ix_role_permissions_area", table_name="role_permissions")
-    op.drop_index("ix_role_permissions_role_id", table_name="role_permissions")
+    # Индексы прав отдельно не снимаем — их уносит сама таблица.
     op.drop_table("role_permissions")
     op.drop_table("roles")

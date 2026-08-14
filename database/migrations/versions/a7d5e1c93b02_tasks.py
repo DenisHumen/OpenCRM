@@ -53,7 +53,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    with op.batch_alter_table('tasks', schema=None) as batch_op:
-        for column in ('created_at', 'done_at', 'deal_id', 'client_id', 'assignee_id', 'due_at'):
-            batch_op.drop_index(batch_op.f(f'ix_tasks_{column}'))
+    # Индексы отдельно не снимаем — их уносит `drop_table`, а на MySQL снятие
+    # индекса под живым внешним ключом отвергается (1553). Разбор — в откате
+    # `e4451c527c34`. Здесь на это упирался `ix_tasks_deal_id`.
     op.drop_table('tasks')

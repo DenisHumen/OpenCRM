@@ -109,23 +109,22 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    with op.batch_alter_table("mail_messages", schema=None) as batch_op:
-        batch_op.drop_index("ix_mail_messages_account_uid")
-        batch_op.drop_index(batch_op.f("ix_mail_messages_from_addr"))
-        batch_op.drop_index(batch_op.f("ix_mail_messages_sent_at"))
-        batch_op.drop_index(batch_op.f("ix_mail_messages_deal_id"))
-        batch_op.drop_index(batch_op.f("ix_mail_messages_client_id"))
-        batch_op.drop_index(batch_op.f("ix_mail_messages_account_id"))
-        batch_op.drop_index(batch_op.f("ix_mail_messages_message_id"))
+    # Индексы отдельно не снимаем — их уносит `drop_table`, а на MySQL снятие
+    # индекса под живым внешним ключом отвергается (1553). Разбор — в откате
+    # `e4451c527c34`. Здесь на это упирался `ix_mail_messages_deal_id`.
     op.drop_table("mail_messages")
-
-    with op.batch_alter_table("mail_accounts", schema=None) as batch_op:
-        batch_op.drop_index(batch_op.f("ix_mail_accounts_address"))
     op.drop_table("mail_accounts")
 
     # Состояние блока чистим тоже: иначе после отката и повторного наката почта
     # молча осталась бы «включённой» при пустых таблицах.
-    op.execute("DELETE FROM module_states WHERE key = 'mail'")
+    #
+    # Через конструкцию SQLAlchemy, а не строкой: `key` — зарезервированное
+    # слово MySQL, и голое `WHERE key = 'mail'` там синтаксическая ошибка
+    # (1064), то есть откат обрывался ровно на этой строке. SQLite такое имя
+    # прощал, поэтому строка и дожила до переезда. Здесь имя закавычит сама
+    # SQLAlchemy, и одинаково на любом движке.
+    sostoyaniya = sa.table("module_states", sa.column("key", sa.String))
+    op.execute(sostoyaniya.delete().where(sostoyaniya.c.key == "mail"))
 
     # Записи ленты, порождённые письмами, НЕ трогаем. Лента — общая история
     # общения, а не собственность блока: откатывая почту, мы убираем зеркало

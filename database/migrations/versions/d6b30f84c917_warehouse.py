@@ -92,16 +92,8 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    with op.batch_alter_table('stock_moves', schema=None) as batch_op:
-        batch_op.drop_index(batch_op.f('ix_stock_moves_happened_at'))
-        batch_op.drop_index(batch_op.f('ix_stock_moves_kind'))
-        batch_op.drop_index(batch_op.f('ix_stock_moves_author_id'))
-        batch_op.drop_index(batch_op.f('ix_stock_moves_deal_id'))
-        batch_op.drop_index(batch_op.f('ix_stock_moves_product_id'))
+    # Индексы отдельно не снимаем — их уносит `drop_table`, а на MySQL снятие
+    # индекса под живым внешним ключом отвергается (1553). Разбор — в откате
+    # `e4451c527c34`. Здесь на это упирался `ix_stock_moves_author_id`.
     op.drop_table('stock_moves')
-
-    with op.batch_alter_table('products', schema=None) as batch_op:
-        batch_op.drop_index(batch_op.f('ix_products_deleted_at'))
-        batch_op.drop_index(batch_op.f('ix_products_name'))
-        batch_op.drop_index(batch_op.f('ix_products_sku'))
     op.drop_table('products')

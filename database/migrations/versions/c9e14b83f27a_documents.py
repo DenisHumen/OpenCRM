@@ -75,15 +75,8 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    with op.batch_alter_table('document_events', schema=None) as batch_op:
-        batch_op.drop_index(batch_op.f('ix_document_events_created_at'))
-        batch_op.drop_index(batch_op.f('ix_document_events_document_id'))
+    # Индексы отдельно не снимаем — их уносит `drop_table`, а на MySQL снятие
+    # индекса под живым внешним ключом отвергается (1553). Разбор — в откате
+    # `e4451c527c34`. Здесь на это упирался `ix_document_events_document_id`.
     op.drop_table('document_events')
-
-    with op.batch_alter_table('documents', schema=None) as batch_op:
-        for name in (
-            'ix_documents_created_at', 'ix_documents_deal_id', 'ix_documents_client_id',
-            'ix_documents_status', 'ix_documents_number',
-        ):
-            batch_op.drop_index(batch_op.f(name))
     op.drop_table('documents')

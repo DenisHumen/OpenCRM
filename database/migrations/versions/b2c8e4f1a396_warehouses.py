@@ -130,24 +130,25 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # Ссылки снимаются ПЕРВЫМИ, до индексов. На MySQL индекс, по которому
+    # проверяется внешний ключ, снять нельзя вовсе — отказ 1553 «needed in a
+    # foreign key constraint», и откат вставал ровно здесь, на
+    # `ix_stock_moves_transfer_id`. Порядок «индексы, потом ключи» достался от
+    # SQLite, которому он был безразличен.
+    with op.batch_alter_table("stock_moves") as batch:
+        batch.drop_constraint("fk_stock_moves_transfer", type_="foreignkey")
+        batch.drop_constraint("fk_stock_moves_warehouse", type_="foreignkey")
+
+    # Индексы — только у таблицы, которая переживёт откат. У тех, что сносятся
+    # целиком, индексы уходят вместе с ними (разбор — в откате `e4451c527c34`).
     op.drop_index("ix_stock_moves_wh_happened", table_name="stock_moves")
     op.drop_index("ix_stock_moves_wh_product_qty", table_name="stock_moves")
     op.drop_index("ix_stock_moves_transfer_id", table_name="stock_moves")
     op.drop_index("ix_stock_moves_warehouse_id", table_name="stock_moves")
+
     with op.batch_alter_table("stock_moves") as batch:
-        batch.drop_constraint("fk_stock_moves_transfer", type_="foreignkey")
-        batch.drop_constraint("fk_stock_moves_warehouse", type_="foreignkey")
         batch.drop_column("transfer_id")
         batch.drop_column("warehouse_id")
 
-    op.drop_index("ix_stock_transfers_author_id", table_name="stock_transfers")
-    op.drop_index("ix_stock_transfers_happened_at", table_name="stock_transfers")
-    op.drop_index("ix_stock_transfers_reverses_id", table_name="stock_transfers")
-    op.drop_index("ix_stock_transfers_to_warehouse_id", table_name="stock_transfers")
-    op.drop_index("ix_stock_transfers_from_warehouse_id", table_name="stock_transfers")
     op.drop_table("stock_transfers")
-
-    op.drop_index("ix_warehouses_deleted_at", table_name="warehouses")
-    op.drop_index("ix_warehouses_code", table_name="warehouses")
-    op.drop_index("ix_warehouses_name", table_name="warehouses")
     op.drop_table("warehouses")

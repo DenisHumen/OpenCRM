@@ -54,11 +54,14 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_index("ix_stock_moves_document_id", table_name="stock_moves")
+    # Ссылка снимается ДО индекса: на MySQL индекс, по которому проверяется
+    # внешний ключ, снять нельзя (отказ 1553), и откат вставал ровно здесь.
+    # Разбор — в откате `e4451c527c34`.
     with op.batch_alter_table("stock_moves") as batch:
         batch.drop_constraint("fk_stock_moves_document", type_="foreignkey")
+    op.drop_index("ix_stock_moves_document_id", table_name="stock_moves")
+    with op.batch_alter_table("stock_moves") as batch:
         batch.drop_column("document_id")
 
-    op.drop_index("ix_document_lines_product_id", table_name="document_lines")
-    op.drop_index("ix_document_lines_document_id", table_name="document_lines")
+    # Индексы строк отдельно не снимаем — их уносит сама таблица.
     op.drop_table("document_lines")
