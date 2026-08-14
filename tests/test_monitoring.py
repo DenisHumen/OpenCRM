@@ -1994,7 +1994,10 @@ def test_razmer_sprashivaetsya_zaprosom_a_ne_molchaniem():
     а на сервере сборщик выходил на первой строке — другого пути у числа не было
     вовсе, и метрика молча пропадала.
     """
-    istochnik = Path("web/api/routes/metrics.py").read_text(encoding="utf-8")
+    # Путь от корня репозитория, как у всех соседей в этом файле. Относительный
+    # зависел бы от рабочего каталога прогона — то есть от того, что делал
+    # предыдущий тест, а не от того, что проверяет этот.
+    istochnik = (ROOT / "web" / "api" / "routes" / "metrics.py").read_text(encoding="utf-8")
     sborshchik = istochnik[istochnik.index("def _collect_database("):]
     sborshchik = sborshchik[: sborshchik.index("\ndef ")]
     assert "engine_info.database_size_bytes" in sborshchik, (
