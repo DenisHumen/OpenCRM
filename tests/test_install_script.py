@@ -278,45 +278,12 @@ def test_repair_leaves_certificates_alone():
     )
 
 
-# --- оборванный переезд не имеет права оставить сайт закрытым ------------------
+# --- закрытый сайт обязан быть виден -------------------------------------------
 #
-# Перенос базы идёт при ЗАКРЫТОМ сайте: писать в это время некому, и потому
-# «сверка сошлась» — факт, а не обещание. Цена этого решения — окно, в котором
-# оборванный скрипт оставляет сайт закрытым навсегда.
-#
-# Проверено убийством дерева переезда на середине переноса: режим обслуживания
-# остался включён, `/healthz` отвечал `status ok, schema ok, redis ok`, и не
-# видел беды никто — ни докер, ни автообновление, ни мониторинг. Сотрудник при
-# этом получал 503 даже на ЧТЕНИЕ списка клиентов, публичная главная отвечала
-# 503, а владелец проходил по устройству режима и видел РАБОЧИЙ САЙТ.
-#
-# Отсюда две проверки. Перехват сигналов закрывает обычные обрывы (Ctrl+C,
-# `kill`, закрытая ssh-сессия), видимость — все остальные, включая `kill -9` и
-# выдернутое питание, от которых перехват не спасает вовсе.
-
-
-def test_the_move_traps_signals_and_reopens_the_site():
-    """Без перехвата Ctrl+C посреди переноса закрывает сайт навсегда."""
-    text = source()
-    assert "trap " in text, "в скрипте нет ни одного перехвата сигналов"
-    perehvat = text[text.index("migrate_trap() {") : text.index("migrate_trap() {") + 600]
-    for signal in ("EXIT", "INT", "TERM", "HUP"):
-        assert signal in perehvat, f"сигнал {signal} не перехватывается"
-    assert "migrate_cleanup" in perehvat, "перехват ничего не снимает"
-
-    uborka = text[text.index("migrate_cleanup() {") : text.index("migrate_trap() {")]
-    assert "migrate_maintenance off" in uborka, "уборка не открывает сайт обратно"
-
-
-def test_the_trap_is_armed_before_the_site_is_closed():
-    """Сигнал между «поставили перехват» и «закрыли» оставил бы сайт закрытым."""
-    text = source()
-    perenos = text[text.index("migrate_sqlite_to_mysql() {") :]
-    perenos = perenos[: perenos.index("\n}\n")]
-    assert "migrate_trap" in perenos, "перехват при переезде не ставится вовсе"
-    assert perenos.index("migrate_trap") < perenos.index("migrate_maintenance on"), (
-        "перехват ставится ПОСЛЕ закрытия сайта — окно между ними ничем не закрыто"
-    )
+# Режим обслуживания включает человек, и он же может забыть его снять. Владелец
+# в закрытый сайт проходит по устройству режима и видит его работающим, пока
+# сотрудники получают 503, — то есть единственный, кто может открыть, беды и не
+# видит. Отсюда две проверки: видимость в диагностике и способ открыть с сервера.
 
 
 def test_doctor_says_the_site_is_closed():
@@ -342,57 +309,17 @@ def test_maintenance_can_be_lifted_from_the_command_line():
     assert "maintenance) cmd_maintenance" in text, "команда не подключена к разбору аргументов"
 
 
-def test_osmotr_idyot_do_zakrytiya_sayta():
-    """Беда, которую находит осмотр, делает переезд невозможным целиком.
-
-    Найдено живым прогоном на настоящем докере: перенос доходил до `deals`,
-    получал от MySQL «1452 Cannot add or update a child row» и падал ПОСЕРЕДИНЕ
-    — сайт к этому времени уже закрыт на обслуживание, цель наполовину
-    заполнена, а в логе имя ограничения вместо имени беды.
-
-    Вопрос «нет ли строк, ссылающихся в пустоту» задаётся одному источнику: ни
-    MySQL, ни копии, ни закрытого сайта для него не нужно. Значит и стоять он
-    обязан до всего этого — иначе отказ стоит людям простоя на ровном месте.
-    """
-    text = source()
-    perenos = text[text.index("migrate_sqlite_to_mysql() {") :]
-    perenos = perenos[: perenos.index("\n}\n")]
-    assert "migrate_preflight" in perenos, "осмотр источника в переезде не зовётся вовсе"
-    assert perenos.index("migrate_preflight") < perenos.index("migrate_maintenance on"), (
-        "осмотр идёт ПОСЛЕ закрытия сайта — отказ на нём стоит людям простоя"
-    )
-    assert perenos.index("migrate_preflight") < perenos.index("migrate_snapshot_sqlite"), (
-        "осмотр идёт после снятия копии — лишняя работа перед заведомым отказом"
-    )
-    assert perenos.index("migrate_preflight") < perenos.index("migrate_up_services"), (
-        "осмотр идёт после подъёма MySQL: на медленном диске VPS первый старт "
-        "создаёт каталог данных минутами, и всё это перед заведомым отказом"
-    )
-
-    osmotr = text[text.index("migrate_preflight() {") :]
-    osmotr = osmotr[: osmotr.index("\n}\n")]
-    assert "--preflight" in osmotr, "осмотр зовёт что-то другое, а не проверку источника"
-    assert "--target" not in osmotr, (
-        "осмотру передают цель — значит он потребует поднятой MySQL там, где она не нужна"
-    )
-
-
-def test_pereezd_i_obsluzhivanie_est_v_menyu():
+def test_obsluzhivanie_est_v_menyu():
     """Меню — единственная дверь для того, кто командами не пользуется.
 
-    Переезд и режим обслуживания — ровно те два действия, за которыми человек
-    приходит в самый неудобный момент: первое он делает один раз в жизни,
-    второе — когда сайт закрыт, а он этого не видит (владелец проходит по
+    Режим обслуживания — то действие, за которым человек приходит в самый
+    неудобный момент: сайт закрыт, а он этого не видит (владелец проходит по
     устройству режима и видит сайт рабочим).
     """
     text = source()
     menyu = text[text.index("menu() {") : text.index("usage() {")]
-    for punkt, komanda in (
-        ("Переезд на MySQL", "cmd_migrate_mysql"),
-        ("Режим обслуживания", "menu_maintenance"),
-    ):
-        assert punkt in menyu, f"пункт «{punkt}» пропал из меню"
-        assert komanda in menyu, f"пункт «{punkt}» есть, а вызова {komanda} нет"
+    assert "Режим обслуживания" in menyu, "пункт «Режим обслуживания» пропал из меню"
+    assert "menu_maintenance" in menyu, "пункт есть, а вызова menu_maintenance нет"
 
     # Номера пунктов и разбор ответа обязаны сойтись: пункт, который печатается,
     # но не разбирается, отвечает «нет такого пункта».

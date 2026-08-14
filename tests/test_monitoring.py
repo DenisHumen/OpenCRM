@@ -430,16 +430,18 @@ def test_monitoring_stoit_pod_profilem():
 
 
 def test_vybor_profilya_ne_zatiraet_sosedniy():
-    """COMPOSE_PROFILES общий на базу и на мониторинг.
+    """COMPOSE_PROFILES — общий список, и писать в него можно только по имени.
 
-    Запись целиком (`env_set COMPOSE_PROFILES monitoring`) молча вынесла бы из
-    стека службу базы — и сайт после ближайшего `up` поднялся бы на пустом
-    файле рядом.
+    Профилей в нём сейчас два, оба про мониторинг: `monitoring` и
+    `monitoring-logs`. Запись целиком (`env_set COMPOSE_PROFILES monitoring`)
+    молча вынесла бы из стека логи — а раньше, пока база была под профилем,
+    так же молча выносила бы саму базу, и сайт после ближайшего `up`
+    поднимался бы на пустом файле рядом. Цена ошибки упала, правило осталось.
     """
     script = _script()
-    assert "compose_profile mysql on" in script
-    assert "compose_profile mysql off" in script
     assert "compose_profile monitoring on" in script
+    assert "compose_profile monitoring off" in script
+    assert "compose_profile monitoring-logs" in script
     assert not re.search(r'env_set "\$DOCKER_ENV" COMPOSE_PROFILES (mysql|monitoring)', script), (
         "профиль снова пишется целиком, затирая чужое решение"
     )
