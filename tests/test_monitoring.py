@@ -1246,6 +1246,7 @@ def test_razmer_bazy_sprashivaetsya_u_servera(tmp_path):
         # «база исчезла», а отсутствие точки видно как отсутствие.
         assert razmer is None
 
+
 def test_na_mysql_razmer_sprashivaetsya_zaprosom_a_ne_molchaniem():
     """Живого MySQL в наборе нет, поэтому стережём связку, а не число.
 

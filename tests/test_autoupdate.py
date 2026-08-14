@@ -836,7 +836,7 @@ def test_a_deploy_walks_the_steps_in_order(tmp_path):
 
     assert outcome.status == STATUS_DEPLOYED
     assert step_names(outcome) == [
-        "preflight", "fetch", "checkout", "tests", "backup", "deploy",
+        "preflight", "fetch", "checkout", "tests", "config", "backup", "deploy",
         "nginx-reload", "health", "prune",
     ]
     assert all(step.ok for step in outcome.steps)
@@ -938,6 +938,69 @@ def test_red_tests_never_reach_the_live_site(tmp_path):
     assert not shell.ran("up -d --build")
     assert shell.ran(f"checkout --detach --quiet {OLD}")  # чекаут вернули на место
     assert "2 failed" in outcome.reason
+
+
+def test_nastroyki_ne_soshlis_zhivoy_sayt_ne_tronut(tmp_path):
+    """Новый код требует настройку, которой на машине нет.
+
+    Так уже случилось: Redis стал обязательным, а обновление никогда не
+    дописывает `OPENCRM_REDIS_URL` — пароль ему взять неоткуда. Отказ вылезал
+    после подмены контейнера: сайт лёг, `/healthz` вернул 502, откатились и код,
+    и база. И так кругом, каждые полчаса, пока человек не зашёл руками.
+
+    Отказ по конфигу заранее известен и ничего не стоит — значит он обязан
+    случиться до того, как живой сайт тронут.
+    """
+    shell = FakeShell()
+    shell.fail("config.selfcheck", err="OPENCRM_REDIS_URL пуст: общего счётчика нет")
+    updater = make_updater(tmp_path, shell=shell)
+
+    outcome = updater.run_once()
+
+    assert outcome.status == STATUS_ABORTED
+    assert not shell.ran("up -d --build")
+    assert not shell.ran("snapshot_db dump")  # до копии базы даже не дошли
+    assert shell.ran(f"checkout --detach --quiet {OLD}")
+    assert "OPENCRM_REDIS_URL" in outcome.reason
+
+
+def test_proverka_nastroek_ne_zapuskaet_migratsii(tmp_path):
+    """Проверка обязана быть безобидной — иначе она хуже отсутствующей.
+
+    У образа `ENTRYPOINT ["/entrypoint.sh"]`, а `compose run` подменяет команду,
+    но НЕ точку входа. Забыть `--entrypoint` — значит на «безобидной проверке
+    настроек» дождаться базы и накатить миграции: до снятия копии и раньше своей
+    очереди. Копии нет, схема уже новая, откатываться нечем.
+    """
+    updater = make_updater(tmp_path)
+
+    updater.run_once()
+
+    zapusk = next(cmd for cmd in updater.shell.calls if "config.selfcheck" in cmd)
+    assert "--entrypoint python" in zapusk, zapusk
+    # и без чужих служб: базу с redis проверка настроек не поднимает
+    assert "--no-deps" in zapusk, zapusk
+
+
+def test_proverka_nastroek_smotrit_na_novyy_kod(tmp_path):
+    """Проверять надо новый код, а не образ с прошлого раза.
+
+    `compose run` без сборки берёт лежащий образ — то есть требования СТАРОГО
+    кода. Проверка при этом зелёная и совершенно бесполезная: обновление ровно
+    так же ляжет после подмены. Поэтому образ пересобирается перед запуском.
+
+    Отдельной командой, а не флагом `run --build`: флаг появился только в
+    Compose v2.13, а от установки проект требует просто «compose v2».
+    """
+    updater = make_updater(tmp_path)
+
+    updater.run_once()
+
+    poryadok = updater.shell.calls
+    sborka = next(i for i, cmd in enumerate(poryadok) if "compose" in cmd and "build app" in cmd)
+    proverka = next(i for i, cmd in enumerate(poryadok) if "config.selfcheck" in cmd)
+    assert sborka < proverka, poryadok[sborka:proverka + 1]
+    assert "--build" not in poryadok[proverka]  # флага из v2.13 быть не должно
 
 
 def test_a_directory_that_is_not_a_repository_stops_cleanly(tmp_path):
