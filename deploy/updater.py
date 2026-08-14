@@ -480,65 +480,16 @@ class Updater:
             ),
         )
 
-    def _snapshot(self, steps: list[Step], target: str) -> Path | None:
-        """Копия базы перед миграциями. Без неё деплой не едет.
+    def _snapshot(self, steps: list[Step], target: str) -> Path:
+        """Копия базы перед миграциями — тем же кодом, что и в точке входа.
 
-        **Копия снимается по тому адресу, ПО КОТОРОМУ РАБОТАЕМ**, а не по
-        наличию файла. Прежде здесь стоял один-единственный путь — файл SQLite,
-        — и на установке, переехавшей на MySQL, это давало худший из исходов:
-        файл после переезда остаётся лежать НАРОЧНО (к нему возвращаются, если
-        переезд не удался), поэтому `source.exists()` истинно, шаг `backup`
-        отчитывался успехом и клал в снимок 179 МБ базы, которой никто не
-        пользуется, — а `_restore_db` при откате перезаписывал тот же ненужный
-        файл и тоже отчитывался успехом. Рабочая MySQL при этом не была ни
-        скопирована, ни возвращена. Это хуже отсутствия копии: отсутствие видно,
-        а зелёный отчёт обманывает.
+        Пока баз было две, здесь стояла проверка «файл базы существует», и на
+        установке, переехавшей на MySQL, она отвечала ПРАВДУ и означала ЛОЖЬ:
+        файл SQLite оставался лежать нарочно, шаг отчитывался успехом, сняв
+        копию базы, которой никто не пользуется, а откат «удавался»,
+        перезаписав тот же ненужный файл. Зелёный отчёт при отсутствующей
+        копии хуже, чем отсутствие копии: отсутствие видно.
 
-        Точку входа (`docker/entrypoint.sh`) починили тем же правилом раньше;
-        здесь оно повторяется, потому что копии две и они независимы — эта
-        снимается ДО подмены контейнера, та внутри него перед миграциями.
-        """
-        if self.config.db_is_mysql:
-            return self._snapshot_mysql(steps, target)
-
-        source = self.config.db_file
-        if not source.exists():
-            steps.append(Step("backup", True, "базы ещё нет — первый деплой"))
-            return None
-
-        destination = self.config.state_dir / f"pre-update-{target[:12]}.db"
-        try:
-            self.config.state_dir.mkdir(parents=True, exist_ok=True)
-            destination.unlink(missing_ok=True)
-
-            # 1) Штатный путь: `.backup` в работающем контейнере даёт консистентную
-            #    копию на горячую, не останавливая сайт (так же делают backup.sh и
-            #    entrypoint.sh). Контейнер пишет в /app/data — это data_dir на хосте.
-            inside = f"/app/data/{destination.name}"
-            hot = self._compose("exec", "-T", "app", "sqlite3", "/app/data/" + self.config.db_name,
-                                f".backup '{inside}'", timeout=300)
-            landed = self.config.data_dir / destination.name
-            if hot.ok and landed.exists():
-                shutil.move(str(landed), str(destination))
-                steps.append(Step("backup", True, destination.name))
-                return destination
-
-            # 2) Контейнер не отвечает — значит, в базу никто не пишет, и обычная
-            #    копия файла вместе с журналом WAL тоже консистентна.
-            landed.unlink(missing_ok=True)
-            shutil.copy2(source, destination)
-            for suffix in ("-wal", "-shm"):
-                sidecar = source.with_name(source.name + suffix)
-                if sidecar.exists():
-                    shutil.copy2(sidecar, destination.with_name(destination.name + suffix))
-        except OSError as failure:
-            steps.append(Step("backup", False, str(failure)))
-            raise _Stop(f"не удалось снять копию базы: {failure}") from failure
-        steps.append(Step("backup", True, f"{destination.name} (копия файла, контейнер не отвечал)"))
-        return destination
-
-    def _snapshot_mysql(self, steps: list[Step], target: str) -> Path:
-        """Дамп MySQL перед миграциями — тем же кодом, что и в точке входа.
 
         Клиента `mysqldump` в образе приложения нет и не будет (разбор — в шапке
         `scripts/snapshot_db.py`), поэтому дамп пишет сам проект, на `pymysql`.
@@ -717,30 +668,7 @@ class Updater:
         return reason
 
     def _restore_db(self, snapshot: Path) -> str:
-        """Вернуть базу из снимка. Пустая строка — получилось."""
-        if self.config.db_is_mysql:
-            return self._restore_mysql(snapshot)
-        target = self.config.db_file
-        stamp = time.strftime("%Y%m%d-%H%M%S")
-        try:
-            if target.exists():
-                # Неудачную базу откладываем, а не стираем: в ней данные за время
-                # неудавшегося обновления, и разбираться с ними будет человек.
-                target.replace(target.with_name(f"{target.name}.failed-update-{stamp}"))
-            shutil.copy2(snapshot, target)
-            # Журнал WAL от прежней базы SQLite доиграл бы поверх восстановленной —
-            # снимок `.backup` самодостаточен, боковые файлы должны исчезнуть.
-            for suffix in ("-wal", "-shm"):
-                target.with_name(target.name + suffix).unlink(missing_ok=True)
-                sidecar = snapshot.with_name(snapshot.name + suffix)
-                if sidecar.exists():
-                    shutil.copy2(sidecar, target.with_name(target.name + suffix))
-        except OSError as failure:
-            return str(failure)
-        return ""
-
-    def _restore_mysql(self, snapshot: Path) -> str:
-        """Залить дамп обратно в MySQL. Пустая строка — получилось.
+        """Вернуть базу из копии. Пустая строка — получилось.
 
         Клиент `mysql` живёт в образе базы, поэтому дамп отдаётся ему на вход
         заходом в службу `db` — тем же способом, каким восстанавливают обычные

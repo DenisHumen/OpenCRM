@@ -29,7 +29,14 @@ from deploy.updater import (
     STATUS_BROKEN,
     STATUS_DEPLOYED,
 )
-from tests.test_autoupdate import NEW, FakeProbe, FakeShell, blob, make_config, make_updater
+from tests.test_autoupdate import (
+    NEW,
+    FakeProbe,
+    FakeShell,
+    damp_snimaetsya,
+    make_config,
+    make_updater,
+)
 
 ROOT = Path(__file__).resolve().parent.parent
 PAGE = ROOT / "docker" / "nginx" / "maintenance" / "maintenance.html"
@@ -96,10 +103,13 @@ def test_each_step_is_announced_while_it_is_happening(tmp_path):
     бы на «снимаем копию базы», то есть на уже неверное.
     """
     config = make_config(tmp_path)
-    config.db_file.write_bytes(blob("база"))
     seen: dict[str, str] = {}
     shell = FakeShell()
-    shell.effect("sqlite3", lambda: seen.setdefault("backup", state_of(config)["step"]))
+    shell.effect(
+        "scripts.snapshot_db dump",
+        lambda: (seen.setdefault("backup", state_of(config)["step"]),
+                 damp_snimaetsya(config, shell)()),
+    )
     shell.effect("up -d --build", lambda: seen.setdefault("build", state_of(config)["step"]))
     updater = make_updater(
         tmp_path, config=config, shell=shell, probe=WatchingProbe(seen, config)
@@ -140,8 +150,8 @@ def test_an_update_that_never_touched_the_site_leaves_nothing_behind(tmp_path):
     падении сайта и соврало бы про его причину.
     """
     config = make_config(tmp_path)
-    config.db_file.write_bytes(blob("база"))
-    (config.state_dir / f"pre-update-{NEW[:12]}.db").mkdir()  # снимок класть некуда
+    # Копию класть некуда: на её месте каталог, а не файл.
+    (config.state_dir / f"pre-update-{NEW[:12]}.sql").mkdir()
 
     assert make_updater(tmp_path, config=config).run_once().status == STATUS_ABORTED
 
