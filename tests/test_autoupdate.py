@@ -1235,7 +1235,7 @@ def test_otkat_na_mysql_ne_zalivaet_oborvannuyu_kopiyu(tmp_path):
 
 
 def test_neudachnaya_baza_mysql_otkladyvaetsya_v_storonu(tmp_path):
-    """У SQLite неудачная база откладывается файлом — здесь тем же дампом.
+    """Неудачная база не стирается, а откладывается в сторону — тем же дампом.
 
     В ней данные за время неудавшегося обновления, и разбираться с ними будет
     человек.

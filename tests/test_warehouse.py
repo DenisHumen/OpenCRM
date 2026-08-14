@@ -86,7 +86,7 @@ def test_stock_is_the_sum_of_moves(root_client):
 def test_stock_leaves_the_repository_as_a_whole_number(root_client):
     """Остаток выходит из репозитория ЦЕЛЫМ, а не `Decimal` — всеми тремя путями.
 
-    `SUM()` в MySQL возвращает `Decimal`, и на SQLite этого видно не было. Пока
+    `SUM()` в MySQL возвращает `Decimal`, а не целое. Пока
     приведение не стояло в репозитории, `Decimal` доезжал до показа: строка
     остатка собирается через `f"{frac:03d}"` и падала `ValueError`ом, а ответ
     API уходил дробным числом — `jsonable_encoder` переводит `Decimal` во float,
@@ -398,8 +398,8 @@ def test_absurd_quantity_is_refused_not_a_crash(root_client):
 
     У количества, в отличие от денег, потолка не было вовсе. «10^30» в поле (то
     есть обычная опечатка или вставка мимо поля) доходило до вставки и роняло
-    запрос OverflowError'ом от драйвера SQLite — пятисоткой на пользовательский
-    ввод, без единого слова о том, что не так.
+    запрос переполнением в драйвере — пятисоткой на пользовательский ввод, без
+    единого слова о том, что не так.
     """
     product = new_product(root_client, name="Гвозди", unit="kg")
     for absurd in ("9" * 30, "1e20", str(2**63)):

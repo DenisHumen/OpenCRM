@@ -81,8 +81,8 @@ def _search_stmt(
         # или `equipment`. Обрамляем и строку, и искомое запятыми — тогда
         # совпасть может только метка целиком.
         #
-        # Сложение строк, а не `func.concat`: SQLAlchemy сама соберёт `||` для
-        # SQLite и `concat()` для MySQL. Экранирование `%` и `_` остаётся за
+        # Сложение строк, а не `func.concat`: SQLAlchemy сама соберёт из него
+        # `concat()` под MySQL. Экранирование `%` и `_` остаётся за
         # `contains`.
         v_ramke = literal(",") + Client.tags + literal(",")
         stmt = stmt.where(contains(v_ramke, f",{tag.strip()},"))

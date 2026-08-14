@@ -34,7 +34,7 @@ class Role(Base):
     #: Роль, которую получает новый сотрудник при регистрации. Ровно одна;
     #: следит за этим сервис, а не база — частичный уникальный индекс
     #: (`UNIQUE ... WHERE is_default`) запрещён принципами docs/03-database.md
-    #: ради переезда на MySQL, а обычный `UNIQUE` запретил бы двум ролям
+    #: — в MySQL их нет вовсе, — а обычный `UNIQUE` запретил бы двум ролям
     #: одновременно *не* быть основной.
     is_default: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
