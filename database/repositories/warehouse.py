@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from database.models import Product, ProductBarcode, StockMove
 from database.models.warehouse import QUANTITY_SCALE
-from database.query import contains, page_of
+from database.query import as_int, contains, page_of
 
 
 def get_product(db: Session, product_id: int, include_deleted: bool = False) -> Product | None:
@@ -75,6 +75,9 @@ def stock_of(
 
     coalesce — потому что SUM по пустому набору даёт NULL, а «движений не было»
     означает ровно ноль, а не «неизвестно».
+
+    `as_int` — потому что `SUM()` в MySQL возвращает `Decimal`, а количество в
+    проекте целое (разбор — в докстроке самой `as_int`).
     """
     stmt = select(func.coalesce(func.sum(StockMove.quantity_milli), 0)).where(
         StockMove.product_id == product_id
@@ -83,7 +86,7 @@ def stock_of(
         stmt = stmt.where(StockMove.warehouse_id == warehouse_id)
     if on_date is not None:
         stmt = stmt.where(StockMove.happened_at <= on_date)
-    return db.scalar(stmt) or 0
+    return as_int(db.scalar(stmt))
 
 
 def stock_by_product(
@@ -114,7 +117,7 @@ def stock_by_product(
     if on_date is not None:
         stmt = stmt.where(StockMove.happened_at <= on_date)
     stmt = stmt.group_by(StockMove.product_id)
-    return {product_id: total for product_id, total in db.execute(stmt).all()}
+    return {product_id: as_int(total) for product_id, total in db.execute(stmt).all()}
 
 
 def stock_by_warehouse(
@@ -151,7 +154,7 @@ def stock_by_warehouse(
 
     spread: dict[int, dict[int, int]] = {}
     for product_id, warehouse_id, total in db.execute(stmt).all():
-        spread.setdefault(product_id, {})[warehouse_id] = total
+        spread.setdefault(product_id, {})[warehouse_id] = as_int(total)
     return spread
 
 
@@ -189,13 +192,23 @@ _COST_EXPR = func.coalesce(
 )
 
 
-def _scaled_to_minor(total: int) -> int:
+def _scaled_to_minor(total) -> int:
     """Масштабированная сумма → минорные единицы, целочисленно.
 
     Делить на 1000 обычным `/` нельзя: в Python это float, а деньги через float
     мы не считаем принципиально. Округление — к ближайшему от нуля, чтобы возврат
     на склад (отрицательный вклад) округлялся так же, как списание.
+
+    `as_int` на входе, а не на выходе. Без него сюда приезжает `Decimal` (так
+    `SUM()` отвечает в MySQL), и `//` возвращает `Decimal` же — то есть
+    себестоимость заявки уезжала наружу не целой, вопреки подписи, и в ответ API
+    попадала дробным числом (`jsonable_encoder` переводит `Decimal` во float).
+    Значение при этом сходилось: знак здесь развёрнут явно, а на неотрицательных
+    операндах «вниз» и «к нулю» — одно и то же. Опираться на это совпадение
+    нельзя: сама по себе `//` у `Decimal` округляет к нулю, и стоит кому-то
+    убрать явную ветку для отрицательных, как копейка возврата разойдётся.
     """
+    total = as_int(total)
     half = QUANTITY_SCALE // 2
     if total >= 0:
         return (total + half) // QUANTITY_SCALE
@@ -217,7 +230,7 @@ def deal_cost_minor(db: Session, deal_id: int) -> int:
     отрицательным количеством, поэтому знак переворачиваем: себестоимость заявки —
     число положительное, а возврат на склад её уменьшает.
     """
-    return _scaled_to_minor(db.scalar(select(_COST_EXPR).where(StockMove.deal_id == deal_id)) or 0)
+    return _scaled_to_minor(db.scalar(select(_COST_EXPR).where(StockMove.deal_id == deal_id)))
 
 
 def deal_cost_by_deal(db: Session, deal_ids: list[int]) -> dict[int, int]:
@@ -229,7 +242,7 @@ def deal_cost_by_deal(db: Session, deal_ids: list[int]) -> dict[int, int]:
         .where(StockMove.deal_id.in_(deal_ids))
         .group_by(StockMove.deal_id)
     ).all()
-    return {deal_id: _scaled_to_minor(total or 0) for deal_id, total in rows}
+    return {deal_id: _scaled_to_minor(total) for deal_id, total in rows}
 
 
 # --- штрихкоды ---

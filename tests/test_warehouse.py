@@ -83,6 +83,35 @@ def test_stock_is_the_sum_of_moves(root_client):
     assert sum(m["quantity_milli"] for m in history["items"]) == expected
 
 
+def test_stock_leaves_the_repository_as_a_whole_number(root_client):
+    """Остаток выходит из репозитория ЦЕЛЫМ, а не `Decimal` — всеми тремя путями.
+
+    `SUM()` в MySQL возвращает `Decimal`, и на SQLite этого видно не было. Пока
+    приведение не стояло в репозитории, `Decimal` доезжал до показа: строка
+    остатка собирается через `f"{frac:03d}"` и падала `ValueError`ом, а ответ
+    API уходил дробным числом — `jsonable_encoder` переводит `Decimal` во float,
+    то есть ровно в то, через что количество и деньги проходить не должны.
+
+    Проверяем типом, а не значением: значение сходилось и до починки, потому
+    `Decimal` и прожил на боевом сервере незамеченным.
+    """
+    from database.repositories import warehouse as warehouse_repo
+    from database.session import SessionLocal
+
+    product = new_product(root_client, name="Целое число", unit="kg")
+    move(root_client, product["id"], "in", "1.5")
+
+    with SessionLocal() as db:
+        ostatok = warehouse_repo.stock_of(db, product["id"])
+        assert ostatok == 1500
+        assert type(ostatok) is int, f"остаток приехал {type(ostatok).__name__}"
+
+        pachkoy = warehouse_repo.stock_by_product(db, [product["id"]])
+        assert type(pachkoy[product["id"]]) is int
+        po_skladam = warehouse_repo.stock_by_warehouse(db, [product["id"]])
+        assert all(type(v) is int for v in po_skladam[product["id"]].values())
+
+
 def test_fractional_quantities_survive_a_hundred_operations(root_client):
     """Дробные килограммы не должны копить ошибку: 1.0 − 0.1×10 = ровно 0.
 
