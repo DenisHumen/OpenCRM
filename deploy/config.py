@@ -87,7 +87,6 @@ class UpdateConfig:
     project_dir: Path
     state_dir: Path
     data_dir: Path
-    db_name: str
     compose_file: Path
     health_url: str
     smoke_urls: tuple[str, ...]
@@ -107,21 +106,12 @@ class UpdateConfig:
     github_token: str
     telegram_token: str
     telegram_chat_id: str
-    #: На чём работает база прямо сейчас. Не «лежит ли файл рядом»: после
-    #: переезда на MySQL файл SQLite остаётся на месте НАРОЧНО (к нему
-    #: возвращаются, если переезд не удался), и проверка по файлу отвечала бы
-    #: «да» на установке, где эта база никому не нужна уже месяц.
-    db_is_mysql: bool = False
     #: Имя базы в MySQL — им же зовут клиент при возврате. Пароля здесь нет и
     #: быть не должно: строка попадает в шаги обновления и в уведомления.
     mysql_db: str = ""
     #: Служба базы в compose. Клиент `mysql` живёт в её образе, а не в образе
     #: приложения, — поэтому дамп заливается заходом именно сюда.
     db_service: str = "db"
-
-    @property
-    def db_file(self) -> Path:
-        return self.data_dir / self.db_name
 
     @property
     def history_file(self) -> Path:
@@ -155,7 +145,6 @@ class UpdateConfig:
             project_dir=project_dir,
             state_dir=Path(get("STATE_DIR") or home / "updates"),
             data_dir=Path(get("DATA_DIR") or home / "data"),
-            db_name=get("DB_NAME", "opencrm.db"),
             compose_file=Path(get("COMPOSE_FILE") or project_dir / "docker" / "docker-compose.yml"),
             health_url=get("HEALTH_URL", "http://127.0.0.1/healthz"),
             smoke_urls=smoke,
@@ -179,7 +168,6 @@ class UpdateConfig:
             github_token=get("GITHUB_TOKEN"),
             telegram_token=get("TELEGRAM_TOKEN"),
             telegram_chat_id=get("TELEGRAM_CHAT"),
-            db_is_mysql=db_url.startswith("mysql"),
             mysql_db=_imya_bazy(db_url),
             db_service=get("DB_SERVICE", "db"),
         )
