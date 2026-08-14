@@ -105,10 +105,32 @@ scrape_configs:
       #
       # Уровень выделяется меткой, чтобы «покажи ошибки за час» было одним
       # щелчком, а не чтением всего подряд.
+      #
+      # ПРИВЕДЕНИЕ РЕГИСТРА — не косметика, а единственное, что делает метку
+      # пригодной для запроса. `(?i)` заставляет regex ИСКАТЬ без разбора
+      # регистра, но в группу попадает то, что вправду написано в строке.
+      # Замерено на стенде (`/loki/api/v1/label/level/values`): без приведения
+      # метка принимала ШЕСТЬ значений — `Error`, `Traceback`, `WARNING`,
+      # `Warning`, `error`, `traceback`, — потому что uvicorn пишет `ERROR`,
+      # Python начинает трассировку с `Traceback`, MySQL говорит `Warning`, а
+      # Redis — `WARNING`. Селектор Loki при этом сравнивает ТОЧНО: запрос
+      # `level=~"error|critical|traceback"` не совпадал ни с одним из них,
+      # кроме случайно попавших внутрь слов (`raise_for_error`,
+      # `with_traceback`). То есть панель «Ошибки приложения» показывала обрывки
+      # трассировок и молчала о настоящих `ERROR` и `CRITICAL` — а выглядело это
+      # как «ошибок нет».
+      #
+      # Побочная выгода: значений становится три вместо шести, и потоков в Loki
+      # (а значит, кусков на диске) — вдвое меньше на каждую службу.
       - match:
           selector: '{service!="nginx"}'
           stages:
+            # `critical` первым: строку «CRITICAL error while …» правильнее
+            # отнести к критическим, а RE2 при равной позиции берёт левую ветку.
             - regex:
-                expression: "(?i)(?P<level>error|warning|critical|traceback)"
+                expression: "(?i)(?P<level>critical|error|warning|traceback)"
+            - template:
+                source: level
+                template: '{{ ToLower .Value }}'
             - labels:
                 level:

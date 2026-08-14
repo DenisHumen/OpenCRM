@@ -66,6 +66,53 @@ scrape_configs:
     static_configs:
       - targets: ["app:8000"]
 
+  # --- база: соединения, замки, буферный пул, медленные запросы -----------
+  #
+  # `metric_relabel_configs` с `keep` — обязательная часть, а не украшение.
+  # Замерено на стенде: mysqld-exporter отдаёт 992 ряда даже с урезанным
+  # набором собирателей, а всего в этом Prometheus их было 2144. То есть
+  # ОДНА новая служба увеличила бы хранилище наполовину — и уткнулась бы в
+  # потолок 512 МБ раньше, чем истекут пятнадцать дней хранения.
+  #
+  # Список — ровно то, по чему нарисованы панели, как и у node-exporter. Ряда
+  # `up{job="mysql"}` он не касается: тот рождается в самом Prometheus уже
+  # после этой обработки, поэтому «экспортёр не отвечает» видно всегда.
+  #
+  # Добавили панель про базу — допишите метрику сюда, иначе она никогда не
+  # появится. Стережёт tests/test_monitoring_dashboards.py: он сверяет
+  # запросы дашбордов с этим самым списком.
+  #
+  # То же и для ПРАВИЛ ТРЕВОГ, и там цена ошибки выше. Панель по непрошедшей
+  # метрике видно сразу — она пуста; правило по ней выглядит написанным,
+  # проходит `promtool check rules` и молчит ОДИНАКОВО при исправной и при
+  # задыхающейся базе. Эту связку стережёт
+  # tests/test_monitoring.py::test_metrika_kazhdogo_pravila_dodet_cherez_otbor.
+  #
+  # Переносить регулярное выражение на несколько строк НЕЛЬЗЯ: свёрнутый блок
+  # `>-` склеивает их пробелом, и отбор перестанет совпадать вообще ни с чем.
+  - job_name: mysql
+    static_configs:
+      - targets: ["db-exporter:9104"]
+    metric_relabel_configs:
+      - source_labels: [__name__]
+        action: keep
+        regex: >-
+          mysql_up|mysql_global_status_(threads_connected|threads_running|max_used_connections|aborted_connects|slow_queries|queries|innodb_row_lock_waits|innodb_row_lock_current_waits|innodb_buffer_pool_read_requests|innodb_buffer_pool_reads|buffer_pool_pages)|mysql_global_variables_(max_connections|innodb_buffer_pool_size|innodb_page_size)
+
+  # --- Redis: память против потолка, вытеснения, попадания, задержка ------
+  #
+  # Тот же keep и по той же причине: экспортёр отдаёт 367 рядов, а нужны из них
+  # полтора десятка. `redis_commands_*` оставлены целиком — они с меткой `cmd`,
+  # и без них не посчитать среднюю задержку команды.
+  - job_name: redis
+    static_configs:
+      - targets: ["redis-exporter:9121"]
+    metric_relabel_configs:
+      - source_labels: [__name__]
+        action: keep
+        regex: >-
+          redis_up|redis_memory_used_bytes|redis_memory_max_bytes|redis_evicted_keys_total|redis_keyspace_hits_total|redis_keyspace_misses_total|redis_connected_clients|redis_blocked_clients|redis_rejected_connections_total|redis_commands_duration_seconds_total|redis_commands_total
+
   # --- доли ответов и время ответа из журнала nginx -----------------------
   #
   # Считает promtail на лету, пока разбирает журнал (docker/monitoring/promtail).
