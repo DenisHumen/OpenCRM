@@ -3,6 +3,9 @@
 # Формат журнала доступа: на уровне http, потому что `log_format` и `map` в
 # server-блоке не живут. По этим строкам мониторинг считает доли ответов.
 include /opencrm/templates/logging.inc;
+# Ограничители потока на входах и переменная HSTS. Тоже уровень http: `map` и
+# `limit_req_zone` в server-блоке не живут.
+include /opencrm/templates/hardening.inc;
 
 server {
     listen 80;
@@ -56,10 +59,12 @@ server {
 
     client_max_body_size 220m;
 
-    add_header X-Content-Type-Options nosniff always;
-    add_header Referrer-Policy strict-origin-when-cross-origin always;
-    # полгода: домен уже отдаёт HTTPS, и откат на http ломает cookie сессии
-    add_header Strict-Transport-Security "max-age=15768000" always;
+    # Набор заголовков — одним файлом на оба шаблона и на каждый блок, у
+    # которого есть свои `add_header`. Почему не строками прямо здесь: `add_header`
+    # НЕ НАСЛЕДУЕТСЯ блоком, у которого есть хоть один свой, и написанные тут
+    # строки молча не доезжали до `/branding/`, `/avatars/` и страницы
+    # обслуживания. Разбор с замерами — в headers.inc.
+    include /opencrm/templates/headers.inc;
 
     include /opencrm/templates/locations.inc;
 }

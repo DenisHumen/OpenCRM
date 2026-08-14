@@ -81,7 +81,14 @@ CSP_APP = (
 )
 # Медиа/брендинг — не документы; на случай прямого открытия SVG глушим любой скрипт
 # (в дополнение к санитайзингу при загрузке).
-CSP_MEDIA = "default-src 'none'; img-src 'self'; media-src 'self'; style-src 'unsafe-inline'; sandbox"
+#: `frame-ancestors 'none'` здесь не лишний и не выводится из соседей:
+#: `default-src 'none'` управляет тем, что страница ГРУЗИТ, а не тем, кто грузит
+#: ЕЁ, а `sandbox` ограничивает саму страницу, а не чужую рамку вокруг неё. Без
+#: него файл работы клиента вставляется в любой сайт как своя картинка.
+CSP_MEDIA = (
+    "default-src 'none'; img-src 'self'; media-src 'self'; "
+    "style-src 'unsafe-inline'; frame-ancestors 'none'; sandbox"
+)
 
 
 # Пути, которые работают даже при закрытом на обслуживание сайте.
