@@ -871,41 +871,118 @@ class Updater:
             raise _Stop(f"{name}: {result.tail(4)}")
         return result
 
+    #: Как выглядит исход: значок, заголовок и надо ли звенеть на телефоне.
+    #:
+    #: Значок стоит первым не для красоты: в списке чатов Telegram показывает
+    #: начало последней строки, и по одному символу видно, идти смотреть или нет.
+    #:
+    #: STATUS_WAITING в списке нет намеренно: ожидание зелёного CI — не новость,
+    #: а нормальный ход дела, и уведомлять о нём каждые пять минут значило бы
+    #: приучить не читать эти сообщения.
+    ISHODY = {
+        STATUS_DEPLOYED: ("✅", "Обновлено", True),
+        STATUS_ROLLED_BACK: ("↩️", "Обновление откачено", False),
+        STATUS_BROKEN: ("🆘", "Откат не поднялся — нужен человек", False),
+        STATUS_ABORTED: ("⏸", "Обновление не начиналось", True),
+    }
+
     def _notify(self, outcome: Outcome) -> None:
-        # STATUS_WAITING в списке нет намеренно: ожидание зелёного CI — не
-        # новость, а нормальный ход дела, и уведомлять о нём каждые пять минут
-        # значило бы приучить не читать эти сообщения.
-        titles = {
-            STATUS_DEPLOYED: "OpenCRM обновлён",
-            STATUS_ROLLED_BACK: "OpenCRM: обновление откачено",
-            STATUS_BROKEN: "OpenCRM: откат не поднялся, нужен человек",
-            STATUS_ABORTED: "OpenCRM: обновление не начиналось",
-        }
-        title = titles.get(outcome.status)
-        if not title:
+        ishod = self.ISHODY.get(outcome.status)
+        if not ishod:
             return
-        lines = [title, f"{self.config.repo}@{self.config.branch}"]
+        znachok, zagolovok, tiho = ishod
+        e = notify.ekranirovat
+
+        # --- шапка: что случилось и с чем ---
+        stroki = [f"{znachok} <b>{e(zagolovok)}</b>"]
+
+        # Репозиторий и ветка — одной строкой мелким шрифтом. Ссылку на коммит
+        # вешаем на сам номер: карточку предпросмотра мы всё равно погасили, а
+        # нажать на семь символов проще, чем копировать их глазами.
+        adres = f"{self.config.repo}@{self.config.branch}"
+        stroki.append(f"<code>{e(adres)}</code>")
+
         if outcome.to_sha:
-            lines.append(f"{outcome.from_sha[:12] or '—'} → {outcome.to_sha[:12]}")
+            bylo = (outcome.from_sha or "")[:12] or "—"
+            stalo = outcome.to_sha[:12]
+            ssylka = f"https://github.com/{self.config.repo}/commit/{outcome.to_sha}"
+            stroki.append(
+                f"<code>{e(bylo)}</code> → <a href=\"{e(ssylka)}\"><code>{e(stalo)}</code></a>"
+            )
         if outcome.summary:
-            lines.append(outcome.summary)
+            stroki.append(f"<i>{e(outcome.summary)}</i>")
+
+        # --- причина: главное, ради чего сообщение читают ---
         if outcome.reason:
-            lines.append("")
-            lines.append(outcome.reason)
-        failed = [step for step in outcome.steps if not step.ok]
-        if failed:
-            lines.append("")
-            # Провалившийся шаг называется ВСЕГДА, в том числе когда обновление в
-            # целом удалось. Не смертельный шаг — не значит незаметный: заголовок
-            # «OpenCRM обновлён» читают как «всё хорошо», а под ним может лежать
-            # непримененный конфиг nginx. Ровно так пять суток никто не знал, что
-            # сайт работает со старым конфигом.
+            stroki.append("")
+            stroki.append(f"<b>{e(outcome.reason)}</b>")
+
+        # --- шаги: провалившиеся видно сразу, остальные под кат ---
+        #
+        # Провалившийся шаг называется ВСЕГДА, в том числе когда обновление в
+        # целом удалось. Не смертельный шаг — не значит незаметный: заголовок
+        # «Обновлено» читают как «всё хорошо», а под ним может лежать
+        # непримененный конфиг nginx. Ровно так пять суток никто не знал, что
+        # сайт работает со старым конфигом.
+        upali = [shag for shag in outcome.steps if not shag.ok]
+        if upali:
+            stroki.append("")
             if outcome.status == STATUS_DEPLOYED:
-                lines.append("но не всё прошло гладко:")
-            lines += [f"✗ {step.name}: {step.detail}".rstrip(": ") for step in failed]
-        lines.append("")
-        lines.append(f"{outcome.seconds:.0f} c")
-        self.notifier.send("\n".join(lines))
+                stroki.append("<b>Но не всё прошло гладко:</b>")
+            for shag in upali:
+                # Подробность не повторяем, если она уже сказана причиной выше:
+                # один и тот же текст трижды подряд (причина, шаг, список
+                # ходов) читается как три разные беды.
+                podrobno = ""
+                if shag.detail and shag.detail not in (outcome.reason or ""):
+                    podrobno = f": {shag.detail}"
+                stroki.append(f"✗ <b>{e(shag.name)}</b>{e(podrobno)}")
+
+        # Полный список ходов — сворачиваемой цитатой. Разбирают его редко, но
+        # когда разбирают, идти за ним в журнал на сервер неоткуда: сообщение
+        # приходит туда, где человек уже есть.
+        if outcome.steps:
+            stroki.append("")
+            stroki.append(self._hod_shagov(outcome))
+
+        # --- подвал: сколько заняло ---
+        stroki.append("")
+        stroki.append(f"<i>{e(_dlitelnost(outcome.seconds))}</i>")
+
+        self.notifier.send("\n".join(stroki), tiho=tiho and not upali)
+
+    def _hod_shagov(self, outcome: Outcome) -> str:
+        """Все шаги одной сворачиваемой цитатой.
+
+        `expandable` — то самое «показать ещё» Telegram: список из
+        четырнадцати ходов не занимает пол-экрана, но и не потерян. Первая
+        строка цитаты видна всегда, поэтому в неё выносится счёт.
+        """
+        e = notify.ekranirovat
+        proshli = sum(1 for shag in outcome.steps if shag.ok)
+        vsego = len(outcome.steps)
+        vnutri = [f"<b>Ход обновления: {proshli} из {vsego}</b>"]
+        for shag in outcome.steps:
+            znak = "✓" if shag.ok else "✗"
+            podrobno = f" — {shag.detail}" if shag.detail else ""
+            vnutri.append(f"{znak} {e(shag.name)}{e(podrobno)}")
+        return "<blockquote expandable>" + "\n".join(vnutri) + "</blockquote>"
+
+
+def _dlitelnost(sekund: float) -> str:
+    """«1136 c» глазами человека — «18 мин 56 с».
+
+    Секундами меряют то, что укладывается в минуту; всё остальное человек
+    всё равно переводит в уме, и делать это за него дешевле, чем заставлять.
+    """
+    vsego = int(sekund)
+    if vsego < 60:
+        return f"{vsego} с"
+    minut, sekundy = divmod(vsego, 60)
+    if minut < 60:
+        return f"{minut} мин {sekundy:02d} с"
+    chasov, minut = divmod(minut, 60)
+    return f"{chasov} ч {minut:02d} мин"
 
 
 def _utc_now() -> str:

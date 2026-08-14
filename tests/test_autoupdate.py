@@ -152,10 +152,21 @@ class FakeNotifier:
 
     def __init__(self):
         self.messages: list[str] = []
+        #: Со звуком или без — часть исхода, а не мелочь: удачное ночное
+        #: обновление не должно будить, а упавшее обязано.
+        self.tihie: list[bool] = []
 
-    def send(self, text):
+    def send(self, text, *, tiho=False):
         self.messages.append(text)
+        self.tihie.append(tiho)
         return True
+
+    @property
+    def plain(self) -> list[str]:
+        """Сообщения без разметки — по ним удобно проверять смысл, а не теги."""
+        from deploy.notify import bez_razmetki
+
+        return [bez_razmetki(m) for m in self.messages]
 
 
 # --- обвязка ---
@@ -1562,3 +1573,122 @@ def test_na_sqlite_imya_bazy_pusto(tmp_path):
     config = UpdateConfig.from_env({"OPENCRM_HOME": str(tmp_path)})
     assert config.db_is_mysql is False
     assert config.mysql_db == ""
+
+
+# --- оформление сообщений в Telegram ------------------------------------------
+#
+# Разметка тут когда-то была выключена целиком, и повод был настоящий: в текст
+# попадает заголовок коммита, а в MarkdownV2 экранировать надо восемнадцать
+# символов. Любой пропущенный — и Telegram отбивает сообщение целиком, то есть
+# об упавшем деплое не узнаёт никто именно потому, что сообщение было подробным.
+#
+# HTML требует трёх символов вместо восемнадцати, но одного этого мало: свойство,
+# которое обязано держаться, — «ошибка в оформлении не заглушает аварию».
+
+
+def test_zagolovok_kommita_s_razmetkoy_ne_lomaet_soobshchenie(tmp_path):
+    """`<`, `&` и `_` в заголовке коммита — обычное дело, а не редкость."""
+    github = FakeGitHub(summary="fix(a_b): <script> & «кавычки» *звёздочки* `код`")
+    updater = make_updater(tmp_path, github=github)
+
+    updater.run_once()
+
+    soobshchenie = updater.notifier.messages[0]
+    assert "&lt;script&gt;" in soobshchenie, "угловые скобки не экранированы"
+    assert "&amp;" in soobshchenie, "амперсанд не экранирован"
+    # А смысл при этом на месте: подчёркивания и звёздочки в HTML не разметка.
+    assert "fix(a_b)" in soobshchenie
+    assert "*звёздочки*" in soobshchenie
+
+
+def test_otbituyu_razmetku_dosylaem_ploskim_tekstom(tmp_path):
+    """Если Telegram не разобрал разметку — сообщение обязано дойти без неё.
+
+    Это и есть то свойство, ради которого разметку когда-то сняли совсем.
+    Теперь она есть, а гарантия осталась.
+    """
+    import urllib.error
+
+    from deploy import notify
+
+    poshlo = []
+
+    def otkryvatel(request, timeout=None):  # noqa: ARG001
+        telo = request.data.decode("utf-8")
+        poshlo.append(telo)
+        if "parse_mode" in telo:
+            raise urllib.error.HTTPError(request.full_url, 400, "can't parse entities", {}, None)
+
+        class Otvet:
+            status = 200
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                return False
+
+        return Otvet()
+
+    kanal = notify.Telegram("token", "chat", opener=otkryvatel)
+    assert kanal.send("<b>Обновлено</b>\n<blockquote>шаг</blockquote>") is True
+    assert len(poshlo) == 2, "запасной отправки не было"
+    assert "parse_mode" not in poshlo[1], "во второй раз снова послали разметку"
+    # И теги в плоском тексте не остались мусором.
+    assert "%3Cb%3E" not in poshlo[1] and "b%3E" not in poshlo[1]
+
+
+def test_udachnoe_obnovlenie_ne_budit_a_upavshee_budit(tmp_path):
+    """Ночью удачный деплой — не повод звенеть. Откат — повод."""
+    updater = make_updater(tmp_path)
+    updater.run_once()
+    assert updater.notifier.tihie == [True], "удачное обновление звенит на телефоне"
+
+    shell = FakeShell()
+    shell.fail("up -d --build", err="build failed")
+    upavshiy = make_updater(tmp_path, shell=shell)
+    upavshiy.run_once()
+    assert upavshiy.notifier.tihie == [False], "откат ушёл беззвучно — его не заметят"
+
+
+def test_spisok_shagov_svorachivaetsya(tmp_path):
+    """Четырнадцать ходов не должны занимать пол-экрана, но и теряться не должны."""
+    updater = make_updater(tmp_path)
+    updater.run_once()
+
+    soobshchenie = updater.notifier.messages[0]
+    assert "<blockquote expandable>" in soobshchenie, "список шагов не сворачивается"
+    assert "Ход обновления:" in soobshchenie, "в свёрнутом виде не видно счёта"
+    # Первая строка цитаты видна всегда — счёт обязан быть именно в ней.
+    vnutri = soobshchenie.split("<blockquote expandable>")[1]
+    assert vnutri.splitlines()[0].startswith("<b>Ход обновления:")
+
+
+def test_dlitelnost_chitaetsya_glazami():
+    """«1136 c» человек всё равно переводит в уме — сделаем это за него."""
+    from deploy.updater import _dlitelnost
+
+    assert _dlitelnost(42) == "42 с"
+    assert _dlitelnost(1136) == "18 мин 56 с"
+    assert _dlitelnost(3725) == "1 ч 02 мин"
+
+
+def test_prichina_ne_povtoryaetsya_trizhdy(tmp_path):
+    """Причина, шаг и список ходов не должны твердить одно и то же подряд.
+
+    Три одинаковых строки читаются как три разные беды — ровно так выглядел
+    откат в чате: заголовок, причина, и следом «✗ health: <та же причина>».
+    """
+    shell = FakeShell()
+    shell.fail("up -d --build", err="build failed")
+    updater = make_updater(tmp_path, shell=shell)
+
+    updater.run_once()
+
+    ploskiy = updater.notifier.plain[0]
+    do_citaty = ploskiy.split("Ход обновления:")[0]
+    assert do_citaty.count("build failed") == 1, (
+        f"причина повторена {do_citaty.count('build failed')} раза до свёрнутого списка"
+    )
+    # Имя упавшего шага при этом названо — иначе непонятно, где встало.
+    assert "✗ deploy" in do_citaty

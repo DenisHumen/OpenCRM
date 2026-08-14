@@ -37,15 +37,25 @@ receivers:
         # место ставится заглушка — иначе «оповещение действительно уходит»
         # проверить нечем, кроме как отправив сообщение в живой чат.
         api_url: __TELEGRAM_API__
-        # Разметка выключена намеренно, и это тот же урок, что в deploy/notify.py:
-        # в текст попадают адреса, команды и подчёркивания, а Telegram на
-        # неразобранной разметке отбивает сообщение целиком — то есть об аварии
-        # никто не узнаёт именно потому, что сообщение было слишком подробным.
-        parse_mode: ""
+        # Разметка — HTML, и это не то же самое, что было.
+        #
+        # Выключена она была из-за MarkdownV2: там экранировать надо
+        # восемнадцать символов, а в текст тревоги попадают адреса, команды и
+        # подчёркивания. Любой пропущенный — и Telegram отбивает сообщение
+        # целиком, то есть об аварии никто не узнаёт именно потому, что
+        # сообщение было подробным.
+        #
+        # В HTML опасных символов три, и все три здесь экранируются явно —
+        # `reReplaceAll` по каждому. Порядок обязателен: `&` первым, иначе он
+        # съел бы амперсанды, которые сам же и породил.
+        parse_mode: HTML
         send_resolved: true
+        # Ссылку на панель не разворачиваем карточкой: она заняла бы пол-экрана
+        # поверх текста тревоги.
+        disable_notifications: false
         message: |-
-          {{ if eq .Status "firing" }}OpenCRM: тревога ({{ .Alerts.Firing | len }}){{ else }}OpenCRM: всё в порядке{{ end }}
+          {{ if eq .Status "firing" }}🔴 <b>Тревога</b> ({{ .Alerts.Firing | len }}){{ else }}🟢 <b>Всё в порядке</b>{{ end }}
           {{ range .Alerts }}
-          {{ .Annotations.summary }}
-          {{ .Annotations.description }}
+          <b>{{ .Annotations.summary | reReplaceAll "&" "&amp;" | reReplaceAll "<" "&lt;" | reReplaceAll ">" "&gt;" }}</b>
+          <blockquote expandable>{{ .Annotations.description | reReplaceAll "&" "&amp;" | reReplaceAll "<" "&lt;" | reReplaceAll ">" "&gt;" }}</blockquote>
           {{ end }}
