@@ -2504,20 +2504,25 @@ monitoring_panel_hint() {
     # `9080:3000` на все интерфейсы.
     _phbind=$(env_get "$DOCKER_ENV" OPENCRM_GRAFANA_BIND 2>/dev/null || true)
     [ -n "$_phbind" ] || _phbind="127.0.0.1"
+    # Номер порта берётся оттуда же, где он и задан: печатать зашитый 9080 при
+    # изменённом OPENCRM_GRAFANA_PORT значило бы диктовать человеку неверный
+    # адрес — и он пошёл бы искать беду в панели, а не в подсказке.
+    _phport=$(env_get "$DOCKER_ENV" OPENCRM_GRAFANA_PORT 2>/dev/null || true)
+    [ -n "$_phport" ] || _phport="9080"
     if [ "$_phbind" = "127.0.0.1" ] || [ "$_phbind" = "localhost" ]; then
         # `lan_ip` возвращает пустую строку с НУЛЕВЫМ кодом, поэтому проверяется
         # значение, а не `||`: иначе в примере вышло бы «user@» без адреса.
         _phlan=$(lan_ip)
         [ -n "$_phlan" ] || _phlan="server"
-        say "$(tr_ "    Напрямую: только с самого сервера, порт 9080. С чужой машины — туннелем:" \
-                 "    Direct:   from this server only, port 9080. From another machine — a tunnel:")"
-        say "$(tr_ "              ssh -L 9080:127.0.0.1:9080 $(id -un)@${_phlan}   затем http://localhost:9080/" \
-                 "              ssh -L 9080:127.0.0.1:9080 $(id -un)@${_phlan}   then http://localhost:9080/")"
+        say "$(tr_ "    Напрямую: только с самого сервера, порт $_phport. С чужой машины — туннелем:" \
+                 "    Direct:   from this server only, port $_phport. From another machine — a tunnel:")"
+        say "$(tr_ "              ssh -L $_phport:127.0.0.1:$_phport $(id -un)@${_phlan}   затем http://localhost:$_phport/" \
+                 "              ssh -L $_phport:127.0.0.1:$_phport $(id -un)@${_phlan}   then http://localhost:$_phport/")"
         say "$(tr_ "              Вход из локальной сети — строка OPENCRM_GRAFANA_BIND в docker/.env" \
                  "              For local-network access set OPENCRM_GRAFANA_BIND in docker/.env")"
     else
-        say "$(tr_ "    Напрямую: http://${_phbind}:9080/   (без TLS — только для локальной сети или VPN)" \
-                 "    Direct:   http://${_phbind}:9080/   (no TLS — local network or VPN only)")"
+        say "$(tr_ "    Напрямую: http://${_phbind}:$_phport/   (без TLS — только для локальной сети или VPN)" \
+                 "    Direct:   http://${_phbind}:$_phport/   (no TLS — local network or VPN only)")"
     fi
 }
 
