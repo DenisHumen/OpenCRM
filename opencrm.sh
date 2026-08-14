@@ -2212,6 +2212,10 @@ cmd_backup() {
     _incoming="$(home_dir)/data/backups/incoming.sql"
     mkdir -p "$(home_dir)/data/backups"
     info "$(tr_ "снимаю дамп базы" "taking the database dump")"
+    # 600 до первой записи: в файле вся база целиком, а перенаправление создало
+    # бы его с 0644 — читаемым любым пользователем машины. То же правило, что и
+    # у копий в `scripts/backup.sh`.
+    : > "$_incoming" && chmod 600 "$_incoming"
     if ! dump_mysql "$_incoming"; then
         # Недоснятый дамп убираем сразу: файл, оставшийся от оборванного
         # снятия, в следующий раз выглядел бы как готовая копия.
@@ -2233,21 +2237,29 @@ cmd_restore() {
     need_install
     step "$(tr_ "Восстановление из копии" "Restore from backup")"
     _dir="$(home_dir)/data/backups/daily"
-    [ -d "$_dir" ] || die "$(tr_ "копий ещё нет ($_dir)" "no backups yet ($_dir)")"
+    # Недельные — тоже в списке, и это не мелочь удобства. Ежедневных хранится
+    # семь; всё, что старше недели, живёт ТОЛЬКО в weekly. Показывая один
+    # `daily`, меню объявляло четыре недельные копии несуществующими — ровно
+    # тогда, когда они и нужны: беду, замеченную через десять дней, из daily уже
+    # не откатить.
+    _dirw="$(home_dir)/data/backups/weekly"
+    [ -d "$_dir" ] || [ -d "$_dirw" ] || die "$(tr_ "копий ещё нет ($_dir)" "no backups yet ($_dir)")"
     say ""
     # Копии называются db-ГГГГ-ММ-ДД.sql — это дамп.
     # Список общий нарочно: базу меняли, а копии от прежней остались лежать
     # рядом, и прятать их значило бы объявить их несуществующими.
     # shellcheck disable=SC2012  # имена копий делает сам скрипт
-    ls -1t "$_dir"/db-*.db "$_dir"/db-*.sql 2>/dev/null | head -n 10 | nl -w4 -s') '
+    ls -1t "$_dir"/db-*.db "$_dir"/db-*.sql "$_dirw"/db-*.sql 2>/dev/null | head -n 10 | nl -w4 -s') '
     say ""
     _n=$(ask "$(tr_ "    Номер копии (Enter — отмена)" "    Backup number (Enter — cancel)")" "")
     [ -n "$_n" ] || { info "$(tr_ "отменено" "cancelled")"; return 0; }
     # shellcheck disable=SC2012  # имена копий делает сам скрипт
-    _db=$(ls -1t "$_dir"/db-*.db "$_dir"/db-*.sql 2>/dev/null | sed -n "${_n}p")
+    _db=$(ls -1t "$_dir"/db-*.db "$_dir"/db-*.sql "$_dirw"/db-*.sql 2>/dev/null | sed -n "${_n}p")
     [ -n "$_db" ] || die "$(tr_ "нет такого номера" "no such number")"
     _stamp=$(basename "$_db" | sed 's/^db-//; s/\.db$//; s/\.sql$//')
-    _storage="$_dir/storage-$_stamp.tar.gz"
+    # Пара ищется РЯДОМ с выбранной базой: недельная копия лежит в weekly, и
+    # жёсткий `$_dir` не нашёл бы её архив.
+    _storage="$(dirname "$_db")/storage-$_stamp.tar.gz"
     [ -f "$_storage" ] || die "$(tr_ "нет пары к базе: $_storage" "no storage archive to match the database: $_storage")"
 
     # Копию от другой базы восстановить нельзя: дамп MySQL не заливается в
@@ -2257,6 +2269,26 @@ cmd_restore() {
         *.db) die "$(tr_ "это файл SQLite от прежней установки — заливать его некуда" "this is an SQLite file from an older installation — there is nowhere to load it")" ;;
     esac
 
+    # Копия дочитана до метки конца? Спрашивается ЗДЕСЬ, до остановки сайта и
+    # до заливки, потому что здесь это ещё бесплатно.
+    #
+    # Оборванный дамп (кончилось место, убили контейнер) — обычный текстовый
+    # файл, и негодность у него не видна ничем, кроме отсутствующего хвоста.
+    # `mysql` заливает такой файл БЕЗ ЖАЛОБ и выходит с нулём. Проверено: копия,
+    # оборванная ровно на границе оператора, восстанавливалась «успешно», а
+    # таблиц `users`, `warehouses`, `works`, `stock_moves` в базе после этого не
+    # было вовсе. Человек при этом видел «восстановлено, сайт отвечает».
+    #
+    # Та же проверка стоит и в `scripts/restore.sh`, но досюда она не
+    # дотягивается: этот путь заливает дамп САМ и зовёт скрипт уже с
+    # OPENCRM_SKIP_DB=1 — то есть проверка сработала бы после порчи.
+    #
+    # Меток две, потому что дамперов двое: `-- Dump completed` пишет mysqldump,
+    # `-- opencrm snapshot complete` — scripts/snapshot_db.py.
+    if ! tail -c 4096 "$_db" 2>/dev/null | grep -q -e "-- Dump completed" -e "-- opencrm snapshot complete"; then
+        die "$(tr_ "копия оборвана — метки конца в ней нет, заливать такую нельзя: $_db"                  "the backup is truncated — it has no end marker, loading it is not safe: $_db")"
+    fi
+
     warn "$(tr_ "текущие данные будут заменены копией от $_stamp" "current data will be replaced by the backup from $_stamp")"
     confirm "$(tr_ "    Продолжить?" "    Continue?")" n || { info "$(tr_ "отменено" "cancelled")"; return 0; }
     run_painted compose stop app
@@ -2265,6 +2297,9 @@ cmd_restore() {
     # неудачного восстановления делать некуда.
     _before="$(home_dir)/data/backups/db-before-restore-$(date +%Y%m%d-%H%M%S).sql"
     info "$(tr_ "снимаю дамп текущей базы: $_before" "dumping the current database to $_before")"
+    # 600 сразу: в этом файле лежит вся система целиком, а создаёт его
+    # перенаправление с правами по умолчанию (0644 при обычной умаске).
+    : > "$_before" && chmod 600 "$_before"
     if ! dump_mysql "$_before"; then
         rm -f "$_before"
         run_painted compose up -d
@@ -2284,7 +2319,7 @@ cmd_restore() {
     # --entrypoint sh обязателен: у образа ENTRYPOINT — это entrypoint.sh, и
     # `compose run app <команда>` передаёт команду ему аргументами, а не вместо
     # него. Без переопределения вместо восстановления поднимался бы uvicorn.
-    run_painted compose run --rm -T --entrypoint sh -e OPENCRM_SKIP_DB=1 app scripts/restore.sh         "/app/data/backups/daily/$(basename "$_db")"         "/app/data/backups/daily/$(basename "$_storage")"
+    run_painted compose run --rm -T --entrypoint sh -e OPENCRM_SKIP_DB=1 app scripts/restore.sh         "/app/data/backups/$(basename "$(dirname "$_db")")/$(basename "$_db")"         "/app/data/backups/$(basename "$(dirname "$_storage")")/$(basename "$_storage")"
     run_painted compose up -d
     if wait_health 60; then
         ok "$(tr_ "восстановлено, сайт отвечает" "restored, the site is answering")"
