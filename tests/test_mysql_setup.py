@@ -554,9 +554,17 @@ def test_sostoyanie_monitoringa_pokazyvaet_eksportyory():
     """
     text = _script()
     mon = text[text.index("cmd_monitoring() {"): text.index("dump_mysql() {")]
-    stroki = [s for s in mon.splitlines() if "compose ps" in s and not s.strip().startswith("#")]
+    # `-q` отбрасывается: это тихий запрос идентификатора («поднята ли служба»),
+    # а не экран состояния. Первая редакция брала ПЕРВУЮ строку с `compose ps` и
+    # покраснела, когда такой запрос появился в скрипте выше по тексту, — то
+    # есть на верной правке, ничего не сломавшей. Проверка обязана искать то
+    # место, о котором она, а не то, что попалось первым.
+    stroki = [
+        s for s in mon.splitlines()
+        if "compose ps" in s and " -q" not in s and not s.strip().startswith("#")
+    ]
     assert stroki, "экран состояния больше не показывает контейнеры мониторинга"
-    assert "db-exporter" in stroki[0] and "redis-exporter" in stroki[0], (
+    assert all("db-exporter" in s and "redis-exporter" in s for s in stroki), (
         "экспортёров базы и Redis нет в списке служб на экране состояния"
     )
 
@@ -727,3 +735,36 @@ def test_dampy_na_khoste_ne_chitayutsya_postoronnimi():
     for imya, fayl in (("cmd_restore", '"$_before"'), ("cmd_backup", '"$_incoming"')):
         kod = _kod(imya)
         assert f"chmod 600 {fayl}" in kod, f"{imya}: {fayl} остаётся читаемым всем"
+
+
+def test_smena_parolya_paneli_menyaet_parol_a_ne_peremennuyu():
+    """Переменная действует при создании УЧЁТНОЙ ЗАПИСИ, а не контейнера.
+
+    Здесь стояло `up -d --force-recreate grafana` с комментарием «пароль
+    читается при создании контейнера». Комментарий отвечал не на тот вопрос, и
+    команда врала: печатала новый пароль, писала его в `docker/.env` — а панель
+    продолжала пускать по старому.
+
+    Замерено на живой Grafana 11.5.2: первый старт с паролем А, пересоздание с
+    паролем Б — вход по Б отвергается, по А проходит. После `grafana cli admin
+    reset-admin-password` — ровно наоборот.
+
+    Проверить это можно было единственным способом: попробовать войти. Сторожа
+    читают скрипт и видят в нём всё, что положено, — поэтому сторож теперь
+    требует именно `grafana cli`, а не «какое-нибудь действие с grafana».
+    """
+    kod = _kod("cmd_monitoring")
+    n = kod.index("password)")
+    vetka = kod[n : kod.index("esac", n)]
+
+    assert "reset-admin-password" in vetka, (
+        "смена пароля панели не зовёт grafana cli — переменная окружения "
+        "существующий пароль не меняет"
+    )
+    # Пароль не аргументом: аргументы видны в `ps` и в `docker inspect`.
+    assert "--password-from-stdin" in vetka, "пароль панели уезжает в аргументы команды"
+    # И успех не объявляется, когда его не было.
+    assert "die " in vetka, (
+        "неудачная смена пароля не отличается от удачной — человек уходит "
+        "уверенным, что сменил пароль"
+    )

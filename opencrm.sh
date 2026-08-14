@@ -2130,13 +2130,48 @@ cmd_monitoring() {
             return 0
             ;;
         password)
+            # `GF_SECURITY_ADMIN_PASSWORD` действует только при СОЗДАНИИ учётной
+            # записи — то есть на первом в жизни старте с пустым каталогом
+            # состояния. Дальше пароль живёт в собственной базе Grafana, и
+            # переменная на него не влияет никак.
+            #
+            # Здесь стояло `up -d --force-recreate grafana` с комментарием
+            # «пароль читается при создании контейнера». Комментарий отвечал не
+            # на тот вопрос, и команда врала человеку: печатала новый пароль,
+            # писала его в docker/.env — а пускала панель по-прежнему по
+            # старому. Замерено на живой Grafana: после пересоздания вход новым
+            # паролем отвергается, старым — проходит.
+            #
+            # Меняет пароль по-настоящему только `grafana cli`. Со стороны
+            # человека это выглядит так же, поэтому проверить разницу можно было
+            # ровно одним способом — попробовать войти.
             _np=$(gen_secret 24)
             env_set "$DOCKER_ENV" OPENCRM_GRAFANA_PASSWORD "$_np"
-            printf '    %s%s%s\n' "$B" "$_np" "$R"
-            # Пароль читается при СОЗДАНИИ контейнера, поэтому не `restart`:
-            # перезапущенная Grafana осталась бы со старым.
-            run_painted compose up -d --force-recreate grafana
-            ok "$(tr_ "пароль сменён" "password changed")"
+
+            if [ -z "$(compose ps -q grafana 2>/dev/null || true)" ]; then
+                # Панели нет — учётной записи ещё не существует, и переменная
+                # сработает сама при первом старте. Это единственный случай,
+                # когда прежнее поведение было верным.
+                printf '    %s%s%s\n' "$B" "$_np" "$R"
+                ok "$(tr_ "пароль записан — подействует при включении мониторинга" \
+                         "password saved — it will apply when monitoring is switched on")"
+                return 0
+            fi
+
+            # Пароль уходит на stdin, а не аргументом: аргументы видны в `ps` и
+            # в `docker inspect` — тем же правилом заведён пароль наблюдателя за
+            # базой. Флаг проверен на живой Grafana.
+            if printf '%s' "$_np" | compose exec -T grafana \
+                grafana cli --homepath /usr/share/grafana \
+                admin reset-admin-password --password-from-stdin >/dev/null 2>&1; then
+                printf '    %s%s%s\n' "$B" "$_np" "$R"
+                ok "$(tr_ "пароль сменён" "password changed")"
+            else
+                # Не молчим и не выдаём успех: человек уходит уверенный, что
+                # сменил пароль, и обнаруживает обратное в худший момент.
+                die "$(tr_ "Grafana не приняла новый пароль — старый остался в силе. Панель поднята? ./opencrm.sh monitoring" \
+                         "Grafana refused the new password — the old one is still in effect. Is the dashboard up? ./opencrm.sh monitoring")"
+            fi
             return 0
             ;;
     esac
