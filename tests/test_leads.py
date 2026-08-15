@@ -428,3 +428,55 @@ def test_bez_bloka_napominanij_zayavka_vse_ravno_prinimaetsya(root_client, intak
     finally:
         back = root_client.post(f"{API}/modules/tasks", json={"enabled": True})
         assert back.status_code == 200, back.text
+
+
+# --- одновременность ---------------------------------------------------------
+
+
+def test_dvoynaya_dostavka_ne_zavodit_dve_kartochki(intake_key, session):
+    """Сервер сайта повторил доставку — карточка и заявка обязаны быть одни.
+
+    Случай назван в самом коде: `DOUBLE_SUBMIT_SECONDS` заведён под то, что
+    «сайт повторил доставку после таймаута». Но защита стояла в ветке ИНАЧЕ —
+    то есть работала только для УЖЕ известного клиента. Для нового её не было
+    вовсе: оба запроса делали `find_client`, оба получали `None` (блокировать
+    нечего — строки ещё нет, а gap-блокировок под READ COMMITTED не бывает),
+    оба заводили карточку и оба — заявку.
+
+    Итог в справочнике: две карточки с одним адресом почты и две одинаковые
+    карточки на доске. Дальше они расходятся ещё сильнее — почта садится на ту,
+    что с меньшим id (`database/repositories/mail.py`, `order_by(Client.id)`), а
+    звонки на ту, которую правили позже (`telephony.py`, `updated_at.desc()`),
+    то есть история одного человека делится надвое молча.
+
+    Утверждение — про ИНВАРИАНТ, а не про то, кто выиграл: гонку никто не
+    обязан выигрывать, и требовать этого значит завести мигающий тест.
+    """
+    from sqlalchemy import func, select
+
+    from database.models.client import Client
+    from tests.test_odin_iz_mnogih import duel
+
+    pochta = "dvoynik@example.org"
+    telo = {"name": "Двойник", "email": pochta, "message": "Сделайте сайт"}
+
+    ishody = duel(lambda _: send(intake_key, **telo).status_code, None, None)
+
+    session.rollback()  # читаем то, что зафиксировали чужие сессии
+    kartochek = session.scalar(
+        select(func.count()).select_from(Client).where(Client.email == pochta)
+    )
+    assert kartochek == 1, (
+        f"карточек с одним адресом стало {kartochek}, исходы ударов: {ishody}. "
+        "Справочник раздвоился на обычном повторе доставки"
+    )
+
+    klient_id = session.scalar(select(Client.id).where(Client.email == pochta))
+    from database.models.deal import Deal
+
+    zayavok = session.scalar(
+        select(func.count()).select_from(Deal).where(Deal.client_id == klient_id)
+    )
+    assert zayavok == 1, (
+        f"заявок по одному обращению стало {zayavok} — менеджер сделает работу дважды"
+    )

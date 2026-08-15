@@ -1,6 +1,6 @@
 from contextlib import contextmanager
 
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, func, select
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from config.settings import get_settings
@@ -93,3 +93,43 @@ def tochka_otkata(db: Session):
     """
     with db.begin_nested() as savepoint:
         yield savepoint
+
+
+#: Ключ, под которым сессия помнит взятые ею именованные замки.
+ZAMKI = "imenovannye_zamki"
+
+
+def zapomnit_zamok(db: Session, imya: str) -> None:
+    """Записать взятый замок, чтобы граница запроса его сняла.
+
+    Именованный замок MySQL держится за СОЕДИНЕНИЕМ и не снимается ни
+    `COMMIT`, ни `ROLLBACK`, ни `Session.close()` — та возвращает соединение в
+    пул, а не закрывает его. Значит снять обязан тот, кто взял; забытый замок
+    уезжает в пул вместе с соединением и заставляет следующего ждать впустую.
+    """
+    db.info.setdefault(ZAMKI, []).append(imya)
+
+
+def snyat_zamki(db: Session) -> None:
+    """Снять всё, что сессия успела занять. Зовётся на границе запроса.
+
+    ПОСЛЕ фиксации, а не до неё, и это не мелочь порядка. Замок здесь стоит
+    ровно затем, чтобы соперник не прошёл раньше, чем чужая запись станет
+    видимой; сними его до `COMMIT` — и соперник получит очередь, увидит пустоту
+    и сделает ровно то, от чего замок заводился. Проверено дуэлью: со снятием
+    внутри сервиса форма с сайта по-прежнему заводила две карточки.
+
+    Отказ на снятии проглатывается намеренно. Эта функция работает в `finally`
+    рядом с закрытием сессии, в том числе когда запрос уже падает; исключение
+    отсюда подменило бы настоящую причину отказа своей. А сам замок в худшем
+    случае уйдёт с соединением: MySQL снимает именованные замки, когда
+    соединение обрывается, и пул однажды его переоткроет.
+    """
+    imena = db.info.pop(ZAMKI, None)
+    if not imena:
+        return
+    for imya in imena:
+        try:
+            db.execute(select(func.release_lock(imya)))
+        except Exception:  # noqa: BLE001 — снятие замка не должно прятать причину отказа
+            pass
