@@ -378,7 +378,10 @@ def ingest_event(db: Session, payload: dict) -> PhoneCall:
     started_at = parse_started_at(payload.get("started_at"), offset)
     knows_started_at = bool(payload.get("started_at"))
 
-    call = telephony_repo.get_by_external_id(db, external_id)
+    # Под правку, то есть с замком на строке: событий об одном разговоре
+    # приходит несколько, и станция повторяет пачку при разрыве связи. Разбор —
+    # в `telephony_repo.vzyat_pod_pravku`.
+    call = telephony_repo.vzyat_pod_pravku(db, external_id)
     if call is None:
         if direction not in CALL_DIRECTIONS:
             raise errors.ValidationError(
