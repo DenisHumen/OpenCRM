@@ -12,6 +12,7 @@
 """
 
 import itertools
+import re
 
 import pytest
 
@@ -562,3 +563,58 @@ def test_sebestoimosti_na_bumage_net(root_client, deal):
 
     page = root_client.get(f"{ACTS}/{act['id']}/print")
     assert "123.45" not in page.text, "себестоимость уехала клиенту на бумаге"
+
+
+def test_kolonka_summ_skladyvaetsya_v_itogo(root_client, deal):
+    """Напечатанные суммы строк складываются в напечатанное «Итого». Всегда.
+
+    Бумагу подписывают, и заказчик её складывает. До правки колонка «Сумма»
+    считалась округлением НА КАЖДОЙ строке, а «Итого» — округлением один раз по
+    всем: на двух строках с количеством 0,5 и ценой 12 345 выходило 61.73 +
+    61.73 = 123.46 под надписью «Итого 123.45».
+
+    Числа подобраны так, что остаток от деления равен ровно половине, — это и
+    есть тот случай, где два способа округления расходятся. На круглых ценах,
+    которыми пользуются соседние проверки печати, расхождения не бывает вовсе,
+    поэтому они его и не ловили.
+    """
+    akt = root_client.post(
+        ACTS, json={"deal_id": deal["id"], "title": "Акт с половинками"}
+    ).json()
+    for nomer in range(2):
+        dobavlena = root_client.post(
+            f"{ACTS}/{akt['id']}/lines",
+            json={"name": f"Работа {nomer}", "quantity": "0.5", "price": 12345},
+        )
+        assert dobavlena.status_code == 201, dobavlena.text
+
+    stranitsa = root_client.get(f"{ACTS}/{akt['id']}/print")
+    assert stranitsa.status_code == 200, stranitsa.text
+
+    # Ячейки колонок читаем целиком: в них не голое число, а сумма с валютой.
+    # Первый разбор брал только цифры и точки и отбрасывал деньги вовсе, оставив
+    # одни количества, — то есть проверка смотрела не на ту колонку.
+    yacheyki = re.findall(r'<td class="num">(.*?)</td>', stranitsa.text, re.S)
+    # Три ячейки на строку (количество, цена, сумма) плюс одна в подвале — само
+    # «Итого». Подпись «Итого» словом сюда не попадает: у её ячейки есть
+    # `colspan`, и образец её не берёт.
+    assert len(yacheyki) == 3 * 2 + 1, f"на листе не та таблица: {yacheyki}"
+
+    def kak_chislo(s: str) -> int | None:
+        nayd = re.search(r"-?[\d\s ]+[.,]\d\d", s)
+        if nayd is None:
+            return None
+        chistoe = nayd.group(0).replace(" ", "").replace(" ", "").replace(",", ".")
+        return round(float(chistoe) * 100)
+
+    na_stroku = 3
+    tel = yacheyki[: 2 * na_stroku]
+    summy = [kak_chislo(tel[i]) for i in range(na_stroku - 1, len(tel), na_stroku)]
+    assert all(s is not None for s in summy), f"суммы строк не разобрались: {tel}"
+
+    itogo = kak_chislo(yacheyki[-1])
+    assert itogo is not None, f"«Итого» не разобралось: {yacheyki[-1]!r}"
+    assert sum(summy) == itogo, (
+        f"колонка сумм даёт {sum(summy)}, а под ней напечатано «Итого» {itogo} — "
+        "заказчик подписывает лист, который не сходится"
+    )
