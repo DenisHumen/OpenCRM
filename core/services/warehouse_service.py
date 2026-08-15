@@ -446,7 +446,7 @@ def shortages(db: Session, rows, warehouse_id: int) -> list[str]:
         if have < row.quantity_milli:
             short.append(
                 f"{row.name_snapshot} ({format_quantity(have)}"
-                f" из {format_quantity(row.quantity_milli)})"
+                f" of {format_quantity(row.quantity_milli)})"
             )
     return short
 
@@ -574,6 +574,15 @@ def warehouse_count(db: Session) -> int:
     форме помеха, а не возможность; завёл второй — выбор появился везде сам.
     """
     return places_repo.count_alive(db)
+
+
+#: Пометка о переезде сверх остатка — начало строки, дальше идёт число.
+#:
+#: Именем, а не строкой в двух местах: проверка обязана убеждаться, что
+#: подтверждение ЗАПИСАНО, и не должна при этом держаться за формулировку.
+#: Пока фраза стояла в тесте буквально, перевод на английский покрасил его —
+#: то есть проверка стерегла слова вместо смысла.
+OVERDRAFT_NOTE = "moved beyond the balance"
 
 
 def seed_defaults(db: Session) -> None:
@@ -808,7 +817,12 @@ def transfer(db: Session, data: dict, author: User) -> StockTransfer:
     if quantity > available:
         # Подтверждение записывается, а не просто пропускает проверку: через
         # месяц вопрос «почему на складе минус» задаст не тот, кто нажимал.
-        note = f"перевезено сверх остатка ({format_quantity(available)})"
+        #
+        # Текст английский, как и всё, что система пишет в базу сама: интерфейс
+        # по умолчанию английский, а запись общая на всех. Пользовательский
+        # комментарий рядом остаётся на языке того, кто его написал, — это его
+        # слова, и переводить их некому.
+        note = f"{OVERDRAFT_NOTE} ({format_quantity(available)})"
         comment = f"{comment} · {note}" if comment else note
 
     happened = to_utc_naive(data.get("happened_at")) or now_utc()
@@ -866,7 +880,7 @@ def revert_transfer(db: Session, transfer_id: int, author: User) -> StockTransfe
     back = StockTransfer(
         from_warehouse_id=header.to_warehouse_id,
         to_warehouse_id=header.from_warehouse_id,
-        comment=f"отмена переезда №{header.id}",
+        comment=f"transfer {header.id} reversed",
         reverses_id=header.id,
         happened_at=happened,
         author_id=author.id,
@@ -891,7 +905,7 @@ def revert_transfer(db: Session, transfer_id: int, author: User) -> StockTransfe
         source=SOURCE_MANUAL,
         entity_type=audit_service.ENTITY_WAREHOUSE,
         entity_id=header.from_warehouse_id,
-        entity_label=f"отмена переезда №{header.id}",
+        entity_label=f"transfer {header.id} reversed",
     )
     return back
 

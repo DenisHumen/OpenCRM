@@ -75,7 +75,7 @@ def delete_share(db: Session, share_id: int, actor: User) -> None:
     # её выдавали, — по ней вопрос и задают («почему у клиента перестало
     # открываться»). Токен в журнал не пишем: он и есть ключ к витрине.
     board = boards_repo.get(db, link.board_id, include_deleted=True)
-    label = board.title if board is not None else f"доска {link.board_id}"
+    label = board.title if board is not None else f"board {link.board_id}"
     link_id = link.id
     db.delete(link)  # share_views уходят каскадом (ondelete=CASCADE)
     db.flush()

@@ -699,7 +699,7 @@ def create_callback_task(db: Session, call: PhoneCall, user: User):
     return task_service.create(
         db,
         {
-            "title": f"Перезвонить {number}",
+            "title": f"Call back {number}",
             # Час — не догма, а разумное «сегодня же»: пропущенный звонок
             # протухает быстро, но перезванивать через минуту после гудка не
             # всегда уместно. Срок правится в самой задаче.

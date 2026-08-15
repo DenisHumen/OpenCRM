@@ -593,7 +593,7 @@ def close(
                 "quantity": _as_text(row.quantity_milli),
                 "warehouse_id": warehouse.id,
                 "deal_id": order.deal_id,
-                "comment": f"{'отгрузка' if outgoing else 'приёмка'} по заказу {order.number}",
+                "comment": f"{'shipped' if outgoing else 'received'} for order {order.number}",
                 "document_id": order.id,
             },
             author,
@@ -674,7 +674,7 @@ def revert(db: Session, document_id: int, author: User) -> Document:
                 "warehouse_id": move.warehouse_id,
                 "deal_id": move.deal_id,
                 "cost": move.cost_minor,
-                "comment": f"отмена по заказу {order.number}",
+                "comment": f"reversed for order {order.number}",
                 "document_id": order.id,
             },
             author,
@@ -693,7 +693,7 @@ def revert(db: Session, document_id: int, author: User) -> Document:
         from_status=STATUS_CLOSED,
     )
 
-    _record(db, order, STATUS_CLOSED, STATUS_CANCELLED, author, "отмена проведения")
+    _record(db, order, STATUS_CLOSED, STATUS_CANCELLED, author, "processing reversed")
     audit_service.record(
         db,
         action=audit_service.ACTION_ORDER_REVERTED,
