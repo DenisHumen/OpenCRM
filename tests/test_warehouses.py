@@ -10,6 +10,7 @@ import itertools
 
 import pytest
 
+from core.services import warehouse_service
 from tests.conftest import API
 
 WAREHOUSES = f"{API}/warehouses"
@@ -279,7 +280,7 @@ def test_uvezti_bolshe_chem_lezhit_ostanavlivaet(root_client, main_warehouse, se
     assert forced.status_code == 201, forced.text
     # Подтверждение записано: через месяц вопрос «почему минус» задаст не тот,
     # кто нажимал, и ответить должна запись, а не память.
-    assert "сверх остатка" in forced.json()["comment"]
+    assert warehouse_service.OVERDRAFT_NOTE in forced.json()["comment"]
     assert stock_on(root_client, item["id"], main_warehouse["id"]) == -3000
 
 

@@ -861,7 +861,7 @@ def accrue_order_costs(
                 actor,
                 amount_minor=amount,
                 happened_at=now_utc(),
-                comment=f"{rule.name} по заказу {order.number}",
+                comment=f"{rule.name} for order {order.number}",
                 # Порождено ЗАКРЫТИЕМ ЗАКАЗА — и снимется его отменой. Ровно по
                 # этой отметке `reverse_order_money` и отбирает своё.
                 origin=ORIGIN_ORDER_CLOSED,
@@ -928,7 +928,7 @@ def reverse_order_money(
             FinanceOperation(
                 category_id=head.category_id,
                 amount_minor=-total,
-                comment=f"отмена по заказу {order.number}",
+                comment=f"reversed for order {order.number}",
                 happened_at=now_utc(),
                 deal_id=head.deal_id,
                 client_id=head.client_id,
@@ -1007,7 +1007,7 @@ def adjust_accrual(
         FinanceOperation(
             category_id=category.id,
             amount_minor=in_terms_of(category.direction, difference),
-            comment=f"поправка: {head.comment or category.name}",
+            comment=f"adjustment: {head.comment or category.name}",
             happened_at=head.happened_at,
             deal_id=head.deal_id,
             client_id=head.client_id,

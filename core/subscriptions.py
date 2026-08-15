@@ -42,7 +42,6 @@ from core.services import (
     client_service,
     deal_service,
     finance_service,
-    lead_service,
     pipeline_service,
     task_service,
     warehouse_service,
@@ -260,9 +259,12 @@ def write_off_act_materials(event: events.Event) -> None:
         event.actor,
         warehouse_id=event["warehouse_id"],
         confirm_negative=event["confirm_negative"],
-        # Комментарий движения — то, чем его назовут вслух: «списано по акту
+        # Комментарий движения — то, чем его назовут вслух: «for certificate
         # 2026-000123». По нему же в журнале склада находят, откуда взялся минус.
-        comment=f"по акту {act.number}",
+        #
+        # По-английски, как и всё, что система пишет в базу сама: интерфейс по
+        # умолчанию английский, а запись эта общая на всех, кто откроет журнал.
+        comment=f"for certificate {act.number}",
         source=event.source,
         source_ref=event.source_ref,
     )
