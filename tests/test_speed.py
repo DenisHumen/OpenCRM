@@ -59,6 +59,23 @@ class Zaprosy:
         ]
 
 
+def progret(client, adres: str, **params) -> None:
+    """Сходить по адресу ДО замера, чтобы счёт не мерил прогрев кэша.
+
+    Состояние блоков системы кэшируется на две секунды
+    (`core/services/modules_service.CACHE_SECONDS`). Первый запрос его греет и
+    стоит на один запрос дороже второго — и проверка, сравнивающая два замера
+    подряд, меряет не «сколько стоит строка», а «успел ли протухнуть кэш».
+
+    Поймано на CI: список из ОДНОЙ строки стоил 5 запросов, из полусотни — 4.
+    Меньше данных дороже больше — верный признак, что считается не то.
+
+    Греем перед КАЖДЫМ замером, а не один раз в начале: между замерами тест
+    успевает завести десяток записей, и двух секунд может не хватить.
+    """
+    assert client.get(adres, params=params or None).status_code == 200
+
+
 def _indeksy(tablitsa: str) -> dict[str, list[tuple[str, str]]]:
     """{имя индекса: [(колонка, направление)]} прямо из живой схемы.
 
@@ -293,6 +310,7 @@ def test_doska_ne_delaet_zaprosa_na_kartochku(root_client):
             f"{API}/deals", json={"title": f"Скорость доски {nomer}", "client_id": client_id}
         )
 
+    progret(root_client, f"{API}/deals/board")
     with Zaprosy() as zapisano:
         assert root_client.get(f"{API}/deals/board").status_code == 200
     bylo = len(zapisano.spisok)
@@ -302,6 +320,7 @@ def test_doska_ne_delaet_zaprosa_na_kartochku(root_client):
             f"{API}/deals", json={"title": f"Скорость доски {nomer}", "client_id": client_id}
         )
 
+    progret(root_client, f"{API}/deals/board")
     with Zaprosy() as zapisano:
         assert root_client.get(f"{API}/deals/board").status_code == 200
     stalo = len(zapisano.spisok)
@@ -318,10 +337,12 @@ def test_spisok_klientov_ne_zavisit_ot_chisla_kartochek(root_client):
     которое считается отдельным запросом на карточку, и список из двухсот строк
     начнёт делать двести обращений — молча и только на боевой базе.
     """
+    progret(root_client, f"{API}/clients", per_page=1)
     with Zaprosy() as zapisano:
         assert root_client.get(f"{API}/clients", params={"per_page": 1}).status_code == 200
     odna = len(zapisano.spisok)
 
+    progret(root_client, f"{API}/clients", per_page=50)
     with Zaprosy() as zapisano:
         assert root_client.get(f"{API}/clients", params={"per_page": 50}).status_code == 200
     polsotni = len(zapisano.spisok)
