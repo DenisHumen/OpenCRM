@@ -243,3 +243,43 @@ def test_baza_mimo_migratsiy_i_ne_shoditsya_ostanavlivaet(chistaya_baza, monkeyp
     with pytest.raises(RuntimeError) as failure:
         main._ensure_schema()
     assert "warehouses" in str(failure.value)
+
+
+def test_healthz_ne_vryot_pri_lezhachey_baze(monkeypatch):
+    """Лежащая база обязана СБИТЬ ответ 200 — на этом держится откат обновления.
+
+    Обновление ждёт `/healthz` и, не дождавшись, возвращает прошлую версию
+    вместе с базой. Ответь он 200 при неотвечающей базе — обновление посчитало
+    бы деплой удачным и оставило сломанный сайт: контейнер поднят, страница
+    отдаёт пятисотки, а откатывать уже никто не станет.
+
+    Свойство это ни одна проверка не стерегла: у `/healthz` были сторожа на
+    схему, режим обслуживания и Redis, а на саму базу — нет. При этом именно
+    база и есть то единственное, ради чего он ходит в `SELECT 1`.
+
+    Про Redis решение обратное и тоже намеренное (`tests/test_ratelimit_shared`):
+    его `/healthz` не опрашивает вовсе, потому что заменой контейнера
+    приложения лежащий Redis не чинится, а цикл перезапусков поверх аварии
+    соседа — это своя авария. С базой не так: без неё приложение не работает
+    вовсе, и говорить обратное было бы враньём.
+    """
+    from fastapi.testclient import TestClient
+    from sqlalchemy.exc import OperationalError
+
+    import web.main as glavnoe
+
+    class BazaNeOtvechaet:
+        def execute(self, *args, **kwargs):
+            raise OperationalError("SELECT 1", {}, Exception("база не отвечает"))
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(glavnoe, "SessionLocal", BazaNeOtvechaet)
+    # `raise_server_exceptions=False` — чтобы увидеть КОД ОТВЕТА, а не поймать
+    # исключение: снаружи докер и обновлятор видят именно код.
+    otvet = TestClient(glavnoe.app, raise_server_exceptions=False).get("/healthz")
+    assert otvet.status_code != 200, (
+        "при лежачей базе /healthz ответил 200 — обновление сочтёт такой деплой "
+        "удачным и не откатится"
+    )
