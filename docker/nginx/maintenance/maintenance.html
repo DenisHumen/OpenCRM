@@ -166,7 +166,26 @@
   <div class="wrap">
     <div class="dot"></div>
     <h1>We&rsquo;ll be right back</h1>
-    <p>The site is being updated. This page refreshes itself &mdash; no need to do anything.</p>
+    <!-- Здесь стояло «The site is being updated», и это была НЕПРАВДА в самом
+         дорогом случае из всех.
+         nginx отдаёт эту страницу на каждый свой 502/503/504 — то есть всякий
+         раз, когда до приложения не достучаться. Обновление — лишь одна из
+         причин; остальные это авария. Проверено живьём: пакеты до базы
+         выброшены молча (правило фаервола) — запрос к `/healthz` провисел
+         127 секунд, nginx упёрся в `proxy_read_timeout 120s` и показал ровно
+         эту страницу со словами «сайт обновляется». Обновления при этом не
+         было и близко: лежала база.
+         Цена вранья тут не в красоте формулировки. Владелец, увидев «идёт
+         обновление», ЖДЁТ — он уверен, что процесс идёт сам и кончится. А
+         кончиться ему нечем: приложение никто не перезапускает (docker
+         нездоровый контейнер не трогает), база сама не встаёт. Объявленные
+         работы выглядят точно так же, как авария, требующая человека.
+         Поэтому по умолчанию страница говорит только то, что знает наверняка:
+         сайт сейчас недоступен. Слова про обновление появляются НИЖЕ, из
+         скрипта, и ровно тогда, когда есть свежая запись о ходе работ
+         (`/branding/update-state.json`, см. usableState) — то есть когда
+         работы действительно идут и известно, на каком они шаге. -->
+    <p id="lead">The site is temporarily unavailable. This page refreshes itself &mdash; no need to do anything.</p>
 
     <!-- Скрыт по умолчанию и остаётся скрытым, если рассказывать нечего: файла
          с ходом может не быть вовсе (сайт лёг не из-за обновления, стек подняли
@@ -178,26 +197,26 @@
       <div class="since" id="since"></div>
     </div>
 
-    <div class="foot">Идёт обновление. Страница обновится сама.</div>
-    <button class="play" id="play" type="button" hidden>Скучно ждать? Сыграйте в змейку</button>
+    <div class="foot" id="foot">This page refreshes itself.</div>
+    <button class="play" id="play" type="button" hidden>Bored waiting? Play a game of snake</button>
 
-    <button class="back" id="back" type="button">Сайт снова работает — вернуться</button>
+    <button class="back" id="back" type="button">The site is back &mdash; return</button>
 
     <div class="game" id="game" hidden>
       <div class="hud">
-        <span>Счёт: <b id="score">0</b></span>
-        <span>Рекорд: <b id="best">0</b></span>
+        <span>Score: <b id="score">0</b></span>
+        <span>Best: <b id="best">0</b></span>
       </div>
-      <canvas class="board" id="board" width="400" height="400" aria-label="Змейка"></canvas>
-      <div class="hint" id="hint">Стрелки или WASD. На телефоне — свайп.</div>
+      <canvas class="board" id="board" width="400" height="400" aria-label="Snake"></canvas>
+      <div class="hint" id="hint">Arrows or WASD. Swipe on a phone.</div>
       <div class="who-row">
-        <label for="who">Имя в таблице</label>
-        <input id="who" type="text" maxlength="24" placeholder="Аноним" autocomplete="off" spellcheck="false">
+        <label for="who">Name on the board</label>
+        <input id="who" type="text" maxlength="24" placeholder="Anonymous" autocomplete="off" spellcheck="false">
       </div>
       <div class="queued" id="queued" hidden></div>
 
       <div class="lb" id="lb" hidden>
-        <h2>Таблица лидеров</h2>
+        <h2>Leaderboard</h2>
         <ol id="lbList"></ol>
         <div class="note" id="lbNote"></div>
       </div>
@@ -225,6 +244,7 @@
   var lb = $("lb"), lbList = $("lbList"), lbNote = $("lbNote");
   var progress = $("progress"), stepList = $("stepList");
   var why = $("why"), since = $("since");
+  var lead = $("lead"), foot = $("foot");
   var ctx = canvas.getContext("2d");
 
   // localStorage может быть недоступен (приватный режим, запрет третьих сторон).
@@ -286,7 +306,7 @@
       var li = document.createElement("li");
       var who = document.createElement("span");
       who.className = "who";
-      who.textContent = row.name || "Аноним";   // textContent, а не innerHTML: имя чужое
+      who.textContent = row.name || "Anonymous";   // textContent, а не innerHTML: имя чужое
       var pts = document.createElement("span");
       pts.className = "pts";
       pts.textContent = row.score;
@@ -294,8 +314,8 @@
       lbList.appendChild(li);
     });
     lbNote.textContent = items.length
-      ? "Обновляется, когда сайт возвращается."
-      : "Появится, когда сайт вернётся и результаты уйдут на сервер.";
+      ? "Refreshed whenever the site comes back."
+      : "It will appear once the site is back and scores reach the server.";
   }
 
   // --- игра ----------------------------------------------------------------
@@ -373,12 +393,12 @@
     }
     if (score > 0) {
       var name = (whoInput.value || "").trim();
-      queueScore({ name: name || "Аноним", score: score, played_ms: Date.now() - startedAt });
+      queueScore({ name: name || "Anonymous", score: score, played_ms: Date.now() - startedAt });
       queuedEl.hidden = false;
-      queuedEl.textContent = "Счёт " + score + " записан — уйдёт в таблицу, когда сайт вернётся.";
+      queuedEl.textContent = "Score " + score + " saved — it will reach the board once the site is back.";
       trySend();
     }
-    hintEl.textContent = "Игра окончена. Пробел или тап — заново.";
+    hintEl.textContent = "Game over. Space or tap to restart.";
   }
 
   function start() {
@@ -386,7 +406,7 @@
     reset();
     playing = true;
     queuedEl.hidden = true;
-    hintEl.textContent = "Стрелки или WASD. На телефоне — свайп.";
+    hintEl.textContent = "Arrows or WASD. Swipe on a phone.";
     draw();
     timer = setTimeout(step, tick);
   }
@@ -407,6 +427,11 @@
     // пока человек набирает имя, стрелки и пробел принадлежат полю, а не змейке
     if (e.target === whoInput) return;
     var k = e.key;
+    // Кириллица ниже — единственная, что осталась на этой странице, и остаётся
+    // намеренно. Это не надпись, а ВВОД: `e.key` отдаёт букву по текущей
+    // раскладке, и у человека с русской раскладкой WASD приходят как «цыфв».
+    // Убрать их значило бы сломать управление тем, кто не переключился, —
+    // а переключаться посреди партии незачем.
     if (k === "ArrowUp" || k === "w" || k === "W" || k === "ц" || k === "Ц") turn(0, -1);
     else if (k === "ArrowDown" || k === "s" || k === "S" || k === "ы" || k === "Ы") turn(0, 1);
     else if (k === "ArrowLeft" || k === "a" || k === "A" || k === "ф" || k === "Ф") turn(-1, 0);
@@ -463,6 +488,30 @@
   var STATE_MAX_AGE_MS = 2 * 60 * 60 * 1000;
   var shownState = "";
 
+  // Слова про работы живут ЗДЕСЬ, а не в разметке, и это главная мысль правки.
+  // Разметку видит всякий, кому nginx не смог отдать приложение, — и авария в
+  // том числе. Эти же строки ставятся только после usableState, то есть когда
+  // есть свежая запись о ходе: тогда про работы известно, что они идут.
+  var WORK_LEAD = {
+    update: "The site is being updated. This page refreshes itself — no need to do anything.",
+    restart: "The application is restarting. This page refreshes itself — no need to do anything."
+  };
+  var WORK_FOOT = {
+    update: "An update is in progress. This page refreshes itself.",
+    restart: "A restart is in progress. This page refreshes itself."
+  };
+  // То, что стоит в разметке. Нужно, чтобы вернуть нейтральные слова, если
+  // запись о ходе успела устареть, пока страница открыта: без возврата
+  // «идёт обновление» осталось бы висеть до перезагрузки.
+  var CALM_LEAD = lead ? lead.textContent : "";
+  var CALM_FOOT = foot ? foot.textContent : "";
+
+  function skazatPro(state) {
+    var vid = state && WORK_LEAD[state.scope] ? state.scope : (state ? "update" : null);
+    if (lead) lead.textContent = vid ? WORK_LEAD[vid] : CALM_LEAD;
+    if (foot) foot.textContent = vid ? WORK_FOOT[vid] : CALM_FOOT;
+  }
+
   function stepsFor(state) {
     return STEP_ORDER[state.scope] || STEP_ORDER.update;
   }
@@ -485,6 +534,7 @@
 
   function renderProgress(raw) {
     var state = usableState(raw);
+    skazatPro(state);
     if (!state) { progress.hidden = true; shownState = ""; return; }
 
     // Без изменений DOM не трогаем вовсе: перерисовка каждые три секунды

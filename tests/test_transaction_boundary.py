@@ -24,6 +24,7 @@ from fastapi import Depends, FastAPI
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from core import exceptions as errors
@@ -33,6 +34,7 @@ from web.api.deps import get_db
 
 IMYA_OTKAZ = "Клиент-которого-не-должно-быть"
 IMYA_UDACHA = "Клиент-который-должен-остаться"
+IMYA_AVARIYA = "Клиент-написанный-перед-смертью-базы"
 
 
 def _prilozhenie() -> FastAPI:
@@ -61,6 +63,14 @@ def _prilozhenie() -> FastAPI:
         db.flush()
         return {"ok": True}
 
+    @app.post("/pishet-i-teryaet-bazu")
+    def pishet_i_teryaet_bazu(db: Session = Depends(get_db)):
+        # Так это и выглядит на самом деле: строка записана, а следующий запрос
+        # уже некому обслужить — база умерла между двумя обращениями.
+        db.add(Client(name=IMYA_AVARIYA))
+        db.flush()
+        raise OperationalError("INSERT …", {}, Exception("база не отвечает"))
+
     return app
 
 
@@ -73,6 +83,16 @@ def _skolko(imya: str) -> int:
 def klient(base_client):
     """`base_client` — чтобы схема и root уже были подняты общим порядком."""
     return TestClient(_prilozhenie())
+
+
+@pytest.fixture()
+def klient_bez_perekhvata(base_client):
+    """Тот же клиент, но код ответа виден вместо всплывшего исключения.
+
+    Наружу — в докер, в nginx, в обновлятор — уходит именно код, а не
+    трассировка, и проверять надо его.
+    """
+    return TestClient(_prilozhenie(), raise_server_exceptions=False)
 
 
 def test_otkaz_ne_ostavlyaet_poloviny_zapisi(klient):
@@ -93,3 +113,30 @@ def test_udachnyy_zapros_vsyo_zhe_sokhranyaet(klient):
     """
     assert klient.post("/pishet-i-otvechaet").status_code == 200
     assert _skolko(IMYA_UDACHA) == 1
+
+
+def test_upavshaya_baza_tozhe_ne_ostavlyaet_poloviny(klient_bez_perekhvata):
+    """Отказ БАЗЫ посреди запроса не оставляет строки — как и доменная ошибка.
+
+    Случай не выдуманный. Проверено на живом стеке: транзакция пишет строку,
+    ждёт, mysqld убивают с хоста SIGKILL, следующая запись получает
+    `Lost connection to MySQL server during query`. После возвращения базы в
+    ней **ноль** строк от этой транзакции — ровно то, что закреплено здесь.
+
+    **Проверка пиннит ИСХОД, а не устройство, и это выяснилось замером.**
+    Напрашивалось объяснение «сузят `except Exception` до `DomainError` — и
+    набор останется зелёным, а половина записи поедет в базу». Оно неверно:
+    сужение поставили и прогнали — все три проверки зелёные. Держит исход
+    вторая вещь, `db.close()` в `finally`: незакоммиченную транзакцию
+    SQLAlchemy откатывает при возврате соединения в пул. То есть инвариант
+    стоит на двух ногах сразу, и подпиливание одной его не роняет.
+
+    Что проверка ловит вправду — тоже замерено: `commit`, переехавший в
+    `finally` («сохраним, что успели»), красит и её, и соседку выше.
+    """
+    otvet = klient_bez_perekhvata.post("/pishet-i-teryaet-bazu")
+    assert otvet.status_code == 500, "отказ базы обязан быть виден кодом ответа"
+    assert _skolko(IMYA_AVARIYA) == 0, (
+        "база отказала посреди запроса, а строка осталась — значит вместо "
+        "отката случился commit"
+    )
