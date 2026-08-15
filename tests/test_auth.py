@@ -199,3 +199,46 @@ def test_povtornoe_chtenie_vidit_soseda():
     with engine.connect() as c:
         uroven = c.exec_driver_sql("SELECT @@transaction_isolation").scalar()
     assert uroven.replace("-", " ").upper() == "READ COMMITTED", uroven
+
+
+# --- предел длины пароля -----------------------------------------------------
+
+
+def test_dlinnyy_parol_ne_ronyaet_registratsiyu():
+    """Пароль длиннее предела bcrypt получает отказ, а не пятисотую.
+
+    `bcrypt` считает БАЙТЫ и с версии 4 не обрезает лишнее молча, а отказывает:
+    «password cannot be longer than 72 bytes». Проверка длины при этом считала
+    ЗНАКИ и только снизу, поэтому длинный пароль проходил её и падал уже внутри
+    хэширования — то есть человек, придумавший хорошую длинную фразу, получал
+    пятисотую вместо подсказки.
+
+    Порог в знаках зависит от языка, и это главная неприятность: латиницей до
+    него 73 знака, кириллицей — 37, потому что каждая буква весит два байта.
+    Человек, пишущий пароль по-русски, упирался в предел вдвое раньше и ничего
+    об этом не узнавал.
+    """
+    dlinnyy = "A" * 73
+    otvet = register(TestClient(app), "Long", "long@test.local", password=dlinnyy)
+    assert otvet.status_code == 422, "длинный пароль обязан получить отказ, а не 500"
+    assert otvet.json()["error"]["code"] == "weak_password"
+
+
+def test_predel_schitaetsya_v_baytakh_a_ne_v_znakakh():
+    """Кириллический пароль упирается в предел на 37 знаках, и это тот же предел.
+
+    Проверка отдельная, потому что ошибиться здесь можно молча в обе стороны:
+    считая знаки, мы пропустим кириллическую фразу в bcrypt (пятисотая), а
+    считая байты как знаки — запретим латинскую фразу, которая на самом деле
+    помещается.
+    """
+    kirillitsey = "Пароль" * 7  # 42 знака, 84 байта
+    assert len(kirillitsey) < 73, "опыт бессмыслен: фраза длинна и в знаках тоже"
+
+    otvet = register(TestClient(app), "Кир", "kir@test.local", password=kirillitsey)
+    assert otvet.status_code == 422, "кириллический пароль в 84 байта прошёл предел"
+
+    vlezaet = "Пароль" * 6  # 36 знаков, 72 байта — ровно предел
+    assert len("".join(vlezaet).encode()) == 72
+    ok = register(TestClient(app), "Кир2", "kir2@test.local", password=vlezaet)
+    assert ok.status_code == 201, "пароль ровно в предел обязан приниматься"

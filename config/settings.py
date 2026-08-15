@@ -7,6 +7,17 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 DEV_SECRET_KEY = "dev-secret-key-change-in-production"
 DEV_IP_SALT = "dev-ip-salt"
+#: Пароль root по умолчанию — такое же dev-значение, как два выше.
+#:
+#: Соседи проверялись в production на равенство своему умолчанию, а этот —
+#: только на пустоту. Обычная установка от него не страдает: `./opencrm.sh`
+#: генерирует двадцать знаков и кладёт их в env. Страдает установка РУКАМИ —
+#: `docker compose up` из репозитория, стенд, форк, — и там root заводился с
+#: паролем, который написан в исходниках.
+#:
+#: `must_change_password=True` смягчает, но не закрывает: сменить пароль
+#: предлагается тому, кто вошёл ПЕРВЫМ, а первым может оказаться не владелец.
+DEV_ROOT_PASSWORD = "root-changeme"
 
 
 class Settings(BaseSettings):
@@ -120,6 +131,13 @@ class Settings(BaseSettings):
         Пустой secret_key подписывает cookie PIN-доступа пустым ключом —
         подделать её смог бы кто угодно, поэтому падаем, а не «работаем как есть».
         """
+        # Импорт здесь, а не наверху файла, и это про слои, а не про скорость:
+        # `config` лежит под `core`, и постоянная зависимость вверх развернула бы
+        # направление связей во всём проекте ради одной проверки. Цикла нет
+        # (`passwords` знает только bcrypt), но и повода тянуть его в модульное
+        # пространство тоже нет.
+        from core.security import passwords
+
         errors = []
 
         # Первым — адрес базы: без него остальные вопросы не имеют смысла.
@@ -211,6 +229,25 @@ class Settings(BaseSettings):
             )
         if not self.root_password.strip():
             errors.append("OPENCRM_ROOT_PASSWORD пуст — root-аккаунт не будет создан.")
+        elif self.root_password == DEV_ROOT_PASSWORD:
+            errors.append(
+                "OPENCRM_ROOT_PASSWORD равен dev-значению — root заводится с "
+                "паролем из исходников. Сгенерировать: ./opencrm.sh или "
+                "python -c \"import secrets; print(secrets.token_urlsafe(20))\""
+            )
+        elif not passwords.is_valid_password(self.root_password):
+            # Не «слабый пароль» вообще, а тот единственный случай, когда
+            # приложение не поднимется: root заводится ПРИ СТАРТЕ, минуя
+            # проверку регистрации, и слишком длинный пароль уронил бы
+            # хэширование прямо там. Отказ здесь — с объяснением, а не
+            # трассировкой из bcrypt посреди старта.
+            errors.append(
+                f"OPENCRM_ROOT_PASSWORD не проходит требования: от "
+                f"{passwords.MIN_PASSWORD_LENGTH} знаков и не длиннее "
+                f"{passwords.MAX_PASSWORD_BYTES} байт (кириллица весит два байта "
+                f"на букву). Сейчас: {len(self.root_password)} знаков, "
+                f"{len(self.root_password.encode())} байт."
+            )
         return errors
 
     def config_warnings(self) -> list[str]:

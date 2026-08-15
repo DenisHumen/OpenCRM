@@ -1,7 +1,7 @@
 """Проверки конфигурации: небезопасные значения должны останавливать запуск,
 а не тихо работать «как есть»."""
 
-from config.settings import DEV_IP_SALT, DEV_SECRET_KEY, Settings
+from config.settings import DEV_IP_SALT, DEV_ROOT_PASSWORD, DEV_SECRET_KEY, Settings
 
 PROD = {
     "env": "production",
@@ -152,3 +152,43 @@ def test_chuzhoy_dvizhok_ostanavlivaet_start():
 def test_boevoy_adres_bazy_prinimaetsya():
     """Парная проверка: иначе «отказывать всегда» тоже прошло бы обе прошлые."""
     assert _settings().config_errors() == []
+
+
+def test_production_otvergaet_dev_parol_root():
+    """Пароль из исходников в production — отказ, как у ключа и соли.
+
+    Соседи проверялись на равенство своему умолчанию, а этот — только на
+    пустоту, и разница была не косметической. Обычная установка не страдает:
+    `./opencrm.sh` генерирует двадцать знаков. Страдает установка РУКАМИ —
+    `docker compose up` из репозитория, стенд, форк, — и там root заводился с
+    паролем, который написан в файле настроек.
+
+    `must_change_password=True` смягчает, но не закрывает: сменить пароль
+    предлагается вошедшему ПЕРВЫМ, а первым может оказаться не владелец.
+    """
+    errors = _settings(root_password=DEV_ROOT_PASSWORD).config_errors()
+    assert any("ROOT_PASSWORD" in message for message in errors)
+
+
+def test_production_otvergaet_parol_root_dlinnee_predela():
+    """Слишком длинный пароль root — отказ с объяснением, а не падение старта.
+
+    Случай особый: root заводится ПРИ СТАРТЕ, минуя проверку регистрации.
+    Значит пароль длиннее предела bcrypt уронил бы не форму, а подъём
+    приложения — трассировкой из чужой библиотеки посреди запуска.
+
+    Порог считается в БАЙТАХ, поэтому опыт кириллицей: 42 знака и 84 байта —
+    заведомо длинно, а по знакам ещё коротко.
+    """
+    errors = _settings(root_password="Пароль" * 7).config_errors()
+    assert any("ROOT_PASSWORD" in message for message in errors)
+    assert any("байт" in message for message in errors), (
+        "отказ обязан назвать причину в байтах — иначе он читается как «пароль слаб»"
+    )
+
+
+def test_dlinnyy_no_dopustimyy_parol_root_prokhodit():
+    """Ровно предел — это ещё «можно», и запретить его было бы новой поломкой."""
+    rovno = "Пароль" * 6  # 36 знаков, 72 байта
+    assert len(rovno.encode()) == 72
+    assert _settings(root_password=rovno).config_errors() == []
