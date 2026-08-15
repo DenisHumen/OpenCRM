@@ -17,6 +17,7 @@ import os
 import re
 import shutil
 import subprocess
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -344,6 +345,40 @@ def test_a_plain_restart_does_not_pretend_to_be_an_update(tmp_path):
     second = write_state(tmp_path, "running", "start", previous=json.dumps(first))
     assert second["scope"] == "restart"
     assert second["started_at"] == first["started_at"], "внутри одного запуска отсчёт один"
+
+
+def test_vtoraya_zapis_prodolzhaet_otschyot_a_ne_nachinaet_zanovo(tmp_path):
+    """Отсчёт один на запуск, даже если записи легли в РАЗНЫЕ секунды.
+
+    Проверка выше это и требует, но доказать не может: обе её записи обычно
+    попадают в одну секунду, и она была зелёной при сломанном наследовании. Так
+    и вышло — когда наследование у перезапуска сняли целиком, она краснела не
+    всегда, а примерно раз из нескольких прогонов, и выглядело это миганием.
+
+    Здесь разрыв задан нарочно: `started_at` отодвинут на пять секунд назад. Без
+    наследования вторая запись поставила бы своё время, и на странице обратный
+    отсчёт дёрнулся бы назад между двумя опросами.
+
+    Пять секунд, а не полчаса, — это по-прежнему СВОЯ запись из этого же
+    запуска: между «миграции» и «старт» столько и проходит. Чужая, оставшаяся от
+    прожившего своё контейнера, наследоваться не должна, и об этом парная
+    проверка `test_obychnyy_perezapusk_nachinaet_otschyot_zanovo`.
+    """
+    davecha = datetime.now(timezone.utc) - timedelta(seconds=5)
+    ranshe = {
+        "scope": "restart",
+        "phase": "running",
+        "step": "migrate",
+        "started_at": davecha.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "error": "",
+    }
+    vtoraya = write_state(tmp_path, "running", "start", previous=json.dumps(ranshe))
+
+    assert vtoraya["scope"] == "restart"
+    assert vtoraya["started_at"] == ranshe["started_at"], (
+        "вторая запись за тот же запуск начала отсчёт заново — на странице "
+        "обратный отсчёт дёрнется назад"
+    )
 
 
 @needs_sh
