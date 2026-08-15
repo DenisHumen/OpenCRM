@@ -300,3 +300,33 @@ def test_v_spiske_isklyucheniy_net_lishnikh():
         + "\n  ".join(lishnie)
         + "\nПока они там, настоящее нарушение в них пройдёт молча — уберите."
     )
+
+
+def test_razresheniya_massovogo_update_ne_protukhli():
+    """У каждого разрешения обязано быть то, что оно разрешает.
+
+    `SPLAT_RAZRESHYON` называет места, где `update(...).values(**словарь)`
+    законен: состав полей приходит из сервиса, и по тексту его не прочитать.
+    Пока место названо, сторож на него не смотрит вовсе.
+
+    Значит запись, у которой функцию переименовали или переписали без `**`,
+    молча прикрывает пустоту — и следующий `**словарь`, появившийся в той же
+    функции, пройдёт незамеченным. Разбор той же беды у соседей — в
+    `test_v_spiske_isklyucheniy_net_lishnikh` выше и в
+    `tests/test_route_guards.py`.
+    """
+    zhivye = set()
+    for rel_put in SPLAT_RAZRESHYON:
+        fayl, _, funktsiya = rel_put.partition(":")
+        put = ROOT / fayl
+        if not put.exists():
+            continue
+        for node, _model, imya in _update_sites(put):
+            if imya == funktsiya and any(kw.arg is None for kw in node.keywords):
+                zhivye.add(rel_put)
+
+    lishnie = sorted(SPLAT_RAZRESHYON - zhivye)
+    assert lishnie == [], (
+        "разрешения на массовый update ничего не разрешают — файла, функции "
+        "или самого `**словаря` там больше нет:\n  " + "\n  ".join(lishnie)
+    )
