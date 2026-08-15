@@ -520,7 +520,7 @@
     <h1>{{ board.title }}</h1>
     {% if board.description %}<p class="desc">{{ board.description }}</p>{% endif %}
     {% if site.showcase_show_meta == '1' %}
-    <div class="meta">{{ works|length }} {{ t.works if works|length != 1 else t.work }} · {{ t.updated }} {{ board.updated_at.strftime('%d.%m.%Y') }}</div>
+    <div class="meta">{{ works|length }} {{ slovo_rabot(locale, works|length) }} · {{ t.updated }} {{ board.updated_at.strftime('%d.%m.%Y') }}</div>
     {% endif %}
   </header>
 

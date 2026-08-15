@@ -1,5 +1,29 @@
 export type Locale = "en" | "ru";
 
+/**
+ * Формы слова по числу.
+ *
+ * Без этого интерфейс говорил «1 views» и «1 просмотров» — на обоих языках.
+ * Обойти это подстановкой нельзя: английскому нужны две формы, русскому три,
+ * и правило выбора у них разное. Считает `Intl.PluralRules` — он встроен в
+ * браузер и знает оба языка (и любой третий, если он появится).
+ *
+ * Набор форм НЕПОЛНЫЙ намеренно (`Partial`): у английского их две (`one`,
+ * `other`), у русского четыре (`one`, `few`, `many`, `other`), и требовать
+ * одинаковый набор значило бы заставлять один язык выдумывать формы другого.
+ * Именно поэтому формы обёрнуты помощником: `const ru: typeof en` требует от
+ * `ru` в точности тип из `en`, и без обёртки русский был бы обязан описать
+ * ровно `one` и `other`.
+ *
+ * Первый довод — какая переменная считается. Догадываться нельзя: в
+ * «{n} of {total} permissions» склоняется слово при `total`, а не при `n`.
+ */
+export type PluralForms = Partial<Record<Intl.LDMLPluralRule, string>>;
+
+export type Plural = { schyot: string; forms: PluralForms };
+
+const plural = (schyot: string, forms: PluralForms): Plural => ({ schyot, forms });
+
 const en = {
   // общие
   save: "Save changes",
@@ -46,7 +70,7 @@ const en = {
   avgCheckHint: "across deals closed this month",
   avgCheckNone: "no priced deals closed yet",
   dealsOpenNow: "{n} open",
-  dealsWonThisMonth: "{n} deals with a price",
+  dealsWonThisMonth: plural("n", { one: "{n} deal with a price", other: "{n} deals with a price" }),
   funnel: "Pipeline",
   myTasksToday: "My tasks for today",
   myTasksNone: "Nothing due today",
@@ -137,7 +161,7 @@ const en = {
   moduleOffTakes: "Switching it off also switches off: {list}",
   moduleOnNeeds: "Switching it on also switches on: {list}",
   moduleOffConfirm:
-    "Switch off «{name}»? These will be switched off with it: {list}. Their sections disappear from the menu; the data stays and comes back when you switch them on again.",
+    "Switch off “{name}”? These will be switched off with it: {list}. Their sections disappear from the menu; the data stays and comes back when you switch them on again.",
   moduleOffConfirmYes: "Switch off both",
   moduleChangedBy: "{who}, {when}",
   moduleOn: "Switched on",
@@ -363,7 +387,7 @@ const en = {
   noBoardsYet: "No boards yet — create the first one",
   noClientsYet: "No clients yet — add the first one",
   // clients
-  clientsSub: "{total} clients",
+  clientsSub: plural("total", { one: "{total} client", other: "{total} clients" }),
   searchClients: "Search by name, company, phone, email or tag…",
   client: "Client",
   contact: "Contact",
@@ -395,7 +419,10 @@ const en = {
   deleteClient: "Delete client",
   deleteClientConfirm: "Delete this client? Boards stay, the card can be restored by root.",
   // boards
-  boardsSub: "{total} boards · {published} published",
+  boardsSub: plural("total", {
+    one: "{total} board · {published} published",
+    other: "{total} boards · {published} published",
+  }),
   all: "All",
   published: "Published",
   draft: "Draft",
@@ -439,8 +466,8 @@ const en = {
   deleteWorkConfirm: "Delete this work? Files are removed from the server.",
   deleteBoard: "Delete board",
   deleteBoardConfirm: "Delete this board? All share links will stop working.",
-  viewsCount: "{n} views",
-  uniqueVisitors: "{n} unique visitors",
+  viewsCount: plural("n", { one: "{n} view", other: "{n} views" }),
+  uniqueVisitors: plural("n", { one: "{n} unique visitor", other: "{n} unique visitors" }),
   noViewsYet: "No views yet",
   // storage
   storage: "Storage",
@@ -470,7 +497,10 @@ const en = {
   staffSub: "Approve signups, manage accounts. Only you can see this page.",
   // files (менеджер файлов)
   filesSub: "All board media stored on the server. Only you can see this page.",
-  filesSummary: "{count} files · {size} on disk",
+  filesSummary: plural("count", {
+    one: "{count} file · {size} on disk",
+    other: "{count} files · {size} on disk",
+  }),
   colFile: "File",
   colBoard: "Board",
   colSize: "Size",
@@ -622,7 +652,7 @@ const en = {
   templateUnknown: "These fields no longer exist: {list}. Edit the template — right now they are sent exactly as shown above.",
   deleteTemplateConfirm: "Delete the template “{name}”? Messages already sent stay as they are.",
   modTemplatesAbout: "Ready-made replies with the client name, the deal title and the board link filled in",
-  mailSub: "{total} letters",
+  mailSub: plural("total", { one: "{total} letter", other: "{total} letters" }),
   mailEmpty: "No letters yet — set up a mailbox and run a sync",
   incoming: "Incoming",
   outgoing: "Outgoing",
@@ -669,7 +699,7 @@ const en = {
   mailModuleOffHint: "The mail module is switched off — switch it on in Settings → Modules.",
   // заказы
   orders: "Orders",
-  ordersSub: "{total} orders",
+  ordersSub: plural("total", { one: "{total} order", other: "{total} orders" }),
   ordersEmpty: "No orders yet — the first one is created at the counter",
   newSalesOrder: "Customer order",
   newPurchaseOrder: "Supplier order",
@@ -693,7 +723,7 @@ const en = {
   orderCancel: "Cancel order",
   orderCancelConfirm: "Cancel this order? The reserve is released, the stock is untouched.",
   orderRevertConfirm:
-    "Undo processing? Reverse stock moves appear — the previous ones stay, so the history keeps the answer to «where did it go».",
+    "Undo processing? Reverse stock moves appear — the previous ones stay, so the history keeps the answer to “where did it go”.",
   orderShipForce: "Ship anyway",
   // акт выполненных работ
   actNew: "Act of works",
@@ -711,12 +741,15 @@ const en = {
     "Cancel this act? Nothing has happened yet — the stock and the request stay as they are.",
   actNextStage: "Move the request to",
   actNextStageAuto: "the next stage",
-  actMovedTo: "The request was moved to «{stage}»",
+  actMovedTo: "The request was moved to “{stage}”",
   actDone: "Carried out",
   // склад
 
   warehouse: "Warehouse",
-  warehouseSub: "{total} items · the balance is the sum of moves",
+  warehouseSub: plural("total", {
+    one: "{total} item · the balance is the sum of moves",
+    other: "{total} items · the balance is the sum of moves",
+  }),
   newProduct: "New item",
   searchProducts: "Search by name or SKU…",
   onlyLow: "Running low",
@@ -832,7 +865,7 @@ const en = {
   transferForce: "Move anyway",
   // телефония
   calls: "Calls",
-  callsSub: "{total} calls in the log",
+  callsSub: plural("total", { one: "{total} call in the log", other: "{total} calls in the log" }),
   callsEmpty: "No calls yet. Once the PBX starts sending events, they land here.",
   callsSearch: "Search by number…",
   outcomeAnswered: "Answered",
@@ -881,7 +914,7 @@ const en = {
   regenerateSecretConfirm: "Generate a new secret? The PBX stops being accepted until you paste the new value into it.",
   // журнал действий
   auditLog: "Activity log",
-  auditSub: "{total} entries",
+  auditSub: plural("total", { one: "{total} entry", other: "{total} entries" }),
   auditHint:
     "Money, stages, deletions, access and modules — who changed what, and what triggered it. Entries are only ever added: nobody can edit or remove them, root included. Opening screens and reading are not recorded.",
   auditEmpty: "Nothing recorded yet",
@@ -940,7 +973,10 @@ const en = {
   roleSaved: "Role saved",
   roleDeleted: "Role deleted",
   roleAssigned: "Role changed",
-  rolePermissionsCount: "{n} of {total} permissions",
+  rolePermissionsCount: plural("total", {
+    one: "{n} of {total} permission",
+    other: "{n} of {total} permissions",
+  }),
   noRoles: "No roles yet",
   noRolesHint: "A role describes a job title: what its holder sees and what they may change.",
   // столбцы матрицы
@@ -1105,7 +1141,7 @@ const ru: typeof en = {
   avgCheckHint: "по закрытым за этот месяц",
   avgCheckNone: "закрытых сделок с ценой пока нет",
   dealsOpenNow: "открыто: {n}",
-  dealsWonThisMonth: "сделок с ценой: {n}",
+  dealsWonThisMonth: plural("n", { other: "сделок с ценой: {n}" }),
   funnel: "Воронка",
   myTasksToday: "Мои задачи на сегодня",
   myTasksNone: "На сегодня задач нет",
@@ -1405,7 +1441,11 @@ const ru: typeof en = {
   allClients: "Все клиенты",
   noBoardsYet: "Досок пока нет — создайте первую",
   noClientsYet: "Клиентов пока нет — добавьте первого",
-  clientsSub: "{total} клиентов",
+  clientsSub: plural("total", {
+    one: "{total} клиент",
+    few: "{total} клиента",
+    many: "{total} клиентов",
+  }),
   searchClients: "Поиск по имени, компании, телефону, email или тегу…",
   client: "Клиент",
   contact: "Контакт",
@@ -1435,7 +1475,11 @@ const ru: typeof en = {
   filesInternal: "— внутренние, на витрины не попадают",
   deleteClient: "Удалить клиента",
   deleteClientConfirm: "Удалить клиента? Доски останутся, карточку сможет восстановить root.",
-  boardsSub: "{total} досок · {published} опубликовано",
+  boardsSub: plural("total", {
+    one: "{total} доска · {published} опубликовано",
+    few: "{total} доски · {published} опубликовано",
+    many: "{total} досок · {published} опубликовано",
+  }),
   all: "Все",
   published: "Опубликована",
   draft: "Черновик",
@@ -1478,8 +1522,16 @@ const ru: typeof en = {
   deleteWorkConfirm: "Удалить работу? Файлы будут удалены с сервера.",
   deleteBoard: "Удалить доску",
   deleteBoardConfirm: "Удалить доску? Все публичные ссылки перестанут работать.",
-  viewsCount: "{n} просмотров",
-  uniqueVisitors: "{n} уникальных посетителей",
+  viewsCount: plural("n", {
+    one: "{n} просмотр",
+    few: "{n} просмотра",
+    many: "{n} просмотров",
+  }),
+  uniqueVisitors: plural("n", {
+    one: "{n} уникальный посетитель",
+    few: "{n} уникальных посетителя",
+    many: "{n} уникальных посетителей",
+  }),
   noViewsYet: "Просмотров пока нет",
   storage: "Хранилище",
   diskWarning: "Место кончается",
@@ -1507,7 +1559,11 @@ const ru: typeof en = {
   staffSub: "Одобряйте заявки и управляйте аккаунтами. Эту страницу видите только вы.",
   // files (менеджер файлов)
   filesSub: "Все медиафайлы досок на сервере. Эту страницу видите только вы.",
-  filesSummary: "{count} файлов · {size} на диске",
+  filesSummary: plural("count", {
+    one: "{count} файл · {size} на диске",
+    few: "{count} файла · {size} на диске",
+    many: "{count} файлов · {size} на диске",
+  }),
   colFile: "Файл",
   colBoard: "Доска",
   colSize: "Размер",
@@ -1657,7 +1713,11 @@ const ru: typeof en = {
   templateUnknown: "Таких полей больше нет: {list}. Поправьте шаблон — сейчас они уйдут ровно так, как показаны выше.",
   deleteTemplateConfirm: "Удалить шаблон «{name}»? Уже отправленные сообщения останутся как есть.",
   modTemplatesAbout: "Готовые ответы с подставленным именем клиента, названием заявки и ссылкой на доску",
-  mailSub: "{total} писем",
+  mailSub: plural("total", {
+    one: "{total} письмо",
+    few: "{total} письма",
+    many: "{total} писем",
+  }),
   mailEmpty: "Писем пока нет — настройте ящик и запустите синхронизацию",
   incoming: "Входящие",
   outgoing: "Исходящие",
@@ -1704,7 +1764,11 @@ const ru: typeof en = {
   mailModuleOffHint: "Блок «Почта» выключен — включите его в «Настройки → Модули».",
   // заказы
   orders: "Заказы",
-  ordersSub: "{total} заказов",
+  ordersSub: plural("total", {
+    one: "{total} заказ",
+    few: "{total} заказа",
+    many: "{total} заказов",
+  }),
   ordersEmpty: "Заказов пока нет — первый заводится у стойки",
   newSalesOrder: "Заказ покупателя",
   newPurchaseOrder: "Заказ поставщику",
@@ -1750,7 +1814,11 @@ const ru: typeof en = {
   actDone: "Акт проведён",
   // склад
   warehouse: "Склад",
-  warehouseSub: "{total} позиций · остаток — это сумма движений",
+  warehouseSub: plural("total", {
+    one: "{total} позиция · остаток — это сумма движений",
+    few: "{total} позиции · остаток — это сумма движений",
+    many: "{total} позиций · остаток — это сумма движений",
+  }),
   newProduct: "Новая позиция",
   searchProducts: "Поиск по названию или артикулу…",
   onlyLow: "Заканчивается",
@@ -1866,7 +1934,11 @@ const ru: typeof en = {
   transferForce: "Всё равно перевезти",
   // телефония
   calls: "Звонки",
-  callsSub: "{total} звонков в журнале",
+  callsSub: plural("total", {
+    one: "{total} звонок в журнале",
+    few: "{total} звонка в журнале",
+    many: "{total} звонков в журнале",
+  }),
   callsEmpty: "Звонков пока нет. Как только АТС начнёт присылать события, они появятся здесь.",
   callsSearch: "Поиск по номеру…",
   outcomeAnswered: "Отвечен",
@@ -1915,7 +1987,7 @@ const ru: typeof en = {
   regenerateSecretConfirm: "Создать новый секрет? АТС перестанет приниматься, пока новое значение не вписано в неё.",
   // журнал действий
   auditLog: "Журнал действий",
-  auditSub: "записей: {total}",
+  auditSub: plural("total", { other: "записей: {total}" }),
   auditHint:
     "Деньги, этапы, удаления, доступы и блоки — кто что изменил и чем это вызвано. Записи только добавляются: править и удалять их не может никто, включая root. Открытие экранов и чтение не записываются.",
   auditEmpty: "Записей пока нет",
@@ -1974,7 +2046,7 @@ const ru: typeof en = {
   roleSaved: "Роль сохранена",
   roleDeleted: "Роль удалена",
   roleAssigned: "Роль изменена",
-  rolePermissionsCount: "{n} из {total} прав",
+  rolePermissionsCount: plural("total", { other: "{n} из {total} прав" }),
   noRoles: "Ролей пока нет",
   noRolesHint: "Роль описывает должность: что человек видит и что ему можно менять.",
   // столбцы матрицы
@@ -2099,8 +2171,22 @@ export type TFunc = (key: TranslationKey, vars?: Record<string, string | number>
 
 export function makeT(locale: Locale): TFunc {
   const dict = dicts[locale] ?? en;
+  // Один разбор правил на язык, а не на каждую подпись: `Intl.PluralRules`
+  // стоит дорого при создании и ничего не стоит при вызове.
+  const pravila = new Intl.PluralRules(locale);
   return (key, vars) => {
-    let value: string = dict[key] ?? en[key] ?? key;
+    const zapis: string | Plural = dict[key] ?? en[key] ?? key;
+    let value: string;
+    if (typeof zapis === "string") {
+      value = zapis;
+    } else {
+      // Число могло прийти уже подписью («1 234», «—»): тогда формы не выбрать,
+      // и берём общую. Молча, потому что подпись при этом остаётся читаемой, а
+      // падать в отрисовке из-за формы слова — цена несоразмерная.
+      const chislo = Number(vars?.[zapis.schyot]);
+      const vid = Number.isFinite(chislo) ? pravila.select(chislo) : "other";
+      value = zapis.forms[vid] ?? zapis.forms.other ?? zapis.forms.many ?? zapis.forms.one ?? key;
+    }
     if (vars) {
       for (const [k, v] of Object.entries(vars)) value = value.replace(`{${k}}`, String(v));
     }

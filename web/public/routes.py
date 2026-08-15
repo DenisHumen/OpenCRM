@@ -44,6 +44,43 @@ MAINTENANCE_STRINGS = {
     },
 }
 
+#: Формы слова «работа» по числу — по одной строке на форму, а не на язык.
+#:
+#: В шаблоне стояло `t.works if works|length != 1 else t.work`, и для
+#: английского этого хватает: у него ровно две формы. Русскому нужны три, и
+#: витрина говорила «2 работ» и «21 работ» — то есть ошибалась на самых частых
+#: числах, а верной была только на единице и на пятёрке.
+#:
+#: Правила ниже — те же, что у `Intl.PluralRules` во фронтенде (сверено
+#: прогоном в node на числах 0,1,2,4,5,11,21,22,25,101,1234). Своими руками
+#: здесь потому, что в стандартной библиотеке питона их нет, а тянуть ради
+#: одного слова стороннюю зависимость на страницу, которую видит клиент, —
+#: размен не в ту сторону.
+FORMY_RABOT = {
+    "en": {"one": "work", "other": "works"},
+    "ru": {"one": "работа", "few": "работы", "many": "работ"},
+}
+
+
+def _forma_chisla(locale: str, n: int) -> str:
+    """Какая форма нужна этому числу в этом языке."""
+    if locale == "ru":
+        desyatki, sotni = n % 10, n % 100
+        if desyatki == 1 and sotni != 11:
+            return "one"
+        if 2 <= desyatki <= 4 and not 12 <= sotni <= 14:
+            return "few"
+        return "many"
+    return "one" if n == 1 else "other"
+
+
+def slovo_rabot(locale: str, n: int) -> str:
+    """Слово «работа» в нужной форме. Зовётся из шаблона витрины."""
+    formy = FORMY_RABOT.get(locale, FORMY_RABOT["en"])
+    vid = _forma_chisla(locale, n)
+    return formy.get(vid) or formy.get("other") or formy["one"]
+
+
 # словари витрины: язык задаётся настройкой сайта showcase_locale
 STRINGS = {
     "en": {
@@ -97,6 +134,11 @@ STRINGS = {
         "view_full": "View full",
     },
 }
+
+
+# Помощник отдаётся шаблонам глобалью: тащить его через контекст каждой
+# страницы значило бы поминать в пяти местах то, что нужно в одной строке.
+templates.env.globals["slovo_rabot"] = slovo_rabot
 
 
 def _ctx(db: Session) -> tuple[dict, dict]:
@@ -177,6 +219,7 @@ def showcase(token: str, request: Request, db: Session = Depends(get_db)):
         {
             "site": site,
             "t": strings,
+            "locale": site.get("showcase_locale", "en"),
             "board": board,
             "works": works_payload,
             "modules": layout.build_modules(len(works_payload)),
