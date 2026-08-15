@@ -1,0 +1,200 @@
+"""Засев `phone_norm` при накате телефонии — на населённой базе.
+
+Миграция `a9e64c17f235` заводит колонку `clients.phone_norm` и заполняет её
+нормализованными номерами существующих клиентов. Делалось это построчно: один
+`SELECT` и по одному `UPDATE` на карточку.
+
+**Чем это плохо, если считать не строками, а временем.** Точка входа
+(`docker/entrypoint.sh`) гонит `alembic upgrade head` ДО старта приложения —
+значит всё время миграции `/healthz` не отвечает вовсе. Автообновление
+(`deploy/updater.py`) ждёт его тридцать попыток по четыре секунды, около двух
+минут, и не дождавшись объявляет обновление сломанным и откатывает и код, и
+базу. На боевом объёме, названном в шапке `tests/test_speed.py` (200 000
+клиентов), двести тысяч отдельных обращений в это окно не укладываются, и
+сервер запирается на старой версии. Соседняя миграция `d3b8c05f1e2a` цену
+такого обхода называет прямо: «минуты вместо секунд».
+
+Одним запросом нельзя: `normalize_phone` — это питон (плюс, ведущие нули, код
+страны, добавочный), и переписать его выражением SQL значило бы завести ВТОРУЮ
+нормализацию. Разошлись бы они молча, и заявка перестала бы находить своего
+клиента. Поэтому пачками: значения считает питон, уезжают они одним
+`UPDATE ... CASE` на тысячу строк.
+
+Проверка гоняет НАСТОЯЩУЮ миграцию на настоящей MySQL и заведомо больше одной
+пачки — иначе граница пачки, единственное новое место, осталась бы непройденной.
+"""
+
+import pathlib
+
+from sqlalchemy import create_engine, text
+
+from core.utils import normalize_phone
+
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+
+#: Ревизия телефонии и та, что перед ней.
+TELEFONIYA = "a9e64c17f235"
+DO_NEYO = "d6b30f84c917"
+
+#: Больше одной пачки: размер пачки в миграции — тысяча.
+SKOLKO_KLIENTOV = 1050
+
+
+def _zavesti_klientov(soedinenie, nomera: list[str]) -> None:
+    """Вставить карточки, заполнив ВСЕ обязательные колонки той ревизии.
+
+    Состав колонок спрашивается у базы, а не выписывается сюда списком.
+    Выписанный список — это копия схемы в тесте: он устареет на первой же
+    миграции, добавившей обязательную колонку, и проверка покраснеет отказом
+    вставки, ничего не сказав про засев номеров. Ровно это здесь уже случилось
+    дважды — на `company`, потом на `notes`, которой на той ревизии ещё нет.
+    """
+    kolonki = soedinenie.execute(
+        text(
+            "SELECT COLUMN_NAME, DATA_TYPE FROM information_schema.COLUMNS "
+            "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'clients' "
+            "AND IS_NULLABLE = 'NO' AND COLUMN_DEFAULT IS NULL "
+            "AND EXTRA NOT LIKE '%auto_increment%'"
+        )
+    ).all()
+
+    imena, znacheniya = [], {}
+    for imya, tip in kolonki:
+        if imya in ("phone", "name"):
+            continue
+        imena.append(imya)
+        znacheniya[imya] = 0 if tip in ("int", "bigint", "tinyint", "decimal") else ""
+
+    stolbtsy = ", ".join(["name", "phone"] + imena)
+    mesta = ", ".join([":name", ":phone"] + [f":{imya}" for imya in imena])
+    soedinenie.execute(
+        text(f"INSERT INTO clients ({stolbtsy}) VALUES ({mesta})"),
+        [
+            {"name": f"Клиент {nomer}", "phone": telefon, **znacheniya}
+            for nomer, telefon in enumerate(nomera)
+        ],
+    )
+
+
+def _nakatit(url: str, kuda: str) -> None:
+    from alembic import command
+    from alembic.config import Config
+
+    config = Config(str(ROOT / "alembic.ini"))
+    config.set_main_option("sqlalchemy.url", url)
+    command.upgrade(config, kuda)
+
+
+def test_zasev_nomerov_perezhivaet_granitsu_pachki(chistaya_baza):
+    """Каждому клиенту достался ЕГО номер, а не соседский.
+
+    Опасность у пачечной записи ровно одна и своя: `UPDATE ... CASE id WHEN …`
+    сопоставляет значение с ключом, и перепутанные местами или потерянные на
+    границе пары дадут карточки с чужими номерами. Заметить такое потом нельзя
+    ничем: номер выглядит настоящим, просто принадлежит другому человеку, и
+    звонок садится не в ту карточку.
+
+    Поэтому клиентов заведомо больше одной пачки, номера у всех разные, а
+    сверяется каждый — с тем, что даёт `normalize_phone`, то есть с
+    единственной нормализацией в системе.
+    """
+    _nakatit(chistaya_baza, DO_NEYO)
+
+    dvigatel = create_engine(chistaya_baza)
+    try:
+        with dvigatel.begin() as soedinenie:
+            soedinenie.execute(
+                text(
+                    "INSERT INTO site_settings (`key`, `value`) "
+                    "VALUES ('default_country_code', '380')"
+                )
+            )
+            # Номера разные и разной формы: с плюсом, с ведущим нулём, с
+            # международным префиксом — чтобы сверялась именно нормализация, а
+            # не переписывание строки как есть.
+            formy = ("+38067{:07d}", "067{:07d}", "0038067{:07d}", "38067{:07d}")
+            _zavesti_klientov(
+                soedinenie,
+                [formy[n % len(formy)].format(n) for n in range(SKOLKO_KLIENTOV)],
+            )
+
+        _nakatit(chistaya_baza, TELEFONIYA)
+
+        with dvigatel.connect() as soedinenie:
+            stroki = soedinenie.execute(
+                text("SELECT phone, phone_norm FROM clients ORDER BY id")
+            ).all()
+
+        assert len(stroki) == SKOLKO_KLIENTOV, "клиенты не доехали до миграции"
+        assert len(stroki) > 1000, "пачка одна — граница пачки не проверена"
+
+        razoshlos = [
+            f"{phone!r} → {norm!r}, а должно {normalize_phone(phone, '380')[:32]!r}"
+            for phone, norm in stroki
+            if norm != normalize_phone(phone, "380")[:32]
+        ]
+        assert razoshlos == [], (
+            f"номера засеяны неверно ({len(razoshlos)} из {len(stroki)}):\n  "
+            + "\n  ".join(razoshlos[:5])
+        )
+    finally:
+        dvigatel.dispose()
+
+
+def test_zasev_ne_delaet_zaprosa_na_kazhduyu_kartochku(chistaya_baza):
+    """Число обновлений растёт от числа ПАЧЕК, а не от числа карточек.
+
+    Это и есть вся правка. Проверять её счётом, а не временем, — то же правило,
+    что в `tests/test_speed.py`: «уложились в N миллисекунд» мигает на чужой
+    машине и в контейнере под нагрузкой.
+
+    **Считает сама MySQL, а не слушатель SQLAlchemy, и это не прихоть.** Первая
+    редакция вешала `before_cursor_execute` на свой движок и была ЛОЖНО-ЗЕЛЁНОЙ:
+    alembic поднимает собственное соединение, слушатель не видел ни одного
+    запроса, счётчик оставался нулём, и «ноль обновлений» проходило проверку
+    «не больше десяти». Покраснения не случилось даже на заведомо построчной
+    редакции — то есть проверка не проверяла ничего.
+
+    `Com_update` из GLOBAL STATUS считает на сервере и потому видит любое
+    соединение. Отсюда же и нижняя граница в утверждении: счётчик, показавший
+    ноль, означает «смотрю не туда», а не «обновлений не было».
+    """
+    _nakatit(chistaya_baza, DO_NEYO)
+
+    dvigatel = create_engine(chistaya_baza)
+    try:
+        with dvigatel.begin() as soedinenie:
+            soedinenie.execute(
+                text(
+                    "INSERT INTO site_settings (`key`, `value`) "
+                    "VALUES ('default_country_code', '380')"
+                )
+            )
+            _zavesti_klientov(
+                soedinenie, [f"+38067{n:07d}" for n in range(SKOLKO_KLIENTOV)]
+            )
+
+        def com_update() -> int:
+            with dvigatel.connect() as s:
+                stroka = s.execute(
+                    text("SHOW GLOBAL STATUS LIKE 'Com_update'")
+                ).first()
+                return int(stroka[1])
+
+        do = com_update()
+        _nakatit(chistaya_baza, TELEFONIYA)
+        stalo = com_update() - do
+
+        assert stalo >= 1, (
+            "счётчик обновлений показал ноль — значит проверка смотрит не туда, "
+            "а не что обновлений не было"
+        )
+        # Тысяча в пачке, 1050 карточек — значит две пачки, плюс возможные
+        # обновления самой alembic. Запас стократный: запрос на карточку дал бы
+        # больше тысячи.
+        assert stalo <= 20, (
+            f"обновлений ушло {stalo} при {SKOLKO_KLIENTOV} карточках — "
+            "засев по-прежнему идёт построчно"
+        )
+    finally:
+        dvigatel.dispose()
