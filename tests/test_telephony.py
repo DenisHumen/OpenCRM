@@ -206,19 +206,35 @@ def test_simultaneous_events_with_one_call_id_do_not_fail(root_client, telephony
 
     from core.services import telephony_service as service
 
-    real = service.telephony_repo.get_by_external_id
-    seen = {"lookups": 0}
+    # Подменяется `vzyat_pod_pravku`, а не `get_by_external_id`, и это не
+    # косметика. Сервис ищет звонок именно им — под замком, потому что события
+    # об одном разговоре приходят разом и правят одну строку. Оставь проверка
+    # прежнюю точку подмены, она перехватывала бы функцию, которой сервис больше
+    # не пользуется: промах не наступал бы, гонка не воспроизводилась, и
+    # проверка зеленела бы, ничего не проверив.
+    real = service.telephony_repo.vzyat_pod_pravku
+    seen = {"lookups": 0, "zapasnyh": 0}
 
     def blind_once(db, external_id):
         """Первый поиск промахивается — как у проигравшего гонку запроса."""
         seen["lookups"] += 1
         return None if seen["lookups"] == 1 else real(db, external_id)
 
-    monkeypatch.setattr(service.telephony_repo, "get_by_external_id", blind_once)
+    # Запасной поиск считается отдельно: он живёт ВНУТРИ `insert_or_take` и
+    # зовётся уже после отказа по уникальности — то есть это другой поиск, не
+    # тот, что подменён выше.
+    nastoyashchiy_zapasnoy = service.telephony_repo.get_by_external_id
+
+    def schitat_zapasnoy(db, external_id):
+        seen["zapasnyh"] += 1
+        return nastoyashchiy_zapasnoy(db, external_id)
+
+    monkeypatch.setattr(service.telephony_repo, "vzyat_pod_pravku", blind_once)
+    monkeypatch.setattr(service.telephony_repo, "get_by_external_id", schitat_zapasnoy)
 
     second = send_event(telephony, {**payload, "outcome": "answered", "duration": 30})
     assert second.status_code == 200, second.text
-    assert seen["lookups"] >= 2, "запасной поиск после нарушения уникальности не сработал"
+    assert seen["zapasnyh"] >= 1, "запасной поиск после нарушения уникальности не сработал"
     assert second.json()["call"]["id"] == first.json()["call"]["id"], "звонок задвоился"
     # проигравший вставку не теряет своё событие: поля из него доехали
     assert second.json()["call"]["duration_sec"] == 30
@@ -861,3 +877,53 @@ def test_numbers_from_the_station_are_still_accepted(root_client, telephony, cli
     assert call["external_id"] == "770077"
     assert call["from_number"] == "380671234567"
     assert call["client_id"] == client_record["id"]
+
+
+def test_dva_sobytiya_razom_ne_dvoyat_zapis_v_lente(root_client, telephony, client_record):
+    """Два события об одном разговоре разом — запись в ленте одна.
+
+    ДУЭЛЬ. В журнале уже лежит звонок с `outcome = NULL`: событие «начался»
+    проведено и зафиксировано, значит записи в ленте ещё нет, а строка звонка
+    есть. Дальше станция теряет связь и повторяет пачку — об этом сказано в
+    докстроке обработчика, — и два события с одним `call_id` и итогом приходят
+    одновременно.
+
+    Без замка получалось так: оба читали строку, оба видели `note_id = NULL`,
+    оба доходили до записи в ленту. Проигравший вставал на блокировке при своём
+    `UPDATE`, дожидался чужого коммита — и шёл дальше СО СВОИМ УСТАРЕВШИМ
+    объектом: SQLAlchemy не перечитывает уже загруженную строку после снятия
+    блокировки. `note_id` в памяти оставался `None`, вторая запись появлялась, а
+    `call.note_id` переписывался на неё. В ленте клиента два входа об одном
+    разговоре — и разные, если события уточняли длительность.
+
+    Утверждение про ИНВАРИАНТ, а не про победителя: гонку никто не обязан
+    выигрывать.
+    """
+    from tests.test_odin_iz_mnogih import duel
+
+    nachalo = {
+        "call_id": "duel-1",
+        "direction": "in",
+        "from": "+380671234567",
+        "to": "0442000000",
+        "started_at": "2026-08-06T09:00:00+00:00",
+    }
+    assert send_event(telephony, nachalo).status_code == 200
+
+    def zavershenie(dlitelnost):
+        return send_event(
+            telephony, {**nachalo, "outcome": "answered", "duration": dlitelnost}
+        ).status_code
+
+    ishody = duel(zavershenie, 75, 76)
+
+    zapisi = root_client.get(
+        f"{API}/clients/{client_record['id']}/notes?per_page=200"
+    ).json()["items"]
+    pro_duel = [
+        z for z in zapisi
+        if z["kind"] == "call" and z["happened_at"].startswith("2026-08-06T09:00")
+    ]
+    assert len(pro_duel) == 1, (
+        f"в ленте {len(pro_duel)} записи об одном разговоре, исходы ударов: {ishody}"
+    )
