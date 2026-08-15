@@ -1827,3 +1827,74 @@ def test_ischeznuvshaya_sluzhba_ne_ostayotsya_rabotat(tmp_path):
 
     podnyatie = next(c for c in updater.shell.calls if "up -d --build" in c)
     assert "--remove-orphans" in podnyatie, podnyatie
+
+
+# --- место на диске ----------------------------------------------------------
+
+
+def test_nekhvatka_mesta_ostanavlivaet_do_pervoy_zapisi(tmp_path, monkeypatch):
+    """Отказ по месту дёшев ДО первой записи и очень дорог посреди дампа.
+
+    Обновление пишет на диск трижды: копия базы (на боевом объёме гигабайт с
+    лишним), слои нового образа, образ ворот. Старый образ лежит до `prune`,
+    значит на пике их два. Это не гипотеза: образ панели мониторинга разом
+    вырос с 744 МБ до 1.16 ГБ.
+
+    А оборванный нехваткой места дамп — обычный текстовый файл, и негодность у
+    него не видна ничем, кроме отсутствующего хвоста. Такую копию однажды уже
+    заливали «успешно», не заметив пропажи половины таблиц.
+    """
+    import shutil as _shutil
+    from collections import namedtuple
+
+    config = make_config(tmp_path, OPENCRM_UPDATE_MIN_FREE_MB="2048")
+    shell = FakeShell()
+    Mesto = namedtuple("Mesto", "total used free")
+    monkeypatch.setattr(_shutil, "disk_usage", lambda _p: Mesto(0, 0, 500 * 1024 * 1024))
+    updater = make_updater(tmp_path, config=config, shell=shell)
+
+    outcome = updater.run_once()
+
+    assert outcome.status == STATUS_ABORTED
+    assert "500 МБ" in outcome.reason and "2048" in outcome.reason
+    # Docker не звали вовсе: ни сборки, ни ворот, ни дампа.
+    assert not shell.ran("docker"), shell.calls
+    # И на новый коммит не переходили. Возврат чекаута на ПРЕЖНИЙ при этом
+    # случается, и так и надо — первая редакция этой проверки запрещала любой
+    # `checkout` и краснела на верном коде: отказ обязан оставить дерево там,
+    # где оно было.
+    assert not shell.ran(f"checkout --detach --quiet {NEW}"), shell.calls
+    assert not shell.ran("fetch"), shell.calls
+
+
+def test_mesta_khvataet_obnovlenie_idyot(tmp_path, monkeypatch):
+    """Парная проверка: иначе «отказывать всегда» тоже прошло бы предыдущую."""
+    import shutil as _shutil
+    from collections import namedtuple
+
+    config = make_config(tmp_path, OPENCRM_UPDATE_MIN_FREE_MB="2048")
+    Mesto = namedtuple("Mesto", "total used free")
+    monkeypatch.setattr(_shutil, "disk_usage", lambda _p: Mesto(0, 0, 9000 * 1024 * 1024))
+    updater = make_updater(tmp_path, config=config)
+
+    assert updater.run_once().status == STATUS_DEPLOYED
+
+
+def test_nemoy_disk_ne_zaklinivaet_obnovleniya(tmp_path, monkeypatch):
+    """Не сумели узнать свободное место — работаем как раньше.
+
+    Это важнее самой проверки. Страховка, превращённая в новый способ
+    остановить обновления, хуже той беды, от которой она заведена: место
+    кончается раз в год, а неотвечающий `disk_usage` (сетевой том, права,
+    чужая файловая система) заклинил бы деплой навсегда и без объяснений.
+    """
+    import shutil as _shutil
+
+    def ne_otvechaet(_put):
+        raise OSError("нет такого устройства")
+
+    config = make_config(tmp_path, OPENCRM_UPDATE_MIN_FREE_MB="2048")
+    monkeypatch.setattr(_shutil, "disk_usage", ne_otvechaet)
+    updater = make_updater(tmp_path, config=config)
+
+    assert updater.run_once().status == STATUS_DEPLOYED
