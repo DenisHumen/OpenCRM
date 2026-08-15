@@ -586,7 +586,7 @@ def seed_defaults(db: Session) -> None:
     """
     if places_repo.count_alive(db) > 0:
         return
-    warehouse = Warehouse(name="Основной")
+    warehouse = Warehouse(name="Main")
     db.add(warehouse)
     db.flush()
     places_repo.make_default(db, warehouse)

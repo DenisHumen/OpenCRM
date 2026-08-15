@@ -27,15 +27,20 @@ templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 # Тексты страницы ручного обслуживания (её отдаёт middleware в web/main.py).
 # Держим здесь, рядом с остальными строками публичной части и её шаблонами.
 MAINTENANCE_STRINGS = {
+    # Подвал стоял наоборот: в английской ветке лежала русская фраза, в русской —
+    # английская. Обе ветки при этом выглядели заполненными, и ни один прогон об
+    # этом не говорил — перепутанное местами не отличить от переведённого, пока
+    # не прочтёшь глазами обе строки сразу. Нашлось перебором словарей
+    # (`tests/test_zasev_yazyk.py`), а не чтением.
     "en": {
         "title": "Closed for maintenance",
         "text": "The site is temporarily unavailable. Please come back a little later.",
-        "foot": "Идут технические работы.",
+        "foot": "The site is closed for maintenance.",
     },
     "ru": {
         "title": "Технические работы",
         "text": "Сайт временно недоступен. Загляните чуть позже.",
-        "foot": "The site is closed for maintenance.",
+        "foot": "Идут технические работы.",
     },
 }
 

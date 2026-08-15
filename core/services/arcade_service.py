@@ -35,12 +35,22 @@ MAX_PLAYED_MS = 6 * 60 * 60 * 1000
 MAX_NAME = 24
 MAX_PER_HOUR = 20
 
+#: Как подписан игрок, не назвавшийся никак.
+#:
+#: Ровно то же слово стоит в placeholder-е поля и подставляется при выводе
+#: строки на самой странице (`docker/nginx/maintenance/maintenance.html`).
+#: Пока здесь было «Аноним», страница обещала одно имя, а сервер записывал
+#: другое, и в таблице рекордов соседствовали два безымянных игрока.
+#: Разделить константу с той страницей нечем — она статическая и отдаётся
+#: без приложения, — поэтому совпадение стережёт `tests/test_zasev_yazyk.py`.
+ANON_NAME = "Anonymous"
+
 
 def _clean_name(name: str) -> str:
     # Управляющие символы и переводы строк вырезаем: имя попадает в публичную
     # таблицу, а вокруг неё не должно быть сюрпризов при выводе.
     cleaned = "".join(ch for ch in (name or "") if ch.isprintable()).strip()
-    return cleaned[:MAX_NAME] or "Аноним"
+    return cleaned[:MAX_NAME] or ANON_NAME
 
 
 def submit(db: Session, name: str, score: int, played_ms: int, ip: str) -> dict:

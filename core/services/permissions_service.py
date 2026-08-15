@@ -57,8 +57,8 @@ PRESETS: dict[str, dict] = {
     # существующие сотрудники, и любое расхождение здесь означает, что после
     # обновления у человека пропала кнопка, которой он пользовался вчера.
     "manager": {
-        "name": "Менеджер",
-        "hint": "Ведёт клиентов и заявки целиком. То же, что умели сотрудники до появления ролей",
+        "name": "Manager",
+        "hint": "Runs clients and requests end to end. The same reach staff had before roles existed",
         # Ни `staff.view`, ни `settings.view` здесь нет, и это не забывчивость:
         # список сотрудников и настройки сайта были закрыты от менеджера и до
         # ролей (`require_root`). Выдать их «заодно» значило бы расширить
@@ -81,8 +81,8 @@ PRESETS: dict[str, dict] = {
         ),
     },
     "accountant": {
-        "name": "Бухгалтер",
-        "hint": "Деньги, бланки и реквизиты. Доски и переписка ему не нужны",
+        "name": "Accountant",
+        "hint": "Money, paperwork and company details. Boards and mail are not needed here",
         "permissions": (
             _view("clients", "deals", "settings")
             + _crud("documents", "companies")
@@ -98,8 +98,8 @@ PRESETS: dict[str, dict] = {
         ),
     },
     "project_manager": {
-        "name": "Проджект-менеджер",
-        "hint": "Заявки, склад и сроки. Суммы и зарплаты коллег — мимо",
+        "name": "Project manager",
+        "hint": "Requests, stock and deadlines. Amounts and colleagues' pay stay out of reach",
         "permissions": (
             _crud("deals", "tasks", "boards")
             + _view("clients", "companies", "documents", "settings")
@@ -118,16 +118,16 @@ PRESETS: dict[str, dict] = {
         ),
     },
     "director": {
-        "name": "Гендиректор",
-        "hint": "Видит и может всё, включая роли и настройки. Кроме прав самого root",
+        "name": "Director",
+        "hint": "Sees and can do everything, roles and settings included. Except root's own rights",
         # Собирается из реестра, а не перечислением: должность «всё» обязана
         # получать и то, что появится в следующем блоке, иначе она перестанет
         # быть тем, чем названа, ровно в день выхода обновления.
         "permissions": list(permissions.all_codes()),
     },
     "viewer": {
-        "name": "Наблюдатель",
-        "hint": "Только смотрит: ничего не создаёт, не меняет и не видит сумм",
+        "name": "Viewer",
+        "hint": "Looks only: creates nothing, changes nothing, sees no amounts",
         "permissions": _view(*[area.key for area in permissions.AREAS if not area.is_system]),
     },
 }
