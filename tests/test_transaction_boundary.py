@@ -19,6 +19,8 @@
 значит чинить бесконечно.
 """
 
+import pathlib
+
 import pytest
 from fastapi import Depends, FastAPI
 from fastapi.responses import JSONResponse
@@ -140,3 +142,40 @@ def test_upavshaya_baza_tozhe_ne_ostavlyaet_poloviny(klient_bez_perekhvata):
         "база отказала посреди запроса, а строка осталась — значит вместо "
         "отката случился commit"
     )
+
+
+def test_imenovannye_zamki_snimayutsya_posle_fiksatsii():
+    """Порядок в `finally`: сначала `commit`, потом снятие замков, потом `close`.
+
+    Порядок здесь и есть вся защита, а по коду этого не видно — три строки
+    выглядят взаимозаменяемыми. Они не взаимозаменяемы:
+
+    - снять замок ДО `commit` — значит впустить соперника раньше, чем чужая
+      запись станет видимой. Замок при этом есть, а толку от него нет. Так и
+      было в первой редакции (снятие стояло в `finally` самого сервиса), и
+      дуэль формы с сайта давала те же две карточки, что и без замка вовсе;
+    - снять ПОСЛЕ `close` — некуда: сессия закрыта, запрос выполнить нечем;
+    - не снять вовсе — соединение вернётся в пул запертым. `Session.close()`
+      его не закрывает, а MySQL держит именованный замок за соединением, и
+      следующая заявка от того же контакта прождёт впустую весь срок.
+
+    Проверка текстовая, потому что проверять надо ПОРЯДОК СТРОК, а не поведение:
+    поведение при неверном порядке отличается только под гонкой, то есть
+    воспроизводится через раз.
+    """
+    istochnik = (
+        pathlib.Path(__file__).resolve().parent.parent / "web" / "api" / "deps.py"
+    ).read_text(encoding="utf-8")
+
+    telo = istochnik[istochnik.index("def _edinica_raboty(") :]
+    telo = telo[: telo.index("\ndef ")]
+
+    gde_commit = telo.index("db.commit()")
+    gde_snyatie = telo.index("snyat_zamki(db)")
+    gde_close = telo.index("db.close()")
+
+    assert gde_commit < gde_snyatie, (
+        "замки снимаются до фиксации — соперник получит очередь раньше, чем "
+        "чужая запись станет видимой, и замок перестанет что-либо значить"
+    )
+    assert gde_snyatie < gde_close, "замки снимаются после закрытия сессии — нечем"

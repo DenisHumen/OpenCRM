@@ -8,7 +8,7 @@ from core import permissions as core_permissions
 from core.ratelimit import SlidingWindowLimiter
 from core.services import auth_service, modules_service, permissions_service
 from database.models import User
-from database.session import SessionLocal
+from database.session import SessionLocal, snyat_zamki
 
 SESSION_COOKIE = "opencrm_session"
 CSRF_COOKIE = "opencrm_csrf"
@@ -101,6 +101,14 @@ def _edinica_raboty():
         db.rollback()
         raise
     finally:
+        # Именованные замки MySQL снимаются ЗДЕСЬ, и место выбрано, а не
+        # случилось. Такой замок держится за соединением: ни `COMMIT`, ни
+        # `ROLLBACK`, ни `Session.close()` его не снимают — последняя возвращает
+        # соединение в пул, не закрывая. Снять раньше фиксации тоже нельзя:
+        # соперник получил бы очередь до того, как чужая запись станет видимой,
+        # то есть замок не сделал бы ничего. Между `commit` и `close` — ровно
+        # то единственное место, где оба условия выполнены.
+        snyat_zamki(db)
         db.close()
 
 

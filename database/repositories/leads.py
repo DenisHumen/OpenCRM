@@ -15,12 +15,14 @@
 спрашивать» решается здесь, одним местом, а не в сервисе.
 """
 
+import hashlib
 from datetime import datetime
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from database.models import Client, Deal
+from database.session import zapomnit_zamok
 from database.repositories import mail as mail_repo
 from database.repositories import telephony as telephony_repo
 
@@ -77,3 +79,53 @@ def count_clients_since(db: Session, source: str, since: datetime) -> int:
         )
         or 0
     )
+
+
+#: Сколько ждать своей очереди на приём одной заявки.
+#:
+#: Секунды, а не миллисекунды: соперник — не толпа, а второй экземпляр той же
+#: доставки, и он уходит, как только заведёт карточку. Пять секунд заведомо
+#: больше этого и заведомо меньше терпения сервера сайта.
+LOCK_SECONDS = 5
+
+
+def _imya_zamka(klyuch: str) -> str:
+    """Имя замка по контакту. Хэш, а не сам адрес.
+
+    Три довода, и все три обязательные. Имя замка в MySQL ограничено 64
+    знаками, а адрес почты бывает длиннее (`clients.email` — 255). Адрес попадёт
+    в `SHOW PROCESSLIST` и в журнал медленных запросов, то есть чужая почта
+    оказалась бы в местах, где её никто не ждёт. И одинаковая длина имени
+    избавляет от вопроса, что делать с пробелами и юникодом внутри.
+    """
+    return "opencrm_lead_" + hashlib.sha1(klyuch.encode("utf-8")).hexdigest()[:32]
+
+
+def zapert_priyom(db: Session, klyuch: str) -> bool:
+    """Занять очередь на приём заявки от этого контакта.
+
+    Именованный замок, а не `SELECT ... FOR UPDATE`, и это не выбор из вкусов.
+    Запирать нечего: карточки ещё НЕТ, а `FOR UPDATE` берёт существующие строки;
+    промежутки под `READ COMMITTED` не запираются вовсе (см. разбор в
+    `warehouse_service.zapert_tovar` — там та же причина решается иначе, потому
+    что там строка товара есть).
+
+    Уникальный индекс тоже не годится: пустая почта у карточки законна и
+    встречается у большинства, а частичных индексов в MySQL нет — об этом прямо
+    сказано в правилах проекта.
+
+    Отвечает `True`, если очередь занята. `False` означает «не дождался» — и
+    вызывающий идёт дальше БЕЗ замка: потерять заявку хуже, чем завести дубль,
+    а дубль при этом становится редкостью вместо обычного дела.
+
+    Замок держится за СОЕДИНЕНИЕМ, а не за транзакцией: ни `COMMIT`, ни
+    `ROLLBACK` его не снимают. Снимает его граница запроса
+    (`database.session.snyat_zamki`), и снимает ПОСЛЕ фиксации — раньше нельзя:
+    соперник получил бы очередь до того, как чужая запись станет видимой, и
+    сделал бы ровно то, от чего замок заводился. Проверено дуэлью.
+    """
+    imya = _imya_zamka(klyuch)
+    vzyat = bool(db.scalar(select(func.get_lock(imya, LOCK_SECONDS))))
+    if vzyat:
+        zapomnit_zamok(db, imya)
+    return vzyat
