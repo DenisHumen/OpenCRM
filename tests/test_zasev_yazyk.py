@@ -32,8 +32,16 @@
 
 Проверки механические, потому что одиннадцатое такое место появится тем же
 путём, что и первые десять: кто-то напишет строку на своём языке, и это никого
-не остановит. Последняя из них — единственная, что смотрит не в исходники, а в
+не остановит. Одна из них — единственная, что смотрит не в исходники, а в
 получившуюся базу: рассуждение по исходникам здесь один раз уже подвело.
+
+**Четвёртый заход — формы слова по числу.** Вопрос уже не «на каком языке», а
+«грамотно ли», но живёт он здесь же: подпись «1 views» портит впечатление тем
+же способом, что и русская надпись в английском интерфейсе. Формы не было
+нигде — ни в CRM («1 просмотров»), ни на витрине («2 работ», «21 работ»).
+Фронтенд считает их `Intl.PluralRules`, витрина — своими руками, потому что в
+питоне правил нет; совпадение этих двух счётов проверяется по числам, снятым
+прогоном в node.
 """
 
 import ast
@@ -515,3 +523,140 @@ def test_razbor_slovarey_interfeysa_vidit_perevody():
     bloki = _angliyskie_bloki_ts(terms)
     assert len(bloki) == 4, f"веток en в terms.ts найдено {len(bloki)}, ожидалось четыре"
     assert any('"Deal"' in b for b in bloki), "разбор не видит английских форм слова"
+
+
+# --- формы слова по числу ----------------------------------------------------
+
+#: Какие формы обязан описать язык.
+#:
+#: Категории не выдуманы, а спрошены у `Intl.PluralRules` в node 20:
+#:   en → one, other;      1 → one, всё остальное → other;
+#:   ru → one, few, many, other;  1 и 21 → one, 2 и 1234 → few, 0 и 5 → many.
+#: `other` у русского достаётся только дробям (1,5), и подпись со счётом дробной
+#: не бывает — поэтому русскому разрешено описать либо все три целых формы,
+#: либо ровно `other`, если число в подписи стоит ПОСЛЕДНИМ («записей: 5») и
+#: форма от счёта не зависит вовсе.
+FORMY_YAZYKA = {
+    "en": ({"one", "other"},),
+    "ru": ({"one", "few", "many"}, {"other"}),
+}
+
+
+#: Запись вида `  ключ: plural("счёт", { форма: "текст", … }),`
+ZAPIS_FORM = re.compile(r"^  (\w+): plural\(\"(\w+)\", \{(.*?)\}\),\s*$", re.S | re.M)
+
+
+def _formy_v_vetke(tekst: str, vetka: str) -> list[tuple[str, str, dict[str, str]]]:
+    """Записи `plural("счёт", {формы})` внутри названной ветки словаря.
+
+    Ветки объявлены по-разному — `const en = {` и `const ru: typeof en = {`, —
+    поэтому якорь ищется без знака равенства. Первая попытка искала точное
+    `const {ветка} = {` и на русской падала с ValueError; отказ был громкий и
+    потому безобидный, но проверка, ищущая по точному написанию соседа, живёт
+    ровно до его следующей правки.
+    """
+    nachalo = re.search(rf"^const {vetka}\b.*\{{$", tekst, flags=re.M)
+    assert nachalo, f"ветка {vetka} не найдена — разбор смотрит не туда"
+    konets = tekst.index("\n};", nachalo.end())
+
+    return [
+        (klyuch, schyot, dict(re.findall(r"(\w+):\s*\"([^\"]*)\"", telo)))
+        for klyuch, schyot, telo in ZAPIS_FORM.findall(tekst[nachalo.end() : konets])
+    ]
+
+
+@pytest.mark.parametrize("vetka", sorted(FORMY_YAZYKA))
+def test_formy_slova_po_chislu_polny(vetka: str):
+    """У каждой подписи со счётом описаны все формы, которых требует язык.
+
+    Без этого интерфейс говорил «1 views» и «1 просмотров» — на обоих языках
+    сразу. Типы такую нехватку не видят: набор форм намеренно неполный
+    (`Partial`), иначе английский был бы обязан выдумывать русские падежи.
+    Значит стеречь полноту больше нечем.
+    """
+    tekst = (ROOT / "web/frontend/crm/src/lib/i18n.ts").read_text(encoding="utf-8")
+    zapisi = _formy_v_vetke(tekst, vetka)
+    assert zapisi, f"в ветке {vetka} не найдено ни одной подписи со счётом"
+
+    bedy = []
+    for klyuch, _, formy_i_slova in zapisi:
+        formy = set(formy_i_slova)
+        if not any(formy == dopustimo for dopustimo in FORMY_YAZYKA[vetka]):
+            ozhidalos = " либо ".join(
+                "+".join(sorted(d)) for d in FORMY_YAZYKA[vetka]
+            )
+            bedy.append(f"{klyuch}: описано {'+'.join(sorted(formy))}, нужно {ozhidalos}")
+    assert bedy == [], f"неполные формы в ветке {vetka}:\n  " + "\n  ".join(bedy)
+
+
+@pytest.mark.parametrize("vetka", sorted(FORMY_YAZYKA))
+def test_schitaemaya_peremennaya_est_v_kazhdoy_forme(vetka: str):
+    """Названная переменная подставляется в КАЖДУЮ форму.
+
+    Забыть её в одной из форм — значит потерять само число ровно на том счёте,
+    для которого форма и заведена: подпись станет «clients» без единицы впереди.
+    Догадаться по коду об этом нельзя, потому что остальные формы целы.
+
+    Заодно проверяется, что имя вообще осмысленное: `plural` берёт его строкой,
+    и опечатка в нём молча уводит выбор к `other` навсегда.
+    """
+    tekst = (ROOT / "web/frontend/crm/src/lib/i18n.ts").read_text(encoding="utf-8")
+    bedy = []
+    for klyuch, schyot, formy_i_slova in _formy_v_vetke(tekst, vetka):
+        for forma, znachenie in sorted(formy_i_slova.items()):
+            if f"{{{schyot}}}" not in znachenie:
+                bedy.append(f"{klyuch}.{forma}: нет {{{schyot}}} в {znachenie!r}")
+    assert bedy == [], (
+        f"считаемая переменная потерялась в ветке {vetka}:\n  " + "\n  ".join(bedy)
+    )
+
+
+#: Что ответил `Intl.PluralRules` в node 20 — снято прогоном, а не выведено.
+#:
+#: Витрина считает формы своими руками (`web/public/routes.py`): в стандартной
+#: библиотеке питона правил нет, а тянуть ради одного слова зависимость на
+#: страницу, которую видит клиент, — размен не в ту сторону. Раз правила
+#: переписаны, они обязаны совпадать с теми, по которым живёт фронтенд, —
+#: иначе одно и то же число в CRM и на витрине склонялось бы по-разному.
+KATEGORII_NODE = {
+    "en": {0: "other", 1: "one", 2: "other", 4: "other", 5: "other", 11: "other",
+           21: "other", 22: "other", 25: "other", 101: "other", 1234: "other"},
+    "ru": {0: "many", 1: "one", 2: "few", 4: "few", 5: "many", 11: "many",
+           21: "one", 22: "few", 25: "many", 101: "one", 1234: "few"},
+}
+
+
+@pytest.mark.parametrize("yazyk", sorted(KATEGORII_NODE))
+def test_vitrina_sklonyaet_kak_frontend(yazyk: str):
+    """Свои правила форм совпадают с браузерными на каждом снятом числе.
+
+    Числа не случайные: 21 и 101 — «одна работа» при двузначном счёте, 11 —
+    ловушка на то же правило, 1234 — на трёхзначную сотню, 0 — на «работ».
+    Витрина ошибалась на 2, 4, 21, 22, 101 и 1234, то есть на большинстве
+    настоящих подборок, и была права только на единице и на пятёрке.
+    """
+    from web.public.routes import _forma_chisla
+
+    razoshlos = [
+        f"{n}: своё {_forma_chisla(yazyk, n)}, у браузера {vid}"
+        for n, vid in sorted(KATEGORII_NODE[yazyk].items())
+        if _forma_chisla(yazyk, n) != vid
+    ]
+    assert razoshlos == [], (
+        f"формы витрины разошлись с браузерными ({yazyk}):\n  " + "\n  ".join(razoshlos)
+    )
+
+
+def test_u_vitriny_est_slovo_na_kazhduyu_formu():
+    """Язык описал все формы, которые его правила умеют выбрать.
+
+    Иначе выбор молча съезжает на запасную и подпись врёт ровно на тех числах,
+    ради которых форма и заводилась.
+    """
+    from web.public.routes import FORMY_RABOT, _forma_chisla
+
+    nekhvatka = []
+    for yazyk, formy in sorted(FORMY_RABOT.items()):
+        nuzhno = {_forma_chisla(yazyk, n) for n in range(0, 1000)}
+        nekhvatka += [f"{yazyk}: нет формы {vid}" for vid in sorted(nuzhno - set(formy))]
+    assert nekhvatka == [], "\n  ".join(["у витрины неполные формы:"] + nekhvatka)
