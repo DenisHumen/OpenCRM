@@ -289,9 +289,9 @@ def print_order(
             "name": line.name_snapshot,
             "quantity": _quantity(line.quantity_milli),
             "price": _money(line.price_minor, currency),
-            "sum": _money(_line_sum(line), currency),
+            "sum": _money(summa, currency),
         }
-        for line in rows
+        for line, summa in zip(rows, document_service.line_totals(rows))
     ]
 
     html = public_routes.templates.get_template("order_print.html").render(
@@ -311,10 +311,15 @@ def print_order(
     return HTMLResponse(html)
 
 
-def _line_sum(line) -> int:
-    """Сумма строки в минорных единицах. Делим на тысячу один раз, целыми."""
-    scaled = line.quantity_milli * (line.price_minor or 0)
-    return (scaled + 500) // 1000
+# `_line_sum` отсюда убран. Он был ВТОРЫМ местом, где считаются деньги, — ровно
+# тем, от чего предостерегает докстрока модели `DocumentLine`, — и успел
+# разойтись с первым дважды. Во-первых, он округлял на каждой строке, тогда как
+# итог округляется один раз, и колонка «Сумма» не складывалась в «Итого».
+# Во-вторых, у него не было ветки для отрицательных: строка со скидочной ценой
+# округлялась в колонке в одну сторону, а в итоге в другую.
+#
+# Теперь суммы строк берутся из `document_service.line_totals` — общим счётом,
+# нарастающим итогом, так что колонка складывается в итог тождественно.
 
 
 def _money(minor: int | None, currency: str) -> str:

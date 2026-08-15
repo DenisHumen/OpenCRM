@@ -390,12 +390,16 @@ def print_act(
                 "name": line.name_snapshot,
                 "quantity": _quantity(line.quantity_milli),
                 "price": _money(line.price_minor, currency),
-                # Сумма строки — тем же счётом, что и итог, только по одной
-                # строке. Своя арифметика здесь означала бы второе место, где
-                # считаются деньги, и разошлись бы они первым же округлением.
-                "sum": _money(document_service.total_minor([line]), currency),
+                # Сумма строки — из общего счёта нарастающим итогом, чтобы
+                # колонка СКЛАДЫВАЛАСЬ в «Итого» под ней. Здесь стоял вызов
+                # `total_minor` по одной строке, и намерение было верным
+                # («считать деньги одним местом»), а следствие — нет: округление
+                # на каждой строке против округления один раз на итоге даёт
+                # расхождение, и заказчик подписывал лист, где 61.73 + 61.73
+                # стоит под «Итого 123.45». Разбор — в `document_service.line_totals`.
+                "sum": _money(summa, currency),
             }
-            for line in rows
+            for line, summa in zip(rows, document_service.line_totals(rows))
         ],
         total=_money(document_service.total_minor(rows), currency),
         barcode=codes.barcode_svg(act.number),
