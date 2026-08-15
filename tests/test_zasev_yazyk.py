@@ -435,3 +435,83 @@ def test_svezhaya_ustanovka_poluchaet_angliyskie_dannye(chistaya_baza):
         "свежая установка получила русские данные при английском интерфейсе:\n  "
         + "\n  ".join(russkie)
     )
+
+
+# --- словари интерфейса ------------------------------------------------------
+
+#: Словари фронтенда с ветками языков.
+SLOVARI_INTERFEYSA = (
+    "web/frontend/crm/src/lib/i18n.ts",
+    "web/frontend/crm/src/lib/terms.ts",
+)
+
+
+def _bez_kommentariev_ts(tekst: str) -> str:
+    tekst = re.sub(r"/\*.*?\*/", "", tekst, flags=re.S)
+    tekst = re.sub(r"(?m)^\s*//.*$", "", tekst)
+    return re.sub(r"(?m)\s//[^\"'`\n]*$", "", tekst)
+
+
+def _angliyskie_bloki_ts(tekst: str) -> list[str]:
+    """Куски текста внутри `const en = {…}` и `en: {…}` — по счёту скобок.
+
+    Полноту КЛЮЧЕЙ здесь стеречь незачем: `const ru: typeof en` заставляет
+    typescript ругаться на пропущенный ключ ещё до сборки. Чего он не видит —
+    это русской строки, положенной в английскую ветку: типы у неё те же.
+    Ровно так перепутались местами подписи витрины (`web/public/routes.py`).
+    """
+    bloki = []
+    for nachalo in [m.end() - 1 for m in re.finditer(r"(?:const en\s*=|(?<![\w])en\s*:)\s*\{", tekst)]:
+        glubina, i = 0, nachalo
+        while i < len(tekst):
+            if tekst[i] == "{":
+                glubina += 1
+            elif tekst[i] == "}":
+                glubina -= 1
+                if glubina == 0:
+                    break
+            i += 1
+        bloki.append(tekst[nachalo : i + 1])
+    return bloki
+
+
+@pytest.mark.parametrize("rel", SLOVARI_INTERFEYSA)
+def test_angliyskaya_vetka_slovarey_interfeysa_bez_kirillitsy(rel: str):
+    """Английская ветка словаря интерфейса — по-английски."""
+    put = ROOT / rel
+    assert put.exists(), f"{rel} — файла нет, список словарей устарел"
+
+    bloki = _angliyskie_bloki_ts(_bez_kommentariev_ts(put.read_text(encoding="utf-8")))
+    assert bloki, f"{rel}: английской ветки не найдено — разбор смотрит не туда"
+
+    vinovnye = []
+    for blok in bloki:
+        vinovnye += [
+            stroka.strip()
+            for stroka in blok.split("\n")
+            if KIRILLITSA.search(stroka)
+        ]
+    assert vinovnye == [], (
+        f"в английской ветке {rel} русский текст:\n  " + "\n  ".join(vinovnye)
+    )
+
+
+def test_razbor_slovarey_interfeysa_vidit_perevody():
+    """Разбор обязан доставать сами переводы, а не пустоту.
+
+    Скобочный счёт по тексту хрупок: сдвинется форма файла — и «кириллицы не
+    нашлось» будет значить «не туда смотрел».
+    """
+    slovar = _bez_kommentariev_ts(
+        (ROOT / "web/frontend/crm/src/lib/i18n.ts").read_text(encoding="utf-8")
+    )
+    bloki = _angliyskie_bloki_ts(slovar)
+    assert len(bloki) == 1, f"веток en в i18n.ts найдено {len(bloki)}, ожидалась одна"
+    assert bloki[0].count(":") > 500, "разбор достал огрызок словаря, а не словарь"
+
+    terms = _bez_kommentariev_ts(
+        (ROOT / "web/frontend/crm/src/lib/terms.ts").read_text(encoding="utf-8")
+    )
+    bloki = _angliyskie_bloki_ts(terms)
+    assert len(bloki) == 4, f"веток en в terms.ts найдено {len(bloki)}, ожидалось четыре"
+    assert any('"Deal"' in b for b in bloki), "разбор не видит английских форм слова"
