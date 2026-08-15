@@ -1,7 +1,9 @@
 """Приём и обработка медиафайлов работ: валидация по сигнатуре,
 WebP-превью, blurhash, постеры видео (через ffmpeg, если он установлен)."""
 
+import io
 import re
+import threading
 import shutil
 import subprocess
 import tempfile
@@ -199,16 +201,117 @@ def derive(im: Image.Image, box: int) -> Image.Image:
     return variant
 
 
+#: Сколько мегапикселей позволено РАЗЖАТЬ за раз. Не размер файла и не размер
+#: снимка.
+#:
+#: Цена разжатия замерена и линейна: 3,83 МБ памяти на мегапиксель (4 Мпикс →
+#: 15,4 МБ; 16 → 61,1; 36 → 137,8; 89 → 339,7). Считается пиковый RSS процесса,
+#: потому что смотрит на него именно OOM-killer.
+#:
+#: Откуда опасность. У службы `app` в `docker-compose.yml` нет `mem_limit` — он
+#: стоит у всех служб наблюдения и отсутствует у трёх главных. Значит верхнюю
+#: границу задаёт машина: два гигабайта на всё, включая MySQL. Жертву при
+#: нехватке выбирает ядро по наибольшему RSS, то есть скорее всего базу: сайт
+#: терял бы MySQL из-за того, что кто-то загрузил альбом.
+#:
+#: Умолчание Pillow (89,5 Мпикс) от этого не спасало: на 89 Мпикс он лишь
+#: предупреждает и разжимает, а отказывает только на вдвое большем.
+#:
+#: Настоящая приманка — не JPEG, а PNG: 25 Мпикс весят 2,0 МБ файлом и 95,6 МБ
+#: в памяти. Маленькая посылка, большой расход — предел `max_upload_mb: 200`
+#: такое пропускает не заметив.
+#:
+#: 50 Мпикс — это 191 МБ худшего случая (замерено: 50 Мпикс PNG дают ровно
+#: 191,0 МБ, 51 отвергается без разжатия). Выше любого телефона (48 Мпикс у
+#: iPhone 16 Pro) и любой зеркалки массового ряда (61 Мпикс у Sony A7R V), но
+#: ниже того, чем можно уронить машину. JPEG сюда почти не упирается: он идёт
+#: через `draft` и приходит к проверке уже уменьшенным.
+MAX_DECODE_MEGAPIXELS = 50
+
+#: Сколько картинок разжимается ОДНОВРЕМЕННО.
+#:
+#: Бюджет выше ограничивает одну картинку, а редактор доски принимает пачку
+#: файлов сразу, и превью строятся фоновыми задачами. Каждая такая задача —
+#: синхронная функция, значит Starlette уводит её в общий пул потоков, а его
+#: ёмкость по умолчанию сорок (проверено:
+#: `anyio.to_thread.current_default_thread_limiter().total_tokens` = 40). Без
+#: этого замка худший случай — сорок разжатий по 191 МБ, то есть 7,6 ГБ на
+#: машине с двумя.
+#:
+#: Два, а не один: превью строятся в фоне, и очередь из двадцати фотографий
+#: пойдёт вдвое быстрее, а пик остаётся предсказуемым — 382 МБ, что машина
+#: переживает вместе с базой.
+_razzhatie = threading.BoundedSemaphore(2)
+
+
+def _proverit_byudzhet(im: Image.Image) -> None:
+    """Отказать до разжатия, если картинка не влезает в бюджет памяти."""
+    megapikseley = (im.size[0] * im.size[1]) / 1_000_000
+    if megapikseley > MAX_DECODE_MEGAPIXELS:
+        raise errors.ValidationError(
+            f"Image is too large to process: {im.size[0]}x{im.size[1]} "
+            f"({megapikseley:.0f} megapixels, limit is {MAX_DECODE_MEGAPIXELS}). "
+            "Save it as JPEG or scale it down and upload again.",
+            code="image_too_large",
+        )
+
+
+def assert_decodable(content: bytes) -> None:
+    """Проверить картинку ДО того, как её примут. Зовётся из загрузки.
+
+    Стоит в запросе, а не в фоновой обработке, ровно затем, чтобы отказ дошёл до
+    человека. Превью строятся фоновой задачей, и отказ там пометил бы работу как
+    `failed` без единого слова о причине: поля для причины у модели нет.
+
+    Ничего не стоит: `Image.open` читает заголовок, размеры известны сразу
+    (замерено: прирост 0,0 МБ), `draft` тоже не разжимает.
+    """
+    try:
+        with Image.open(io.BytesIO(content)) as im:
+            im.draft("RGB", (SIZE_LARGE, SIZE_LARGE))
+            _proverit_byudzhet(im)
+    except errors.ValidationError:
+        raise
+    except Exception:
+        # Не разобралось — не наше дело: тип уже определён по magic bytes, а
+        # битый файл честнее отдать обработчику, который пометит работу
+        # неудачной, чем отвергать здесь чужой ошибкой.
+        return
+
+
 def process_image(work_uid: str, original: Path) -> dict:
     with Image.open(original) as im:
-        im.load()
+        # РАЗМЕРЫ ИЗВЕСТНЫ ДО РАЗЖАТИЯ и стоят ноль байт. Снимаем их здесь,
+        # потому что дальше `draft` изменит `im.size`, а в метаданных работы
+        # обязан лежать размер ОРИГИНАЛА: по нему считаются пропорции,
+        # `is_long_image` и `srcset`. Уменьшенный размер там означал бы тихо
+        # испорченную вёрстку витрины у всех загруженных работ.
         width, height = im.size
-        if im.mode not in ("RGB", "RGBA"):
-            im = im.convert("RGBA" if "transparency" in im.info or im.mode in ("P", "LA") else "RGB")
-        directory = original.parent
-        for name, size in (("large", SIZE_LARGE), ("card", SIZE_CARD), ("thumb", SIZE_THUMB)):
-            derive(im, size).save(directory / f"{name}.webp", "WEBP", quality=85)
-        bh = compute_blurhash(im)
+
+        # Разжать сразу помельче. JPEG умеет отдавать 1/2, 1/4, 1/8, и Pillow
+        # выбирает ближайший масштаб НЕ МЕНЬШЕ запрошенного; исходник мельче
+        # коробки не трогается вовсе. Замерено на 89 Мпикс: 339,7 МБ → 21,5 МБ
+        # (в шестнадцать раз меньше) и при этом БЫСТРЕЕ — 0,95 с против 1,25.
+        # Качество не страдает: самая крупная производная всё равно 1920 px.
+        im.draft("RGB", (SIZE_LARGE, SIZE_LARGE))
+
+        # Бюджет считается ПОСЛЕ `draft`, и порядок тут — вся суть. Тогда он
+        # ограничивает настоящий расход памяти, а не размер снимка: фотография
+        # со 100-мегапиксельной камеры придёт сюда уменьшенной и пройдёт, а
+        # PNG-бомба останется собой и будет отвергнута — до разжатия, то есть
+        # бесплатно (`draft` к PNG неприменим и отвечает `None`).
+        _proverit_byudzhet(im)
+
+        with _razzhatie:
+            im.load()
+            if im.mode not in ("RGB", "RGBA"):
+                im = im.convert(
+                    "RGBA" if "transparency" in im.info or im.mode in ("P", "LA") else "RGB"
+                )
+            directory = original.parent
+            for name, size in (("large", SIZE_LARGE), ("card", SIZE_CARD), ("thumb", SIZE_THUMB)):
+                derive(im, size).save(directory / f"{name}.webp", "WEBP", quality=85)
+            bh = compute_blurhash(im)
     return {"width": width, "height": height, "blurhash": bh}
 
 

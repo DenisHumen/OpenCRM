@@ -246,3 +246,64 @@ def test_the_three_places_show_the_same_board_card(manager_client):
     if in_dashboard is not None:   # дашборд показывает только четыре свежих
         assert set(in_dashboard) <= set(in_list)
         assert in_dashboard["works_count"] == 1
+
+
+def test_ogromnaya_kartinka_otvergaetsya_do_razzhatiya(manager_client):
+    """Картинка, которая не влезает в бюджет памяти, получает отказ при ЗАГРУЗКЕ.
+
+    Цена разжатия замерена и линейна: 3,83 МБ на мегапиксель. У службы `app` в
+    `docker-compose.yml` нет `mem_limit` — он стоит у всех служб наблюдения и
+    отсутствует у трёх главных, — значит верхнюю границу задаёт машина: два
+    гигабайта на всё, включая MySQL. Жертву при нехватке выбирает ядро по
+    наибольшему RSS, то есть скорее всего базу.
+
+    Приманка тут не JPEG, а PNG: 25 Мпикс весят 2 МБ файлом и 95,6 МБ в памяти.
+    Предел `max_upload_mb: 200` такое пропускает не заметив — он про размер
+    посылки, а расход зависит от числа пикселей.
+
+    Отказ обязан прийти В ЗАПРОСЕ. Превью строятся фоновой задачей, и отказ там
+    пометил бы работу `failed` без единого слова о причине: поля для причины у
+    модели нет, и человек повторял бы тот же файл.
+    """
+    import io as _io
+
+    from PIL import Image as _Image
+
+    storona = 7200  # 51,8 Мпикс — чуть выше бюджета
+    bomba = _io.BytesIO()
+    _Image.new("RGB", (storona, storona)).save(bomba, "PNG", compress_level=1)
+    telo = bomba.getvalue()
+    assert len(telo) < 20 * 1024 * 1024, (
+        "опыт бессмыслен: файл сам по себе великоват, и его отвергнет потолок "
+        "размера, а не бюджет памяти"
+    )
+
+    doska = _board(manager_client, "Доска для бомбы")
+    otvet = manager_client.post(
+        f"{API}/boards/{doska['id']}/works",
+        files={"file": ("bomba.png", telo, "image/png")},
+    )
+    assert otvet.status_code == 422, f"ожидался понятный отказ, пришло {otvet.status_code}"
+    assert otvet.json()["error"]["code"] == "image_too_large"
+
+
+def test_obychnyy_snimok_s_kamery_prohodit(manager_client):
+    """Снимок с телефона проходит, и это половина смысла правки.
+
+    Бюджет должен отсекать бомбы, а не фотографии. 24 Мпикс — обычный телефон;
+    JPEG вдобавок идёт через `draft` и приходит к проверке уже уменьшенным,
+    поэтому камеры на 100 Мпикс тоже проходят.
+    """
+    import io as _io
+
+    from PIL import Image as _Image
+
+    snimok = _io.BytesIO()
+    _Image.new("RGB", (5657, 4243)).save(snimok, "JPEG", quality=80)
+
+    doska = _board(manager_client, "Доска для снимка")
+    otvet = manager_client.post(
+        f"{API}/boards/{doska['id']}/works",
+        files={"file": ("foto.jpg", snimok.getvalue(), "image/jpeg")},
+    )
+    assert otvet.status_code == 202, f"обычный снимок отвергнут: {otvet.text[:200]}"
