@@ -660,3 +660,50 @@ def test_u_vitriny_est_slovo_na_kazhduyu_formu():
         nuzhno = {_forma_chisla(yazyk, n) for n in range(0, 1000)}
         nekhvatka += [f"{yazyk}: нет формы {vid}" for vid in sorted(nuzhno - set(formy))]
     assert nekhvatka == [], "\n  ".join(["у витрины неполные формы:"] + nekhvatka)
+
+
+def test_kazhdyy_vyzov_peredayot_schitaemoe_chislo():
+    """Экран передаёт ту переменную, по которой выбирается форма.
+
+    Слабое место всей затеи: `plural("total", …)` берёт имя СТРОКОЙ, и
+    typescript про него ничего не знает. Экран, зовущий `t("ordersSub", { n })`
+    вместо `{ total }`, соберётся молча — и навсегда покажет общую форму, то
+    есть «1 orders» ровно там, откуда всё и начиналось.
+
+    Проверяются оба конца: имя, которое просит словарь, и имя, которое даёт
+    экран. Одного разбора словаря для этого мало — он не знает, кто его зовёт.
+    """
+    src = ROOT / "web" / "frontend" / "crm" / "src"
+    slovar = (src / "lib" / "i18n.ts").read_text(encoding="utf-8")
+    klyuchi = dict(
+        re.findall(r"^  (\w+): plural\(\"(\w+)\"", slovar[slovar.index("const en = {") :], flags=re.M)
+    )
+    assert klyuchi, "подписей со счётом не найдено — разбор смотрит не туда"
+
+    fayly = [p for p in src.rglob("*.tsx")] + [
+        p for p in src.rglob("*.ts") if p.name != "i18n.ts"
+    ]
+    bedy, vsego = [], 0
+    for klyuch, schyot in sorted(klyuchi.items()):
+        naydeno = 0
+        for put in fayly:
+            tekst = put.read_text(encoding="utf-8")
+            for vyzov in re.finditer(rf"t\(\s*\"{klyuch}\"\s*,\s*\{{([^}}]*)\}}", tekst):
+                naydeno += 1
+                dovody = vyzov.group(1)
+                # Имя обязано быть КЛЮЧОМ, а не куском выражения. Первая
+                # попытка искала `\btotal\s*[,:}]` и была ложно-зелёной: в
+                # `{ n: data.total }` слово `total` есть — с краю, после точки.
+                # Мутация «экран передаёт n вместо total» её не покрасила, и
+                # узналось это только мутацией. Поэтому имя ищется там, где
+                # ключ и может стоять: сразу после `{` или после запятой.
+                if not re.search(rf"(?:^|[{{,])\s*{schyot}\s*[:,}}]", "{" + dovody + "}"):
+                    bedy.append(
+                        f"{put.relative_to(ROOT).as_posix()}: {klyuch} зовут без {schyot!r}"
+                    )
+        if naydeno == 0:
+            bedy.append(f"{klyuch}: подпись со счётом есть, а зовёт её никто — ключ мёртв")
+        vsego += naydeno
+
+    assert bedy == [], "\n  ".join(["вызовы разошлись со словарём:"] + bedy)
+    assert vsego >= len(klyuchi), f"вызовов найдено {vsego} на {len(klyuchi)} ключей"
