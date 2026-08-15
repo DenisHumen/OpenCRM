@@ -30,8 +30,17 @@ def test_upload_work_processing_pipeline(manager_client):
     assert ready["media"]["card"].endswith("card.webp")
 
     # производные файлы на диске, оригинал не в публичном списке
+    #
+    # Каталог берётся СВОЙ, по адресу производной этой самой работы. Здесь
+    # стояло `next(media_dir.glob("*"))` — первый попавшийся, — и это работало,
+    # пока работа в каталоге была одна. Порядок у `glob` файловый, а не по
+    # времени создания: стоило появиться соседней работе, и проверка начинала
+    # смотреть в чужой каталог. Поймано обратным порядком прогона на CI, где
+    # первым оказался каталог с `video.mp4`.
     media_dir = get_settings().media_dir
-    work_dir = next(media_dir.glob("*"))
+    work_uid = ready["media"]["card"].rstrip("/").split("/")[-2]
+    work_dir = media_dir / work_uid
+    assert work_dir.is_dir(), f"каталог работы не найден: {work_dir}"
     names = {p.name for p in work_dir.iterdir()}
     assert {"original.png", "large.webp", "card.webp", "thumb.webp"} <= names
 
