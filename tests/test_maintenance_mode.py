@@ -221,3 +221,72 @@ def test_cleanup_is_written_into_the_journal(root_client):
             if e["action"] == "storage.purged"
         ]
     assert entries, "уборка не попала в журнал"
+
+
+def test_puti_otkrytye_pri_zakrytom_sayte_vedut_kuda_to(closed):
+    """Каждый пропуск обязан вести к чему-то, что приложение вправду отдаёт.
+
+    `MAINTENANCE_OPEN_*` — это список «не применять правило здесь», и мёртвая
+    запись в нём дороже прочих: пропуска заведены ради одного — чтобы владелец
+    мог войти и СНЯТЬ режим. Переименовали путь, а строка осталась — и
+    настоящий путь закрыт заглушкой вместе со всеми.
+
+    Хуже всех `/assets/`: без него страница входа откроется ПУСТОЙ. Разметка
+    есть, сборка не загрузилась, кнопки нет, и снять режим неоткуда. Заметить
+    это можно только глазами и только в тот единственный раз, когда режим
+    включён по-настоящему.
+
+    Проверка структурная: путь обязан быть либо подключённым каталогом
+    (`app.mount`), либо приставкой настоящего маршрута. Поведением тут не
+    проверить `/assets/` — файлы сборки в наборе могут и не лежать.
+    """
+    from starlette.routing import Mount
+
+    from web.main import app
+    from web.middleware import MAINTENANCE_OPEN_PATHS, MAINTENANCE_OPEN_PREFIXES
+
+    podklyucheno = {r.path.rstrip("/") + "/" for r in app.routes if isinstance(r, Mount)}
+    marshruty = _vse_puti(app)
+
+    bezdomnye = []
+    for pristavka in MAINTENANCE_OPEN_PREFIXES:
+        norma = pristavka.rstrip("/") + "/"
+        est_katalog = norma in podklyucheno
+        est_marshrut = any(p == pristavka.rstrip("/") or p.startswith(norma) for p in marshruty)
+        if not (est_katalog or est_marshrut):
+            bezdomnye.append(pristavka)
+
+    for put in MAINTENANCE_OPEN_PATHS:
+        # Страницы вроде `/login` рисует SPA — их отдаёт общий перехват, поэтому
+        # для них проверка поведением, а не по списку маршрутов.
+        if TestClient(app).get(put).status_code == 503:
+            bezdomnye.append(put)
+
+    assert bezdomnye == [], (
+        "при закрытом сайте эти пути объявлены открытыми, но вести им некуда:\n  "
+        + "\n  ".join(bezdomnye)
+        + "\nБез них владелец не войдёт и не снимет режим."
+    )
+
+
+def _vse_puti(app) -> set[str]:
+    """Пути всех маршрутов, включая подключённые роутеры.
+
+    Плоский перебор `app.routes` показывает единицы вместо полутора сотен: те
+    же грабли, что в `tests/test_route_guards.py:api_routes`.
+    """
+    puti: set[str] = set()
+
+    def sobrat(routes, pristavka=""):
+        for r in routes:
+            vlozhennyy = getattr(r, "original_router", None)
+            if vlozhennyy is not None:
+                ctx = getattr(r, "include_context", None)
+                sobrat(vlozhennyy.routes, pristavka + (getattr(ctx, "prefix", "") or ""))
+                continue
+            put = getattr(r, "path", None)
+            if put:
+                puti.add(pristavka + put)
+
+    sobrat(app.routes)
+    return puti

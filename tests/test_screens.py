@@ -949,3 +949,33 @@ def test_a_reference_that_did_not_load_says_so():
         "справочник не приехал, а экран об этом молчит:\n" + "\n".join(silent)
         + "\n\nЛибо покажи LoadFailed, либо внеси в REFERENCE_WITHOUT_WORD с объяснением."
     )
+
+
+def test_spisok_isklyuchyonnykh_ekranov_ne_protukh():
+    """Исключённый экран обязан существовать и обязан нуждаться в исключении.
+
+    Пока файл назван в `EXEMPT`, его стражи не проверяются вовсе. Запись, у
+    которой экран переименовали или где отказ уже показывается, прикрывает
+    пустоту — и молчащий страж, добавленный в тот же файл завтра, пройдёт
+    незамеченным.
+
+    Тот же разбор, что у списков исключений в `tests/test_db_boundary.py` и
+    `tests/test_route_guards.py`: список «сюда не смотреть» гниёт быстрее
+    прочего, потому что пополняют его осознанно, а вычищать некому.
+    """
+    ekrany = _screens_with_guard()
+
+    propavshie = sorted(set(EXEMPT) - set(ekrany))
+    assert propavshie == [], (
+        "исключения указывают на экраны, которых нет или у которых больше нет "
+        "стражей:\n  " + "\n  ".join(propavshie)
+    )
+
+    lishnie = sorted(
+        imya for imya in EXEMPT
+        if all("error={" in g and "onRetry={" in g for g in ekrany[imya])
+    )
+    assert lishnie == [], (
+        "эти экраны уже показывают отказ — исключение им не нужно:\n  "
+        + "\n  ".join(lishnie)
+    )
