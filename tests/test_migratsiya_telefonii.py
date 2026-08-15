@@ -40,6 +40,40 @@ DO_NEYO = "d6b30f84c917"
 SKOLKO_KLIENTOV = 1050
 
 
+def _obyazatelnye(soedinenie, tablitsa: str) -> dict:
+    """Чем заполнить колонки таблицы, у которых нет умолчания.
+
+    Спрашивается у базы, а не выписывается списком. Выписанный список — это
+    копия схемы в тесте: он устареет на первой же миграции с новой обязательной
+    колонкой, и проверка покраснеет отказом ВСТАВКИ, ничего не сказав про то,
+    ради чего написана. Здесь это уже случилось дважды подряд.
+    """
+    kolonki = soedinenie.execute(
+        text(
+            "SELECT COLUMN_NAME, DATA_TYPE FROM information_schema.COLUMNS "
+            "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :tablitsa "
+            "AND IS_NULLABLE = 'NO' AND COLUMN_DEFAULT IS NULL "
+            "AND EXTRA NOT LIKE '%auto_increment%'"
+        ),
+        {"tablitsa": tablitsa},
+    ).all()
+    return {
+        imya: (0 if tip in ("int", "bigint", "tinyint", "decimal") else "")
+        for imya, tip in kolonki
+    }
+
+
+def _vstavit(soedinenie, tablitsa: str, **svoyo) -> int:
+    """Вставить одну строку, дополнив её обязательными колонками."""
+    znacheniya = {**_obyazatelnye(soedinenie, tablitsa), **svoyo}
+    stolbtsy = ", ".join(f"`{imya}`" for imya in znacheniya)
+    mesta = ", ".join(f":{imya}" for imya in znacheniya)
+    soedinenie.execute(
+        text(f"INSERT INTO {tablitsa} ({stolbtsy}) VALUES ({mesta})"), znacheniya
+    )
+    return int(soedinenie.execute(text("SELECT LAST_INSERT_ID()")).scalar())
+
+
 def _zavesti_klientov(soedinenie, nomera: list[str]) -> None:
     """Вставить карточки, заполнив ВСЕ обязательные колонки той ревизии.
 
@@ -195,6 +229,73 @@ def test_zasev_ne_delaet_zaprosa_na_kazhduyu_kartochku(chistaya_baza):
         assert stalo <= 20, (
             f"обновлений ушло {stalo} при {SKOLKO_KLIENTOV} карточках — "
             "засев по-прежнему идёт построчно"
+        )
+    finally:
+        dvigatel.dispose()
+
+
+# --- откат, сужающий колонку -------------------------------------------------
+
+INDEKSY = "f9b41c7e2d08"
+DO_INDEKSOV = "c5e19a3d7b46"
+
+
+def _otkatit(url: str, kuda: str) -> None:
+    from alembic import command
+    from alembic.config import Config
+
+    config = Config(str(ROOT / "alembic.ini"))
+    config.set_main_option("sqlalchemy.url", url)
+    command.downgrade(config, kuda)
+
+
+def test_otkat_perezhivaet_dlinnyy_klyuch_etapa(chistaya_baza):
+    """Спуск ниже `f9b41c7e2d08` возможен, даже когда ключ этапа длинный.
+
+    Эта ревизия расширяет ключи этапов с 20 знаков до 32, а её откат сужает
+    обратно. Комментарий обещал, что длинные ключи «при этом обрежутся», — но на
+    MySQL со `STRICT_TRANS_TABLES` (умолчание, проект его не переопределяет)
+    сужение колонки под существующими данными не обрезает молча, а падает с
+    1265 «Data too long».
+
+    Ключи такой длины — штатное дело, а не выдумка: `pipeline_service` режет
+    основу ключа до 24 знаков и добавляет суффикс при совпадении. Ради ровно
+    такого этапа («Waiting for customer approval») колонку и расширяли.
+
+    Отказ приходился на ПЕРВОЕ действие отката, поэтому ревизия обрывалась в
+    самом начале: `alembic_version` оставался на месте, и спуск ниже становился
+    невозможен вовсе.
+    """
+    from sqlalchemy import create_engine, text
+
+    _nakatit(chistaya_baza, INDEKSY)
+
+    dlinnyy = "waiting_for_customer_app"  # 24 знака — как режет pipeline_service
+    assert len(dlinnyy) > 20, "опыт бессмыслен: ключ помещается в старую колонку"
+
+    dvigatel = create_engine(chistaya_baza)
+    try:
+        with dvigatel.begin() as soedinenie:
+            klient = _vstavit(soedinenie, "clients", name="Заказчик отката")
+            zayavka = _vstavit(
+                soedinenie, "deals", title="Заявка отката", client_id=klient
+            )
+            _vstavit(
+                soedinenie,
+                "deal_stage_changes",
+                deal_id=zayavka,
+                from_stage=dlinnyy,
+                to_stage=dlinnyy,
+            )
+
+        _otkatit(chistaya_baza, DO_INDEKSOV)
+
+        with dvigatel.connect() as soedinenie:
+            stalo = soedinenie.execute(
+                text("SELECT from_stage, to_stage FROM deal_stage_changes")
+            ).all()
+        assert stalo == [(dlinnyy[:20], dlinnyy[:20])], (
+            f"после отката в журнале {stalo}, а ожидалось укорочение до двадцати знаков"
         )
     finally:
         dvigatel.dispose()
