@@ -141,6 +141,13 @@ def upload_work(db: Session, board_id: int, original_name: str, content: bytes) 
         )
     detected_kind, ext, mime = media_service.detect_media(content[:512], original_name)
     kind = "image" if detected_kind == "svg" else detected_kind
+    if detected_kind == "image":
+        # Отказ ЗДЕСЬ, в запросе, а не в фоновой обработке. Превью строятся
+        # фоновой задачей, и отказ там пометил бы работу `failed` без единого
+        # слова о причине — поля для причины у модели нет, и человек повторял бы
+        # тот же файл. Проверка при этом ничего не стоит: размеры читаются из
+        # заголовка, разжатия не происходит.
+        media_service.assert_decodable(content)
 
     work = Work(
         board_id=board.id,
