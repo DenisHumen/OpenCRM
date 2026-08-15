@@ -455,3 +455,45 @@ def test_data_v_zhurnale_ne_zavisit_ot_chasovogo_poyasa():
         ).scalar()
     assert tip == "datetime", f"время журнала хранится как {tip}"
     assert isinstance(datetime.now(), datetime)
+
+
+def test_smena_preseta_ne_zavisit_ot_chisla_zayavok(root_client):
+    """Перестройка воронки стоит одинаково при одной заявке и при десяти.
+
+    Раньше это был цикл по заявкам: присвоение этапа плюс `add_stage_change`, а
+    тот делает `db.flush()` — то есть на КАЖДУЮ заявку отдельные INSERT и
+    UPDATE, и вдобавок все объекты поднимались в память. На боевом объёме из
+    шапки этого файла (400 000 заявок) смена пресета означала бы под миллион
+    отдельных обращений в одной транзакции запроса, с блокировками на всей
+    таблице заявок до самого конца.
+
+    Меряем не время, а СЧЁТ, и не абсолютный, а его РОСТ: сколько именно
+    запросов уходит на перестройку — дело устройства и меняется от правки к
+    правке. А вот зависимость от числа заявок — это и есть беда, и её видно
+    сразу.
+    """
+    klient = root_client.post(f"{API}/clients", json={"name": "Воронка и скорость"}).json()
+
+    def perestroit(preset: str) -> int:
+        with Zaprosy() as z:
+            otvet = root_client.post(f"{API}/pipeline/preset", json={"preset": preset})
+            assert otvet.status_code == 200, otvet.text
+        return len(z.spisok)
+
+    # Одна заявка на доске.
+    root_client.post(f"{API}/deals", json={"title": "Одна", "client_id": klient["id"]})
+    progret(root_client, f"{API}/pipeline/stages")
+    s_odnoy = perestroit("services")
+
+    # Ещё дюжина — счёт обязан остаться прежним.
+    for nomer in range(12):
+        root_client.post(
+            f"{API}/deals", json={"title": f"Ещё {nomer}", "client_id": klient["id"]}
+        )
+    s_dyuzhinoy = perestroit("universal")
+
+    assert s_dyuzhinoy - s_odnoy <= 1, (
+        f"перестройка при 13 заявках стоит {s_dyuzhinoy} запросов против "
+        f"{s_odnoy} при одной — счёт растёт от числа заявок. Запас тут "
+        f"тринадцатикратный: запрос на заявку дал бы +24"
+    )

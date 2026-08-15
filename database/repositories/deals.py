@@ -1,4 +1,4 @@
-from sqlalchemy import func, or_, select, update
+from sqlalchemy import Integer, func, insert, literal, or_, select, update
 from sqlalchemy.orm import Session
 
 from core.utils import divide_money
@@ -338,3 +338,46 @@ def stage_history(db: Session, deal_id: int) -> list[DealStageChange]:
             .order_by(DealStageChange.changed_at.asc(), DealStageChange.id.asc())
         )
     )
+
+
+def pereselit_iz_etapov(
+    db: Session, keys: list[str], target: str, user_id: int | None
+) -> int:
+    """Перевести все заявки со снятых этапов на целевой. Двумя запросами.
+
+    Раньше это был цикл по заявкам: на каждую — присвоение `deal.stage` и вызов
+    `add_stage_change`, а тот делает `db.flush()`. То есть на каждую заявку
+    уходило по отдельному INSERT и UPDATE, и вдобавок все объекты поднимались в
+    память. На боевом объёме (в шапке `tests/test_speed.py` он назван: 400 000
+    заявок) смена пресета означала бы под миллион отдельных обращений в ОДНОЙ
+    транзакции запроса, с блокировками на всей таблице заявок до самого конца.
+
+    Порядок двух запросов — не деталь, а условие правильности. Журнал пишется
+    ПЕРВЫМ, потому что берёт `from_stage` из ещё не изменённой строки; поменяй
+    их местами — и в журнале окажется переход «из целевого этапа в целевой», то
+    есть история переезда, которая ничего не говорит.
+
+    `synchronize_session=False` не забывчивость: объекты заявок в этой сессии
+    после массового UPDATE устареют, и полагаться на них нельзя — вызывающий
+    после этого их не трогает, а следующий запрос читает базу заново.
+    """
+    keys = [key for key in keys if key]
+    if not keys:
+        return 0
+
+    db.execute(
+        insert(DealStageChange).from_select(
+            ["deal_id", "from_stage", "to_stage", "changed_by"],
+            select(
+                Deal.id,
+                Deal.stage,
+                literal(target),
+                literal(user_id, type_=Integer),
+            ).where(Deal.stage.in_(keys)),
+        )
+    )
+    itog = db.execute(
+        update(Deal).where(Deal.stage.in_(keys)).values(stage=target),
+        execution_options={"synchronize_session": False},
+    )
+    return itog.rowcount or 0
