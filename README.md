@@ -3,45 +3,326 @@
   <img src="docs/assets/logo.svg" alt="OpenCRM" width="260">
 </picture>
 
-*[English](README.en.md)*
+*[Русская версия](README.ru.md)*
 
-CRM-система для студии дизайна с публичной витриной работ.
+**A CRM for a small business: jobs, clients, stock, paperwork and money in one
+place — on your own server, no subscription, no third-party cloud.**
 
-Два мира в одном продукте:
+One command installs it on a $5 VPS. After that it updates itself, backs itself
+up, and never phones home.
 
-- **CRM** — внутренний инструмент команды: база клиентов, заметки, история взаимодействий, файлы, доски с работами.
-- **Витрина** — публичная страница-визитка: менеджер формирует доску с работами и делится ссылкой; клиент открывает её без регистрации и видит красиво оформленное портфолио.
+![Request board](docs/images/requests-board.png)
 
-## Ключевые принципы
+---
 
-- Бэкенд — Python (FastAPI), фронтенд — React + TypeScript.
-- База данных — MySQL 8 и Redis рядом; схема доводится миграциями сама (SQLAlchemy + Alembic).
-- Файлы работ хранятся на сервере рядом с приложением.
-- Клиентам регистрация не нужна — доступ к доскам только по ссылке (с опциональным PIN и сроком действия).
-- Сотрудники регистрируются сами, аккаунты одобряет root — встроенный суперпользователь.
-- Язык интерфейса по умолчанию — английский, каждый пользователь может переключить и выбор сохраняется.
+## Who it's for
 
-## Документация
+A sign shop, a repair bench, a boutique, a studio, a salon — anyone doing five
+to fifty jobs a week without an IT department.
 
-Вся документация — в каталоге [docs](docs/README.md):
+You shape it with **switches, not custom work**. On first sign-in it asks what
+your business does and turns on the parts that fit. No stock to track? That
+section is gone — out of the menu, out of the API. Start carrying stock later
+and one switch brings it back with your data intact.
 
-| Документ | Содержание |
-|---|---|
-| [01 — Обзор](docs/01-overview.md) | Концепция, роли, сценарии использования |
-| [02 — Архитектура](docs/02-architecture.md) | Стек, структура каталогов, модули, пайплайн медиа |
-| [03 — База данных](docs/03-database.md) | Схема, таблицы, миграции, индексы |
-| [04 — API](docs/04-api.md) | Спецификация REST API |
-| [05 — Дизайн CRM](docs/05-crm-design.md) | Дизайн-ноты интерфейса CRM |
-| [06 — Дизайн витрины](docs/06-showcase-design.md) | Концепция публичной витрины, анимации, элементы управления |
-| [07 — Безопасность](docs/07-security.md) | Аутентификация, роли, публичные ссылки, защита файлов |
-| [08 — Деплой](docs/08-deployment.md) | Docker, VPS, бэкапы, автообновление |
-| [09 — План работ](docs/09-roadmap.md) | Этапы реализации |
+Everything below is a screenshot of the real thing. The data is invented: a
+Portland sign shop called Beacon Sign & Print, its made-up customers and jobs.
 
-## Статус
+---
 
-Этапы 0–5 плана работ завершены (см. [09-roadmap.md](docs/09-roadmap.md)): бэкенд с интеграционными тестами, React SPA CRM по макетам из `design/`, публичная витрина 1:1 с макетами (модульная сетка, blurhash, PIN-ячейки, лайтбокс). Production-артефакты готовы: Docker, nginx, бэкапы, скрипты обслуживания и автообновление из GitHub с откатом. Остался сам деплой на VPS с HTTPS и внешним мониторингом — порядок ниже.
+## Jobs on a board
 
-## Быстрый старт (dev)
+The backbone. Every job carries a stage, an owner, a due date, an amount, what's
+been paid, and a record of who moved it when.
+
+![Dragging a card between stages](docs/images/drag-stage.gif)
+
+You don't draw the pipeline from scratch. Five ready-made stage sets ship with
+it — services and repair, retail, appointments, agency, general-purpose — and
+every stage renames, moves or goes away. The one rule the system enforces: keep
+one winning end and one losing end, or there's nothing to measure against.
+
+Even the word is yours. Call them deals, orders, requests or bookings; every
+label in the app follows. The screenshots here say *requests*, because that's
+what a sign shop calls them.
+
+![Request card](docs/images/request-card.png)
+
+---
+
+## Clients
+
+A client card is a single feed — calls, meetings, emails, notes. Receipts you
+issued and materials you burned on their job drop into the same place, so
+"what have we actually done for these people" is one screen instead of three.
+
+![Client card](docs/images/client-card.png)
+
+---
+
+## Finding things
+
+Ctrl+K anywhere. Clients, jobs and boards in one list; an empty box shows what
+you touched last. Search obeys permissions — if someone can't see it, they
+can't find it either.
+
+![Command palette](docs/images/search.gif)
+
+---
+
+## Stock
+
+Several locations. Receipts, issues, write-offs, returns, stock-take
+corrections, transfers between stores. Quantities carry three decimal places,
+so 0.125 kg and 1.5 m² survive the round trip.
+
+![Recording a receipt](docs/images/stock-receipt.gif)
+
+**Nothing stores the balance.** It's the sum of the movements, worked out on
+demand. A stored total drifts from its own history eventually, and then nobody
+can say which number to trust. Job costing works the same way, for the same
+reason.
+
+![Warehouse](docs/images/warehouse.png)
+
+---
+
+## Barcodes
+
+One item, several codes: a single, a pack of ten, a full box. Scan the box and
+ten units land in the order. The barcodes are drawn by the app itself — nothing
+is fetched from anywhere — and a scanner just types, so there are no drivers to
+install and no browser prompts to click through.
+
+![Product card with a barcode](docs/images/product-card.png)
+
+---
+
+## Orders
+
+Sales orders and purchase orders. Lines get picked by scanning, and what you
+picked stays separate from what was ordered — so a short line shows up on the
+bench, not at the customer's door.
+
+![Orders](docs/images/orders.png)
+
+---
+
+## Paperwork
+
+Intake receipts, completion certificates, order forms. Numbering runs
+continuously through the year, and printing speaks English, Russian or
+Ukrainian — picked for the customer in front of you, not for the person typing.
+
+![Printed form](docs/images/printed-form.png)
+
+Every form carries a barcode and a QR code. The barcode pulls the job up on a
+scan. The QR code sends the customer to a page where they can check on it
+themselves, which is one phone call you don't take.
+
+![Forms](docs/images/forms.png)
+
+---
+
+## Money
+
+Income and spending by category, budgets per period, profit across any range.
+Amounts are whole numbers of cents and never touch a `float`.
+
+![Finance](docs/images/finance.png)
+
+**Entries can't be edited or deleted** — there is no such permission. You fix a
+mistake with an opposing entry, the way a paper cash book works, so what
+happened stays legible instead of quietly becoming what you wish had happened.
+
+---
+
+## Reports
+
+Where jobs stall, what you billed month by month, and which channels actually
+bring customers. Every one exports to CSV.
+
+![Reports](docs/images/reports.png)
+
+---
+
+## Showing work to a customer
+
+Put a board together, get a link, send it. Your customer opens it with no
+account and sees your work presented properly, not a shared folder.
+
+![Public showcase](docs/images/showcase.png)
+
+Links take an access code and an expiry date. The customer types the code once
+and the pass lives in their browser after that.
+
+![Entering the code](docs/images/showcase-pin.gif)
+
+Back in the CRM the board tells you everything: published or not, how many
+times it was opened, by how many different people, and when. Revoke a link or
+reissue it — the old one dies, the work stays.
+
+![Board editor](docs/images/board-editor.png)
+
+---
+
+## Turning things off
+
+Fifteen modules. Two of them hold the place up — Clients and Deals — and the
+rest come and go one switch at a time.
+
+![Switching a module off](docs/images/modules-off.gif)
+
+A module that's off is gone completely: menu, API, reports, search, permissions
+matrix. **Nothing is deleted.** Switch it back on and your data is exactly where
+you left it. Dependencies are handled for you — turn off the warehouse and
+you're told that labels go with it, before anything happens.
+
+The full list: Clients, Deals, Companies, Forms, Reminders, Message templates,
+Boards, Warehouse, Labels, Orders, Reports, Mail, Calls, Finance, Monitoring.
+
+---
+
+## Who can see what
+
+A role is a job title with a set of permissions. Five come ready — manager,
+accountant, project manager, director, observer — and you can rebuild any of
+them.
+
+![Roles](docs/images/roles.png)
+
+Permissions restrict the server, not the screen. Without the right to see
+amounts, they don't reach the browser at all: not in a list, not in a report,
+not in a CSV export. Other people's jobs are filtered inside the query rather
+than hidden with CSS.
+
+---
+
+## Dashboard
+
+Money in progress, what closed this month, average job size, the pipeline,
+today's reminders, and who's been opening your boards.
+
+![Dashboard](docs/images/dashboard.png)
+
+---
+
+## Also in the box
+
+- **Mail.** A company IMAP/SMTP mailbox; incoming messages match a client by
+  address and land in their feed.
+- **Calls.** A call log, a signed webhook from your phone provider,
+  click-to-call from any card, and a "ring them back" reminder in one click.
+- **Leads from your website.** Post your contact form to a keyed endpoint and
+  the enquiry arrives in the pipeline.
+- **Server monitoring.** Prometheus, Grafana, Loki and Telegram alerts, behind a
+  compose profile — skip it entirely on a small box.
+- **Activity log** for root: who changed what, read-only.
+- **Maintenance mode.** Visitors get a holding page; root keeps working.
+- **Two interface languages** — English and Russian, per user.
+
+---
+
+## Installing it
+
+An Ubuntu 24.04 server, and a domain if you have one. Then one command.
+
+```bash
+sudo apt install -y git
+sudo git clone https://github.com/DenisHumen/OpenCRM.git /opt/OpenCRM
+sudo chown -R $USER:$USER /opt/OpenCRM
+cd /opt/OpenCRM && ./opencrm.sh
+```
+
+`chown` isn't cosmetic: the clone runs under `sudo`, so the directory ends up
+owned by root while the script and the auto-updater run as you. Without it git
+says `detected dubious ownership` and refuses to touch anything. You don't need
+`chmod +x` — the executable bit is in the repository.
+
+The first question is the language, English or Russian. It's saved to
+`docker/.env` (`OPENCRM_LANG`), so the menu, the diagnostics and anything cron
+mails you all speak the same way. Change it later by editing that variable.
+
+From there the wizard:
+
+1. **installs Docker** from Docker's own repository (`apt install docker.io` ships without the `compose` v2 plugin this project needs) and adds you to the `docker` group;
+2. **generates secrets** — `OPENCRM_SECRET_KEY`, the IP hashing salt, the admin password. A second run leaves them alone: regenerating them would sign everyone out and void every share link you'd handed out;
+3. **writes your UID:GID** into `docker/.env` — the container writes to mounted directories as that user, and a mismatch is "permission denied" on the first migration;
+4. **creates the state directories** under `~/opencrm/`;
+5. **builds and starts the stack**, then waits for `/healthz`;
+6. **issues a Let's Encrypt certificate** — after checking the domain's A record actually points here, because otherwise the challenge fails anyway and burns one of your weekly attempts;
+7. **closes the firewall** — ufw allows SSH and the site, nothing else. The SSH port is read from three places at once (your live connection, listening sockets, the config) so the script can't lock you out: on Ubuntu 24.04 ssh is socket-activated and the `Port` in `sshd_config` may be fiction;
+8. **schedules daily backups** at 03:30, by systemd timer or cron;
+9. **turns on auto-update**, as a systemd service or a cron job.
+
+At the end it prints the address, the login and the admin password. The password
+appears once; the first sign-in makes you change it.
+
+Before building it checks memory and disk. The frontend build is the hungriest
+step, and on a 1 GB box with no swap the OOM killer takes it out without saying
+why — so if memory is tight, the script offers to add a swap file.
+
+No domain is fine: the site comes up over HTTP and answers on its IP. Add one
+later with `./opencrm.sh domain`.
+
+Non-interactively, from Ansible or similar:
+
+```bash
+./opencrm.sh install --domain studio.example --email you@studio.example --yes
+```
+
+### After that, a menu
+
+```
+   1) Status and health         8) Logs
+   2) Start                     9) Backup
+   3) Restart                  10) Restore from backup
+   4) Stop                     11) Domain and HTTPS
+   5) Update now               12) Firewall
+   6) Auto-update on/off       13) Reset admin password
+   7) Update journal           14) Diagnostics
+                                0) Exit
+```
+
+All of it works as commands too, for cron and scripts:
+
+```bash
+./opencrm.sh status          # what's deployed, is it alive, is there an update
+./opencrm.sh update          # update now instead of waiting for the poll
+./opencrm.sh autoupdate off  # pause before doing anything by hand
+./opencrm.sh backup
+./opencrm.sh firewall        # inspect and repair the ufw rules
+./opencrm.sh doctor          # environment check for when something is off
+./opencrm.sh maintenance off # reopen the site
+```
+
+---
+
+## How it's built
+
+- Python (FastAPI) on the back, React + TypeScript single-page app on the front.
+- MySQL 8 for data, Redis beside it holding the sign-in and PIN attempt counters shared across processes.
+- Migrations (SQLAlchemy + Alembic) run on every update — after the database is copied, before the app starts.
+- An app whose schema doesn't match **refuses to start**: `/healthz` never returns 200, so the update rolls back both code and database. There's no "running on the wrong schema" state to discover later.
+- Uploaded work lives on the server next to the app; previews, blurhashes and video posters are made at upload time.
+- Money is integer minor units, quantities are integer thousandths. Neither goes near a `float`.
+- Every database query lives in `database/`. A test enforces that none escape.
+- Nothing calls out: no telemetry, no third-party update checks, no external CDNs. The CSP wouldn't allow it anyway.
+
+### Updating
+
+The server updates itself: a daemon pulls the commit, rebuilds the container,
+copies the database and applies migrations before start. While the container is
+swapped, nginx serves a holding page with a 503 and `Retry-After` — search
+engines keep those pages indexed instead of dropping them as broken.
+
+- **Editing files on the server stops auto-update.** It sees a dirty working tree and won't move; overwriting your work isn't its call. Commit, or `git checkout -- .`, or `./opencrm.sh autoupdate off` while you work.
+- **A failed commit isn't retried in a loop.** It's remembered and the daemon waits for the next one. To retry that same commit, `./opencrm.sh update`.
+- **Rollback restores the database only if the container was already swapped.** If the build failed earlier than that, the old app was serving and taking writes the whole time, and restoring the snapshot would erase them. Snapshots are in `~/opencrm/updates/`.
+- **Backups sit on the same disk as the database.** That covers a corrupted database and your own mistakes, not a dead disk. Off-site upload is configured in `scripts/backup.sh`, worked example included.
+- **Docker publishes ports around ufw.** 80 and 443 stay open even if a rule forbids them — that's Docker, and for the site it's what you want. But any other container with `ports:` is exposed the same way, so publish those on `127.0.0.1` only.
+
+### Developing
 
 ```bash
 python -m venv .venv
@@ -51,110 +332,36 @@ cd web/frontend/crm && npm install && npm run build && cd ../../..
 .venv/Scripts/python -m uvicorn web.main:app --host 0.0.0.0 --port 8000
 ```
 
-- CRM открывается на `http://localhost:8000/` (FastAPI отдаёт собранную SPA), витрины — на `/b/{token}`.
-- **`--host 0.0.0.0` обязателен, если открывать не с этой же машины.** По умолчанию uvicorn слушает только `127.0.0.1`, и с телефона или соседнего компьютера по `http://192.168.x.x:8000` соединения не будет вовсе. Для показа витрины по локальной сети задайте ещё `OPENCRM_BASE_URL=http://192.168.x.x:8000` — иначе скопированная в CRM ссылка на доску будет вести на `localhost` и у коллеги не откроется. На Windows первый запуск с `0.0.0.0` попросит разрешение брандмауэра — доступ нужен для сети «Частная».
-- Перед запуском скопируйте `config/.env.example` в `config/.env` и заполните. В `production` приложение не стартует с пустым `OPENCRM_SECRET_KEY` или `OPENCRM_IP_HASH_SALT` — это защита от подделки cookie, а не придирка.
-- Root-аккаунт создаётся **один раз** на пустой базе из `OPENCRM_ROOT_EMAIL`/`OPENCRM_ROOT_PASSWORD`; при первом входе обязательна смена пароля. Дальше правка этих переменных ни на что не влияет — логин и пароль меняются командой:
+- The CRM opens at `http://localhost:8000/`; showcases live at `/b/{token}`.
+- **`--host 0.0.0.0` is required to reach it from another machine.** uvicorn binds `127.0.0.1` otherwise. To show a board over the LAN, also set `OPENCRM_BASE_URL=http://192.168.x.x:8000`, or the link you copy will point at `localhost`.
+- Copy `config/.env.example` to `config/.env` first. In `production` the app won't start with an empty `OPENCRM_SECRET_KEY` or `OPENCRM_IP_HASH_SALT` — that's cookie forgery protection, not pedantry.
+- The root account is created **once**, on an empty database, from `OPENCRM_ROOT_EMAIL`/`OPENCRM_ROOT_PASSWORD`. After that:
 
 ```bash
-python scripts/reset_root.py --email me@studio.site --password "новый-пароль"
-```
-- Разработка фронтенда с hot-reload: `npm run dev` в `web/frontend/crm` (Vite на 5173, API проксируется на 8000).
-- API-документация (dev): `http://localhost:8000/api/docs`.
-- Тесты: `.venv/Scripts/python -m pytest`.
-- Демо-данные и пример витрины: `.venv/Scripts/python scripts/seed_demo.py` (сервер должен быть запущен).
-
-## Деплой на сервер (Ubuntu 24.04)
-
-Всё делает один скрипт. От вас — только домен.
-
-```bash
-sudo apt install -y git
-sudo git clone https://github.com/DenisHumen/OpenCRM.git /opt/OpenCRM
-sudo chown -R $USER:$USER /opt/OpenCRM
-cd /opt/OpenCRM && ./opencrm.sh
+python scripts/reset_root.py --email me@studio.site --password "new-password"
 ```
 
-`chown` — не косметика: клонирует `sudo`, то есть каталог достаётся root, а
-дальше скрипт и автообновление работают от вас. Без этой строки git отвечает
-`detected dubious ownership` и отказывается делать что-либо в чужом каталоге.
-`chmod +x` не нужен — бит исполнения хранится в самом репозитории.
+- Frontend with hot reload: `npm run dev` in `web/frontend/crm` (Vite on 5173, API proxied to 8000).
+- API docs (dev only): `http://localhost:8000/api/docs`.
+- Tests: `.venv/Scripts/python -m pytest`.
+- Demo data and a sample showcase: `.venv/Scripts/python scripts/seed_demo.py`, with the server running.
 
-Первым делом мастер спрашивает язык — русский или английский. Выбор сохраняется в `docker/.env` (`OPENCRM_LANG`), поэтому меню, диагностика и сообщения из cron говорят одинаково. Переключить потом: поправить эту переменную или задать `OPENCRM_LANG=en` в окружении.
+---
 
-Дальше мастер сам:
+## Documentation
 
-1. **ставит Docker** из репозитория Docker (в `apt install docker.io` нет плагина `compose` v2, на который завязан проект) и добавляет вас в группу `docker`;
-2. **генерирует секреты** — `OPENCRM_SECRET_KEY`, соль для хэшей IP и пароль администратора; повторный запуск их не трогает, иначе разлогинило бы всех и обесценило выданные PIN-ссылки;
-3. **подставляет ваши UID:GID** в `docker/.env` — контейнер пишет в примонтированные каталоги под ними, и несовпадение упирается в «permission denied» на первой же миграции;
-4. **создаёт каталоги состояния** в `~/opencrm/`;
-5. **собирает и поднимает стек**, дожидается ответа `/healthz`;
-6. **выпускает сертификат** Let's Encrypt — предварительно проверив, что A-запись домена ведёт именно на этот сервер (иначе проверка всё равно провалится, только зря потратит попытку из недельного лимита);
-7. **закрывает фаервол** — ufw пропускает внутрь только SSH и сайт. Порт SSH определяется по трём источникам сразу (активное подключение, слушающие сокеты, конфиг), чтобы не отрезать вас от собственного сервера: на Ubuntu 24.04 ssh поднимается сокетом systemd, и порт из `sshd_config` может не иметь к делу отношения;
-8. **ставит ежедневные копии** на 3:30 — таймером systemd, а без него заданием cron;
-9. **включает автообновление** — службой systemd, а без systemd заданием cron.
+Everything is in [docs](docs/README.md). **The manual is written in Russian** —
+this file is the English way into the project, not a translation of all of it.
 
-В конце покажет адрес, логин и пароль администратора. Пароль показывается один раз; при первом входе система попросит его сменить.
-
-Перед сборкой скрипт смотрит на память и место: сборка фронтенда — самое прожорливое место установки, и на машине с 1 ГБ без подкачки её убивает OOM-killer без внятного сообщения. Если памяти мало, предложит добавить файл подкачки.
-
-Домен можно не указывать — тогда сайт поднимется по HTTP и будет доступен по IP в локальной сети. Добавить домен позже: `./opencrm.sh domain`.
-
-Неинтерактивно (например, из Ansible):
-
-```bash
-./opencrm.sh install --domain studio.example --email you@studio.example --yes
-```
-
-### Дальше — меню
-
-Повторный запуск `./opencrm.sh` открывает меню:
-
-```
-   1) Статус и здоровье          8) Логи
-   2) Запустить                  9) Резервная копия
-   3) Перезапустить             10) Восстановить из копии
-   4) Остановить                11) Домен и HTTPS
-   5) Обновить сейчас           12) Фаервол
-   6) Автообновление вкл/выкл   13) Сбросить пароль администратора
-   7) Журнал обновлений         14) Диагностика
-                                 0) Выход
-```
-
-Всё то же есть командами — для cron и скриптов:
-
-```bash
-./opencrm.sh status          # что развёрнуто, живо ли, есть ли обновление
-./opencrm.sh update          # обновиться сейчас, не дожидаясь опроса
-./opencrm.sh autoupdate off  # пауза перед ручными работами
-./opencrm.sh backup
-./opencrm.sh firewall        # посмотреть и починить правила ufw
-./opencrm.sh doctor          # проверка окружения, когда что-то не так
-./opencrm.sh maintenance off # открыть сайт
-```
-
-### Пока сайт обновляется
-
-Замена контейнера занимает секунды, но всё это время приложения нет. Вместо голого «502 Bad Gateway» nginx отдаёт страницу обслуживания — `docker/nginx/maintenance/maintenance.html`, её можно править под себя. Ответ идёт с кодом 503 и заголовком `Retry-After`: по нему поисковики держат страницы в индексе, а не выбрасывают как сломанные. Страница возвращает посетителя на сайт сама, как только приложение ответило.
-
-В подвале спрятана змейка — скоротать минуту ожидания. Пока сайт лежит, отправить счёт некуда: он лежит в `localStorage` и уходит на сервер, как только приложение отозвалось; таблица лидеров хранится в основной базе. Отдельный сервис ради игры в продакшене не работает.
-
-Собственные ошибки приложения (404, 500) заглушкой не подменяются, а проверка Let's Encrypt продолжает работать и во время обновления — иначе продление сертификата однажды провалилось бы молча.
-
-### Закрыть сайт руками
-
-Это другое: приложение работает, но root закрыл его на работы — «Настройки сайта → Обслуживание». Заглушку видят все остальные: и сотрудники, и клиенты по ссылкам на доски. Root продолжает пользоваться CRM как обычно, иначе снять режим было бы неоткуда.
-
-Можно оставить необязательное пояснение — «переносим базу, вернёмся к 14:00»; оно попадёт на страницу, которую видят посетители. При открытии сайта пояснение стирается: оставшееся от прошлого раза вводило бы в заблуждение сильнее, чем его отсутствие.
-
-Пока режим включён, поверх интерфейса висит полоса с напоминанием и указанием, кто и когда закрыл. Без неё забытый режим молча держит закрытыми и витрины, и вход остальным. `/healthz` при этом продолжает отвечать `200` — иначе Docker счёл бы контейнер больным и начал его перезапускать.
-
-### Что стоит знать заранее
-
-- **Правки прямо на сервере останавливают автообновление.** Оно видит грязное рабочее дерево и не едет: затирать сделанное руками не имеет права. Либо закоммитьте, либо `git checkout -- .`, либо `./opencrm.sh autoupdate off` на время работ.
-- **Упавший коммит не пробуется по кругу.** Он запоминается, и демон ждёт следующего; повторить его же — `./opencrm.sh update`.
-- **Откат возвращает базу только если контейнер успели заменить.** Упади сборка раньше — старое приложение всё это время работало и принимало записи, и возврат к снимку стёр бы их. Снимки лежат в `~/opencrm/updates/`.
-- **Копии лежат на том же диске, что и база.** Это спасает от испорченной базы и от собственной ошибки, но не от смерти диска. Выгрузка наружу настраивается в `scripts/backup.sh` — там же готовый пример.
-- **Docker публикует порты мимо ufw.** 80 и 443 будут открыты, даже если запретить их правилом, — так устроен Docker, и для сайта это ровно то, что нужно. Но и любой другой контейнер с `ports:` окажется снаружи вопреки правилам: публикуйте такие порты только на `127.0.0.1`.
-
-Как всё устроено внутри и почему именно так — [08-deployment.md](docs/08-deployment.md).
+| Document | Contents |
+|---|---|
+| [01 — Overview](docs/01-overview.md) | What the system does, roles, scenarios |
+| [02 — Architecture](docs/02-architecture.md) | Stack, directory layout, modules, media pipeline |
+| [03 — Database](docs/03-database.md) | Schema, tables, migrations, indexes |
+| [04 — API](docs/04-api.md) | REST API specification |
+| [05 — CRM design](docs/05-crm-design.md) | Design notes for the interface |
+| [06 — Showcase design](docs/06-showcase-design.md) | Public showcase, animation, controls |
+| [07 — Security](docs/07-security.md) | Authentication, roles, public links, file protection |
+| [08 — Deployment](docs/08-deployment.md) | Docker, VPS, backups, auto-update |
+| [09 — Roadmap](docs/09-roadmap.md) | Delivery stages |
+| [11 — Modules](docs/11-modules.md) | Module registry, dependencies, permissions |
