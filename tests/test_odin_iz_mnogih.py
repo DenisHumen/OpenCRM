@@ -263,3 +263,98 @@ def test_dvoe_uvozyat_posledneye_razom(root_client):
             assert otvet.status_code in (200, 204), (
                 f"склад {w['name']} не закрылся: {otvet.status_code} {otvet.text}"
             )
+
+
+# --- склад: два заказа на последний товар ------------------------------------
+
+
+def test_dva_zakaza_otgruzhayut_posledneye_razom(root_client):
+    """Отгрузить сверх остатка можно только с подтверждением — и разом тоже.
+
+    Проведение ОДНОГО заказа дважды здесь закрыто давно и осознанно: статус
+    меняется условным `UPDATE`, и второй получает отказ. Но заказов два, и
+    спорят они не за статус, а за товар.
+
+    Устройство то же, что у переезда: сначала `_shortages` спрашивает остаток,
+    потом пишутся движения. Между шагами окно, и двое проходят оба — со склада
+    уходит больше, чем там было, а подтверждения не давал никто.
+
+    Утверждение не «остаток неотрицателен»: отгрузка сверх остатка законна с
+    `confirm_negative`, и обычному движению минус разрешён нарочно. Проверяется
+    ровно то, что без подтверждения сверх остатка не уходит.
+    """
+    from tests.test_orders import ORDERS, order_with, product, stock_of
+
+    root_client.post(f"{API}/modules/warehouse", json={"enabled": True})
+    root_client.post(f"{API}/modules/orders", json={"enabled": True})
+
+    tovar = product(root_client, stock="2")
+    # Покупателя заводим сами: в соседнем файле это приспособа pytest, а не
+    # функция, и импортировать её отсюда нечем.
+    pokupatel = root_client.post(
+        f"{API}/clients", json={"name": "Дуэль покупатель"}
+    ).json()
+    pervyy = order_with(root_client, pokupatel, tovar, quantity="2")
+    vtoroy = order_with(root_client, pokupatel, tovar, quantity="2")
+
+    codes = duel(
+        lambda order_id: root_client.post(f"{ORDERS}/{order_id}/close", json={}).status_code,
+        pervyy["id"],
+        vtoroy["id"],
+    )
+    assert set(codes) == {"first", "second"}, f"об ударе не отчитались: {codes}"
+
+    ostalos = stock_of(root_client, tovar["id"])
+    udachnyh = sum(1 for k in codes.values() if k == 200)
+    assert ostalos >= 0, (
+        f"отгрузили сверх остатка без подтверждения: осталось {ostalos} тысячных "
+        f"при двух единицах на складе, удачных отгрузок {udachnyh}, ответы {codes}"
+    )
+
+
+def test_dva_akta_spisyvayut_posledneye_razom(root_client):
+    """Третье место с тем же устройством — списание материалов по акту.
+
+    Правило «остаток не хранится» неизбежно даёт два шага: спросить и записать.
+    Значит окно возникает везде, где между ними стоит проверка «хватает ли», —
+    и находить такие места по одному бессмысленно. Эта проверка стережёт третье
+    из трёх, чтобы правило было записано не только словами.
+    """
+    from tests.test_acts import ACTS, DEALS, act_with, product, uniq
+
+    root_client.post(f"{API}/modules/warehouse", json={"enabled": True})
+    root_client.post(f"{API}/modules/documents", json={"enabled": True})
+
+    zakazchik = root_client.post(
+        f"{API}/clients", json={"name": f"Дуэль заказчик {uniq()}"}
+    ).json()
+    # Заявки две: акт проводится по своей, и один акт на двоих спор увёл бы в
+    # смену статуса — а спорить надо за товар.
+    zayavki = [
+        root_client.post(
+            DEALS, json={"title": f"Дуэль работа {uniq()}", "client_id": zakazchik["id"]}
+        ).json()
+        for _ in range(2)
+    ]
+
+    tovar = product(root_client, stock="2")
+    pervyy = act_with(root_client, zayavki[0], tovar, quantity="2")
+    vtoroy = act_with(root_client, zayavki[1], tovar, quantity="2")
+
+    codes = duel(
+        lambda act_id: root_client.post(f"{ACTS}/{act_id}/complete", json={}).status_code,
+        pervyy["id"],
+        vtoroy["id"],
+    )
+    assert set(codes) == {"first", "second"}, f"об ударе не отчитались: {codes}"
+
+    from database.repositories import warehouse as sklad_repo
+    from database.session import SessionLocal
+
+    with SessionLocal() as db:
+        ostalos = sklad_repo.stock_of(db, tovar["id"])
+    udachnyh = sum(1 for k in codes.values() if k == 200)
+    assert ostalos >= 0, (
+        f"списали сверх остатка без подтверждения: осталось {ostalos} тысячных "
+        f"при двух единицах, удачных актов {udachnyh}, ответы {codes}"
+    )
