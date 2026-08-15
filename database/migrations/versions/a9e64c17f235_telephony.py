@@ -107,14 +107,55 @@ def _backfill_client_phone_norm() -> None:
             site_settings.c.key == "default_country_code"
         )
     ).scalar() or ''
+    # Засев ПАЧКАМИ, а не по строке. Правило проекта (CLAUDE.md §1, шаг 4)
+    # требует заполнять одним UPDATE, и соседняя миграция `d3b8c05f1e2a` сама
+    # называет цену обхода: «200 000 клиентов и 400 000 заявок — это минуты
+    # вместо секунд».
+    #
+    # Одним запросом здесь всё же нельзя: `normalize_phone` — это питон
+    # (плюс, ведущие нули, код страны, добавочный), и переписать его выражением
+    # SQL значило бы завести ВТОРУЮ нормализацию. Разошлись бы они молча, и
+    # заявка просто перестала бы находить своего клиента.
+    #
+    # Отсюда пачки: значения считаются питоном, а уезжают одним `UPDATE ... CASE`
+    # на тысячу строк. Тысяча — размер, при котором запрос ещё далеко от
+    # `max_allowed_packet` (по умолчанию 64 МБ у MySQL 8), а число обращений
+    # падает в тысячу раз: 200 000 строк это 200 запросов вместо 200 000.
+    #
+    # Цена промедления не в терпении: точка входа гонит миграции ДО старта
+    # приложения, `/healthz` всё это время не отвечает, а автообновление ждёт
+    # его около двух минут и потом откатывает и код, и базу.
+    RAZMER_PACHKI = 1000
     rows = bind.execute(sa.text("SELECT id, phone FROM clients WHERE phone <> ''")).fetchall()
+    pachka = []
+
+    def _slit(pachka):
+        if not pachka:
+            return
+        # `CASE id WHEN … THEN …` одним запросом на всю пачку. Имена параметров
+        # свои у каждой пары, потому что значения разные.
+        vetki = " ".join(f"WHEN :id{n} THEN :norm{n}" for n in range(len(pachka)))
+        gde = ", ".join(f":id{n}" for n in range(len(pachka)))
+        dovody = {}
+        for n, (client_id, normalized) in enumerate(pachka):
+            dovody[f"id{n}"] = client_id
+            dovody[f"norm{n}"] = normalized
+        bind.execute(
+            sa.text(
+                f"UPDATE clients SET phone_norm = CASE id {vetki} END WHERE id IN ({gde})"
+            ),
+            dovody,
+        )
+
     for client_id, phone in rows:
         normalized = normalize_phone(phone or '', code)[:32]
-        if normalized:
-            bind.execute(
-                sa.text("UPDATE clients SET phone_norm = :norm WHERE id = :id"),
-                {"norm": normalized, "id": client_id},
-            )
+        if not normalized:
+            continue
+        pachka.append((client_id, normalized))
+        if len(pachka) >= RAZMER_PACHKI:
+            _slit(pachka)
+            pachka = []
+    _slit(pachka)
 
 
 def downgrade() -> None:
