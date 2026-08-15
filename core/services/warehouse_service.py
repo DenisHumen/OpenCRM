@@ -780,6 +780,10 @@ def transfer(db: Session, data: dict, author: User) -> StockTransfer:
             "Quantity must be greater than zero", code="bad_transfer_quantity"
         )
 
+    # Занимаем товар ДО подсчёта остатка: между «спросили» и «записали» есть
+    # окно, и двое, увозящие последнее разом, проходят оба. Разбор — в докстроке
+    # `warehouse_repo.zapert_tovar`.
+    warehouse_repo.zapert_tovar(db, product.id)
     available = warehouse_repo.stock_of(db, product.id, source.id)
     if quantity > available and not data.get("confirm_negative"):
         raise errors.ValidationError(
