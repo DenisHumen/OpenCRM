@@ -12,7 +12,7 @@ Revises: b2c48f7a91d5
 (`core/permissions.py`) — в базе только то, кому они выданы.
 
 **Никто не должен потерять доступ.** Поэтому миграция не просто заводит
-таблицы: она кладёт роль «Менеджер» с набором прав, ровно повторяющим то, что
+таблицы: она кладёт роль «Manager» с набором прав, ровно повторяющим то, что
 умел `require_staff` до этой правки, и назначает её всем существующим
 сотрудникам. Root не получает роли вовсе — у него все права всегда.
 
@@ -94,7 +94,7 @@ def upgrade() -> None:
 
 
 def _seed_manager_role() -> None:
-    """Роль «Менеджер» и переезд на неё всех, кто не root.
+    """Роль «Manager» и переезд на неё всех, кто не root.
 
     Через `op.get_bind()`, а не через модели: модель завтра обрастёт полями,
     которых в этой ревизии ещё нет, и миграция сломается на базе, которую как
@@ -123,10 +123,10 @@ def _seed_manager_role() -> None:
     )
 
     bind.execute(
-        roles.insert().values(name="Менеджер", preset="manager", is_default=True)
+        roles.insert().values(name="Manager", preset="manager", is_default=True)
     )
     role_id = bind.execute(
-        sa.select(roles.c.id).where(roles.c.name == "Менеджер")
+        sa.select(roles.c.id).where(roles.c.name == "Manager")
     ).scalar_one()
 
     bind.execute(

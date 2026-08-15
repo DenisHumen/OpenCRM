@@ -47,8 +47,13 @@ def test_presets_cover_different_businesses(root_client):
 
 def test_preset_replaces_the_pipeline(root_client):
     applied = root_client.post(f"{PIPE}/preset", json={"preset": "services"}).json()["items"]
-    names = [s["name"] for s in applied]
-    assert "Диагностика" in names, "набор для ремонта без диагностики бессмыслен"
+    # По КЛЮЧУ, а не по названию: докстрока этого файла обещает проверять
+    # инварианты, а не конкретные слова, и здесь это обещание держалось только
+    # до первого перевода. Ключ и есть то, чем этап опознаётся везде остальном —
+    # на него ссылаются карточки, отчёты и журнал переходов; название владелец
+    # меняет в первый же день.
+    keys = [s["key"] for s in applied]
+    assert "diagnostics" in keys, "набор для ремонта без диагностики бессмыслен"
     assert [s["kind"] for s in applied][-2:] == ["won", "lost"]
 
 

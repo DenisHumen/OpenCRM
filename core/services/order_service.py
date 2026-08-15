@@ -181,7 +181,7 @@ def create(db: Session, data: dict, author: User) -> tuple[Document, bool]:
 
 
 def _title(kind: str) -> str:
-    return "Заказ покупателя" if kind == KIND_SALES_ORDER else "Заказ поставщику"
+    return "Sales order" if kind == KIND_SALES_ORDER else "Purchase order"
 
 
 # --- клиент заказа ------------------------------------------------------------

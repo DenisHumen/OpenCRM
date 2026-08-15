@@ -80,7 +80,7 @@ def test_name_is_trimmed_and_never_empty(base_client):
     assert len(response.json()["name"]) <= arcade_service.MAX_NAME
 
     blank = anon(base_client).post(ARCADE + "/scores", json={"name": "   ", "score": 2, "played_ms": 3000})
-    assert blank.json()["name"] == "Аноним"
+    assert blank.json()["name"] == arcade_service.ANON_NAME
 
 
 def test_one_address_cannot_flood_the_table(base_client):

@@ -23,6 +23,18 @@ from tests.test_deals import DEALS, make_client
 MODULES = f"{API}/modules"
 
 
+def stage_name(client, key: str) -> str:
+    """Как этап называется В ЭТОЙ базе.
+
+    Не константой: название этапа — засеянные данные, а они переводятся и
+    переименовываются. Проверка «смена этапа видна в ленте» про название знать
+    не должна вовсе — ей важно, что в ленту попало имя ТОГО этапа, куда сделка
+    уехала. Спросить его у воронки честнее, чем повторить своей копией.
+    """
+    items = client.get(f"{API}/pipeline/stages").json()["items"]
+    return next(s["name"] for s in items if s["key"] == key)
+
+
 @pytest.fixture
 def subscribe():
     """Подписки на время теста.
@@ -99,7 +111,7 @@ def test_stage_change_reaches_the_feed(manager_client, deal):
 
     entries = feed(manager_client, deal, kind=KIND_STAGE)
     assert len(entries) == 1, "смена этапа не дошла до ленты"
-    assert "В работе" in entries[0]["body"]
+    assert stage_name(manager_client, "in_progress") in entries[0]["body"]
 
 
 def test_the_deal_does_not_know_who_listens(manager_client, deal, subscribe):
@@ -151,7 +163,8 @@ def test_observer_failure_does_not_undo_the_operation(manager_client, deal, subs
 
     bodies = [entry["body"] for entry in feed(manager_client, deal, kind=KIND_STAGE)]
     assert "Половина работы наблюдателя" not in bodies, "огрызок упавшего наблюдателя остался"
-    assert any("В работе" in body for body in bodies), "соседний подписчик не отработал"
+    v_rabote = stage_name(manager_client, "in_progress")
+    assert any(v_rabote in body for body in bodies), "соседний подписчик не отработал"
     assert "half_written_then_broken" in caplog.text, "падение осталось без следа в журнале"
 
 

@@ -51,17 +51,17 @@ depends_on: Union[str, Sequence[str], None] = None
 #: «Зарплату», найдёт её по числу, а не по названию, которое к тому времени
 #: успеют переименовать.
 SEED = (
-    (1, "Выручка", "income", "general"),
-    (2, "Прочие доходы", "income", "general"),
-    (3, "Закупка товара", "expense", "general"),
-    (4, "Аренда", "expense", "general"),
+    (1, "Revenue", "income", "general"),
+    (2, "Other income", "income", "general"),
+    (3, "Stock purchase", "expense", "general"),
+    (4, "Rent", "expense", "general"),
     # Зарплата и налоги — не просто расходы: их спрашивают отдельной строкой
     # («сколько ушло на людей», «сколько отдали государству»), и разложить
     # расходы по этому признаку нельзя, если он не записан.
-    (5, "Зарплата", "expense", "salary"),
-    (6, "Налоги", "expense", "tax"),
-    (7, "Реклама", "expense", "general"),
-    (8, "Прочие расходы", "expense", "general"),
+    (5, "Payroll", "expense", "salary"),
+    (6, "Taxes", "expense", "tax"),
+    (7, "Advertising", "expense", "general"),
+    (8, "Other expenses", "expense", "general"),
 )
 
 
