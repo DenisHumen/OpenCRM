@@ -713,3 +713,61 @@ def test_granitsy_perioda_poluotkrytye():
     assert start == datetime(2031, 3, 1)
     assert end == datetime(2031, 4, 1)
     assert end - start == timedelta(days=31)
+
+
+def test_plan_do_kontsa_kalendarya_ne_lozhit_ekran(root_client, finance_on):
+    """План с концом `9999-12-31` сохраняется — и экран планов после этого жив.
+
+    «План до конца проекта» — законное намерение, и форма даты не ограничивает
+    (`period_end: str`). Собственная проверка такую дату пропускает целиком:
+    `date.fromisoformat` её разбирает, MySQL DATE хранит. А дальше счёт границ
+    периода делал `period_end + timedelta(days=1)` и падал `OverflowError`-ом —
+    не `ValueError`, который ловится этажом выше, и не доменной ошибкой, а
+    исключением, на которое обработчика нет вовсе.
+
+    Хуже всего то, ЧТО именно ложилось. Выдача планов отбирает всё, что
+    ПЕРЕСЕКАЕТСЯ с периодом экрана, поэтому такой план попадал в каждый месяц
+    начиная со своего начала. То есть экран планов переставал открываться
+    навсегда — и починить его из интерфейса было нельзя, потому что интерфейс не
+    открывался.
+    """
+    sozdana = root_client.post(
+        f"{API}/finance/categories",
+        json={"name": "Долгий проект 2031", "direction": "expense"},
+    )
+    assert sozdana.status_code == 201, sozdana.text
+    statya = sozdana.json()
+
+    sozdan = root_client.post(
+        f"{API}/finance/budgets",
+        json={
+            "category_id": statya["id"],
+            "period_start": "2026-08-01",
+            "period_end": "9999-12-31",
+            "planned": 50000,
+        },
+    )
+    assert sozdan.status_code == 201, sozdan.text
+
+    spisok = root_client.get(f"{API}/finance/budgets", params={"month": "2026-08"})
+    assert spisok.status_code == 200, (
+        f"экран планов лёг на плане до конца календаря: {spisok.status_code}"
+    )
+    assert any(p["id"] == sozdan.json()["id"] for p in spisok.json()["items"]), (
+        "план сохранился, но в выдачу не попал — значит проверка смотрит не туда"
+    )
+
+
+def test_otchyot_s_dalyokim_kontsom_perioda_ne_lozhitsya(root_client, finance_on):
+    """То же у отчётов, где конец периода приходит ПАРАМЕТРОМ ЗАПРОСА.
+
+    Отдельно от бюджета, потому что поверхность другая и шире: план заводит
+    root, а отчёт открывает любой, у кого есть право смотреть. Счёт границ там
+    был тот же самый, скопированный.
+    """
+    otvet = root_client.get(
+        f"{API}/reports/funnel", params={"from": "2026-01-01", "to": "9999-12-31"}
+    )
+    assert otvet.status_code == 200, (
+        f"отчёт лёг на дате у края календаря: {otvet.status_code} {otvet.text[:200]}"
+    )

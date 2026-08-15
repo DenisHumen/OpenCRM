@@ -37,7 +37,7 @@ from sqlalchemy.orm import Session
 
 from core import exceptions as errors
 from core.services import pipeline_service
-from core.utils import divide_money, now_utc
+from core.utils import divide_money, konets_dnya, now_utc
 from database.models.client import CLIENT_SOURCES
 from database.models.pipeline import KIND_LOST, KIND_OPEN, KIND_WON
 from database.repositories import reports as reports_repo
@@ -86,7 +86,7 @@ def parse_period(
         )
 
     start = datetime.combine(start_day, datetime.min.time()) + shift
-    end = datetime.combine(end_day + timedelta(days=1), datetime.min.time()) + shift
+    end = konets_dnya(end_day, shift)
     return start, end, start_day, end_day
 
 
@@ -124,7 +124,7 @@ def month_buckets(
     # Те же границы, что считает `parse_period`: полуоткрытый интервал от
     # местной полуночи первого дня до местной полуночи дня ПОСЛЕ последнего.
     period_start = datetime.combine(start_day, datetime.min.time()) + shift
-    period_end = datetime.combine(end_day + timedelta(days=1), datetime.min.time()) + shift
+    period_end = konets_dnya(end_day, shift)
     buckets: list[tuple[str, datetime, datetime]] = []
     cursor = start_day.replace(day=1)
     last = end_day.replace(day=1)

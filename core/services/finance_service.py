@@ -30,7 +30,7 @@ from core import exceptions as errors
 from core import references
 from core import uniqueness
 from core.services import audit_service, company_service, modules_service
-from core.utils import now_utc, to_utc_naive
+from core.utils import konets_dnya, now_utc, to_utc_naive
 from database.models import (
     FinanceBudget,
     FinanceCategory,
@@ -1225,7 +1225,7 @@ def _period_bounds(
     """
     shift = timedelta(minutes=tz_offset)
     start = datetime.combine(period_start, datetime.min.time()) + shift
-    end = datetime.combine(period_end + timedelta(days=1), datetime.min.time()) + shift
+    end = konets_dnya(period_end, shift)
     return start, end
 
 
