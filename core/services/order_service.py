@@ -557,6 +557,17 @@ def close(
     warehouse = warehouse_service.resolve_warehouse(db, warehouse_id)
     outgoing = order.kind == KIND_SALES_ORDER
 
+    # Занимаем товары ДО проверки нехватки. Устройство то же, что у переезда:
+    # `_shortages` спрашивает остаток, движения пишутся ниже, и между шагами
+    # окно. Замерено дуэлью — два заказа на последние две единицы проходили оба,
+    # со склада уходило четыре, и подтверждения не давал никто.
+    #
+    # Порядок по id обязателен: двое, берущие одни и те же товары в разном
+    # порядке, встают друг против друга насмерть. Разбор замка — в докстроке
+    # `warehouse_repo.zapert_tovar`.
+    for row in sorted({row.product_id for row in goods}):
+        warehouse_repo.zapert_tovar(db, row)
+
     if outgoing and goods and not confirm_negative:
         short = _shortages(db, goods, warehouse.id)
         if short:
