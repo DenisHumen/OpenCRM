@@ -25,12 +25,36 @@
 
 from __future__ import annotations
 
+import logging
 import secrets
+from datetime import datetime
 
 from sqlalchemy.orm import Session
 
+from config.settings import get_settings
 from core import exceptions as errors
+from core.utils import normalize_phone, now_utc
+from database.models import ClientNote
+from database.models.telegram import (
+    DIRECTION_IN,
+    DIRECTION_OUT,
+    KIND_DOCUMENT,
+    KIND_PHOTO,
+    KIND_TEXT,
+    KIND_VIDEO,
+    KIND_VOICE,
+    SEND_FAILED,
+    SEND_PENDING,
+    SEND_SENT,
+)
 from database.repositories import settings as settings_repo
+from database.repositories import telegram as telegram_repo
+
+logger = logging.getLogger(__name__)
+
+#: Вид записи в ленте клиента. Рядом с `call` и `email`: третий канал общения
+#: в том же месте — в этом и смысл единой ленты.
+NOTE_KIND = "telegram"
 
 #: Общий приставок настроек канала. Ни одна из них не уезжает в общий
 #: `GET /settings`: там их не ждут, а токен там и вовсе не должен появляться.
@@ -157,3 +181,496 @@ def otklyuchit(db: Session) -> dict:
     """
     settings_repo.write_many(db, {SETTING_TOKEN: "", SETTING_WEBHOOK_SECRET: ""})
     return nastroyki(db)
+
+
+# --- разговор с телеграмом ---------------------------------------------------
+#
+# Своими руками на `urllib`, без новой зависимости. Довод тот же, по которому
+# так сделан деплойный отправитель: библиотека ради четырёх вызовов — это ещё
+# один пакет, который надо обновлять, и ещё одна причина, по которой сборка
+# однажды не соберётся. Вызовов действительно четыре: послать текст, послать
+# файл, узнать адрес файла, скачать его.
+
+API = "https://api.telegram.org"
+
+#: Сколько ждать телеграм. Секунды, а не минуты: приём вебхука обязан ответить
+#: быстро — телеграм считает медленный ответ недоставкой и повторяет.
+TIMEOUT = 10
+
+#: Что забираем себе сразу, а что оставляем в телеграме.
+#:
+#: Картинки и документы до потолка — сразу: без них переписка в CRM неполная,
+#: а менеджер полезет в свой телефон, то есть ровно туда, откуда общение и
+#: уводили. Видео — по нажатию: гигабайт переписки за месяц съест диск, а за
+#: диском в этом проекте уже однажды никто не следил, пока не стало поздно.
+MAX_AUTO_DOWNLOAD = 20 * 1024 * 1024
+
+
+class TelegramOtkaz(Exception):
+    """Телеграм отказал. Отдельным видом, чтобы отличать от нашей поломки."""
+
+
+def _vyzov(token: str, metod: str, polya: dict, opener=None) -> dict:
+    """Один вызов Bot API. Возвращает `result` или бросает `TelegramOtkaz`."""
+    import json
+    import urllib.error
+    import urllib.request
+
+    dannye = json.dumps(polya).encode("utf-8")
+    zapros = urllib.request.Request(
+        f"{API}/bot{token}/{metod}",
+        data=dannye,
+        headers={"Content-Type": "application/json"},
+    )
+    otkryt = opener or urllib.request.urlopen
+    try:
+        with otkryt(zapros, timeout=TIMEOUT) as otvet:
+            telo = json.loads(otvet.read().decode("utf-8"))
+    except urllib.error.HTTPError as beda:
+        # Телеграм объясняет отказ в теле, и объяснение нужно человеку: «бот
+        # заблокирован пользователем» и «неверный токен» чинятся по-разному.
+        try:
+            telo = json.loads(beda.read().decode("utf-8"))
+        except Exception:
+            raise TelegramOtkaz(f"HTTP {beda.code}") from None
+        raise TelegramOtkaz(str(telo.get("description") or f"HTTP {beda.code}")) from None
+    except Exception as beda:  # noqa: BLE001 — сеть, DNS, таймаут
+        raise TelegramOtkaz(str(beda)) from None
+
+    if not telo.get("ok"):
+        raise TelegramOtkaz(str(telo.get("description") or "unknown error"))
+    return telo.get("result") or {}
+
+
+def poslat_tekst(token: str, chat_id: int, text: str, opener=None) -> dict:
+    """Отправить текст. Разметки нет намеренно.
+
+    В сообщении клиенту разметка не нужна, а вред от неё реальный: текст пишет
+    менеджер, в нём бывают `<`, `&` и звёздочки, и телеграм отбил бы сообщение
+    целиком с `can't parse entities`. Здесь это означало бы, что клиент не
+    получил ответ, а менеджер об этом не узнал.
+    """
+    return _vyzov(token, "sendMessage", {"chat_id": chat_id, "text": text}, opener)
+
+
+def _mnogochastnoe(polya: dict, fayl: tuple[str, str, bytes]) -> tuple[bytes, str]:
+    """Тело `multipart/form-data` руками.
+
+    Руками, потому что `urllib` этого не умеет, а тащить ради одного вызова
+    целую библиотеку запросов незачем. Граница берётся случайной и длинной:
+    совпади она с содержимым файла — тело разберётся неверно, и это тот отказ,
+    который воспроизводится раз в жизни и не воспроизводится в тестах.
+    """
+    import secrets as _secrets
+
+    granitsa = "----OpenCRM" + _secrets.token_hex(16)
+    imya_polya, imya_fayla, soderzhimoe = fayl
+    kuski: list[bytes] = []
+    for klyuch, znachenie in polya.items():
+        kuski.append(
+            f'--{granitsa}\r\nContent-Disposition: form-data; name="{klyuch}"\r\n\r\n'
+            f"{znachenie}\r\n".encode("utf-8")
+        )
+    kuski.append(
+        f'--{granitsa}\r\nContent-Disposition: form-data; name="{imya_polya}"; '
+        f'filename="{imya_fayla}"\r\nContent-Type: application/octet-stream\r\n\r\n'.encode("utf-8")
+    )
+    kuski.append(soderzhimoe)
+    kuski.append(f"\r\n--{granitsa}--\r\n".encode("utf-8"))
+    return b"".join(kuski), f"multipart/form-data; boundary={granitsa}"
+
+
+def poslat_fayl(
+    token: str, chat_id: int, vid: str, imya: str, soderzhimoe: bytes, podpis: str = "", opener=None
+) -> dict:
+    """Отправить картинку, видео или документ."""
+    import json
+    import urllib.error
+    import urllib.request
+
+    metod = {"photo": "sendPhoto", "video": "sendVideo"}.get(vid, "sendDocument")
+    imya_polya = {"photo": "photo", "video": "video"}.get(vid, "document")
+
+    polya = {"chat_id": str(chat_id)}
+    if podpis:
+        polya["caption"] = podpis
+    telo, tip = _mnogochastnoe(polya, (imya_polya, imya, soderzhimoe))
+
+    zapros = urllib.request.Request(
+        f"{API}/bot{token}/{metod}", data=telo, headers={"Content-Type": tip}
+    )
+    otkryt = opener or urllib.request.urlopen
+    try:
+        with otkryt(zapros, timeout=TIMEOUT * 6) as otvet:
+            razobrano = json.loads(otvet.read().decode("utf-8"))
+    except urllib.error.HTTPError as beda:
+        try:
+            razobrano = json.loads(beda.read().decode("utf-8"))
+        except Exception:
+            raise TelegramOtkaz(f"HTTP {beda.code}") from None
+        raise TelegramOtkaz(str(razobrano.get("description") or f"HTTP {beda.code}")) from None
+    except Exception as beda:  # noqa: BLE001
+        raise TelegramOtkaz(str(beda)) from None
+
+    if not razobrano.get("ok"):
+        raise TelegramOtkaz(str(razobrano.get("description") or "unknown error"))
+    return razobrano.get("result") or {}
+
+
+def skachat_fayl(token: str, file_id: str, opener=None) -> bytes:
+    """Забрать файл к себе: сначала узнать путь, потом скачать.
+
+    Два обращения, потому что так устроен Bot API: `getFile` отдаёт временный
+    путь, и только по нему файл доступен. Путь живёт около часа — хранить его
+    негде и незачем.
+    """
+    import urllib.request
+
+    svedeniya = _vyzov(token, "getFile", {"file_id": file_id}, opener)
+    put = svedeniya.get("file_path")
+    if not put:
+        raise TelegramOtkaz("телеграм не назвал путь к файлу")
+
+    otkryt = opener or urllib.request.urlopen
+    zapros = urllib.request.Request(f"{API}/file/bot{token}/{put}")
+    try:
+        with otkryt(zapros, timeout=TIMEOUT * 6) as otvet:
+            return otvet.read()
+    except Exception as beda:  # noqa: BLE001
+        raise TelegramOtkaz(str(beda)) from None
+
+
+def zadat_vebkhuk(token: str, adres: str, sekret: str, opener=None) -> dict:
+    """Сказать телеграму, куда слать обновления.
+
+    `secret_token` — то единственное, чем приём отличает настоящий телеграм от
+    того, кто узнал адрес. Телеграм присылает его заголовком на каждом запросе.
+    """
+    return _vyzov(
+        token,
+        "setWebhook",
+        {
+            "url": adres,
+            "secret_token": sekret,
+            # Только сообщения: остального нам не нужно, а лишние обновления —
+            # это лишние запросы к нашему приёму.
+            "allowed_updates": ["message"],
+            # Старые необработанные обновления при подключении выбрасываем:
+            # иначе первое включение вывалит в CRM всё, что копилось у
+            # телеграма, задним числом и одним залпом.
+            "drop_pending_updates": True,
+        },
+        opener,
+    )
+
+
+# --- приём входящих ----------------------------------------------------------
+
+def _kod_strany(db: Session) -> str:
+    """Код страны для нормализации номера — общая настройка контактов.
+
+    Та же, что у телефонии и заявок с сайта: «067…» и «+380 67…» обязаны
+    считаться одним человеком во всех трёх каналах, иначе переписка сядет не на
+    ту карточку.
+    """
+    return {row.key: row.value for row in settings_repo.rows_with_prefix(db, "default_")}.get(
+        "default_country_code", ""
+    )
+
+
+def _imya_iz(otpravitel: dict) -> str:
+    """Как подписать диалог, если клиент ещё не привязан к карточке."""
+    chasti = [str(otpravitel.get("first_name") or ""), str(otpravitel.get("last_name") or "")]
+    imya = " ".join(c for c in chasti if c).strip()
+    return imya or str(otpravitel.get("username") or "") or "Telegram"
+
+
+def _vlozhenie(soobshchenie: dict) -> tuple[str, str, str, int]:
+    """Что за вложение: (вид, file_id, имя, размер). Текст — вид `text`.
+
+    Картинка приходит НАБОРОМ размеров, от миниатюры до оригинала. Берём
+    последний: телеграм отдаёт их по возрастанию, и предпоследний — это
+    предпросмотр, который в переписке выглядит как испорченное фото.
+    """
+    if soobshchenie.get("photo"):
+        krupneyshee = soobshchenie["photo"][-1]
+        return (
+            KIND_PHOTO,
+            str(krupneyshee.get("file_id") or ""),
+            "photo.jpg",
+            int(krupneyshee.get("file_size") or 0),
+        )
+    for klyuch, vid, imya_po_umolchaniyu in (
+        ("video", KIND_VIDEO, "video.mp4"),
+        ("voice", KIND_VOICE, "voice.ogg"),
+        ("document", KIND_DOCUMENT, "file"),
+    ):
+        chast = soobshchenie.get(klyuch)
+        if chast:
+            return (
+                vid,
+                str(chast.get("file_id") or ""),
+                str(chast.get("file_name") or imya_po_umolchaniyu),
+                int(chast.get("file_size") or 0),
+            )
+    return KIND_TEXT, "", "", 0
+
+
+def prinyat(db: Session, obnovlenie: dict, opener=None) -> dict:
+    """Одно обновление от телеграма. Отвечает, что с ним сделали.
+
+    **Идемпотентность обязательна, а не желательна.** Телеграм повторяет
+    доставку, пока не получит 200: обрыв сети, наш перезапуск, медленный ответ —
+    и то же сообщение приходит снова. Без защиты клиент увидел бы в CRM две
+    копии своей фразы, а менеджер ответил бы дважды.
+
+    Защит две, и они разные по природе. Строка диалога берётся ПОД ЗАМКОМ
+    (`vzyat_pod_pravku`) — иначе два одновременных обновления оба увидят «чата
+    нет» и заведут два. А само сообщение отсеивается по идентификатору
+    телеграма: он у сообщения уникален и не меняется.
+    """
+    soobshchenie = obnovlenie.get("message") or {}
+    chat = soobshchenie.get("chat") or {}
+    chat_id = chat.get("id")
+    if not chat_id or chat.get("type") != "private":
+        # Групп и каналов у этого канала нет по устройству: общение один на
+        # один. Молча пропускаем, а не отказываем: телеграм на отказ ответит
+        # повтором, и мы получим тот же мусор ещё раз.
+        return {"status": "ignored", "reason": "not_private"}
+
+    otpravitel = soobshchenie.get("from") or {}
+    kogda = datetime.utcfromtimestamp(int(soobshchenie.get("date") or 0)) if soobshchenie.get(
+        "date"
+    ) else now_utc().replace(tzinfo=None)
+
+    dialog = telegram_repo.vzyat_pod_pravku(db, int(chat_id))
+    if dialog is None:
+        dialog = telegram_repo.create_chat(
+            db,
+            chat_id=int(chat_id),
+            username=str(otpravitel.get("username") or "")[:64],
+            title=_imya_iz(otpravitel)[:200],
+        )
+    else:
+        # Имя и логин обновляем: человек их меняет, а переписка обязана
+        # оставаться узнаваемой.
+        dialog.username = str(otpravitel.get("username") or "")[:64] or dialog.username
+        dialog.title = _imya_iz(otpravitel)[:200] or dialog.title
+
+    vneshniy = soobshchenie.get("message_id")
+    if vneshniy is not None and telegram_repo.po_vneshnemu_id(db, dialog.id, int(vneshniy)):
+        return {"status": "duplicate", "chat_id": dialog.id}
+
+    # Клиент поделился номером кнопкой — единственная точная привязка.
+    kontakt = soobshchenie.get("contact") or {}
+    if kontakt.get("phone_number") and not dialog.client_id:
+        nomer = str(kontakt["phone_number"])
+        dialog.phone = nomer[:64]
+        dialog.phone_norm = normalize_phone(nomer, _kod_strany(db))[:32]
+        klient = telegram_repo.find_client_by_phone(db, dialog.phone_norm)
+        if klient is not None:
+            dialog.client_id = klient.id
+
+    tekst = str(soobshchenie.get("text") or soobshchenie.get("caption") or "")
+
+    # Метка из ссылки `t.me/бот?start=метка` — откуда клиент пришёл.
+    if tekst.startswith("/start") and not dialog.source:
+        chasti = tekst.split(maxsplit=1)
+        if len(chasti) == 2:
+            dialog.source = chasti[1].strip()[:64]
+
+    vid, file_id, imya_fayla, razmer = _vlozhenie(soobshchenie)
+
+    put_fayla = ""
+    if file_id and vid != KIND_VIDEO and 0 < razmer <= MAX_AUTO_DOWNLOAD:
+        # Видео не забираем сразу намеренно: см. `MAX_AUTO_DOWNLOAD`.
+        try:
+            soderzhimoe = skachat_fayl(token(db), file_id, opener)
+            put_fayla = _polozhit_fayl(dialog, imya_fayla, soderzhimoe)
+        except Exception as beda:  # noqa: BLE001
+            # Не сумели забрать файл — сообщение всё равно записываем. Потерять
+            # текст из-за неудавшейся загрузки картинки значило бы потерять
+            # больше, чем сохранить.
+            logger.warning("не забрали файл из телеграма: %r", beda)
+
+    stroka = telegram_repo.dobavit_soobshchenie(
+        db,
+        chat_id=dialog.id,
+        external_id=int(vneshniy) if vneshniy is not None else None,
+        direction=DIRECTION_IN,
+        kind=vid,
+        body=tekst,
+        file_path=put_fayla,
+        file_name=imya_fayla if put_fayla else "",
+        file_size=razmer or None,
+        happened_at=kogda,
+        send_state=SEND_SENT,
+    )
+    _zapis_v_lentu(db, dialog, stroka)
+    return {"status": "accepted", "chat_id": dialog.id, "message_id": stroka.id}
+
+
+def _polozhit_fayl(dialog, imya: str, soderzhimoe: bytes) -> str:
+    """Положить файл переписки на диск и вернуть относительный путь.
+
+    В своём каталоге канала, а не в общем хранилище клиентских файлов, и это
+    решение. Файл из переписки принадлежит ДИАЛОГУ, а диалог бывает не привязан
+    ни к какой карточке — то есть класть его в «файлы клиента» просто некуда.
+    Привяжут диалог позже — файл никуда не переедет, ссылка не сломается.
+    """
+    import uuid as _uuid
+
+    koren = get_settings().storage_dir / "telegram" / str(dialog.chat_id)
+    koren.mkdir(parents=True, exist_ok=True)
+    # Имя своё, а не присланное: имя из телеграма приходит от постороннего и
+    # бывает чем угодно, включая `../`. Расширение сохраняем — по нему браузер
+    # понимает, чем открыть.
+    rasshirenie = ("." + imya.rsplit(".", 1)[-1][:10]) if "." in imya else ""
+    svoyo = f"{_uuid.uuid4().hex}{rasshirenie}"
+    (koren / svoyo).write_bytes(soderzhimoe)
+    return f"telegram/{dialog.chat_id}/{svoyo}"
+
+
+def _zapis_v_lentu(db: Session, dialog, stroka) -> None:
+    """Сообщение попадает в ленту клиента — если диалог к карточке привязан.
+
+    Не привязан — записи нет: лента принадлежит карточке, а класть переписку
+    неизвестно чью неизвестно куда нельзя.
+
+    Автор пуст у входящих: их написал клиент, человека с нашей стороны за
+    записью нет. Это тот же законный случай, что у звонка из АТС.
+    """
+    if not dialog.client_id:
+        return
+    telo = stroka.body or {
+        KIND_PHOTO: "Photo",
+        KIND_VIDEO: "Video",
+        KIND_VOICE: "Voice message",
+        KIND_DOCUMENT: "File",
+    }.get(stroka.kind, "Message")
+    db.add(
+        ClientNote(
+            client_id=dialog.client_id,
+            author_id=stroka.author_id,
+            kind=NOTE_KIND,
+            direction=stroka.direction,
+            body=telo[:2000],
+            happened_at=stroka.happened_at,
+        )
+    )
+
+
+# --- отправка ----------------------------------------------------------------
+
+def otpravit(
+    db: Session,
+    chat_row_id: int,
+    *,
+    tekst: str = "",
+    author=None,
+    fayl: tuple[str, bytes] | None = None,
+    opener=None,
+):
+    """Ответить клиенту. Строка заводится ДО обращения к телеграму.
+
+    Порядок здесь — вся защита, и он противоположен привычному «сделал —
+    записал».
+
+    **Почему сначала запись.** Отправка идёт по сети и длится сотни
+    миллисекунд. Нажали дважды — второй запрос приходит, пока первый ещё в
+    пути. Записав ПОСЛЕ отправки, мы отправили бы дважды, и это увидел бы
+    клиент: в переписке двойное сообщение выглядит как невнимательность фирмы.
+    Записав ДО, мы имеем строку, по которой видно, что отправка уже идёт.
+
+    **Почему отказ телеграма не откатывает запись.** Менеджер обязан увидеть,
+    что его ответ не ушёл, — иначе он уверен, что ответил, и ждёт реакции.
+    Строка остаётся с пометкой «не отправлено» и причиной от телеграма
+    («бот заблокирован пользователем» чинится не так, как «неверный токен»).
+    """
+    dialog = telegram_repo.get_chat(db, chat_row_id)
+    if dialog is None:
+        raise errors.NotFoundError("Chat not found", code="telegram_chat_not_found")
+
+    tekst = (tekst or "").strip()
+    if not tekst and fayl is None:
+        raise errors.ValidationError("Message is empty", code="message_empty")
+
+    kluch = token(db)
+    if not kluch:
+        raise errors.ValidationError(
+            "Telegram bot is not configured", code="telegram_not_configured"
+        )
+
+    vid = KIND_TEXT
+    imya_fayla = ""
+    put_fayla = ""
+    if fayl is not None:
+        imya_fayla, soderzhimoe = fayl
+        vid = _vid_po_imeni(imya_fayla)
+        put_fayla = _polozhit_fayl(dialog, imya_fayla, soderzhimoe)
+
+    stroka = telegram_repo.dobavit_soobshchenie(
+        db,
+        chat_id=dialog.id,
+        direction=DIRECTION_OUT,
+        kind=vid,
+        body=tekst,
+        file_path=put_fayla,
+        file_name=imya_fayla if put_fayla else "",
+        file_size=len(fayl[1]) if fayl is not None else None,
+        author_id=getattr(author, "id", None),
+        happened_at=now_utc().replace(tzinfo=None),
+        send_state=SEND_PENDING,
+    )
+
+    try:
+        if fayl is not None:
+            itog = poslat_fayl(kluch, dialog.chat_id, vid, imya_fayla, fayl[1], tekst, opener)
+        else:
+            itog = poslat_tekst(kluch, dialog.chat_id, tekst, opener)
+    except TelegramOtkaz as beda:
+        stroka.send_state = SEND_FAILED
+        stroka.send_error = str(beda)[:255]
+        logger.warning("телеграм не принял ответ в диалоге %s: %s", dialog.id, beda)
+        return stroka
+
+    stroka.send_state = SEND_SENT
+    stroka.send_error = ""
+    vneshniy = itog.get("message_id")
+    if vneshniy is not None:
+        stroka.external_id = int(vneshniy)
+    _zapis_v_lentu(db, dialog, stroka)
+    return stroka
+
+
+def _vid_po_imeni(imya: str) -> str:
+    """Картинка, видео или документ — по расширению.
+
+    По расширению, а не по содержимому, и это осознанное упрощение: здесь файл
+    приходит от СВОЕГО сотрудника через свою же форму, а не от постороннего.
+    Ошибка вида означает, что телеграм покажет картинку файлом, — неприятно и
+    безвредно. У входящих всё иначе, там вид называет сам телеграм.
+    """
+    hvost = imya.rsplit(".", 1)[-1].lower() if "." in imya else ""
+    if hvost in ("jpg", "jpeg", "png", "gif", "webp"):
+        return KIND_PHOTO
+    if hvost in ("mp4", "mov", "webm"):
+        return KIND_VIDEO
+    return KIND_DOCUMENT
+
+
+def privyazat_klienta(db: Session, chat_row_id: int, client_id: int | None):
+    """Связать диалог с карточкой — руками, по решению человека.
+
+    Руками и есть главное. Автоматическая привязка возможна ровно одна: точное
+    совпадение нормализованного номера, когда клиент сам поделился контактом.
+    Всё остальное — совпадение имени, похожий логин — запрещено, и это
+    оплаченный урок: в заказах привязка по частичному совпадению имени уводила
+    деньги и товар на чужую карточку. Здесь ценой была бы переписка, которую
+    читает не тот человек.
+    """
+    dialog = telegram_repo.get_chat(db, chat_row_id)
+    if dialog is None:
+        raise errors.NotFoundError("Chat not found", code="telegram_chat_not_found")
+    dialog.client_id = client_id
+    return dialog
