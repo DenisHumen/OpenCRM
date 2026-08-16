@@ -1,26 +1,34 @@
-"""Переписка с клиентами через бота фирмы: пока настройки подключения.
+"""Переписка с клиентами через бота фирмы.
 
-Все ручки закрыты блоком ``telegram`` — выключили блок, и раздела нет ни в
-меню, ни в API. Это правило проекта, а не удобство: спрятать пункт меню
+Настройки подключения, приём от телеграма, список диалогов, лента, ответ,
+вложения, привязка к карточке, присутствие и поток живых событий.
+
+Все рабочие ручки закрыты блоком ``telegram`` — выключили блок, и раздела нет
+ни в меню, ни в API. Это правило проекта, а не удобство: спрятать пункт меню
 недостаточно, адрес остаётся рабочим и лежит в закладках.
 
-Приём сообщений от телеграма появится отдельной ручкой и БЕЗ зависимости от
-блока — по той же причине, по какой так сделан вебхук АТС: телеграм не умеет
-узнать, что канал выключили, и продолжит доставлять; отвечать ему пятисоткой
-значило бы копить у него очередь повторов.
+Приём вынесен в отдельный роутер БЕЗ зависимости от блока — по той же причине,
+по какой так сделан вебхук АТС: телеграм не умеет узнать, что канал выключили,
+и продолжит доставлять; отвечать ему пятисоткой значило бы копить у него
+очередь повторов.
 """
 
+import asyncio
 import hmac
+import json
 import logging
+import time
 
 from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from config.settings import get_settings
 from core import exceptions as errors
+from core import realtime
 from core.ratelimit import SlidingWindowLimiter
-from core.services import telegram_service
+from core.services import codes, svodka_service, telegram_service
 from database.models import User
 from database.repositories import clients as clients_repo
 from database.repositories import telegram as telegram_repo
@@ -74,8 +82,28 @@ def otklyuchit(
     db: Session = Depends(get_db),
     _: User = Depends(require_perm("telegram", "manage")),
 ) -> dict:
-    """Отключить бота. Переписка остаётся — отключение про связь, а не про данные."""
+    """Отключить бота. Переписка остаётся — отключение про связь, а не про данные.
+
+    Вебхук снимаем ДО стирания токена: после стирания обращаться к телеграму
+    уже нечем, и адрес висел бы у него до первой ошибки доставки.
+    """
+    telegram_service.otklyuchit_vebkhuk(db)
     return telegram_service.otklyuchit(db)
+
+
+@router.post("/connect")
+def podklyuchit(
+    db: Session = Depends(get_db),
+    _: User = Depends(require_perm("telegram", "manage")),
+) -> dict:
+    """Сказать телеграму, куда доставлять сообщения.
+
+    Отдельным действием, а не при сохранении токена: адрес приёма зависит от
+    того, как сайт виден снаружи, и меняется при переезде или смене домена.
+    Прицепи это к токену — и единственным способом переподключиться было бы
+    перевводить токен.
+    """
+    return telegram_service.podklyuchit(db)
 
 
 def _dialog_naruzhu(row) -> dict:
@@ -108,6 +136,8 @@ def _soobshchenie_naruzhu(row) -> dict:
         "file_name": row.file_name,
         "file_size": row.file_size,
         "has_file": bool(row.file_path),
+        # Есть что забрать, но ещё не забрали — про видео.
+        "can_fetch": bool(row.file_id) and not row.file_path,
         "author_id": row.author_id,
         "send_state": row.send_state,
         "send_error": row.send_error,
@@ -182,6 +212,52 @@ async def vebkhuk(request: Request, db: Session = Depends(get_db)) -> dict:
 
 
 # --- переписка ---------------------------------------------------------------
+
+
+@router.get("/invite")
+def priglashenie(
+    label: str = Query("site", max_length=64, pattern=r"^[A-Za-z0-9_-]*$"),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_perm("telegram", "view")),
+) -> dict:
+    """Ссылка и QR-код, которыми клиента приводят к боту.
+
+    **Без этого канал не работает вовсе, и это не украшение.** Телеграм не
+    позволяет боту написать первым тому, кто его не запускал: клиент обязан
+    начать разговор сам. Значит нужен способ его привести — ссылка на сайте,
+    QR на квитанции, кнопка «написать нам».
+
+    Метка (`?start=метка`) едет в диалог и отвечает на вопрос «откуда пришёл»:
+    с сайта, с наклейки, из письма. Разрешены только буквы, цифры, дефис и
+    подчёркивание — таково требование самого телеграма, и отдать сюда что-то
+    другое значило бы выдать ссылку, которая молча не работает.
+    """
+    imya = telegram_service.nastroyki(db)["bot_username"]
+    if not imya:
+        raise errors.ValidationError(
+            "Bot username is not set — fill it in the Telegram settings",
+            code="telegram_username_missing",
+        )
+    ssylka = f"https://t.me/{imya}" + (f"?start={label}" if label else "")
+    return {"url": ssylka, "qr_svg": codes.qr_svg(ssylka)}
+
+
+@router.post("/digest/send")
+def poslat_svodku(
+    db: Session = Depends(get_db),
+    _: User = Depends(require_perm("telegram", "manage")),
+) -> dict:
+    """Отправить сводку прямо сейчас.
+
+    Нужна не вместо расписания, а рядом с ним, и ровно для одного: посмотреть,
+    как сводка выглядит, не дожидаясь утра. Без этого единственный способ
+    проверить оформление — подождать сутки, а оформление правят итерациями.
+
+    Отвечает тем же, чем и расписание: «ушла», «не настроено», «не ушла и
+    почему». Ненастроенный канал — не отказ ручки: человек мог открыть экран
+    раньше, чем ввёл токен.
+    """
+    return svodka_service.otpravit(db)
 
 
 @router.get("/chats")
@@ -269,6 +345,49 @@ async def otpravit_fayl(
     return _soobshchenie_naruzhu(stroka)
 
 
+@router.get("/chats/{chat_row_id}/messages/{message_id}/file")
+def vlozhenie(
+    chat_row_id: int,
+    message_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_perm("telegram", "view")),
+):
+    """Отдать вложение переписки.
+
+    Через приложение, а не отдачей каталога прямо из nginx, и это решение.
+    Файл из переписки с клиентом — не публичная картинка витрины: его вправе
+    видеть тот, у кого есть право на раздел, и никто больше. Отдай мы каталог
+    статикой, ссылка работала бы у всякого, кто её узнал, а узнаётся она из
+    истории браузера, пересланного сообщения или чужого экрана.
+    """
+    put, stroka = telegram_service.fayl_soobshcheniya(db, chat_row_id, message_id)
+    return FileResponse(
+        put,
+        # Имя для сохранения — то, под которым файл прислали. На диске он лежит
+        # под своим (имя от постороннего доверия не заслуживает), но человеку
+        # показать надо привычное.
+        filename=stroka.file_name or put.name,
+    )
+
+
+@router.post("/chats/{chat_row_id}/messages/{message_id}/fetch")
+def zabrat_vlozhenie(
+    chat_row_id: int,
+    message_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_perm("telegram", "view")),
+) -> dict:
+    """Забрать видео, которое сразу не тянули.
+
+    Право на ПРОСМОТР, а не на запись: нажатие «посмотреть» — это чтение
+    переписки, а не изменение её. Данных оно не меняет и клиенту ничего не
+    отправляет; всё, что происходит, — файл переезжает к нам с серверов
+    телеграма.
+    """
+    stroka = telegram_service.zabrat_pozzhe(db, chat_row_id, message_id)
+    return _soobshchenie_naruzhu(stroka)
+
+
 class PrivyazkaVhod(BaseModel):
     client_id: int | None = None
 
@@ -285,3 +404,143 @@ def privyazat(
         raise errors.NotFoundError("Client not found", code="client_not_found")
     dialog = telegram_service.privyazat_klienta(db, chat_row_id, data.client_id)
     return _dialog_naruzhu(dialog)
+
+
+# --- живое состояние ---------------------------------------------------------
+
+
+class PrisutstvieVhod(BaseModel):
+    """Подтверждение «я в этом чате». Пустое тело — человек ушёл."""
+
+    present: bool = True
+
+
+@router.post("/chats/{chat_row_id}/presence")
+def prisutstvie(
+    chat_row_id: int,
+    data: PrisutstvieVhod,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_perm("telegram", "view")),
+) -> dict:
+    """Отметиться в чате и узнать, кто здесь ещё.
+
+    **Отметка со сроком годности, а не запись в базу.** Присутствие живёт
+    секунды и по правилу проекта не хранится: оно производное от того, кто
+    сейчас на связи. Ключ в Redis истекает сам — уборщик здесь был бы третьим
+    местом, которое надо чинить, и первым, которое сломается молча.
+
+    Ответ содержит ВСЕХ, кто в чате, включая спросившего: экрану проще
+    отфильтровать себя, чем догадываться, что его в списке нет намеренно.
+    """
+    if telegram_repo.get_chat(db, chat_row_id) is None:
+        raise errors.NotFoundError("Chat not found", code="telegram_chat_not_found")
+
+    if data.present:
+        realtime.otmetit_prisutstvie(chat_row_id, user.id, user.name or user.email)
+    else:
+        realtime.ubrat_prisutstvie(chat_row_id, user.id)
+
+    kto = realtime.kto_v_chate(chat_row_id)
+    # Объявляем смену состава — иначе сосед узнает о новом человеке только на
+    # своём следующем подтверждении, то есть через несколько секунд. Ровно тот
+    # конфликт, ради которого баннер и заводится, успел бы случиться.
+    realtime.obyavit("presence", chat_id=chat_row_id, watchers=kto)
+    return {"watchers": kto}
+
+
+#: Сколько живёт одно соединение потока, секунды.
+#:
+#: Предел нужен, и не ради тестов. Долгое соединение без него живёт, пока живо
+#: приложение: посредники, мобильные операторы и сам браузер рвут такие молча,
+#: а на нашей стороне остаётся висеть генератор, который об этом не знает.
+#: Пять минут — это переподключение раз в пять минут, которое `EventSource`
+#: делает сам и незаметно, и гарантия, что забытых соединений не накопится.
+MAX_ZHIZN_POTOKA = 300
+
+
+@router.get("/stream")
+async def potok(
+    request: Request,
+    _: User = Depends(require_perm("telegram", "view")),
+):
+    """Поток событий: новые сообщения и смена присутствия, без перезагрузки.
+
+    **Почему поток от сервера, а не веб-сокеты.** Одно долгое соединение в одну
+    сторону — ровно то, что здесь нужно: браузер только слушает, а говорит
+    обычными запросами. Веб-сокеты потребовали бы переговоров об апгрейде
+    протокола через nginx и своего поведения при обрывах, а взамен дали бы
+    двусторонность, которой тут применения нет.
+
+    **Почему не длинная блокировка на подписке.** Синхронная подписка Redis
+    заняла бы поток из общего пула на всё время соединения. Пул один на всё
+    приложение, и полтора десятка открытых мессенджеров выели бы его целиком —
+    остальные запросы встали бы в очередь. Поэтому чтение неблокирующее, а
+    пауза между попытками своя: четверть секунды — это «мгновенно» для глаза и
+    четыре пробуждения в секунду для машины.
+
+    **`X-Accel-Buffering: no` обязателен.** Без него nginx копит ответ в буфере
+    и отдаёт его пачкой — то есть поток перестаёт быть потоком, а становится
+    очень медленным запросом. Заметить это на локальной машине без nginx нельзя
+    вовсе: там всё работает.
+    """
+    podpiska = realtime.podpisatsya()
+
+    async def sobytiya():
+        # Первое событие — сразу, не дожидаясь новостей. Оно говорит браузеру,
+        # что соединение живо: без него вкладка полминуты не знает, подключилась
+        # она или висит.
+        gotovnost = json.dumps({"type": "ready", "bus": podpiska is not None})
+        yield f"data: {gotovnost}\n\n"
+
+        nachalo = time.monotonic()
+        posledniy_signal = nachalo
+        try:
+            while True:
+                if await request.is_disconnected():
+                    break
+                if time.monotonic() - nachalo > MAX_ZHIZN_POTOKA:
+                    # Кончился срок — прощаемся сами. `EventSource` в браузере
+                    # переподключится без единой строки кода с нашей стороны, а
+                    # экран дочитает пропущенное обычным запросом «что после».
+                    break
+
+                if podpiska is not None:
+                    while True:
+                        # `timeout=0` — забрать то, что уже пришло, и вернуться.
+                        # Ждать здесь нельзя: см. про пул потоков выше.
+                        soobshchenie = podpiska.get_message(timeout=0)
+                        if not soobshchenie:
+                            break
+                        dannye = soobshchenie.get("data")
+                        if isinstance(dannye, bytes):
+                            dannye = dannye.decode("utf-8", "replace")
+                        if dannye:
+                            yield f"data: {dannye}\n\n"
+
+                # Пульс раз в двадцать секунд. Не украшение: молчащее соединение
+                # рвут посредники и мобильные операторы, а браузер узнаёт об
+                # этом только когда попробует прочитать. Комментарий SSE
+                # (строка с двоеточия) до приложения не доходит и трафика почти
+                # не стоит.
+                if time.monotonic() - posledniy_signal > 20:
+                    posledniy_signal = time.monotonic()
+                    yield ": pulse\n\n"
+
+                await asyncio.sleep(0.25)
+        finally:
+            if podpiska is not None:
+                try:
+                    podpiska.close()
+                except Exception:  # noqa: BLE001 — соединение и так закрывается
+                    pass
+
+    return StreamingResponse(
+        sobytiya(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            # Соединение долгое и своё: посреднику незачем его переиспользовать.
+            "Connection": "keep-alive",
+        },
+    )

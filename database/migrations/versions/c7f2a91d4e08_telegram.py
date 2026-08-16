@@ -62,9 +62,6 @@ def upgrade() -> None:
         ["last_message_at"],
         unique=False,
     )
-    op.create_index(
-        "ix_telegram_chats_last_message", "telegram_chats", ["last_message_at"], unique=False
-    )
 
     op.create_table(
         "telegram_messages",
@@ -79,6 +76,9 @@ def upgrade() -> None:
         # считается отдельно, и упереться в потолок колонки значило бы потерять
         # хвост чужого сообщения.
         sa.Column("body", sa.Text(), nullable=False),
+        # `file_id` — чем забрать файл у телеграма позже. Нужен для видео:
+        # сразу его не тянем, но и терять возможность посмотреть нельзя.
+        sa.Column("file_id", sa.String(length=200), nullable=False, server_default=""),
         sa.Column("file_path", sa.String(length=500), nullable=False, server_default=""),
         sa.Column("file_name", sa.String(length=255), nullable=False, server_default=""),
         sa.Column("file_size", sa.Integer(), nullable=True),

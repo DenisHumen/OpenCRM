@@ -51,6 +51,33 @@ services:
       timeout: 5s
       retries: 20
 
+  # Redis для живого слоя. Без него мессенджер проверить нечем: шина событий и
+  # присутствие живут ТОЛЬКО в нём, и проверка «а работает ли живое» без Redis
+  # либо пропускается, либо зеленеет, ничего не проверив. Второе хуже: правило
+  # проекта прямо говорит, что живое состояние в памяти процесса выглядит
+  # правильным и ломается молча на втором процессе.
+  #
+  # Настройки те же по смыслу, что у боевого: потолок памяти и вытеснение
+  # старого. Числа меньше — контейнер живёт минуты.
+  redis-test:
+    image: redis:7-alpine
+    command:
+      - redis-server
+      - --save
+      - ""
+      - --appendonly
+      - "no"
+      - --maxmemory
+      - 32mb
+      - --maxmemory-policy
+      - allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+    mem_limit: 64m
+
   tests:
     build:
       context: ..
@@ -62,9 +89,15 @@ services:
       # правильно, потому что прогон не на той базе бывает зелёным и ничего при
       # этом не обещает.
       OPENCRM_TEST_DB_URL: mysql+pymysql://root:testy@db-test:3306/opencrm_test?charset=utf8mb4
+      # Живой слой мессенджера: шина событий и присутствие. Без адреса
+      # `redis_client.get_client()` отвечает `None`, и проверки живого слоя
+      # честно краснеют «Redis недоступен» — а не пропускаются молча.
+      OPENCRM_REDIS_URL: redis://redis-test:6379/0
       PYTHONDONTWRITEBYTECODE: "1"
     depends_on:
       db-test:
+        condition: service_healthy
+      redis-test:
         condition: service_healthy
     # Точка входа подменяется, а не только команда, и это не придирка.
     # `entrypoint.sh` в этом образе аргументы дальше НЕ передаёт: он кончается
@@ -76,4 +109,18 @@ services:
     entrypoint: ["python"]
     # `-p no:cacheprovider`: писать .pytest_cache в образ незачем, а на
     # read-only слоях это ещё и отказ.
-    command: ["-m", "pytest", "-q", "-p", "no:cacheprovider"]
+    # `faulthandler_timeout`: один тест висит дольше четырёх минут — питон
+    # печатает стек ВСЕХ потоков и прогон продолжается. Без этого зависание
+    # выглядит как молчание: журнал не пишется, последняя строка — проценты, и
+    # где именно встало, узнать нельзя. Так уже было: час на одной строке.
+    #
+    # Четыре минуты, а не полминуты: самый долгий честный тест здесь гоняет всю
+    # цепочку миграций на свежей схеме, и это законные минуты.
+    command:
+      - "-m"
+      - "pytest"
+      - "-q"
+      - "-p"
+      - "no:cacheprovider"
+      - "-o"
+      - "faulthandler_timeout=240"

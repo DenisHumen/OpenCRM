@@ -1714,6 +1714,23 @@ setup_backups() {
         else
             warn "$(tr_ "таймер не запустился — снимайте копии вручную (пункт меню)" "the timer did not start — take backups by hand (menu item)")"
         fi
+        # Таймер утренней сводки — рядом с копией и тем же приёмом. Отдельным
+        # блоком, а не строкой в предыдущем: у них разное время и разный смысл
+        # неудачи. Копия не снялась — данные под угрозой; сводка не ушла —
+        # владелец не получил письмо, что заметно и само.
+        _svd=/etc/systemd/system/opencrm-svodka
+        sed -e "s#^User=.*#User=$(id -un)#" \
+            -e "s#^WorkingDirectory=.*#WorkingDirectory=$REPO_DIR#" \
+            -e "s#^ExecStart=.*#ExecStart=$REPO_DIR/opencrm.sh svodka#" \
+            "$REPO_DIR/deploy/systemd/opencrm-svodka.service" | $SUDO tee "$_svd.service" >/dev/null
+        $SUDO cp "$REPO_DIR/deploy/systemd/opencrm-svodka.timer" "$_svd.timer"
+        $SUDO systemctl daemon-reload
+        if $SUDO systemctl enable --now opencrm-svodka.timer >/dev/null 2>&1; then
+            ok "$(tr_ "сводка уходит по утрам (systemctl list-timers opencrm-svodka)" "the summary goes out every morning (systemctl list-timers opencrm-svodka)")"
+        else
+            warn "$(tr_ "таймер сводки не запустился" "the summary timer did not start")"
+        fi
+
     elif has crontab; then
         _line="30 3 * * * cd $REPO_DIR && ./opencrm.sh backup >/dev/null 2>&1"
         if crontab -l 2>/dev/null | grep -q "opencrm.sh backup"; then
@@ -2239,6 +2256,23 @@ dump_mysql() {
     # подставленный здесь, он попал бы в командную строку docker и стал виден
     # в `ps` любому пользователю сервера.
     compose exec -T db sh -c 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" exec mysqldump --single-transaction --routines --triggers --no-tablespaces --default-character-set=utf8mb4 -u root "$MYSQL_DATABASE"' > "$1"
+}
+
+cmd_svodka() {
+    need_install
+    step "$(tr_ "Утренняя сводка" "Morning summary")"
+    # Изнутри контейнера приложения: цифры считают те же репозитории, что
+    # отвечают экранам. Второй счёт «снаружи» означал бы два места, где
+    # считается одно и то же, и разошлись бы они молча.
+    #
+    # `-T` обязателен: под systemd и cron терминала нет, и без него docker
+    # отказывается выделять псевдотерминал — команда падает не сделав ничего.
+    if compose exec -T app python -m scripts.svodka; then
+        ok "$(tr_ "сводка обработана" "summary processed")"
+    else
+        warn "$(tr_ "сводка не ушла — подробности выше" "the summary did not go out — details above")"
+        return 1
+    fi
 }
 
 cmd_backup() {
@@ -3197,6 +3231,7 @@ main() {
         history)    cmd_history "${1:-15}" ;;
         logs)       cmd_logs "${1:-}" ;;
         backup)     cmd_backup ;;
+        svodka)     cmd_svodka ;;
         restore)    cmd_restore ;;
         https)      cmd_https ;;
         domain)     cmd_domain ;;

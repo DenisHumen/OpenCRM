@@ -265,6 +265,7 @@ export function Sidebar({
     // Журнал звонков — рядом с почтой: и то и другое про разговоры с клиентом,
     // а подробности каждого разговора всё равно живут в ленте заявки.
     { module: "telephony", perm: "telephony.view", to: "/calls", label: t("calls"), icon: "call" },
+    { module: "telegram", perm: "telegram.view", to: "/telegram", label: t("modTelegram"), icon: "send" },
   ]);
 
   const admin = allowed<NavItem>(user, modules, [
@@ -314,6 +315,7 @@ export function Sidebar({
     // то, чем пользуются каждый день.
     { module: "mail", perm: "settings.manage", to: "/settings/mailboxes", label: t("mailboxes") },
     { module: "telephony", perm: "settings.manage", to: "/settings/telephony", label: t("telephony") },
+    { module: "telegram", perm: "settings.manage", to: "/settings/telegram", label: t("modTelegram") },
     { perm: "settings.manage", to: "/settings/brand", label: t("brand") },
     { perm: "settings.manage", to: "/settings/contacts", label: t("contacts") },
     { perm: "settings.manage", to: "/settings/showcase", label: t("showcase") },

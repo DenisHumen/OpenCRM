@@ -13,6 +13,7 @@ import { AuthScreen, ForcePasswordChange } from "./screens/Auth";
 import { BoardEditor } from "./screens/BoardEditor";
 import { Boards } from "./screens/Boards";
 import { Calls } from "./screens/Calls";
+import { Telegram } from "./screens/Telegram";
 import { ClientCard } from "./screens/ClientCard";
 import { Clients } from "./screens/Clients";
 import { Companies } from "./screens/Companies";
@@ -48,6 +49,7 @@ import { Setup } from "./screens/Setup";
 import { SettingsWarehouses } from "./screens/SettingsWarehouses";
 import { Staff } from "./screens/Staff";
 import { Tasks } from "./screens/Tasks";
+import { SettingsTelegram } from "./screens/TelegramSettings";
 import { SettingsTelephony } from "./screens/TelephonySettings";
 import { Warehouse } from "./screens/Warehouse";
 
@@ -260,6 +262,11 @@ export default function App() {
               <Route path="/calls" element={<Calls />} />
             </Route>
           </Route>
+          <Route element={<ModuleRoute module="telegram" />}>
+            <Route element={<PermRoute perm="telegram.view" />}>
+              <Route path="/telegram" element={<Telegram />} />
+            </Route>
+          </Route>
           {/* Мониторинг живёт по адресу `/server`, а НЕ по `/monitoring`:
               последний перехватывает nginx (`location = /monitoring` отдаёт 301
               на `/monitoring/`, то есть в Grafana). Переход внутри SPA работал
@@ -324,6 +331,9 @@ export default function App() {
                 кнопка сохранения и секрет, который показывается один раз. */}
             <Route element={<ModuleRoute module="telephony" />}>
               <Route path="/settings/telephony" element={<SettingsTelephony />} />
+            </Route>
+            <Route element={<ModuleRoute module="telegram" />}>
+              <Route path="/settings/telegram" element={<SettingsTelegram />} />
             </Route>
             {/* разделов настроек будет больше — каждый своим маршрутом,
                 чтобы на них можно было сослаться и открыть из сайдбара */}

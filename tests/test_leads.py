@@ -79,14 +79,19 @@ def intake_key(base_client) -> str:
 
 @pytest.fixture(autouse=True)
 def fresh_limiter():
-    """Ограничитель живёт в памяти процесса и общий на все проверки.
+    """Ограничитель общий на все проверки — сбрасываем до и после.
 
     Не сбрось его — и десятая проверка в файле упирается в потолок, набранный
     девятью предыдущими, а падение выглядит как поломка приёма.
+
+    Через `ochistit()`, а не обнулением словаря. Раньше словарь и был всем
+    счётчиком, но с общим хранилищем (Redis) он опустел, а счёт остался: сброс
+    перестал что-либо сбрасывать МОЛЧА. Поймано тем, что после добавления Redis
+    в ворота проверка потолка тела стала падать на счётчике, набранном соседкой.
     """
-    leads_route.lead_limiter._attempts.clear()
+    leads_route.lead_limiter.ochistit()
     yield
-    leads_route.lead_limiter._attempts.clear()
+    leads_route.lead_limiter.ochistit()
 
 
 def send(key: str | None, **fields):

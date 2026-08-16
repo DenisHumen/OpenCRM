@@ -7,6 +7,7 @@ PIN. Всё, что растёт от чужих запросов и не убы
 
 import time
 
+from core import redis_client
 from core.ratelimit import SWEEP_AFTER, SlidingWindowLimiter
 
 
@@ -71,7 +72,13 @@ def test_expired_keys_do_not_pile_up():
     просроченные записи оставались лежать, память росла на каждый новый адрес и
     не убывала никогда: отказа не видно, процесс просто пухнет.
     """
-    limiter = SlidingWindowLimiter(max_attempts=3, window_seconds=0.1)
+    # Своё имя, а не общее «default»: ключи ограничителя живут в общем Redis, и
+    # на чужом имени этот перебор считал бы заодно всё, что оставили соседние
+    # проверки.
+    limiter = SlidingWindowLimiter(
+        max_attempts=3, window_seconds=0.1, name="sweep-test"
+    )
+    limiter.ochistit()
 
     for i in range(SWEEP_AFTER + 200):
         limiter.record_failure(f"attacker-{i}@example.com")
@@ -79,9 +86,34 @@ def test_expired_keys_do_not_pile_up():
     time.sleep(0.5)   # окно всех этих попыток истекло
     limiter.record_failure("someone-else@example.com")
 
-    assert limiter.tracked() <= SWEEP_AFTER, (
-        f"ограничитель помнит {limiter.tracked()} просроченных ключей"
+    # **Свойство одно, а держится оно разными способами, и проверять их надо
+    # по-разному.**
+    #
+    # В памяти процесса просроченное выметает уборка: без неё словарь растёт на
+    # каждый новый адрес и не убывает никогда.
+    #
+    # В Redis уборки нет и не нужно — у каждого ключа стоит срок годности, и
+    # сервер снимает их сам. Требовать здесь того же числа значило бы требовать
+    #, чтобы Redis успел это сделать за полсекунды при сроке в две: проверка
+    # краснела бы на исправном коде. Поэтому здесь проверяется ТО, ОТ ЧЕГО
+    # свойство зависит, — что срок годности вообще проставлен.
+    if redis_client.get_client() is None:
+        assert limiter.tracked() <= SWEEP_AFTER, (
+            f"ограничитель помнит {limiter.tracked()} просроченных ключей"
+        )
+        return
+
+    client = redis_client.get_client()
+    bez_sroka = [
+        klyuch
+        for klyuch in client.scan_iter(match=f"{redis_client.PREFIX}rl:sweep-test:*", count=200)
+        if client.ttl(klyuch) < 0
+    ]
+    assert bez_sroka == [], (
+        f"у {len(bez_sroka)} ключей ограничителя нет срока годности — "
+        "они останутся в Redis навсегда, а память будет расти на каждый адрес"
     )
+    limiter.ochistit()
 
 
 def test_a_sweep_never_unblocks_someone_who_is_still_trying():
