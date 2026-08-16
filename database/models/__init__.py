@@ -20,6 +20,7 @@ from database.models.warehouse import (
     StockTransfer,
     Warehouse,
 )
+from database.models.telegram import TelegramChat, TelegramMessage
 from database.models.telephony import PhoneCall
 from database.models.finance import (
     FinanceBudget,
@@ -61,6 +62,8 @@ __all__ = [
     "StockTransfer",
     "Warehouse",
     "PhoneCall",
+    "TelegramChat",
+    "TelegramMessage",
     "FinanceCategory",
     "FinanceOperation",
     "FinanceBudget",

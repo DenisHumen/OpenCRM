@@ -98,6 +98,13 @@ MODULES: tuple[Module, ...] = (
     # функция. Зависит только от клиентов: звонок обязан находить, кому он был,
     # а заявка у звонка бывает не всегда («позвонил спросить про цены»).
     Module(key="telephony", default=False, requires=("clients",)),
+    # Переписка с клиентами через бота фирмы. Третий канал общения рядом с
+    # почтой и телефонией, и зависимость та же: сообщение обязано находить, чьё
+    # оно, а заявка у переписки бывает не всегда («спросил про цены»).
+    #
+    # Выключен по умолчанию: без настроенного бота раздел пуст, а пустой
+    # мессенджер в меню — обещание, а не функция.
+    Module(key="telegram", default=False, requires=("clients",)),
     # Деньги предприятия: приход и расход по статьям, планы, прибыль.
     #
     # Без `requires` намеренно. Строка «Аренда за август» не относится ни к
@@ -214,7 +221,7 @@ class Preset:
 PRESETS: tuple[Preset, ...] = (
     Preset(
         key="services",
-        modules=("documents", "warehouse", "tasks", "telephony", "finance"),
+        modules=("documents", "warehouse", "tasks", "telephony", "telegram", "finance"),
         pipeline="services",
         deal_term="request",
     ),
