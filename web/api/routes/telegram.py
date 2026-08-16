@@ -263,13 +263,16 @@ def poslat_svodku(
 @router.get("/chats")
 def dialogi(
     q: str = Query("", max_length=MAX_SEARCH),
+    source: str = Query("", max_length=64),
     page: int = Query(1, ge=1),
     per_page: int = Query(50, ge=1, le=200),
     db: Session = Depends(get_db),
     user: User = Depends(require_perm("telegram", "view")),
 ) -> dict:
     """Список диалогов, свежие сверху, с личным счётчиком непрочитанного."""
-    stroki, vsego = telegram_repo.spisok_dialogov(db, q=q.strip(), page=page, per_page=per_page)
+    stroki, vsego = telegram_repo.spisok_dialogov(
+        db, q=q.strip(), source=source.strip(), page=page, per_page=per_page
+    )
     # Непрочитанное — своё у каждого сотрудника: граница «дочитал до сюда»
     # личная. Считается на всю страницу разом, а не по диалогу: список открыт
     # весь день и перезапрашивается живьём.

@@ -80,14 +80,22 @@ def find_client_by_phone(db: Session, phone_norm: str) -> Client | None:
 
 
 def spisok_dialogov(
-    db: Session, *, q: str = "", page: int = 1, per_page: int = 50
+    db: Session, *, q: str = "", source: str = "", page: int = 1, per_page: int = 50
 ) -> tuple[list[TelegramChat], int]:
     """Страница списка диалогов, свежие сверху.
 
     Сортировка по `last_message_at` убыванием, а пустые — в конец: диалог, где
     ещё ничего не сказано, не должен занимать первую строку.
+
+    Отбор по метке (`source`) отвечает на вопрос «сколько пришло с наклейки, а
+    сколько с сайта». Метка кладётся в диалог при первом `/start метка`, и без
+    отбора она лежала бы мёртвым грузом: записана — и не спросишь.
     """
     zapros = select(TelegramChat)
+    if source:
+        # Точное совпадение, а не подстрока: метки короткие и назначает их
+        # владелец сам. Подстрока склеила бы «сайт» и «сайт-акция».
+        zapros = zapros.where(TelegramChat.source == source)
     if q:
         # Через `contains`, а не через `like` руками: `%` и `_` в поисковой
         # строке для LIKE означают не себя, и человек, ищущий «100%», получил бы
