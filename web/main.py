@@ -332,6 +332,8 @@ def create_app() -> FastAPI:
     app.include_router(system.router, prefix=api_prefix)
     app.include_router(workspace.router, prefix=api_prefix)
     app.include_router(telegram.router, prefix=api_prefix)
+    # Приём от телеграма — без зависимости от блока, обоснование в роутере.
+    app.include_router(telegram.webhook_router, prefix=api_prefix)
     app.include_router(telephony.router, prefix=api_prefix)
     # Вебхук АТС — отдельным роутером: он единственный не закрыт блоком
     # телефонии (обоснование — в web/api/routes/telephony.py).

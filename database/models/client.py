@@ -8,7 +8,7 @@ from database.query import search_norm
 from database.session import Base
 
 #: Виды, которые сотрудник заводит руками.
-NOTE_KINDS = ("note", "call", "meeting", "email")
+NOTE_KINDS = ("note", "call", "meeting", "email", "telegram")
 
 #: Виды, которые появляются сами — от подписчика на событие, а не из формы.
 #: Отделены от рукописных намеренно: иначе менеджер мог бы прислать «смену
