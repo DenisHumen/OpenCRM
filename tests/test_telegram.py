@@ -961,3 +961,28 @@ def test_neprochitannoe_lichnoe_a_ne_obshchee(root_client, manager_client, bot_n
         d for d in manager_client.get(f"{TG}/chats").json()["items"] if d["chat_id"] == 505400
     ][0]
     assert chuzhoy["unread"] == 1, "чужое чтение погасило значок у соседа"
+
+
+def test_otbor_po_metke_istochnika(root_client, bot_nastroen):
+    """Метка из ссылки отвечает на вопрос «откуда пришли клиенты».
+
+    Без отбора она лежала бы мёртвым грузом: записана — и не спросишь. А
+    спрашивают её ровно затем, ради чего метки и заводят: сравнить, что
+    работает — наклейка на квитанции или кнопка на сайте.
+
+    Совпадение точное, а не по подстроке: метки короткие и назначает их
+    владелец сам, а подстрока склеила бы «sayt» и «sayt-akciya».
+    """
+    _poslat(root_client, bot_nastroen, _obnovlenie(506100, 1, text="/start sayt"))
+    _poslat(root_client, bot_nastroen, _obnovlenie(506200, 1, text="/start sayt-akciya"))
+    _poslat(root_client, bot_nastroen, _obnovlenie(506300, 1, text="/start naklejka"))
+
+    s_sayta = root_client.get(f"{TG}/chats", params={"source": "sayt"}).json()["items"]
+    nomera = {d["chat_id"] for d in s_sayta}
+    assert 506100 in nomera, "диалог с меткой не нашёлся"
+    assert 506200 not in nomera, "подстрока склеила «sayt» и «sayt-akciya»"
+    assert 506300 not in nomera, "в отбор попал чужой источник"
+
+    # Без отбора видны все три.
+    vse = {d["chat_id"] for d in root_client.get(f"{TG}/chats").json()["items"]}
+    assert {506100, 506200, 506300} <= vse, "без отбора список неполон"
