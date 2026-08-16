@@ -375,7 +375,7 @@ export function Telegram() {
   const otkrytyy = chats.find((c) => c.id === vybran) || null;
 
   return (
-    <div className="screen tg-screen">
+    <div className="page page-wide tg-screen">
       <aside className="tg-list">
         <div className="tg-search">
           <Icon name="search" />
