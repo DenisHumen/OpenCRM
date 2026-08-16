@@ -85,6 +85,10 @@ export function Telegram() {
   // Справочник клиентов для ручной привязки. Через общий крючок, как в
   // редакторе доски: отказ здесь не должен выглядеть как «клиентов нет».
   const klienty = useReference<any>("/clients?per_page=200");
+  // Шаблоны сообщений уже сделаны для других каналов — здесь их просто
+  // подключаем. Заводить свои значило бы завести ВТОРОЕ место, где живут
+  // типовые ответы, и разойтись с первым на первой же правке.
+  const shablony = useReference<any>("/templates?per_page=100");
 
   // Последнее известное сообщение: по нему дочитываем пропущенное после
   // обрыва. Обрыв неизбежен, а начинать с чистого листа в переписке нельзя.
@@ -302,6 +306,26 @@ export function Telegram() {
     }
   };
 
+  /** Подставить шаблон в поле ввода.
+   *
+   * Именно ПОДСТАВИТЬ, а не отправить. Шаблон — заготовка: в него дописывают
+   * подробности этого разговора. Отправляй он сразу, им пользовались бы только
+   * там, где ответ дословно типовой, то есть почти нигде.
+   */
+  const podstavit_shablon = async (id: string) => {
+    if (!id) return;
+    try {
+      const gotovo = await api.get<{ text: string }>(
+        `/templates/${id}/render${otkrytyy?.client_id ? `?client_id=${otkrytyy.client_id}` : ""}`,
+      );
+      // Дописываем к тому, что уже набрано, а не затираем: человек мог начать
+      // печатать и вспомнить про шаблон.
+      setTekst((bylo) => (bylo ? `${bylo}\n${gotovo.text}` : gotovo.text));
+    } catch (beda) {
+      toastError(beda);
+    }
+  };
+
   const otvetit = async () => {
     if (vybran == null || !tekst.trim()) return;
     // Засов берётся ПЕРВЫМ действием: не взялся — значит отправка уже идёт, и
@@ -513,6 +537,36 @@ export function Telegram() {
             </div>
 
             <footer className="tg-compose">
+              {/*
+                Показываем выбор и при отказе загрузки — с прямой пометкой.
+                Спрятанный выбор читается как «шаблонов нет», и человек набирает
+                типовой ответ заново, не зная, что они есть и просто не
+                доехали.
+              */}
+              {((shablony.items ?? []).length > 0 || shablony.failure != null) && (
+                <select
+                  className="tg-templates"
+                  value=""
+                  onChange={(e) => {
+                    void podstavit_shablon(e.target.value);
+                    e.target.value = "";
+                  }}
+                  aria-label={t("tgTemplate")}
+                  title={t("tgTemplate")}
+                >
+                  <option value="">{t("tgTemplate")}</option>
+                  {shablony.failure != null && (
+                    <option value="" disabled>
+                      {t("loadFailed")}
+                    </option>
+                  )}
+                  {(shablony.items ?? []).map((shablon: any) => (
+                    <option key={shablon.id} value={shablon.id}>
+                      {shablon.name}
+                    </option>
+                  ))}
+                </select>
+              )}
               <label className="tg-attach">
                 <Icon name="upload" />
                 <input

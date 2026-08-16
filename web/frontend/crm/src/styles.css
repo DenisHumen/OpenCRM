@@ -1496,3 +1496,17 @@ a.tg-file:hover { text-decoration: underline; }
   line-height: 20px;
   text-align: center;
 }
+
+
+/* Шаблоны в поле ввода: узкий выбор рядом со скрепкой, не отнимающий места у
+   самого поля — печатают в нём, а шаблон берут изредка. */
+.tg-templates {
+  max-width: 150px;
+  padding: 4px 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+}
