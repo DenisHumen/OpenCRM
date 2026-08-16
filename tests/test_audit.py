@@ -638,16 +638,21 @@ def test_notes_of_a_deleted_client_keep_their_log(root_client, manager_client, s
 def test_no_stray_notes_without_an_author(root_client, manager_client, deal, session):
     """Сводная проверка: ничьих записей в ленте не появилось на ровном месте.
 
-    Автор пуст ровно у писем и звонков — там человека действительно нет. У всех
-    прочих видов записи автор обязан быть: пусто у них означало бы, что где-то
-    исполнителя не протащили, и найти это место потом будет нечем.
+    Автор пуст ровно у писем, звонков и входящих из телеграма — там человека с
+    НАШЕЙ стороны действительно нет: письмо прислал клиент, звонок принесла
+    станция, сообщение написал клиент боту. У всех прочих видов записи автор
+    обязан быть: пусто у них означало бы, что где-то исполнителя не протащили,
+    и найти это место потом будет нечем.
+
+    Исходящие в телеграме автора имеют — там отвечает живой менеджер, и его имя
+    в ленте обязано стоять.
     """
     manager_client.post(f"{DEALS}/{deal['id']}/move", json={"stage": "done"})
 
     orphans = session.scalars(
         select(ClientNote).where(ClientNote.author_id.is_(None))
     ).all()
-    assert all(note.kind in ("email", "call") for note in orphans), (
+    assert all(note.kind in ("email", "call", "telegram") for note in orphans), (
         "ничья запись в ленте у вида, где человек есть: "
         + ", ".join(sorted({n.kind for n in orphans}))
     )

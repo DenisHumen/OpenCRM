@@ -152,7 +152,38 @@ def _build_schema_with_migrations() -> None:
     command.upgrade(config, "head")
 
 
+def _ochistit_redis() -> None:
+    """Убрать ВСЁ, что осталось в Redis от прошлого прогона.
+
+    База пересоздаётся перед каждым прогоном (`_ochistit_bazu`), а Redis — нет,
+    и это несимметрично опасно: **идентификаторы строк начинаются заново, а
+    ключи в Redis остаются от прошлых**. Прогон натыкается на чужую границу
+    «прочитано» для диалога с тем же номером и на чужой счётчик неудачных
+    попыток входа.
+
+    Поймано на CI: он гоняет набор ДВАЖДЫ — прямым порядком файлов и обратным.
+    Первый прогон оставлял ключи, второй краснел на них: «непрочитанных 0» там,
+    где их два, и «429» там, где ждали «401». В воротах деплоя этого не видно
+    вовсе — там прогон один.
+
+    Чистим по общей приставке приложения, а не всю базу Redis: на машине
+    разработчика это может быть тот же сервер, что у боевого стенда, и
+    `FLUSHDB` унёс бы чужое.
+    """
+    from core import redis_client
+
+    client = redis_client.get_client()
+    if client is None:
+        return
+    try:
+        for klyuch in client.scan_iter(match=f"{redis_client.PREFIX}*", count=500):
+            client.delete(klyuch)
+    except Exception as beda:  # noqa: BLE001 — Redis не обязан быть живым
+        print(f"[тесты] не удалось прибрать Redis: {beda!r}", flush=True)
+
+
 _ochistit_bazu()
+_ochistit_redis()
 _build_schema_with_migrations()
 
 from fastapi.testclient import TestClient  # noqa: E402
