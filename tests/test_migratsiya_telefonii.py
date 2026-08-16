@@ -299,3 +299,57 @@ def test_otkat_perezhivaet_dlinnyy_klyuch_etapa(chistaya_baza):
         )
     finally:
         dvigatel.dispose()
+
+
+# --- накат с промежуточной точки ---------------------------------------------
+
+
+def test_nakat_s_predposledney_revizii_dayot_polnuyu_skhemu(chistaya_baza):
+    """Схема сходится с моделями и при накате С СЕРЕДИНЫ, а не только с нуля.
+
+    **Это сторож на ошибку, которая уже стоила отката боевого сервера.**
+    Выгруженную ревизию правили вместо того, чтобы добавить новую: дописали
+    колонку в уже применённую миграцию. Alembic применённое заново не гоняет —
+    колонка не появилась, модель её требовала, сверка схемы отказалась поднимать
+    приложение, и обновление откатилось вместе с базой.
+
+    Почему этого не поймала соседняя проверка соответствия: она строит схему
+    С НУЛЯ, прогоняя всю цепочку. Правленая миграция при таком построении
+    выглядит целой — колонка-то в ней есть. Расхождение появляется ровно там,
+    где ревизия УЖЕ отмечена применённой, то есть на всякой живой установке.
+
+    Отсюда способ проверки: доводим базу до предпоследней ревизии — состояния,
+    в котором стоит сервер перед обновлением, — и накатываем остаток. Если
+    последний шаг чего-то не доносит, здесь это видно, а не на бою.
+    """
+    from alembic.script import ScriptDirectory
+    from sqlalchemy import create_engine
+
+    from alembic.config import Config
+    from database.schema_check import check
+
+    config = Config(str(ROOT / "alembic.ini"))
+    config.set_main_option("sqlalchemy.url", chistaya_baza)
+    skript = ScriptDirectory.from_config(config)
+    golova = skript.get_current_head()
+    predposledniy = skript.get_revision(golova).down_revision
+    assert predposledniy, "у головы нет предшественника — цепочка из одной ревизии?"
+
+    # Состояние сервера ПЕРЕД обновлением.
+    _nakatit(chistaya_baza, predposledniy)
+    # И само обновление.
+    _nakatit(chistaya_baza, "head")
+
+    dvigatel = create_engine(chistaya_baza)
+    try:
+        otchyot = check(dvigatel)
+    finally:
+        dvigatel.dispose()
+
+    assert otchyot.ok, (
+        "после наката с предпоследней ревизии схема НЕ сходится с моделями:\n  "
+        + otchyot.summary()
+        + "\n\nСамая вероятная причина: правили уже выгруженную миграцию вместо "
+        "того, чтобы добавить новую. Применённую ревизию alembic заново не "
+        "гоняет, и на живой установке правка не выполнится никогда."
+    )

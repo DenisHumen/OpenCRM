@@ -410,6 +410,48 @@ def zabrat_vlozhenie(
     return _soobshchenie_naruzhu(stroka)
 
 
+class IzDialogaVhod(BaseModel):
+    """Что можно уточнить, заводя заявку или задачу из переписки.
+
+    Всё необязательное: смысл кнопки в том, чтобы нажать её и вернуться к
+    разговору. Заставь она заполнять форму — ею перестанут пользоваться и
+    вернутся к переносу руками, то есть ровно к тому, от чего уходили.
+    """
+
+    title: str = ""
+    description: str = ""
+    due_at: str | None = None
+
+
+@router.post("/chats/{chat_row_id}/deal", status_code=201)
+def zayavka_iz_dialoga(
+    chat_row_id: int,
+    data: IzDialogaVhod,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_perm("deals", "create")),
+) -> dict:
+    """Завести заявку по этой переписке.
+
+    Право спрашивается на ЗАЯВКИ, а не на телеграм, и это не описка: заводится
+    заявка, и решать, кому это можно, должен раздел заявок. Иначе право на
+    переписку тихо давало бы право заводить работу.
+    """
+    zayavka = telegram_service.zavesti_zayavku(db, chat_row_id, data.model_dump(), user)
+    return {"id": zayavka.id, "title": zayavka.title, "client_id": zayavka.client_id}
+
+
+@router.post("/chats/{chat_row_id}/task", status_code=201)
+def zadacha_iz_dialoga(
+    chat_row_id: int,
+    data: IzDialogaVhod,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_perm("tasks", "create")),
+) -> dict:
+    """Завести напоминание по этой переписке. Привязка к карточке не обязательна."""
+    zadacha = telegram_service.zavesti_zadachu(db, chat_row_id, data.model_dump(), user)
+    return {"id": zadacha.id, "title": zadacha.title}
+
+
 class PrivyazkaVhod(BaseModel):
     client_id: int | None = None
 
