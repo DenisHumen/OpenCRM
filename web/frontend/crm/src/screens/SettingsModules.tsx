@@ -28,6 +28,7 @@ export const LABEL: Record<string, TranslationKey> = {
   templates: "templates",
   monitoring: "modMonitoring",
   telephony: "modTelephony",
+  telegram: "modTelegram",
   finance: "modFinance",
 };
 
@@ -46,6 +47,7 @@ const ABOUT: Record<string, TranslationKey> = {
   templates: "modTemplatesAbout",
   monitoring: "modMonitoringAbout",
   telephony: "modTelephonyAbout",
+  telegram: "modTelegramAbout",
   finance: "modFinanceAbout",
 };
 
@@ -64,6 +66,7 @@ const ICON: Record<string, string> = {
   templates: "note",
   monitoring: "alert",
   telephony: "call",
+  telegram: "chat",
   // «receipt» — тот же значок, что у бланков и заказов, и это не оплошность:
   // ближе к деньгам в наборе ничего нет, а свой значок ради одного блока
   // означал бы правку `Icon.PATHS` — общего файла, куда финансам лезть незачем.
