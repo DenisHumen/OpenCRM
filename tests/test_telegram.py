@@ -864,3 +864,100 @@ def test_kartinka_po_prezhnemu_zabiraetsya_srazu(root_client, bot_nastroen, monk
     stroka = root_client.get(f"{TG}/chats/{dialog['id']}/messages").json()["items"][0]
     assert stroka["has_file"] is True, "картинка перестала забираться сразу"
     assert stroka["can_fetch"] is False
+
+
+# --- непрочитанное -----------------------------------------------------------
+
+
+def test_neprochitannoe_schitaetsya_i_snimaetsya_chteniem(root_client, bot_nastroen):
+    """Пришло входящее — счётчик вырос; открыли диалог — обнулился.
+
+    Обе половины в одном теле нарочно. По отдельности каждая зеленела бы на
+    неверном поведении: «счётчик вырос» верно и для счётчика, который никогда не
+    обнуляется, а «обнулился» — для того, который всегда ноль.
+
+    Прочитанное отмечается САМИМ чтением ленты, а не отдельной кнопкой: человек
+    открыл диалог и увидел сообщения. Кнопка «прочитано» существует ровно
+    затем, чтобы её забывали нажимать.
+    """
+    _poslat(root_client, bot_nastroen, _obnovlenie(505100, 1, text="первое"))
+    _poslat(root_client, bot_nastroen, _obnovlenie(505100, 2, text="второе"))
+
+    dialog = _dialog(root_client, 505100)
+    assert dialog["unread"] == 2, f"счётчик непрочитанного неверен: {dialog}"
+
+    # Открыли ленту — значит прочитали.
+    root_client.get(f"{TG}/chats/{dialog['id']}/messages")
+    assert _dialog(root_client, 505100)["unread"] == 0, "чтение ленты не сняло счётчик"
+
+    # Пришло ещё — счётчик снова про новое, а не про всё подряд.
+    _poslat(root_client, bot_nastroen, _obnovlenie(505100, 3, text="третье"))
+    assert _dialog(root_client, 505100)["unread"] == 1, (
+        "после дочитывания счётчик считает не с границы, а с начала"
+    )
+
+
+def test_svoy_otvet_ne_stanovitsya_neprochitannym(root_client, bot_nastroen, monkeypatch):
+    """Свои же ответы непрочитанными не бывают.
+
+    Иначе значок горел бы после каждого собственного ответа, и его перестали бы
+    замечать — вместе с настоящими сообщениями клиентов.
+    """
+    from core.services import telegram_service
+
+    monkeypatch.setattr(
+        telegram_service,
+        "poslat_tekst",
+        lambda kluch, chat_id, text, opener=None: {"message_id": 900},
+    )
+
+    _poslat(root_client, bot_nastroen, _obnovlenie(505200, 1, text="вопрос"))
+    dialog = _dialog(root_client, 505200)
+    root_client.get(f"{TG}/chats/{dialog['id']}/messages")
+    assert _dialog(root_client, 505200)["unread"] == 0
+
+    root_client.post(f"{TG}/chats/{dialog['id']}/messages", json={"text": "мой ответ"})
+    assert _dialog(root_client, 505200)["unread"] == 0, (
+        "собственный ответ засчитан непрочитанным"
+    )
+
+
+def test_granitsa_prochitannogo_tolko_rastyot(root_client, bot_nastroen):
+    """Открыли старую страницу переписки — граница назад не поехала.
+
+    Иначе листание вглубь помечало бы непрочитанным всё, что пришло позже:
+    человек ушёл читать начало разговора и вернулся к десятку «новых»
+    сообщений, которых он уже читал.
+    """
+    for nomer in range(1, 4):
+        _poslat(root_client, bot_nastroen, _obnovlenie(505300, nomer, text=f"№{nomer}"))
+    dialog = _dialog(root_client, 505300)
+
+    lenta = root_client.get(f"{TG}/chats/{dialog['id']}/messages").json()["items"]
+    assert _dialog(root_client, 505300)["unread"] == 0
+
+    # Листаем вглубь: просим то, что ДО первого показанного.
+    root_client.get(f"{TG}/chats/{dialog['id']}/messages?before={lenta[-1]['id']}")
+    assert _dialog(root_client, 505300)["unread"] == 0, (
+        "листание вглубь сдвинуло границу назад"
+    )
+
+
+def test_neprochitannoe_lichnoe_a_ne_obshchee(root_client, manager_client, bot_nastroen):
+    """Один прочитал — у второго счётчик остался.
+
+    Граница «дочитал до сюда» личная: общая означала бы, что первый открывший
+    диалог гасит значок всем, и сообщение клиента теряется для того, кто его не
+    видел.
+    """
+    _dat_pravo_na_telegram(root_client, manager_client)
+    _poslat(root_client, bot_nastroen, _obnovlenie(505400, 1, text="кому-то одному"))
+
+    dialog = _dialog(root_client, 505400)
+    root_client.get(f"{TG}/chats/{dialog['id']}/messages")
+    assert _dialog(root_client, 505400)["unread"] == 0
+
+    chuzhoy = [
+        d for d in manager_client.get(f"{TG}/chats").json()["items"] if d["chat_id"] == 505400
+    ][0]
+    assert chuzhoy["unread"] == 1, "чужое чтение погасило значок у соседа"

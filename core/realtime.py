@@ -151,3 +151,80 @@ def kto_v_chate(chat_row_id: int) -> list[dict]:
     except Exception as beda:  # noqa: BLE001
         logger.warning("не собрали присутствие: %r", beda)
         return []
+
+
+#: Приставка границы «прочитано»: `…tg:r:<диалог>:<сотрудник>`.
+PROCHITANO = f"{redis_client.PREFIX}tg:r:"
+
+#: Сколько живёт отметка «дочитал до сюда».
+#:
+#: Месяц. Не вечно и не минуты, и обе крайности плохи по-своему. Вечно —
+#: значит копить по ключу на каждую пару «диалог × сотрудник» навсегда, включая
+#: уволенных и закрытые переписки. Минуты — значит после обеда все диалоги снова
+#: непрочитаны, и счётчик перестают замечать.
+PROCHITANO_TTL = 30 * 24 * 3600
+
+
+def otmetit_prochitano(chat_row_id: int, user_id: int, message_id: int) -> None:
+    """Запомнить, до какого сообщения человек дочитал.
+
+    **Почему в Redis, а не в базе.** Это производное и личное: «сколько
+    непрочитанного» считается от границы, а сама граница ничего не значит для
+    дела — её не увидит ни отчёт, ни клиент, ни соседний сотрудник. Колонка в
+    базе означала бы таблицу, растущую как «диалоги × сотрудники», ради числа
+    на значке.
+
+    **Чем платим, и это надо знать.** Redis поднят с вытеснением старого
+    (`allkeys-lru`). Под давлением памяти граница может пропасть — и диалог
+    покажется непрочитанным целиком. Неприятно и безвредно: человек открывает
+    его, и граница ставится заново. Обратная ошибка — показать прочитанным
+    непрочитанное — была бы хуже, и её тут быть не может: пропажа границы
+    всегда ошибается в сторону «посмотри ещё раз».
+
+    Граница только растёт. Иначе открытая заново старая переписка сдвинула бы
+    её назад, и всё, что пришло позже, снова стало бы непрочитанным.
+    """
+    client = redis_client.get_client()
+    if client is None:
+        return
+    klyuch = f"{PROCHITANO}{chat_row_id}:{user_id}"
+    try:
+        bylo = client.get(klyuch)
+        if bylo is not None and int(bylo) >= message_id:
+            # Всё равно продлеваем срок: человек в диалоге, значит он ему нужен.
+            client.expire(klyuch, PROCHITANO_TTL)
+            return
+        client.setex(klyuch, PROCHITANO_TTL, str(message_id))
+    except Exception as beda:  # noqa: BLE001
+        logger.warning("не отметили прочитанное: %r", beda)
+
+
+def granitsy_prochitannogo(chat_ids: list[int], user_id: int) -> dict[int, int]:
+    """До какого сообщения дочитано в каждом из названных диалогов.
+
+    Одним обращением на всю страницу (`MGET`), а не по запросу на диалог:
+    список открыт весь рабочий день и перезапрашивается живьём, и полсотни
+    обращений на каждый показ — это полсотни обращений каждые несколько секунд
+    у каждого менеджера.
+    """
+    if not chat_ids:
+        return {}
+    client = redis_client.get_client()
+    if client is None:
+        return {}
+    try:
+        klyuchi = [f"{PROCHITANO}{cid}:{user_id}" for cid in chat_ids]
+        znacheniya = client.mget(klyuchi)
+    except Exception as beda:  # noqa: BLE001
+        logger.warning("не собрали границы прочитанного: %r", beda)
+        return {}
+
+    itog: dict[int, int] = {}
+    for chat_row_id, znachenie in zip(chat_ids, znacheniya):
+        if znachenie is None:
+            continue
+        try:
+            itog[chat_row_id] = int(znachenie)
+        except (TypeError, ValueError):
+            continue
+    return itog
