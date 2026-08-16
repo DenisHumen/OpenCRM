@@ -119,77 +119,101 @@ export function SettingsTelegram() {
   };
 
   return (
-    <div className="screen settings-screen">
-      <h1>{t("modTelegram")}</h1>
-      <p className="hint">{t("tgSettingsAbout")}</p>
+    <div className="page page-narrow">
+      <div className="page-head" style={{ alignItems: "flex-start", marginBottom: 22 }}>
+        <div>
+          <h1 className="page-title">{t("modTelegram")}</h1>
+          <div className="page-sub">{t("tgSettingsAbout")}</div>
+        </div>
+      </div>
 
-      <label className="field">
-        <span>{t("tgToken")}</span>
-        <input
-          type="password"
-          value={token}
-          onChange={(e) => setToken(e.target.value)}
-          placeholder={
-            config.configured ? `••••••••${config.token_tail}` : "123456789:AA..."
-          }
-          autoComplete="off"
-        />
-        <small>{t("tgTokenHint")}</small>
-      </label>
+      <div className="card card-pad" style={{ marginBottom: 18 }}>
+        <div style={{ display: "grid", gap: 14 }}>
+          <div>
+            <label className="label">{t("tgToken")}</label>
+            <input
+              className="input"
+              type="password"
+              value={token}
+              onChange={(e) => setToken(e.target.value)}
+              placeholder={
+                config.configured ? `\u2022\u2022\u2022\u2022${config.token_tail}` : "123456789:AA..."
+              }
+              autoComplete="off"
+            />
+            <div className="field-desc">{t("tgTokenHint")}</div>
+          </div>
 
-      <label className="field">
-        <span>{t("tgBotName")}</span>
-        <input
-          value={botName}
-          onChange={(e) => setBotName(e.target.value)}
-          placeholder="my_company_bot"
-        />
-        <small>{t("tgBotNameHint")}</small>
-      </label>
+          <div>
+            <label className="label">{t("tgBotName")}</label>
+            <input
+              className="input"
+              value={botName}
+              onChange={(e) => setBotName(e.target.value)}
+              placeholder="my_company_bot"
+            />
+            <div className="field-desc">{t("tgBotNameHint")}</div>
+          </div>
 
-      <label className="field">
-        <span>{t("tgDigestChat")}</span>
-        <input
-          value={chat}
-          onChange={(e) => setChat(e.target.value)}
-          placeholder="123456789"
-          inputMode="numeric"
-        />
-        <small>{t("tgDigestChatHint")}</small>
-      </label>
+          <div>
+            <label className="label">{t("tgDigestChat")}</label>
+            <input
+              className="input"
+              value={chat}
+              onChange={(e) => setChat(e.target.value)}
+              placeholder="123456789"
+              inputMode="numeric"
+            />
+            <div className="field-desc">{t("tgDigestChatHint")}</div>
+          </div>
+        </div>
 
-      <div className="row">
-        <button type="button" onClick={() => void save()} disabled={busy}>
-          {t("save")}
-        </button>
-        {/*
-          «Подключить» отдельно от «Сохранить», и это не лишний шаг. Адрес
-          приёма зависит от того, как сайт виден снаружи, и меняется при
-          переезде или смене домена — а токен при этом остаётся прежним.
-        */}
-        <button
-          type="button"
-          onClick={() => void connect()}
-          disabled={busy || !config.configured}
-        >
-          {t("tgConnect")}
-        </button>
-        {config.configured && (
-          <button type="button" onClick={() => void disconnect()} disabled={busy}>
-            {t("tgDisconnect")}
+        <div style={{ display: "flex", gap: 10, marginTop: 18, flexWrap: "wrap" }}>
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={() => void save()}
+            disabled={busy}
+          >
+            {t("save")}
           </button>
-        )}
+          {/*
+            «Подключить» отдельной кнопкой, и это не лишний шаг. Адрес приёма
+            зависит от того, как сайт виден снаружи, и меняется при переезде или
+            смене домена, — а токен при этом остаётся прежним.
+          */}
+          <button
+            type="button"
+            className="btn"
+            onClick={() => void connect()}
+            disabled={busy || !config.configured}
+          >
+            {t("tgConnect")}
+          </button>
+          {config.configured && (
+            <button
+              type="button"
+              className="btn btn-danger-link"
+              onClick={() => void disconnect()}
+              disabled={busy}
+            >
+              {t("tgDisconnect")}
+            </button>
+          )}
+        </div>
       </div>
 
       {invite && (
-        <div className="tg-invite">
-          <p className="hint">{t("tgInviteHint")}</p>
-          <code>{invite.url}</code>
+        <div className="card card-pad">
+          <label className="label">{t("tgInviteHint")}</label>
+          <div className="field-desc" style={{ marginBottom: 10 }}>
+            <code>{invite.url}</code>
+          </div>
           {/*
             QR рядом со ссылкой, а не вместо неё. Ссылку кладут на сайт и в
-            письмо, код — на квитанцию и наклейку: это два разных места, и
-            выбирать за владельца незачем. Код приходит с сервера готовым SVG —
-            рисовать его в браузере значило бы тащить ещё одну библиотеку.
+            письмо, код — на квитанцию и наклейку: это разные места, и выбирать
+            за владельца незачем. Код приходит с сервера готовым SVG — рисовать
+            его в браузере значило бы тащить ещё одну библиотеку.
           */}
           <div
             className="tg-qr"
