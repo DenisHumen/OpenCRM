@@ -32,8 +32,26 @@ jobs:
           --health-timeout=5s
           --health-retries=20
           --health-start-period=60s
+      # Redis нужен по той же причине, по которой здесь появилась MySQL: без
+      # него живой слой мессенджера проверить НЕЧЕМ. Шина событий и присутствие
+      # живут только в нём, и проверки на них либо пропускаются, либо зеленеют,
+      # ничего не проверив.
+      #
+      # Забыть его здесь легко и уже случилось: Redis добавили в ворота деплоя,
+      # а сюда нет, и CI покраснел «Redis недоступен» на коде, который в
+      # воротах зелёный. Красные ворота и зелёный CI (или наоборот) — это две
+      # разные правды об одном коде, и верить после этого перестают обеим.
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=2s
+          --health-timeout=3s
+          --health-retries=15
     env:
       OPENCRM_TEST_DB_URL: "mysql+pymysql://root:testy@127.0.0.1:3306/opencrm_test?charset=utf8mb4"
+      OPENCRM_REDIS_URL: "redis://127.0.0.1:6379/0"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
