@@ -59,7 +59,7 @@ interface Watcher {
 const PULS_PRISUTSTVIYA = 5000;
 
 export function Telegram() {
-  const { t, locale, toastError, user } = useApp();
+  const { t, locale, toast, toastError, user } = useApp();
   const [chats, setChats] = useState<TgChat[] | null>(null);
   const [vybran, setVybran] = useState<number | null>(null);
   const [messages, setMessages] = useState<TgMessage[]>([]);
@@ -281,6 +281,27 @@ export function Telegram() {
     }
   };
 
+  /** Завести заявку или напоминание по этой переписке.
+   *
+   * Ради этого канал и внутри CRM: иначе менеджер читает разговор здесь, а
+   * заявку заводит отдельно, перенося сведения руками.
+   */
+  const zavesti = async (chto: "deal" | "task") => {
+    if (vybran == null) return;
+    if (!guard.take()) return;
+    try {
+      const sozdano = await api.post<{ id: number; title: string }>(
+        `/telegram/chats/${vybran}/${chto}`,
+        {},
+      );
+      toast(`${t(chto === "deal" ? "tgDealMade" : "tgTaskMade")}: ${sozdano.title}`);
+    } catch (beda) {
+      toastError(beda);
+    } finally {
+      guard.free();
+    }
+  };
+
   const otvetit = async () => {
     if (vybran == null || !tekst.trim()) return;
     // Засов берётся ПЕРВЫМ действием: не взялся — значит отправка уже идёт, и
@@ -381,6 +402,12 @@ export function Telegram() {
                 {otkrytyy.username && <span>@{otkrytyy.username}</span>}
               </div>
               <div className="tg-head-right">
+                <button type="button" onClick={() => void zavesti("deal")} disabled={guard.busy}>
+                  {t("tgMakeDeal")}
+                </button>
+                <button type="button" onClick={() => void zavesti("task")} disabled={guard.busy}>
+                  {t("tgMakeTask")}
+                </button>
                 <label className="tg-link">
                   <span>{t("tgClient")}</span>
                   {/*

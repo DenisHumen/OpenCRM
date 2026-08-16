@@ -854,3 +854,77 @@ def poslat_tekst_razmetkoy(token: str, chat_id: int, text: str, opener=None) -> 
 
         ploskiy = _re.sub(r"<[^>]+>", "", text)
         return _vyzov(token, "sendMessage", {"chat_id": chat_id, "text": ploskiy}, opener)
+
+
+# --- то, ради чего канал внутри CRM ------------------------------------------
+
+def zavesti_zayavku(db: Session, chat_row_id: int, data: dict, author):
+    """Завести заявку прямо из диалога.
+
+    **Ради этого мессенджер и внутри CRM, а не в соседней вкладке.** Иначе
+    менеджер читает переписку здесь, а заявку заводит отдельно, перенося
+    сведения руками — то есть делает ровно ту работу, которую перенос и должен
+    был убрать.
+
+    Диалог обязан быть привязан к карточке: заявка без клиента бессмысленна,
+    и подставлять «кого-нибудь» нельзя — это тот же оплаченный урок про чужую
+    карточку. Не привязан — говорим об этом кодом, а не заводим клиента сами:
+    решение «этот диалог — вот этот человек» принимает человек.
+
+    Название по умолчанию берём из последнего входящего: девять раз из десяти
+    заявка называется тем, с чего клиент начал. Переименовать её потом — одно
+    движение, а вспомнить, о чём был разговор, по названию «Заявка из
+    телеграма» — нельзя.
+    """
+    from core.services import deal_service
+
+    dialog = telegram_repo.get_chat(db, chat_row_id)
+    if dialog is None:
+        raise errors.NotFoundError("Chat not found", code="telegram_chat_not_found")
+    if not dialog.client_id:
+        raise errors.ValidationError(
+            "Link this conversation to a client card first",
+            code="telegram_chat_not_linked",
+        )
+
+    nazvanie = (data.get("title") or "").strip()
+    if not nazvanie:
+        posledneye = telegram_repo.lenta(db, chat_row_id, limit=20)
+        vhodyashchie = [s for s in posledneye if s.direction == DIRECTION_IN and s.body]
+        nazvanie = (vhodyashchie[0].body if vhodyashchie else "").strip()[:200]
+    if not nazvanie:
+        nazvanie = dialog.title or "Telegram"
+
+    return deal_service.create_deal(
+        db,
+        {
+            "title": nazvanie,
+            "client_id": dialog.client_id,
+            "description": (data.get("description") or "").strip(),
+        },
+        author,
+    )
+
+
+def zavesti_zadachu(db: Session, chat_row_id: int, data: dict, author):
+    """Завести напоминание из диалога.
+
+    В отличие от заявки, задача НЕ требует привязки к карточке: «перезвонить
+    этому человеку» осмысленно и до того, как выяснили, кто он. Привязан
+    диалог — клиент подставится; нет — задача всё равно заведётся, и это
+    честнее, чем требовать сначала разобраться, а потом уже не забыть.
+    """
+    from core.services import task_service
+
+    dialog = telegram_repo.get_chat(db, chat_row_id)
+    if dialog is None:
+        raise errors.NotFoundError("Chat not found", code="telegram_chat_not_found")
+
+    nazvanie = (data.get("title") or "").strip()
+    if not nazvanie:
+        nazvanie = f"Telegram: {dialog.title or dialog.username or dialog.chat_id}"[:200]
+
+    telo = {"title": nazvanie, "due_at": data.get("due_at")}
+    if dialog.client_id:
+        telo["client_id"] = dialog.client_id
+    return task_service.create(db, telo, author)

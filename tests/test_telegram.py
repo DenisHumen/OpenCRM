@@ -986,3 +986,81 @@ def test_otbor_po_metke_istochnika(root_client, bot_nastroen):
     # Без отбора видны все три.
     vse = {d["chat_id"] for d in root_client.get(f"{TG}/chats").json()["items"]}
     assert {506100, 506200, 506300} <= vse, "без отбора список неполон"
+
+
+# --- заявка и задача из диалога ----------------------------------------------
+
+
+def test_zayavka_iz_dialoga_beryot_nazvanie_iz_razgovora(root_client, bot_nastroen):
+    """Заявка заводится по переписке, и названа она тем, с чего клиент начал.
+
+    Ради этого канал и внутри CRM, а не в соседней вкладке: иначе менеджер
+    читает переписку здесь, а заявку заводит отдельно, перенося сведения
+    руками — ровно ту работу, которую перенос должен был убрать.
+
+    Название по умолчанию из последнего входящего, а не «Заявка из телеграма»:
+    переименовать потом — одно движение, а вспомнить, о чём был разговор, по
+    безликому названию нельзя.
+    """
+    klient = root_client.post(
+        f"{API}/clients", json={"name": "Из диалога", "phone": "+380671230011"}
+    ).json()
+
+    telo = _obnovlenie(507100, 1, text="Нужен ремонт холодильника")
+    telo["message"]["contact"] = {"phone_number": "+380671230011", "first_name": "Пётр"}
+    _poslat(root_client, bot_nastroen, telo)
+    dialog = _dialog(root_client, 507100)
+    assert dialog["client_id"] == klient["id"]
+
+    otvet = root_client.post(f"{TG}/chats/{dialog['id']}/deal", json={})
+    assert otvet.status_code == 201, otvet.text
+    assert otvet.json()["title"] == "Нужен ремонт холодильника", otvet.text
+    assert otvet.json()["client_id"] == klient["id"]
+
+
+def test_zayavka_bez_privyazki_otkazyvaet_ponyatno(root_client, bot_nastroen):
+    """Диалог ничей — заявку не заводим и говорим почему.
+
+    Подставить «кого-нибудь» нельзя: это тот же оплаченный урок про чужую
+    карточку. Завести клиента самим — тоже: решение «этот диалог — вот этот
+    человек» принимает человек, а не догадка.
+    """
+    _poslat(root_client, bot_nastroen, _obnovlenie(507200, 1, text="а это кто"))
+    dialog = _dialog(root_client, 507200)
+
+    otvet = root_client.post(f"{TG}/chats/{dialog['id']}/deal", json={})
+    assert otvet.status_code == 422, otvet.text
+    assert otvet.json()["error"]["code"] == "telegram_chat_not_linked"
+
+
+def test_zadacha_iz_dialoga_zavoditsya_i_bez_privyazki(root_client, bot_nastroen):
+    """Напоминание не требует карточки, в отличие от заявки.
+
+    «Перезвонить этому человеку» осмысленно и до того, как выяснили, кто он.
+    Требовать сначала разобраться, а потом уже не забыть — значит потерять
+    ровно те разговоры, где разбираться было некогда.
+    """
+    _poslat(root_client, bot_nastroen, _obnovlenie(507300, 1, text="перезвоните позже"))
+    dialog = _dialog(root_client, 507300)
+
+    otvet = root_client.post(f"{TG}/chats/{dialog['id']}/task", json={})
+    assert otvet.status_code == 201, otvet.text
+    assert otvet.json()["title"], "задача без названия"
+
+
+def test_svoyo_nazvanie_pobezhdaet_ugadannoe(root_client, bot_nastroen):
+    """Назвали заявку сами — берётся названное, а не угаданное из переписки."""
+    klient = root_client.post(
+        f"{API}/clients", json={"name": "Своё название", "phone": "+380671230022"}
+    ).json()
+    telo = _obnovlenie(507400, 1, text="здравствуйте")
+    telo["message"]["contact"] = {"phone_number": "+380671230022", "first_name": "Пётр"}
+    _poslat(root_client, bot_nastroen, telo)
+    dialog = _dialog(root_client, 507400)
+
+    otvet = root_client.post(
+        f"{TG}/chats/{dialog['id']}/deal", json={"title": "Замена компрессора"}
+    )
+    assert otvet.status_code == 201, otvet.text
+    assert otvet.json()["title"] == "Замена компрессора"
+    assert otvet.json()["client_id"] == klient["id"]
