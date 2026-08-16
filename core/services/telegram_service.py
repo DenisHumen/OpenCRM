@@ -33,6 +33,7 @@ from sqlalchemy.orm import Session
 
 from config.settings import get_settings
 from core import exceptions as errors
+from core import realtime
 from core.utils import normalize_phone, now_utc
 from database.models import ClientNote
 from database.models.telegram import (
@@ -500,13 +501,30 @@ def prinyat(db: Session, obnovlenie: dict, opener=None) -> dict:
         direction=DIRECTION_IN,
         kind=vid,
         body=tekst,
+        file_id=file_id,
         file_path=put_fayla,
-        file_name=imya_fayla if put_fayla else "",
+        # Имя нужно и у незабранного файла: без него в переписке стояло бы
+        # безымянное «видео», и человек не понял бы, что именно ему прислали.
+        file_name=imya_fayla if (put_fayla or file_id) else "",
         file_size=razmer or None,
         happened_at=kogda,
         send_state=SEND_SENT,
     )
     _zapis_v_lentu(db, dialog, stroka)
+    # В шину — ПОСЛЕ записи, чтобы услышавший нашёл сообщение в базе. Объявить
+    # раньше значило бы разослать «пришло новое», по которому экран сходил бы в
+    # базу и ничего не нашёл: транзакция ещё не зафиксирована.
+    #
+    # Отказ шины сюда не поднимается: сообщение уже записано, и ронять приём
+    # из-за недоступного Redis значило бы менять надёжное на быстрое. Телеграм
+    # на такой отказ ответил бы повтором.
+    realtime.obyavit(
+        "message",
+        chat_id=dialog.id,
+        message_id=stroka.id,
+        direction=DIRECTION_IN,
+        preview=(stroka.body or "")[:80],
+    )
     return {"status": "accepted", "chat_id": dialog.id, "message_id": stroka.id}
 
 
@@ -640,6 +658,13 @@ def otpravit(
     if vneshniy is not None:
         stroka.external_id = int(vneshniy)
     _zapis_v_lentu(db, dialog, stroka)
+    realtime.obyavit(
+        "message",
+        chat_id=dialog.id,
+        message_id=stroka.id,
+        direction=DIRECTION_OUT,
+        preview=(stroka.body or "")[:80],
+    )
     return stroka
 
 
@@ -674,3 +699,158 @@ def privyazat_klienta(db: Session, chat_row_id: int, client_id: int | None):
         raise errors.NotFoundError("Chat not found", code="telegram_chat_not_found")
     dialog.client_id = client_id
     return dialog
+
+
+def podklyuchit(db: Session, opener=None) -> dict:
+    """Сказать телеграму, куда доставлять. Без этого канал молчит.
+
+    **Почему отдельным действием, а не при сохранении токена.** Адрес приёма
+    зависит от того, как сайт виден снаружи, а не от токена. Владелец меняет
+    домен, ставит сертификат, переезжает на другой сервер — и каждый раз надо
+    сказать телеграму заново. Прицепи мы это к сохранению токена, единственным
+    способом переподключиться было бы перевводить токен.
+
+    Адрес берётся из `base_url` — того самого, которым владелец объявил, как
+    сайт виден снаружи (по нему же строятся публичные ссылки на доски).
+    Телеграм требует HTTPS и проверяет сертификат: по http он вебхук не
+    примет, и отказ придёт понятный.
+    """
+    kluch = token(db)
+    if not kluch:
+        raise errors.ValidationError(
+            "Telegram bot is not configured", code="telegram_not_configured"
+        )
+    sekret = webhook_secret(db)
+    if not sekret:
+        raise errors.ValidationError(
+            "Webhook secret is missing — save the bot token again",
+            code="telegram_secret_missing",
+        )
+
+    osnova = get_settings().base_url.rstrip("/")
+    if not osnova.startswith("https://"):
+        # Телеграм принимает вебхук только по HTTPS. Сказать об этом здесь
+        # честнее, чем отдать его же отказ: человек читает наш экран, а не
+        # документацию Bot API.
+        raise errors.ValidationError(
+            f"Telegram delivers only over HTTPS, and the site address is {osnova}. "
+            "Set OPENCRM_BASE_URL to your https address first.",
+            code="telegram_needs_https",
+        )
+
+    adres = f"{osnova}/api/v1/telegram/webhook"
+    try:
+        zadat_vebkhuk(kluch, adres, sekret, opener)
+    except TelegramOtkaz as beda:
+        raise errors.ValidationError(
+            f"Telegram refused the webhook: {beda}", code="telegram_webhook_refused"
+        ) from None
+    return {"connected": True, "url": adres}
+
+
+def otklyuchit_vebkhuk(db: Session, opener=None) -> None:
+    """Снять вебхук у телеграма. Молча терпит отказ.
+
+    Терпит намеренно: отключение бота не должно упираться в доступность
+    телеграма. Токен мы уже стёрли, доставлять он всё равно будет некуда — а
+    висящий у телеграма адрес перестанет работать сам.
+    """
+    kluch = token(db)
+    if not kluch:
+        return
+    try:
+        _vyzov(kluch, "deleteWebhook", {"drop_pending_updates": True}, opener)
+    except TelegramOtkaz as beda:
+        logger.warning("не сняли вебхук у телеграма: %s", beda)
+
+
+def zabrat_pozzhe(db: Session, chat_row_id: int, message_id: int, opener=None):
+    """Забрать у телеграма файл, который сразу не тянули. Про видео.
+
+    **Почему видео не забирается сразу.** Переписка с картинками съест диск за
+    месяцы, а с видео — за недели; в этом проекте за диском уже однажды никто не
+    следил, пока не стало поздно. Поэтому видео помечается, а тянется тогда,
+    когда его действительно попросили посмотреть.
+
+    Забранное остаётся у нас: второй раз то же видео качать неоткуда и незачем,
+    а ссылка телеграма живёт около часа. Повторный вызов на уже забранном файле
+    ничего не делает — он идемпотентен, и это важно: кнопку нажимают дважды.
+    """
+    stroka = telegram_repo.po_id(db, message_id)
+    if stroka is None or stroka.chat_id != chat_row_id:
+        raise errors.NotFoundError("Message not found", code="telegram_file_not_found")
+    if stroka.file_path:
+        return stroka
+    if not stroka.file_id:
+        raise errors.NotFoundError("Nothing to download", code="telegram_file_not_found")
+
+    dialog = telegram_repo.get_chat(db, chat_row_id)
+    try:
+        soderzhimoe = skachat_fayl(token(db), stroka.file_id, opener)
+    except TelegramOtkaz as beda:
+        # Телеграм хранит файлы не вечно, и у старой переписки его может уже не
+        # быть. Говорим об этом прямо: «не скачалось» человеку понятнее, чем
+        # пустая страница.
+        raise errors.ValidationError(
+            f"Telegram did not give the file: {beda}", code="telegram_file_gone"
+        ) from None
+
+    stroka.file_path = _polozhit_fayl(dialog, stroka.file_name or "video.mp4", soderzhimoe)
+    stroka.file_size = len(soderzhimoe)
+    return stroka
+
+
+def fayl_soobshcheniya(db: Session, chat_row_id: int, message_id: int):
+    """Путь к вложению на диске — для отдачи наружу.
+
+    Проверяем ДВА условия, а не одно: сообщение принадлежит названному диалогу,
+    и путь не уводит за пределы каталога канала. Второе не паранойя: имя файла
+    у входящего приходит от постороннего, и хотя мы его не используем (кладём
+    под своим), полагаться на это в месте, отдающем файлы наружу, нельзя. Такой
+    проверки не хватало ровно в этом классе мест по всей отрасли.
+    """
+    stroka = telegram_repo.po_id(db, message_id)
+    if stroka is None or stroka.chat_id != chat_row_id or not stroka.file_path:
+        raise errors.NotFoundError("File not found", code="telegram_file_not_found")
+
+    koren = (get_settings().storage_dir / "telegram").resolve()
+    put = (get_settings().storage_dir / stroka.file_path).resolve()
+    if not put.is_relative_to(koren) or not put.exists():
+        raise errors.NotFoundError("File not found", code="telegram_file_not_found")
+    return put, stroka
+
+
+def poslat_tekst_razmetkoy(token: str, chat_id: int, text: str, opener=None) -> dict:
+    """Отправить текст С РАЗМЕТКОЙ и с запасным путём на случай отказа разбора.
+
+    Отдельно от `poslat_tekst`, и разница принципиальная. Клиенту мы пишем БЕЗ
+    разметки: текст сочиняет менеджер, в нём бывают `<` и `&`, и телеграм отбил
+    бы сообщение целиком. Здесь текст сочиняем мы сами и всё чужое в нём
+    экранируем — значит разметку можно и нужно: сводка со сворачиваемым блоком
+    читается, а сплошная простыня нет.
+
+    **Запасной путь обязателен.** Телеграм отбивает сообщение по разбору
+    разметки кодом 400. Получив его, шлём то же самое плоским текстом. Свойство,
+    ради которого это написано: ошибка в оформлении не имеет права заглушить
+    сводку — а молчание сводки читается как «всё сломалось».
+    """
+    try:
+        return _vyzov(
+            token,
+            "sendMessage",
+            {
+                "chat_id": chat_id,
+                "text": text,
+                "parse_mode": "HTML",
+                # Ссылок в сводке нет, а предпросмотр к ним превратил бы её в
+                # простыню картинок.
+                "disable_web_page_preview": True,
+            },
+            opener,
+        )
+    except TelegramOtkaz as beda:
+        logger.warning("сводка не разобралась как HTML, шлём плоским текстом: %s", beda)
+        import re as _re
+
+        ploskiy = _re.sub(r"<[^>]+>", "", text)
+        return _vyzov(token, "sendMessage", {"chat_id": chat_id, "text": ploskiy}, opener)

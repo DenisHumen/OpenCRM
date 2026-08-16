@@ -1265,3 +1265,219 @@ button { font-family: var(--sans); }
 /* «Такого действия здесь не бывает» и «не выдано» обязаны выглядеть по-разному. */
 .perm-na { color: var(--surface-2); user-select: none; }
 .perm-matrix input[type="checkbox"] { cursor: pointer; accent-color: var(--brand); }
+
+/* --- мессенджер: переписка с клиентами через бота фирмы ------------------- */
+/*
+ * Две колонки, а не три. Третья («аккаунты») из раннего замысла отпала вместе
+ * с личными аккаунтами менеджеров: бот один, и полоса с одной строкой — это
+ * место, занятое ни за чем.
+ *
+ * Высота считается от окна, а не от содержимого: у мессенджера прокручивается
+ * лента внутри, а не страница целиком. Иначе поле ввода уезжает вниз и его
+ * приходится искать прокруткой — ровно то, чего в переписке не прощают.
+ */
+.tg-screen {
+  display: grid;
+  grid-template-columns: minmax(220px, 320px) 1fr;
+  gap: 16px;
+  height: calc(100vh - 64px - 32px);
+  min-height: 420px;
+}
+
+.tg-list {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--well);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.tg-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+}
+.tg-search input {
+  flex: 1;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  outline: none;
+}
+
+.tg-list ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-y: auto;
+}
+
+.tg-chat {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 2px 8px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.tg-chat:hover { background: var(--well-off); }
+.tg-chat.is-active { background: var(--tint-neutral); }
+.tg-chat-title { font-weight: 600; }
+.tg-chat-time { font-size: 12px; opacity: 0.6; }
+.tg-chat-unlinked {
+  grid-column: 1 / -1;
+  font-size: 12px;
+  opacity: 0.7;
+}
+
+.tg-talk {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--well);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.tg-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+}
+.tg-head span { opacity: 0.6; margin-left: 8px; font-size: 13px; }
+.tg-source { font-size: 12px; opacity: 0.7; }
+
+/*
+ * Баннер «в чате не только вы». Заметный, но не перекрывающий работу: это
+ * предупреждение, а не запрет — решено, что двое договорятся сами.
+ */
+.tg-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  font-size: 13px;
+  background: var(--warn-bar);
+  border-bottom: 1px solid var(--line);
+}
+
+.tg-feed {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tg-msg {
+  max-width: min(560px, 78%);
+  padding: 8px 12px;
+  border-radius: 12px;
+  background: var(--well-off);
+}
+.tg-msg p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+/* Свои — справа, чужие — слева: так устроен всякий мессенджер, и делать иначе
+   значило бы заставить переучиваться. */
+.tg-out { align-self: flex-end; background: var(--tint-brand); }
+.tg-in { align-self: flex-start; }
+.tg-msg.is-failed { border: 1px solid var(--danger); }
+.tg-time { display: block; font-size: 11px; opacity: 0.55; margin-top: 4px; }
+.tg-failed { display: block; font-size: 12px; color: var(--danger); margin-top: 4px; }
+.tg-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: inherit;
+}
+
+.tg-compose {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--line);
+}
+.tg-compose textarea {
+  flex: 1;
+  min-height: 38px;
+  max-height: 140px;
+  resize: vertical;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+.tg-attach { cursor: pointer; padding: 8px; opacity: 0.75; }
+.tg-attach:hover { opacity: 1; }
+
+@media (max-width: 860px) {
+  /* На узком экране список и переписка не помещаются рядом. Показываем их
+     колонкой: список сверху ограниченной высоты, переписка под ним. */
+  .tg-screen { grid-template-columns: 1fr; height: auto; }
+  .tg-list { max-height: 40vh; }
+  .tg-feed { min-height: 50vh; }
+}
+
+/* Кнопка «показать более ранние»: над лентой, неброская — её нажимают редко. */
+.tg-more {
+  align-self: center;
+  padding: 4px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.tg-more:hover { background: var(--well-off); }
+a.tg-file { text-decoration: none; }
+a.tg-file:hover { text-decoration: underline; }
+
+/* Привязка диалога к карточке — в шапке переписки, рядом с меткой источника. */
+.tg-head-right { display: flex; align-items: center; gap: 12px; }
+.tg-link { display: flex; align-items: center; gap: 6px; font-size: 13px; }
+.tg-link select {
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  max-width: 220px;
+}
+
+/* Приглашение в бота: ссылка для сайта, код для квитанции. */
+.tg-invite { margin-top: 20px; display: grid; gap: 8px; justify-items: start; }
+.tg-invite code { padding: 4px 8px; border: 1px solid var(--line); border-radius: 8px; }
+.tg-qr svg { width: 160px; height: 160px; }
+
+/* «Посмотреть видео»: тянет файл по нажатию, а не при открытии диалога. */
+.tg-fetch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.tg-fetch:hover { background: var(--well-off); }

@@ -66,7 +66,7 @@ const ICON: Record<string, string> = {
   templates: "note",
   monitoring: "alert",
   telephony: "call",
-  telegram: "chat",
+  telegram: "send",
   // «receipt» — тот же значок, что у бланков и заказов, и это не оплошность:
   // ближе к деньгам в наборе ничего нет, а свой значок ради одного блока
   // означал бы правку `Icon.PATHS` — общего файла, куда финансам лезть незачем.

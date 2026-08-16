@@ -376,3 +376,491 @@ def test_perepiska_privyazannogo_dialoga_vidna_v_lente_klienta(root_client, bot_
     zapisi = root_client.get(f"{API}/clients/{klient['id']}/notes?per_page=200").json()["items"]
     iz_telegrama = [z for z in zapisi if z["kind"] == "telegram"]
     assert iz_telegrama, f"записи из телеграма нет в ленте клиента: {zapisi}"
+
+
+# --- живое состояние ---------------------------------------------------------
+
+
+def _dat_pravo_na_telegram(root_client, manager_client) -> None:
+    """Выдать менеджеру право смотреть переписку.
+
+    Роль по умолчанию о новом разделе не знает — так и должно быть: права на
+    свежий блок не появляются у всех сами. Значит в проверке их надо выдать
+    явно, как это сделает владелец в матрице доступов.
+    """
+    ya = manager_client.get(f"{API}/auth/me").json()
+    roli = root_client.get(f"{API}/roles").json()["items"]
+    moya = next(r for r in roli if r["id"] == ya["role_id"])
+    obnovleno = root_client.patch(
+        f"{API}/roles/{moya['id']}",
+        json={"permissions": sorted(set(moya["permissions"]) | {"telegram.view"})},
+    )
+    assert obnovleno.status_code == 200, obnovleno.text
+
+
+def test_prisutstvie_pokazyvaet_kto_v_chate(root_client, manager_client, bot_nastroen):
+    """Двое открыли один диалог — оба видят друг друга.
+
+    Ради этого весь живой слой и строится: баннер «в чате не только вы» должен
+    показывать ИМЕНА, а не число. Число не говорит, с кем договариваться.
+    """
+    _dat_pravo_na_telegram(root_client, manager_client)
+    _poslat(root_client, bot_nastroen, _obnovlenie(502100, 1, text="кто ответит"))
+    dialog = _dialog(root_client, 502100)
+
+    pervyy = root_client.post(f"{TG}/chats/{dialog['id']}/presence", json={"present": True})
+    assert pervyy.status_code == 200, pervyy.text
+    assert len(pervyy.json()["watchers"]) == 1, "сам себя в списке не увидел"
+
+    vtoroy = manager_client.post(f"{TG}/chats/{dialog['id']}/presence", json={"present": True})
+    assert vtoroy.status_code == 200, vtoroy.text
+    imena = {kto["name"] for kto in vtoroy.json()["watchers"]}
+    assert len(imena) == 2, f"второй не увидел первого: {vtoroy.json()['watchers']}"
+
+
+def test_ushedshiy_propadaet_srazu(root_client, bot_nastroen):
+    """Закрыл чат — исчез из баннера немедленно, а не через срок годности.
+
+    Срок снял бы отметку и сам, но через пятнадцать секунд. Всё это время сосед
+    видел бы предупреждение о конфликте с человеком, который уже ушёл, — то
+    есть предупреждение о том, чего нет.
+    """
+    _poslat(root_client, bot_nastroen, _obnovlenie(502200, 1, text="я ухожу"))
+    dialog = _dialog(root_client, 502200)
+
+    root_client.post(f"{TG}/chats/{dialog['id']}/presence", json={"present": True})
+    ushyol = root_client.post(f"{TG}/chats/{dialog['id']}/presence", json={"present": False})
+    assert ushyol.status_code == 200, ushyol.text
+    assert ushyol.json()["watchers"] == [], "ушедший остался в чате"
+
+
+def test_prisutstvie_v_chuzhom_dialoge_otvergaetsya(root_client, bot_nastroen):
+    """Отметиться в несуществующем диалоге нельзя."""
+    otvet = root_client.post(f"{TG}/chats/999999/presence", json={"present": True})
+    assert otvet.status_code == 404
+    assert otvet.json()["error"]["code"] == "telegram_chat_not_found"
+
+
+def test_potok_otvechaet_srazu_i_ne_buferizuetsya(root_client, telegram_on, monkeypatch):
+    """Поток здоровается первым событием и просит nginx не копить ответ.
+
+    Оба свойства проверяются вместе, потому что оба невидимы на локальной
+    машине. Без первого события вкладка полминуты не знает, подключилась она
+    или висит. Без `X-Accel-Buffering: no` nginx копит поток в буфере и отдаёт
+    пачкой — то есть поток перестаёт быть потоком, а становится очень медленным
+    запросом. Заметить это без настоящего nginx нельзя вовсе.
+    """
+    # Срок жизни соединения на время проверки — секунда. Без него поток
+    # держится пять минут, и проверка ждала бы их полностью: разрыв со стороны
+    # тестового клиента до приложения не доходит, `is_disconnected` в нём не
+    # срабатывает. Так и вышло в первой редакции — прогон завис.
+    from web.api.routes import telegram as marshruty
+
+    monkeypatch.setattr(marshruty, "MAX_ZHIZN_POTOKA", 1)
+
+    with root_client.stream("GET", f"{TG}/stream") as otvet:
+        assert otvet.status_code == 200
+        assert otvet.headers["content-type"].startswith("text/event-stream")
+        assert otvet.headers.get("x-accel-buffering") == "no", (
+            "nginx будет копить поток в буфере, и живые обновления станут пачками"
+        )
+        for stroka in otvet.iter_lines():
+            if stroka.startswith("data:"):
+                import json as _json
+
+                sobytie = _json.loads(stroka[len("data:") :])
+                assert sobytie["type"] == "ready"
+                break
+
+
+def test_novoe_soobshchenie_obyavlyaetsya_v_shinu(root_client, bot_nastroen):
+    """Пришло сообщение — о нём объявлено всем процессам.
+
+    Проверяем шину напрямую, а не через поток: поток — это уже способ доставки,
+    а объявление обязано случиться независимо от того, слушает его кто-нибудь
+    или нет. Иначе сообщение, пришедшее в момент, когда все вкладки закрыты,
+    не объявлялось бы вовсе.
+    """
+    from core import realtime
+
+    podpiska = realtime.podpisatsya()
+    assert podpiska is not None, "Redis недоступен — живой слой не проверить"
+    try:
+        _poslat(root_client, bot_nastroen, _obnovlenie(502300, 1, text="объяви меня"))
+
+        import json as _json
+        import time as _time
+
+        uslyshano = []
+        # Ждём недолго: объявление уходит сразу, а не по расписанию. Секунды с
+        # запасом хватает соседнему контейнеру на той же машине.
+        do = _time.monotonic() + 3
+        while _time.monotonic() < do and not uslyshano:
+            soobshchenie = podpiska.get_message(timeout=0.2)
+            if soobshchenie and soobshchenie.get("data"):
+                dannye = soobshchenie["data"]
+                if isinstance(dannye, bytes):
+                    dannye = dannye.decode("utf-8")
+                razobrano = _json.loads(dannye)
+                if razobrano.get("type") == "message":
+                    uslyshano.append(razobrano)
+
+        assert uslyshano, "о новом сообщении в шину не объявили"
+        assert uslyshano[0]["direction"] == "in"
+        assert uslyshano[0]["preview"] == "объяви меня"
+    finally:
+        podpiska.close()
+
+
+# --- утренняя сводка ---------------------------------------------------------
+
+
+def test_svodka_uhodit_i_soderzhit_tsifry(root_client, bot_nastroen, monkeypatch):
+    """Сводка собирается и уходит в назначенный чат.
+
+    Настоящей сети здесь нет: подставляем отправку и смотрим, ЧТО именно ушло.
+    Проверять «вызвали телеграм» без разбора текста бессмысленно — сводка,
+    ушедшая пустой, вызывает его точно так же.
+    """
+    from core.services import telegram_service
+
+    root_client.put(f"{TG}/settings", json={"digest_chat": "123456789"})
+
+    ushlo = []
+    monkeypatch.setattr(
+        telegram_service,
+        "poslat_tekst_razmetkoy",
+        lambda kluch, chat_id, text, opener=None: ushlo.append((chat_id, text))
+        or {"message_id": 1},
+    )
+
+    otvet = root_client.post(f"{TG}/digest/send")
+    assert otvet.status_code == 200, otvet.text
+    assert otvet.json()["status"] == "sent", otvet.text
+
+    assert len(ushlo) == 1, f"сводка ушла не один раз: {ushlo}"
+    chat_id, tekst = ushlo[0]
+    assert chat_id == 123456789, "сводка ушла не в тот чат"
+    assert "Сводка за" in tekst
+    assert "Заявок новых" in tekst, f"в сводке нет цифр по делу:\n{tekst}"
+
+
+def test_svodka_bez_nastroyki_molchit(root_client, telegram_on):
+    """Чат не назван — сводка не отправляется и это не отказ.
+
+    Не отказ намеренно: расписание не должно краснеть у того, кто телеграмом не
+    пользуется. Красное расписание, которое так и задумано, перестают читать —
+    и вместе с ним перестают читать настоящие отказы.
+    """
+    otvet = root_client.post(f"{TG}/digest/send")
+    assert otvet.status_code == 200, otvet.text
+    assert otvet.json()["status"] == "skipped"
+    assert otvet.json()["reason"] == "not_configured"
+
+
+def test_upavshiy_razdel_ne_ronyaet_svodku(root_client, bot_nastroen, monkeypatch):
+    """Один счёт сломался — сводка всё равно уходит и говорит об этом.
+
+    Иначе одна сломанная выборка означала бы, что владелец не получит НИЧЕГО, и
+    не узнает, что канал жив. А молчание сводки читается как «всё сломалось» —
+    то есть поломка одного счёта выглядела бы как поломка всего.
+    """
+    from core.services import telegram_service
+    from database.repositories import svodka as svodka_repo
+
+    root_client.put(f"{TG}/settings", json={"digest_chat": "123456789"})
+
+    def slomat(*args, **kwargs):
+        raise RuntimeError("подставная поломка счёта")
+
+    monkeypatch.setattr(svodka_repo, "prosrocheno_napominaniy", slomat)
+
+    ushlo = []
+    monkeypatch.setattr(
+        telegram_service,
+        "poslat_tekst_razmetkoy",
+        lambda kluch, chat_id, text, opener=None: ushlo.append(text) or {"message_id": 1},
+    )
+
+    otvet = root_client.post(f"{TG}/digest/send")
+    assert otvet.status_code == 200, otvet.text
+    assert otvet.json()["status"] == "sent", "сломанный раздел уронил всю сводку"
+    assert otvet.json()["otkazy"], "о несосчитанном разделе не сказано"
+    assert "Не сосчиталось" in ushlo[0], f"в тексте нет пометки о поломке:\n{ushlo[0]}"
+
+    # Парная проверка: `svodka_service` не проглотил поломку молча.
+    assert "просроченные напоминания" in otvet.json()["otkazy"]
+
+
+def test_okno_svodki_eto_proshedshie_sutki_po_mestnomu(root_client):
+    """Сводка считает вчерашние сутки по МЕСТНОМУ времени, а не по UTC.
+
+    Перепутать здесь легче всего, и цена ошибки — цифры, сдвинутые на несколько
+    часов, которые выглядят правдоподобно. «За вчера» обязано означать вчера
+    того, кто читает, иначе утренние цифры включают чужой вечер.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from core.services import svodka_service
+
+    # Полночь по местному: окно обязано быть ровно предыдущими сутками.
+    mestnyy_polden = datetime(2026, 8, 16, 12, 0, tzinfo=svodka_service.POYAS)
+    ot, do, den = svodka_service._sutki(mestnyy_polden)
+
+    assert do - ot == timedelta(days=1), f"окно не сутки: {do - ot}"
+    assert den == "15.08.2026", f"подпись не про вчера: {den}"
+    # Границы отдаются в UTC и без пояса — база живёт в нём.
+    assert ot.tzinfo is None and do.tzinfo is None
+    ozhidaemoe_nachalo = (
+        datetime(2026, 8, 15, 0, 0, tzinfo=svodka_service.POYAS)
+        .astimezone(timezone.utc)
+        .replace(tzinfo=None)
+    )
+    assert ot == ozhidaemoe_nachalo, f"начало окна съехало: {ot} против {ozhidaemoe_nachalo}"
+
+
+def test_razmetka_svodki_imeet_zapasnoy_put(root_client, bot_nastroen, monkeypatch):
+    """Телеграм не разобрал разметку — сводка уходит плоским текстом.
+
+    Свойство, ради которого это написано: ошибка в ОФОРМЛЕНИИ не имеет права
+    заглушить сводку. Молчание сводки читается как «всё сломалось», и разбирать
+    будут не ту поломку.
+    """
+    from core.services import telegram_service
+
+    vyzovy = []
+
+    def podstava(token, metod, polya, opener=None):
+        vyzovy.append(polya)
+        if polya.get("parse_mode"):
+            raise telegram_service.TelegramOtkaz("can't parse entities")
+        return {"message_id": 2}
+
+    monkeypatch.setattr(telegram_service, "_vyzov", podstava)
+
+    itog = telegram_service.poslat_tekst_razmetkoy(
+        "123:AAA", 5, "<b>Сводка</b> и <i>цифры</i>"
+    )
+    assert itog == {"message_id": 2}
+    assert len(vyzovy) == 2, "запасного пути не было — сводка потерялась бы"
+    assert "parse_mode" not in vyzovy[1], "вторая попытка снова с разметкой"
+    assert vyzovy[1]["text"] == "Сводка и цифры", (
+        f"теги не сняты, телеграм отобьёт и это: {vyzovy[1]['text']!r}"
+    )
+
+
+# --- приглашение и подключение -----------------------------------------------
+
+
+def test_priglashenie_daet_ssylku_i_kod(root_client, bot_nastroen):
+    """Ссылка и QR, которыми клиента приводят к боту.
+
+    Без этого канал не работает вовсе, и это не украшение: телеграм не
+    позволяет боту написать первым тому, кто его не запускал. Клиент обязан
+    начать разговор сам — значит нужен способ его привести.
+    """
+    root_client.put(f"{TG}/settings", json={"bot_username": "@moy_bot"})
+
+    otvet = root_client.get(f"{TG}/invite", params={"label": "naklejka"})
+    assert otvet.status_code == 200, otvet.text
+    telo = otvet.json()
+    # Собачка снимается при сохранении: в ссылке её быть не должно.
+    assert telo["url"] == "https://t.me/moy_bot?start=naklejka", telo["url"]
+    assert telo["qr_svg"].lstrip().startswith("<svg"), "QR-код не отрисовался"
+
+
+def test_priglashenie_bez_imeni_bota_otkazyvaet_ponyatno(root_client, telegram_on):
+    """Имя бота не задано — отказ с внятным кодом, а не ссылка в никуда.
+
+    Ссылка `https://t.me/?start=…` выглядит настоящей и не работает. Отдать её
+    значило бы разослать клиентам нерабочий адрес и узнать об этом от них.
+    """
+    # Имя бота стираем явно: отключение бота его НЕ трогает (оно про связь, а
+    # не про данные), и соседняя проверка оставила бы своё. Первая редакция
+    # этого не учла и краснела на настоящей ссылке.
+    root_client.put(f"{TG}/settings", json={"bot_username": ""})
+
+    otvet = root_client.get(f"{TG}/invite")
+    assert otvet.status_code == 422, otvet.text
+    assert otvet.json()["error"]["code"] == "telegram_username_missing"
+
+
+def test_metka_priglasheniya_proveryaetsya(root_client, bot_nastroen):
+    """Метка — только буквы, цифры, дефис и подчёркивание.
+
+    Требование самого телеграма. Пропусти мы сюда пробел или кириллицу — вышла
+    бы ссылка, которая молча не работает, а это худший вид поломки: она
+    выглядит рабочей.
+    """
+    root_client.put(f"{TG}/settings", json={"bot_username": "moy_bot"})
+    otvet = root_client.get(f"{TG}/invite", params={"label": "с сайта"})
+    assert otvet.status_code == 422, otvet.text
+
+
+def test_podklyuchenie_bez_https_obyasnyaet_prichinu(root_client, bot_nastroen):
+    """Телеграм принимает вебхук только по HTTPS — говорим это своими словами.
+
+    В проверках адрес сайта задан по http, и это тот самый случай. Отдать
+    человеку отказ телеграма дословно значило бы отправить его читать чужую
+    документацию; он читает наш экран.
+    """
+    otvet = root_client.post(f"{TG}/connect")
+    assert otvet.status_code == 422, otvet.text
+    assert otvet.json()["error"]["code"] == "telegram_needs_https"
+
+
+def test_podklyuchenie_bez_tokena_otkazyvaet(root_client, telegram_on):
+    """Подключать нечего, пока не введён токен."""
+    otvet = root_client.post(f"{TG}/connect")
+    assert otvet.status_code == 422, otvet.text
+    assert otvet.json()["error"]["code"] == "telegram_not_configured"
+
+
+def test_vlozhenie_otdayotsya_tolko_svoyo(root_client, bot_nastroen, monkeypatch):
+    """Файл отдаётся по своему диалогу и не отдаётся по чужому.
+
+    Проверка на принадлежность, а не только на существование. Идентификаторы
+    сообщений сквозные, и без неё адрес чужого диалога с чужим номером
+    сообщения отдавал бы чужую переписку тому, кто просто подставил число.
+    """
+    from core.services import telegram_service
+
+    # Кладём входящее с файлом, подставив загрузку из телеграма.
+    monkeypatch.setattr(
+        telegram_service, "skachat_fayl", lambda kluch, file_id, opener=None: b"soderzhimoe"
+    )
+    telo = _obnovlenie(503100, 1, caption="вот файл")
+    telo["message"]["document"] = {
+        "file_id": "AAA",
+        "file_name": "dogovor.pdf",
+        "file_size": 11,
+    }
+    _poslat(root_client, bot_nastroen, telo)
+    dialog = _dialog(root_client, 503100)
+
+    lenta = root_client.get(f"{TG}/chats/{dialog['id']}/messages").json()["items"]
+    assert lenta[0]["has_file"] is True, f"файл не забрался: {lenta}"
+
+    svoyo = root_client.get(
+        f"{TG}/chats/{dialog['id']}/messages/{lenta[0]['id']}/file"
+    )
+    assert svoyo.status_code == 200, svoyo.text
+    assert svoyo.content == b"soderzhimoe"
+
+    # Тот же файл по ЧУЖОМУ диалогу — отказ.
+    _poslat(root_client, bot_nastroen, _obnovlenie(503200, 1, text="чужой диалог"))
+    chuzhoy = _dialog(root_client, 503200)
+    otkaz = root_client.get(
+        f"{TG}/chats/{chuzhoy['id']}/messages/{lenta[0]['id']}/file"
+    )
+    assert otkaz.status_code == 404, "файл отдан по чужому диалогу"
+
+
+# --- видео по нажатию --------------------------------------------------------
+
+
+def test_video_ne_zabiraetsya_srazu_no_zabiraetsya_po_nazhatiyu(
+    root_client, bot_nastroen, monkeypatch
+):
+    """Видео помечается, но не тянется, — и тянется, когда его попросили.
+
+    Переписка с видео съест диск за недели, а в этом проекте за диском уже
+    однажды никто не следил, пока не стало поздно. Но и терять возможность
+    посмотреть нельзя: клиент прислал видео о поломке, а менеджер его не видит.
+
+    Проверка парная в одном теле нарочно: по отдельности каждая половина
+    зеленела бы и на неверном поведении. «Не забрали сразу» верно и для видео,
+    которое не забирается никогда; «забрали по нажатию» верно и для видео,
+    которое тянется само.
+    """
+    from core.services import telegram_service
+
+    skachivaniy = []
+
+    def podstava(kluch, file_id, opener=None):
+        skachivaniy.append(file_id)
+        return b"eto video"
+
+    monkeypatch.setattr(telegram_service, "skachat_fayl", podstava)
+
+    telo = _obnovlenie(504100, 1, caption="вот поломка")
+    telo["message"]["video"] = {
+        "file_id": "VIDEO-1",
+        "file_name": "polomka.mp4",
+        "file_size": 5_000_000,
+    }
+    _poslat(root_client, bot_nastroen, telo)
+    dialog = _dialog(root_client, 504100)
+
+    lenta = root_client.get(f"{TG}/chats/{dialog['id']}/messages").json()["items"]
+    stroka = lenta[0]
+    assert skachivaniy == [], "видео забрали сразу — диск кончится за недели"
+    assert stroka["has_file"] is False
+    assert stroka["can_fetch"] is True, "видео нечем забрать позже"
+    assert stroka["file_name"] == "polomka.mp4", (
+        "имя потерялось — в переписке стояло бы безымянное «видео»"
+    )
+
+    zabrano = root_client.post(
+        f"{TG}/chats/{dialog['id']}/messages/{stroka['id']}/fetch"
+    )
+    assert zabrano.status_code == 200, zabrano.text
+    assert skachivaniy == ["VIDEO-1"], f"забрали не то: {skachivaniy}"
+    assert zabrano.json()["has_file"] is True
+    assert zabrano.json()["can_fetch"] is False
+
+    fayl = root_client.get(
+        f"{TG}/chats/{dialog['id']}/messages/{stroka['id']}/file"
+    )
+    assert fayl.status_code == 200
+    assert fayl.content == b"eto video"
+
+
+def test_povtornoe_nazhatie_ne_kachaet_dvazhdy(root_client, bot_nastroen, monkeypatch):
+    """Кнопку нажали дважды — телеграм спросили один раз.
+
+    Кнопки нажимают дважды, это обычное дело. Второе скачивание того же видео —
+    это лишний трафик и лишний файл на диске рядом с первым.
+    """
+    from core.services import telegram_service
+
+    skachivaniy = []
+    monkeypatch.setattr(
+        telegram_service,
+        "skachat_fayl",
+        lambda kluch, file_id, opener=None: skachivaniy.append(file_id) or b"video",
+    )
+
+    telo = _obnovlenie(504200, 1)
+    telo["message"]["video"] = {"file_id": "VIDEO-2", "file_size": 1000}
+    _poslat(root_client, bot_nastroen, telo)
+    dialog = _dialog(root_client, 504200)
+    stroka = root_client.get(f"{TG}/chats/{dialog['id']}/messages").json()["items"][0]
+
+    adres = f"{TG}/chats/{dialog['id']}/messages/{stroka['id']}/fetch"
+    assert root_client.post(adres).status_code == 200
+    assert root_client.post(adres).status_code == 200
+    assert skachivaniy == ["VIDEO-2"], f"скачали дважды: {skachivaniy}"
+
+
+def test_kartinka_po_prezhnemu_zabiraetsya_srazu(root_client, bot_nastroen, monkeypatch):
+    """Парная к видео: картинку тянем сразу, и это не должно сломаться.
+
+    Без неё правка «не тянуть видео» могла бы заодно перестать тянуть всё
+    остальное, и переписка в CRM стала бы неполной — то есть менеджер полез бы
+    в свой телефон, ровно туда, откуда общение и уводили.
+    """
+    from core.services import telegram_service
+
+    monkeypatch.setattr(
+        telegram_service, "skachat_fayl", lambda kluch, file_id, opener=None: b"kartinka"
+    )
+
+    telo = _obnovlenie(504300, 1, caption="фото")
+    telo["message"]["photo"] = [{"file_id": "PH-1", "file_size": 2048}]
+    _poslat(root_client, bot_nastroen, telo)
+    dialog = _dialog(root_client, 504300)
+
+    stroka = root_client.get(f"{TG}/chats/{dialog['id']}/messages").json()["items"][0]
+    assert stroka["has_file"] is True, "картинка перестала забираться сразу"
+    assert stroka["can_fetch"] is False

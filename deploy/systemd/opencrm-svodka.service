@@ -1,0 +1,16 @@
+[Unit]
+Description=OpenCRM: утренняя сводка в телеграм
+Documentation=https://github.com/DenisHumen/OpenCRM/blob/main/docs/13-telegram-messenger.md
+# Сводка считается изнутри контейнера приложения теми же репозиториями, что
+# отвечают экранам. Второй счёт «снаружи» означал бы два места, где считается
+# одно и то же, и разошлись бы они молча.
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=studio
+WorkingDirectory=/opt/OpenCRM
+ExecStart=/opt/OpenCRM/opencrm.sh svodka
+StandardOutput=journal
+StandardError=journal

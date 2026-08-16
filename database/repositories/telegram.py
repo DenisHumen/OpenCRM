@@ -11,27 +11,26 @@
 - список диалогов сортируется по `last_message_at` — колонке, а не по
   соединению с таблицей сообщений. Соединение здесь стоило бы прохода по самой
   быстрорастущей таблице системы на каждый показ;
-- счётчик непрочитанного НЕ хранится и НЕ считается на каждый диалог отдельно:
-  он берётся одним запросом с группировкой на всю страницу сразу.
+- листание переписки идёт по идентификатору, а не по смещению: смещение на
+  живой переписке врёт, потому что пока человек читает, приходят новые
+  сообщения, и вторая страница показывает то, что уже было на первой.
+
+Счётчика непрочитанного здесь НЕТ, и это осознанно. Он требует границы
+«прочитано» на сотрудника, а такой границы в системе пока не существует:
+живое состояние знает, кто В чате, но не помнит, до какого места он дочитал.
+Запрос, считающий непрочитанным весь диалог, был бы хуже отсутствия счётчика —
+он показывал бы одно и то же число всегда.
 """
 
-from datetime import datetime
-
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from database.models import Client, TelegramChat, TelegramMessage
-from database.models.telegram import DIRECTION_IN
 from database.query import contains, page_of
 
 
 def get_chat(db: Session, chat_row_id: int) -> TelegramChat | None:
     return db.get(TelegramChat, chat_row_id)
-
-
-def get_by_chat_id(db: Session, chat_id: int) -> TelegramChat | None:
-    """Диалог по идентификатору телеграма — точка склейки входящих."""
-    return db.scalar(select(TelegramChat).where(TelegramChat.chat_id == chat_id))
 
 
 def vzyat_pod_pravku(db: Session, chat_id: int) -> TelegramChat | None:
@@ -113,48 +112,6 @@ def spisok_dialogov(
     )
 
 
-def neprochitannye(db: Session, chat_ids: list[int], granitsy: dict[int, datetime]) -> dict[int, int]:
-    """Сколько непрочитанного в каждом диалоге — ОДНИМ запросом на всю страницу.
-
-    Не по одному запросу на диалог: страница списка это полсотни строк, и
-    запрос на строку означал бы полсотни обращений каждые несколько секунд у
-    каждого открытого экрана.
-
-    Граница «прочитано» приходит снаружи, из живого состояния (Redis): она
-    производная и по правилу проекта не хранится. Диалог, о котором граница
-    неизвестна, считается непрочитанным целиком — это честнее, чем показать
-    ноль и дать сообщению потеряться.
-    """
-    if not chat_ids:
-        return {}
-    stroki = db.execute(
-        select(TelegramMessage.chat_id, func.count(TelegramMessage.id), func.max(TelegramMessage.happened_at))
-        .where(
-            TelegramMessage.chat_id.in_(chat_ids),
-            TelegramMessage.direction == DIRECTION_IN,
-        )
-        .group_by(TelegramMessage.chat_id)
-    ).all()
-
-    itog: dict[int, int] = {}
-    for chat_row_id, vsego, _posledneye in stroki:
-        granitsa = granitsy.get(chat_row_id)
-        if granitsa is None:
-            itog[chat_row_id] = int(vsego)
-            continue
-        itog[chat_row_id] = int(
-            db.scalar(
-                select(func.count(TelegramMessage.id)).where(
-                    TelegramMessage.chat_id == chat_row_id,
-                    TelegramMessage.direction == DIRECTION_IN,
-                    TelegramMessage.happened_at > granitsa,
-                )
-            )
-            or 0
-        )
-    return itog
-
-
 def lenta(
     db: Session, chat_row_id: int, *, do_id: int | None = None, limit: int = 50
 ) -> list[TelegramMessage]:
@@ -212,3 +169,8 @@ def po_vneshnemu_id(db: Session, chat_row_id: int, external_id: int) -> Telegram
             TelegramMessage.external_id == external_id,
         )
     )
+
+
+def po_id(db: Session, message_id: int) -> TelegramMessage | None:
+    """Сообщение по своему идентификатору."""
+    return db.get(TelegramMessage, message_id)
