@@ -266,12 +266,21 @@ def dialogi(
     page: int = Query(1, ge=1),
     per_page: int = Query(50, ge=1, le=200),
     db: Session = Depends(get_db),
-    _: User = Depends(require_perm("telegram", "view")),
+    user: User = Depends(require_perm("telegram", "view")),
 ) -> dict:
-    """Список диалогов, свежие сверху."""
+    """Список диалогов, свежие сверху, с личным счётчиком непрочитанного."""
     stroki, vsego = telegram_repo.spisok_dialogov(db, q=q.strip(), page=page, per_page=per_page)
+    # Непрочитанное — своё у каждого сотрудника: граница «дочитал до сюда»
+    # личная. Считается на всю страницу разом, а не по диалогу: список открыт
+    # весь день и перезапрашивается живьём.
+    nomera = [row.id for row in stroki]
+    granitsy = realtime.granitsy_prochitannogo(nomera, user.id)
+    neprochitano = telegram_repo.neprochitannye(db, nomera, granitsy)
     return {
-        "items": [_dialog_naruzhu(row) for row in stroki],
+        "items": [
+            {**_dialog_naruzhu(row), "unread": neprochitano.get(row.id, 0)}
+            for row in stroki
+        ],
         "total": vsego,
         "page": page,
         "per_page": per_page,
@@ -284,7 +293,7 @@ def soobshcheniya(
     before: int | None = Query(None, ge=1),
     after: int | None = Query(None, ge=0),
     db: Session = Depends(get_db),
-    _: User = Depends(require_perm("telegram", "view")),
+    user: User = Depends(require_perm("telegram", "view")),
 ) -> dict:
     """Лента переписки.
 
@@ -302,6 +311,16 @@ def soobshcheniya(
         stroki = telegram_repo.novee(db, chat_row_id, after)
     else:
         stroki = list(reversed(telegram_repo.lenta(db, chat_row_id, do_id=before)))
+
+    # Прочитанное отмечается ЧТЕНИЕМ ленты, а не отдельной кнопкой: человек
+    # открыл диалог и увидел сообщения — значит он их прочитал. Отдельная
+    # кнопка «прочитано» существует ровно затем, чтобы её забывали нажимать.
+    #
+    # Только при листании вглубь и первом показе: дочитывание после обрыва
+    # (`after`) границу не двигает — оно приносит то, что человек мог и не
+    # видеть, если вкладка была свёрнута.
+    if after is None and stroki:
+        realtime.otmetit_prochitano(chat_row_id, user.id, max(s.id for s in stroki))
     return {"items": [_soobshchenie_naruzhu(row) for row in stroki]}
 
 

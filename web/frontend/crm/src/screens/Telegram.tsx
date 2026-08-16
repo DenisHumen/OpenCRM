@@ -31,6 +31,7 @@ export interface TgChat {
   client_id: number | null;
   source: string;
   last_message_at: string | null;
+  unread: number;
 }
 
 export interface TgMessage {
@@ -354,6 +355,11 @@ export function Telegram() {
                   <span className="tg-chat-time">
                     {chat.last_message_at ? formatDateTime(chat.last_message_at, locale) : ""}
                   </span>
+                  {chat.unread > 0 && (
+                    <span className="tg-unread" aria-label={t("tgUnread")}>
+                      {chat.unread}
+                    </span>
+                  )}
                   {chat.client_id == null && (
                     <span className="tg-chat-unlinked">{t("tgUnlinked")}</span>
                   )}

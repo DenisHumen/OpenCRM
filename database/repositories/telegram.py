@@ -26,6 +26,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from database.models import Client, TelegramChat, TelegramMessage
+from database.models.telegram import DIRECTION_IN
 from database.query import contains, page_of
 
 
@@ -174,3 +175,42 @@ def po_vneshnemu_id(db: Session, chat_row_id: int, external_id: int) -> Telegram
 def po_id(db: Session, message_id: int) -> TelegramMessage | None:
     """Сообщение по своему идентификатору."""
     return db.get(TelegramMessage, message_id)
+
+
+def neprochitannye(db: Session, chat_ids: list[int], granitsy: dict[int, int]) -> dict[int, int]:
+    """Сколько ВХОДЯЩИХ пришло после границы «прочитано» — по всей странице сразу.
+
+    Одним запросом с группировкой, а не запросом на диалог: страница списка это
+    полсотни строк, и запрос на строку означал бы полсотни обращений каждые
+    несколько секунд у каждого открытого экрана.
+
+    Граница приходит снаружи (из Redis) и по каждому диалогу своя. Отсутствие
+    границы значит «не читал вовсе» — тогда непрочитано всё входящее. Это
+    честнее нуля: ошибиться в сторону «посмотри ещё раз» безвредно, а в
+    обратную — значит спрятать сообщение клиента.
+
+    Считаются только входящие: свои же ответы непрочитанными не бывают.
+    """
+    if not chat_ids:
+        return {}
+    # Границы у диалогов РАЗНЫЕ, и уложить их в одно условие SQL можно только
+    # через `CASE` по всему словарю — то есть запросом длиной со страницу,
+    # который вдобавок не воспользуется индексом. Поэтому отсев грубый (одно
+    # число на всех), а точный счёт — по отобранным строкам.
+    #
+    # Строк после отсева единицы: это входящие, пришедшие после того, как самый
+    # отставший сотрудник дочитал свой диалог. Их и показывают значком.
+    nizhnyaya = min(granitsy.values(), default=0)
+    stroki = db.execute(
+        select(TelegramMessage.chat_id, TelegramMessage.id).where(
+            TelegramMessage.chat_id.in_(chat_ids),
+            TelegramMessage.direction == DIRECTION_IN,
+            TelegramMessage.id > nizhnyaya,
+        )
+    ).all()
+
+    itog: dict[int, int] = {cid: 0 for cid in chat_ids}
+    for chat_row_id, message_id in stroki:
+        if message_id > granitsy.get(chat_row_id, 0):
+            itog[chat_row_id] += 1
+    return itog
