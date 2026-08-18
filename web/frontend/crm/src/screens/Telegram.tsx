@@ -123,6 +123,10 @@ export function Telegram() {
    *  показать над полем ввода, а лезть за ней в ленту при каждом наборе
    *  буквы значило бы искать по всему списку на каждое нажатие. */
   const [otvechaem, setOtvechaem] = useState<TgMessage | null>(null);
+  /** Открыто ли меню действий в шапке разговора. */
+  const [menyu, setMenyu] = useState(false);
+  /** Показан ли выбор карточки клиента. Зовут его изредка — потому и прячем. */
+  const [privyazka, setPrivyazka] = useState(false);
   const [otpravka, setOtpravka] = useState(false);
   /** Идущая заливка: сколько ушло, сколько всего и чем её бросить. */
   const [zaliv, setZaliv] = useState<{
@@ -243,6 +247,10 @@ export function Telegram() {
     // Привязку снимаем вместе со сменой диалога: цитата из прошлого
     // разговора над полем ввода нового — прямой путь отправить не то.
     setOtvechaem(null);
+    // Меню и выбор карточки — туда же: открытые, они относились бы к диалогу,
+    // которого на экране уже нет.
+    setMenyu(false);
+    setPrivyazka(false);
     if (vybran == null) return;
     void zagruzit_lentu(vybran);
   }, [vybran, zagruzit_lentu]);
@@ -753,24 +761,108 @@ export function Telegram() {
                 )}
               </div>
               <div className="tg-head-right">
-                <button type="button" onClick={() => void zavesti("deal")} disabled={guard.busy}>
-                  {t("tgMakeDeal")}
-                </button>
-                <button type="button" onClick={() => void zavesti("task")} disabled={guard.busy}>
-                  {t("tgMakeTask")}
-                </button>
+                {/*
+                  К какой карточке привязан диалог — на виду, потому что это
+                  первое, что спрашивают, отвечая клиенту. Привязан — ссылка
+                  прямо в карточку; не привязан — слово «нет карточки», по
+                  которому открывается тот же выбор, что и был.
+                */}
+                {otkrytyy.client_id != null ? (
+                  <Link className="tg-chip" to={`/clients/${otkrytyy.client_id}`}>
+                    <Icon name="user" size={13} />
+                    {delo?.name || t("tgClient")}
+                  </Link>
+                ) : (
+                  <button
+                    type="button"
+                    className="tg-chip tg-chip-empty"
+                    onClick={() => setPrivyazka((bylo) => !bylo)}
+                    aria-expanded={privyazka}
+                  >
+                    <Icon name="user" size={13} />
+                    {t("tgUnlinked")}
+                  </button>
+                )}
+
+                <div className="tg-actions">
+                  <button
+                    type="button"
+                    className="btn-icon"
+                    aria-label={t("actions")}
+                    aria-expanded={menyu}
+                    onClick={() => setMenyu((bylo) => !bylo)}
+                  >
+                    <Icon name="dots" />
+                  </button>
+                  {menyu && (
+                    <div className="user-menu tg-menu">
+                      <button
+                        type="button"
+                        className="user-menu-item"
+                        disabled={guard.busy}
+                        onClick={() => {
+                          setMenyu(false);
+                          void zavesti("deal");
+                        }}
+                      >
+                        <Icon name="deals" size={14} />
+                        {t("tgMakeDeal")}
+                      </button>
+                      <button
+                        type="button"
+                        className="user-menu-item"
+                        disabled={guard.busy}
+                        onClick={() => {
+                          setMenyu(false);
+                          void zavesti("task");
+                        }}
+                      >
+                        <Icon name="clock" size={14} />
+                        {t("tgMakeTask")}
+                      </button>
+                      <div className="user-menu-sep" />
+                      <button
+                        type="button"
+                        className="user-menu-item"
+                        onClick={() => {
+                          setMenyu(false);
+                          setPrivyazka(true);
+                        }}
+                      >
+                        <Icon name="link" size={14} />
+                        {otkrytyy.client_id != null ? t("tgRelink") : t("tgLink")}
+                      </button>
+                      {otkrytyy.source && (
+                        <>
+                          <div className="user-menu-sep" />
+                          <span className="tg-menu-note">
+                            {t("tgCameFrom")}: {otkrytyy.source}
+                          </span>
+                        </>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/*
+                Выбор карточки — отдельной строкой и только когда его позвали.
+                Прежде он стоял в шапке всегда: место занимал постоянно, а
+                трогают его один раз за всю жизнь диалога.
+
+                Справочник не приехал — говорим об этом, а не рисуем пустой
+                выбор. Пустой выбор читается как «клиентов нет», и человек
+                заводит второго того же клиента.
+              */}
+              {privyazka && (
                 <label className="tg-link">
                   <span>{t("tgClient")}</span>
-                  {/*
-                    Справочник не приехал — говорим об этом, а не рисуем пустой
-                    выбор. Пустой выбор читается как «клиентов нет», и человек
-                    заводит второго того же клиента.
-                  */}
                   <select
                     value={otkrytyy.client_id ?? ""}
-                    onChange={(e) =>
-                      void privyazat(e.target.value ? Number(e.target.value) : null)
-                    }
+                    onChange={(e) => {
+                      void privyazat(e.target.value ? Number(e.target.value) : null);
+                      setPrivyazka(false);
+                    }}
                   >
                     <option value="">{t("tgUnlinked")}</option>
                     {klienty.failure != null && (
@@ -785,12 +877,7 @@ export function Telegram() {
                     ))}
                   </select>
                 </label>
-                {otkrytyy.source && (
-                  <span className="tg-source">
-                    {t("tgCameFrom")}: {otkrytyy.source}
-                  </span>
-                )}
-              </div>
+              )}
             </header>
 
             {sosedi.length > 0 && (

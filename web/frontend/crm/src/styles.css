@@ -1445,15 +1445,77 @@ button { font-family: var(--sans); }
  * сжимали друг друга, и на узком окне выбор клиента уползал за край. Кнопки
  * жмут изредка, а место они занимали всегда.
  */
+/*
+ * Шапка разговора: собеседник слева, действия справа — в одну строку.
+ *
+ * Прежде действия занимали вторую строку во всю ширину: две кнопки со словами
+ * и выпадающий список с подписью. Места они требовали всегда, а нажимают их
+ * изредка — рядом с именем это читалось панелью управления, а не шапкой
+ * переписки. Теперь на виду только то, на что смотрят: кто собеседник и к
+ * какой карточке он привязан.
+ */
 .tg-head {
-  display: grid;
-  grid-template-columns: auto 1fr;
+  display: flex;
   align-items: center;
-  gap: 8px 10px;
-  padding: 10px 16px;
+  gap: 10px;
+  padding: 10px 14px;
   border-bottom: 1px solid var(--line);
+  flex-wrap: wrap;
 }
-.tg-head-right { grid-column: 1 / -1; }
+.tg-head-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+.tg-actions { position: relative; display: flex; }
+/* Меню действий — тот же приём, что в карточке клиента (`user-menu`), только
+   привязано к своей кнопке. Ширина по содержимому: пунктов три, и растягивать
+   их до двухсот точек незачем. */
+.tg-menu {
+  position: absolute;
+  top: 34px;
+  right: 0;
+  left: auto;
+  bottom: auto;
+  min-width: 190px;
+  white-space: nowrap;
+}
+.tg-menu-note {
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--muted);
+}
+/* Значок привязки: ссылка в карточку либо приглашение её выбрать. Выглядят
+   одинаково, потому что отвечают на один вопрос — «чей это разговор». */
+.tg-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 220px;
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+  text-decoration: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tg-chip:hover { background: var(--well-off); }
+.tg-chip-empty { color: var(--muted); border-style: dashed; }
+/* Выбор карточки — строкой под шапкой, когда его позвали. */
+.tg-head + .tg-link,
+.tg-link {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
 .tg-head-right {
   flex-wrap: wrap;
   row-gap: 8px;
@@ -1684,7 +1746,6 @@ a.tg-file:hover { text-decoration: underline; }
 
 /* Привязка диалога к карточке — в шапке переписки, рядом с меткой источника. */
 .tg-head-right { display: flex; align-items: center; gap: 12px; }
-.tg-link { display: flex; align-items: center; gap: 6px; font-size: 13px; }
 .tg-link select {
   padding: 4px 8px;
   border: 1px solid var(--line);
