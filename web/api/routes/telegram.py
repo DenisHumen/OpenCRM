@@ -138,6 +138,21 @@ def _dialog_naruzhu(row) -> dict:
     }
 
 
+def _predprosmotr(stroka) -> dict:
+    """Последняя фраза для строки списка. Пусто — диалог ещё молчит.
+
+    Тело режется до 80 знаков ЗДЕСЬ, а не на экране: наружу незачем отдавать
+    простыню, из которой строка списка покажет одну строчку.
+    """
+    if stroka is None:
+        return {"last_preview": "", "last_direction": "", "last_kind": ""}
+    return {
+        "last_preview": (stroka.body or "")[:80],
+        "last_direction": stroka.direction,
+        "last_kind": stroka.kind,
+    }
+
+
 def _soobshchenie_naruzhu(row) -> dict:
     """Сообщение для экрана.
 
@@ -310,9 +325,14 @@ def dialogi(
     nomera = [row.id for row in stroki]
     granitsy = realtime.granitsy_prochitannogo(nomera, user.id)
     neprochitano = telegram_repo.neprochitannye(db, nomera, granitsy)
+    poslednie = telegram_repo.poslednie_soobshcheniya(db, [row.id for row in stroki])
     return {
         "items": [
-            {**_dialog_naruzhu(row), "unread": neprochitano.get(row.id, 0)}
+            {
+                **_dialog_naruzhu(row),
+                "unread": neprochitano.get(row.id, 0),
+                **_predprosmotr(poslednie.get(row.id)),
+            }
             for row in stroki
         ],
         "total": vsego,

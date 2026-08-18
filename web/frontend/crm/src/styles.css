@@ -1305,73 +1305,58 @@ button { font-family: var(--sans); }
  * лента внутри, а не страница целиком. Иначе поле ввода уезжает вниз и его
  * приходится искать прокруткой — ровно то, чего в переписке не прощают.
  */
-.tg-screen {
-  display: grid;
-  grid-template-columns: minmax(220px, 320px) 1fr;
-  /* Третья колонка появляется вместе с делом клиента: сетка узнаёт о
-     ней по наличию узла, а не по классу на родителе — иначе о ней
-     пришлось бы помнить в двух местах. */
-  grid-template-columns: minmax(220px, 320px) 1fr;
-  gap: 16px;
-  /* Высоту НЕ подбираем числом. Здесь стояло `calc(100vh - 160px)`, где 160 —
-     сумма шапки и отступов, набранная на глаз. Она не сошлась с настоящей
-     вёрсткой: снизу оставалась пустая полоса, а лента при этом прокручивалась.
-     Любое такое число живёт до первой правки шапки и врёт молча.
-
-     Вместо этого высота достаётся от предков: колонка приложения растягивается
-     на окно, страница забирает остаток, мессенджер — остаток от страницы.
-     Растяжка включается только там, где на странице ЕСТЬ мессенджер (правила
-     с `:has` ниже), потому что остальным экранам нужна обычная прокрутка
-     страницы целиком. */
-  flex: 1;
-  min-height: 420px;
-}
-
 /*
- * Полноэкранный экран внутри обычной страницы.
+ * Мессенджер — приложение в приложении, по образцу клиента телеграма: список
+ * слева всегда, разговор справа, на узком экране — список ИЛИ разговор.
+ * Раскладка телеграмовская, цвета и токены наши.
  *
- * `min-height: 0` в каждом звене — не украшение: у флекс-элемента наименьшая
- * высота по умолчанию равна содержимому, и без обнуления лента вместо
- * собственной прокрутки растягивает страницу, унося поле ввода за нижний край.
- * Ровно от этого мессенджеры и страдают.
- *
- * `dvh`, а не `vh`: на телефоне `vh` считает окно вместе с адресной строкой,
- * которая то есть, то нет, — экран оказывается выше видимого места.
+ * **Урок, оплаченный боевым показом.** Прежде экран был одним узлом
+ * `page page-wide tg-screen`, и правило растяжки `.app-shell:has(...) .page`
+ * (специфичность 0,3,0) молча побеждало `.tg-screen { display: grid }`
+ * (0,1,0): флекс-столбик вместо сетки, список сверху во всю ширину. Стенд
+ * этого не увидел, потому что там `.page` и `.tg-screen` были разными узлами.
+ * Отсюда правило: мессенджер НЕ страница, класса `page` на нём нет.
  */
-@media (min-width: 861px) {
-  .app-shell:has(.tg-screen) {
-    height: 100dvh;
-    overflow: hidden;
-  }
-  .app-shell:has(.tg-screen) .app-main {
-    display: flex;
-    flex-direction: column;
-    min-height: 0;
-  }
-  .app-shell:has(.tg-screen) .page {
-    flex: 1;
-    min-height: 0;
-    display: flex;
-    flex-direction: column;
-    /* 64px снизу — воздух под текстовой колонкой, чтобы последняя строка не
-       липла к краю окна. Под полноэкранным мессенджером читать нечего, и эти
-       64px просто отнимают у переписки полторы строки. Оставляем столько же,
-       сколько сверху. */
-    padding-bottom: 32px;
-  }
+.app-shell:has(.tg-screen) {
+  height: 100dvh;
+  overflow: hidden;
+}
+.app-shell:has(.tg-screen) .app-main {
+  display: flex;
+  flex-direction: column;
+  /* Наименьшая высота флекс-ребёнка равна содержимому; без нуля лента тянет
+     страницу вниз и поле ввода уезжает за край. */
+  min-height: 0;
+}
+.tg-screen {
+  flex: 1;
+  min-height: 0;
+  margin: 12px;
+  display: grid;
+  grid-template-columns: clamp(260px, 28%, 360px) minmax(0, 1fr);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--well);
+  overflow: hidden;
 }
 
-.tg-screen:has(.tg-delo) {
-  grid-template-columns: minmax(200px, 280px) 1fr minmax(220px, 300px);
+/* Дело клиента — третьей колонкой, и только там, где ей есть место. На
+   среднем экране она отнимала бы ширину у переписки, ради которой всё и
+   открыто, — как в телеграме, где профиль не показывается на узком окне. */
+.tg-delo { display: none; }
+@media (min-width: 1360px) {
+  .tg-delo { display: flex; }
+  .tg-screen:has(.tg-delo) {
+    grid-template-columns: clamp(240px, 24%, 340px) minmax(0, 1fr) clamp(230px, 22%, 300px);
+  }
 }
 
 .tg-list {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: var(--well);
-  border: 1px solid var(--line);
-  border-radius: 12px;
+  min-height: 0;
+  border-right: 1px solid var(--line);
 }
 
 .tg-search {
@@ -1413,13 +1398,12 @@ button { font-family: var(--sans); }
   grid-template-columns: auto 1fr auto;
   grid-template-areas:
     "face title time"
-    "face note  unread";
+    "face prev  unread";
   align-items: center;
-  gap: 2px 8px;
+  gap: 2px 10px;
   width: 100%;
-  padding: 10px 12px;
+  padding: 9px 12px;
   border: 0;
-  border-bottom: 1px solid var(--line);
   background: transparent;
   color: inherit;
   text-align: left;
@@ -1435,19 +1419,23 @@ button { font-family: var(--sans); }
   white-space: nowrap;
 }
 .tg-chat-time { grid-area: time; font-size: 12px; opacity: 0.6; white-space: nowrap; }
-.tg-chat-unlinked {
-  grid-area: note;
-  font-size: 12px;
-  opacity: 0.7;
+/* Последняя фраза — вторая строка, как в списке телеграма: по ней диалог
+   вспоминают, не открывая. Свою реплику предваряет «Вы:». */
+.tg-chat-prev {
+  grid-area: prev;
+  font-size: 12.5px;
+  opacity: 0.65;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
+.tg-chat-prev em { font-style: normal; opacity: 0.8; }
 
 .tg-talk {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: var(--well);
-  border: 1px solid var(--line);
-  border-radius: 12px;
+  min-height: 0;
 }
 
 /*
@@ -1458,13 +1446,14 @@ button { font-family: var(--sans); }
  * жмут изредка, а место они занимали всегда.
  */
 .tg-head {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 8px;
-  padding: 12px 16px;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 8px 10px;
+  padding: 10px 16px;
   border-bottom: 1px solid var(--line);
 }
+.tg-head-right { grid-column: 1 / -1; }
 .tg-head-right {
   flex-wrap: wrap;
   row-gap: 8px;
@@ -1500,6 +1489,23 @@ button { font-family: var(--sans); }
 .tg-profile:hover { opacity: 1; text-decoration: underline; }
 .tg-source { font-size: 12px; opacity: 0.7; }
 
+/* «Назад» к списку: панели на узком экране показываются по одной, и без
+   этой кнопки из разговора не выйти иначе как клавишей Escape. */
+.tg-back {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.tg-back:hover { background: var(--well-off); }
+
 /*
  * Баннер «в чате не только вы». Заметный, но не перекрывающий работу: это
  * предупреждение, а не запрет — решено, что двое договорятся сами.
@@ -1518,7 +1524,9 @@ button { font-family: var(--sans); }
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 16px;
+  /* Боковой воздух растёт с шириной: пузыри на весь экран нечитаемы, а узкая
+     колонка посреди широкого окна — ровно то, как разложен клиент телеграма. */
+  padding: 16px clamp(16px, 8%, 120px);
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -1540,7 +1548,7 @@ button { font-family: var(--sans); }
 .tg-feed > *:first-child { margin-top: auto; }
 
 .tg-msg {
-  max-width: min(560px, 78%);
+  max-width: min(480px, 86%);
   padding: 8px 12px;
   border-radius: 14px;
   background: var(--well-off);
@@ -1628,8 +1636,11 @@ button { font-family: var(--sans); }
 .tg-photo { display: block; }
 .tg-photo img {
   display: block;
-  max-width: 100%;
-  max-height: 320px;
+  /* Телеграмовский размер: фотография — примерно треть окна, а не полотно.
+     На показе снимки досок растягивались на всю ширину пузыря и переписка
+     превращалась в галерею, в которой не видно слов. */
+  max-width: min(320px, 100%);
+  max-height: 300px;
   border-radius: 10px;
   object-fit: cover;
 }
@@ -1638,17 +1649,22 @@ button { font-family: var(--sans); }
 /* Забранное видео: та же ширина, что у фотографии, и тот же потолок высоты. */
 .tg-video {
   display: block;
-  max-width: 100%;
-  max-height: 320px;
+  max-width: min(360px, 100%);
+  max-height: 300px;
   border-radius: 10px;
 }
 
 @media (max-width: 860px) {
-  /* На узком экране список и переписка не помещаются рядом. Показываем их
-     колонкой: список сверху ограниченной высоты, переписка под ним. */
-  .tg-screen { grid-template-columns: 1fr; height: auto; }
-  .tg-list { max-height: 40vh; }
-  .tg-feed { min-height: 50vh; }
+  /* На узком экране — как в телеграме на телефоне: видна ОДНА панель. Прежде
+     они складывались колонкой, и список в четыре строки над перепиской не был
+     ни списком, ни перепиской. Открыт диалог — показан разговор с кнопкой
+     «назад»; закрыт — список во весь экран. */
+  .tg-screen { grid-template-columns: 1fr; margin: 0; border: 0; border-radius: 0; }
+  .tg-screen:not(.is-talking) .tg-talk { display: none; }
+  .tg-screen.is-talking .tg-list { display: none; }
+  .tg-list { border-right: 0; }
+  .tg-back { display: inline-flex; }
+  .tg-feed { padding: 12px; }
 }
 
 /* Кнопка «показать более ранние»: над лентой, неброская — её нажимают редко. */
@@ -1790,6 +1806,7 @@ a.tg-file:hover { text-decoration: underline; }
 /* Аватар в строке диалога и в шапке переписки. Лицо собеседника — то, по чему
    диалог находят глазом быстрее, чем читают имя. */
 .tg-face { grid-area: face; display: flex; align-items: center; }
+.tg-face .avatar { width: 38px; height: 38px; font-size: 13px; }
 .tg-who { display: flex; align-items: center; gap: 10px; }
 /* Премиум собеседника: звёздочка у имени. Значком, а не именным эмодзи —
    тот приходит идентификатором стикера в формате TGS (сжатый Lottie),
@@ -1803,14 +1820,11 @@ a.tg-file:hover { text-decoration: underline; }
 /* Дело клиента рядом с перепиской: третья колонка. Появляется только у
    привязанного диалога — см. довод в разметке. */
 .tg-delo {
-  display: flex;
   flex-direction: column;
   gap: 12px;
   overflow-y: auto;
   padding: 14px;
-  background: var(--well);
-  border: 1px solid var(--line);
-  border-radius: 12px;
+  border-left: 1px solid var(--line);
 }
 .tg-delo-head { display: flex; flex-direction: column; gap: 2px; }
 .tg-delo-name { font-weight: 600; font-size: 14px; }
