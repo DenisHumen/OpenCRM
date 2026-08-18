@@ -1731,6 +1731,23 @@ setup_backups() {
             warn "$(tr_ "таймер сводки не запустился" "the summary timer did not start")"
         fi
 
+        # Уборка старой переписки телеграма. Таймер ставится всегда, а удаляет
+        # он что-либо только тогда, когда владелец сам назвал срок хранения:
+        # умолчание — хранить вечно. Пустой прогон дешевле, чем расписание,
+        # которое надо не забыть поставить в тот день, когда решение примут.
+        _tgu=/etc/systemd/system/opencrm-telegram-uborka
+        sed -e "s#^User=.*#User=$(id -un)#" \
+            -e "s#^WorkingDirectory=.*#WorkingDirectory=$REPO_DIR#" \
+            -e "s#^ExecStart=.*#ExecStart=$REPO_DIR/opencrm.sh tg-uborka#" \
+            "$REPO_DIR/deploy/systemd/opencrm-telegram-uborka.service" | $SUDO tee "$_tgu.service" >/dev/null
+        $SUDO cp "$REPO_DIR/deploy/systemd/opencrm-telegram-uborka.timer" "$_tgu.timer"
+        $SUDO systemctl daemon-reload
+        if $SUDO systemctl enable --now opencrm-telegram-uborka.timer >/dev/null 2>&1; then
+            ok "$(tr_ "уборка переписки ходит по ночам (systemctl list-timers opencrm-telegram-uborka)" "the conversation cleanup runs at night (systemctl list-timers opencrm-telegram-uborka)")"
+        else
+            warn "$(tr_ "таймер уборки переписки не запустился" "the cleanup timer did not start")"
+        fi
+
     elif has crontab; then
         _line="30 3 * * * cd $REPO_DIR && ./opencrm.sh backup >/dev/null 2>&1"
         if crontab -l 2>/dev/null | grep -q "opencrm.sh backup"; then
@@ -2271,6 +2288,27 @@ cmd_svodka() {
         ok "$(tr_ "сводка обработана" "summary processed")"
     else
         warn "$(tr_ "сводка не ушла — подробности выше" "the summary did not go out — details above")"
+        return 1
+    fi
+}
+
+cmd_tg_uborka() {
+    need_install
+    step "$(tr_ "Уборка старой переписки" "Old conversation cleanup")"
+    # Изнутри контейнера приложения, тем же приёмом, что и сводка: удаляют
+    # репозитории канала, а не сочинённый рядом SQL. Второе место, знающее
+    # устройство таблицы, разошлось бы с первым на первой же правке схемы.
+    #
+    # `-T` обязателен: под systemd терминала нет, и без него docker отказывается
+    # выделять псевдотерминал — задание падает, не сделав ничего.
+    #
+    # Задание молчит и выходит с нулём, пока владелец не назвал срок хранения:
+    # умолчание — хранить вечно, и расписание не должно краснеть у того, кто
+    # уборку не включал.
+    if compose exec -T app python -m scripts.telegram_uborka "$@"; then
+        ok "$(tr_ "уборка отработала" "cleanup finished")"
+    else
+        warn "$(tr_ "уборка не отработала — подробности выше" "the cleanup did not finish — details above")"
         return 1
     fi
 }
@@ -3232,6 +3270,7 @@ main() {
         logs)       cmd_logs "${1:-}" ;;
         backup)     cmd_backup ;;
         svodka)     cmd_svodka ;;
+        tg-uborka)  cmd_tg_uborka "$@" ;;
         restore)    cmd_restore ;;
         https)      cmd_https ;;
         domain)     cmd_domain ;;
