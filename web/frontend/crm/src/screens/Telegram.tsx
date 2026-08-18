@@ -189,6 +189,8 @@ export function Telegram() {
    */
   const [delo, setDelo] = useState<any>(null);
   const [deloIdyot, setDeloIdyot] = useState(false);
+  /** Счётчик «перечитай дело»: растёт, когда мы сами что-то в нём завели. */
+  const [deloOsvezhit, setDeloOsvezhit] = useState(0);
   // Свой засов у панели дела, отдельно от засова отправки. Разделены не ради
   // порядка: общий засов означал бы, что заведение карточки на секунду гасит
   // кнопку «отправить», то есть действие с карточкой мешает отвечать клиенту.
@@ -523,7 +525,7 @@ export function Telegram() {
     return () => {
       nuzhno = false;
     };
-  }, [klient_id, vidno_klientov]);
+  }, [klient_id, vidno_klientov, deloOsvezhit]);
 
   // Присутствие: подтверждаем, пока чат открыт, и снимаем, уходя.
   useEffect(() => {
@@ -673,6 +675,10 @@ export function Telegram() {
         {},
       );
       toast(`${t(chto === "deal" ? "tgDealMade" : "tgTaskMade")}: ${sozdano.title}`);
+      // Дело клиента рядом обязано показать заведённое. Без этого заявка
+      // есть, а в панели её нет до переоткрытия диалога — и человек
+      // заводит вторую такую же.
+      setDeloOsvezhit((bylo) => bylo + 1);
     } catch (beda) {
       toastError(beda);
     } finally {
