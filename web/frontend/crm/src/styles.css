@@ -1308,6 +1308,10 @@ button { font-family: var(--sans); }
 .tg-screen {
   display: grid;
   grid-template-columns: minmax(220px, 320px) 1fr;
+  /* Третья колонка появляется вместе с делом клиента: сетка узнаёт о
+     ней по наличию узла, а не по классу на родителе — иначе о ней
+     пришлось бы помнить в двух местах. */
+  grid-template-columns: minmax(220px, 320px) 1fr;
   gap: 16px;
   /* Высоту НЕ подбираем числом. Здесь стояло `calc(100vh - 160px)`, где 160 —
      сумма шапки и отступов, набранная на глаз. Она не сошлась с настоящей
@@ -1355,6 +1359,10 @@ button { font-family: var(--sans); }
        сколько сверху. */
     padding-bottom: 32px;
   }
+}
+
+.tg-screen:has(.tg-delo) {
+  grid-template-columns: minmax(200px, 280px) 1fr minmax(220px, 300px);
 }
 
 .tg-list {
@@ -1788,3 +1796,98 @@ a.tg-file:hover { text-decoration: underline; }
    которого браузер не рисует; ради него понадобилась бы новая
    библиотека. Развилка описана в документе и оставлена владельцу. */
 .tg-premium { margin-left: 5px; color: var(--brand); font-size: 11px; }
+/* Именной эмодзи: ровно по высоте строки имени, иначе он раздвинул бы
+   строку диалога и вся сетка списка поехала бы. */
+.tg-emoji { width: 14px; height: 14px; margin-left: 5px; vertical-align: -2px; }
+
+/* Дело клиента рядом с перепиской: третья колонка. Появляется только у
+   привязанного диалога — см. довод в разметке. */
+.tg-delo {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+  padding: 14px;
+  background: var(--well);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.tg-delo-head { display: flex; flex-direction: column; gap: 2px; }
+.tg-delo-name { font-weight: 600; font-size: 14px; }
+.tg-delo-sub { font-size: 12px; opacity: 0.7; }
+.tg-delo-title { font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; opacity: 0.6; }
+.tg-delo-pusto { font-size: 12.5px; opacity: 0.6; }
+.tg-delo-fields { display: grid; gap: 6px; font-size: 12.5px; }
+.tg-delo-fields > div { display: flex; justify-content: space-between; gap: 8px; }
+.tg-delo-fields span { opacity: 0.6; }
+.tg-delo-deals { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.tg-delo-deals > li { display: grid; gap: 3px; font-size: 12.5px; }
+.tg-delo-line { display: flex; justify-content: space-between; gap: 8px; opacity: 0.75; }
+
+/* Ответ на конкретное сообщение. Цитата отвечает на вопрос «на что это ответ» —
+   без неё в разговоре про три позиции заказа ответ читается как ответ на
+   последнюю, и клиент понимает не то. */
+.tg-quote {
+  display: block;
+  width: 100%;
+  text-align: left;
+  margin-bottom: 6px;
+  padding: 4px 8px;
+  border: 0;
+  border-left: 2px solid var(--accent);
+  border-radius: 4px;
+  background: rgb(0 0 0 / 8%);
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  opacity: 0.8;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tg-quote:hover { opacity: 1; }
+/* Кнопка «ответить» появляется по наведению: в покое она отвлекала бы от
+   самого разговора, а место занимала бы всегда. */
+.tg-msg { position: relative; }
+.tg-reply {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--well);
+  color: inherit;
+  opacity: 0.75;
+  cursor: pointer;
+}
+.tg-msg:hover .tg-reply { display: inline-flex; }
+.tg-reply:hover { opacity: 1; }
+.tg-reply-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  border-top: 1px solid var(--line);
+  font-size: 12px;
+}
+.tg-reply-bar > span:first-child { opacity: 0.6; }
+.tg-reply-text {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tg-reply-bar button {
+  border: 0;
+  background: none;
+  color: var(--danger);
+  font: inherit;
+  cursor: pointer;
+  padding: 0;
+}

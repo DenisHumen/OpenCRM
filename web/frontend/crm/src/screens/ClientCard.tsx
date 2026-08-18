@@ -39,6 +39,9 @@ const SYSTEM_NOTE_KINDS = new Set(["stage", "document", "stock"]);
 
 const NOTE_ICONS: Record<string, string> = {
   note: "note", call: "call", meeting: "meeting", email: "email",
+  // Переписка через бота фирмы — третий канал общения в той же ленте, рядом со
+  // звонком и письмом. Значок тот же, что у раздела мессенджера.
+  telegram: "send",
   // Смену этапа ставит подписчик на событие, а не человек: в списке «добавить»
   // её нет, а в ленте она обязана быть — иначе карточка клиента молчит о том,
   // что заявка доехала до следующего этапа.
@@ -69,6 +72,7 @@ const NOTE_LABELS: Record<string, TranslationKey> = {
   call: "call",
   meeting: "meeting",
   email: "emailNote",
+  telegram: "modTelegram",
   stage: "feedStage",
   document: "feedDocument",
   stock: "feedStock",
