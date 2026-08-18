@@ -1033,6 +1033,84 @@ def test_lenta_messendzhera_popolnyaetsya_tolko_sliyaniem():
     )
 
 
+def _tela_bez_dvizheniya(css: str) -> str:
+    """Содержимое всех блоков `@media (prefers-reduced-motion: reduce)` разом.
+
+    Считаем скобки, а не ловим выражением: внутри блока свои правила со своими
+    парами скобок, и «до первой закрывающей» обрезало бы блок по первому же
+    правилу.
+    """
+    kuski: list[str] = []
+    for nachalo in re.finditer(r"@media\s*\(prefers-reduced-motion:\s*reduce\)\s*\{", css):
+        glubina, i = 1, nachalo.end()
+        while i < len(css) and glubina:
+            if css[i] == "{":
+                glubina += 1
+            elif css[i] == "}":
+                glubina -= 1
+            i += 1
+        kuski.append(css[nachalo.end() : i - 1])
+    return "\n".join(kuski)
+
+
+def test_animacii_messendzhera_gasnut_pri_otkaze_ot_dvizheniya():
+    """У каждой анимации мессенджера есть ветка `prefers-reduced-motion`.
+
+    Настройка эта не про вкус. Движение на экране — известная причина тошноты и
+    головокружения, и человек, который её отключил, отключил её не потому, что
+    ему не нравится: у части людей от прыгающего пузыря темнеет в глазах. У
+    проекта уважение к настройке уже заведено — полоса «сайт закрыт на работы»
+    и превью кнопки витрины гасят движение именно так.
+
+    Переписка тут хуже прочих экранов: пузырь появляется не по нажатию, а сам —
+    столько раз, сколько клиент написал. Забытая ветка означает не одно
+    неприятное движение, а весь рабочий день из них.
+
+    Проверка механическая, потому что забыть её ничего не стоит: анимация без
+    ветки работает, выглядит хорошо и молчит — у всех, кроме тех, кому плохо.
+    """
+    css = (SCREENS / "styles.css").read_text(encoding="utf-8")
+
+    # Правила, которые оживляют что-либо в мессенджере: селектор `.tg-…` и
+    # `animation` с именем `tg-…`. Именно по имени: `animation: none` в самой
+    # ветке отказа под это условие не попадает.
+    pravila = re.findall(r"(\.tg-[^{}]*?)\{([^{}]*)\}", css)
+    ozhivlyayut = {
+        " ".join(selektor.split()): re.findall(r"animation:\s*(tg-[\w-]+)", telo)
+        for selektor, telo in pravila
+        if re.search(r"animation:\s*tg-[\w-]+", telo)
+    }
+    assert ozhivlyayut, (
+        "в стилях не нашлось ни одной анимации мессенджера — проверка смотрит "
+        "не туда либо анимацию переименовали"
+    )
+
+    # Названная раскадровка обязана существовать: опечатка в имени не ломает
+    # ничего, анимации просто нет — и заметить это можно только глазами.
+    est_kadry = set(re.findall(r"@keyframes\s+([\w-]+)", css))
+    poteryany = sorted(
+        imya for imena in ozhivlyayut.values() for imya in imena if imya not in est_kadry
+    )
+    assert poteryany == [], (
+        "анимация ссылается на несуществующую раскадровку: " + ", ".join(poteryany)
+    )
+
+    tishina = _tela_bez_dvizheniya(css)
+    assert "animation: none" in tishina, (
+        "в ветке `prefers-reduced-motion` нет ни одного `animation: none` — "
+        "ветка либо пуста, либо разобрана неверно"
+    )
+
+    zabyty = sorted(selektor for selektor in ozhivlyayut if selektor not in tishina)
+    assert zabyty == [], (
+        "эти пузыри мессенджера анимируются, а в ветке "
+        "`@media (prefers-reduced-motion: reduce)` их нет:\n  "
+        + "\n  ".join(zabyty)
+        + "\n\nЧеловеку, отключившему движение, они будут прыгать на каждое "
+        "сообщение клиента. Погасите их там же, слово в слово тем же селектором."
+    )
+
+
 def test_potok_sobytiy_otkryvaetsya_v_odnom_meste():
     """`new EventSource` живёт ровно в одном модуле.
 
