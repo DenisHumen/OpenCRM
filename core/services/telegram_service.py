@@ -457,6 +457,113 @@ def _vlozhenie(soobshchenie: dict) -> tuple[str, str, str, int]:
     return KIND_TEXT, "", "", 0
 
 
+# --- кнопки под сообщением ----------------------------------------------------
+#
+# Кнопки нужны там, где ответ должен быть В ОДНО ДЕЙСТВИЕ и без переключения
+# окна: «принял тревогу», «заглушить на час». Всё, что сложнее, — это разговор,
+# а разговор ведут словами, а не кнопками.
+
+
+def poslat_s_knopkami(
+    token: str, chat_id: int, text: str, knopki: list[list[dict]], opener=None
+) -> dict:
+    """Сообщение с клавиатурой под ним.
+
+    `knopki` — ряды кнопок; у каждой `text` и `callback_data`. В `callback_data`
+    телеграм отводит **64 байта**, и это не рекомендация: длиннее — отказ всего
+    сообщения. Поэтому туда кладут короткий опознаватель («ack:42»), а не
+    состояние.
+    """
+    dannye = {
+        "chat_id": chat_id,
+        "text": text,
+        "reply_markup": json.dumps({"inline_keyboard": knopki}),
+    }
+    return _vyzov(token, "sendMessage", dannye, opener)
+
+
+def otvetit_na_nazhatie(
+    token: str, callback_id: str, tekst: str = "", opener=None
+) -> dict:
+    """Погасить «часики» у нажатой кнопки.
+
+    Обязательный шаг, а не вежливость: пока телеграм не получил ответ на
+    `callback_query`, у нажавшего крутится ожидание, и через несколько секунд
+    он нажимает второй раз. Отвечать надо ДАЖЕ на нажатие, которое мы решили
+    не выполнять, — иначе человек думает, что не сработало.
+    """
+    dannye: dict = {"callback_query_id": callback_id}
+    if tekst:
+        # Всплывающая подсказка вместо тишины: «принято» и «уже принято другим»
+        # различаются только этим текстом.
+        dannye["text"] = tekst[:200]
+    return _vyzov(token, "answerCallbackQuery", dannye, opener)
+
+
+def perepisat_soobshchenie(
+    token: str, chat_id: int, message_id: int, text: str, knopki=None, opener=None
+) -> dict:
+    """Переписать уже отправленное сообщение — обычно чтобы убрать кнопки.
+
+    Тревога, которую приняли, обязана перестать выглядеть непринятой: иначе
+    второй дежурный жмёт «принять» по той же самой, а третий идёт её чинить.
+    """
+    dannye: dict = {"chat_id": chat_id, "message_id": message_id, "text": text}
+    dannye["reply_markup"] = json.dumps({"inline_keyboard": knopki or []})
+    return _vyzov(token, "editMessageText", dannye, opener)
+
+
+#: Обработчики нажатий: приставка `callback_data` → что сделать.
+#:
+#: Реестром, а не цепочкой `if` в приёме, и это не украшение. Приём обновлений —
+#: место, куда телеграм стучится каждым сообщением клиента, и всякая новая
+#: кнопка там означала бы правку самого горячего кода канала. Реестр позволяет
+#: соседнему разделу (тревогам, например) подписаться у себя и не трогать приём
+#: вовсе.
+#:
+#: Обработчик получает `(db, nazhatie)` и возвращает текст всплывающей подсказки
+#: либо пустую строку.
+NAZHATIYA: dict[str, object] = {}
+
+
+def podpisatsya_na_knopku(pristavka: str, obrabotchik) -> None:
+    """Заявить обработчик нажатий с такой приставкой в `callback_data`."""
+    NAZHATIYA[pristavka] = obrabotchik
+
+
+def _prinyat_nazhatie(db: Session, nazhatie: dict, opener=None) -> dict:
+    """Разобрать нажатие кнопки и позвать того, кто его ждал.
+
+    Ответ телеграму уходит В ЛЮБОМ случае, включая неизвестную кнопку: пока
+    ответа нет, у нажавшего крутятся часики. Неизвестная кнопка — обычное дело
+    после обновления: сообщение со старыми кнопками осталось в чате навсегда.
+    """
+    dannye = str(nazhatie.get("data") or "")
+    pristavka = dannye.split(":", 1)[0]
+    obrabotchik = NAZHATIYA.get(pristavka)
+
+    podskazka = ""
+    if obrabotchik is None:
+        podskazka = "This button is no longer available"
+    else:
+        try:
+            podskazka = obrabotchik(db, nazhatie) or ""
+        except Exception as beda:  # noqa: BLE001
+            logger.exception("обработчик нажатия упал: %r", beda)
+            podskazka = "Could not do that"
+
+    kluch = token(db)
+    if kluch and nazhatie.get("id"):
+        try:
+            otvetit_na_nazhatie(kluch, str(nazhatie["id"]), podskazka, opener)
+        except Exception as beda:  # noqa: BLE001
+            # Часики у нажавшего погаснут сами через несколько секунд. Ронять
+            # из-за этого разбор нажатия незачем.
+            logger.warning("не ответили на нажатие: %r", beda)
+
+    return {"status": "callback", "data": dannye}
+
+
 def prinyat(db: Session, obnovlenie: dict, opener=None) -> dict:
     """Одно обновление от телеграма. Отвечает, что с ним сделали.
 
@@ -470,6 +577,12 @@ def prinyat(db: Session, obnovlenie: dict, opener=None) -> dict:
     нет» и заведут два. А само сообщение отсеивается по идентификатору
     телеграма: он у сообщения уникален и не меняется.
     """
+    # Нажатие кнопки приходит тем же вебхуком, что и сообщение, но устроено
+    # иначе: у него нет ни текста, ни вида, ни чата в привычном смысле. Разбор
+    # у него свой и живёт отдельно — здесь только развилка.
+    if obnovlenie.get("callback_query"):
+        return _prinyat_nazhatie(db, obnovlenie["callback_query"], opener)
+
     soobshchenie = obnovlenie.get("message") or {}
     chat = soobshchenie.get("chat") or {}
     chat_id = chat.get("id")
