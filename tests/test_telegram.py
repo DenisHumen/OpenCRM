@@ -1884,7 +1884,7 @@ def test_nazhatie_ne_zavodit_dialog_i_ne_pishet_v_perepisku(root_client, bot_nas
     assert len(stalo) == bylo, f"нажатие завело диалог: {[d['chat_id'] for d in stalo]}"
 
 
-def test_dlina_callback_data_pomeshchaetsya_v_predel_telegrama():
+def test_dlina_callback_data_pomeshchaetsya_v_predel_telegrama(monkeypatch):
     """64 байта — предел телеграма на `callback_data`, и он не рекомендация.
 
     Длиннее — отказ ВСЕГО сообщения, а не одной кнопки: тревога не уйдёт вовсе.
@@ -1899,20 +1899,17 @@ def test_dlina_callback_data_pomeshchaetsya_v_predel_telegrama():
         ushlo.update(dannye or {})
         return {"message_id": 1}
 
-    telegram_service._vyzov = vyzov
-    try:
-        telegram_service.poslat_s_knopkami(
-            "token",
-            123,
-            "тревога",
-            [[{"text": "Принято", "callback_data": "ack:12345"}]],
-        )
-    finally:
-        # Возвращаем на место: подмена сделана руками, потому что помощник
-        # зовётся напрямую, без базы и клиента.
-        import importlib
-
-        importlib.reload(telegram_service)
+    # Через `monkeypatch`, а НЕ перезагрузкой модуля. Перезагрузка заводит новый
+    # словарь `NAZHATIYA`, и подписки, сделанные соседними разделами при ввозе
+    # (тревоги подписываются именно так), пропадают до конца прогона. Проверки
+    # после этой краснели бы через одну и по порядку запуска.
+    monkeypatch.setattr(telegram_service, "_vyzov", vyzov)
+    telegram_service.poslat_s_knopkami(
+        "token",
+        123,
+        "тревога",
+        [[{"text": "Принято", "callback_data": "ack:12345"}]],
+    )
 
     import json as _json
 
