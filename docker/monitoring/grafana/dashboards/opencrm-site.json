@@ -119,6 +119,7 @@
                     "ContainerUnhealthy": {"text": "Контейнер нездоров: проверка не проходит (ContainerUnhealthy)", "index": 9},
                     "BackupTooOld": {"text": "Резервная копия не снималась больше суток (BackupTooOld)", "index": 10},
                     "BackupBroken": {"text": "Последняя резервная копия негодна (BackupBroken)", "index": 11},
+                    "DigestMissing": {"text": "Утренняя сводка не приходила больше суток (DigestMissing)", "index": 100},
                     "DeployRolledBack": {"text": "Обновление откатилось (DeployRolledBack)", "index": 12},
                     "DatabaseSchemaMismatch": {"text": "Схема базы разошлась с моделями (DatabaseSchemaMismatch)", "index": 13},
                     "RateLimiterUnavailable": {"text": "Счётчик попыток недоступен, вход отвечает 503 (RateLimiterUnavailable)", "index": 14},
