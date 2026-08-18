@@ -411,6 +411,12 @@ services:
       - ./monitoring/alertmanager/entrypoint.sh:/opencrm/entrypoint.sh:ro
       - ./monitoring/alertmanager/alertmanager.yml.template:/etc/alertmanager/alertmanager.yml.template:ro
       - ./monitoring/alertmanager/alertmanager-silent.yml:/etc/alertmanager/alertmanager-silent.yml:ro
+      # Третий путь доставки: тревога уходит НАШИМ обработчиком, чтобы к ней
+      # можно было приложить кнопки «принято» и «заглушить». Выбирается точкой
+      # входа по ответу приложения, а не настройкой: переключатель завёл бы
+      # состояние, в котором он включён, а CRM лежит, — то есть тревога о
+      # лежащем сайте пошла бы через сам лежащий сайт.
+      - ./monitoring/alertmanager/alertmanager-crm.yml.template:/etc/alertmanager/alertmanager-crm.yml.template:ro
       - ${OPENCRM_HOME:-${HOME}/opencrm}/monitoring/alertmanager:/alertmanager
     expose: ["9093"]
     mem_limit: 96m

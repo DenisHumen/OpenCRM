@@ -936,6 +936,7 @@ def test_alertmanager_podnimaetsya_i_bez_kanala():
 BEZ_GISTEREZISA = {
     "CertificateExpiringSoon": "счётчик дней идёт только вниз; вверх — один раз, продлением",
     "BackupTooOld": "возраст копии растёт монотонно, гаснет от появления новой",
+    "DigestMissing": "то же у сводки: срок с последней растёт монотонно, гаснет от новой",
     "BackupBroken": "меняется раз в сутки, в момент снятия копии",
     "DeployRolledBack": "гаснет по своему часовому окну — гистерезис спорил бы с замыслом",
 }

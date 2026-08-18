@@ -417,7 +417,7 @@ def zadat_vebkhuk(token: str, adres: str, sekret: str, opener=None) -> dict:
             "secret_token": sekret,
             # Только сообщения: остального нам не нужно, а лишние обновления —
             # это лишние запросы к нашему приёму.
-            "allowed_updates": ["message"],
+            "allowed_updates": ["message", "callback_query"],
             # Старые необработанные обновления при подключении выбрасываем:
             # иначе первое включение вывалит в CRM всё, что копилось у
             # телеграма, задним числом и одним залпом.
@@ -487,7 +487,12 @@ def _vlozhenie(soobshchenie: dict) -> tuple[str, str, str, int]:
 
 
 def poslat_s_knopkami(
-    token: str, chat_id: int, text: str, knopki: list[list[dict]], opener=None
+    token: str,
+    chat_id: int,
+    text: str,
+    knopki: list[list[dict]],
+    opener=None,
+    tiho: bool = False,
 ) -> dict:
     """Сообщение с клавиатурой под ним.
 
@@ -496,11 +501,16 @@ def poslat_s_knopkami(
     сообщения. Поэтому туда кладут короткий опознаватель («ack:42»), а не
     состояние.
     """
-    dannye = {
+    dannye: dict = {
         "chat_id": chat_id,
         "text": text,
         "reply_markup": json.dumps({"inline_keyboard": knopki}),
     }
+    if tiho:
+        # Без звука. Нужно предупреждениям: звенящее ночью «место на диске к
+        # концу месяца кончится» учит выключать звук всему чату — вместе с
+        # авариями, ради которых чат и заведён.
+        dannye["disable_notification"] = True
     return _vyzov(token, "sendMessage", dannye, opener)
 
 
