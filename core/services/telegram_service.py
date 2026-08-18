@@ -25,6 +25,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import secrets
 from datetime import datetime
@@ -257,7 +258,9 @@ def _vyzov(token: str, metod: str, polya: dict, opener=None) -> dict:
     return telo.get("result") or {}
 
 
-def poslat_tekst(token: str, chat_id: int, text: str, opener=None) -> dict:
+def poslat_tekst(
+    token: str, chat_id: int, text: str, opener=None, otvet_na: int | None = None
+) -> dict:
     """Отправить текст. Разметки нет намеренно.
 
     В сообщении клиенту разметка не нужна, а вред от неё реальный: текст пишет
@@ -265,7 +268,14 @@ def poslat_tekst(token: str, chat_id: int, text: str, opener=None) -> dict:
     целиком с `can't parse entities`. Здесь это означало бы, что клиент не
     получил ответ, а менеджер об этом не узнал.
     """
-    return _vyzov(token, "sendMessage", {"chat_id": chat_id, "text": text}, opener)
+    dannye: dict = {"chat_id": chat_id, "text": text}
+    if otvet_na is not None:
+        # `allow_sending_without_reply` не ставим: если сообщение, на которое
+        # отвечают, у клиента удалено, лучше узнать об этом отказом, чем молча
+        # отправить ответ, повисший в воздухе. Менеджер увидит причину и
+        # отправит заново без привязки.
+        dannye["reply_to_message_id"] = otvet_na
+    return _vyzov(token, "sendMessage", dannye, opener)
 
 
 def _mnogochastnoe(polya: dict, fayl: tuple[str, str, bytes]) -> tuple[bytes, str]:
@@ -296,7 +306,14 @@ def _mnogochastnoe(polya: dict, fayl: tuple[str, str, bytes]) -> tuple[bytes, st
 
 
 def poslat_fayl(
-    token: str, chat_id: int, vid: str, imya: str, soderzhimoe: bytes, podpis: str = "", opener=None
+    token: str,
+    chat_id: int,
+    vid: str,
+    imya: str,
+    soderzhimoe: bytes,
+    podpis: str = "",
+    opener=None,
+    otvet_na: int | None = None,
 ) -> dict:
     """Отправить картинку, видео или документ."""
     import json
@@ -309,6 +326,10 @@ def poslat_fayl(
     polya = {"chat_id": str(chat_id)}
     if podpis:
         polya["caption"] = podpis
+    if otvet_na is not None:
+        # В multipart всё уезжает строками — число здесь превратилось бы в
+        # `TypeError` при сборке тела, а не в отказ телеграма.
+        polya["reply_to_message_id"] = str(otvet_na)
     telo, tip = _mnogochastnoe(polya, (imya_polya, imya, soderzhimoe))
 
     zapros = urllib.request.Request(
@@ -516,9 +537,20 @@ def prinyat(db: Session, obnovlenie: dict, opener=None) -> dict:
             # больше, чем сохранить.
             logger.warning("не забрали файл из телеграма: %r", beda)
 
+    # На что отвечает клиент. Телеграм присылает целое сообщение, но нам нужен
+    # только его номер: по нему находим СВОЮ запись. Не нашли — привязки не
+    # будет, и это законно: отвечать могут на сообщение, которого у нас нет
+    # (переписка началась до подключения канала).
+    otvet_na = None
+    otvechayut = soobshchenie.get("reply_to_message") or {}
+    if otvechayut.get("message_id"):
+        nayden = telegram_repo.po_vneshnemu_id(db, dialog.id, int(otvechayut["message_id"]))
+        otvet_na = nayden.id if nayden else None
+
     stroka = telegram_repo.dobavit_soobshchenie(
         db,
         chat_id=dialog.id,
+        reply_to_id=otvet_na,
         external_id=int(vneshniy) if vneshniy is not None else None,
         direction=DIRECTION_IN,
         kind=vid,
@@ -564,6 +596,10 @@ def prinyat(db: Session, obnovlenie: dict, opener=None) -> dict:
         kluch = token(db)
         if kluch:
             obnovit_avatar(db, dialog, kluch, opener)
+            # Именной эмодзи — той же отметкой и только у премиума: у остальных
+            # его не бывает вовсе, и два вызова ушли бы впустую на каждого.
+            if dialog.is_premium:
+                obnovit_status_emodzi(db, dialog, kluch, opener)
 
     return {"status": "accepted", "chat_id": dialog.id, "message_id": stroka.id}
 
@@ -634,6 +670,7 @@ def otpravit(
     author=None,
     fayl: tuple[str, bytes] | None = None,
     opener=None,
+    otvet_na: int | None = None,
 ):
     """Ответить клиенту. Строка заводится ДО обращения к телеграму.
 
@@ -683,9 +720,22 @@ def otpravit(
         vid = _vid_po_imeni(imya_fayla)
         put_fayla = _polozhit_fayl(dialog, imya_fayla, soderzhimoe)
 
+    # На что отвечаем. Проверяем ЗДЕСЬ, а не доверяем номеру из запроса: чужой
+    # номер иначе привязал бы ответ к переписке другого клиента, и цитата в
+    # ленте показала бы чужие слова.
+    otvet_na_stroku = None
+    if otvet_na is not None:
+        nayden = telegram_repo.po_id(db, otvet_na)
+        if nayden is None or nayden.chat_id != dialog.id:
+            raise errors.ValidationError(
+                "Message to reply to is not in this chat", code="telegram_reply_not_here"
+            )
+        otvet_na_stroku = nayden
+
     stroka = telegram_repo.dobavit_soobshchenie(
         db,
         chat_id=dialog.id,
+        reply_to_id=otvet_na_stroku.id if otvet_na_stroku else None,
         direction=DIRECTION_OUT,
         kind=vid,
         body=tekst,
@@ -698,10 +748,20 @@ def otpravit(
     )
 
     try:
+        # Номер в телеграме, а не наш: привязку понимает он, и у него своя
+        # нумерация. У сообщения, которое к нам приехало без номера (такое
+        # бывает у старых записей), привязки не будет — лучше отправить без
+        # цитаты, чем не отправить вовсе.
+        vneshniy_otveta = otvet_na_stroku.external_id if otvet_na_stroku else None
         if fayl is not None:
-            itog = poslat_fayl(kluch, dialog.chat_id, vid, imya_fayla, fayl[1], tekst, opener)
+            itog = poslat_fayl(
+                kluch, dialog.chat_id, vid, imya_fayla, fayl[1], tekst, opener,
+                otvet_na=vneshniy_otveta,
+            )
         else:
-            itog = poslat_tekst(kluch, dialog.chat_id, tekst, opener)
+            itog = poslat_tekst(
+                kluch, dialog.chat_id, tekst, opener, otvet_na=vneshniy_otveta
+            )
     except TelegramOtkaz as beda:
         stroka.send_state = SEND_FAILED
         stroka.send_error = str(beda)[:255]
@@ -751,6 +811,77 @@ def _vid_po_imeni(imya: str) -> str:
     if hvost in ("mp4", "mov", "webm"):
         return KIND_VIDEO
     return KIND_DOCUMENT
+
+
+def obnovit_status_emodzi(db: Session, dialog, kluch: str, opener=None) -> str:
+    """Забрать картинку именного эмодзи собеседника.
+
+    **Два вызова, и оба только для премиума.** Именной эмодзи бывает только у
+    него — значит у остальных спрашивать нечего, и `is_premium` из самого
+    сообщения работает здесь отбором, который ничего не стоит.
+
+    Первый вызов — `getChat`: в объекте пользователя (`message.from`) именного
+    эмодзи НЕТ, он приходит только у чата. Второй — `getCustomEmojiStickers`:
+    он превращает идентификатор в стикер, у которого есть статичная миниатюра.
+
+    Тянем именно миниатюру, а не сам стикер: стикер — это Lottie, и рисовать
+    его нечем без новой библиотеки во фронтенде.
+
+    Отказы наружу не поднимаются: значок у имени — украшение, и уронить из-за
+    него приём сообщения значило бы обменять важное на неважное.
+    """
+    try:
+        chat = _vyzov(kluch, "getChat", {"chat_id": dialog.chat_id}, opener)
+        opoznavatel = chat.get("emoji_status_custom_emoji_id")
+        if not opoznavatel:
+            # Сняли значок — снимаем и у себя. Иначе он висел бы у имени вечно.
+            dialog.emoji_status_path = ""
+            return ""
+
+        stikery = _vyzov(
+            kluch,
+            "getCustomEmojiStickers",
+            {"custom_emoji_ids": json.dumps([opoznavatel])},
+            opener,
+        )
+        if not stikery:
+            dialog.emoji_status_path = ""
+            return ""
+
+        miniatyura = (stikery[0] or {}).get("thumbnail") or {}
+        if not miniatyura.get("file_id"):
+            # Стикер без миниатюры рисовать нечем. Не отказ: просто нечего
+            # показать, и значок останется прежним видом — премиумной звёздочкой.
+            dialog.emoji_status_path = ""
+            return ""
+
+        soderzhimoe = skachat_fayl(kluch, miniatyura["file_id"], opener, srok=TIMEOUT)
+        dialog.emoji_status_path = _polozhit_fayl(
+            dialog, "emoji.webp", soderzhimoe, imya_kak_est=True
+        )
+        return dialog.emoji_status_path
+    except Exception as beda:  # noqa: BLE001
+        logger.warning("не забрали именной эмодзи: %r", beda)
+        return dialog.emoji_status_path or ""
+
+
+def emodzi_fayl(db: Session, chat_row_id: int):
+    """Путь к забранной картинке именного эмодзи. Только чтение с диска.
+
+    Тот же довод, что у аватара: разговор с телеграмом живёт в приёме сообщения,
+    а ручка показа читает файл. Иначе первый показ списка означал бы стадо
+    запросов, занятый пул соединений и 429 в ответ.
+    """
+    dialog = telegram_repo.get_chat(db, chat_row_id)
+    if dialog is None:
+        raise errors.NotFoundError("Chat not found", code="telegram_chat_not_found")
+    if not dialog.emoji_status_path:
+        raise errors.NotFoundError("No emoji status", code="telegram_no_emoji")
+
+    put = get_settings().storage_dir / dialog.emoji_status_path
+    if not put.exists():
+        raise errors.NotFoundError("No emoji status", code="telegram_no_emoji")
+    return put
 
 
 def privyazat_klienta(db: Session, chat_row_id: int, client_id: int | None):

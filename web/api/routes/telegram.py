@@ -128,6 +128,7 @@ def _dialog_naruzhu(row) -> dict:
         # Теперь забор живёт в приёме сообщения и от показа не зависит вовсе.
         "has_avatar": bool(row.avatar_path),
         "is_premium": row.is_premium,
+        "has_emoji": bool(row.emoji_status_path),
     }
 
 
@@ -150,6 +151,7 @@ def _soobshchenie_naruzhu(row) -> dict:
         # Есть что забрать, но ещё не забрали — про видео.
         "can_fetch": bool(row.file_id) and not row.file_path,
         "author_id": row.author_id,
+        "reply_to_id": row.reply_to_id,
         "send_state": row.send_state,
         "send_error": row.send_error,
         "happened_at": row.happened_at,
@@ -160,9 +162,21 @@ def _soobshchenie_naruzhu(row) -> dict:
 #
 # Отдельным роутером и БЕЗ зависимости от блока — по той же причине, что у
 # вебхука АТС: телеграм не умеет узнать, что канал выключили. Отвечай мы ему
-# отказом, он копил бы у себя очередь повторов и вывалил её разом при
-# включении. Молчаливое «принято» на выключенном блоке честнее: сообщения при
-# этом не теряются, они просто не приходят.
+# отказом, он копил бы у себя очередь повторов и вывалил её разом при включении.
+#
+# **Выключенный блок приём НЕ останавливает: сообщение записывается.** Это
+# решение, а не недосмотр. Выключение блока — про нас: меню, экран, ручки,
+# настройки. Бот при этом остаётся подключённым, и клиент продолжает писать, не
+# зная о наших переключателях. Уронить его слова значило бы: человек написал,
+# телеграм показал «доставлено», ответа нет и не будет, а сообщения нет нигде.
+# Хуже этого здесь ничего нет, и происходит оно молча.
+#
+# Записанное при этом никому не показывается — раздела не существует. Включат
+# обратно — переписка на месте, ровно как обещает правило блоков «данные не
+# стираются».
+#
+# Перестать ПРИНИМАТЬ — отдельное и явное действие: `DELETE /telegram/settings`
+# снимает вебхук у телеграма. Это «отключить канал», а не «убрать раздел».
 webhook_router = APIRouter(prefix="/telegram", tags=["telegram"])
 
 #: Поток приёма. Обычная переписка — единицы сообщений в секунду; всё, что
@@ -339,6 +353,9 @@ def soobshcheniya(
 
 
 class OtvetVhod(BaseModel):
+    #: На какое сообщение отвечаем. Своё, не телеграмово: наружу телеграмовы
+    #: номера не отдаются вовсе.
+    reply_to_id: int | None = None
     text: str = ""
 
 
@@ -350,7 +367,9 @@ def otvetit(
     user: User = Depends(require_perm("telegram", "create")),
 ) -> dict:
     """Ответить клиенту текстом."""
-    stroka = telegram_service.otpravit(db, chat_row_id, tekst=data.text, author=user)
+    stroka = telegram_service.otpravit(
+        db, chat_row_id, tekst=data.text, author=user, otvet_na=data.reply_to_id
+    )
     return _soobshchenie_naruzhu(stroka)
 
 
@@ -359,6 +378,10 @@ async def otpravit_fayl(
     chat_row_id: int,
     file: UploadFile = File(...),
     caption: str = Form(""),
+    # Форма, а не JSON: файл и его спутники едут одним multipart. Пустая строка
+    # означает «без привязки» — так проще на стороне браузера, где `null` в
+    # форму не положить.
+    reply_to_id: str = Form(""),
     db: Session = Depends(get_db),
     user: User = Depends(require_perm("telegram", "create")),
 ) -> dict:
@@ -374,6 +397,7 @@ async def otpravit_fayl(
         tekst=caption,
         author=user,
         fayl=(file.filename or "file", soderzhimoe),
+        otvet_na=int(reply_to_id) if reply_to_id.strip().isdigit() else None,
     )
     return _soobshchenie_naruzhu(stroka)
 
@@ -447,6 +471,25 @@ def avatar(
         # событие, и без этого один аватар ехал бы по сети десятки раз за смену.
         # `private` — потому что переписка с клиентом не должна оседать в
         # промежуточных кэшах по дороге.
+        headers={"Cache-Control": "private, max-age=3600"},
+    )
+
+
+@router.get("/chats/{chat_row_id}/emoji")
+def emodzi(
+    chat_row_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_perm("telegram", "view")),
+):
+    """Картинка именного эмодзи собеседника.
+
+    Статичная миниатюра стикера: сам эмодзи — Lottie, и браузер его не рисует.
+    Забирается при приёме сообщения не чаще раза в сутки и только у премиума.
+    """
+    put = telegram_service.emodzi_fayl(db, chat_row_id)
+    return FileResponse(
+        put,
+        content_disposition_type="inline",
         headers={"Cache-Control": "private, max-age=3600"},
     )
 

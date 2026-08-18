@@ -148,6 +148,17 @@ class TelegramChat(Base):
     #: срок молчания — беда невелика, а вечная правда стоила бы опроса.
     is_premium: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
 
+    #: Именной эмодзи: путь к забранной СТАТИЧНОЙ картинке.
+    #:
+    #: Сам эмодзи — стикер в формате TGS (сжатый Lottie) или WEBM, и браузер его
+    #: не рисует. У стикера есть миниатюра, которую рисует, — её и храним.
+    #: Анимация остаётся отдельным решением владельца и в эту схему укладывается:
+    #: путь к ней ляжет рядом, если захотят.
+    #:
+    #: Бывает только у премиума, поэтому и спрашиваем его только у премиума
+    #: (см. `obnovit_status_emodzi`).
+    emoji_status_path: Mapped[str] = mapped_column(String(255), default="")
+
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     # Отдельного `__table_args__` здесь нет намеренно. В первой редакции стоял
@@ -206,6 +217,19 @@ class TelegramMessage(Base):
     #: должен уносить с собой переписку с клиентом.
     author_id: Mapped[int | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+
+    #: Сообщение, на которое отвечают.
+    #:
+    #: Ссылка на СВОЮ запись, а не на номер в телеграме: тот уникален внутри
+    #: чата, и ссылка на него означала бы пару «чат + номер» с поиском при
+    #: каждом показе ленты. Плюс у исходящего номер появляется только ПОСЛЕ
+    #: успешной отправки, а цитату надо показать сразу.
+    #:
+    #: `SET NULL`: удаление того, на что ссылались, не уносит ответ — он просто
+    #: теряет цитату.
+    reply_to_id: Mapped[int | None] = mapped_column(
+        ForeignKey("telegram_messages.id", ondelete="SET NULL"), nullable=True
     )
 
     send_state: Mapped[str] = mapped_column(String(16), default=SEND_SENT)

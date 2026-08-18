@@ -287,7 +287,7 @@ def test_otvet_uhodit_v_telegram_i_lozhitsya_v_perepisku(root_client, bot_nastro
 
     ushlo = []
 
-    def podstava(kluch, chat_id, text, opener=None):
+    def podstava(kluch, chat_id, text, opener=None, otvet_na=None):
         ushlo.append((chat_id, text))
         return {"message_id": 555}
 
@@ -912,7 +912,7 @@ def test_svoy_otvet_ne_stanovitsya_neprochitannym(root_client, bot_nastroen, mon
     monkeypatch.setattr(
         telegram_service,
         "poslat_tekst",
-        lambda kluch, chat_id, text, opener=None: {"message_id": 900},
+        lambda kluch, chat_id, text, opener=None, otvet_na=None: {"message_id": 900},
     )
 
     _poslat(root_client, bot_nastroen, _obnovlenie(505200, 1, text="вопрос"))
@@ -1437,6 +1437,318 @@ def test_svezhiy_avatar_zamenyaet_staryy_a_ne_kopitsya(root_client, bot_nastroen
     assert [p.name for p in katalog.iterdir()] == ["avatar.jpg"], "аватары копятся на диске"
     svezhiy = root_client.get(f"{TG}/chats/{dialog['id']}/avatar")
     assert svezhiy.content == b"novaya", "показывается старый аватар вместо нового"
+
+
+
+# --- ответ на конкретное сообщение -------------------------------------------
+
+
+def test_otvet_privyazyvaetsya_i_uhodit_s_privyazkoy(root_client, bot_nastroen, monkeypatch):
+    """Ответ помнит, на что он ответ, — и телеграм узнаёт об этом тоже.
+
+    Обе половины в одном теле: привязка, которая есть у нас и не уехала в
+    телеграм, показывает цитату менеджеру и НЕ показывает клиенту — то есть
+    ровно та беда, ради которой всё и делалось, остаётся у него на экране.
+    """
+    from core.services import telegram_service
+
+    ushlo = {}
+
+    def poslat(kluch, chat_id, text, opener=None, otvet_na=None):
+        ushlo["otvet_na"] = otvet_na
+        return {"message_id": 991}
+
+    monkeypatch.setattr(telegram_service, "poslat_tekst", poslat)
+
+    _poslat(root_client, bot_nastroen, _obnovlenie(509100, 41, text="сколько стоит доставка?"))
+    dialog = _dialog(root_client, 509100)
+    vopros = root_client.get(f"{TG}/chats/{dialog['id']}/messages").json()["items"][0]
+
+    otvet = root_client.post(
+        f"{TG}/chats/{dialog['id']}/messages",
+        json={"text": "двести гривен", "reply_to_id": vopros["id"]},
+    )
+    assert otvet.status_code == 201, otvet.text
+    assert otvet.json()["reply_to_id"] == vopros["id"], "привязка не сохранилась"
+    assert ushlo["otvet_na"] == 41, (
+        f"в телеграм ушёл не тот номер: {ushlo}. Клиент увидит ответ без цитаты"
+    )
+
+
+def test_otvet_na_chuzhoe_soobshchenie_otvergaetsya(root_client, bot_nastroen, monkeypatch):
+    """Привязать ответ к сообщению ЧУЖОГО диалога нельзя.
+
+    Номер сообщения приходит из браузера, и подставить в него чужой — дело
+    одной строки. Без проверки цитата в ленте показала бы слова другого
+    клиента: не «неверная ссылка», а чужая переписка на экране.
+    """
+    from core.services import telegram_service
+
+    monkeypatch.setattr(
+        telegram_service,
+        "poslat_tekst",
+        lambda kluch, chat_id, text, opener=None, otvet_na=None: {"message_id": 992},
+    )
+
+    _poslat(root_client, bot_nastroen, _obnovlenie(509200, 51, text="первый диалог"))
+    _poslat(root_client, bot_nastroen, _obnovlenie(509300, 52, text="второй диалог"))
+    pervyy = _dialog(root_client, 509200)
+    vtoroy = _dialog(root_client, 509300)
+    chuzhoe = root_client.get(f"{TG}/chats/{vtoroy['id']}/messages").json()["items"][0]
+
+    otkaz = root_client.post(
+        f"{TG}/chats/{pervyy['id']}/messages",
+        json={"text": "ответ не туда", "reply_to_id": chuzhoe["id"]},
+    )
+    assert otkaz.status_code == 422, otkaz.text
+    assert otkaz.json()["error"]["code"] == "telegram_reply_not_here"
+
+
+def test_vhodyashchiy_otvet_klienta_zapominaet_na_chto_otvechayut(root_client, bot_nastroen):
+    """Клиент ответил на наше сообщение — привязка сохраняется и у нас.
+
+    Без неё переписка в CRM читается иначе, чем у клиента в телефоне: там
+    цитата есть, здесь нет. Разговор про три позиции заказа так расходится на
+    два разных разговора.
+    """
+    _poslat(root_client, bot_nastroen, _obnovlenie(509400, 61, text="какой из трёх вариантов?"))
+    dialog = _dialog(root_client, 509400)
+    nashe = root_client.get(f"{TG}/chats/{dialog['id']}/messages").json()["items"][0]
+
+    telo = _obnovlenie(509400, 62, text="второй")
+    telo["message"]["reply_to_message"] = {"message_id": 61}
+    _poslat(root_client, bot_nastroen, telo)
+
+    lenta = root_client.get(f"{TG}/chats/{dialog['id']}/messages").json()["items"]
+    otvet_klienta = [s for s in lenta if s["body"] == "второй"][0]
+    assert otvet_klienta["reply_to_id"] == nashe["id"], (
+        f"привязка входящего ответа потерялась: {otvet_klienta}"
+    )
+
+
+def test_otvet_na_neizvestnoe_soobshchenie_ne_teryaet_samo_soobshchenie(
+    root_client, bot_nastroen
+):
+    """Клиент ответил на то, чего у нас нет, — сообщение всё равно записано.
+
+    Такое бывает законно: переписка началась до подключения канала, и первых
+    сообщений у нас нет вовсе. Потерять из-за этого ответ клиента значило бы
+    потерять сам разговор.
+    """
+    telo = _obnovlenie(509500, 71, text="да, согласен")
+    telo["message"]["reply_to_message"] = {"message_id": 999999}
+    otvet = _poslat(root_client, bot_nastroen, telo)
+    assert otvet.status_code == 200, otvet.text
+
+    dialog = _dialog(root_client, 509500)
+    lenta = root_client.get(f"{TG}/chats/{dialog['id']}/messages").json()["items"]
+    assert [s["body"] for s in lenta] == ["да, согласен"]
+    assert lenta[0]["reply_to_id"] is None, "привязка выдумана на пустом месте"
+
+
+
+# --- именной эмодзи -----------------------------------------------------------
+
+
+def _telegram_podstavlen(monkeypatch, otvety: dict, skachano=b"kartinka"):
+    """Подменить разговор с телеграмом словарём «метод → ответ» и считать вызовы."""
+    from core.services import telegram_service
+
+    zvali = []
+
+    def vyzov(kluch, metod, dannye=None, opener=None):
+        zvali.append(metod)
+        if metod in otvety:
+            return otvety[metod]
+        raise AssertionError(f"неожиданный вызов {metod}")
+
+    monkeypatch.setattr(telegram_service, "_vyzov", vyzov)
+    monkeypatch.setattr(
+        telegram_service,
+        "skachat_fayl",
+        lambda kluch, file_id, opener=None, srok=None: skachano,
+    )
+    return zvali
+
+
+def test_imennoy_emodzi_beryotsya_kartinkoy_i_pokazyvaetsya(
+    root_client, bot_nastroen, monkeypatch
+):
+    """У премиума забирается СТАТИЧНАЯ миниатюра значка и отдаётся экрану.
+
+    Сам значок — стикер в формате TGS (сжатый Lottie), и браузер его не рисует:
+    ради анимации понадобилась бы новая библиотека во фронтенде. Миниатюра
+    рисуется обычной картинкой, и значок при этом тот самый, включая платные
+    наборы.
+    """
+    zvali = _telegram_podstavlen(
+        monkeypatch,
+        {
+            "getUserProfilePhotos": {"photos": []},
+            "getChat": {"emoji_status_custom_emoji_id": "5350305076983339640"},
+            "getCustomEmojiStickers": [{"thumbnail": {"file_id": "TH-1"}}],
+        },
+        skachano=b"znachok",
+    )
+
+    telo = _obnovlenie(510100, 81, text="привет")
+    telo["message"]["from"]["is_premium"] = True
+    _poslat(root_client, bot_nastroen, telo)
+
+    assert "getChat" in zvali and "getCustomEmojiStickers" in zvali, f"вызовы: {zvali}"
+
+    dialog = _dialog(root_client, 510100)
+    assert dialog["is_premium"] is True
+    assert dialog["has_emoji"] is True, f"значок забрали, а признак молчит: {dialog}"
+
+    kartinka = root_client.get(f"{TG}/chats/{dialog['id']}/emoji")
+    assert kartinka.status_code == 200, kartinka.text
+    assert kartinka.content == b"znachok"
+
+
+def test_u_ne_premiuma_za_emodzi_ne_hodim(root_client, bot_nastroen, monkeypatch):
+    """Без премиума именного эмодзи не бывает — и двух вызовов ради него тоже.
+
+    Иначе каждый диалог стоил бы двух лишних обращений к Bot API в сутки при
+    заведомо пустом ответе, а телеграм считает вызовы, а не их полезность.
+    """
+    zvali = _telegram_podstavlen(monkeypatch, {"getUserProfilePhotos": {"photos": []}})
+
+    _poslat(root_client, bot_nastroen, _obnovlenie(510200, 82, text="привет"))
+
+    assert "getChat" not in zvali, f"сходили за значком к обычному человеку: {zvali}"
+    assert _dialog(root_client, 510200)["has_emoji"] is False
+
+
+def test_snyatyy_emodzi_propadaet_i_u_nas(root_client, bot_nastroen, monkeypatch):
+    """Убрал значок — он пропадает и в CRM.
+
+    Иначе он висел бы у имени вечно: показ читается как «вот его значок», а не
+    «вот его значок по состоянию на прошлый год».
+    """
+    _telegram_podstavlen(
+        monkeypatch,
+        {
+            "getUserProfilePhotos": {"photos": []},
+            "getChat": {"emoji_status_custom_emoji_id": "77"},
+            "getCustomEmojiStickers": [{"thumbnail": {"file_id": "TH-2"}}],
+        },
+    )
+    telo = _obnovlenie(510300, 83, text="привет")
+    telo["message"]["from"]["is_premium"] = True
+    _poslat(root_client, bot_nastroen, telo)
+    dialog = _dialog(root_client, 510300)
+    assert dialog["has_emoji"] is True
+
+    # Назавтра значок снят.
+    _zabyt_kogda_sprashivali(dialog["id"])
+    _telegram_podstavlen(
+        monkeypatch,
+        {"getUserProfilePhotos": {"photos": []}, "getChat": {}},
+    )
+    telo = _obnovlenie(510300, 84, text="снял значок")
+    telo["message"]["from"]["is_premium"] = True
+    _poslat(root_client, bot_nastroen, telo)
+
+    assert _dialog(root_client, 510300)["has_emoji"] is False, "снятый значок остался висеть"
+    assert root_client.get(f"{TG}/chats/{dialog['id']}/emoji").status_code == 404
+
+
+
+# --- выключение блока на всех уровнях ----------------------------------------
+
+
+def test_vyklyuchennyy_blok_zakryt_na_vseh_svoih_urovnyah(root_client, bot_nastroen):
+    """Выключенный блок исчезает целиком, а не «в основном».
+
+    `docs/11-modules.md` называет семь уровней, и пропущенный делает выключение
+    косметическим: пункт спрятан, а адрес работает; экран убран, а настройки
+    открыты. Здесь проверяются те уровни, которые проверяемы с сервера, — по
+    одному запросу на каждый. Уровни интерфейса (меню, маршруты SPA) держатся
+    списками в `Sidebar.tsx` и `App.tsx` и проверяются `tests/test_layout.py`.
+
+    Приём вебхука в этот список НЕ входит намеренно: телеграм не умеет узнать,
+    что канал выключили, и отвечать ему отказом значило бы копить у него очередь
+    повторов, которая вывалится разом при включении. Он отвечает «принято» и
+    ничего не делает — это отдельная проверка ниже.
+    """
+    _poslat(root_client, bot_nastroen, _obnovlenie(511100, 91, text="привет"))
+    dialog = _dialog(root_client, 511100)
+
+    otklyuchen = root_client.post(f"{API}/modules/telegram", json={"enabled": False})
+    assert otklyuchen.status_code == 200, otklyuchen.text
+
+    # По ручке на уровень: настройки, список диалогов, лента, отправка, поток,
+    # вложение, аватар, сводка, присутствие, отметка прочтения.
+    adresa = [
+        ("GET", f"{TG}/settings"),
+        ("GET", f"{TG}/chats"),
+        ("GET", f"{TG}/invite"),
+        ("GET", f"{TG}/chats/{dialog['id']}/messages"),
+        ("POST", f"{TG}/chats/{dialog['id']}/messages"),
+        ("POST", f"{TG}/chats/{dialog['id']}/presence"),
+        ("POST", f"{TG}/chats/{dialog['id']}/read"),
+        ("GET", f"{TG}/chats/{dialog['id']}/avatar"),
+        ("GET", f"{TG}/chats/{dialog['id']}/emoji"),
+        ("POST", f"{TG}/digest/send"),
+        ("PATCH", f"{TG}/chats/{dialog['id']}"),
+        ("POST", f"{TG}/chats/{dialog['id']}/deal"),
+        ("POST", f"{TG}/chats/{dialog['id']}/task"),
+    ]
+    for metod, adres in adresa:
+        otvet = getattr(root_client, metod.lower())(
+            adres, **({"json": {}} if metod in ("POST", "PATCH") else {})
+        )
+        assert otvet.status_code == 403, f"{metod} {adres} отвечает {otvet.status_code}"
+        assert otvet.json()["error"]["code"] == "module_disabled", f"{metod} {adres}"
+
+    root_client.post(f"{API}/modules/telegram", json={"enabled": True})
+
+
+def test_pri_vyklyuchennom_bloke_slova_klienta_ne_propadayut(root_client, bot_nastroen):
+    """Блок выключен, а сообщение клиента записано — и находится после включения.
+
+    Отказывать телеграму нельзя: он сочтёт доставку неудавшейся и будет
+    повторять часами, а при включении вывалит накопленное разом.
+
+    Но и «принять и выбросить» нельзя, хотя соблазн есть: раздела нет, значит
+    и записи не надо. Со стороны клиента это выглядит так — написал, телеграм
+    показал «доставлено», ответа нет и не будет, а слов его нет нигде. Хуже
+    этого здесь ничего не бывает, и происходит оно молча.
+
+    Поэтому приём пишет, а показывать записанное некому: раздел закрыт целиком
+    (соседняя проверка). Перестать принимать — отдельное явное действие,
+    `DELETE /telegram/settings` снимает вебхук.
+    """
+    root_client.post(f"{API}/modules/telegram", json={"enabled": False})
+    otvet = _poslat(root_client, bot_nastroen, _obnovlenie(511200, 92, text="пока выключено"))
+    assert otvet.status_code == 200, otvet.text
+
+    # Пока блок выключен, ручки закрыты — даже своему.
+    assert root_client.get(f"{TG}/chats").status_code == 403
+
+    root_client.post(f"{API}/modules/telegram", json={"enabled": True})
+    dialog = _dialog(root_client, 511200)
+    lenta = root_client.get(f"{TG}/chats/{dialog['id']}/messages").json()["items"]
+    assert [s["body"] for s in lenta] == ["пока выключено"], (
+        "слова клиента, написанные при выключенном блоке, потерялись"
+    )
+
+
+def test_dannye_perepiski_perezhivayut_vyklyuchenie(root_client, bot_nastroen):
+    """Выключение — про связь, а не про данные.
+
+    Правило блоков прямо говорит: данные при выключении не стираются. Переписка
+    с клиентом бывает доказательством, и потерять её из-за переключателя нельзя.
+    """
+    _poslat(root_client, bot_nastroen, _obnovlenie(511300, 93, text="сохрани меня"))
+    dialog = _dialog(root_client, 511300)
+
+    root_client.post(f"{API}/modules/telegram", json={"enabled": False})
+    root_client.post(f"{API}/modules/telegram", json={"enabled": True})
+
+    lenta = root_client.get(f"{TG}/chats/{dialog['id']}/messages").json()["items"]
+    assert [s["body"] for s in lenta] == ["сохрани меня"], "переписка не пережила выключение"
 
 
 def test_nomera_chatov_u_proverok_ne_peresekayutsya():

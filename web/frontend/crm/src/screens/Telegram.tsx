@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 
 import { Icon } from "../components/Icon";
 import { Avatar, EmptyState, ScreenLoading } from "../components/ui";
@@ -8,10 +9,11 @@ import { useApp } from "../lib/app";
 import { useDebounced } from "../lib/debounce";
 import { useFailure } from "../lib/failure";
 import { useGuard } from "../lib/guard";
+import { can } from "../lib/permissions";
 import { useReference } from "../lib/reference";
 import { podpisatsya } from "../lib/tgpotok";
 import { otmetit_otkrytyy_chat } from "../lib/signaly";
-import { formatDateTime, initials } from "../lib/format";
+import { formatDateTime, formatMoney, initials } from "../lib/format";
 
 /**
  * Мессенджер: переписка с клиентами через бота фирмы.
@@ -37,6 +39,7 @@ export interface TgChat {
   unread: number;
   has_avatar: boolean;
   is_premium: boolean;
+  has_emoji: boolean;
 }
 
 export interface TgMessage {
@@ -50,6 +53,7 @@ export interface TgMessage {
   has_file: boolean;
   can_fetch: boolean;
   author_id: number | null;
+  reply_to_id: number | null;
   send_state: "pending" | "sent" | "failed";
   send_error: string;
   happened_at: string;
@@ -112,6 +116,10 @@ export function Telegram() {
   const [messages, setMessages] = useState<TgMessage[]>([]);
   const [watchers, setWatchers] = useState<Watcher[]>([]);
   const [tekst, setTekst] = useState("");
+  /** На какое сообщение отвечаем. Само сообщение, а не номер: цитату надо
+   *  показать над полем ввода, а лезть за ней в ленту при каждом наборе
+   *  буквы значило бы искать по всему списку на каждое нажатие. */
+  const [otvechaem, setOtvechaem] = useState<TgMessage | null>(null);
   const [otpravka, setOtpravka] = useState(false);
   /** Идущая заливка: сколько ушло, сколько всего и чем её бросить. */
   const [zaliv, setZaliv] = useState<{
@@ -136,6 +144,22 @@ export function Telegram() {
   // короткая переписка и дочитанная до конца выглядят одинаково.
   const [estGlubzhe, setEstGlubzhe] = useState(false);
   const iskat = useDebounced(poisk, 300);
+  /**
+   * Дело клиента рядом с его словами.
+   *
+   * Это и есть ответ на вопрос «зачем переписка в CRM, если она есть в
+   * телефоне»: отвечая, менеджер видит, что человек заказывал, сколько должен и
+   * какая заявка в работе. В телефоне этого нет и быть не может.
+   *
+   * Берём СУЩЕСТВУЮЩУЮ ручку карточки, а не заводим свою сводную. Она уже
+   * подчиняется правилам раздела заявок: чужие заявки в ответ не попадают, а
+   * суммы приходят пустыми у того, кому их видеть не положено. Своя ручка
+   * означала бы второе место, где эти правила надо помнить, — и первое, где их
+   * забудут.
+   */
+  const [delo, setDelo] = useState<any>(null);
+  const [deloIdyot, setDeloIdyot] = useState(false);
+  const stages = useReference<any>("/pipeline/stages");
   // Справочник клиентов для ручной привязки. Через общий крючок, как в
   // редакторе доски: отказ здесь не должен выглядеть как «клиентов нет».
   const klienty = useReference<any>("/clients?per_page=200");
@@ -213,6 +237,9 @@ export function Telegram() {
   );
 
   useEffect(() => {
+    // Привязку снимаем вместе со сменой диалога: цитата из прошлого
+    // разговора над полем ввода нового — прямой путь отправить не то.
+    setOtvechaem(null);
     if (vybran == null) return;
     void zagruzit_lentu(vybran);
   }, [vybran, zagruzit_lentu]);
@@ -321,6 +348,41 @@ export function Telegram() {
       otmetit_otkrytyy_chat(null);
     };
   }, [vybran]);
+
+  // Дело клиента: грузится по привязке диалога, а не по открытию чата.
+  // Непривязанный диалог — обычное состояние, и запрос на него ушёл бы впустую.
+  // Ищем прямо в списке, а не в `otkrytyy`: тот считается ниже, после
+  // стражей загрузки, а крючки обязаны стоять до них — иначе их число
+  // менялось бы от захода к заходу, и React потерял бы состояние.
+  const klient_id: number | null =
+    (chats ?? []).find((c) => c.id === vybran)?.client_id ?? null;
+  const vidno_klientov = can(user, "clients.view");
+  useEffect(() => {
+    if (klient_id == null || !vidno_klientov) {
+      setDelo(null);
+      return;
+    }
+    let nuzhno = true;
+    setDeloIdyot(true);
+    void (async () => {
+      try {
+        const otvet = await api.get<any>(`/clients/${klient_id}`);
+        // Тот же довод, что у ленты: пока ответ ехал, могли открыть другой
+        // диалог, и чужое дело рядом с чужой перепиской — худшее, что тут
+        // может показаться.
+        if (nuzhno) setDelo(otvet);
+      } catch {
+        // Молча: карточка — довесок к переписке. Всплывающая жалоба на каждый
+        // моргнувший запрос мешала бы отвечать клиенту.
+        if (nuzhno) setDelo(null);
+      } finally {
+        if (nuzhno) setDeloIdyot(false);
+      }
+    })();
+    return () => {
+      nuzhno = false;
+    };
+  }, [klient_id, vidno_klientov]);
 
   // Присутствие: подтверждаем, пока чат открыт, и снимаем, уходя.
   useEffect(() => {
@@ -442,7 +504,7 @@ export function Telegram() {
     try {
       const stroka = await api.post<TgMessage>(
         `/telegram/chats/${vybran}/messages`,
-        { text: tekst },
+        { text: tekst, reply_to_id: otvechaem?.id ?? null },
       );
       // Ушло в тот диалог, что был открыт при нажатии, — и показать это надо
       // там же. Успел человек переключиться — сообщение отправлено верно, а вот
@@ -452,6 +514,7 @@ export function Telegram() {
         posledneye.current = stroka.id;
       }
       setTekst("");
+      setOtvechaem(null);
       void zagruzit_chats();
     } catch (beda) {
       toastError(beda);
@@ -548,10 +611,25 @@ export function Telegram() {
                   </span>
                   <span className="tg-chat-title">
                     {chat.title || chat.username}
-                    {chat.is_premium && (
-                      <span className="tg-premium" title={t("tgPremium")}>
-                        ★
-                      </span>
+                    {chat.has_emoji ? (
+                      /*
+                        Именной эмодзи вместо звёздочки: человек выбрал его сам,
+                        и узнают его по нему. Звёздочка остаётся тем, у кого
+                        премиум есть, а значка нет.
+                      */
+                      <img
+                        className="tg-emoji"
+                        src={`/api/v1/telegram/chats/${chat.id}/emoji`}
+                        alt={t("tgPremium")}
+                        title={t("tgPremium")}
+                        loading="lazy"
+                      />
+                    ) : (
+                      chat.is_premium && (
+                        <span className="tg-premium" title={t("tgPremium")}>
+                          ★
+                        </span>
+                      )
                     )}
                   </span>
                   <span className="tg-chat-time">
@@ -589,10 +667,19 @@ export function Telegram() {
                 />
                 <strong>
                   {otkrytyy.title || otkrytyy.username}
-                  {otkrytyy.is_premium && (
-                    <span className="tg-premium" title={t("tgPremium")}>
-                      ★
-                    </span>
+                  {otkrytyy.has_emoji ? (
+                    <img
+                      className="tg-emoji"
+                      src={`/api/v1/telegram/chats/${otkrytyy.id}/emoji`}
+                      alt={t("tgPremium")}
+                      title={t("tgPremium")}
+                    />
+                  ) : (
+                    otkrytyy.is_premium && (
+                      <span className="tg-premium" title={t("tgPremium")}>
+                        ★
+                      </span>
+                    )
                   )}
                 </strong>
                 {/*
@@ -689,10 +776,41 @@ export function Telegram() {
               {messages.map((stroka) => (
                 <div
                   key={stroka.id}
+                  id={`tg-msg-${stroka.id}`}
                   className={`tg-msg tg-${stroka.direction}${
                     stroka.send_state === "failed" ? " is-failed" : ""
                   }`}
                 >
+                  <button
+                    type="button"
+                    className="tg-reply"
+                    onClick={() => setOtvechaem(stroka)}
+                    aria-label={t("tgReply")}
+                    title={t("tgReply")}
+                  >
+                    <Icon name="send" size={12} />
+                  </button>
+                  {stroka.reply_to_id != null && (
+                    /*
+                      Цитата отвечает на вопрос «а на что это ответ». Берём из
+                      уже загруженной ленты: сообщение, которому отвечали, почти
+                      всегда рядом. Нет его (ушло глубже, чем открыто) —
+                      показываем, что ответ есть, но цитаты не видно; врать
+                      «ответ на последнее» нельзя, ровно из-за этого пункт и
+                      заведён.
+                    */
+                    <button
+                      type="button"
+                      className="tg-quote"
+                      onClick={() => {
+                        const uzel = document.getElementById(`tg-msg-${stroka.reply_to_id}`);
+                        uzel?.scrollIntoView({ block: "center", behavior: "smooth" });
+                      }}
+                    >
+                      {messages.find((s) => s.id === stroka.reply_to_id)?.body?.slice(0, 90) ||
+                        t("tgQuoteGone")}
+                    </button>
+                  )}
                   {stroka.body && <p>{stroka.body}</p>}
                   {stroka.can_fetch && (
                     /*
@@ -805,6 +923,17 @@ export function Telegram() {
                 </div>
               </div>
             )}
+            {otvechaem && (
+              <div className="tg-reply-bar">
+                <span>{t("tgReplyTo")}:</span>
+                <span className="tg-reply-text">
+                  {otvechaem.body?.slice(0, 90) || otvechaem.file_name || t("tgFile")}
+                </span>
+                <button type="button" onClick={() => setOtvechaem(null)}>
+                  {t("cancel")}
+                </button>
+              </div>
+            )}
             <footer className="tg-compose">
               {/*
                 Показываем выбор и при отказе загрузки — с прямой пометкой.
@@ -877,6 +1006,73 @@ export function Telegram() {
           </>
         )}
       </section>
+
+      {/*
+        Третья колонка появляется только у привязанного диалога и только у
+        того, кому клиенты видны. Пустая колонка «здесь могло быть дело»
+        отнимала бы место у переписки, ради которой экран и открыт.
+      */}
+      {otkrytyy !== null && klient_id != null && vidno_klientov && (
+        <aside className="tg-delo">
+          {delo === null ? (
+            <div className="tg-delo-pusto">{deloIdyot ? t("loading") : t("loadFailed")}</div>
+          ) : (
+            <>
+              <div className="tg-delo-head">
+                <Link className="tg-delo-name" to={`/clients/${delo.id}`}>
+                  {delo.name}
+                </Link>
+                {delo.company && <div className="tg-delo-sub">{delo.company}</div>}
+              </div>
+
+              <div className="tg-delo-fields">
+                {delo.phone && (
+                  <div>
+                    <span>{t("phone")}</span>
+                    <a href={`tel:${delo.phone}`}>{delo.phone}</a>
+                  </div>
+                )}
+                {delo.email && (
+                  <div>
+                    <span>{t("email")}</span>
+                    <a href={`mailto:${delo.email}`}>{delo.email}</a>
+                  </div>
+                )}
+              </div>
+
+              <div className="tg-delo-title">{t("deals")}</div>
+              {(delo.deals ?? []).length === 0 ? (
+                <div className="tg-delo-pusto">{t("tgNoDeals")}</div>
+              ) : (
+                <ul className="tg-delo-deals">
+                  {(delo.deals ?? []).map((zayavka: any) => (
+                    <li key={zayavka.id}>
+                      <Link to={`/deals/${zayavka.id}`}>{zayavka.title}</Link>
+                      <div className="tg-delo-line">
+                        <span>
+                          {(stages.items ?? []).find((s: any) => s.key === zayavka.stage)?.name ||
+                            zayavka.stage}
+                        </span>
+                        {/*
+                          Показываем ОСТАТОК, а не сумму: отвечая клиенту, важно
+                          «сколько он должен», а не «сколько стоило». Пусто —
+                          значит сумм этому сотруднику не показывают, и это не
+                          то же самое, что ноль.
+                        */}
+                        {zayavka.remainder != null && (
+                          <strong>
+                            {formatMoney(zayavka.remainder, delo.currency || "USD", locale)}
+                          </strong>
+                        )}
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </>
+          )}
+        </aside>
+      )}
     </div>
   );
 }

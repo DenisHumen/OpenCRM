@@ -14,6 +14,7 @@ import pathlib
 import re
 
 SCREENS = pathlib.Path(__file__).resolve().parent.parent / "web" / "frontend" / "crm" / "src"
+KOREN = pathlib.Path(__file__).resolve().parent.parent
 
 # Стражи, которым отказ не нужен, — с причиной у каждого.
 EXEMPT = {
@@ -937,6 +938,12 @@ REFERENCE_WITHOUT_WORD: dict[tuple[str, str], str] = {
     ("Mail.tsx", "accounts"): "отказ ни на что не влияет: отправку делает сервер",
     ("ClientCard.tsx", "mailAccounts"): "то же: сервер возьмёт первый активный ящик",
     ("DealCard.tsx", "mailAccounts"): "то же: сервер возьмёт первый активный ящик",
+    # Названия этапов в деле клиента рядом с перепиской. Не ответил — на
+    # месте названия остаётся КЛЮЧ этапа («new», «in_work»): не пусто, не
+    # выдумано и не выглядит выбором. Сказать «справочник не приехал» тут
+    # значило бы поставить жалобу в узкую колонку рядом с перепиской,
+    # отняв место у того, ради чего экран открыт.
+    ("Telegram.tsx", "stages"): "запасной вид — сам ключ этапа, он честен и не пуст",
 }
 
 
@@ -1050,3 +1057,40 @@ def test_potok_sobytiy_otkryvaetsya_v_odnom_meste():
     assert gde == ["lib/tgpotok.ts"], (
         "поток событий открывается не в одном месте, а в: " + ", ".join(gde)
     )
+
+
+def test_kartochka_klienta_znaet_vse_vidy_zapisey_lenty():
+    """Подпись и значок есть у КАЖДОГО вида записи, какой умеет заводить сервер.
+
+    В самой карточке об этом написано прямо: «заметить пропуск здесь придётся
+    глазами — записи ленты приходят нетипизированными, и `tsc` про новый вид не
+    скажет». Он и не сказал: мессенджер завёл вид `telegram`, а таблица подписей
+    о нём не узнала, и в ленте клиента запись выходила БЕЗ ПОДПИСИ — видно, что
+    что-то было, а что именно, не сказано.
+
+    Проверка снимает это с глаз: список видов читается у сервера, таблицы — у
+    экрана, и расхождение краснеет.
+    """
+    model = (KOREN / "database" / "models" / "client.py").read_text(encoding="utf-8")
+    karta = (SCREENS / "screens" / "ClientCard.tsx").read_text(encoding="utf-8")
+
+    vidy = set(re.findall(r'"(\w+)"', re.search(r"NOTE_KINDS = \(([^)]*)\)", model).group(1)))
+    sistemnye = re.search(r"SYSTEM_NOTE_KINDS = \(([^)]*)\)", model).group(1)
+    # Системные заданы через постоянные (`KIND_STAGE`), а не строками: берём их
+    # значения из тех же строк объявления.
+    for imya in re.findall(r"(KIND_\w+)", sistemnye):
+        znachenie = re.search(rf'{imya} = "(\w+)"', model)
+        if znachenie:
+            vidy.add(znachenie.group(1))
+
+    assert len(vidy) >= 7, f"видов записей разобрано {len(vidy)} — проверка смотрит не туда"
+
+    for imya_tablicy in ("NOTE_LABELS", "NOTE_ICONS"):
+        telo = re.search(rf"{imya_tablicy}[^=]*= \{{(.*?)\n\}};", karta, re.S).group(1)
+        est = set(re.findall(r"(\w+):", telo))
+        propali = sorted(vidy - est)
+        assert not propali, (
+            f"в {imya_tablicy} нет видов записей, которые заводит сервер: "
+            + ", ".join(propali)
+            + ". В ленте клиента такая запись выходит без подписи или без значка."
+        )
