@@ -49,6 +49,7 @@ from database.models.telegram import (
     SEND_PENDING,
     SEND_SENT,
 )
+from core.services import telegram_uborka
 from database.repositories import settings as settings_repo
 from database.repositories import telegram as telegram_repo
 
@@ -114,6 +115,19 @@ def nastroyki(db: Session) -> dict:
         "digest_chat": vse.get(SETTING_DIGEST_CHAT, ""),
         "bot_username": vse.get(SETTING_USERNAME, ""),
         "webhook_secret_set": bool(vse.get(SETTING_WEBHOOK_SECRET, "")),
+        # Рост переписки: сколько лежит, во что обойдётся каждый срок хранения
+        # и что сделал прошлый прогон уборки.
+        #
+        # Считает это отдельная служба (`core/services/telegram_uborka.py`):
+        # «сколько хранить» и «как разговаривать с Bot API» — разные предметы, и
+        # в одном файле правка одного задевала бы другое.
+        #
+        # Отдаётся здесь, а не своей ручкой, потому что читается ровно одним
+        # экраном и ровно вместе с остальным: вторая ручка означала бы второй
+        # запрос на каждое открытие настроек.
+        "retention_months": telegram_uborka.srok(db),
+        "rost": telegram_uborka.ves(db),
+        "last_cleanup": telegram_uborka.posledniy_progon(db),
     }
 
 
@@ -168,6 +182,14 @@ def zadat(db: Session, data: dict) -> dict:
 
     if "bot_username" in data:
         izmeneniya[SETTING_USERNAME] = str(data.get("bot_username") or "").strip().lstrip("@")[:64]
+
+    if "retention_months" in data:
+        # Отдельной службой, а не строкой рядом с токеном, и это не педантизм:
+        # срок хранения — единственная настройка канала, которая СТИРАЕТ данные.
+        # Проверка у неё своя: значение берётся из названного списка, потому что
+        # экран показывает цену каждого срока, а спросить базу можно только про
+        # заранее названные.
+        telegram_uborka.zadat_srok(db, data.get("retention_months"))
 
     if izmeneniya:
         settings_repo.write_many(db, izmeneniya)
