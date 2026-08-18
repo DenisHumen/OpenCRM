@@ -238,6 +238,45 @@ def _collect_storage(out: Metrics) -> None:
         return
 
 
+
+def _collect_digest(out: Metrics) -> None:
+    """Когда утренняя сводка уходила в последний раз.
+
+    Метрикой, а не проверкой в приложении, и по той же причине, по какой так
+    сделана резервная копия: «этого не произошло» — не событие, и заметить его
+    может только тот, кто смотрит на часы. Смотрит на часы Prometheus.
+
+    Сводка задумана признаком живого канала: пока она приходит, бот настроен,
+    база отвечает, расписание работает. Значит её ТИШИНА — самый дешёвый
+    признак того, что что-то из этого перестало быть правдой, и терять её
+    нельзя.
+
+    Ряда нет вовсе, пока сводка ни разу не уходила: выдуманный ноль означал бы
+    «последняя сводка в 1970 году» и тревогу на свежей установке.
+    """
+    from database.session import SessionLocal
+
+    try:
+        with SessionLocal() as db:
+            from core.services import svodka_service
+
+            kogda = svodka_service.kogda_poslednyaya(db)
+    except Exception:  # noqa: BLE001
+        return
+    if not kogda:
+        return
+    try:
+        from datetime import datetime, timezone
+
+        metka = datetime.fromisoformat(kogda).replace(tzinfo=timezone.utc).timestamp()
+    except ValueError:
+        return
+    out.add(
+        "opencrm_digest_last_timestamp_seconds",
+        metka,
+        help_text="Когда утренняя сводка ушла в последний раз.",
+    )
+
 def _collect_backups(out: Metrics) -> None:
     """Когда снята последняя копия и какого она размера.
 
@@ -419,6 +458,7 @@ COLLECTORS = (
     _collect_database,
     _collect_storage,
     _collect_backups,
+    _collect_digest,
     _collect_deploy,
 )
 
