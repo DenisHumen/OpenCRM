@@ -682,24 +682,50 @@ def test_avariya_ne_uhodit_dvumya_soobshcheniyami():
     )
 
 
-def test_preduprezhdenie_po_prezhnemu_prihodit_bez_zvuka():
+def test_preduprezhdenie_po_prezhnemu_prihodit_bez_zvuka(monkeypatch):
     """Предупреждение, звенящее ночью, учит выключать звук всему чату.
 
     А выключенный звук чата — это выключенный звук и у аварии тоже. Довод
-    старый и оплаченный, и появление кнопок не имеет права его отменить:
-    отправка через CRM звук выключать пока не умеет (`poslat_s_knopkami` не
-    принимает `disable_notification`), поэтому предупреждения остались на прямом
-    пути. Проверка стережёт именно это — не «как красивее», а «звенит или нет».
+    старый и оплаченный, и появление кнопок не имеет права его отменить.
+
+    **Механизм сменился, довод — нет.** Раньше тишину обеспечивал отдельный
+    приёмник Alertmanager, и проверка сравнивала приёмники. Теперь звук
+    выключает сама служба по метке важности, а приёмник один — иначе оформление
+    сообщения пришлось бы держать в двух копиях, которые расходятся молча.
+    Проверка смотрит туда, где решение теперь живёт: авария звенит,
+    предупреждение приходит тихо.
     """
-    kuda = _priyomnik_marshruta(SHABLON_CRM, "warning")
-    assert kuda != _priyomnik_marshruta(SHABLON_CRM, "critical"), (
-        "важность больше не решает, звенеть ли телефону"
-    )
-    blok = _poluchateli(SHABLON_CRM)[kuda]
-    assert "disable_notifications: true" in blok, "предупреждение снова звенит ночью"
-    assert re.search(r"^\s+parse_mode: HTML\s*$", blok, re.M), (
-        "без parse_mode: HTML подстановки перестают экранироваться, а `<script>` "
-        "из описания правила приезжает в чат как есть"
+    from core.services import trevogi_service
+
+    poslannoe = []
+
+    def podstava(kluch, chat_id, text, knopki, opener=None, tiho=False):
+        poslannoe.append(tiho)
+        return {"message_id": 100 + len(poslannoe)}
+
+    monkeypatch.setattr(trevogi_service.telegram_service, "poslat_s_knopkami", podstava)
+
+    from database.session import SessionLocal
+
+    # Зовём настоящую точку разбора одной тревоги, а не заведённый ради проверки
+    # помощник: помощник стерёг бы сам себя, а разбор — тот, что работает.
+    with SessionLocal() as db:
+        for vazhnost in ("critical", "warning"):
+            trevogi_service._odna(
+                db,
+                "token",
+                1,
+                {
+                    "status": "firing",
+                    "fingerprint": f"proba-zvuk-{vazhnost}",
+                    "labels": {"alertname": "Проба", "severity": vazhnost},
+                    "annotations": {"summary": "проверка звука"},
+                    "startsAt": "",
+                },
+            )
+
+    assert poslannoe == [False, True], (
+        f"важность больше не решает, звенеть ли телефону: {poslannoe}"
     )
 
 
