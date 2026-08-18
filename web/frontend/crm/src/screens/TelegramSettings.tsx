@@ -1,10 +1,36 @@
 import { useCallback, useEffect, useState } from "react";
 
-import { ScreenLoading } from "../components/ui";
+import { ConfirmModal, ScreenLoading } from "../components/ui";
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
 import { useFailure } from "../lib/failure";
+import { formatBytes, formatDate } from "../lib/format";
 import { useGuard } from "../lib/guard";
+
+/** Чем платит владелец за вечное хранение — числами, а не словом «растёт». */
+interface TelegramRost {
+  messages: number;
+  files: number;
+  /** Вес забранных вложений по строкам базы. */
+  file_bytes: number;
+  /** Что каталог канала занимает на диске: там же лежат аватары. */
+  disk_bytes: number;
+  oldest_at: string | null;
+  /** Цена каждого предлагаемого срока: ключ — месяцы. */
+  po_srokam: Record<string, { messages: number; bytes: number }>;
+}
+
+/** След последнего прогона уборки. Пусто — уборка ни разу не ходила. */
+interface TelegramProgon {
+  at: string;
+  cutoff: string;
+  months: number;
+  messages: number;
+  files: number;
+  bytes: number;
+  /** Ложь — прогон уперся в предел времени и продолжит в следующий раз. */
+  done: boolean;
+}
 
 interface TelegramConfig {
   configured: boolean;
@@ -12,6 +38,10 @@ interface TelegramConfig {
   digest_chat: string;
   bot_username: string;
   webhook_secret_set: boolean;
+  /** Ноль — хранить вечно. Это и есть значение по умолчанию. */
+  retention_months: number;
+  rost: TelegramRost;
+  last_cleanup: TelegramProgon | null;
 }
 
 /**
@@ -26,11 +56,15 @@ interface TelegramConfig {
  * сервер отдаёт только хвост из четырёх знаков, чтобы владелец узнал свой.
  */
 export function SettingsTelegram() {
-  const { t, toast, toastError } = useApp();
+  const { t, locale, toast, toastError } = useApp();
   const [config, setConfig] = useState<TelegramConfig | null>(null);
   const [token, setToken] = useState("");
   const [chat, setChat] = useState("");
   const [botName, setBotName] = useState("");
+  // Срок хранения переписки. Ноль — вечно, и с него всё начинается: пока
+  // владелец не назвал срок, не удаляется ничего.
+  const [srok, setSrok] = useState(0);
+  const [confirmSrok, setConfirmSrok] = useState(false);
   const [busy, setBusy] = useState(false);
   // Засов на подключение: второе нажатие послало бы телеграму тот же
   // `setWebhook` ещё раз, пока первый в пути.
@@ -49,6 +83,7 @@ export function SettingsTelegram() {
         setConfig(svezhee);
         setChat(svezhee.digest_chat);
         setBotName(svezhee.bot_username);
+        setSrok(svezhee.retention_months);
       })
       .catch(fail);
   }, [fail, clear]);
@@ -117,6 +152,36 @@ export function SettingsTelegram() {
       setBusy(false);
     }
   };
+
+  /**
+   * Записать срок хранения — отдельно от прочих настроек и отдельной кнопкой.
+   *
+   * Отдельно потому, что это единственное решение на экране, которое СТИРАЕТ
+   * данные. Стоя в одном ряду с токеном и чатом сводки, оно уезжало бы в базу
+   * заодно с ними — то есть человек, поправивший имя бота, нечаянно включал бы
+   * удаление переписки.
+   */
+  const saveSrok = async (mesyatsev: number) => {
+    setBusy(true);
+    try {
+      const svezhee = await api.put<TelegramConfig>("/telegram/settings", {
+        retention_months: mesyatsev,
+      });
+      setConfig(svezhee);
+      setSrok(svezhee.retention_months);
+      toast(t("saved"));
+    } catch (beda) {
+      toastError(beda);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const rost = config.rost;
+  const podSrok = srok > 0 ? rost.po_srokam[String(srok)] : undefined;
+  // Что уйдёт при выбранном, но ещё не сохранённом сроке. Показывается ДО
+  // нажатия: цифры после удаления — это уже не предупреждение, а отчёт.
+  const izmenilsya = srok !== config.retention_months;
 
   return (
     <div className="page page-narrow">
@@ -221,6 +286,134 @@ export function SettingsTelegram() {
             dangerouslySetInnerHTML={{ __html: invite.qr_svg }}
           />
         </div>
+      )}
+
+      {/*
+        Рост переписки и уборка старого.
+
+        Карточка начинается с ЦИФР, а не с выбора срока, и это порядок, а не
+        оформление: пока не видно, сколько переписка весит и с какого числа она
+        идёт, выбирать срок не из чего. «Растёт быстро» — не довод ни за, ни
+        против.
+
+        Сроки приезжают с сервера вместе с ценой каждого (`po_srokam`), поэтому
+        список здесь не повторяется: одно место, где он назван, — служба уборки.
+      */}
+      <div className="card card-pad" style={{ marginTop: 18 }}>
+        <label className="label">{t("tgStorage")}</label>
+        <div className="field-desc" style={{ marginBottom: 14 }}>{t("tgStorageAbout")}</div>
+
+        <div style={{ display: "flex", gap: 26, flexWrap: "wrap", marginBottom: 16 }}>
+          <div>
+            <div className="page-sub">{t("tgStoredMessages")}</div>
+            <div style={{ fontSize: 20, fontWeight: 600 }}>
+              {rost.messages.toLocaleString(locale)}
+            </div>
+          </div>
+          <div>
+            <div className="page-sub">{t("tgStoredFiles")}</div>
+            <div style={{ fontSize: 20, fontWeight: 600 }}>
+              {rost.files.toLocaleString(locale)}
+            </div>
+          </div>
+          <div>
+            <div className="page-sub">{t("tgStoredDisk")}</div>
+            <div style={{ fontSize: 20, fontWeight: 600 }}>{formatBytes(rost.disk_bytes)}</div>
+          </div>
+          {rost.oldest_at && (
+            <div>
+              <div className="page-sub">{t("tgOldest")}</div>
+              <div style={{ fontSize: 20, fontWeight: 600 }}>
+                {formatDate(rost.oldest_at, locale)}
+              </div>
+            </div>
+          )}
+        </div>
+
+        <label className="label">{t("tgRetention")}</label>
+        <select
+          className="input"
+          value={String(srok)}
+          onChange={(e) => setSrok(Number(e.target.value))}
+          disabled={busy}
+        >
+          {/*
+            «Хранить вечно» стоит первым и выбрано по умолчанию. Умолчание здесь
+            и есть решение: переписка с клиентом бывает доказательством, и молча
+            стереть её нельзя.
+          */}
+          <option value="0">{t("tgRetentionForever")}</option>
+          {Object.keys(rost.po_srokam)
+            .map(Number)
+            .sort((a, b) => a - b)
+            .map((mesyatsev) => (
+              <option key={mesyatsev} value={String(mesyatsev)}>
+                {t("tgRetentionOption", {
+                  months: mesyatsev,
+                  messages: rost.po_srokam[String(mesyatsev)].messages.toLocaleString(locale),
+                  size: formatBytes(rost.po_srokam[String(mesyatsev)].bytes),
+                })}
+              </option>
+            ))}
+        </select>
+        <div className="field-desc">{t("tgRetentionHint")}</div>
+
+        {/*
+          Предупреждение показывается ДО сохранения и называет числа. Оно и есть
+          то, чем «уборка по решению владельца» отличается от «уборки молча»:
+          решение принимают, зная цену, а не узнав её постфактум.
+        */}
+        {izmenilsya && srok > 0 && podSrok && (
+          <div className="field-desc" style={{ marginTop: 12, color: "var(--danger)" }}>
+            {t("tgRetentionWarn", {
+              messages: podSrok.messages.toLocaleString(locale),
+              size: formatBytes(podSrok.bytes),
+            })}
+          </div>
+        )}
+        <div className="field-desc" style={{ marginTop: 8 }}>{t("tgRetentionKeeps")}</div>
+
+        <div style={{ display: "flex", gap: 10, marginTop: 16, flexWrap: "wrap" }}>
+          <button
+            type="button"
+            className="btn btn-primary"
+            disabled={busy || !izmenilsya}
+            onClick={() => {
+              // Подтверждение спрашивается только у включения уборки. Возврат к
+              // вечному хранению ничего не стирает и спрашивать не о чем.
+              if (srok > 0) setConfirmSrok(true);
+              else void saveSrok(0);
+            }}
+          >
+            {t("save")}
+          </button>
+        </div>
+
+        <div className="field-desc" style={{ marginTop: 16 }}>
+          {config.last_cleanup
+            ? t("tgCleanupLine", {
+                date: formatDate(config.last_cleanup.at, locale),
+                messages: config.last_cleanup.messages.toLocaleString(locale),
+                files: config.last_cleanup.files.toLocaleString(locale),
+                size: formatBytes(config.last_cleanup.bytes),
+                cutoff: formatDate(config.last_cleanup.cutoff, locale),
+              }) + (config.last_cleanup.done ? "" : " " + t("tgCleanupPartial"))
+            : t("tgCleanupNever")}
+        </div>
+      </div>
+
+      {confirmSrok && podSrok && (
+        <ConfirmModal
+          text={t("tgRetentionConfirm", {
+            months: srok,
+            messages: podSrok.messages.toLocaleString(locale),
+            size: formatBytes(podSrok.bytes),
+          })}
+          confirmLabel={t("save")}
+          danger
+          onConfirm={() => void saveSrok(srok)}
+          onClose={() => setConfirmSrok(false)}
+        />
       )}
     </div>
   );
