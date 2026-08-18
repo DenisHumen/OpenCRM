@@ -118,6 +118,39 @@ SROK_PAMYATI = 36 * 3600
 #: Приставка ключей памяти: `…trev:<отпечаток>`.
 KLYUCH = f"{redis_client.PREFIX}trev:"
 
+#: Поле записи → вид его отдельного ключа (`…trev:ack:<отпечаток>` и родня).
+#:
+#: **Эти три поля в самой записи НЕ хранятся.** Их пишет тот, кто нажал кнопку,
+#: и пишет по одному ключу за раз; при чтении они прикладываются к записи
+#: обратно. Довод — гонка двух нажатий: правка записи это три действия
+#: (прочитать, поменять, записать целиком), и между первым и третьим успевает
+#: второй нажавший. Пока кнопка была одна, спасала отметка «кто первый», но
+#: кнопки РАЗНЫЕ: один жмёт «принято», другой «заглушить», оба выигрывают свою
+#: отметку — и тот, кто записал вторым, стирает чужое поле. Из сообщения
+#: пропадает «✅ Принял: …» либо теряется номер тишины, и снять её потом нечем.
+#:
+#: Тот же приём и по тому же доводу, по которому «кто первый» решает `SET NX`:
+#: состояние держит хранилище, а не порядок, в котором нам повезло прочитать.
+OTMETKI = {"prinyal": "ack", "zaglushil": "sil", "silence_id": "silid"}
+
+#: Сколько неудачных доставок подряд означает «канал не работает».
+#:
+#: Три, а не одна: телеграм отбивает отправку и просто так — 429, перезапуск,
+#: моргнувшая сеть, — и объявлять канал сломанным по одному отказу значило бы
+#: переключать путь доставки от каждой мелочи. Три подряд случайностью уже не
+#: бывают: так выглядит отозванный токен и бот, выгнанный из чата.
+PODRYAD_SBOEV = 3
+
+#: Сколько живёт счётчик неудач — он же срок, на который канал сам себя
+#: объявляет неготовым. Пока ключ жив, `/alerts/ready` отвечает «нет» и
+#: Alertmanager доставляет напрямую; ключ истёк — пробуем снова. Четверть часа
+#: выбрана с двух сторон: починенный токен возвращает кнопки без перезапуска
+#: приложения, а сломанный не заставляет пробовать каждую минуту.
+SROK_SBOEV = 900
+
+#: Ключ счётчика неудач. Один на всю систему — канал доставки тоже один.
+KLYUCH_SBOI = f"{KLYUCH}sboi"
+
 #: Где живёт Alertmanager. Внутри сети compose он всегда `alertmanager:9093`,
 #: поэтому умолчание рабочее и настраивать обычно нечего.
 #:
@@ -151,8 +184,25 @@ def gotov(db: Session) -> bool:
     Спрашивается снаружи, из `entrypoint.sh` Alertmanager: пока ответ «нет», он
     доставляет тревоги прежним путём, напрямую в телеграм. Это и есть запасной
     путь — не бумажный, а работающий сам.
+
+    **Заполненных настроек для ответа «да» мало.** Токен отзывают, бота
+    выгоняют из чата, чат удаляют — настройки при этом остаются на месте, а
+    доставка перестаёт работать целиком. Отвечай мы по одному их наличию,
+    Alertmanager продолжал бы доставлять через нас, каждая тревога падала бы,
+    он повторял бы её вечно, и запасной путь не включился бы НИКОГДА — то есть
+    авария не дошла бы никуда именно потому, что канал доставки настроен.
+    Тревога о лежащем сайте не должна упираться в отозванный токен так же, как
+    не должна упираться в переключатель блока.
+
+    Поэтому смотрим ещё и на то, чем кончались последние доставки: три неудачи
+    подряд — «нет», и Alertmanager уходит на прямой путь. Возврат происходит
+    сам: счётчик живёт `SROK_SBOEV` и истекает, а удачная доставка обнуляет его
+    сразу. Крайняя цена ошибки здесь — тревоги без кнопок, а не тревоги в
+    никуда, и выбирать надо эту сторону.
     """
-    return bool(telegram_service.token(db)) and bool(chat(db))
+    if not telegram_service.token(db) or not chat(db):
+        return False
+    return _sboev_podryad() < PODRYAD_SBOEV
 
 
 # --- память о тревоге --------------------------------------------------------
@@ -191,30 +241,60 @@ def _zanyat(otpechatok: str, zapis: dict) -> bool:
         return True
 
 
+def _kluch_otmetki(otpechatok: str, vid: str) -> str:
+    return f"{KLYUCH}{vid}:{otpechatok}"
+
+
 def _vspomnit(otpechatok: str) -> dict | None:
+    """Запись о тревоге вместе с отметками нажатий.
+
+    Отметки лежат отдельными ключами (см. `OTMETKI`) и прикладываются к записи
+    здесь — одним `MGET`, чтобы состояние читалось за то же обращение, что и
+    сама тревога, а не за четыре.
+
+    Ответ `None` означает и «такой тревоги нет», и «Redis не ответил»: снаружи
+    оба случая — «памяти нет», и решение принимается одно и то же. Отличать их
+    имеет право только отбой, и он это делает не вопросом к памяти, а тем, что
+    чистит её безусловно (см. `_pogasla`).
+    """
     client = _klient()
     if client is None:
         return None
+    polya = list(OTMETKI)
+    klyuchi = [KLYUCH + otpechatok] + [_kluch_otmetki(otpechatok, OTMETKI[p]) for p in polya]
     try:
-        syroye = client.get(KLYUCH + otpechatok)
+        znacheniya = client.mget(klyuchi)
     except Exception as beda:  # noqa: BLE001
         logger.warning("не прочитали память тревог: %r", beda)
         return None
-    if not syroye:
+    if not znacheniya or not znacheniya[0]:
         return None
     try:
-        return json.loads(syroye)
+        zapis = json.loads(znacheniya[0])
     except Exception:  # noqa: BLE001 — чужое или испорченное значение
         return None
+    if not isinstance(zapis, dict):
+        return None
+    for pole, znachenie in zip(polya, znacheniya[1:]):
+        if znachenie:
+            zapis[pole] = znachenie
+    return zapis
 
 
 def _zapomnit(otpechatok: str, zapis: dict) -> None:
-    """Переписать занятую запись. Срок годности продлевается вместе с ней."""
+    """Переписать занятую запись. Срок годности продлевается вместе с ней.
+
+    Пишется только неизменная часть тревоги: чат, сообщение, метки, время.
+    Отметки нажатий отсюда ВЫБРАСЫВАЮТСЯ — иначе обработчик «принято» и
+    обработчик «заглушить», сработавшие разом, затирали бы поля друг друга
+    (разбор — у `OTMETKI`).
+    """
     client = _klient()
     if client is None:
         return
+    telo = {k: v for k, v in zapis.items() if k not in OTMETKI}
     try:
-        client.set(KLYUCH + otpechatok, json.dumps(zapis), ex=SROK_PAMYATI)
+        client.set(KLYUCH + otpechatok, json.dumps(telo), ex=SROK_PAMYATI)
     except Exception as beda:  # noqa: BLE001
         logger.warning("не записали память тревог: %r", beda)
 
@@ -223,8 +303,9 @@ def _zabyt(otpechatok: str) -> None:
     client = _klient()
     if client is None:
         return
+    klyuchi = [KLYUCH + otpechatok] + [_kluch_otmetki(otpechatok, vid) for vid in OTMETKI.values()]
     try:
-        client.delete(KLYUCH + otpechatok, f"{KLYUCH}ack:{otpechatok}", f"{KLYUCH}sil:{otpechatok}")
+        client.delete(*klyuchi)
     except Exception as beda:  # noqa: BLE001
         logger.warning("не убрали тревогу из памяти: %r", beda)
 
@@ -250,7 +331,7 @@ def _zanyat_otmetku(otpechatok: str, vid: str, kem: str) -> str:
     client = _klient()
     if client is None:
         return kem
-    kluch = f"{KLYUCH}{vid}:{otpechatok}"
+    kluch = _kluch_otmetki(otpechatok, vid)
     try:
         if client.set(kluch, kem, nx=True, ex=SROK_PAMYATI):
             return kem
@@ -272,9 +353,74 @@ def _osvobodit_otmetku(otpechatok: str, vid: str) -> None:
     if client is None:
         return
     try:
-        client.delete(f"{KLYUCH}{vid}:{otpechatok}")
+        client.delete(_kluch_otmetki(otpechatok, vid))
     except Exception as beda:  # noqa: BLE001
         logger.warning("не сняли отметку нажатия: %r", beda)
+
+
+def _zapisat_otmetku(otpechatok: str, vid: str, znachenie: str) -> None:
+    """След состоявшегося действия — своим ключом, без `NX`.
+
+    Спорить здесь не с кем: пишет тот, кто выиграл отметку «кто первый», и
+    только после того, как действие удалось. `NX` тут был бы обманом — он
+    сохранил бы первое значение, а верное всегда последнее.
+    """
+    client = _klient()
+    if client is None:
+        return
+    try:
+        client.set(_kluch_otmetki(otpechatok, vid), znachenie, ex=SROK_PAMYATI)
+    except Exception as beda:  # noqa: BLE001
+        logger.warning("не записали отметку нажатия: %r", beda)
+
+
+# --- чем кончались последние доставки ----------------------------------------
+#
+# Счётчик подряд идущих неудач. Живёт в Redis, а не в памяти процесса, по той же
+# причине, по какой там живёт ограничитель попыток: рабочих процессов несколько,
+# а `/alerts/ready` спрашивают у любого из них — счётчик в памяти отвечал бы про
+# один процесс из восьми. Redis не ответил — считаем, что неудач не было: без
+# общего счётчика отличить сломанный канал от рабочего нечем, а объявить себя
+# неготовым из-за аварии Redis значило бы отдать кнопки на время чужой поломки.
+
+
+def _otmetit_sboy() -> None:
+    client = _klient()
+    if client is None:
+        return
+    try:
+        pipe = client.pipeline(transaction=True)
+        pipe.incr(KLYUCH_SBOI)
+        pipe.expire(KLYUCH_SBOI, SROK_SBOEV)
+        pipe.execute()
+    except Exception as beda:  # noqa: BLE001
+        logger.warning("не отметили неудачу доставки: %r", beda)
+
+
+def _otmetit_udachu() -> None:
+    """Тревога ушла — значит канал работает, и прошлые неудачи ничего не значат."""
+    client = _klient()
+    if client is None:
+        return
+    try:
+        client.delete(KLYUCH_SBOI)
+    except Exception as beda:  # noqa: BLE001
+        logger.warning("не сбросили счётчик неудач: %r", beda)
+
+
+def _sboev_podryad() -> int:
+    client = _klient()
+    if client is None:
+        return 0
+    try:
+        znachenie = client.get(KLYUCH_SBOI)
+    except Exception as beda:  # noqa: BLE001
+        logger.warning("не прочитали счётчик неудач: %r", beda)
+        return 0
+    try:
+        return int(znachenie or 0)
+    except (TypeError, ValueError):  # чужое значение под нашим ключом
+        return 0
 
 
 # --- текст сообщения ---------------------------------------------------------
@@ -433,14 +579,23 @@ def prinyat(db: Session, telo: dict, opener=None) -> dict:
             # аварию.
             logger.warning("тревога не ушла в телеграм: %s", beda)
             itog["failed"] += 1
+            _otmetit_sboy()
         except ValueError:
             # Идентификатор чата не число. Настройка проверяется при вводе, но
             # прийти сюда с мусором она всё-таки может — уронить из-за этого всю
             # доставку нельзя.
             logger.warning("чат тревог задан не числом: %r", kuda)
             itog["failed"] += 1
+            # Считаем и это: мусор в настройке сам не починится, а раз через нас
+            # доставки нет — пусть Alertmanager вернётся на прямой путь.
+            _otmetit_sboy()
         else:
             itog[chto] += 1
+            if chto == "sent":
+                # Только настоящая отправка. «Повтор» и «отбой» ничего не шлют
+                # (отбой правит сообщение, и его отказ мы глотаем), то есть о
+                # живости токена не говорят ничего.
+                _otmetit_udachu()
 
     itog["status"] = "failed" if itog["failed"] else "ok"
     return itog
@@ -504,18 +659,24 @@ def _odna(db: Session, kluch: str, kuda: int, trevoga: dict, opener=None) -> str
 def _pogasla(kluch: str, otpechatok: str, opener=None) -> str:
     """Отбой: перерисовать сообщение и забыть тревогу.
 
-    Забыть обязательно. Отпечаток считается по меткам и у той же тревоги
-    завтра будет тем же — оставленная в памяти запись превратила бы новое
-    падение сайта в «повтор», о котором никто не узнает.
+    Забыть обязательно и БЕЗУСЛОВНО — даже когда вспомнить не удалось. Разница
+    не бумажная: `_vspomnit` отвечает `None` в двух случаях сразу — записи нет
+    и Redis не ответил, — а вот последствия у них разные. Нет записи — забывать
+    нечего, лишний `DELETE` ничего не стоит. Не ответил — запись цела и доживёт
+    до конца `SROK_PAMYATI`, то есть полтора суток; та же тревога, зажёгшаяся
+    через полчаса, придёт с тем же отпечатком (он считается по меткам),
+    проиграет `NX` собственному трупу и будет сочтена повтором. Сообщения нет,
+    Alertmanager считает доставленным, дежурный не узнал НИЧЕГО. Ровно та
+    авария, ради которой канал и заводился, — пропущенная молча.
+
+    Уйти в ранний возврат отбою при этом всё равно есть зачем, и причина другая:
+    об этой тревоге мы могли не сообщать вовсе (память истекла, Redis
+    перезапускался, тревога зажглась до включения канала). Отбой без тревоги —
+    сообщение ни о чём, и его быть не должно. Поэтому пропускается только
+    ПРАВКА сообщения, а очистка памяти — никогда.
     """
     zapis = _vspomnit(otpechatok)
-    if zapis is None:
-        # Об этой тревоге мы не сообщали (память истекла, Redis перезапускался,
-        # тревога зажглась до включения канала). Отбой без тревоги — сообщение
-        # ни о чём.
-        return "resolved"
-
-    if zapis.get("message_id"):
+    if zapis is not None and zapis.get("message_id"):
         try:
             telegram_service.perepisat_soobshchenie(
                 kluch,
@@ -613,11 +774,13 @@ def _prinyat_trevogu(zapis: dict, kem: str) -> tuple[str, bool]:
     """
     if zapis.get("prinyal"):
         return f"Уже принял: {zapis['prinyal']}", False
-    pervyy = _zanyat_otmetku(zapis["fp"], "ack", kem)
+    pervyy = _zanyat_otmetku(zapis["fp"], OTMETKI["prinyal"], kem)
     if pervyy != kem:
         # Соседний процесс успел раньше, а мы прочитали запись до того, как он
         # её переписал. Свою стало́ бы вносить нельзя — она затёрла бы его имя.
         return f"Уже принял: {pervyy}", False
+    # В записи это поле живёт только до перерисовки сообщения: сохранённой
+    # отметка стала уже строкой выше, своим ключом (см. `OTMETKI`).
     zapis["prinyal"] = kem
     return "Принято", True
 
@@ -632,27 +795,35 @@ def _zaglushit_trevogu(zapis: dict, kem: str) -> tuple[str, bool]:
     """
     if zapis.get("zaglushil"):
         return f"Уже заглушено: {zapis['zaglushil']}", False
-    pervyy = _zanyat_otmetku(zapis["fp"], "sil", kem)
+    pervyy = _zanyat_otmetku(zapis["fp"], OTMETKI["zaglushil"], kem)
     if pervyy != kem:
         return f"Уже заглушено: {pervyy}", False
     try:
-        zapis["silence_id"] = postavit_tishinu(zapis.get("labels") or {}, kem)
+        tishina = postavit_tishinu(zapis.get("labels") or {}, kem)
     except AlertmanagerOtkaz as beda:
         logger.warning("не поставили тишину: %s", beda)
         # Отметку снимаем: иначе кнопка исчезнет, тишины не будет, а следующее
         # нажатие получит «уже заглушено» — человек будет уверен, что заглушил.
-        _osvobodit_otmetku(zapis["fp"], "sil")
+        _osvobodit_otmetku(zapis["fp"], OTMETKI["zaglushil"])
         return "Не удалось заглушить — Alertmanager не ответил", False
+    # Номер тишины — своим ключом, и это не симметрия ради симметрии: он
+    # единственное, чем поставленную тишину можно найти и снять, а в записи его
+    # затёр бы одновременно нажавший «принято».
+    _zapisat_otmetku(zapis["fp"], OTMETKI["silence_id"], tishina)
+    zapis["silence_id"] = tishina
     zapis["zaglushil"] = kem
     return "Заглушено на час", True
 
 
 def _pererisovat(db: Session, zapis: dict) -> None:
-    """Переписать сообщение под новое состояние и запомнить его.
+    """Переписать сообщение под новое состояние и продлить память о тревоге.
 
-    Порядок такой: сперва в память, потом в телеграм. Обратный означал бы, что
-    неудачная правка сообщения (телеграм моргнул) теряет отметку «принято»
-    вместе с собой — а она и есть то, ради чего кнопку нажимали.
+    Отметку нажатия здесь уже не сохраняют: она легла своим ключом там, где её
+    выиграли, — до всякой правки сообщения. Довод прежний и он усилился:
+    неудачная правка (телеграм моргнул) не имеет права терять то, ради чего
+    кнопку нажимали, а запись целиком её ещё и отдавала на затирание соседу.
+    `_zapomnit` остаётся ради срока годности: у тревоги, с которой работают,
+    память обязана дожить до отбоя.
     """
     _zapomnit(zapis["fp"], zapis)
     kluch = telegram_service.token(db)

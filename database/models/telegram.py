@@ -190,7 +190,12 @@ class TelegramMessage(Base):
     #: нажатие не отправило дважды.
     external_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, index=True)
 
-    direction: Mapped[str] = mapped_column(String(8), index=True)
+    #: Куда шло сообщение. Своего одиночного индекса у колонки НЕТ намеренно:
+    #: значений два, и такой индекс делит таблицу пополам, то есть почти
+    #: бесполезен. Хуже: замер показал, что MySQL выбирал именно его вместо
+    #: составного и читал все входящие строки таблицы. Направление входит
+    #: первым в `ix_telegram_messages_napravlenie` ниже.
+    direction: Mapped[str] = mapped_column(String(8))
     kind: Mapped[str] = mapped_column(String(16), default=KIND_TEXT)
 
     #: Текст сообщения или подпись к файлу. `Text`, а не `String`: предел
@@ -243,4 +248,14 @@ class TelegramMessage(Base):
     __table_args__ = (
         # Лента одного диалога: страница за страницей, свежие сверху.
         Index("ix_telegram_messages_chat_time", "chat_id", "happened_at"),
+        # Счёт непрочитанного по всей странице списка: условия «направление
+        # входящее И диалог такой-то И номер больше границы» ложатся на этот
+        # индекс диапазонами, и проход выходит ПОКРЫВАЮЩИМ — к самой таблице
+        # обращений нет вовсе (замерено: `Using index` вместо `Using where;
+        # Using temporary` и чтения всех входящих строк).
+        #
+        # `id` в хвосте не лишний, хотя InnoDB и дописывает первичный ключ ко
+        # всякому вторичному индексу сам: названный явно, он попадает в
+        # определение, и `alembic` с проверкой схемы видят то же, что база.
+        Index("ix_telegram_messages_napravlenie", "direction", "chat_id", "id"),
     )

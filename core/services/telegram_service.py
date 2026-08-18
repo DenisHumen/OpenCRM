@@ -30,6 +30,7 @@ import logging
 import secrets
 from datetime import datetime
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from config.settings import get_settings
@@ -631,12 +632,28 @@ def prinyat(db: Session, obnovlenie: dict, opener=None) -> dict:
 
     dialog = telegram_repo.vzyat_pod_pravku(db, int(chat_id))
     if dialog is None:
-        dialog = telegram_repo.create_chat(
-            db,
-            chat_id=int(chat_id),
-            username=str(otpravitel.get("username") or "")[:64],
-            title=_imya_iz(otpravitel)[:200],
-        )
+        try:
+            dialog = telegram_repo.create_chat(
+                db,
+                chat_id=int(chat_id),
+                username=str(otpravitel.get("username") or "")[:64],
+                title=_imya_iz(otpravitel)[:200],
+            )
+            # Фиксируем сразу, чтобы уникальность сработала ЗДЕСЬ, а не на
+            # выходе из запроса, где ловить её уже поздно.
+            db.flush()
+        except IntegrityError:
+            # Диалог завёл кто-то одновременно с нами. `FOR UPDATE` этого не
+            # предотвращает: запирать нечего, строки ещё нет, — и оба обновления
+            # видят «чата нет». Первое сообщение нового клиента приходит именно
+            # так: «/start» и вопрос двумя обновлениями подряд.
+            #
+            # Откатываемся и перечитываем уже под замком: чужая строка к этому
+            # моменту зафиксирована.
+            db.rollback()
+            dialog = telegram_repo.vzyat_pod_pravku(db, int(chat_id))
+            if dialog is None:
+                raise
     else:
         # Имя и логин обновляем: человек их меняет, а переписка обязана
         # оставаться узнаваемой.
@@ -670,17 +687,9 @@ def prinyat(db: Session, obnovlenie: dict, opener=None) -> dict:
 
     vid, file_id, imya_fayla, razmer = _vlozhenie(soobshchenie)
 
+    # Файл здесь НЕ качаем. Строка заводится без него, а вложение приезжает
+    # следом, вторым шагом, уже без открытой транзакции — см. `_dokachat` ниже.
     put_fayla = ""
-    if file_id and vid != KIND_VIDEO and 0 < razmer <= MAX_AUTO_DOWNLOAD:
-        # Видео не забираем сразу намеренно: см. `MAX_AUTO_DOWNLOAD`.
-        try:
-            soderzhimoe = skachat_fayl(token(db), file_id, opener)
-            put_fayla = _polozhit_fayl(dialog, imya_fayla, soderzhimoe)
-        except Exception as beda:  # noqa: BLE001
-            # Не сумели забрать файл — сообщение всё равно записываем. Потерять
-            # текст из-за неудавшейся загрузки картинки значило бы потерять
-            # больше, чем сохранить.
-            logger.warning("не забрали файл из телеграма: %r", beda)
 
     # На что отвечает клиент. Телеграм присылает целое сообщение, но нам нужен
     # только его номер: по нему находим СВОЮ запись. Не нашли — привязки не
@@ -729,24 +738,71 @@ def prinyat(db: Session, obnovlenie: dict, opener=None) -> dict:
         title=dialog.title or dialog.username or str(dialog.chat_id),
     )
 
-    # Аватар — ПОСЛЕ объявления в шину, и это порядок, а не случайность: экраны
-    # получают «пришло новое» немедленно, а разговор об аватаре идёт следом и
-    # ничего не задерживает.
+    # ЗДЕСЬ транзакция закрывается, и это главное решение всей функции.
     #
-    # Здесь, а не в ручке показа, потому что тут частоту ограничивает сама
-    # переписка: одно сообщение — не более одного захода, и не чаще раза в
-    # сутки на диалог. Ручка показа при первом же открытии списка попросила бы
-    # сотню аватаров разом и заняла бы весь пул соединений.
-    if avatar_ustarel(dialog):
-        kluch = token(db)
-        if kluch:
-            obnovit_avatar(db, dialog, kluch, opener)
-            # Именной эмодзи — той же отметкой и только у премиума: у остальных
-            # его не бывает вовсе, и два вызова ушли бы впустую на каждого.
-            if dialog.is_premium:
-                obnovit_status_emodzi(db, dialog, kluch, opener)
+    # Всё, что выше, — короткая работа с базой под замком строки диалога.
+    # Всё, что ниже, — разговор с телеграмом, и он идёт уже БЕЗ замка и без
+    # занятого соединения. Держали бы, как раньше: три клиента с фотографиями —
+    # три соединения из десяти на минуту, телеграм повторяет недождавшуюся
+    # доставку, повторы встают на тот же `FOR UPDATE`, и «QueuePool limit»
+    # накрывает всё приложение вместе с проверкой здоровья.
+    db.commit()
 
-    return {"status": "accepted", "chat_id": dialog.id, "message_id": stroka.id}
+    nomera = {"chat_id": dialog.id, "message_id": stroka.id}
+    kluch = token(db)
+
+    # Вложение вторым шагом. Событие в шину уже ушло — экран покажет сообщение
+    # сразу, а картинка появится следующим событием, которое шлёт `_dokachat`.
+    if kluch and file_id and vid != KIND_VIDEO and 0 < razmer <= MAX_AUTO_DOWNLOAD:
+        _dokachat(db, dialog, stroka, kluch, file_id, imya_fayla, opener)
+
+    # Аватар и именной эмодзи — третьим шагом, не чаще раза в сутки на диалог.
+    if kluch and avatar_ustarel(dialog):
+        obnovit_avatar(db, dialog, kluch, opener)
+        # Эмодзи только у премиума: у остальных его не бывает вовсе, и два
+        # вызова ушли бы впустую на каждого.
+        if dialog.is_premium:
+            obnovit_status_emodzi(db, dialog, kluch, opener)
+        db.commit()
+
+    return {"status": "accepted", **nomera}
+
+
+def _dokachat(db, dialog, stroka, kluch, file_id, imya_fayla, opener=None) -> None:
+    """Забрать вложение и дописать его к уже записанному сообщению.
+
+    Отдельным шагом ПОСЛЕ фиксации сообщения, а не внутри неё. Порядок стоит
+    объяснить, потому что он выглядит лишней работой:
+
+    - сообщение уже записано и уже объявлено — клиента слышно сразу, даже если
+      его фотография едет минуту;
+    - соединение к базе на время скачивания свободно;
+    - не забрали (сеть, 429, файл пропал) — текст всё равно на месте, а вложение
+      остаётся забираемым по кнопке, как видео.
+
+    Второе объявление в шину нужно затем, что первое ушло без файла: лента на
+    экране складывается по `id` идемпотентно, и повторное событие просто
+    перечитывает ту же строку — теперь уже с картинкой.
+    """
+    try:
+        soderzhimoe = skachat_fayl(kluch, file_id, opener)
+        stroka.file_path = _polozhit_fayl(dialog, imya_fayla, soderzhimoe)
+        db.commit()
+    except Exception as beda:  # noqa: BLE001
+        # Откатываем СВОЮ незавершённую правку: без этого сессия остаётся в
+        # сломанной транзакции, и следующий же запрос по ней получает отказ.
+        db.rollback()
+        logger.warning("не забрали файл из телеграма: %r", beda)
+        return
+
+    realtime.obyavit(
+        "message",
+        chat_id=dialog.id,
+        message_id=stroka.id,
+        direction=DIRECTION_IN,
+        preview=(stroka.body or "")[:80],
+        title=dialog.title or dialog.username or str(dialog.chat_id),
+    )
 
 
 def _polozhit_fayl(

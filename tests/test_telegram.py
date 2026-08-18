@@ -1920,6 +1920,188 @@ def test_dlina_callback_data_pomeshchaetsya_v_predel_telegrama(monkeypatch):
             assert dlina <= 64, f"кнопка «{knopka['text']}»: {dlina} байт из 64"
 
 
+
+# --- приём ничего не держит и ничего не теряет --------------------------------
+
+
+def test_vlozhenie_kachaetsya_posle_fiksatsii_soobshcheniya(
+    root_client, bot_nastroen, monkeypatch
+):
+    """К моменту скачивания файла сообщение УЖЕ записано и зафиксировано.
+
+    **Зачем так.** Прежде вложение качалось внутри транзакции, взявшей диалог
+    `FOR UPDATE`. Три клиента с фотографиями занимали три соединения из десяти
+    на минуту; телеграм, не дождавшись ответа, повторял доставку, повторы
+    вставали на тот же замок — и «QueuePool limit» накрывал всё приложение
+    вместе с проверкой здоровья, по которой обновление откатывает релиз.
+
+    Проверка смотрит на это единственным честным способом: изнутри скачивания
+    спрашивает базу ДРУГИМ соединением. Видно сообщение — значит транзакция
+    закрыта, замка нет, соединение свободно.
+    """
+    from core.services import telegram_service
+    from database.repositories import telegram as telegram_repo
+    from database.session import SessionLocal
+
+    vidno_so_storony = {}
+
+    def skachat(kluch, file_id, opener=None, srok=None):
+        # Другая сессия — то есть другое соединение и другая транзакция.
+        with SessionLocal() as chuzhaya:
+            dialogi = [
+                d for d in telegram_repo.spisok_dialogov(chuzhaya, per_page=100)[0]
+                if d.chat_id == 515100
+            ]
+            vidno_so_storony["dialog"] = bool(dialogi)
+            if dialogi:
+                lenta = telegram_repo.lenta(chuzhaya, dialogi[0].id)
+                vidno_so_storony["soobshcheniy"] = len(lenta)
+        return b"kartinka"
+
+    monkeypatch.setattr(telegram_service, "skachat_fayl", skachat)
+
+    telo = _obnovlenie(515100, 101, caption="вот фото")
+    telo["message"]["photo"] = [{"file_id": "PH-515", "file_size": 2048}]
+    otvet = _poslat(root_client, bot_nastroen, telo)
+    assert otvet.status_code == 200, otvet.text
+
+    assert vidno_so_storony.get("dialog") is True, (
+        "во время скачивания диалог не виден со стороны — значит транзакция "
+        "всё ещё открыта и держит замок с соединением"
+    )
+    assert vidno_so_storony.get("soobshcheniy", 0) >= 1, (
+        "сообщение не зафиксировано до скачивания: упади сеть — и слова клиента "
+        "пропадут вместе с его фотографией"
+    )
+
+    # И файл в итоге дописан к той же строке, а не потерян.
+    dialog = _dialog(root_client, 515100)
+    lenta = root_client.get(f"{TG}/chats/{dialog['id']}/messages").json()["items"]
+    assert len(lenta) == 1, f"сообщение задвоилось: {lenta}"
+    assert lenta[0]["has_file"] is True, "вложение не дописалось к сообщению"
+
+
+def test_neudavsheesya_vlozhenie_ne_teryaet_soobshchenie(
+    root_client, bot_nastroen, monkeypatch
+):
+    """Файл не забрался — текст клиента всё равно на месте.
+
+    Разрыв на скачивании обычен: 429 от телеграма, оборванная сеть, пропавший
+    файл. Потерять из-за этого подпись к фотографии значило бы потерять то, ради
+    чего переписка и ведётся.
+    """
+    from core.services import telegram_service
+
+    def padaet(kluch, file_id, opener=None, srok=None):
+        raise telegram_service.TelegramOtkaz("сеть моргнула")
+
+    monkeypatch.setattr(telegram_service, "skachat_fayl", padaet)
+
+    telo = _obnovlenie(515200, 102, caption="фото со сметой")
+    telo["message"]["photo"] = [{"file_id": "PH-516", "file_size": 2048}]
+    assert _poslat(root_client, bot_nastroen, telo).status_code == 200
+
+    dialog = _dialog(root_client, 515200)
+    lenta = root_client.get(f"{TG}/chats/{dialog['id']}/messages").json()["items"]
+    assert [s["body"] for s in lenta] == ["фото со сметой"]
+    assert lenta[0]["has_file"] is False
+    # Сессия после отката цела: следующее сообщение записывается как обычно.
+    assert _poslat(root_client, bot_nastroen, _obnovlenie(515200, 103, text="ещё")).status_code == 200
+    assert len(root_client.get(f"{TG}/chats/{dialog['id']}/messages").json()["items"]) == 2
+
+
+def test_beda_bazy_otvechaet_povtorom_a_ne_prinyato(root_client, bot_nastroen, monkeypatch):
+    """Не смогли записать — говорим телеграму «повтори», а не «принято».
+
+    200 на непойманной беде базы означает: повтора не будет, а сообщения нет
+    нигде. Замок не дождался, соединение оборвалось, сервер перезапускают —
+    всё это преходяще и чинится повтором, который телеграм сделает сам.
+
+    А вот ошибка РАЗБОРА повтором не чинится, и на неё по-прежнему 200: то же
+    обновление приедет и разберётся так же, только очередь у телеграма вырастет.
+    """
+    from sqlalchemy.exc import OperationalError
+
+    from core.services import telegram_service
+
+    def ne_dozhdalsya(*a, **k):
+        raise OperationalError("SELECT 1", {}, Exception("lock wait timeout"))
+
+    monkeypatch.setattr(telegram_service, "prinyat", ne_dozhdalsya)
+    otvet = _poslat(root_client, bot_nastroen, _obnovlenie(515300, 104, text="привет"))
+    assert otvet.status_code == 503, otvet.text
+    assert otvet.json()["error"]["code"] == "telegram_store_failed"
+
+    def razbor_slomalsya(*a, **k):
+        raise KeyError("неожиданное поле")
+
+    monkeypatch.setattr(telegram_service, "prinyat", razbor_slomalsya)
+    otvet = _poslat(root_client, bot_nastroen, _obnovlenie(515300, 105, text="привет"))
+    assert otvet.status_code == 200, otvet.text
+    assert otvet.json()["status"] == "error"
+
+
+def test_priyom_zhivyot_bez_ogranichitelya(root_client, bot_nastroen, monkeypatch):
+    """Redis лёг — переписка с клиентами продолжается.
+
+    Ограничитель на этой ручке сторожит ПОДБОР секрета, а не поток сообщений.
+    Закрывать из-за него приём значило бы отбивать 503 всем клиентам разом:
+    телеграм копит повторы часами и, не дождавшись, теряет их. Подбор при этом
+    не дешевеет — секрет сверяется постоянным временем и с одной попытки не
+    угадывается.
+    """
+    from core import exceptions as errors
+    from web.api.routes import telegram as ruchka
+
+    def net_redisa(adres):
+        raise errors.LimiterUnavailableError("Redis не отвечает")
+
+    monkeypatch.setattr(ruchka.webhook_limiter, "is_blocked", net_redisa)
+
+    otvet = _poslat(root_client, bot_nastroen, _obnovlenie(515400, 106, text="слышно?"))
+    assert otvet.status_code == 200, otvet.text
+    dialog = _dialog(root_client, 515400)
+    lenta = root_client.get(f"{TG}/chats/{dialog['id']}/messages").json()["items"]
+    assert [s["body"] for s in lenta] == ["слышно?"]
+
+
+def test_odnovremennoe_pervoe_soobshchenie_ne_dvoit_dialog(root_client, bot_nastroen, monkeypatch):
+    """Два первых обновления нового клиента заводят ОДИН диалог.
+
+    `FOR UPDATE` по несуществующей строке не запирает ничего: оба обновления
+    видят «чата нет» и оба идут его заводить. Первое сообщение нового клиента
+    приходит именно так — «/start» и вопрос двумя обновлениями подряд.
+
+    Проверка воспроизводит гонку честно: подменяет чтение так, что первый заход
+    «не видит» уже заведённую строку, — и требует, чтобы приём поднял чужую
+    запись, а не упал на уникальности `chat_id`.
+    """
+    from database.repositories import telegram as telegram_repo
+    from core.services import telegram_service
+
+    nastoyashchee = telegram_repo.vzyat_pod_pravku
+    slepykh = {"ostalos": 1}
+
+    def slepoy(db, chat_id):
+        # Первый заход после появления чужой строки притворяется, что её нет.
+        if slepykh["ostalos"] > 0 and chat_id == 515500:
+            slepykh["ostalos"] -= 1
+            return None
+        return nastoyashchee(db, chat_id)
+
+    _poslat(root_client, bot_nastroen, _obnovlenie(515500, 107, text="/start"))
+    monkeypatch.setattr(telegram_service.telegram_repo, "vzyat_pod_pravku", slepoy)
+
+    otvet = _poslat(root_client, bot_nastroen, _obnovlenie(515500, 108, text="а сколько стоит?"))
+    assert otvet.status_code == 200, otvet.text
+
+    dialog = _dialog(root_client, 515500)  # сам по себе требует РОВНО одного
+    lenta = root_client.get(f"{TG}/chats/{dialog['id']}/messages").json()["items"]
+    assert [s["body"] for s in lenta] == ["/start", "а сколько стоит?"], (
+        f"второе сообщение нового клиента потерялось: {lenta}"
+    )
+
+
 def test_nomera_chatov_u_proverok_ne_peresekayutsya():
     """Один номер телеграм-чата — одна проверка. Иначе они молча портят друг друга.
 
