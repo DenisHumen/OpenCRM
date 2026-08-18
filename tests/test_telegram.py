@@ -1751,6 +1751,178 @@ def test_dannye_perepiski_perezhivayut_vyklyuchenie(root_client, bot_nastroen):
     assert [s["body"] for s in lenta] == ["сохрани меня"], "переписка не пережила выключение"
 
 
+
+# --- нажатия кнопок -----------------------------------------------------------
+
+
+def _knopka_podstavlena(monkeypatch, pristavka, obrabotchik):
+    """Подписать обработчик и убрать его за собой.
+
+    Реестр обработчиков живёт в модуле, а не в запросе: подписка одной проверки
+    досталась бы всем следующим, и порядок прогона начал бы значить.
+    `monkeypatch` снимает её сам.
+    """
+    from core.services import telegram_service
+
+    monkeypatch.setitem(telegram_service.NAZHATIYA, pristavka, obrabotchik)
+
+
+def test_nazhatie_dohodit_do_svoego_obrabotchika(root_client, bot_nastroen, monkeypatch):
+    """Кнопку нажали — позвали того, кто её заявил, и погасили часики.
+
+    Ответ телеграму обязателен: пока он его не получил, у нажавшего крутится
+    ожидание, и через пару секунд человек жмёт второй раз. Для тревоги это
+    означает второго дежурного, побежавшего чинить уже починенное.
+    """
+    from core.services import telegram_service
+
+    zvali = []
+    otvety = []
+    _knopka_podstavlena(
+        monkeypatch, "proba", lambda db, nazhatie: zvali.append(nazhatie["data"]) or "принято"
+    )
+    monkeypatch.setattr(
+        telegram_service,
+        "otvetit_na_nazhatie",
+        lambda kluch, callback_id, tekst="", opener=None: otvety.append((callback_id, tekst)),
+    )
+
+    otvet = _poslat(
+        root_client,
+        bot_nastroen,
+        {"update_id": 7001, "callback_query": {"id": "cb-1", "data": "proba:42"}},
+    )
+    assert otvet.status_code == 200, otvet.text
+    assert zvali == ["proba:42"], f"обработчик не позвали: {zvali}"
+    assert otvety == [("cb-1", "принято")], f"телеграму не ответили: {otvety}"
+
+
+def test_neizvestnaya_knopka_vsyo_ravno_poluchaet_otvet(root_client, bot_nastroen, monkeypatch):
+    """Кнопка из прошлой жизни — не повод молчать.
+
+    Сообщение с кнопками остаётся в чате навсегда, а обработчик после
+    обновления может исчезнуть. Молчание в ответ выглядит для человека как
+    «нажал и ничего не произошло», и он жмёт снова и снова.
+    """
+    from core.services import telegram_service
+
+    otvety = []
+    monkeypatch.setattr(
+        telegram_service,
+        "otvetit_na_nazhatie",
+        lambda kluch, callback_id, tekst="", opener=None: otvety.append(tekst),
+    )
+
+    otvet = _poslat(
+        root_client,
+        bot_nastroen,
+        {"update_id": 7002, "callback_query": {"id": "cb-2", "data": "davno_ushlo:1"}},
+    )
+    assert otvet.status_code == 200, otvet.text
+    assert otvety and otvety[0], f"на неизвестную кнопку не ответили ничем: {otvety}"
+
+
+def test_upavshiy_obrabotchik_ne_ronyaet_priyom(root_client, bot_nastroen, monkeypatch):
+    """Обработчик упал — приём отвечает 200 и говорит нажавшему, что не вышло.
+
+    Пятисотка здесь означала бы, что телеграм считает доставку неудавшейся и
+    повторяет нажатие часами. Одно нажатие превратилось бы в поток.
+    """
+    from core.services import telegram_service
+
+    def padaet(db, nazhatie):
+        raise RuntimeError("внутри всё сломалось")
+
+    otvety = []
+    _knopka_podstavlena(monkeypatch, "beda", padaet)
+    monkeypatch.setattr(
+        telegram_service,
+        "otvetit_na_nazhatie",
+        lambda kluch, callback_id, tekst="", opener=None: otvety.append(tekst),
+    )
+
+    otvet = _poslat(
+        root_client,
+        bot_nastroen,
+        {"update_id": 7003, "callback_query": {"id": "cb-3", "data": "beda:9"}},
+    )
+    assert otvet.status_code == 200, otvet.text
+    assert otvety and otvety[0], "нажавшему не сказали, что не вышло"
+
+
+def test_nazhatie_ne_zavodit_dialog_i_ne_pishet_v_perepisku(root_client, bot_nastroen, monkeypatch):
+    """Нажатие — не сообщение: ни диалога, ни строки в ленте от него не остаётся.
+
+    У `callback_query` нет ни текста, ни чата в привычном смысле, и разбирать
+    его как сообщение значило бы завести диалог с пустым именем и записать в
+    переписку пустоту. Клиент увидел бы в CRM разговор, которого не было.
+    """
+    from core.services import telegram_service
+
+    monkeypatch.setattr(
+        telegram_service,
+        "otvetit_na_nazhatie",
+        lambda kluch, callback_id, tekst="", opener=None: None,
+    )
+    bylo = len(root_client.get(f"{TG}/chats").json()["items"])
+
+    _poslat(
+        root_client,
+        bot_nastroen,
+        {
+            "update_id": 7004,
+            "callback_query": {
+                "id": "cb-4",
+                "data": "proba:1",
+                "from": {"id": 512100, "first_name": "Дежурный"},
+                "message": {"message_id": 5, "chat": {"id": 512100, "type": "private"}},
+            },
+        },
+    )
+
+    stalo = root_client.get(f"{TG}/chats").json()["items"]
+    assert len(stalo) == bylo, f"нажатие завело диалог: {[d['chat_id'] for d in stalo]}"
+
+
+def test_dlina_callback_data_pomeshchaetsya_v_predel_telegrama():
+    """64 байта — предел телеграма на `callback_data`, и он не рекомендация.
+
+    Длиннее — отказ ВСЕГО сообщения, а не одной кнопки: тревога не уйдёт вовсе.
+    Проверка сторожит собственный помощник: он собирает клавиатуру, и соблазн
+    положить в кнопку состояние вместо опознавателя велик.
+    """
+    from core.services import telegram_service
+
+    ushlo = {}
+
+    def vyzov(kluch, metod, dannye=None, opener=None):
+        ushlo.update(dannye or {})
+        return {"message_id": 1}
+
+    telegram_service._vyzov = vyzov
+    try:
+        telegram_service.poslat_s_knopkami(
+            "token",
+            123,
+            "тревога",
+            [[{"text": "Принято", "callback_data": "ack:12345"}]],
+        )
+    finally:
+        # Возвращаем на место: подмена сделана руками, потому что помощник
+        # зовётся напрямую, без базы и клиента.
+        import importlib
+
+        importlib.reload(telegram_service)
+
+    import json as _json
+
+    razmetka = _json.loads(ushlo["reply_markup"])
+    for ryad in razmetka["inline_keyboard"]:
+        for knopka in ryad:
+            dlina = len(knopka["callback_data"].encode("utf-8"))
+            assert dlina <= 64, f"кнопка «{knopka['text']}»: {dlina} байт из 64"
+
+
 def test_nomera_chatov_u_proverok_ne_peresekayutsya():
     """Один номер телеграм-чата — одна проверка. Иначе они молча портят друг друга.
 
