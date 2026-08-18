@@ -61,6 +61,7 @@ from web.api.routes import (
     warehouse,
     telegram,
     telephony,
+    trevogi,
     workspace,
 )
 from web import middleware
@@ -338,6 +339,11 @@ def create_app() -> FastAPI:
     # Вебхук АТС — отдельным роутером: он единственный не закрыт блоком
     # телефонии (обоснование — в web/api/routes/telephony.py).
     app.include_router(telephony.webhook_router, prefix=api_prefix)
+    # Приём тревог от Alertmanager. Тоже без блока и без права: он не умеет
+    # узнать, что мониторинг выключили, а тревога о лежащем сайте не должна
+    # упираться в переключатель в интерфейсе этого сайта. Чем закрыт вместо
+    # сессии — в web/api/routes/trevogi.py.
+    app.include_router(trevogi.router, prefix=api_prefix)
     app.include_router(arcade.router, prefix=api_prefix)
     app.include_router(public_routes.router)
     # Приём заявок с сайта: роутер несёт полный префикс сам
