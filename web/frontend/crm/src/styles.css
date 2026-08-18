@@ -1836,7 +1836,7 @@ a.tg-file:hover { text-decoration: underline; }
   border: 0;
   border-left: 2px solid var(--accent);
   border-radius: 4px;
-  background: rgb(0 0 0 / 8%);
+  background: var(--tint-neutral);
   color: inherit;
   font: inherit;
   font-size: 12px;

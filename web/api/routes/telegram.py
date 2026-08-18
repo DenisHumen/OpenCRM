@@ -54,6 +54,12 @@ class NastroykiVhod(BaseModel):
     token: str | None = None
     digest_chat: str | None = None
     bot_username: str | None = None
+    #: Сколько месяцев хранить переписку. Ноль — вечно, и это умолчание.
+    #:
+    #: Числом, а не строкой, в отличие от соседей: экран выбирает его из списка,
+    #: и приведение к строке ради единообразия завело бы ещё одно место, где «0»
+    #: и «» надо считать одним и тем же.
+    retention_months: int | None = None
 
 
 @router.get("/settings")
