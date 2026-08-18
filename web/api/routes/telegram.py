@@ -22,7 +22,9 @@ import time
 from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
+from sqlalchemy.exc import DBAPIError, OperationalError
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 
 from config.settings import get_settings
 from core import exceptions as errors
@@ -231,7 +233,20 @@ async def vebkhuk(request: Request, db: Session = Depends(get_db)) -> dict:
     # Перебор секрета притормаживаем ДО сравнения: иначе ограничитель считает
     # только тех, кто уже промахнулся, а подбирающий шлёт запросы свободно.
     adres = client_ip(request)
-    if webhook_limiter.is_blocked(adres):
+    try:
+        zablokirovan = webhook_limiter.is_blocked(adres)
+    except errors.LimiterUnavailableError:
+        # Redis лежит. Ограничитель бережёт от ПОДБОРА секрета, а не от потока
+        # сообщений, и закрыть из-за него приём значило бы отбивать 503 всем
+        # клиентам сразу: телеграм копит повторы часами и, если не дождётся,
+        # теряет их. Подбор при этом остаётся невозможен — секрет сверяется
+        # ниже постоянным временем, и угадать его с одной попытки нельзя.
+        #
+        # То есть выбор был между «перебор станет чуть дешевле, пока лежит
+        # Redis» и «переписка с клиентами встала целиком». Второе дороже.
+        logger.warning("ограничитель приёма недоступен — пропускаем без счёта")
+        zablokirovan = False
+    if zablokirovan:
         raise errors.RateLimitedError(
             "Too many webhook attempts", code="webhook_flooded"
         )
@@ -249,10 +264,29 @@ async def vebkhuk(request: Request, db: Session = Depends(get_db)) -> dict:
         return {"status": "ignored", "reason": "bad_json"}
 
     try:
-        return telegram_service.prinyat(db, obnovlenie)
+        # В отдельном потоке, а не прямо здесь. Ручка объявлена `async def`, а
+        # внутри разбора живёт синхронный `urllib` с таймаутами до минуты:
+        # выполненный в корутине, он останавливает ЦИКЛ СОБЫТИЙ, то есть все
+        # запросы этого процесса разом — включая `/healthz`, по которому
+        # обновление решает, откатывать ли живой релиз.
+        return await run_in_threadpool(telegram_service.prinyat, db, obnovlenie)
+    except errors.DomainError:
+        # Наши доменные отказы разбирает общий обработчик: у них свой код и своё
+        # объяснение, и подменять их безликим «error» незачем.
+        raise
+    except (OperationalError, DBAPIError) as beda:
+        # Беда базы — ПРЕХОДЯЩАЯ: замок не дождался, соединение оборвалось,
+        # сервер перезапускают. Отвечать на это 200 значит сказать телеграму
+        # «принято» о сообщении, которого мы не записали: повтора не будет, и
+        # слова клиента исчезнут молча. Пусть повторит — идемпотентность у нас
+        # своя, по `external_id`.
+        logger.exception("база не дала записать обновление телеграма: %r", beda)
+        raise errors.PrehodyashchayaBedaError(
+            "Could not store the update, please retry", code="telegram_store_failed"
+        ) from None
     except Exception as beda:  # noqa: BLE001
-        # Разбор не удался — сообщаем себе в лог и отвечаем 200. Повтор того же
-        # сообщения не починит наш разбор, а очередь у телеграма вырастет.
+        # А вот наша ошибка РАЗБОРА повтором не чинится: то же сообщение
+        # приедет и разберётся так же. Отвечаем 200, чтобы не копить очередь.
         logger.exception("не разобрали обновление телеграма: %r", beda)
         return {"status": "error"}
 
@@ -413,17 +447,22 @@ async def otpravit_fayl(
 ) -> dict:
     """Отправить клиенту файл: картинку, видео или документ."""
     soderzhimoe = await file.read()
+    # Отправка в телеграм — синхронный `urllib` с таймаутом в минуту на
+    # пятидесяти мегабайтах. В корутине он остановил бы цикл событий вместе со
+    # всеми запросами процесса, поэтому уходит в поток.
     if not soderzhimoe:
         raise errors.ValidationError("File is empty", code="file_empty")
     if len(soderzhimoe) > get_settings().max_upload_bytes:
         raise errors.ValidationError("File is too large", code="file_too_large")
-    stroka = telegram_service.otpravit(
-        db,
-        chat_row_id,
-        tekst=caption,
-        author=user,
-        fayl=(file.filename or "file", soderzhimoe),
-        otvet_na=int(reply_to_id) if reply_to_id.strip().isdigit() else None,
+    stroka = await run_in_threadpool(
+        lambda: telegram_service.otpravit(
+            db,
+            chat_row_id,
+            tekst=caption,
+            author=user,
+            fayl=(file.filename or "file", soderzhimoe),
+            otvet_na=int(reply_to_id) if reply_to_id.strip().isdigit() else None,
+        )
     )
     return _soobshchenie_naruzhu(stroka)
 

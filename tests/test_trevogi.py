@@ -63,6 +63,10 @@ def kanal(root_client):
     # Ограничитель общий на процесс и переживает проверки: без сброса соседние
     # начинают влиять друг на друга. Урок из docs/13, раздел 7.
     marshruty.limiter.ochistit()
+    # По той же причине сбрасывается счётчик неудачных доставок: он лежит в
+    # Redis одним ключом на всю систему, и проверка, оставившая его набранным,
+    # объявила бы канал неготовым у соседки — та искала бы поломку у себя.
+    trevogi_service._otmetit_udachu()
     yield
     root_client.delete(f"{TG}/settings")
     root_client.post(f"{API}/modules/telegram", json={"enabled": False})
@@ -268,6 +272,45 @@ def test_zagorevshayasya_snova_trevoga_ne_schitaetsya_povtorom(root_client, bot,
     assert len(_poslannye(bot)) == 2, "вторая авария не дошла — её сочли повтором первой"
 
 
+def test_otboy_chistit_pamyat_dazhe_kogda_redis_morgnul(root_client, bot, kanal, monkeypatch):
+    """Отбой снимает память ВСЕГДА, а не только когда её удалось прочитать.
+
+    Память отвечает `None` в двух случаях сразу: записи нет и Redis не ответил.
+    Второй — это моргнувшее соединение с соседним контейнером, который
+    перезапускается сам; дело обычное, а не редкость. Уйди отбой без очистки,
+    запись дожила бы до конца срока (полтора суток), и тревога, зажёгшаяся
+    через полчаса, пришла бы с тем же отпечатком, проиграла бы отметке «уже
+    слали» и была бы сочтена повтором.
+
+    Хуже всего в этой беде то, что снаружи её не видно ниоткуда: сообщения нет,
+    Alertmanager считает тревогу доставленной, дежурный ничего не узнал. Сайт
+    лежит, а чат молчит — ровно то, ради чего канал заводился.
+    """
+    _poslat(root_client, _dostavka("fp-morgnul"))
+
+    # Redis моргает ровно на чтении памяти: запись цела, но нам её не отдали.
+    nastoyashchee = trevogi_service._vspomnit
+    morgaet = {"da": False}
+
+    def vspomnit(otpechatok):
+        return None if morgaet["da"] else nastoyashchee(otpechatok)
+
+    monkeypatch.setattr(trevogi_service, "_vspomnit", vspomnit)
+
+    morgaet["da"] = True
+    otboy = _poslat(root_client, _dostavka("fp-morgnul", status="resolved"))
+    assert otboy.json()["resolved"] == 1, otboy.text
+
+    # Соединение восстановилось, и та же тревога зажглась снова.
+    morgaet["da"] = False
+    opyat = _poslat(root_client, _dostavka("fp-morgnul"))
+    assert opyat.json()["sent"] == 1, (
+        "новая авария сочтена повтором: отбой не убрал из памяти запись, "
+        "которую не сумел прочитать"
+    )
+    assert len(_poslannye(bot)) == 2, "второй аварии в чате нет, и узнать о ней неоткуда"
+
+
 def test_neudavshayasya_otpravka_ne_zapiraet_trevogu_navsegda(
     root_client, bot, kanal, monkeypatch
 ):
@@ -336,6 +379,50 @@ def test_gotovnost_otvechaet_alertmanageru(root_client, bot, kanal):
     )
 
 
+def test_otvalivshiysya_bot_snimaet_gotovnost_kanala(root_client, bot, kanal, monkeypatch):
+    """Отозванный токен обязан вернуть доставку на прямой путь.
+
+    Готовность отвечала по одному наличию настроек, а от того, что токен
+    отозвали (бота выгнали из чата, чат удалили), настройки не меняются.
+    Alertmanager продолжал бы доставлять через нас, каждая тревога падала бы,
+    он повторял бы её вечно — и запасной путь не включился бы НИКОГДА. То есть
+    авария не дошла бы никуда именно потому, что канал доставки настроен.
+
+    Считаем неудачи подряд: три — это уже не 429 и не моргнувшая сеть.
+    Возврат обязан быть таким же самостоятельным, поэтому проверяется и он:
+    удачная доставка возвращает кнопки без перезапуска приложения.
+    """
+    zapisyvayushchiy = telegram_service._vyzov
+    otozvan = {"da": True}
+
+    def otkazat(token, metod, polya, opener=None):
+        if otozvan["da"] and metod == "sendMessage":
+            raise telegram_service.TelegramOtkaz("Unauthorized")
+        return zapisyvayushchiy(token, metod, polya, opener)
+
+    monkeypatch.setattr(telegram_service, "_vyzov", otkazat)
+
+    for nomer in range(trevogi_service.PODRYAD_SBOEV):
+        upalo = _poslat(root_client, _dostavka(f"fp-otozvan-{nomer}"))
+        assert upalo.json()["failed"] == 1, upalo.text
+
+    ne_gotov = root_client.get(f"{TREVOGI}/ready")
+    assert ne_gotov.status_code == 200, ne_gotov.text
+    assert ne_gotov.json() == {"ready": False}, (
+        "канал объявляет себя готовым, хотя ни одна тревога через него не "
+        "уходит — Alertmanager так и будет доставлять в никуда"
+    )
+
+    # Токен починили (или бота вернули в чат), и тревога ушла.
+    otozvan["da"] = False
+    vernulos = _poslat(root_client, _dostavka("fp-otozvan-vernulsya"))
+    assert vernulos.json()["sent"] == 1, vernulos.text
+    assert root_client.get(f"{TREVOGI}/ready").json() == {"ready": True}, (
+        "удачная доставка не вернула канал в строй — кнопок не будет, пока "
+        "кто-нибудь не перезапустит приложение"
+    )
+
+
 def test_trevoga_prishedshaya_snaruzhi_otvergaetsya(root_client, bot, kanal):
     """Единственное, чем закрыт приём вместо сессии, — граница сети.
 
@@ -355,6 +442,51 @@ def test_trevoga_prishedshaya_snaruzhi_otvergaetsya(root_client, bot, kanal):
     assert otvet.status_code == 403, otvet.text
     assert otvet.json()["error"]["code"] == "alerts_external"
     assert _poslannye(bot) == [], "поддельная тревога всё-таки ушла в чат"
+
+
+def test_lezhachiy_redis_ne_zakryvaet_priyom_trevog(root_client, bot, kanal, monkeypatch):
+    """Тревога о лежащем Redis не может упираться в лежащий Redis.
+
+    Ограничитель при недоступном Redis отказывает — так решено ради входа, где
+    «пропустить всех» означает выключенную защиту от подбора. Здесь он не
+    сторожит ничего подобного: тревога приходит от своего Alertmanager из своей
+    сети, и поставлен ограничитель против потока. Зато цена его отказа наивысшая
+    из возможных — тревоги не доставляются ВООБЩЕ, включая правило `RedisDown`,
+    которое ровно про эту аварию. Служба молчала бы именно о той поломке,
+    которая её и заткнула.
+
+    Вторая половина проверки не менее важна первой: послабление не имеет права
+    открывать приём наружу. Граница сети обязана держать и при мёртвом
+    ограничителе — иначе лечение оказалось бы дороже болезни.
+    """
+    from core import exceptions as oshibki
+    from web.api.routes import trevogi as marshruty
+
+    def ne_otvechaet(kluch):
+        raise oshibki.LimiterUnavailableError(
+            "Rate limiter storage is unavailable", code="limiter_unavailable"
+        )
+
+    monkeypatch.setattr(marshruty.limiter, "is_blocked", ne_otvechaet)
+
+    otvet = _poslat(root_client, _dostavka("fp-redis-lezhit"))
+    assert otvet.status_code == 200, (
+        "приём тревог закрылся вместе с Redis — авария не дойдёт ни одна, и "
+        "первой не дойдёт та, что про сам Redis"
+    )
+    assert otvet.json()["sent"] == 1, otvet.text
+    assert len(_poslannye(bot)) == 1
+
+    snaruzhi = root_client.post(
+        f"{TREVOGI}/webhook",
+        json=_dostavka("fp-redis-snaruzhi"),
+        headers={"X-Forwarded-For": "203.0.113.7"},
+    )
+    assert snaruzhi.status_code == 403, (
+        "мёртвый ограничитель открыл приём наружу: поддельные аварии теперь "
+        "шлёт кто угодно из интернета"
+    )
+    assert len(_poslannye(bot)) == 1, "поддельная тревога всё-таки ушла в чат"
 
 
 # --- нажатия ------------------------------------------------------------------
@@ -471,6 +603,54 @@ def test_odnovremennoe_zaglushenie_ne_plodit_tishiny(
     )
 
     assert len(alertmanager) == 1, "одновременные нажатия поставили две тишины"
+
+
+def test_raznye_knopki_ne_zatirayut_otmetki_drug_druga(
+    root_client, bot, kanal, alertmanager, monkeypatch
+):
+    """Двое нажали РАЗНЫЕ кнопки — уцелеть обязаны обе отметки.
+
+    От двух нажатий одной кнопки канал защищён отметкой «кто первый», а вот
+    «принято» и «заглушить» — это разные поля одной записи, и каждый обработчик
+    писал её ЦЕЛИКОМ: прочитал, поправил свою копию, записал. Кто записал
+    вторым, тот стёр чужое.
+
+    Стирается при этом ровно то, ради чего кнопки и делались. Пропадает
+    «✅ Принял: …» — и дежурный, глядя в чат, не видит, что аварией уже занят
+    сосед (повторное нажатие при этом отвечает «уже принято», но имени в чате
+    нет ни у кого). Или теряется номер тишины — и поставленную тишину потом не
+    найти и не снять.
+
+    Гонка воспроизводится тем же приёмом, что и у одинаковых кнопок: запись «не
+    доезжает», и второй обработчик видит ровно то, что видел бы одновременный.
+    Подменяется она ПОСЛЕ отправки — сообщение в чате к этому времени уже есть,
+    и правки его видно.
+    """
+    _poslat(root_client, _dostavka("fp-dve-knopki"))
+    monkeypatch.setattr(trevogi_service, "_zapomnit", lambda otpechatok, zapis: None)
+
+    _nazhali(root_client, f"{trevogi_service.PRISTAVKA}:a:fp-dve-knopki")
+    _nazhali(
+        root_client,
+        f"{trevogi_service.PRISTAVKA}:s:fp-dve-knopki",
+        imya="Марина",
+        familiya="Сидорова",
+        login="marina",
+        kto=777007,
+    )
+
+    posledneye = _pravki(bot)[-1]["text"]
+    assert "Иван Петров" in posledneye, (
+        "заглушивший стёр отметку принявшего: в чате не видно, что аварией уже "
+        "занимаются"
+    )
+    assert "Марина Сидорова" in posledneye, "отметка о тишине не дошла до сообщения"
+
+    pamyat = trevogi_service._vspomnit("fp-dve-knopki")
+    assert pamyat.get("prinyal"), "принявший потерян и в памяти — второе нажатие ответит «Принято»"
+    assert pamyat.get("silence_id"), (
+        "номер тишины потерян: поставленную тишину нечем найти и нечем снять"
+    )
 
 
 def test_neudavshayasya_tishina_ne_zapiraet_knopku(
