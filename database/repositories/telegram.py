@@ -187,6 +187,30 @@ def po_id(db: Session, message_id: int) -> TelegramMessage | None:
     return db.get(TelegramMessage, message_id)
 
 
+def poslednie_soobshcheniya(db: Session, chat_ids: list[int]) -> dict[int, TelegramMessage]:
+    """Последнее сообщение каждого диалога — по всей странице сразу.
+
+    Нужно списку диалогов: строка без последней фразы не отвечает на вопрос
+    «о чём мы говорили», и человек открывает диалог только чтобы вспомнить.
+    Ровно поэтому список в телеграме показывает предпросмотр.
+
+    Одним запросом на страницу, как `neprochitannye` рядом: запрос на диалог
+    означал бы полсотни обращений на каждый показ. Подзапрос с MAX(id) ходит
+    по индексу chat_id и отдаёт по строке на диалог.
+    """
+    if not chat_ids:
+        return {}
+    vlozhennyy = (
+        select(func.max(TelegramMessage.id))
+        .where(TelegramMessage.chat_id.in_(chat_ids))
+        .group_by(TelegramMessage.chat_id)
+    )
+    stroki = db.scalars(
+        select(TelegramMessage).where(TelegramMessage.id.in_(vlozhennyy))
+    ).all()
+    return {s.chat_id: s for s in stroki}
+
+
 def neprochitannye(db: Session, chat_ids: list[int], granitsy: dict[int, int]) -> dict[int, int]:
     """Сколько ВХОДЯЩИХ пришло после границы «прочитано» — по всей странице сразу.
 

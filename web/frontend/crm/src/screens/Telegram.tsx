@@ -37,6 +37,9 @@ export interface TgChat {
   source: string;
   last_message_at: string | null;
   unread: number;
+  last_preview: string;
+  last_direction: string;
+  last_kind: string;
   has_avatar: boolean;
   is_premium: boolean;
   has_emoji: boolean;
@@ -333,6 +336,22 @@ export function Telegram() {
   // ОТКРЫТОМ и видимом чате не подаётся. Убираем отметку, уходя с экрана,
   // иначе после ухода сигналы молчали бы про последний просмотренный диалог.
   useEffect(() => {
+    const na_klavishu = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      // Порядок как в телеграме: Escape сперва снимает «отвечаем на», и только
+      // следующий — закрывает диалог. Слушатель на документе, а не на поле:
+      // выход должен работать откуда угодно.
+      if (otvechaem) {
+        setOtvechaem(null);
+        return;
+      }
+      if (vybranRef.current != null) setVybran(null);
+    };
+    document.addEventListener("keydown", na_klavishu);
+    return () => document.removeEventListener("keydown", na_klavishu);
+  }, [otvechaem]);
+
+  useEffect(() => {
     otmetit_otkrytyy_chat(vybran);
     // Отметка живёт двенадцать секунд и подтверждается каждые пять: закрытая на
     // полуслове вкладка иначе навсегда заглушила бы сигналы по своему диалогу.
@@ -573,7 +592,7 @@ export function Telegram() {
   const otkrytyy = chats.find((c) => c.id === vybran) || null;
 
   return (
-    <div className="page page-wide tg-screen">
+    <div className={vybran != null ? "tg-screen is-talking" : "tg-screen"}>
       <aside className="tg-list">
         <div className="tg-search">
           <Icon name="search" />
@@ -635,13 +654,23 @@ export function Telegram() {
                   <span className="tg-chat-time">
                     {chat.last_message_at ? formatDateTime(chat.last_message_at, locale) : ""}
                   </span>
+                  <span className="tg-chat-prev">
+                    {chat.last_direction === "out" && <em>{t("tgYou")} </em>}
+                    {chat.last_preview ||
+                      (chat.last_kind === "photo"
+                        ? t("tgKindPhoto")
+                        : chat.last_kind === "video"
+                          ? t("tgKindVideo")
+                          : chat.last_kind === "voice"
+                            ? t("tgKindVoice")
+                            : chat.last_kind === "document"
+                              ? t("tgKindDocument")
+                              : "")}
+                  </span>
                   {chat.unread > 0 && (
                     <span className="tg-unread" aria-label={t("tgUnread")}>
                       {chat.unread}
                     </span>
-                  )}
-                  {chat.client_id == null && (
-                    <span className="tg-chat-unlinked">{t("tgUnlinked")}</span>
                   )}
                 </button>
               </li>
@@ -656,6 +685,15 @@ export function Telegram() {
         ) : (
           <>
             <header className="tg-head">
+              <button
+                type="button"
+                className="tg-back"
+                onClick={() => setVybran(null)}
+                aria-label={t("back")}
+                title={t("back")}
+              >
+                <Icon name="arrowLeft" />
+              </button>
               <div className="tg-who">
                 <Avatar
                   text={initials(otkrytyy.title || otkrytyy.username || "?")}
