@@ -9,6 +9,7 @@ import { useApp } from "../lib/app";
 import { useDebounced } from "../lib/debounce";
 import { useFailure } from "../lib/failure";
 import { useGuard } from "../lib/guard";
+import { moduleOn } from "../lib/modules";
 import { can } from "../lib/permissions";
 import { useReference } from "../lib/reference";
 import { podpisatsya } from "../lib/tgpotok";
@@ -113,7 +114,7 @@ function slit(bylo: TgMessage[], novye: TgMessage[]): TgMessage[] {
 }
 
 export function Telegram() {
-  const { t, locale, toast, toastError, user } = useApp();
+  const { t, locale, toast, toastError, user, modules } = useApp();
   const [chats, setChats] = useState<TgChat[] | null>(null);
   const [vybran, setVybran] = useState<number | null>(null);
   const [messages, setMessages] = useState<TgMessage[]>([]);
@@ -173,7 +174,17 @@ export function Telegram() {
   // Шаблоны сообщений уже сделаны для других каналов — здесь их просто
   // подключаем. Заводить свои значило бы завести ВТОРОЕ место, где живут
   // типовые ответы, и разойтись с первым на первой же правке.
-  const shablony = useReference<any>("/templates?per_page=100");
+  //
+  // Спрашиваем, только если есть у кого: блок включён и право на шаблоны есть.
+  // Иначе `null` — «спрашивать нечего». Разница не в одном запросе: справочник,
+  // спрошенный при выключенном блоке, отвечает `module_disabled`, а экран
+  // показывает «не удалось загрузить» — то есть врёт. Ничего не ломалось,
+  // повторять нечего, и выключенный блок обязан исчезнуть целиком, а не
+  // остаться жалобой на сервер.
+  const shablony_dostupny = moduleOn(modules, "templates") && can(user, "templates.view");
+  const shablony = useReference<any>(
+    shablony_dostupny ? "/templates?per_page=100" : null,
+  );
 
   // Последнее известное сообщение: по нему дочитываем пропущенное после
   // обрыва. Обрыв неизбежен, а начинать с чистого листа в переписке нельзя.
@@ -487,6 +498,19 @@ export function Telegram() {
    */
   const zavesti = async (chto: "deal" | "task") => {
     if (vybran == null) return;
+    // Заявка заводится НА КАРТОЧКУ, и сервер отказывает непривязанному диалогу
+    // (`telegram_chat_not_linked`). Говорим об этом сами и на языке интерфейса:
+    // ответ сервера обращён к разработчику и приходит по-английски, а человеку
+    // у экрана нужна не причина отказа, а следующее движение — выбрать клиента
+    // в списке рядом. Кнопку при этом не гасим: погашенная кнопка молчит о том,
+    // чего ей не хватает, и нажать её, чтобы узнать, уже нельзя.
+    //
+    // Напоминания это не касается: «перезвонить этому человеку» осмысленно и
+    // до того, как выяснили, кто он, — так же решено и на сервере.
+    if (chto === "deal" && klient_id == null) {
+      toast(t("tgDealNeedsClient"), true);
+      return;
+    }
     if (!guard.take()) return;
     try {
       const sozdano = await api.post<{ id: number; title: string }>(
@@ -510,12 +534,26 @@ export function Telegram() {
   const podstavit_shablon = async (id: string) => {
     if (!id) return;
     try {
-      const gotovo = await api.get<{ text: string }>(
-        `/templates/${id}/render${otkrytyy?.client_id ? `?client_id=${otkrytyy.client_id}` : ""}`,
+      const gotovo = await api.get<{ text: string; missing?: string[] }>(
+        // Клиента берём из `klient_id` — того же значения, по которому рядом
+        // грузится дело. Нет привязки — параметра нет вовсе, и это законный
+        // путь: подстановка отвечает и без клиента (это предпросмотр), а
+        // отказывать в шаблоне из-за того, что собеседник ещё не опознан,
+        // значило бы отключить шаблоны в половине разговоров.
+        `/templates/${id}/render${klient_id != null ? `?client_id=${klient_id}` : ""}`,
       );
       // Дописываем к тому, что уже набрано, а не затираем: человек мог начать
       // печатать и вспомнить про шаблон.
       setTekst((bylo) => (bylo ? `${bylo}\n${gotovo.text}` : gotovo.text));
+      // Поля, которых нечем заполнить, сервер называет поимённо — и молчать о
+      // них нельзя. В непривязанном диалоге шаблон подставляется как
+      // «Здравствуйте, —!», прочерк посреди фразы глазами не ловится, и
+      // уезжает такое клиенту. Отправку не запрещаем: прочерк бывает и
+      // уместен, решает человек, — но узнать он должен ДО нажатия «отправить».
+      const propusk = gotovo.missing ?? [];
+      if (propusk.length > 0) {
+        toast(t("tgTemplateGaps", { list: propusk.join(", ") }), true);
+      }
     } catch (beda) {
       toastError(beda);
     }
@@ -796,30 +834,50 @@ export function Telegram() {
                   </button>
                   {menyu && (
                     <div className="user-menu tg-menu">
-                      <button
-                        type="button"
-                        className="user-menu-item"
-                        disabled={guard.busy}
-                        onClick={() => {
-                          setMenyu(false);
-                          void zavesti("deal");
-                        }}
-                      >
-                        <Icon name="deals" size={14} />
-                        {t("tgMakeDeal")}
-                      </button>
-                      <button
-                        type="button"
-                        className="user-menu-item"
-                        disabled={guard.busy}
-                        onClick={() => {
-                          setMenyu(false);
-                          void zavesti("task");
-                        }}
-                      >
-                        <Icon name="clock" size={14} />
-                        {t("tgMakeTask")}
-                      </button>
+                      {/*
+                        Пункт стоит за тем же правом, что спросит сервер:
+                        заводится ЗАЯВКА, и решает раздел заявок. Без права его
+                        нет вовсе — иначе он отвечал бы отказом на каждое
+                        нажатие, то есть выглядел бы сломанным.
+
+                        Непривязанный диалог — другое дело: право есть, не
+                        хватает одного движения. Поэтому пункт на месте и живой,
+                        а подсказка называет это движение и указывает на выбор
+                        карточки рядом.
+                      */}
+                      {can(user, "deals.create") && (
+                        <button
+                          type="button"
+                          className="user-menu-item"
+                          disabled={guard.busy}
+                          title={
+                            otkrytyy.client_id == null
+                              ? t("tgDealNeedsClient")
+                              : t("tgMakeDeal")
+                          }
+                          onClick={() => {
+                            setMenyu(false);
+                            void zavesti("deal");
+                          }}
+                        >
+                          <Icon name="deals" size={14} />
+                          {t("tgMakeDeal")}
+                        </button>
+                      )}
+                      {can(user, "tasks.create") && (
+                        <button
+                          type="button"
+                          className="user-menu-item"
+                          disabled={guard.busy}
+                          onClick={() => {
+                            setMenyu(false);
+                            void zavesti("task");
+                          }}
+                        >
+                          <Icon name="clock" size={14} />
+                          {t("tgMakeTask")}
+                        </button>
+                      )}
                       <div className="user-menu-sep" />
                       <button
                         type="button"
@@ -1061,12 +1119,22 @@ export function Telegram() {
             )}
             <footer className="tg-compose">
               {/*
-                Показываем выбор и при отказе загрузки — с прямой пометкой.
-                Спрятанный выбор читается как «шаблонов нет», и человек набирает
-                типовой ответ заново, не зная, что они есть и просто не
-                доехали.
+                Выбор стоит на месте всегда, пока блок включён и право есть, —
+                и когда шаблонов ещё ни одного тоже. Прежде он появлялся только
+                при непустом списке, и на свежей системе в подписи не было
+                ВООБЩЕ ничего: человек искал шаблоны там, где их обещали, не
+                находил даже места, где они должны быть, и делал единственный
+                возможный вывод — «не работают».
+
+                Поэтому три состояния названы врозь прямо в закрытом виде
+                выбора, не требуя его открывать: «Шаблон» (есть из чего
+                выбирать), «шаблонов пока нет» (справочник ответил пустым) и
+                «не удалось загрузить» (не ответил вовсе). Свести их к одному
+                пустому списку значит ответить на вопрос, которого не задавали.
+                Пока ответа нет, подпись остаётся нейтральной: «шаблонов нет»
+                на полсекунды загрузки — то же самое враньё, только короткое.
               */}
-              {((shablony.items ?? []).length > 0 || shablony.failure != null) && (
+              {shablony_dostupny && (
                 <select
                   className="tg-templates"
                   value=""
@@ -1077,12 +1145,13 @@ export function Telegram() {
                   aria-label={t("tgTemplate")}
                   title={t("tgTemplate")}
                 >
-                  <option value="">{t("tgTemplate")}</option>
-                  {shablony.failure != null && (
-                    <option value="" disabled>
-                      {t("loadFailed")}
-                    </option>
-                  )}
+                  <option value="">
+                    {shablony.failure != null
+                      ? t("loadFailed")
+                      : shablony.items != null && shablony.items.length === 0
+                        ? t("tgNoTemplates")
+                        : t("tgTemplate")}
+                  </option>
                   {(shablony.items ?? []).map((shablon: any) => (
                     <option key={shablon.id} value={shablon.id}>
                       {shablon.name}
