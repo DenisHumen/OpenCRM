@@ -1145,6 +1145,30 @@ const en = {
   // Выгрузка работ доски. Подпись общая на кнопку архива; у кнопки на самой
   // работе подписи нет — там значок, и его называет `download` выше.
   downloadAll: "Download all works",
+  // Рост переписки телеграма и уборка старого. Цифры идут перед выбором срока
+  // намеренно: не видя веса, выбирать не из чего.
+  tgStorage: "Storage and cleanup",
+  tgStorageAbout:
+    "Conversations are kept forever unless you choose otherwise. Nothing is ever deleted silently — a chat with a client can be evidence.",
+  tgStoredMessages: "Messages",
+  tgStoredFiles: "Attachments",
+  tgStoredDisk: "On disk",
+  tgOldest: "Oldest message",
+  tgRetention: "Keep conversations",
+  tgRetentionForever: "Forever (nothing is deleted)",
+  tgRetentionOption: "{months} months — would remove {messages} messages ({size})",
+  tgRetentionHint:
+    "The cleanup runs once a night, right after the backup, and works in small batches so a large table never blocks the database.",
+  tgRetentionWarn:
+    "Saving this removes {messages} messages and their attachments ({size}) at the next nightly run, and every night after that.",
+  tgRetentionKeeps:
+    "Attachments are deleted from disk together with the messages. Client timeline entries and the conversations themselves stay — only the messages go.",
+  tgRetentionConfirm:
+    "Keep conversations for {months} months? The next nightly cleanup will remove {messages} messages and their attachments ({size}). This cannot be undone — only a backup can bring them back.",
+  tgCleanupLine:
+    "Last cleanup on {date}: removed {messages} messages and {files} attachments ({size}), older than {cutoff}.",
+  tgCleanupPartial: "It ran out of its time budget and will continue on the next run.",
+  tgCleanupNever: "The cleanup has not run yet.",
 };
 
 const ru: typeof en = {
@@ -2254,6 +2278,28 @@ const ru: typeof en = {
   finAdjustWas: "было {sum}",
   finAccrualReverted: "Сторнировано вместе с заказом",
   downloadAll: "Скачать все работы",
+  tgStorage: "Хранение и уборка",
+  tgStorageAbout:
+    "Переписка хранится вечно, пока вы не решите иначе. Молча не удаляется ничего — разговор с клиентом бывает доказательством.",
+  tgStoredMessages: "Сообщений",
+  tgStoredFiles: "Вложений",
+  tgStoredDisk: "На диске",
+  tgOldest: "Самое старое",
+  tgRetention: "Хранить переписку",
+  tgRetentionForever: "Вечно (ничего не удаляется)",
+  tgRetentionOption: "{months} мес. — уйдёт {messages} сообщений ({size})",
+  tgRetentionHint:
+    "Уборка ходит раз в сутки, сразу после ночной копии, и работает небольшими пачками — большая таблица не должна вставать вместе с базой.",
+  tgRetentionWarn:
+    "После сохранения ближайшая ночная уборка удалит {messages} сообщений и их вложения ({size}) — и будет делать это каждую ночь.",
+  tgRetentionKeeps:
+    "Вложения стираются с диска вместе с сообщениями. Записи в ленте клиента и сами диалоги остаются — уходят только сообщения.",
+  tgRetentionConfirm:
+    "Хранить переписку {months} мес.? Ближайшая ночная уборка удалит {messages} сообщений и их вложения ({size}). Отменить это нельзя — вернуть их сможет только резервная копия.",
+  tgCleanupLine:
+    "Последняя уборка {date}: удалено {messages} сообщений и {files} вложений ({size}), старше {cutoff}.",
+  tgCleanupPartial: "Прогон уперся в отпущенное время и продолжит в следующий раз.",
+  tgCleanupNever: "Уборка ещё ни разу не ходила.",
 };
 
 const dicts: Record<Locale, typeof en> = { en, ru };

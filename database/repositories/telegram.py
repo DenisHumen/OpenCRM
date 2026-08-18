@@ -22,7 +22,9 @@
 он показывал бы одно и то же число всегда.
 """
 
-from sqlalchemy import select
+from datetime import datetime
+
+from sqlalchemy import and_, case, delete, func, select
 from sqlalchemy.orm import Session
 
 from database.models import Client, TelegramChat, TelegramMessage
@@ -222,3 +224,117 @@ def neprochitannye(db: Session, chat_ids: list[int], granitsy: dict[int, int]) -
         if message_id > granitsy.get(chat_row_id, 0):
             itog[chat_row_id] += 1
     return itog
+
+
+# --- рост таблицы и уборка старого -------------------------------------------
+#
+# `telegram_messages` растёт быстрее всех таблиц системы, и решение «сколько
+# хранить» принимает владелец. Запросы ниже обслуживают ровно это: первый
+# показывает, сколько переписка весит СЕЙЧАС и сколько уйдёт при каждом из
+# предлагаемых сроков, остальные два убирают старое пачками.
+
+
+def ves_perepiski(db: Session, granitsy: dict[int, datetime]) -> dict:
+    """Вес переписки и цена каждого срока хранения — ОДНИМ запросом.
+
+    Одним, а не запросом на срок, и это главное в этой функции. Сроков пять, и
+    пять отдельных счётов означали бы пять полных проходов по самой большой
+    таблице системы — при том что читаются они разом, на одном экране, ради
+    одного решения. Условная сумма (`CASE WHEN`) даёт все числа за один проход.
+
+    `oldest_at` считается здесь же, и он не украшение: без него «хранить 12
+    месяцев» — отвлечённое число. Владельцу нужно видеть, что самая старая
+    переписка от такого-то числа, иначе выбирать не из чего.
+
+    Вес считается по `file_size` тех строк, у которых файл ДЕЙСТВИТЕЛЬНО забран
+    (`file_path` не пуст). У видео размер известен, а файла у нас нет — он
+    остался в телеграме, и наш диск не занимает.
+    """
+    est_fayl = TelegramMessage.file_path != ""
+    razmer = func.coalesce(TelegramMessage.file_size, 0)
+
+    polya = [
+        func.count(TelegramMessage.id),
+        func.sum(case((est_fayl, 1), else_=0)),
+        func.sum(case((est_fayl, razmer), else_=0)),
+        func.min(TelegramMessage.happened_at),
+    ]
+    poryadok = sorted(granitsy)
+    for mesyatsev in poryadok:
+        do = granitsy[mesyatsev]
+        staroe = TelegramMessage.happened_at < do
+        polya.append(func.sum(case((staroe, 1), else_=0)))
+        polya.append(func.sum(case((and_(staroe, est_fayl), razmer), else_=0)))
+
+    stroka = db.execute(select(*polya)).one()
+
+    po_srokam: dict[int, dict[str, int]] = {}
+    for nomer, mesyatsev in enumerate(poryadok):
+        po_srokam[mesyatsev] = {
+            "messages": int(stroka[4 + nomer * 2] or 0),
+            "bytes": int(stroka[5 + nomer * 2] or 0),
+        }
+
+    return {
+        "messages": int(stroka[0] or 0),
+        "files": int(stroka[1] or 0),
+        "file_bytes": int(stroka[2] or 0),
+        "oldest_at": stroka[3],
+        "po_srokam": po_srokam,
+    }
+
+
+def skolko_starykh(db: Session, do: datetime) -> int:
+    """Сколько сообщений старше границы. Для показа «сколько уйдёт»."""
+    return int(
+        db.scalar(
+            select(func.count(TelegramMessage.id)).where(TelegramMessage.happened_at < do)
+        )
+        or 0
+    )
+
+
+def starye(db: Session, do: datetime, predel: int) -> list[tuple[int, str]]:
+    """Пачка самых старых сообщений: пары «идентификатор, путь к файлу».
+
+    Пачкой, а не всем разом: удаление миллиона строк одной транзакцией держит
+    журнал отката всё время работы и кладёт базу — а таблица здесь как раз та,
+    где миллион строк это обычное дело.
+
+    Самые старые сначала (`happened_at`, по возрастанию), и это не косметика.
+    Прогон ограничен по времени и обрывается на середине; начиная с дальнего
+    края, каждый прогон продвигает границу, и следующий начинает с того места,
+    где кончил предыдущий. Начни мы с произвольного места — уборка топталась бы
+    по всей таблице, ни разу не дочистив её до конца.
+
+    Отбор идёт по `happened_at`, по которому есть индекс: у него же и условие, и
+    порядок, то есть база читает подряд ровно столько строк, сколько попросили.
+    """
+    return [
+        (int(id_), str(put or ""))
+        for id_, put in db.execute(
+            select(TelegramMessage.id, TelegramMessage.file_path)
+            .where(TelegramMessage.happened_at < do)
+            .order_by(TelegramMessage.happened_at.asc())
+            .limit(predel)
+        ).all()
+    ]
+
+
+def udalit_soobshcheniya(db: Session, ids: list[int]) -> int:
+    """Удалить названные сообщения. Возвращает, сколько строк ушло.
+
+    Именно по списку идентификаторов, а не повторением условия по времени.
+    Условие отобрало строки мгновением раньше; повтори мы его в удалении —
+    под него попало бы и то, чего в отобранной пачке не было, а мы бы
+    отчитались числом из этой пачки. Расхождение числа в журнале с тем, что
+    произошло на самом деле, — ровно то, чего эта затея не допускает.
+
+    Диалоги при этом НЕ трогаются: диалог помнит, кто это, к какой карточке
+    привязан и откуда пришёл. Убрать его вместе с последним сообщением значило
+    бы стереть привязку, которую человек ставил руками.
+    """
+    if not ids:
+        return 0
+    itog = db.execute(delete(TelegramMessage).where(TelegramMessage.id.in_(ids)))
+    return int(itog.rowcount or 0)
