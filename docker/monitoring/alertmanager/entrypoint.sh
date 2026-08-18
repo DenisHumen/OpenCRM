@@ -25,16 +25,70 @@ TARGET=/tmp/alertmanager.yml
 # с чем сравнивать.
 NOVYY=/tmp/alertmanager.yml.new
 
-if [ -n "$TOKEN" ] && [ -n "$CHAT" ]; then
-    TEMPLATE=/etc/alertmanager/alertmanager.yml.template
-    echo "[opencrm-alertmanager] канал: Telegram, чат $CHAT"
-else
-    TEMPLATE=/etc/alertmanager/alertmanager-silent.yml
-    echo "[opencrm-alertmanager] ВНИМАНИЕ: Telegram не настроен."
-    echo "[opencrm-alertmanager] Тревоги будут считаться и показываться на дашборде,"
-    echo "[opencrm-alertmanager] но никуда не уйдут — то есть о поломке всё равно"
-    echo "[opencrm-alertmanager] узнают глазами. Настроить: ./opencrm.sh monitoring"
-fi
+# Адрес готовности CRM. Имя службы, а не адрес: внутри сети compose приложение
+# всегда `app`, а адрес его контейнера меняется при каждом пересоздании.
+CRM_READY="${OPENCRM_CRM_READY_URL:-http://app:8000/api/v1/alerts/ready}"
+
+# --- третий путь доставки: через CRM, с кнопками -----------------------------
+#
+# Кнопки «принято» и «заглушить на час» приложить к сообщению может только тот,
+# кто это сообщение отправляет, а Alertmanager клавиатуру телеграма не умеет
+# вовсе. Поэтому появился третий шаблон: тревоги уезжают в CRM, а она собирает
+# сообщение и шлёт его ботом фирмы. Разбор — в core/services/trevogi_service.py.
+#
+# **Выбор проверяется, а не настраивается.** Отдельная переменная «включить
+# кнопки» означала бы состояние, в котором она стоит, а CRM не отвечает: тревоги
+# уходили бы в никуда — и ровно тогда, когда они и нужны. Спрашиваем саму CRM, и
+# ответ «нет» (не настроен бот, не назван чат тревог, приложение лежит) молча
+# возвращает доставку на прямой путь.
+#
+# Проба идёт БЕЗ ожидания дольше пары секунд: она стоит на пути к перечитыванию
+# конфига, и зависший запрос остановил бы его целиком.
+crm_gotov() {
+    [ -n "$TOKEN" ] && [ -n "$CHAT" ] || return 1
+    # `wget` есть в busybox, на котором собран образ Alertmanager. Нет его —
+    # проба не удалась, и это верный исход: доставка остаётся прямой.
+    otvet=$(wget -q -T 2 -O - "$CRM_READY" 2>/dev/null) || return 1
+    # Разбирать JSON тут нечем и незачем: ответ — один признак.
+    case "$otvet" in
+        *'"ready":true'* | *'"ready": true'*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+#: Шаблон доставки через CRM. Проверяется на существование ПЕРЕД выбором, и это
+#: не перестраховка: файл попадает в контейнер отдельной строкой монтирования
+#: (`docker/docker-compose.yml`), а `sed` по отсутствующему файлу под `set -e`
+#: уронил бы точку входа — то есть Alertmanager ушёл бы в цикл перезапуска и
+#: сломал ровно то правило, которое сам должен сторожить. Нет файла — доставка
+#: остаётся прежней, прямой.
+SHABLON_CRM=/etc/alertmanager/alertmanager-crm.yml.template
+
+vybrat_shablon() {
+    if [ -z "$TOKEN" ] || [ -z "$CHAT" ]; then
+        TEMPLATE=/etc/alertmanager/alertmanager-silent.yml
+    elif [ -f "$SHABLON_CRM" ] && crm_gotov; then
+        TEMPLATE="$SHABLON_CRM"
+    else
+        TEMPLATE=/etc/alertmanager/alertmanager.yml.template
+    fi
+}
+
+vybrat_shablon
+case "$TEMPLATE" in
+    *silent*)
+        echo "[opencrm-alertmanager] ВНИМАНИЕ: Telegram не настроен."
+        echo "[opencrm-alertmanager] Тревоги будут считаться и показываться на дашборде,"
+        echo "[opencrm-alertmanager] но никуда не уйдут — то есть о поломке всё равно"
+        echo "[opencrm-alertmanager] узнают глазами. Настроить: ./opencrm.sh monitoring"
+        ;;
+    *crm*)
+        echo "[opencrm-alertmanager] канал: CRM (кнопки «принято» и «заглушить»), чат $CHAT"
+        ;;
+    *)
+        echo "[opencrm-alertmanager] канал: Telegram, чат $CHAT"
+        ;;
+esac
 
 render() {
     sed -e "s|__TELEGRAM_TOKEN__|$TOKEN|g" \
@@ -68,9 +122,16 @@ render "$TARGET"
 # сравнение готового конфига их правку не заметило бы, и новое правило не
 # применилось бы никогда. Перезагрузка Prometheus при этом ничего никому не
 # шлёт — цена ошибки разная, значит и решение разное.
+#
+# Тем же циклом переспрашивается и путь доставки. Это и есть весь запасной путь
+# для кнопок: CRM перестала отвечать — через пять минут тревоги снова уходят
+# напрямую в телеграм, вернулась — снова с кнопками. Отдельного присмотра за
+# этим не нужно, потому что смена пути видна как обычная правка конфига и
+# уезжает в журнал строкой «конфиг изменился».
 (
     while :; do
         sleep 300
+        vybrat_shablon
         render "$NOVYY"
         # `cmp` в busybox есть, но полагаться на набор апплетов чужого образа
         # незачем: сравнение содержимого — это ровно `=` в оболочке.

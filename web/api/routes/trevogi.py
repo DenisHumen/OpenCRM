@@ -1,0 +1,121 @@
+"""Приём тревог от Alertmanager.
+
+Одна ручка и её проверка готовности. Всё, что происходит дальше — сборка
+сообщения, кнопки, тишина, — живёт в `core/services/trevogi_service.py`; там же
+записан довод, почему тревогу шлём мы, а не встроенная интеграция Alertmanager.
+
+--------------------------------------------------------------------------
+Почему без блока и без права
+--------------------------------------------------------------------------
+
+По той же причине, что у вебхука телеграма и вебхука АТС: **Alertmanager не
+умеет узнать, что блок выключили.** Отвечай мы ему отказом, он считал бы это
+неудачной доставкой, повторял бы её и накопил очередь, которая вывалилась бы
+разом при включении. А главное — тревога о лежащем сайте не должна упираться в
+переключатель в интерфейсе того самого сайта.
+
+--------------------------------------------------------------------------
+Чем закрыто вместо сессии
+--------------------------------------------------------------------------
+
+**Границей сети, и проверяем мы её сами.** Alertmanager стучится по адресу
+`http://app:8000/...` — напрямую, внутри сети compose, минуя nginx. Порт 8000
+наружу не публикуется (`expose`, а не `ports`), то есть снаружи до приложения
+можно дойти ровно одним путём — через nginx. А nginx на каждом проксируемом
+запросе дописывает `X-Forwarded-For` (`docker/nginx/templates/proxy-headers.inc`),
+и убрать его посторонний не может: заголовок добавляется поверх присланного.
+
+Отсюда правило: **запрос с `X-Forwarded-For` пришёл снаружи и тревогой быть не
+может.** Проверка ровно та же по природе, что `deny all` у `/api/v1/metrics`,
+только стоит в приложении, а не в конфиге nginx, — и потому действует даже там,
+где nginx настроен иначе.
+
+Общий секрет был бы надёжнее: он закрыл бы и соседа по сети compose. Завести
+его сейчас нечем — переменную окружения надо раздать двум контейнерам сразу
+(`docker/docker-compose.yml` и `docker/.env`), а это отдельное решение
+владельца. Разбор — в `docs/13-telegram-messenger.md`.
+"""
+
+import logging
+
+from fastapi import APIRouter, Depends, Request
+from fastapi.responses import JSONResponse
+from sqlalchemy.orm import Session
+
+from core import exceptions as errors
+from core.ratelimit import SlidingWindowLimiter
+from core.services import trevogi_service
+from web.api.deps import client_ip, get_db
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/alerts", tags=["alerts"])
+
+#: Поток тревог. Их единицы в час даже на разваливающемся сервере; сотня в
+#: минуту означает либо сломавшийся Alertmanager, либо чужой, нашедший адрес.
+#: И то и другое лучше притормозить, чем разбирать по чату.
+limiter = SlidingWindowLimiter(100, 60, name="alertswebhook")
+
+
+@router.post("/webhook", status_code=200)
+async def vebkhuk(request: Request, db: Session = Depends(get_db)):
+    """Доставка от Alertmanager: список тревог, зажёгшихся или погасших.
+
+    **Отвечаем 200 не всегда, и это отличие от вебхука телеграма.** Там повтор
+    вредил: телеграм слал бы одно и то же сообщение клиента часами. Здесь повтор
+    ПОЛЕЗЕН — он и есть способ доставить тревогу, которая не ушла, потому что
+    телеграм моргнул. Поэтому преходящий отказ отдаётся пятисоткой, а неразбор
+    (не тот JSON, чужое тело) — двухсоткой: повторять то, что мы не понимаем,
+    незачем.
+    """
+    if request.headers.get("x-forwarded-for"):
+        # Пришло через nginx, то есть снаружи. Alertmanager так не ходит.
+        raise errors.ForbiddenError("Alerts webhook is internal only", code="alerts_external")
+
+    adres = client_ip(request)
+    if limiter.is_blocked(adres):
+        raise errors.RateLimitedError("Too many alert deliveries", code="alerts_flooded")
+
+    try:
+        telo = await request.json()
+    except Exception:  # noqa: BLE001 — прислали не JSON
+        return {"status": "ignored", "reason": "bad_json"}
+    if not isinstance(telo, dict):
+        return {"status": "ignored", "reason": "bad_json"}
+
+    try:
+        itog = trevogi_service.prinyat(db, telo)
+    except Exception as beda:  # noqa: BLE001
+        # Наша поломка в разборе. Повтор её не починит, а очередь у
+        # Alertmanager вырастет — отвечаем 200 и пишем себе в журнал.
+        logger.exception("не разобрали доставку Alertmanager: %r", beda)
+        return {"status": "error"}
+
+    if itog.get("status") == "failed":
+        # Хоть одна тревога не ушла. Просим повторить ВСЮ доставку: уже
+        # отправленные защищены памятью и вторым сообщением не станут.
+        limiter.record_failure(adres)
+        return JSONResponse(status_code=503, content=itog)
+    return itog
+
+
+@router.get("/ready")
+def gotovnost(request: Request, db: Session = Depends(get_db)) -> dict:
+    """Готова ли CRM принимать тревоги. Спрашивает Alertmanager, не человек.
+
+    Его `entrypoint.sh` выбирает по этому ответу, каким путём доставлять:
+    через нас (с кнопками) или напрямую в телеграм (как раньше). Опрашивает он
+    раз в пять минут — тем же циклом, которым и так перечитывает конфиг.
+
+    **Ответ «нет» — не отказ, а рабочее состояние.** Бот фирмы не настроен, чат
+    тревог не назван, приложение поднимается — во всех этих случаях тревоги
+    обязаны идти прежним путём, а не пропадать. Поэтому здесь всегда 200, а
+    решение читается из тела: отказ кодом Alertmanager принял бы за поломку
+    самой проверки и вёл бы себя одинаково при живой и мёртвой CRM.
+
+    Снаружи закрыта той же границей сети, что и приём: посторонний из интернета
+    не должен узнавать даже того, настроен ли у нас канал тревог.
+    """
+    if request.headers.get("x-forwarded-for"):
+        raise errors.ForbiddenError("Alerts webhook is internal only", code="alerts_external")
+    return {"ready": trevogi_service.gotov(db)}
