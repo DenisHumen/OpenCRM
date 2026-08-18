@@ -3,6 +3,11 @@ import { useRef, useState, type FormEvent } from "react";
 import { Avatar } from "../components/ui";
 import { api, ApiError, type User } from "../lib/api";
 import { useApp } from "../lib/app";
+import {
+  signaly_vklyucheny,
+  vklyuchit_signaly,
+  vyklyuchit_signaly,
+} from "../lib/signaly";
 import { formatDate, initials } from "../lib/format";
 import { THEMES, type Theme } from "../lib/theme";
 
@@ -79,6 +84,16 @@ export function Profile() {
     } catch (err) {
       setPasswordError(err instanceof ApiError ? err.message : t("error"));
     }
+  };
+
+  // Сигналы о письмах клиентов: настройка браузера, не учётной записи.
+  const [signaly, setSignaly] = useState(signaly_vklyucheny());
+
+  const perekluchit_signaly = async () => {
+    const itog = await vklyuchit_signaly();
+    setSignaly(true);
+    if (itog === "denied") toast(t("tgSignalsDenied"));
+    else if (itog === "unsupported") toast(t("tgSignalsSoundOnly"));
   };
 
   return (
@@ -180,6 +195,41 @@ export function Profile() {
           ))}
         </div>
         <div style={{ color: "var(--faint)", fontSize: 11.5 }}>{t("themeHint")}</div>
+      </div>
+
+      {/* Сигналы о письмах клиентов. Настройка ЭТОГО БРАУЗЕРА, а не учётной
+          записи, и написано об этом прямо: разрешение на всплывающие окна даёт
+          браузер, и оно не переезжает на телефон вместе с логином. Храни мы
+          её на сервере — человек включил бы сигналы на рабочем компьютере и
+          недоумевал, почему дома тихо.
+
+          Разрешение спрашивается ПО НАЖАТИЮ, и это не придирка к порядку:
+          спрошенное при загрузке страницы люди отклоняют не глядя, а
+          отклонённое браузер помнит навсегда — второго раза не будет. */}
+      <div className="card" style={{ padding: "20px 22px", marginBottom: 16 }}>
+        <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 16 }}>{t("tgSignals")}</div>
+        <div style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap" }}>
+          <button
+            type="button"
+            className={"option-chip pick-chip" + (signaly ? " active" : "")}
+            aria-pressed={signaly}
+            onClick={() => void perekluchit_signaly()}
+          >
+            {t("tgSignalsOn")}
+          </button>
+          <button
+            type="button"
+            className={"option-chip pick-chip" + (!signaly ? " active" : "")}
+            aria-pressed={!signaly}
+            onClick={() => {
+              vyklyuchit_signaly();
+              setSignaly(false);
+            }}
+          >
+            {t("tgSignalsOff")}
+          </button>
+        </div>
+        <div style={{ color: "var(--faint)", fontSize: 11.5 }}>{t("tgSignalsHint")}</div>
       </div>
 
       <form className="card" style={{ padding: "20px 22px" }} onSubmit={changePassword}>

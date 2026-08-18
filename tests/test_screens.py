@@ -138,7 +138,7 @@ def test_no_translation_stays_without_a_screen_to_show_it():
     удалить живой перевод.
     """
     dictionary = (SCREENS / "lib" / "i18n.ts").read_text(encoding="utf-8")
-    assert not re.search(r"t\(\s*`", dictionary + _all_screen_code()), (
+    assert not re.search(r"\bt\(\s*`", dictionary + _all_screen_code()), (
         "появился ключ, собранный шаблоном: проверка мёртвых переводов его не видит"
     )
 
@@ -387,6 +387,10 @@ POST_WITHOUT_LATCH: dict[tuple[str, str], str] = {
     ("Telegram.tsx", "/telegram/chats/{}/presence"): (
         "отметка «я смотрю этот чат»: не запись, а срок годности ключа в Redis. "
         "Второе нажатие продлевает ту же отметку в то же самое значение"
+    ),
+    ("Telegram.tsx", "/telegram/chats/{}/read"): (
+        "отметка «я это увидел»: граница прочитанного только растёт, и второй "
+        "вызов с тем же числом не делает ничего. Записи не заводит вовсе"
     ),
     ("Telegram.tsx", "/telegram/chats/{}/messages/{}/fetch"): (
         "забрать видео у телеграма: идемпотентно по устройству — уже забранное "
@@ -769,8 +773,13 @@ def _elements(tag: str):
 
 
 def _named(attrs: str, body: str) -> bool:
-    """Есть ли у кнопки доступное имя: подпись, `aria-label` или `title`."""
+    """Есть ли у кнопки доступное имя: подпись, `aria-label`, `title` или `alt`."""
     if "aria-label" in attrs or "aria-labelledby" in attrs or "title=" in attrs:
+        return True
+    # Ссылка вокруг картинки называется её `alt` — так устроен расчёт
+    # доступного имени, и читалка объявляет именно его. Пустой `alt` не в счёт:
+    # им помечают украшение, которое читать не надо.
+    if re.search(r"<img\b[^>]*\balt=(?:\{[^}]+\}|\"[^\"]+\")", body):
         return True
     inner = re.sub(r"<Icon\b[^>]*/>", "", body)
     inner = re.sub(r"<[^>]*>", "", inner)
@@ -986,4 +995,58 @@ def test_spisok_isklyuchyonnykh_ekranov_ne_protukh():
     assert lishnie == [], (
         "эти экраны уже показывают отказ — исключение им не нужно:\n  "
         + "\n  ".join(lishnie)
+    )
+
+
+def test_lenta_messendzhera_popolnyaetsya_tolko_sliyaniem():
+    """Ни одно `setMessages` не дописывает в список напрямую.
+
+    Одно и то же сообщение приезжает тремя независимыми путями: ответом ручки
+    при отправке, событием шины и дочитыванием после обрыва. Пути обгоняют друг
+    друга, поэтому любой из них рано или поздно привозит то, что уже показано.
+
+    Так и было на живом показе: отправленный файл показывался в переписке
+    дважды. В телеграм он уходил ОДИН раз — то есть задваивался показ, а со
+    стороны это неотличимо от повторной отправки клиенту.
+
+    Чинить порядок присваиваний бессмысленно — он чинится ровно до следующего
+    пути доставки. Лечит только идемпотентность: лента — множество по `id`.
+    Проверка механическая, потому что дописать `[...bylo, stroka]` в четвёртом
+    месте проще, чем вспомнить, почему так нельзя.
+    """
+    text = (SCREENS / "screens" / "Telegram.tsx").read_text(encoding="utf-8")
+
+    vyzovy = re.findall(r"setMessages\((.{0,80})", text, re.S)
+    assert len(vyzovy) >= 5, f"вызовов setMessages разобрано {len(vyzovy)} — смотрим не туда"
+
+    mimo = [v.strip().splitlines()[0] for v in vyzovy if "slit(" not in v]
+    assert not mimo, (
+        "лента пополняется мимо слияния по `id`, и одно сообщение покажется "
+        "дважды:\n  " + "\n  ".join(mimo)
+    )
+
+
+def test_potok_sobytiy_otkryvaetsya_v_odnom_meste():
+    """`new EventSource` живёт ровно в одном модуле.
+
+    Слушателей у потока двое: оболочка приложения — ради сигнала о письме
+    клиента (менеджер сидит в заявках, а не в переписке), и экран мессенджера —
+    ради ленты. Открой каждый своё соединение, и на одну вкладку придётся два
+    живых генератора на сервере, два переподключения после обрыва и два
+    обработчика одного события.
+
+    Проверка механическая, потому что соблазн написать `new EventSource` прямо
+    в экране велик: это на строку короче, а расплата видна только на сервере
+    под нагрузкой.
+    """
+    gde = []
+    for put in sorted(SCREENS.rglob("*.ts*")):
+        if "node_modules" in put.parts:
+            continue
+        text = put.read_text(encoding="utf-8")
+        if "new EventSource" in text:
+            gde.append(put.relative_to(SCREENS).as_posix())
+
+    assert gde == ["lib/tgpotok.ts"], (
+        "поток событий открывается не в одном месте, а в: " + ", ".join(gde)
     )

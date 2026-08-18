@@ -204,6 +204,17 @@ const en = {
   tgOlder: "Show earlier messages",
   tgClient: "Client",
   tgSend: "Send",
+  tgTooBig: "Telegram accepts files up to {max} MB, and this one is {size}.",
+  tgAttach: "Attach a file (up to {max} MB)",
+  tgOpenProfile: "Open profile in Telegram",
+  tgPremium: "Telegram Premium",
+  tgSignals: "Client message alerts",
+  tgSignalsOn: "On",
+  tgSignalsOff: "Off",
+  tgSignalsHint: "A sound and a desktop notification when a client writes to the bot. This browser only — the permission belongs to it, not to your account.",
+  tgSignalsDenied: "Notifications are blocked in this browser — the sound will still play.",
+  tgSignalsSoundOnly: "This browser has no desktop notifications — the sound will still play.",
+  tgCopyChatId: "Copy Telegram ID",
   tgUnread: "Unread",
   tgMakeDeal: "New request",
   tgTemplate: "Template",
@@ -1131,6 +1142,9 @@ const en = {
   finAdjustHint: "The first entry stays as it was: a difference entry is added next to it, and the journal shows both.",
   finAdjustWas: "was {sum}",
   finAccrualReverted: "Reversed with the order",
+  // Выгрузка работ доски. Подпись общая на кнопку архива; у кнопки на самой
+  // работе подписи нет — там значок, и его называет `download` выше.
+  downloadAll: "Download all works",
 };
 
 const ru: typeof en = {
@@ -1307,6 +1321,17 @@ const ru: typeof en = {
   tgOlder: "Показать более ранние",
   tgClient: "Клиент",
   tgSend: "Отправить",
+  tgTooBig: "Телеграм принимает файлы до {max} МБ, а этот — {size}.",
+  tgAttach: "Приложить файл (до {max} МБ)",
+  tgOpenProfile: "Открыть профиль в телеграме",
+  tgPremium: "Телеграм-премиум",
+  tgSignals: "Сигналы о письмах клиентов",
+  tgSignalsOn: "Включены",
+  tgSignalsOff: "Выключены",
+  tgSignalsHint: "Звук и всплывающее окно, когда клиент пишет боту. Только в этом браузере: разрешение принадлежит ему, а не учётной записи.",
+  tgSignalsDenied: "Всплывающие окна запрещены в этом браузере — останется звук.",
+  tgSignalsSoundOnly: "Этот браузер не умеет всплывающих окон — останется звук.",
+  tgCopyChatId: "Скопировать идентификатор телеграма",
   tgUnread: "Непрочитанных",
   tgMakeDeal: "Завести заявку",
   tgTemplate: "Шаблон",
@@ -2228,6 +2253,7 @@ const ru: typeof en = {
   finAdjustHint: "Первая запись остаётся как была: рядом заводится операция на разницу, и в журнале видно обе.",
   finAdjustWas: "было {sum}",
   finAccrualReverted: "Сторнировано вместе с заказом",
+  downloadAll: "Скачать все работы",
 };
 
 const dicts: Record<Locale, typeof en> = { en, ru };

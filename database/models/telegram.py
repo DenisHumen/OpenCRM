@@ -26,7 +26,17 @@
 
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Index, Integer, String, Text, func
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from database.session import Base
@@ -109,6 +119,34 @@ class TelegramChat(Base):
     last_message_at: Mapped[datetime | None] = mapped_column(
         DateTime, nullable=True, index=True
     )
+
+    #: Фотография профиля: путь к забранному файлу относительно хранилища.
+    #:
+    #: Аватар НЕ приходит с сообщением — его спрашивают отдельным вызовом. Отсюда
+    #: и вторая колонка рядом: без отметки «когда спрашивали» мы ходили бы за ним
+    #: на каждый показ списка диалогов, то есть по разу на собеседника каждые
+    #: несколько секунд. Телеграм за такое ограничивает.
+    avatar_path: Mapped[str] = mapped_column(String(255), default="")
+
+    #: Когда СПРАШИВАЛИ у телеграма — не когда получили.
+    #:
+    #: Разница существенная: у многих аватара нет вовсе (не поставили или закрыли
+    #: настройками приватности), и это обычное состояние, а не отказ. Отметка
+    #: ставится в обоих случаях, иначе безаватарный собеседник стоил бы нам
+    #: вызова при каждом обращении.
+    avatar_checked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    #: Есть ли у собеседника премиум телеграма.
+    #:
+    #: Приходит прямо в сообщении (`message.from.is_premium`) и не стоит ни
+    #: одного лишнего вызова — в отличие от именного эмодзи, за которым надо
+    #: идти в `getChat`, потом в `getCustomEmojiStickers`, а рисовать его
+    #: браузер не умеет вовсе (формат TGS — сжатый Lottie).
+    #:
+    #: Снимком, а не расчётом: премиум кончается и продлевается, и значение
+    #: обновляется с каждым сообщением. Между сообщениями оно может врать на
+    #: срок молчания — беда невелика, а вечная правда стоила бы опроса.
+    is_premium: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
 
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 

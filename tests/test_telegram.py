@@ -508,6 +508,10 @@ def test_novoe_soobshchenie_obyavlyaetsya_v_shinu(root_client, bot_nastroen):
         assert uslyshano, "о новом сообщении в шину не объявили"
         assert uslyshano[0]["direction"] == "in"
         assert uslyshano[0]["preview"] == "объяви меня"
+        # Имя собеседника едет в самом событии. Без него уведомление на экране
+        # менеджера говорит «Telegram» и ничего больше: по такому непонятно,
+        # бежать отвечать или это очередной «спасибо».
+        assert uslyshano[0]["title"] == "Пётр", f"в событии нет имени: {uslyshano[0]}"
     finally:
         podpiska.close()
 
@@ -1064,3 +1068,416 @@ def test_svoyo_nazvanie_pobezhdaet_ugadannoe(root_client, bot_nastroen):
     assert otvet.status_code == 201, otvet.text
     assert otvet.json()["title"] == "Замена компрессора"
     assert otvet.json()["client_id"] == klient["id"]
+
+
+# --- предел телеграма на файл ------------------------------------------------
+
+
+def test_predel_telegrama_polveka_ne_menyaetsya():
+    """Пятьдесят мегабайт — предел самого телеграма, а не наша настройка.
+
+    Проверка на число выглядит мелочно ровно до первой правки «а давайте
+    поднимем». Поднять его нельзя: Bot API откажет, файл к клиенту не уйдёт, а
+    человек узнает об этом словами nginx после полной заливки.
+
+    То же число названо в `Telegram.tsx` — браузер бережёт от впустую
+    потраченной заливки, сервер от обхода браузера.
+    """
+    from core.services.telegram_service import MAX_TELEGRAM_FILE
+
+    assert MAX_TELEGRAM_FILE == 50 * 1024 * 1024
+
+
+def test_slishkom_bolshoy_fayl_otvergaetsya_do_otpravki(
+    root_client, bot_nastroen, monkeypatch
+):
+    """Отказ приходит ДО обращения к телеграму и не оставляет следов.
+
+    На живом показе видео уходило целиком и только тогда получало
+    «Request Entity Too Large» — чужими словами, без намёка на предел и на то,
+    что делать. Здесь важны три вещи разом: отказ понятный, телеграм не
+    дёргали, строки «не доставлено» в переписке не осталось. Последнее не
+    придирка: строка означала бы, что менеджер видит в диалоге сообщение,
+    которого клиенту не отправляли и отправить не могли.
+    """
+    from core.services import telegram_service
+
+    _poslat(root_client, bot_nastroen, _obnovlenie(505500, 1, text="привет"))
+    dialog = _dialog(root_client, 505500)
+    bylo = len(root_client.get(f"{TG}/chats/{dialog['id']}/messages").json()["items"])
+
+    zvali = []
+    monkeypatch.setattr(
+        telegram_service,
+        "poslat_fayl",
+        lambda *a, **k: zvali.append(a) or {"message_id": 1},
+    )
+    # Предел двигаем вниз, а не шлём пятьдесят мегабайт: проверяем сторожа, а не
+    # выносливость памяти. Само число проверено соседним тестом.
+    monkeypatch.setattr(telegram_service, "MAX_TELEGRAM_FILE", 16)
+
+    otvet = root_client.post(
+        f"{TG}/chats/{dialog['id']}/files",
+        files={"file": ("otchet.pdf", b"x" * 64, "application/pdf")},
+    )
+    assert otvet.status_code == 422, otvet.text
+    assert otvet.json()["error"]["code"] == "telegram_file_too_large", otvet.text
+    assert "MB" in otvet.json()["error"]["message"], otvet.text
+
+    assert not zvali, "телеграм дёрнули файлом, который заведомо не примут"
+    stalo = root_client.get(f"{TG}/chats/{dialog['id']}/messages").json()["items"]
+    assert len(stalo) == bylo, f"осталась строка о неотправленном: {stalo}"
+
+
+# --- фотография видна в переписке --------------------------------------------
+
+
+def test_fotografiya_otdayotsya_dlya_pokaza_a_dokument_dlya_sohraneniya(
+    root_client, bot_nastroen, monkeypatch
+):
+    """Фото открывается, документ скачивается — по заголовку показа.
+
+    Переписка рисует фотографию картинкой по этой самой ссылке. Стой на ней
+    `attachment`, щелчок по фото начинал бы скачивание вместо просмотра.
+
+    Обратное послабление опаснее: присланный посторонним HTML, показанный с
+    нашего домена, — это чужой скрипт в нашем происхождении. Поэтому `inline`
+    ровно у фотографий, а не у всего, что похоже на картинку.
+    """
+    from core.services import telegram_service
+
+    monkeypatch.setattr(
+        telegram_service, "skachat_fayl", lambda kluch, file_id, opener=None: b"soderzhimoe"
+    )
+
+    telo = _obnovlenie(505600, 1, caption="фото")
+    telo["message"]["photo"] = [{"file_id": "PH-9", "file_size": 2048}]
+    _poslat(root_client, bot_nastroen, telo)
+
+    telo = _obnovlenie(505600, 2, caption="документ")
+    telo["message"]["document"] = {
+        "file_id": "DOC-9",
+        "file_name": "dogovor.pdf",
+        "file_size": 11,
+    }
+    _poslat(root_client, bot_nastroen, telo)
+
+    dialog = _dialog(root_client, 505600)
+    lenta = root_client.get(f"{TG}/chats/{dialog['id']}/messages").json()["items"]
+    po_vidu = {s["kind"]: s["id"] for s in lenta}
+    assert "photo" in po_vidu and "document" in po_vidu, f"не тот разбор: {lenta}"
+
+    foto = root_client.get(
+        f"{TG}/chats/{dialog['id']}/messages/{po_vidu['photo']}/file"
+    )
+    assert foto.status_code == 200, foto.text
+    assert foto.headers["content-disposition"].startswith("inline"), (
+        f"фото отдаётся на скачивание: {foto.headers['content-disposition']}"
+    )
+    # Вид содержимого важен не меньше: заголовок `nosniff` стоит на всём, и с
+    # `text/plain` браузер откажется показывать картинку вовсе.
+    assert foto.headers["content-type"].startswith("image/"), foto.headers["content-type"]
+
+    dok = root_client.get(
+        f"{TG}/chats/{dialog['id']}/messages/{po_vidu['document']}/file"
+    )
+    assert dok.status_code == 200, dok.text
+    assert dok.headers["content-disposition"].startswith("attachment"), (
+        f"документ показывается вместо сохранения: {dok.headers['content-disposition']}"
+    )
+
+
+# --- прочтение у открытого диалога -------------------------------------------
+
+
+def test_dochityvanie_ne_dvigaet_granitsu_a_otmetka_dvigaet(root_client, bot_nastroen):
+    """Разделение сделано нарочно, и обе половины проверяются вместе.
+
+    Дочитывание (`after=`) приносит сообщения в том числе в СВЁРНУТУЮ вкладку —
+    засчитывать их прочитанными нельзя, иначе вернувшийся не увидит, что
+    пропустил. А когда на вкладку смотрят, счётчик у открытого диалога обязан
+    сниматься: иначе менеджер читает сообщение и одновременно видит слева от
+    него «1», снять которую можно только уйдя и вернувшись.
+
+    Различает эти два случая только браузер, поэтому граница двигается
+    отдельной ручкой, а не самим дочитыванием.
+    """
+    _poslat(root_client, bot_nastroen, _obnovlenie(505700, 1, text="первое"))
+    dialog = _dialog(root_client, 505700)
+    lenta = root_client.get(f"{TG}/chats/{dialog['id']}/messages").json()["items"]
+    assert _dialog(root_client, 505700)["unread"] == 0
+
+    _poslat(root_client, bot_nastroen, _obnovlenie(505700, 2, text="второе"))
+    svezhee = root_client.get(
+        f"{TG}/chats/{dialog['id']}/messages?after={lenta[-1]['id']}"
+    ).json()["items"]
+    assert len(svezhee) == 1, f"дочитывание вернуло не то: {svezhee}"
+    assert _dialog(root_client, 505700)["unread"] == 1, (
+        "дочитывание засчитало прочитанным то, чего человек мог не видеть"
+    )
+
+    otvet = root_client.post(
+        f"{TG}/chats/{dialog['id']}/read", json={"up_to": svezhee[-1]["id"]}
+    )
+    assert otvet.status_code == 200, otvet.text
+    assert _dialog(root_client, 505700)["unread"] == 0, "отметка не сняла счётчик"
+
+
+def test_otstavshaya_otmetka_ne_voskreshaet_prochitannoe(root_client, bot_nastroen):
+    """Отметка с меньшим номером границу назад не двигает.
+
+    Запросы приходят не в том порядке, в каком ушли, и отставший «прочитано до
+    пятого» после «до седьмого» вернул бы двум сообщениям вид непрочитанных.
+    Человек пошёл бы смотреть то, что уже читал, — и перестал бы верить
+    счётчику вовсе.
+    """
+    for nomer in range(1, 4):
+        _poslat(root_client, bot_nastroen, _obnovlenie(505800, nomer, text=f"№{nomer}"))
+    dialog = _dialog(root_client, 505800)
+    lenta = root_client.get(f"{TG}/chats/{dialog['id']}/messages").json()["items"]
+    assert _dialog(root_client, 505800)["unread"] == 0
+
+    root_client.post(
+        f"{TG}/chats/{dialog['id']}/read", json={"up_to": lenta[0]["id"]}
+    )
+    assert _dialog(root_client, 505800)["unread"] == 0, (
+        "отставшая отметка сдвинула границу назад"
+    )
+
+
+def test_otmetka_v_chuzhom_dialoge_otvergaetsya(root_client, bot_nastroen):
+    """Несуществующий диалог — отказ, а не тихое «ок».
+
+    Тихое «ок» на неизвестный номер означает ключ в Redis, который никому не
+    принадлежит и не истекает по смыслу, а живёт месяц просто так.
+    """
+    otvet = root_client.post(f"{TG}/chats/999777/read", json={"up_to": 1})
+    assert otvet.status_code == 404, otvet.text
+
+
+# --- аватар собеседника ------------------------------------------------------
+
+
+def _avatar_podstavlen(monkeypatch, snimki, skachano=b"kartinka"):
+    """Подменить разговор с телеграмом и считать обращения."""
+    from core.services import telegram_service
+
+    zvali = []
+
+    def vyzov(kluch, metod, dannye=None, opener=None):
+        zvali.append(metod)
+        if metod == "getUserProfilePhotos":
+            return {"photos": snimki}
+        raise AssertionError(f"неожиданный вызов {metod}")
+
+    monkeypatch.setattr(telegram_service, "_vyzov", vyzov)
+    monkeypatch.setattr(
+        telegram_service,
+        "skachat_fayl",
+        lambda kluch, file_id, opener=None, srok=None: skachano,
+    )
+    return zvali
+
+
+def _zabyt_kogda_sprashivali(chat_row_id: int) -> None:
+    """Состарить отметку: как будто сутки прошли."""
+    from database.repositories import telegram as telegram_repo
+    from database.session import SessionLocal
+
+    with SessionLocal() as db:
+        stroka = telegram_repo.get_chat(db, chat_row_id)
+        stroka.avatar_checked_at = None
+        db.commit()
+
+
+def test_avatar_beryotsya_pri_priyome_i_ne_chashche_raza_v_sutki(
+    root_client, bot_nastroen, monkeypatch
+):
+    """Аватар забирается при входящем сообщении, а второе за сутки не тянет ничего.
+
+    **Почему при приёме, а не при показе.** Ручка показа при первом же открытии
+    списка просит до сотни аватаров разом: соединение к базе держится всё время
+    разговора с телеграмом, пул в десять соединений занимается целиком, и в
+    «QueuePool limit reached» упирается весь CRM, включая проверку здоровья, на
+    которой обновление откатывается. Телеграм на сотню вызовов подряд отвечает
+    429 и придерживает бота — тогда перестают ходить не аватары, а сообщения.
+
+    В приёме частоту ограничивает сама переписка.
+    """
+    zvali = _avatar_podstavlen(
+        monkeypatch, [[{"file_id": "AV-1", "width": 160, "height": 160}]]
+    )
+
+    _poslat(root_client, bot_nastroen, _obnovlenie(508100, 1, text="привет"))
+    assert zvali == ["getUserProfilePhotos"], f"вызовов при первом сообщении: {zvali}"
+
+    dialog = _dialog(root_client, 508100)
+    assert dialog["has_avatar"] is True, "аватар забрали, а признак его не показывает"
+
+    kartinka = root_client.get(f"{TG}/chats/{dialog['id']}/avatar")
+    assert kartinka.status_code == 200, kartinka.text
+    assert kartinka.content == b"kartinka"
+    assert kartinka.headers["content-type"].startswith("image/")
+
+    # Второе сообщение в тех же сутках — ни одного нового обращения.
+    _poslat(root_client, bot_nastroen, _obnovlenie(508100, 2, text="ещё"))
+    assert zvali == ["getUserProfilePhotos"], f"за аватаром сходили повторно: {zvali}"
+
+
+def test_ruchka_avatara_ne_hodit_v_telegram(root_client, bot_nastroen, monkeypatch):
+    """Показ аватара — чтение файла с диска, и ничего больше.
+
+    Сторож на то самое решение: любое обращение к телеграму из этой ручки
+    возвращает первую беду — стадо запросов на открытии списка, занятый пул и
+    429 в ответ.
+    """
+    from core.services import telegram_service
+
+    _avatar_podstavlen(monkeypatch, [[{"file_id": "AV-7", "width": 160, "height": 160}]])
+    _poslat(root_client, bot_nastroen, _obnovlenie(508700, 1, text="привет"))
+    dialog = _dialog(root_client, 508700)
+
+    def nelzya(*a, **k):
+        raise AssertionError("ручка показа пошла в телеграм")
+
+    monkeypatch.setattr(telegram_service, "_vyzov", nelzya)
+    monkeypatch.setattr(telegram_service, "skachat_fayl", nelzya)
+
+    otvet = root_client.get(f"{TG}/chats/{dialog['id']}/avatar")
+    assert otvet.status_code == 200, otvet.text
+    assert otvet.content == b"kartinka"
+
+
+def test_otsutstvie_avatara_ne_zapiraet_dialog_navsegda(
+    root_client, bot_nastroen, monkeypatch
+):
+    """Спросили, не нашли — но завтра спросим снова.
+
+    Самая дорогая ошибка первой редакции пряталась именно здесь. Признак
+    «стоит ли просить картинку» включал в себя «ещё не спрашивали», а забор жил
+    в ручке показа. Стоило один раз не найти аватар — признак становился
+    ложным, экран переставал звать ручку, а звать было ЕДИНСТВЕННЫМ способом
+    обновить. Собеседник, поставивший фотографию назавтра, оставался без лица
+    навсегда, и починить это можно было только правкой строки в базе.
+    """
+    zvali = _avatar_podstavlen(monkeypatch, [])
+
+    _poslat(root_client, bot_nastroen, _obnovlenie(508200, 1, text="привет"))
+    dialog = _dialog(root_client, 508200)
+    assert zvali == ["getUserProfilePhotos"]
+    assert dialog["has_avatar"] is False, "нечего показывать, а признак зовёт за картинкой"
+
+    otkaz = root_client.get(f"{TG}/chats/{dialog['id']}/avatar")
+    assert otkaz.status_code == 404, otkaz.text
+    assert otkaz.json()["error"]["code"] == "telegram_no_avatar"
+
+    # В тех же сутках больше не спрашиваем.
+    _poslat(root_client, bot_nastroen, _obnovlenie(508200, 2, text="ещё"))
+    assert zvali == ["getUserProfilePhotos"], f"спросили повторно в тех же сутках: {zvali}"
+
+    # А назавтра — спрашиваем, и найденное показывается.
+    _zabyt_kogda_sprashivali(dialog["id"])
+    _avatar_podstavlen(monkeypatch, [[{"file_id": "AV-9", "width": 160, "height": 160}]], b"pozdnyaya")
+    _poslat(root_client, bot_nastroen, _obnovlenie(508200, 3, text="поставил фото"))
+
+    assert _dialog(root_client, 508200)["has_avatar"] is True, (
+        "аватар, поставленный позже, не появился — диалог заперт навсегда"
+    )
+    svezhiy = root_client.get(f"{TG}/chats/{dialog['id']}/avatar")
+    assert svezhiy.status_code == 200, svezhiy.text
+    assert svezhiy.content == b"pozdnyaya"
+
+
+def test_otkaz_telegrama_po_avataru_ne_teryaet_soobshchenie(
+    root_client, bot_nastroen, monkeypatch
+):
+    """Телеграм не ответил про аватар — сообщение всё равно принято и записано.
+
+    Аватар — украшение поверх переписки. Уронить из-за него приём значило бы
+    обменять важное на неважное: телеграм счёл бы доставку неудавшейся и начал
+    повторять.
+    """
+    from core.services import telegram_service
+
+    def padaet(kluch, metod, dannye=None, opener=None):
+        raise telegram_service.TelegramOtkaz("телеграм молчит")
+
+    monkeypatch.setattr(telegram_service, "_vyzov", padaet)
+
+    otvet = _poslat(root_client, bot_nastroen, _obnovlenie(508300, 1, text="привет"))
+    assert otvet.status_code == 200, otvet.text
+
+    dialog = _dialog(root_client, 508300)
+    lenta = root_client.get(f"{TG}/chats/{dialog['id']}/messages").json()["items"]
+    assert [s["body"] for s in lenta] == ["привет"], "сообщение потерялось из-за аватара"
+
+
+def test_svezhiy_avatar_zamenyaet_staryy_a_ne_kopitsya(root_client, bot_nastroen, monkeypatch):
+    """Файл аватара один на диалог.
+
+    Случайное имя, как у вложений, означало бы новую копию на диске раз в сутки
+    на каждого собеседника: у полусотни диалогов это восемнадцать тысяч файлов в
+    год, и ни один из них не нужен.
+    """
+    from config.settings import get_settings
+
+    _avatar_podstavlen(monkeypatch, [[{"file_id": "AV-2", "width": 160, "height": 160}]])
+    _poslat(root_client, bot_nastroen, _obnovlenie(508400, 1, text="привет"))
+    dialog = _dialog(root_client, 508400)
+
+    katalog = get_settings().storage_dir / "telegram" / "508400"
+    assert [p.name for p in katalog.iterdir()] == ["avatar.jpg"], (
+        f"в каталоге диалога лишние файлы: {[p.name for p in katalog.iterdir()]}"
+    )
+
+    _zabyt_kogda_sprashivali(dialog["id"])
+    _avatar_podstavlen(monkeypatch, [[{"file_id": "AV-3", "width": 160, "height": 160}]], b"novaya")
+    _poslat(root_client, bot_nastroen, _obnovlenie(508400, 2, text="сменил фото"))
+
+    assert [p.name for p in katalog.iterdir()] == ["avatar.jpg"], "аватары копятся на диске"
+    svezhiy = root_client.get(f"{TG}/chats/{dialog['id']}/avatar")
+    assert svezhiy.content == b"novaya", "показывается старый аватар вместо нового"
+
+
+def test_nomera_chatov_u_proverok_ne_peresekayutsya():
+    """Один номер телеграм-чата — одна проверка. Иначе они молча портят друг друга.
+
+    База у набора одна на весь прогон, и диалог, заведённый соседней проверкой,
+    остаётся. Хуже того: `prinyat` защищён от повторной доставки по паре
+    «диалог + номер сообщения», и вторая проверка с тем же номером чата и тем же
+    `message_id` получает не свои данные, а тихое «duplicate» — её собственное
+    сообщение НЕ записывается вовсе.
+
+    Так и вышло с проверками аватара: поодиночке зелёные, в полном наборе
+    красные, потому что номера 506100–506300 уже заняты отбором по метке
+    источника. Разбирать такое приходится по вычитанию, поэтому проверка
+    механическая.
+    """
+    import pathlib
+    import re
+
+    text = pathlib.Path(__file__).read_text(encoding="utf-8")
+
+    # Разбираем файл на проверки и смотрим, какие номера чатов каждая занимает.
+    kuski = re.split(r"\ndef (test_\w+)", text)
+    zanyato: dict[str, set[str]] = {}
+    for i in range(1, len(kuski), 2):
+        imya, telo = kuski[i], kuski[i + 1]
+        nomera = set(re.findall(r"_obnovlenie\((\d{5,})", telo))
+        nomera |= set(re.findall(r"_dialog\(root_client, (\d{5,})", telo))
+        if nomera:
+            zanyato[imya] = nomera
+
+    assert len(zanyato) >= 10, f"проверок с номерами разобрано {len(zanyato)} — смотрим не туда"
+
+    chey: dict[str, list[str]] = {}
+    for imya, nomera in zanyato.items():
+        for nomer in nomera:
+            chey.setdefault(nomer, []).append(imya)
+
+    delyat = {n: sorted(kto) for n, kto in chey.items() if len(kto) > 1}
+    assert not delyat, (
+        "один номер чата занят несколькими проверками — они будут портить друг "
+        "друга в полном наборе:\n  "
+        + "\n  ".join(f"{n}: {', '.join(kto)}" for n, kto in sorted(delyat.items()))
+    )

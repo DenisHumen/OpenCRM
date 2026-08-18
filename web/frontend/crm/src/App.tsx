@@ -7,6 +7,12 @@ import { Sidebar } from "./components/Sidebar";
 import { ScreenLoading, Toasts } from "./components/ui";
 import { useApp } from "./lib/app";
 import { moduleOn } from "./lib/modules";
+import { podpisatsya } from "./lib/tgpotok";
+import {
+  chat_na_vidu,
+  nachat_vybory,
+  signal_o_soobshchenii,
+} from "./lib/signaly";
 import { can } from "./lib/permissions";
 import { Audit } from "./screens/Audit";
 import { AuthScreen, ForcePasswordChange } from "./screens/Auth";
@@ -85,6 +91,7 @@ function Protected() {
     // (сайдбар и содержимое), и любой её ребёнок становится ещё одной колонкой.
     <>
       <MaintenanceBar />
+      <SignalyTelegrama />
       <div className="app-shell">
         <Sidebar open={navOpen} onOpenSearch={() => setSearchOpen(true)} />
         {navOpen && (
@@ -177,6 +184,38 @@ function PermRoute({ perm }: { perm: string }) {
   const { user } = useApp();
   if (!can(user, perm)) return <Navigate to="/" replace />;
   return <Outlet />;
+}
+
+/**
+ * Сигналы о письмах клиентов — на уровне оболочки, а не экрана мессенджера.
+ *
+ * Иначе уведомление получал бы ровно тот, кто и так смотрит в переписку.
+ * Менеджер работает в заявках, и услышать он должен оттуда.
+ *
+ * Соединение общее (`lib/tgpotok`): экран мессенджера подписывается на тот же
+ * источник, а не открывает второй.
+ */
+function SignalyTelegrama() {
+  const { modules, user } = useApp();
+  const dostupen = moduleOn(modules, "telegram") && can(user, "telegram.view");
+
+  useEffect(() => {
+    if (!dostupen) return;
+    // Выборы «сигналящей» вкладки начинаем сразу: замок достаётся первой
+    // открытой, а не той, где успели нажать кнопку.
+    nachat_vybory();
+    return podpisatsya((sobytie) => {
+      if (sobytie.type !== "message" || sobytie.direction !== "in") return;
+      if (sobytie.chat_id == null) return;
+      signal_o_soobshchenii({
+        zagolovok: sobytie.title || "Telegram",
+        telo: sobytie.preview || "",
+        na_vidu: chat_na_vidu(sobytie.chat_id),
+      });
+    });
+  }, [dostupen]);
+
+  return null;
 }
 
 export default function App() {

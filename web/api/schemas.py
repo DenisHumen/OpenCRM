@@ -629,6 +629,15 @@ def work_out(work: Work, public: bool = False) -> dict:
         "media": media_service.work_media_urls(work) if work.status == "ready" else None,
         # кандидаты по ширине для плитки витрины (см. media_service.work_srcset)
         "srcset": media_service.work_srcset(work) if work.status == "ready" else "",
+        # Откуда сотруднику забрать ИСХОДНИК. Ссылка отдаётся у любой работы, в
+        # том числе необработанной: исходник ложится на диск при загрузке, а
+        # `ready` говорит лишь о превью — и работа, у которой обработка
+        # отвалилась, как раз та, которую иначе не забрать никак.
+        #
+        # На витрину не попадает: ниже стоит список РАЗРЕШЁННОГО, и новое поле
+        # само по себе наружу не уходит. Это ровно тот случай, ради которого
+        # список и заведён.
+        "download_url": f"/api/v1/boards/{work.board_id}/works/{work.id}/download",
     }
     if not public:
         return visible

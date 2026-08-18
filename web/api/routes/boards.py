@@ -1,8 +1,11 @@
+from urllib.parse import quote
+
 from fastapi import APIRouter, BackgroundTasks, Depends, Query, UploadFile
+from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.orm import Session
 
 from core import exceptions as errors
-from core.services import board_service, share_service
+from core.services import board_service, media_service, share_service
 from database.models import User
 from database.repositories import boards as boards_repo
 from database.repositories import shares as shares_repo
@@ -122,6 +125,79 @@ def get_work(
     if work is None:
         raise errors.NotFoundError("Work not found", code="work_not_found")
     return schemas.work_out(work)
+
+
+@router.get("/{board_id}/works/{work_id}/download")
+def download_work(
+    board_id: int,
+    work_id: int,
+    _: User = Depends(require_perm("boards", "view")),
+    db: Session = Depends(get_db),
+):
+    """Отдать сотруднику ИСХОДНИК работы — тот файл, который загрузили.
+
+    Правом на просмотр, и это решение, а не недосмотр: разбор — в шапке раздела
+    «выгрузка исходников» в `core/services/board_service.py`. Коротко: тот, кому
+    доска открыта, уже видит работу в полном размере, и «скачать» здесь означает
+    «взять то же самое файлом», а не новое полномочие.
+
+    Клиенту витрины эта ручка недоступна: у него нет сессии CRM, а публичная
+    часть исходников не отдаёт вовсе (`media_service.PUBLIC_FILENAMES`).
+    """
+    put, work = board_service.fayl_raboty(db, board_id, work_id)
+    return FileResponse(
+        put,
+        filename=board_service.imya_dlya_sohraneniya(work, put),
+        media_type=work.mime or "application/octet-stream",
+        # `attachment` у всего без исключений — в отличие от вложений переписки,
+        # где фотографию показывают по этой же ссылке. Здесь показывать нечем и
+        # незачем: картинку рисует витрина, а сюда приходят именно за файлом. И
+        # это разом снимает вопрос с SVG: скрипт внутри него (санитайзинг —
+        # второй рубеж, а не первый) не выполнится, потому что документ не
+        # откроется вовсе.
+        content_disposition_type="attachment",
+        headers={
+            "X-Content-Type-Options": "nosniff",
+            # Не кэшировать: право могут отобрать, доску — удалить, а исходник
+            # из кэша браузера пережил бы и то, и другое.
+            "Cache-Control": "private, no-store",
+        },
+    )
+
+
+@router.get("/{board_id}/download")
+def download_board(
+    board_id: int,
+    _: User = Depends(require_perm("boards", "view")),
+    db: Session = Depends(get_db),
+):
+    """Все исходники доски одним архивом.
+
+    **Список файлов собирается ЗДЕСЬ, а отдача идёт потоком уже без базы.**
+    Иначе никак: сессия закрывается до того, как уйдёт тело ответа
+    (`web/api/deps.py`, `scope="function"`), и генератор, полезший бы в неё за
+    следующей работой, обратился бы к закрытой сессии. Заодно это ставит все
+    отказы — нет доски, нет файлов — на своё место: до первого байта, пока их
+    ещё можно превратить в честный ответ, а не в оборванную загрузку.
+    """
+    imya, fayly = board_service.fayly_doski(db, board_id)
+    return StreamingResponse(
+        media_service.potok_zip(fayly),
+        media_type="application/zip",
+        headers={
+            # Имя собираем руками: у `StreamingResponse`, в отличие от
+            # `FileResponse`, поля `filename` нет. Две записи в заголовке — не
+            # избыточность: `filename*` несёт настоящее имя (название доски
+            # бывает и русским), а простой `filename` остаётся тому, кто
+            # RFC 5987 не понимает, и он обязан быть из одних ASCII-знаков.
+            "Content-Disposition": (
+                f'attachment; filename="board-{board_id}.zip"; '
+                f"filename*=utf-8''{quote(imya)}"
+            ),
+            "X-Content-Type-Options": "nosniff",
+            "Cache-Control": "private, no-store",
+        },
+    )
 
 
 @router.patch("/{board_id}/works/{work_id}")

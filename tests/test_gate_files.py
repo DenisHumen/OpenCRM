@@ -168,3 +168,45 @@ def test_etap_testov_kopiruet_vse_storozhevye_fayly():
         "этап tests в docker/Dockerfile не копирует файлы, от наличия которых "
         "зависят целые файлы проверок: " + "; ".join(ne_edut)
     )
+
+
+def test_v_ishodnikah_net_upravlyayushchih_simvolov():
+    """Забой и его родня в исходнике — это молчащая проверка.
+
+    Скрипты правок уезжают в проект через обёртку оболочки, а она съедает
+    `\\b`, оставляя в файле НАСТОЯЩИЙ символ забоя (0x08). В исходнике его не
+    видно ничем: и редактор, и `grep`, и просмотр в отладчике показывают строку
+    как ни в чём не бывало. А регексп при этом ищет забой — то есть не находит
+    ничего и НИКОГДА не краснеет.
+
+    Так уже было дважды. Один раз незаметно: сторож на подписи, собранные
+    шаблонной строкой, искал `\\bt(` и с какого-то момента искал забой. Сколько
+    он молчал, установить нельзя — молчащий сторож неотличим от довольного.
+
+    Отсюда механическая проверка на весь исходник. Разрешены ровно перевод
+    строки, возврат каретки и табуляция; всё прочее из области C0 в тексте
+    программы означает, что файл проехал через что-то, чего не задумывали.
+    """
+    razresheno = {"\n", "\r", "\t"}
+    bedy = []
+    for koren in ("tests", "core", "web/api", "web/public", "database", "scripts", "deploy"):
+        for put in sorted((KOREN / koren).rglob("*")):
+            if put.suffix not in (".py", ".ts", ".tsx", ".css", ".sh", ".yml", ".md"):
+                continue
+            if not put.is_file() or "node_modules" in put.parts:
+                continue
+            try:
+                soderzhimoe = put.read_text(encoding="utf-8")
+            except (UnicodeDecodeError, OSError):
+                continue
+            for nomer, stroka in enumerate(soderzhimoe.splitlines(), 1):
+                plohie = {s for s in stroka if ord(s) < 32 and s not in razresheno}
+                if plohie:
+                    imena = ", ".join(f"0x{ord(s):02x}" for s in sorted(plohie))
+                    bedy.append(f"{put.relative_to(KOREN)}:{nomer} — {imena}")
+
+    assert not bedy, (
+        "в исходниках управляющие символы; вероятнее всего это съеденный "
+        "оболочкой `\\b`, и сторож с ним ищет забой вместо границы слова:\n  "
+        + "\n  ".join(bedy)
+    )

@@ -1,5 +1,11 @@
+import io
+import zipfile
+
+from fastapi.testclient import TestClient
+
 from config.settings import get_settings
 from tests.conftest import API, png_bytes
+from web.main import app
 
 
 def _board(client, title="Логотипы для кофеен"):
@@ -316,3 +322,212 @@ def test_obychnyy_snimok_s_kamery_prohodit(manager_client):
         files={"file": ("foto.jpg", snimok.getvalue(), "image/jpeg")},
     )
     assert otvet.status_code == 202, f"обычный снимок отвергнут: {otvet.text[:200]}"
+
+
+# --- выгрузка исходников -----------------------------------------------------
+#
+# Наружу с доски уходят только производные: WebP по длинной стороне, постер
+# видео, размытый след. Исходник закрыт списком разрешённых имён и не отдавался
+# никому — в том числе тому, кто его сюда и загрузил. Проверки ниже стерегут обе
+# половины правки: сотрудник исходник забирает, клиент витрины — нет.
+
+
+def test_sotrudnik_zabiraet_ishodnik_raboty(manager_client):
+    """Менеджер скачивает ровно тот файл, который загрузили, — байт в байт.
+
+    Без этого исходника в системе не достать вовсе: на витрину уходит сжатая
+    производная в WebP, а оригинал лежит в каталоге работ под служебным именем и
+    закрыт списком `media_service.PUBLIC_FILENAMES`. Верни ручка производную —
+    беда была бы тихой: файл скачивается, открывается, выглядит похоже, а в
+    печать не годится, и узнают об этом в типографии.
+    """
+    ishodnik = png_bytes(color=(12, 34, 56))
+    doska = _board(manager_client, "Доска для выгрузки")
+    rabota = manager_client.post(
+        f"{API}/boards/{doska['id']}/works",
+        files={"file": ("logo.png", ishodnik, "image/png")},
+    ).json()
+
+    skachano = manager_client.get(
+        f"{API}/boards/{doska['id']}/works/{rabota['id']}/download"
+    )
+    assert skachano.status_code == 200, skachano.text
+    assert skachano.content == ishodnik, "отдали не исходник, а что-то другое"
+    # Именно СОХРАНИТЬ, а не показать: иначе браузер откроет файл вкладкой, и
+    # кнопка «скачать» перестанет скачивать.
+    raspolozhenie = skachano.headers["content-disposition"]
+    assert raspolozhenie.startswith("attachment"), raspolozhenie
+    assert "logo.png" in raspolozhenie, raspolozhenie
+
+
+def test_ishodnik_sohranyaetsya_s_nastoyashchim_rasshireniem(manager_client):
+    """Имя для сохранения несёт расширение НАСТОЯЩЕГО файла, а не прежнее.
+
+    Вид файла определяется по сигнатуре, а расширению не верят: JPEG, присланный
+    под именем «foto.png», лежит у нас как `original.jpg`. Отдай мы его под
+    прежним именем — человек получит файл, который не открывается двойным
+    щелчком, и решит, что скачивание сломано.
+    """
+    snimok = io.BytesIO()
+    from PIL import Image as _Image
+
+    _Image.new("RGB", (120, 90), (200, 40, 40)).save(snimok, "JPEG", quality=80)
+
+    doska = _board(manager_client, "Доска с чужим расширением")
+    rabota = manager_client.post(
+        f"{API}/boards/{doska['id']}/works",
+        files={"file": ("foto.png", snimok.getvalue(), "image/jpeg")},
+    ).json()
+
+    skachano = manager_client.get(
+        f"{API}/boards/{doska['id']}/works/{rabota['id']}/download"
+    )
+    assert skachano.status_code == 200, skachano.text
+    raspolozhenie = skachano.headers["content-disposition"]
+    assert "foto.jpg" in raspolozhenie, raspolozhenie
+
+
+def test_skachivanie_ne_vydayot_rabotu_chuzhoy_doski(manager_client):
+    """Работа обязана принадлежать НАЗВАННОЙ доске, иначе «нет такого».
+
+    Номер работы стоит в адресе рядом с номером доски, и подставить чужой —
+    первое, что приходит в голову. Без проверки принадлежности сотрудник (а с
+    ним и всякий, кто однажды получил право на доски) забирал бы исходники
+    любого клиента, зная только счётчик. Ровно этой проверки не хватало по всей
+    отрасли в целом классе мест, отдающих файлы по паре номеров.
+    """
+    svoya = _board(manager_client, "Своя доска")
+    chuzhaya = _board(manager_client, "Чужая доска")
+    chuzhaya_rabota = _upload_png(manager_client, chuzhaya["id"], "secret.png")
+
+    podmena = manager_client.get(
+        f"{API}/boards/{svoya['id']}/works/{chuzhaya_rabota['id']}/download"
+    )
+    assert podmena.status_code == 404, podmena.text
+    # И сама работа при этом жива — отказ именно про принадлежность.
+    assert (
+        manager_client.get(
+            f"{API}/boards/{chuzhaya['id']}/works/{chuzhaya_rabota['id']}/download"
+        ).status_code
+        == 200
+    )
+
+
+def test_klient_vitriny_skachat_ishodnik_ne_mozhet(manager_client):
+    """Витрина остаётся витриной: смотреть — да, забирать исходники — нет.
+
+    Клиент открывает доску по внешней ссылке и получает страницу с
+    производными. Исходник — файл в печатном качестве, часто с внутренним
+    именем в придачу; отдавать его тому, кому показали подборку, никто не
+    собирался. Проверка стережёт три двери сразу: обе ручки выгрузки и сама
+    публичная выдача, из которой адрес скачивания не должен даже быть виден.
+    """
+    doska = _board(manager_client, "Витрина без выгрузки")
+    rabota = _upload_png(manager_client, doska["id"], "Иванов_исходник.png")
+    manager_client.patch(f"{API}/boards/{doska['id']}", json={"is_published": True})
+    ssylka = manager_client.post(
+        f"{API}/boards/{doska['id']}/shares", json={"pin": "4821"}
+    ).json()
+
+    gost = TestClient(app)
+    voshyol = gost.post(
+        f"/b/{ssylka['token']}/pin", data={"pin": "4821"}, follow_redirects=False
+    )
+    assert voshyol.status_code in (302, 303), voshyol.text
+    # Пропуск настоящий: страницу гость видит, и отказы ниже — про выгрузку, а
+    # не про то, что гость никуда не вошёл.
+    stranitsa = gost.get(f"/b/{ssylka['token']}")
+    assert stranitsa.status_code == 200
+
+    odna = gost.get(f"{API}/boards/{doska['id']}/works/{rabota['id']}/download")
+    assert odna.status_code == 401, odna.text
+    vse = gost.get(f"{API}/boards/{doska['id']}/download")
+    assert vse.status_code == 401, vse.text
+
+    # Адреса выгрузки нет и в том, что уходит клиенту: ни в странице, ни в
+    # выдаче. Иначе кнопку «скачать» дорисовал бы кто угодно — а отказ выше
+    # обещает лишь то, что она не сработает.
+    assert "/download" not in stranitsa.text
+    dannye = gost.get(f"/b/{ssylka['token']}/data").json()
+    for work in dannye["works"]:
+        assert "download_url" not in work, work.keys()
+
+
+def test_arhiv_doski_sobiraet_vse_ishodniki(manager_client):
+    """«Скачать все» отдаёт целый архив исходников — в порядке доски.
+
+    Доска это НАБОР, и сдают её набором: щёлкать по каждой из тридцати работ —
+    тридцать щелчков и тридцать строк в «Загрузках». Порядок держат номера в
+    именах: распаковщик раскладывает файлы по алфавиту, а он у имён свой, — и
+    они же разводят совпадающие имена, иначе две работы, загруженные как
+    `logo.png`, столкнулись бы в одном архиве.
+    """
+    doska = _board(manager_client, "Доска на выгрузку архивом")
+    pervaya = png_bytes(color=(10, 10, 200))
+    vtoraya = png_bytes(color=(200, 10, 10))
+    manager_client.post(
+        f"{API}/boards/{doska['id']}/works",
+        files={"file": ("logo.png", pervaya, "image/png")},
+    )
+    manager_client.post(
+        f"{API}/boards/{doska['id']}/works",
+        files={"file": ("logo.png", vtoraya, "image/png")},
+    )
+
+    otvet = manager_client.get(f"{API}/boards/{doska['id']}/download")
+    assert otvet.status_code == 200, otvet.text
+    assert otvet.headers["content-type"] == "application/zip"
+    assert otvet.headers["content-disposition"].startswith("attachment")
+
+    arhiv = zipfile.ZipFile(io.BytesIO(otvet.content))
+    assert arhiv.testzip() is None, "архив собран битым"
+    imena = arhiv.namelist()
+    assert imena == ["01 logo.png", "02 logo.png"], imena
+    assert arhiv.read(imena[0]) == pervaya
+    assert arhiv.read(imena[1]) == vtoraya
+
+
+def test_arhiv_pustoy_doski_otkazyvaet_ponyatno(manager_client):
+    """У доски без работ архива нет — и отказ обязан это назвать.
+
+    Пустой zip выглядел бы как успешная выгрузка: файл скачался, а внутри
+    ничего. Человек решит, что пропали работы, а не что доска пуста.
+    """
+    doska = _board(manager_client, "Совсем пустая доска")
+    otvet = manager_client.get(f"{API}/boards/{doska['id']}/download")
+    assert otvet.status_code == 422, otvet.text
+    assert otvet.json()["error"]["code"] == "board_has_no_files"
+
+
+def test_arhiv_idyot_potokom_a_ne_sobiraetsya_v_pamyati(tmp_path):
+    """Архив уходит кусками, а не появляется в памяти целиком.
+
+    Довод замерен в самом `media_service`: у службы приложения нет `mem_limit`,
+    на машине два гигабайта на всё вместе с MySQL, а жертву при нехватке
+    выбирает ядро по наибольшему RSS — то есть базу. Доска на три десятка
+    снимков это полтора гигабайта исходников, и собери мы такой архив в
+    `BytesIO`, одна кнопка «скачать все» роняла бы сайт.
+
+    Проверяем свойство, а не устройство: первый кусок обязан прийти РАНЬШЕ, чем
+    прочитан весь архив. Перепиши кто-нибудь сборку через `BytesIO` — первый же
+    кусок окажется размером со всё, и проверка покраснеет.
+    """
+    from core.services import media_service
+
+    krupnyy = bytes(1024 * 1024)  # мегабайт на файл
+    fayly = []
+    for imya in ("a.bin", "b.bin"):
+        put = tmp_path / imya
+        put.write_bytes(krupnyy)
+        fayly.append((put, imya))
+
+    potok = media_service.potok_zip(fayly)
+    pervyy = next(potok)
+    assert len(pervyy) < len(krupnyy), (
+        f"первым куском пришло {len(pervyy)} байт — архив собрался целиком до отдачи"
+    )
+
+    sobrano = pervyy + b"".join(potok)
+    arhiv = zipfile.ZipFile(io.BytesIO(sobrano))
+    assert arhiv.namelist() == ["a.bin", "b.bin"]
+    assert arhiv.read("b.bin") == krupnyy
