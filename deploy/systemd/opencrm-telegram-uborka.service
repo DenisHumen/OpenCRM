@@ -1,0 +1,16 @@
+[Unit]
+Description=OpenCRM: уборка старой переписки телеграма
+Documentation=https://github.com/DenisHumen/OpenCRM/blob/main/docs/13-telegram-messenger.md
+# Задание ничего не делает, пока владелец не назвал срок хранения: умолчание —
+# хранить вечно. Включённое, оно удаляет пачками и в отпущенное время, потому
+# что telegram_messages — самая большая таблица системы.
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=studio
+WorkingDirectory=/opt/OpenCRM
+ExecStart=/opt/OpenCRM/opencrm.sh tg-uborka
+StandardOutput=journal
+StandardError=journal
