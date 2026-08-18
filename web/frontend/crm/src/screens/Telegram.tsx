@@ -113,6 +113,28 @@ function slit(bylo: TgMessage[], novye: TgMessage[]): TgMessage[] {
   return [...po_id.values()].sort((a, b) => a.id - b.id);
 }
 
+/**
+ * Есть ли что переносить из телеграма в уже заведённую карточку.
+ *
+ * Условие ровно то же, по которому переносит сервер: непустое в телеграме
+ * против пустого в карточке. Разойдись они — кнопка либо не появлялась бы там,
+ * где перенос сработал бы, либо появлялась там, где ей нечего делать, и нажатие
+ * отвечало бы бодрым «готово», ничего не изменив.
+ *
+ * Имени здесь нет намеренно, и это не пропуск. Имя карточки обязательно и
+ * пустым не бывает — значит правило «не затирать непустое» не пропустит его
+ * никогда. Свежее имя из телеграма при этом никуда не девается: оно стоит в
+ * шапке того же разговора, рядом с именем карточки.
+ */
+function est_chto_perenesti(chat: TgChat, kartochka: any): boolean {
+  if (!kartochka) return false;
+  return (
+    (!!chat.phone && !kartochka.phone) ||
+    (!!chat.username && !kartochka.messenger) ||
+    (!!chat.source && !kartochka.source)
+  );
+}
+
 export function Telegram() {
   const { t, locale, toast, toastError, user, modules } = useApp();
   const [chats, setChats] = useState<TgChat[] | null>(null);
@@ -167,6 +189,11 @@ export function Telegram() {
    */
   const [delo, setDelo] = useState<any>(null);
   const [deloIdyot, setDeloIdyot] = useState(false);
+  // Свой засов у панели дела, отдельно от засова отправки. Разделены не ради
+  // порядка: общий засов означал бы, что заведение карточки на секунду гасит
+  // кнопку «отправить», то есть действие с карточкой мешает отвечать клиенту.
+  // Имя со словом `Guard` — сторож `test_screens.py` ищет засов по имени.
+  const kartochkaGuard = useGuard();
   const stages = useReference<any>("/pipeline/stages");
   // Справочник клиентов для ручной привязки. Через общий крючок, как в
   // редакторе доски: отказ здесь не должен выглядеть как «клиентов нет».
@@ -475,6 +502,58 @@ export function Telegram() {
       );
     } catch (beda) {
       toastError(beda);
+    }
+  };
+
+  /** Завести карточку клиента прямо отсюда — и сразу привязать к ней диалог.
+   *
+   * Ради одного нажатия. До этой кнопки менеджер, которому написал незнакомый
+   * человек, уходил в раздел клиентов, заводил карточку руками, возвращался и
+   * выбирал её в списке — три перехода посреди разговора. Столько не делают: в
+   * лучшем случае откладывают на «потом», которое не наступает.
+   *
+   * Ничего не спрашиваем перед отправкой: всё, что нужно, уже знает диалог.
+   * Форма посреди разговора вернула бы нас к переносу руками.
+   */
+  const zavesti_kartochku = async () => {
+    if (vybran == null) return;
+    if (!kartochkaGuard.take()) return;
+    try {
+      const itog = await api.post<any>(`/telegram/chats/${vybran}/client`, {});
+      // Заведение и привязка к уже существующей — разные вести, и молчать про
+      // разницу нельзя: во втором случае человек обязан знать, что карточка не
+      // новая и в ней уже есть история.
+      toast(`${t(itog.created ? "tgClientMade" : "tgClientLinked")}: ${itog.name}`);
+      // Перечитываем список, а не правим состояние руками. Привязка живёт в
+      // строке диалога, из неё берётся `klient_id`, из него — само дело.
+      // Одного запроса хватает на всю цепочку.
+      await zagruzit_chats();
+    } catch (beda) {
+      toastError(beda);
+    } finally {
+      kartochkaGuard.free();
+    }
+  };
+
+  /** Перенести в карточку то, что телеграм узнал о человеке позже.
+   *
+   * Заполняется только пустое: непустое поле карточки могли внести руками, и
+   * оно точнее самоназвания в телеграме. Разбор — в `core/services/telegram_service.py`.
+   */
+  const obnovit_kartochku = async () => {
+    if (vybran == null) return;
+    if (!kartochkaGuard.take()) return;
+    try {
+      const svezhaya = await api.post<any>(`/telegram/chats/${vybran}/client/refresh`, {});
+      // Сливаем поверх, а не подменяем целиком: ручка отвечает карточкой, а в
+      // `delo` рядом с ней лежат заявки, остатки и валюта, которых у неё нет.
+      // Подмена стёрла бы врезку заявок до следующего открытия диалога.
+      setDelo((bylo: any) => ({ ...(bylo || {}), ...svezhaya }));
+      toast(t("tgClientRefreshed"));
+    } catch (beda) {
+      toastError(beda);
+    } finally {
+      kartochkaGuard.free();
     }
   };
 
@@ -1202,13 +1281,34 @@ export function Telegram() {
       </section>
 
       {/*
-        Третья колонка появляется только у привязанного диалога и только у
-        того, кому клиенты видны. Пустая колонка «здесь могло быть дело»
-        отнимала бы место у переписки, ради которой экран и открыт.
+        Третья колонка появляется у того, кому клиенты видны, — и у
+        непривязанного диалога тоже. Прежде она ждала привязки, и довод был
+        честный: пустая колонка «здесь могло быть дело» отнимает место у
+        переписки. Но именно у непривязанного диалога и есть что предложить —
+        завести карточку одним нажатием, — а место для этого предложения нужно
+        ровно там, где потом появится сама карточка.
       */}
-      {otkrytyy !== null && klient_id != null && vidno_klientov && (
+      {otkrytyy !== null && vidno_klientov && (
         <aside className="tg-delo">
-          {delo === null ? (
+          {klient_id == null ? (
+            <>
+              <div className="tg-delo-pusto">{t("tgNoCard")}</div>
+              {/*
+                Прячем от того, кому сервер откажет: правило `lib/permissions.ts`.
+                Кнопка, отвечающая отказом, хуже её отсутствия — она обещает.
+              */}
+              {can(user, "clients.create") && (
+                <button
+                  type="button"
+                  className="tg-delo-knopka"
+                  onClick={() => void zavesti_kartochku()}
+                  disabled={kartochkaGuard.busy}
+                >
+                  {t("tgMakeClient")}
+                </button>
+              )}
+            </>
+          ) : delo === null ? (
             <div className="tg-delo-pusto">{deloIdyot ? t("loading") : t("loadFailed")}</div>
           ) : (
             <>
@@ -1233,6 +1333,24 @@ export function Telegram() {
                   </div>
                 )}
               </div>
+
+              {/*
+                Кнопка появляется только тогда, когда переносить есть что:
+                клиент поделился номером, а в карточке его нет; завёл логин, а в
+                карточке пусто. Висеть постоянно ей нельзя — нажатие, которое
+                девять раз из десяти ничего не меняет, перестают замечать, и
+                десятый раз тоже.
+              */}
+              {can(user, "clients.edit") && est_chto_perenesti(otkrytyy, delo) && (
+                <button
+                  type="button"
+                  className="tg-delo-knopka"
+                  onClick={() => void obnovit_kartochku()}
+                  disabled={kartochkaGuard.busy}
+                >
+                  {t("tgClientRefresh")}
+                </button>
+              )}
 
               <div className="tg-delo-title">{t("deals")}</div>
               {(delo.deals ?? []).length === 0 ? (
