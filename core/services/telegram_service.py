@@ -668,14 +668,23 @@ def prinyat(db: Session, obnovlenie: dict, opener=None) -> dict:
         return {"status": "duplicate", "chat_id": dialog.id}
 
     # Клиент поделился номером кнопкой — единственная точная привязка.
+    #
+    # Номер записывается в диалог ВСЕГДА, даже если карточка уже привязана: это
+    # факт о собеседнике, а не способ его найти. Прежде разбор стоял целиком
+    # под условием «карточки ещё нет», и у привязанного диалога телефон не
+    # появлялся никогда — а именно им и хотят потом дополнить карточку.
     kontakt = soobshchenie.get("contact") or {}
-    if kontakt.get("phone_number") and not dialog.client_id:
+    if kontakt.get("phone_number"):
         nomer = str(kontakt["phone_number"])
         dialog.phone = nomer[:64]
         dialog.phone_norm = normalize_phone(nomer, _kod_strany(db))[:32]
-        klient = telegram_repo.find_client_by_phone(db, dialog.phone_norm)
-        if klient is not None:
-            dialog.client_id = klient.id
+        # А вот ПРИВЯЗКА по номеру — только у непривязанного. Иначе поделившийся
+        # чужим контактом (кнопка отдаёт любой из адресной книги) уводил бы
+        # разговор на чужую карточку.
+        if not dialog.client_id:
+            klient = telegram_repo.find_client_by_phone(db, dialog.phone_norm)
+            if klient is not None:
+                dialog.client_id = klient.id
 
     tekst = str(soobshchenie.get("text") or soobshchenie.get("caption") or "")
 
