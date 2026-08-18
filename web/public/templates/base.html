@@ -50,8 +50,46 @@
     --danger: #E5695E;
     --success: #4CAF6E;
     --lightbox: #0E0D0C;
+    /* Ползунок прокрутки. Имена те же, что в CRM (`styles.css`): полоса —
+       одна и та же вещь в обоих местах, и разные имена у неё означали бы, что
+       следующий раз её перекрасят только в одном. */
+    --scroll-thumb: #35332F;
+    --scroll-thumb-hover: #4E4B45;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  /*
+   * Полоса прокрутки — своя, а не системная.
+   *
+   * Страница тёмная, а системная полоса в Windows светлая: белый жёлоб во всю
+   * высоту у правого края. Заметнее всего это в просмотрщике работ, где вокруг
+   * почти чёрный фон, — там она читается как деталь чужого окна, случайно
+   * попавшая в кадр.
+   *
+   * Правила разведены нарочно. У Firefox своих псевдоэлементов полосы нет, он
+   * понимает только `scrollbar-color`; у Chrome и Safari есть и то, и другое —
+   * но `scrollbar-color`, если его задать, ОТМЕНЯЕТ оформление
+   * псевдоэлементами, и ползунок теряет поля и скругление. Поэтому цвет
+   * стандартным свойством отдаётся только тем, у кого псевдоэлементов нет.
+   */
+  @supports not selector(::-webkit-scrollbar) {
+    * { scrollbar-width: thin; scrollbar-color: var(--scroll-thumb) transparent; }
+  }
+  ::-webkit-scrollbar { width: 12px; height: 12px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb {
+    background: var(--scroll-thumb);
+    /* Прозрачная рамка вместе с `background-clip` даёт ползунку поля: он
+       читается пилюлей внутри жёлоба, а не полосой во всю ширину. */
+    border: 3px solid transparent;
+    background-clip: content-box;
+    border-radius: 999px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--scroll-thumb-hover);
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-corner { background: transparent; }
   html { -webkit-text-size-adjust: 100%; }
   body {
     background: var(--bg);

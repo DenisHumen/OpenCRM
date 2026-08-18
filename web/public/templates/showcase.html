@@ -487,7 +487,14 @@
   #lightbox.long #lb-body { align-items: stretch; }
   #lightbox.long #lb-stage {
     display: block; overflow-y: auto; overscroll-behavior: contain;
-    padding-bottom: 24px; scrollbar-width: thin;
+    padding-bottom: 24px;
+  }
+  /* Здесь подложка темнее страницы, и общий ползунок на ней теряется. Свой —
+     чуть светлее, чтобы длинную работу было видно чем листать. */
+  #lightbox.long #lb-stage::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.22); }
+  #lightbox.long #lb-stage::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.38); }
+  @supports not selector(::-webkit-scrollbar) {
+    #lightbox.long #lb-stage { scrollbar-color: rgba(255,255,255,0.28) transparent; }
   }
   #lightbox.long #lb-stage:focus { outline: none; }
   /* display:block обязателен: сцена в этом режиме не flex, а у инлайновой

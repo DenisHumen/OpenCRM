@@ -206,6 +206,20 @@ TIMEOUT = 10
 #: диском в этом проекте уже однажды никто не следил, пока не стало поздно.
 MAX_AUTO_DOWNLOAD = 20 * 1024 * 1024
 
+#: Сколько телеграм принимает у бота НА ОТПРАВКУ.
+#:
+#: Пятьдесят мегабайт, и это предел самого телеграма — не наш и не подвинуть.
+#: Пределов вокруг три и они разные: nginx пропускает 220 МБ,
+#: `max_upload_mb` разрешает 200, а Bot API отказывает после 50.
+#:
+#: Отсюда правило: проверять НАШИМ пределом мало. Файл в сто мегабайт проходит
+#: и nginx, и нашу проверку, человек ждёт всю загрузку — и получает отказ
+#: телеграма чужими словами: «Request Entity Too Large». Так и случилось на
+#: показе с видео.
+#:
+#: Поэтому предел назван здесь и проверяется ДО обращения к телеграму.
+MAX_TELEGRAM_FILE = 50 * 1024 * 1024
+
 
 class TelegramOtkaz(Exception):
     """Телеграм отказал. Отдельным видом, чтобы отличать от нашей поломки."""
@@ -318,12 +332,17 @@ def poslat_fayl(
     return razobrano.get("result") or {}
 
 
-def skachat_fayl(token: str, file_id: str, opener=None) -> bytes:
+def skachat_fayl(token: str, file_id: str, opener=None, srok: int | None = None) -> bytes:
     """Забрать файл к себе: сначала узнать путь, потом скачать.
 
     Два обращения, потому что так устроен Bot API: `getFile` отдаёт временный
     путь, и только по нему файл доступен. Путь живёт около часа — хранить его
     негде и незачем.
+
+    `srok` укорачивают там, где ждать нельзя. Вложение клиента бывает в
+    десятки мегабайт, и минута на него законна; аватар весит десятки килобайт,
+    а тянут его внутри приёма сообщения — там минута ожидания означала бы, что
+    телеграм сочтёт доставку неудавшейся и пришлёт сообщение повторно.
     """
     import urllib.request
 
@@ -335,7 +354,7 @@ def skachat_fayl(token: str, file_id: str, opener=None) -> bytes:
     otkryt = opener or urllib.request.urlopen
     zapros = urllib.request.Request(f"{API}/file/bot{token}/{put}")
     try:
-        with otkryt(zapros, timeout=TIMEOUT * 6) as otvet:
+        with otkryt(zapros, timeout=srok or TIMEOUT * 6) as otvet:
             return otvet.read()
     except Exception as beda:  # noqa: BLE001
         raise TelegramOtkaz(str(beda)) from None
@@ -457,6 +476,9 @@ def prinyat(db: Session, obnovlenie: dict, opener=None) -> dict:
         # оставаться узнаваемой.
         dialog.username = str(otpravitel.get("username") or "")[:64] or dialog.username
         dialog.title = _imya_iz(otpravitel)[:200] or dialog.title
+    # Премиум — с каждым сообщением, у нового диалога тоже: он кончается и
+    # продлевается, а стоит нам ноль вызовов, потому что едет в самом сообщении.
+    dialog.is_premium = bool(otpravitel.get("is_premium"))
 
     vneshniy = soobshchenie.get("message_id")
     if vneshniy is not None and telegram_repo.po_vneshnemu_id(db, dialog.id, int(vneshniy)):
@@ -524,11 +546,31 @@ def prinyat(db: Session, obnovlenie: dict, opener=None) -> dict:
         message_id=stroka.id,
         direction=DIRECTION_IN,
         preview=(stroka.body or "")[:80],
+        # Имя собеседника едет в событии, а не добывается экраном по chat_id:
+        # уведомление показывается сразу, а список диалогов приезжает позже, и
+        # ждать его значило бы показать «Telegram» вместо имени.
+        title=dialog.title or dialog.username or str(dialog.chat_id),
     )
+
+    # Аватар — ПОСЛЕ объявления в шину, и это порядок, а не случайность: экраны
+    # получают «пришло новое» немедленно, а разговор об аватаре идёт следом и
+    # ничего не задерживает.
+    #
+    # Здесь, а не в ручке показа, потому что тут частоту ограничивает сама
+    # переписка: одно сообщение — не более одного захода, и не чаще раза в
+    # сутки на диалог. Ручка показа при первом же открытии списка попросила бы
+    # сотню аватаров разом и заняла бы весь пул соединений.
+    if avatar_ustarel(dialog):
+        kluch = token(db)
+        if kluch:
+            obnovit_avatar(db, dialog, kluch, opener)
+
     return {"status": "accepted", "chat_id": dialog.id, "message_id": stroka.id}
 
 
-def _polozhit_fayl(dialog, imya: str, soderzhimoe: bytes) -> str:
+def _polozhit_fayl(
+    dialog, imya: str, soderzhimoe: bytes, imya_kak_est: bool = False
+) -> str:
     """Положить файл переписки на диск и вернуть относительный путь.
 
     В своём каталоге канала, а не в общем хранилище клиентских файлов, и это
@@ -544,7 +586,11 @@ def _polozhit_fayl(dialog, imya: str, soderzhimoe: bytes) -> str:
     # бывает чем угодно, включая `../`. Расширение сохраняем — по нему браузер
     # понимает, чем открыть.
     rasshirenie = ("." + imya.rsplit(".", 1)[-1][:10]) if "." in imya else ""
-    svoyo = f"{_uuid.uuid4().hex}{rasshirenie}"
+    # Аватар кладётся под постоянным именем: он у диалога один, и случайное имя
+    # означало бы новую копию на диске раз в сутки на каждого собеседника.
+    # Для всего остального имя своё — присланное приходит от постороннего и
+    # бывает чем угодно, включая `../`.
+    svoyo = imya if imya_kak_est else f"{_uuid.uuid4().hex}{rasshirenie}"
     (koren / svoyo).write_bytes(soderzhimoe)
     return f"telegram/{dialog.chat_id}/{svoyo}"
 
@@ -624,6 +670,16 @@ def otpravit(
     put_fayla = ""
     if fayl is not None:
         imya_fayla, soderzhimoe = fayl
+        # ДО того, как класть файл на диск и заводить строку: иначе в переписке
+        # останется сообщение «не доставлено» о том, что и не могло уйти, и
+        # место на диске займёт файл, которого клиент никогда не увидит.
+        if len(soderzhimoe) > MAX_TELEGRAM_FILE:
+            raise errors.ValidationError(
+                f"Telegram accepts files up to {_v_megabaytah(MAX_TELEGRAM_FILE)} MB, "
+                f"and this one is {_v_megabaytah(len(soderzhimoe))} MB. "
+                "Send a link or a smaller file.",
+                code="telegram_file_too_large",
+            )
         vid = _vid_po_imeni(imya_fayla)
         put_fayla = _polozhit_fayl(dialog, imya_fayla, soderzhimoe)
 
@@ -666,6 +722,19 @@ def otpravit(
         preview=(stroka.body or "")[:80],
     )
     return stroka
+
+
+def _v_megabaytah(baytov: int) -> str:
+    """Байты в мегабайты с одним знаком — для человеческого сообщения.
+
+    Целочисленным делением файл в 50.5 МБ назывался бы «50 МБ», то есть отказ
+    сообщал бы «нельзя больше 50» про число, которое сам же назвал пятьюдесятью.
+    Десятые доли считаем целыми: делить на float здесь незачем, а привычка
+    держать деньги и количества в целых стоит того, чтобы не заводить исключений
+    по мелочи.
+    """
+    desyatye = baytov * 10 // (1024 * 1024)
+    return f"{desyatye // 10}.{desyatye % 10}"
 
 
 def _vid_po_imeni(imya: str) -> str:
@@ -928,3 +997,108 @@ def zavesti_zadachu(db: Session, chat_row_id: int, data: dict, author):
     if dialog.client_id:
         telo["client_id"] = dialog.client_id
     return task_service.create(db, telo, author)
+
+
+# --- аватар собеседника ------------------------------------------------------
+
+
+#: Как часто спрашивать телеграм об аватаре одного человека, секунды.
+#:
+#: Сутки. Замечание владельца звучало как «обновлять в онлайн-режиме», и
+#: буквально это означало бы вызов на каждого собеседника при каждом показе
+#: списка — то есть десятки вызовов в минуту у конторы с полусотней диалогов.
+#: Телеграм за такое ограничивает бота целиком, и тогда перестанут ходить не
+#: аватары, а сообщения.
+#:
+#: Сутки выбраны как цена ошибки в обе стороны: сменивший фотографию клиент
+#: будет узнаваем по вчерашней (беда невелика), а лишних вызовов — один на
+#: человека в день.
+SROK_AVATARA = 24 * 3600
+
+
+def avatar_ustarel(dialog) -> bool:
+    """Пора ли спрашивать телеграм об аватаре этого человека."""
+    kogda = getattr(dialog, "avatar_checked_at", None)
+    if kogda is None:
+        return True
+    proshlo = (now_utc().replace(tzinfo=None) - kogda).total_seconds()
+    # Отрицательное `proshlo` — время на машине переставили назад. Тогда
+    # считаем устаревшим: лишний вызов раз в жизни дешевле аватара, застрявшего
+    # до тех пор, пока часы не догонят.
+    return proshlo >= SROK_AVATARA or proshlo < 0
+
+
+def obnovit_avatar(db: Session, dialog, kluch: str, opener=None) -> str:
+    """Забрать фотографию профиля и вернуть путь к ней (или пустую строку).
+
+    **Отметка ставится в любом случае, включая неудачу.** Аватара может не быть
+    вовсе — человек его не поставил или закрыл настройками приватности, и это
+    обычное состояние, а не отказ. Без отметки «спросили и не нашли» такой
+    собеседник стоил бы нам вызова при каждом показе списка.
+
+    Отказ телеграма наружу не поднимается по той же причине: аватар — украшение
+    поверх переписки, и уронить из-за него показ диалогов было бы обменом
+    важного на неважное.
+    """
+    dialog.avatar_checked_at = now_utc().replace(tzinfo=None)
+    try:
+        svedeniya = _vyzov(
+            kluch,
+            "getUserProfilePhotos",
+            {"user_id": dialog.chat_id, "limit": 1},
+            opener,
+        )
+        snimki = svedeniya.get("photos") or []
+        if not snimki or not snimki[0]:
+            dialog.avatar_path = ""
+            return ""
+
+        # Размеры приходят по возрастанию. Берём САМЫЙ МЕЛКИЙ, который не меньше
+        # 160 точек, а если таких нет — просто самый крупный из мелких: аватар
+        # показывается кружком в 36 точек, и тянуть ради него исходник в
+        # несколько мегабайт незачем.
+        razmery = snimki[0]
+        podhodit = next((r for r in razmery if (r.get("width") or 0) >= 160), razmery[-1])
+        soderzhimoe = skachat_fayl(kluch, podhodit["file_id"], opener, srok=TIMEOUT)
+        # Имя постоянное, без случайной части: аватар у диалога один, и старые
+        # копии иначе копились бы по одной в сутки на человека.
+        dialog.avatar_path = _polozhit_fayl(dialog, "avatar.jpg", soderzhimoe, imya_kak_est=True)
+        return dialog.avatar_path
+    except Exception as beda:  # noqa: BLE001
+        logger.warning("не забрали аватар из телеграма: %r", beda)
+        return dialog.avatar_path or ""
+
+
+
+def avatar_fayl(db: Session, chat_row_id: int):
+    """Путь к забранному аватару. ТОЛЬКО чтение с диска.
+
+    **Здесь нет ни одного обращения к телеграму, и это главное в этой функции.**
+    Первая редакция освежала аватар прямо тут, «по требованию». Стоило это
+    дорого: соединение к базе держится всё время разговора с телеграмом (до
+    семидесяти секунд на скачивание), а первый показ списка после обновления
+    просит до сотни аватаров разом — у всех строк отметка пуста. Пул в десять
+    соединений занимался целиком, и в «QueuePool limit reached» упиралось всё
+    остальное, включая проверку здоровья, на которой обновление откатывается.
+
+    Забор переехал туда, где мы и так разговариваем с телеграмом, — в приём
+    входящего сообщения (`prinyat`). Частоту там ограничивает сама переписка.
+
+    Нет файла — 404, и это НЕ ошибка: у человека может не быть аватара вовсе.
+    Экран рисует инициалы.
+    """
+    dialog = telegram_repo.get_chat(db, chat_row_id)
+    if dialog is None:
+        raise errors.NotFoundError("Chat not found", code="telegram_chat_not_found")
+
+    if not dialog.avatar_path:
+        raise errors.NotFoundError("No avatar", code="telegram_no_avatar")
+
+    put = get_settings().storage_dir / dialog.avatar_path
+    if not put.exists():
+        # Файл потеряли (переезд, чистка диска). Строку не правим: править её
+        # здесь бесполезно — отказ откатит транзакцию вместе с правкой. Само
+        # заживёт при следующем сообщении: отметка состарится, и аватар
+        # заберётся заново.
+        raise errors.NotFoundError("No avatar", code="telegram_no_avatar")
+    return put

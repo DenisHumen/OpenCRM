@@ -7,6 +7,8 @@ import threading
 import shutil
 import subprocess
 import tempfile
+import zipfile
+from collections.abc import Iterable, Iterator
 from pathlib import Path
 
 from PIL import Image
@@ -97,6 +99,30 @@ def public_file(work_uid: str, filename: str) -> Path | None:
     if not candidate.is_relative_to(root):
         return None
     return candidate
+
+
+def original_path(work_uid: str, kind: str, mime: str) -> Path:
+    """Где лежит ИСХОДНИК работы — тот самый файл, который загрузили.
+
+    Имя выводится из вида и mime, а не хранится в записи, и это то же правило,
+    по которому исходник кладёт `save_original`. Знание было в двух местах:
+    здесь клал один код, а фоновая обработка собирала имя заново у себя. Пока
+    оба списка совпадают, всё работает; разойдутся — обработка молча не найдёт
+    файла, который лежит рядом. Третьей копии (выгрузка исходника менеджеру)
+    не завожу — зовут отсюда все трое.
+
+    Путь не проверяется на существование: у работы в состоянии `failed` файл
+    бывает и не дописан, а отвечать на вопрос «есть ли он» должен тот, кто
+    собрался его читать.
+    """
+    directory = work_dir(work_uid)
+    if mime == "image/svg+xml":
+        # SVG не обрабатывается вовсе: он же и исходник, он же и то, что
+        # уходит на витрину (после санитайзинга при загрузке).
+        return directory / "image.svg"
+    if kind == "video":
+        return directory / ("video.webm" if mime == "video/webm" else "video.mp4")
+    return directory / f"original.{mime.split('/')[-1].replace('jpeg', 'jpg')}"
 
 
 def save_original(work_uid: str, kind: str, ext: str, content: bytes) -> Path:
@@ -445,3 +471,99 @@ def work_media_urls(work) -> dict:
         "poster": media_url(uid, "poster.webp") if has_poster else None,
         "video": media_url(uid, f"video.{ext}"),
     }
+
+
+# --- выгрузка исходников архивом ---------------------------------------------
+#
+# Архив собирается ПОТОКОМ и никогда не существует целиком — ни в памяти, ни
+# файлом во временном каталоге.
+#
+# Довод тот же, что у бюджета разжатия выше, и он замерен там же: у службы `app`
+# нет `mem_limit`, машина — два гигабайта на всё вместе с MySQL, а жертву при
+# нехватке выбирает ядро по наибольшему RSS, то есть скорее всего базу. Доска на
+# три десятка снимков с телефона — это полтора гигабайта исходников; собери мы
+# такой архив в `BytesIO`, и одна кнопка «скачать все» роняла бы базу.
+#
+# Временный файл на диске не лучше: место на сервере и так считают (см.
+# `storage_service.has_room_for` при загрузке), а тут оно тратилось бы на копию
+# того, что уже лежит рядом, — и тратилось бы вдвойне при двух менеджерах,
+# нажавших кнопку одновременно.
+
+#: Сколько байт читаем за раз. 256 КБ — обычный компромисс: столько же читает
+#: `shutil.copyfileobj` по умолчанию (64 КБ) с запасом на сеть, а память под
+#: ответ при этом не зависит ни от числа работ, ни от их размера.
+_KUSOK = 256 * 1024
+
+
+class _Nakopitel(io.RawIOBase):
+    """Пишущий конец потока: `zipfile` пишет сюда, а мы забираем накопленное.
+
+    `tell` отвечает честным счётчиком, а `seek` унаследован от `io.IOBase` и
+    отказывает — по этому отказу `zipfile` сам понимает, что поток непроматываем,
+    и дописывает размеры дескриптором ПОСЛЕ каждого файла вместо того, чтобы
+    возвращаться в его заголовок. Ровно это и позволяет отдавать архив, не зная
+    заранее, сколько он весит.
+    """
+
+    def __init__(self) -> None:
+        self._kusok = bytearray()
+        self._vsego = 0
+
+    def writable(self) -> bool:
+        return True
+
+    def write(self, b) -> int:  # type: ignore[override]
+        self._kusok += b
+        self._vsego += len(b)
+        return len(b)
+
+    def tell(self) -> int:
+        return self._vsego
+
+    def zabrat(self) -> bytes:
+        """Отдать написанное с прошлого раза и забыть его."""
+        gotovo = bytes(self._kusok)
+        self._kusok.clear()
+        return gotovo
+
+
+def potok_zip(fayly: Iterable[tuple[Path, str]]) -> Iterator[bytes]:
+    """Архив из перечисленных файлов, кусок за куском.
+
+    На входе пары «путь на диске — имя внутри архива». Пути обязаны быть
+    проверены ДО вызова: генератор работает уже во время отдачи ответа, когда
+    сессия базы закрыта, а заголовки ушли клиенту, — отказывать поздно.
+
+    Без сжатия (`ZIP_STORED`) намеренно. Внутри JPEG, PNG, WebP и MP4 — всё это
+    уже сжато, и deflate отвоюет проценты за полную загрузку процессора на
+    сотнях мегабайт. Архив здесь нужен как один свёрток, а не как способ
+    сэкономить место.
+
+    Пропавший файл пропускаем, а не роняем ответ: заголовки уже отданы, и
+    оборвать отдачу на середине значит отдать битый архив вместо архива без
+    одной работы.
+    """
+    nakopitel = _Nakopitel()
+    with zipfile.ZipFile(nakopitel, "w", zipfile.ZIP_STORED) as arhiv:
+        for put, imya in fayly:
+            try:
+                istochnik = put.open("rb")
+            except OSError:
+                continue
+            # Источник открывается ПЕРВЫМ, и порядок тут не случаен: заведи мы
+            # запись в архиве раньше, её пришлось бы закрывать пустой — то есть
+            # в архиве появился бы файл нулевого размера вместо пропущенного.
+            with istochnik, arhiv.open(imya, "w") as vnutri:
+                while True:
+                    kusok = istochnik.read(_KUSOK)
+                    if not kusok:
+                        break
+                    vnutri.write(kusok)
+                    gotovo = nakopitel.zabrat()
+                    if gotovo:
+                        yield gotovo
+            gotovo = nakopitel.zabrat()
+            if gotovo:
+                yield gotovo
+    # Закрытый `ZipFile` дописал оглавление — оно и уходит последним куском.
+    yield nakopitel.zabrat()

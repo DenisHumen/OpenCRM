@@ -334,6 +334,20 @@ export function BoardEditor() {
                   <WorkTitle work={work} boardId={board.id} onSaved={(updated) =>
                     setBoard((prev: any) => ({ ...prev, works: prev.works.map((w: any) => (w.id === updated.id ? { ...w, ...updated } : w)) }))
                   } />
+                  {/* Скачивание — обычной ссылкой, а не запросом через fetch:
+                      имя файла, прогресс и папку «Загрузки» браузер делает сам
+                      и лучше (тот же довод, что у выгрузки отчётов). Ссылка
+                      ведёт в API CRM, то есть работает под сессией сотрудника;
+                      клиент витрины по ней не проходит. */}
+                  <a
+                    className="text-link"
+                    style={{ display: "flex", color: "var(--faint)" }}
+                    href={work.download_url}
+                    aria-label={t("download")}
+                    title={t("download")}
+                  >
+                    <Icon name="download" size={13} />
+                  </a>
                   <button
                     className="text-link"
                     style={{ display: "flex", color: work.project_url ? "var(--accent)" : "var(--faint)" }}
@@ -569,6 +583,17 @@ export function BoardEditor() {
             <a className="btn btn-secondary" href={`/b/${share.token}`} target="_blank" rel="noreferrer">
               <Icon name="eye" size={15} />
               {t("previewAsClient")}
+            </a>
+          )}
+
+          {/* Архивом — потому что доска это НАБОР. Сдать клиенту три десятка
+              работ по одному щелчку на каждую значит тридцать щелчков и
+              тридцать строк в «Загрузках»; ровно ради набора доска и заведена.
+              Кнопки нет у пустой доски: она отвечала бы отказом. */}
+          {board.works.length > 0 && (
+            <a className="btn btn-secondary" href={`/api/v1/boards/${board.id}/download`}>
+              <Icon name="download" size={15} />
+              {t("downloadAll")}
             </a>
           )}
 

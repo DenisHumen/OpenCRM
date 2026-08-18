@@ -1,14 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Icon } from "../components/Icon";
-import { EmptyState, ScreenLoading } from "../components/ui";
+import { Avatar, EmptyState, ScreenLoading } from "../components/ui";
 import { api } from "../lib/api";
+import { copyText } from "../lib/clipboard";
 import { useApp } from "../lib/app";
 import { useDebounced } from "../lib/debounce";
 import { useFailure } from "../lib/failure";
 import { useGuard } from "../lib/guard";
 import { useReference } from "../lib/reference";
-import { formatDateTime } from "../lib/format";
+import { podpisatsya } from "../lib/tgpotok";
+import { otmetit_otkrytyy_chat } from "../lib/signaly";
+import { formatDateTime, initials } from "../lib/format";
 
 /**
  * Мессенджер: переписка с клиентами через бота фирмы.
@@ -32,6 +35,8 @@ export interface TgChat {
   source: string;
   last_message_at: string | null;
   unread: number;
+  has_avatar: boolean;
+  is_premium: boolean;
 }
 
 export interface TgMessage {
@@ -58,6 +63,48 @@ interface Watcher {
 /** Как часто подтверждаем «я в этом чате». Срок жизни отметки — 15 секунд. */
 const PULS_PRISUTSTVIYA = 5000;
 
+/**
+ * Предел телеграма на файл от бота — пятьдесят мегабайт.
+ *
+ * Названо и здесь, и в `core/services/telegram_service.py`: браузер бережёт
+ * человека от впустую потраченной заливки, сервер — от обхода браузера. Число
+ * одно, потому что предел не наш, а телеграма, и подвинуть его нельзя.
+ */
+const TG_PREDEL_FAYLA = 50 * 1024 * 1024;
+
+/** Байты словами: «14.2 MB». Три знака до запятой хватает, дробь — лишний шум. */
+function razmer(baytov: number): string {
+  if (baytov < 1024) return `${baytov} B`;
+  if (baytov < 1024 * 1024) return `${Math.round(baytov / 1024)} KB`;
+  return `${(baytov / 1024 / 1024).toFixed(1)} MB`;
+}
+
+/**
+ * Свести сообщения в одну ленту без повторов и в порядке возрастания `id`.
+ *
+ * **Почему множество, а не список, в который дописывают.** Одно и то же
+ * сообщение приезжает разными путями: ответом ручки при отправке, событием
+ * шины, дочитыванием после обрыва. Пути независимы и обгоняют друг друга —
+ * значит рано или поздно любое из них привезёт то, что уже показано.
+ *
+ * Так и вышло: отправленный файл появлялся в переписке дважды. В телеграм он
+ * уходил ОДИН раз, то есть задваивался показ. Со стороны это неотличимо от
+ * повторной отправки клиенту, и менеджер не может понять, что произошло.
+ *
+ * Чинить порядок присваиваний бессмысленно: он чинится ровно до следующего
+ * пути доставки. Идемпотентное слияние снимает вопрос целиком — и обрыв связи,
+ * и двойная подписка, и опережающее событие становятся безвредны.
+ *
+ * Свежая запись побеждает: у отправленного сообщения состояние меняется
+ * (`pending` → `sent` или `failed`), и показывать надо последнее известное.
+ */
+function slit(bylo: TgMessage[], novye: TgMessage[]): TgMessage[] {
+  const po_id = new Map<number, TgMessage>();
+  for (const stroka of bylo) po_id.set(stroka.id, stroka);
+  for (const stroka of novye) po_id.set(stroka.id, stroka);
+  return [...po_id.values()].sort((a, b) => a.id - b.id);
+}
+
 export function Telegram() {
   const { t, locale, toast, toastError, user } = useApp();
   const [chats, setChats] = useState<TgChat[] | null>(null);
@@ -66,6 +113,13 @@ export function Telegram() {
   const [watchers, setWatchers] = useState<Watcher[]>([]);
   const [tekst, setTekst] = useState("");
   const [otpravka, setOtpravka] = useState(false);
+  /** Идущая заливка: сколько ушло, сколько всего и чем её бросить. */
+  const [zaliv, setZaliv] = useState<{
+    imya: string;
+    ushlo: number;
+    vsego: number;
+    otmenit: () => void;
+  } | null>(null);
   const [poisk, setPoisk] = useState("");
   // Отказ загрузки списка: экран обязан о нём сказать и дать повторить.
   // Вечная вертушка — это не «грузится», это «мы не знаем и молчим».
@@ -93,6 +147,15 @@ export function Telegram() {
   // Последнее известное сообщение: по нему дочитываем пропущенное после
   // обрыва. Обрыв неизбежен, а начинать с чистого листа в переписке нельзя.
   const posledneye = useRef(0);
+  // Какой диалог открыт ПРЯМО СЕЙЧАС. Именно ref, а не состояние: ответ сервера
+  // разбирается в замыкании, которое помнит `vybran` НА МОМЕНТ ЗАПРОСА, а нужно
+  // знать, что открыто на момент ОТВЕТА. Человек щёлкает по списку быстрее, чем
+  // отвечает сервер, и без этой опоры переписка одного клиента показывается в
+  // окне другого.
+  const vybranRef = useRef<number | null>(null);
+  useEffect(() => {
+    vybranRef.current = vybran;
+  }, [vybran]);
   const lentaRef = useRef<HTMLDivElement | null>(null);
 
   const zagruzit_chats = useCallback(async () => {
@@ -130,7 +193,12 @@ export function Telegram() {
         const otvet = await api.get<{ items: TgMessage[] }>(
           `/telegram/chats/${chatId}/messages`,
         );
-        setMessages(otvet.items);
+        // Ответ мог приехать, когда открыт уже ДРУГОЙ диалог: человек щёлкает
+        // по списку быстрее, чем отвечает сервер. Без этой проверки переписка
+        // одного клиента показывается в окне другого — и менеджер отвечает не
+        // тому.
+        if (vybranRef.current !== chatId) return;
+        setMessages(slit([], otvet.items));
         // Ручка отдаёт по полсотни. Пришла полная страница — значит вглубь,
         // скорее всего, есть ещё.
         setEstGlubzhe(otvet.items.length >= 50);
@@ -159,13 +227,28 @@ export function Telegram() {
   /** Дочитать то, что появилось, пока нас не было или пока шло событие. */
   const dochitat = useCallback(async () => {
     if (vybran == null) return;
+    const chat = vybran;
     try {
       const otvet = await api.get<{ items: TgMessage[] }>(
         `/telegram/chats/${vybran}/messages?after=${posledneye.current}`,
       );
-      if (!otvet.items.length) return;
-      setMessages((bylo) => [...bylo, ...otvet.items]);
-      posledneye.current = otvet.items[otvet.items.length - 1].id;
+      if (!otvet.items.length || vybranRef.current !== chat) return;
+      setMessages((bylo) => slit(bylo, otvet.items));
+      const posledniy = otvet.items[otvet.items.length - 1].id;
+      posledneye.current = posledniy;
+      // Видна вкладка — значит человек смотрит прямо на пришедшее, и держать
+      // его непрочитанным незачем. Свёрнута — граница не двигается: счётчик
+      // затем и нужен, чтобы вернувшийся увидел, что пропустил.
+      //
+      // Знает об этом только браузер: на сервере «вкладка открыта» и «на неё
+      // смотрят» неразличимы.
+      if (document.visibilityState === "visible") {
+        try {
+          await api.post(`/telegram/chats/${vybran}/read`, { up_to: posledniy });
+        } catch {
+          /* не отметилось — счётчик просто снимется при следующем открытии */
+        }
+      }
     } catch {
       // Молча: это фоновое дочитывание, и всплывающая ошибка на каждый
       // моргнувший запрос раздражала бы сильнее, чем помогала.
@@ -180,13 +263,15 @@ export function Telegram() {
    */
   const pokazat_eshchyo = async () => {
     if (vybran == null || !messages.length) return;
+    const chat = vybran;
     try {
       const otvet = await api.get<{ items: TgMessage[] }>(
         `/telegram/chats/${vybran}/messages?before=${messages[0].id}`,
       );
+      if (vybranRef.current !== chat) return;
       setEstGlubzhe(otvet.items.length >= 50);
       if (!otvet.items.length) return;
-      setMessages((bylo) => [...otvet.items, ...bylo]);
+      setMessages((bylo) => slit(bylo, otvet.items));
     } catch (beda) {
       toastError(beda);
     }
@@ -196,26 +281,46 @@ export function Telegram() {
   // обязан слышать про ВСЕ диалоги, иначе новый не появится, пока не
   // перезагрузишь страницу.
   useEffect(() => {
-    const potok = new EventSource("/api/v1/telegram/stream");
-    potok.onmessage = (sobytie) => {
-      let dannye: any;
-      try {
-        dannye = JSON.parse(sobytie.data);
-      } catch {
-        return;
-      }
+    // Подписка на ОБЩИЙ источник, а не свой `EventSource`. Оболочка приложения
+    // слушает тот же поток ради сигналов о письмах, и второе соединение с той
+    // же вкладки означало бы два переподключения и два живых генератора на
+    // сервере — на каждого, кто открыл мессенджер.
+    return podpisatsya((dannye) => {
       if (dannye.type === "message") {
-        void zagruzit_chats();
-        if (dannye.chat_id === vybran) void dochitat();
+        if (dannye.chat_id === vybran) {
+          // Список — ПОСЛЕ дочитывания, а не вместе с ним. Вместе получалась
+          // гонка: список успевал сосчитать непрочитанное раньше, чем открытый
+          // диалог отмечал прочтение, и у чата, на который человек смотрит,
+          // загоралась единица — до следующего события ничем не снимаемая.
+          void dochitat().then(() => zagruzit_chats());
+        } else {
+          void zagruzit_chats();
+        }
       } else if (dannye.type === "presence" && dannye.chat_id === vybran) {
         setWatchers(dannye.watchers || []);
       }
-    };
-    // Ошибку не показываем: `EventSource` переподключается сам, а всплывающее
-    // окно на каждое моргание сети превратило бы экран в поток жалоб.
-    potok.onerror = () => {};
-    return () => potok.close();
+    });
   }, [vybran, zagruzit_chats, dochitat]);
+
+  // Какой диалог открыт — знать обязана и оболочка: сигнал о сообщении в
+  // ОТКРЫТОМ и видимом чате не подаётся. Убираем отметку, уходя с экрана,
+  // иначе после ухода сигналы молчали бы про последний просмотренный диалог.
+  useEffect(() => {
+    otmetit_otkrytyy_chat(vybran);
+    // Отметка живёт двенадцать секунд и подтверждается каждые пять: закрытая на
+    // полуслове вкладка иначе навсегда заглушила бы сигналы по своему диалогу.
+    // Тот же срок и то же биение, что у присутствия, — и по той же причине.
+    const bienie = window.setInterval(() => otmetit_otkrytyy_chat(vybran), PULS_PRISUTSTVIYA);
+    // Свернули вкладку — отметка снимается сразу, не дожидаясь протухания:
+    // двенадцать секунд тишины по открытому диалогу это уже пропущенный клиент.
+    const na_vidimost = () => otmetit_otkrytyy_chat(vybran);
+    document.addEventListener("visibilitychange", na_vidimost);
+    return () => {
+      window.clearInterval(bienie);
+      document.removeEventListener("visibilitychange", na_vidimost);
+      otmetit_otkrytyy_chat(null);
+    };
+  }, [vybran]);
 
   // Присутствие: подтверждаем, пока чат открыт, и снимаем, уходя.
   useEffect(() => {
@@ -279,7 +384,8 @@ export function Telegram() {
       const svezhee = await api.post<TgMessage>(
         `/telegram/chats/${stroka.chat_id}/messages/${stroka.id}/fetch`,
       );
-      setMessages((bylo) => bylo.map((s) => (s.id === svezhee.id ? svezhee : s)));
+      if (vybranRef.current !== svezhee.chat_id) return;
+      setMessages((bylo) => slit(bylo, [svezhee]));
     } catch (beda) {
       toastError(beda);
     }
@@ -338,8 +444,13 @@ export function Telegram() {
         `/telegram/chats/${vybran}/messages`,
         { text: tekst },
       );
-      setMessages((bylo) => [...bylo, stroka]);
-      posledneye.current = stroka.id;
+      // Ушло в тот диалог, что был открыт при нажатии, — и показать это надо
+      // там же. Успел человек переключиться — сообщение отправлено верно, а вот
+      // показывать его в чужой переписке нельзя.
+      if (vybranRef.current === stroka.chat_id) {
+        setMessages((bylo) => slit(bylo, [stroka]));
+        posledneye.current = stroka.id;
+      }
       setTekst("");
       void zagruzit_chats();
     } catch (beda) {
@@ -352,20 +463,44 @@ export function Telegram() {
 
   const prilozhit = async (fayl: File) => {
     if (vybran == null) return;
+    // Отказ ДО заливки, а не после. Своим пределом телеграм отвечает уже приняв
+    // файл целиком: на показе видео в сто мегабайт лилось до конца, и только
+    // тогда приходило «Request Entity Too Large» — чужими словами и без намёка
+    // на то, что делать. Проверка здесь стоит миллисекунду и говорит по делу.
+    if (fayl.size > TG_PREDEL_FAYLA) {
+      toastError(
+        new Error(
+          t("tgTooBig")
+            .replace("{max}", String(TG_PREDEL_FAYLA / 1024 / 1024))
+            .replace("{size}", razmer(fayl.size)),
+        ),
+      );
+      return;
+    }
     if (!guard.take()) return;
     setOtpravka(true);
+    setZaliv({ imya: fayl.name, ushlo: 0, vsego: fayl.size, otmenit: () => {} });
     try {
-      const stroka = await api.upload<TgMessage>(
+      const zalivka = api.zagruzka<TgMessage>(
         `/telegram/chats/${vybran}/files`,
         fayl,
+        ({ ushlo, vsego }) =>
+          setZaliv((bylo) => (bylo ? { ...bylo, ushlo, vsego } : bylo)),
       );
-      setMessages((bylo) => [...bylo, stroka]);
-      posledneye.current = stroka.id;
+      setZaliv((bylo) => (bylo ? { ...bylo, otmenit: zalivka.otmenit } : bylo));
+      const stroka = await zalivka.gotovo;
+      // Заливка идёт долго — переключиться за это время успевают наверняка.
+      if (vybranRef.current === stroka.chat_id) {
+        setMessages((bylo) => slit(bylo, [stroka]));
+        posledneye.current = stroka.id;
+      }
       void zagruzit_chats();
     } catch (beda) {
-      toastError(beda);
+      // Отменил сам — значит не беда, и ругаться незачем.
+      if ((beda as any)?.code !== "canceled") toastError(beda);
     } finally {
       guard.free();
+      setZaliv(null);
       setOtpravka(false);
     }
   };
@@ -393,10 +528,32 @@ export function Telegram() {
               <li key={chat.id}>
                 <button
                   type="button"
-                  className={chat.id === vybran ? "tg-chat is-active" : "tg-chat"}
+                  className={[
+                    "tg-chat",
+                    chat.id === vybran ? "is-active" : "",
+                    // Непрочитанное видно и не доводя глаз до правого края:
+                    // счётчик говорит «сколько», насыщенность строки — «есть».
+                    chat.unread > 0 ? "is-unread" : "",
+                  ]
+                    .filter(Boolean)
+                    .join(" ")}
                   onClick={() => setVybran(chat.id)}
                 >
-                  <span className="tg-chat-title">{chat.title || chat.username}</span>
+                  <span className="tg-face">
+                    <Avatar
+                      small
+                      text={initials(chat.title || chat.username || "?")}
+                      src={chat.has_avatar ? `/api/v1/telegram/chats/${chat.id}/avatar` : null}
+                    />
+                  </span>
+                  <span className="tg-chat-title">
+                    {chat.title || chat.username}
+                    {chat.is_premium && (
+                      <span className="tg-premium" title={t("tgPremium")}>
+                        ★
+                      </span>
+                    )}
+                  </span>
                   <span className="tg-chat-time">
                     {chat.last_message_at ? formatDateTime(chat.last_message_at, locale) : ""}
                   </span>
@@ -421,9 +578,54 @@ export function Telegram() {
         ) : (
           <>
             <header className="tg-head">
-              <div>
-                <strong>{otkrytyy.title || otkrytyy.username}</strong>
-                {otkrytyy.username && <span>@{otkrytyy.username}</span>}
+              <div className="tg-who">
+                <Avatar
+                  text={initials(otkrytyy.title || otkrytyy.username || "?")}
+                  src={
+                    otkrytyy.has_avatar
+                      ? `/api/v1/telegram/chats/${otkrytyy.id}/avatar`
+                      : null
+                  }
+                />
+                <strong>
+                  {otkrytyy.title || otkrytyy.username}
+                  {otkrytyy.is_premium && (
+                    <span className="tg-premium" title={t("tgPremium")}>
+                      ★
+                    </span>
+                  )}
+                </strong>
+                {/*
+                  Логин есть — ссылка в профиль. Логина нет — не ссылка, а
+                  копирование идентификатора: `tg://user?id=` открывается только
+                  в установленном приложении и в браузере молча не делает
+                  ничего, а мёртвая ссылка хуже её отсутствия. По
+                  скопированному числу человека находят в самом телеграме.
+                */}
+                {otkrytyy.username ? (
+                  <a
+                    className="tg-profile"
+                    href={`https://t.me/${otkrytyy.username}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    title={t("tgOpenProfile")}
+                  >
+                    @{otkrytyy.username}
+                  </a>
+                ) : (
+                  <button
+                    type="button"
+                    className="tg-profile"
+                    onClick={() =>
+                      void copyText(String(otkrytyy.chat_id)).then((vyshlo) =>
+                        vyshlo ? toast(t("copied")) : toast(String(otkrytyy.chat_id)),
+                      )
+                    }
+                    title={t("tgCopyChatId")}
+                  >
+                    ID {otkrytyy.chat_id}
+                  </button>
+                )}
               </div>
               <div className="tg-head-right">
                 <button type="button" onClick={() => void zavesti("deal")} disabled={guard.busy}>
@@ -506,23 +708,65 @@ export function Telegram() {
                       <Icon name="download" /> {stroka.file_name || t("tgFile")}
                     </button>
                   )}
-                  {stroka.has_file && (
-                    /*
-                     * Ссылкой, а не встроенной картинкой. Встроить — значит
-                     * тянуть на экран всё подряд при открытии диалога, включая
-                     * то, что человек смотреть не собирался; на мобильном
-                     * интернете это ощутимо. Файл отдаётся через приложение и
-                     * только тому, у кого есть право на раздел.
-                     */
-                    <a
-                      className="tg-file"
-                      href={`/api/v1/telegram/chats/${stroka.chat_id}/messages/${stroka.id}/file`}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      <Icon name="download" /> {stroka.file_name || t("tgFile")}
-                    </a>
-                  )}
+                  {stroka.has_file &&
+                    (stroka.kind === "photo" ? (
+                      /*
+                       * Фотография — картинкой, и это не украшение. Прежде она
+                       * была ссылкой из опасения натянуть на экран всё подряд
+                       * при открытии диалога. Довод снимается `loading="lazy"`:
+                       * браузер тянет только то, что доехало до глаз. А цена
+                       * ошибки в другую сторону оказалась куда выше — на показе
+                       * присланного фото попросту не было видно, и мессенджер
+                       * переставал быть мессенджером.
+                       *
+                       * Ссылка вокруг остаётся: щелчок открывает целиком, потому
+                       * что в переписке картинка ужата до ширины пузыря.
+                       */
+                      <a
+                        className="tg-photo"
+                        href={`/api/v1/telegram/chats/${stroka.chat_id}/messages/${stroka.id}/file`}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        <img
+                          src={`/api/v1/telegram/chats/${stroka.chat_id}/messages/${stroka.id}/file`}
+                          alt={stroka.file_name || t("tgFile")}
+                          loading="lazy"
+                        />
+                      </a>
+                    ) : stroka.kind === "video" ? (
+                      /*
+                       * Забранное видео — проигрывателем, но `preload`
+                       * «metadata»: браузер берёт заголовок ради длительности
+                       * и первого кадра, а сами десятки мегабайт тянет только
+                       * по нажатию «играть». Без этой оговорки открытие
+                       * диалога качало бы всё видео подряд у каждого, кто
+                       * пролистал мимо.
+                       */
+                      <video
+                        className="tg-video"
+                        controls
+                        preload="metadata"
+                        src={`/api/v1/telegram/chats/${stroka.chat_id}/messages/${stroka.id}/file`}
+                      />
+                    ) : (
+                      /*
+                       * Всё прочее — ссылкой: документ показывать нечем, а
+                       * скачивание браузер делает сам. Файл отдаётся через
+                       * приложение и только тому, у кого есть право на раздел.
+                       */
+                      <a
+                        className="tg-file"
+                        href={`/api/v1/telegram/chats/${stroka.chat_id}/messages/${stroka.id}/file`}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        <Icon name="download" /> {stroka.file_name || t("tgFile")}
+                        {stroka.file_size ? (
+                          <span className="tg-file-size">{razmer(stroka.file_size)}</span>
+                        ) : null}
+                      </a>
+                    ))}
                   <span className="tg-time">{formatDateTime(stroka.happened_at, locale)}</span>
                   {stroka.send_state === "failed" && (
                     // Причину показываем прямо здесь: «бот заблокирован
@@ -536,6 +780,31 @@ export function Telegram() {
               ))}
             </div>
 
+            {zaliv && (
+              <div className="tg-upload" role="status" aria-live="polite">
+                <div className="tg-upload-head">
+                  <span className="tg-upload-name">{zaliv.imya}</span>
+                  <span className="tg-upload-num">
+                    {razmer(zaliv.ushlo)} / {razmer(zaliv.vsego)}
+                  </span>
+                  <button
+                    type="button"
+                    className="tg-upload-stop"
+                    onClick={() => zaliv.otmenit()}
+                  >
+                    {t("cancel")}
+                  </button>
+                </div>
+                <div className="tg-upload-bar">
+                  <div
+                    className="tg-upload-fill"
+                    style={{
+                      width: `${zaliv.vsego ? (zaliv.ushlo / zaliv.vsego) * 100 : 0}%`,
+                    }}
+                  />
+                </div>
+              </div>
+            )}
             <footer className="tg-compose">
               {/*
                 Показываем выбор и при отказе загрузки — с прямой пометкой.
@@ -567,7 +836,10 @@ export function Telegram() {
                   ))}
                 </select>
               )}
-              <label className="tg-attach">
+              <label
+                className="tg-attach"
+                title={t("tgAttach").replace("{max}", String(TG_PREDEL_FAYLA / 1024 / 1024))}
+              >
                 <Icon name="upload" />
                 <input
                   type="file"

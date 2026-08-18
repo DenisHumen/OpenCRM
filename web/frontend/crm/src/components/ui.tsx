@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { ApiError } from "../lib/api";
 import { useApp } from "../lib/app";
@@ -82,10 +82,20 @@ export function Avatar({
   online?: boolean;
 }) {
   const size = large ? " avatar-lg" : small ? " avatar-sm" : "";
+  // Картинка может не приехать: файл потеряли при переезде, у собеседника в
+  // телеграме аватар закрыт настройками приватности, ссылка ответила 404.
+  // Раньше на этом месте оставался пустой кружок (или значок битой картинки), а
+  // инициалы — единственное, по чему человека узнают в списке.
+  const [upalo, setUpalo] = useState(false);
+  useEffect(() => setUpalo(false), [src]);
   return (
     <div className={"avatar-wrap" + (large ? " avatar-wrap-lg" : "")}>
       <div className={"avatar" + size}>
-        {src ? <img className="avatar-img" src={src} alt="" /> : text}
+        {src && !upalo ? (
+          <img className="avatar-img" src={src} alt="" onError={() => setUpalo(true)} />
+        ) : (
+          text
+        )}
       </div>
       {online !== undefined && <span className={"avatar-dot" + (online ? " on" : "")} />}
     </div>

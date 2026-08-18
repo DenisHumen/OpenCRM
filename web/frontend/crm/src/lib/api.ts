@@ -50,7 +50,83 @@ export const api = {
     form.append("file", file);
     return request<T>("POST", path, undefined, form);
   },
+  zagruzka: zagruzka,
 };
+
+/** Ход заливки: сколько байт ушло из скольких. */
+export interface KhodZagruzki {
+  ushlo: number;
+  vsego: number;
+}
+
+export interface Zalivka<T> {
+  /** Готовая запись — так же, как у обычной отправки. */
+  gotovo: Promise<T>;
+  /** Бросить заливку на полпути. */
+  otmenit: () => void;
+}
+
+/**
+ * Отправить файл, сообщая о ходе отправки.
+ *
+ * **Почему не `fetch`.** Он не рассказывает, сколько уже ушло: обещание молчит
+ * до конца запроса. На стомегабайтном видео это выглядит как зависший экран —
+ * человек не знает, идёт заливка или всё сломалось, и жмёт ещё раз.
+ * `XMLHttpRequest` старше и многословнее, но событие `upload.progress` есть
+ * только у него; замены в браузерах пока нет.
+ *
+ * Отмена — половина смысла показанного прогресса: увидев «12 МБ из 300»,
+ * человек должен иметь возможность передумать, а не ждать конца впустую.
+ */
+function zagruzka<T = any>(
+  path: string,
+  file: File,
+  khod?: (k: KhodZagruzki) => void,
+): Zalivka<T> {
+  const xhr = new XMLHttpRequest();
+  const gotovo = new Promise<T>((resolve, reject) => {
+    const form = new FormData();
+    form.append("file", file);
+    xhr.open("POST", API + path, true);
+    xhr.withCredentials = true;
+    xhr.setRequestHeader("X-CSRF-Token", csrfToken());
+
+    xhr.upload.onprogress = (e) => {
+      // `lengthComputable` — не формальность: без длины `total` равен нулю, и
+      // доля обратилась бы в NaN, а полоса — в пустое место.
+      if (e.lengthComputable) khod?.({ ushlo: e.loaded, vsego: e.total });
+    };
+
+    xhr.onload = () => {
+      let data: any = null;
+      try {
+        data = JSON.parse(xhr.responseText);
+      } catch {
+        /* пустое тело */
+      }
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(data as T);
+        return;
+      }
+      const err = data?.error ?? {};
+      reject(
+        new ApiError(
+          xhr.status,
+          err.code ?? "http_error",
+          // 413 приходит от nginx, а не от приложения: тело — его страница, не
+          // наш JSON. Без своего текста человек читает «Request Entity Too
+          // Large» и не понимает ни что случилось, ни что делать.
+          err.message ??
+            (xhr.status === 413 ? "File is too large to upload" : xhr.statusText),
+        ),
+      );
+    };
+    xhr.onerror = () => reject(new ApiError(0, "network_error", "Network error"));
+    xhr.onabort = () => reject(new ApiError(0, "canceled", "Canceled"));
+    xhr.send(form);
+  });
+  return { gotovo, otmenit: () => xhr.abort() };
+}
 
 export interface PhoneCall {
   id: number;
