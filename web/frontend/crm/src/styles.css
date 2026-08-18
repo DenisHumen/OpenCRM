@@ -1817,8 +1817,8 @@ a.tg-file:hover { text-decoration: underline; }
    строку диалога и вся сетка списка поехала бы. */
 .tg-emoji { width: 14px; height: 14px; margin-left: 5px; vertical-align: -2px; }
 
-/* Дело клиента рядом с перепиской: третья колонка. Появляется только у
-   привязанного диалога — см. довод в разметке. */
+/* Дело клиента рядом с перепиской: третья колонка. У непривязанного диалога
+   она не пустует, а предлагает завести карточку — см. довод в разметке. */
 .tg-delo {
   flex-direction: column;
   gap: 12px;
@@ -1837,6 +1837,25 @@ a.tg-file:hover { text-decoration: underline; }
 .tg-delo-deals { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
 .tg-delo-deals > li { display: grid; gap: 3px; font-size: 12.5px; }
 .tg-delo-line { display: flex; justify-content: space-between; gap: 8px; opacity: 0.75; }
+/* «Завести карточку» и «Обновить из телеграма». Во всю ширину колонки: обе —
+   главное действие панели, а узкая кнопка, прижатая к краю столбца шириной в
+   палец, читается как примечание. Вид тот же, что у кнопок в шапке разговора
+   (`.tg-head-right button`): это соседние действия по одному и тому же
+   собеседнику, и разный вид у них означал бы разную важность. */
+.tg-delo-knopka {
+  width: 100%;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.tg-delo-knopka:hover:not(:disabled) { background: var(--well-off); }
+.tg-delo-knopka:disabled { opacity: 0.5; cursor: default; }
 
 /* Ответ на конкретное сообщение. Цитата отвечает на вопрос «на что это ответ» —
    без неё в разговоре про три позиции заказа ответ читается как ответ на

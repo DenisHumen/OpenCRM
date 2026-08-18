@@ -34,6 +34,7 @@ from core.services import codes, svodka_service, telegram_service
 from database.models import User
 from database.repositories import clients as clients_repo
 from database.repositories import telegram as telegram_repo
+from web.api import schemas
 from web.api.deps import MAX_SEARCH, client_ip, get_db, require_module, require_perm
 
 logger = logging.getLogger(__name__)
@@ -617,6 +618,49 @@ def zadacha_iz_dialoga(
     """Завести напоминание по этой переписке. Привязка к карточке не обязательна."""
     zadacha = telegram_service.zavesti_zadachu(db, chat_row_id, data.model_dump(), user)
     return {"id": zadacha.id, "title": zadacha.title}
+
+
+@router.post("/chats/{chat_row_id}/client", status_code=201)
+def kartochka_iz_dialoga(
+    chat_row_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_perm("clients", "create")),
+) -> dict:
+    """Завести карточку клиента по этой переписке и сразу её привязать.
+
+    Право спрашивается на КЛИЕНТОВ, ровно как у соседей: у заявки из диалога —
+    `deals.create`, у напоминания — `tasks.create`. Правило общее: спрашиваем
+    право на то, что заводится, а не на телеграм. Иначе право читать переписку
+    тихо давало бы право заводить карточки.
+
+    Тела у запроса нет намеренно. Всё, что нужно, уже знает диалог, а форма
+    посреди разговора означала бы, что кнопкой перестанут пользоваться и
+    вернутся к переносу руками — то есть ровно к тому, от чего уходили.
+
+    Ответ несёт `created`: карточку могли не завести, а привязать к найденной по
+    точному совпадению номера (см. службу). Код 201 при этом честен в обоих
+    случаях — у диалога появилась карточка, которой у него не было.
+    """
+    klient, zavedena = telegram_service.zavesti_kartochku(db, chat_row_id, user)
+    return {**schemas.client_out(klient), "created": zavedena}
+
+
+@router.post("/chats/{chat_row_id}/client/refresh")
+def obnovit_kartochku_iz_dialoga(
+    chat_row_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_perm("clients", "edit")),
+) -> dict:
+    """Перенести в карточку то, что телеграм узнал о человеке позже.
+
+    Право на ПРАВКУ клиентов, а не на заведение: правится существующая карточка.
+    Заполняется только пустое — что и почему, расписано в службе.
+
+    Ответ несёт `updated` — список перенесённых полей. Пустой список законен и
+    отказом не является: нажали, а переносить оказалось нечего.
+    """
+    klient, perenesli = telegram_service.obnovit_kartochku(db, chat_row_id)
+    return {**schemas.client_out(klient), "updated": perenesli}
 
 
 class PrivyazkaVhod(BaseModel):
