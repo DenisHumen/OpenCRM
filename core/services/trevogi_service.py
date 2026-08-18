@@ -477,7 +477,17 @@ def _odna(db: Session, kluch: str, kuda: int, trevoga: dict, opener=None) -> str
 
     try:
         otvet = telegram_service.poslat_s_knopkami(
-            kluch, kuda, _tekst(zapis), _knopki(zapis), opener
+            kluch,
+            kuda,
+            _tekst(zapis),
+            _knopki(zapis),
+            opener,
+            # Предупреждение приходит без звука, авария — со звуком. Разница не
+            # косметическая: звенящее ночью «соединений к базе 82%» учит
+            # выключать звук всему чату, а выключенный звук чата — это
+            # выключенный звук и у аварии. Кнопки при этом остаются у обоих:
+            # «заглушить на час» нужна как раз тому, что шумит, но не горит.
+            tiho=zapis.get("severity") != "critical",
         )
     except Exception:
         # Не ушло — освобождаем занятое, иначе повтор Alertmanager наткнётся на
