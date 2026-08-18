@@ -10,13 +10,24 @@ MySQL: здесь есть `IF()` и `NOT EXISTS` с коррелирующим 
 на другом движке пишутся иначе, а разойтись с настоящей базой они могут молча.
 Вторая — что окно ЗАКРЫТО слева и открыто справа: событие ровно на границе
 обязано попасть в одни сутки, а не в двое или ни в одни.
+
+Порода третья, снизу файла, — про сам факт прибытия, а не про цифры. Сводка
+уходит каждое утро, и пока она приходит, известно, что живы сервер, база и
+бот: тревоги при отвалившемся боте тоже не придут, и узнать об этом иначе
+неоткуда. Значит **молчание сводки обязано быть заметным**, а для этого она не
+имеет права молчать, когда сказать нечего: пустые сутки и отозванный токен
+выглядят одинаково.
 """
 
-from datetime import datetime, timedelta
+import logging
+from datetime import datetime, timedelta, timezone
+
+import pytest
 
 from database.models import Client, Task
 from database.repositories import svodka
 from database.session import SessionLocal
+from tests.conftest import API
 
 
 def _sessiya():
@@ -178,4 +189,306 @@ def test_zayavka_s_perekhodom_uhodit_iz_netronutyh(root_client):
 
     assert posle == do_sdviga - 1, (
         f"после перехода этапа заявка осталась в нетронутых: было {do_sdviga}, стало {posle}"
+    )
+
+
+# --- молчание сводки обязано быть заметным ------------------------------------
+#
+# Ниже проверяется не содержание сводки, а то, что она вообще приходит и что
+# её неприход виден. Свойство это невидимо в коде и проверяется только так:
+# ошибка здесь не роняет ничего, она просто выключает единственный признак
+# жизни канала, и обнаруживается это тогда, когда клиент не дождался ответа.
+
+#: Форма настоящего токена: цифры, двоеточие, буквенно-цифровой хвост.
+#: Свой, а не взятый из `test_telegram.py`: связывать два набора проверок общей
+#: строкой значит ронять один правкой другого.
+OBRAZETS_TOKENA = "123456789:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw"
+
+#: Куда сводка уходит в этих проверках.
+CHAT_SVODKI = 123456789
+
+#: Утро суток, в которых заведомо ничего не происходило.
+#:
+#: Год в будущем, потому что обнулить базу ради одной проверки нельзя —
+#: соседние идут следом и по той же базе. Задано в UTC и с поясом явно: сводка
+#: считает сутки по местному времени (`svodka_service.POYAS`), и наивное «сейчас»
+#: означало бы окно, зависящее от пояса машины, где идёт прогон.
+PUSTOY_DEN = datetime(2032, 5, 5, 6, 0, tzinfo=timezone.utc)
+
+#: Какой день окажется в заголовке при `PUSTOY_DEN`: сводка отчитывается за
+#: ВЧЕРА по местному поясу, а не за сегодня.
+PUSTOY_DEN_V_ZAGOLOVKE = "04.05.2032"
+
+
+@pytest.fixture()
+def bot_so_svodkoy(root_client):
+    """Блок включён, бот настроен, чат сводки назван — всё, что ей нужно.
+
+    Гасим за собой: блок `telegram` выключен по умолчанию, и оставленный
+    включённым он меняет ответы соседних проверок — набор гоняется в обоих
+    порядках, и такая поломка приходит не туда, где её завели.
+    """
+    vklyuchen = root_client.post(f"{API}/modules/telegram", json={"enabled": True})
+    assert vklyuchen.status_code == 200, vklyuchen.text
+    nastroeno = root_client.put(
+        f"{API}/telegram/settings",
+        json={"token": OBRAZETS_TOKENA, "digest_chat": str(CHAT_SVODKI)},
+    )
+    assert nastroeno.status_code == 200, nastroeno.text
+    yield
+    # Настройки снимаются ДО выключения блока: у выключенного ручка настроек
+    # отвечает `module_disabled`, и токен остался бы в базе до конца прогона.
+    root_client.delete(f"{API}/telegram/settings")
+    root_client.post(f"{API}/modules/telegram", json={"enabled": False})
+
+
+def test_pustye_sutki_ne_otmenyayut_svodku(bot_so_svodkoy, monkeypatch):
+    """В сутках не случилось ничего — сводка всё равно уходит и говорит это вслух.
+
+    **Проверка ровно того, ради чего сводка существует.** Она — единственный
+    признак, что канал жив; отозванный токен, упавший контейнер и снятый
+    вебхук дают ту же тишину, что и спокойный день, и тревоги в этих случаях
+    тоже не придут. Начни сводка пропускать пустые сутки — молчание перестало
+    бы что-либо значить, и отвалившийся бот обнаружился бы не раньше, чем
+    клиент не дождался ответа.
+
+    Поэтому проверяется двойное: сообщение УШЛО и в нём НАЗВАНЫ нули. Одного
+    первого мало — сводка, ушедшая с пустым телом, вызывает телеграм точно так
+    же, а читается как «сегодня новостей нет», то есть как молчание.
+
+    Сети здесь нет и быть не должно: настоящий бот означал бы настоящее
+    сообщение настоящему человеку на каждый прогон.
+    """
+    from core.services import svodka_service, telegram_service
+
+    ushlo = []
+    monkeypatch.setattr(
+        telegram_service,
+        "poslat_tekst_razmetkoy",
+        lambda kluch, chat_id, text, opener=None: ushlo.append((chat_id, text))
+        or {"message_id": 1},
+    )
+
+    with _sessiya() as db:
+        itog = svodka_service.otpravit(db, seychas=PUSTOY_DEN)
+
+    assert itog["status"] == "sent", f"в пустые сутки сводка не ушла вовсе: {itog}"
+    assert len(ushlo) == 1, f"сводка ушла не один раз: {ushlo}"
+
+    chat_id, tekst = ushlo[0]
+    assert chat_id == CHAT_SVODKI, f"сводка ушла не в тот чат: {chat_id}"
+    assert f"Сводка за {PUSTOY_DEN_V_ZAGOLOVKE}" in tekst, (
+        f"в сводке нет дня, за который она отчитывается:\n{tekst}"
+    )
+    # Нули названы, а не пропущены. «Ничего не произошло» — это сообщение,
+    # отсутствие строки — нет.
+    assert "Заявок новых: <b>0</b>" in tekst, f"пустые сутки промолчали о заявках:\n{tekst}"
+    assert "закрыто: <b>0</b>" in tekst, f"пустые сутки промолчали о закрытых:\n{tekst}"
+    assert "выручка: <b>0.00" in tekst, f"пустые сутки промолчали о выручке:\n{tekst}"
+    assert "Клиентов новых: <b>0</b>" in tekst, f"пустые сутки промолчали о клиентах:\n{tekst}"
+
+
+def test_otkaz_otpravki_viden_v_otvete_i_v_zhurnale(bot_so_svodkoy, monkeypatch, caplog):
+    """Телеграм отказал — это сказано ответом и записано в журнал, а не съедено.
+
+    Отказ отправки — единственный случай, когда о неприходе сводки можно узнать
+    ДО того, как её хватятся. Проглоти его сервис (вернув «ушла» или промолчав
+    в журнале) — и разбирать пришлось бы по отсутствию сообщения, то есть по
+    тому, чего нет: в журнале ровно ничего, у телеграма спросить нечего,
+    отличить «отказали» от «расписание не сработало» нечем.
+
+    Журнал проверяется отдельно от ответа намеренно: ответ читает человек,
+    нажавший «отправить сейчас», а ночной запуск не читает никто — там журнал
+    единственный след.
+    """
+    from core.services import svodka_service, telegram_service
+
+    def otkazat(*args, **kwargs):
+        raise telegram_service.TelegramOtkaz("chat not found")
+
+    monkeypatch.setattr(telegram_service, "poslat_tekst_razmetkoy", otkazat)
+
+    with caplog.at_level(logging.ERROR, logger="core.services.svodka_service"):
+        with _sessiya() as db:
+            itog = svodka_service.otpravit(db, seychas=PUSTOY_DEN)
+
+    assert itog["status"] == "failed", f"отказ телеграма выдан за успех: {itog}"
+    assert "chat not found" in itog.get("error", ""), (
+        f"причина отказа потерялась по дороге: {itog}"
+    )
+
+    zapisi = [
+        z
+        for z in caplog.records
+        if z.name == "core.services.svodka_service" and z.levelno >= logging.ERROR
+    ]
+    assert zapisi, "отказ отправки не оставил в журнале ни одной записи уровня ошибки"
+    assert any("chat not found" in z.getMessage() for z in zapisi), (
+        f"в журнале есть запись, но без причины отказа: {[z.getMessage() for z in zapisi]}"
+    )
+
+
+def test_skript_svodki_vozvrashchaet_edinitsu_pri_otkaze(monkeypatch, capsys):
+    """Сводка не ушла — скрипт краснеет кодом возврата и называет причину.
+
+    Расписание (`deploy/systemd/opencrm-svodka.timer` → `scripts/svodka.py`) не
+    читает ни ответов, ни текста: оно видит ровно код возврата. Верни скрипт
+    ноль на несостоявшейся отправке — systemd записал бы «успех», сводки бы не
+    было, и в журнале службы стояло бы подтверждение, что всё хорошо. Это хуже
+    молчания: молчание хотя бы ничего не обещает.
+
+    Причина при этом уходит в поток ОШИБОК, а не в обычный вывод: `journalctl -p err`
+    — первое, куда смотрят, и попасть туда сводка обязана сама.
+    """
+    from scripts import svodka as skript
+
+    monkeypatch.setattr(
+        skript.svodka_service,
+        "otpravit",
+        lambda db, *args, **kwargs: {"status": "failed", "error": "Unauthorized"},
+    )
+
+    kod = skript.main()
+    vyvod = capsys.readouterr()
+
+    assert kod == 1, "несостоявшаяся отправка вернула успех — расписание запишет «сводка ушла»"
+    assert "Unauthorized" in vyvod.err, (
+        f"причина отказа не попала в поток ошибок: out={vyvod.out!r} err={vyvod.err!r}"
+    )
+
+
+def test_skript_svodki_ne_krasneet_kogda_kanal_ne_nastroen(monkeypatch, capsys):
+    """Телеграм не настроен — это не отказ: ноль и объяснение обычным выводом.
+
+    Парная к предыдущей и не менее нужная. Верни скрипт единицу тому, кто
+    телеграмом не пользуется, — расписание краснело бы каждое утро по замыслу,
+    а красное по замыслу расписание перестают читать вместе с настоящими
+    отказами. Тогда обе проверки выше становятся бесполезны: код возврата
+    перестаёт что-либо значить.
+    """
+    from scripts import svodka as skript
+
+    monkeypatch.setattr(
+        skript.svodka_service,
+        "otpravit",
+        lambda db, *args, **kwargs: {"status": "skipped", "reason": "not_configured"},
+    )
+
+    kod = skript.main()
+    vyvod = capsys.readouterr()
+
+    assert kod == 0, "ненастроенный канал выдан за отказ — расписание будет краснеть всегда"
+    assert "not_configured" in vyvod.out, (
+        f"скрипт промолчал о том, почему сводка не отправлялась: {vyvod.out!r}"
+    )
+    assert vyvod.err == "", f"«не настроено» ушло в поток ошибок как отказ: {vyvod.err!r}"
+
+
+# --- неприход сводки обязан быть заметен --------------------------------------
+
+
+def test_uspeshnaya_svodka_ostavlyaet_otmetku_vremeni(root_client, bot_so_svodkoy, monkeypatch):
+    """Ушла — отметились. Не ушла — отметки нет.
+
+    Обе половины вместе, потому что порознь каждая зеленеет на неверном
+    поведении: «отметка есть» верно и для отметки, которая ставится всегда, а
+    «отметки нет» — для той, что не ставится никогда.
+
+    Отметка — единственное, по чему видно, что сводка вообще уходила. Отказ
+    отправки виден в журнале и в коде возврата, а несостоявшийся запуск (таймер
+    сорвался, контейнер лежал) не оставляет ничего: телеграм молчит ровно так
+    же, как в спокойный день.
+    """
+    from core.services import svodka_service
+    from database.session import SessionLocal
+
+    monkeypatch.setattr(
+        svodka_service.telegram_service,
+        "poslat_tekst_razmetkoy",
+        lambda kluch, chat_id, text, opener=None: {"message_id": 1},
+    )
+    with SessionLocal() as db:
+        itog = svodka_service.otpravit(db)
+        assert itog["status"] == "sent", itog
+        otmetka = svodka_service.kogda_poslednyaya(db)
+    assert otmetka, "успешная сводка не оставила отметки времени"
+
+    # Теперь отказ: отметка обязана остаться ПРЕЖНЕЙ, а не обновиться.
+    monkeypatch.setattr(
+        svodka_service.telegram_service,
+        "poslat_tekst_razmetkoy",
+        _otkaz_otpravki,
+    )
+    with SessionLocal() as db:
+        itog = svodka_service.otpravit(db)
+        assert itog["status"] == "failed", itog
+        assert svodka_service.kogda_poslednyaya(db) == otmetka, (
+            "неудавшаяся сводка обновила отметку — по ней всё выглядит живым"
+        )
+
+
+def _otkaz_otpravki(kluch, chat_id, text, opener=None):
+    from core.services import telegram_service
+
+    raise telegram_service.TelegramOtkaz("chat not found")
+
+
+def test_metrika_svodki_poyavlyaetsya_tolko_posle_otpravki(root_client, bot_so_svodkoy, monkeypatch):
+    """Ряда нет, пока сводка ни разу не уходила.
+
+    Выдуманный ноль означал бы «последняя сводка в 1970 году» и тревогу на
+    свежей установке — то есть тревогу, которую первым делом заглушат, а вместе
+    с ней и настоящую.
+    """
+    from core.services import svodka_service
+    from database.session import SessionLocal
+
+    with SessionLocal() as db:
+        svodka_service.settings_repo.write_many(db, {svodka_service.SETTING_POSLEDNYAYA: ""})
+        db.commit()
+
+    # Метрики закрыты своим блоком: без него ручка честно отвечает отказом, и
+    # проверка читала бы его вместо рядов.
+    root_client.post(f"{API}/modules/monitoring", json={"enabled": True})
+    pusto = root_client.get(f"{API}/metrics").text
+    assert "opencrm_digest_last_timestamp_seconds" not in pusto, (
+        "метрика показывает время сводки, которой не было"
+    )
+
+    monkeypatch.setattr(
+        svodka_service.telegram_service,
+        "poslat_tekst_razmetkoy",
+        lambda kluch, chat_id, text, opener=None: {"message_id": 1},
+    )
+    with SessionLocal() as db:
+        assert svodka_service.otpravit(db)["status"] == "sent"
+
+    posle = root_client.get(f"{API}/metrics").text
+    root_client.post(f"{API}/modules/monitoring", json={"enabled": False})
+    assert "opencrm_digest_last_timestamp_seconds" in posle, (
+        "сводка ушла, а метрики о ней нет — тревога на молчание не сработает"
+    )
+
+
+def test_trevoga_na_molchanie_svodki_est_v_pravilah():
+    """Метрика без тревоги — это график, на который никто не смотрит.
+
+    Проверка сторожит связку: ряд отдаётся приложением, а замечает молчание
+    Prometheus. Сломается любая половина — молчание снова станет неотличимым от
+    спокойного дня.
+    """
+    import pathlib
+
+    pravila = (
+        pathlib.Path(__file__).resolve().parent.parent
+        / "docker" / "monitoring" / "prometheus" / "rules" / "opencrm.yml"
+    )
+    if not pravila.exists():
+        import pytest
+
+        pytest.skip("правила Prometheus не рядом")
+
+    text = pravila.read_text(encoding="utf-8")
+    assert "opencrm_digest_last_timestamp_seconds" in text, (
+        "тревоги на молчание сводки нет: ряд собирается, а смотреть на него некому"
     )

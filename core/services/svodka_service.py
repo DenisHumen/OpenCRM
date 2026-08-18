@@ -26,10 +26,16 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy.orm import Session
 
 from core import modules as core_modules
+from core.utils import now_utc
 from core.services import modules_service, settings_service, telegram_service
+from database.repositories import settings as settings_repo
 from database.repositories import svodka as svodka_repo
 
 logger = logging.getLogger(__name__)
+
+#: Когда сводка ушла в последний раз. В настройках, а не в отдельной таблице:
+#: это одна строка на всю систему, и заводить ради неё таблицу не за что.
+SETTING_POSLEDNYAYA = "telegram_digest_last_sent_at"
 
 #: Часовой пояс, по которому считаются «сутки» и подписывается заголовок.
 #:
@@ -184,4 +190,28 @@ def otpravit(db: Session, seychas: datetime | None = None, opener=None) -> dict:
     except telegram_service.TelegramOtkaz as beda:
         logger.error("сводка не ушла: %s", beda)
         return {"status": "failed", "error": str(beda)}
+
+    # Отметка времени УСПЕШНОЙ отправки. Уходит метрикой, по метрике стоит
+    # тревога — иначе неприход сводки неотличим от спокойного дня.
+    #
+    # Заметить нечем: отказ отправки виден в ответе, в журнале и в коде
+    # возврата, а вот «скрипт не запустился вовсе» (таймер сорвался, контейнер
+    # лежал) не оставляет вообще ничего. Сводка при этом сама была задумана как
+    # признак живого канала — то есть её тишина обязана шуметь.
+    settings_repo.write_many(
+        db, {SETTING_POSLEDNYAYA: now_utc().replace(tzinfo=None).isoformat(timespec="seconds")}
+    )
+    # Фиксируем ЗДЕСЬ, а не оставляем зовущему. Главный зовущий — ночной скрипт
+    # (`scripts/svodka.py`), и он открывает сессию блоком `with SessionLocal()`
+    # без единого `commit`: отметка сбросилась бы в базу и откатилась вместе с
+    # закрытием сессии. Проверка это и поймала — иначе метрика не появилась бы
+    # НИКОГДА, тревога на молчание не сработала бы ни разу, и вся эта затея
+    # тихо не работала бы ровно так же, как то, что она стережёт.
+    db.commit()
     return {"status": "sent", "otkazy": dannye["otkazy"]}
+
+
+def kogda_poslednyaya(db: Session) -> str:
+    """Когда сводка уходила в последний раз. Пусто — ни разу."""
+    stroka = settings_repo.get_row(db, SETTING_POSLEDNYAYA)
+    return (stroka.value if stroka else "") or ""
