@@ -463,3 +463,53 @@ def test_sobran_otdelnyy_shag(root_client, client_row):
 
     again = root_client.post(f"{ORDERS}/{order['id']}/ready")
     assert again.status_code == 422, "собранный заказ собрали второй раз"
+
+
+def test_dve_stroki_odnogo_tovara_skladyvayutsya_pri_proverke(root_client, client_row):
+    """НАЙДЕНО РАЗБОРОМ: остаток уходил в минус мимо подтверждения.
+
+    Один товар в заказе встречается дважды запросто: две цены, два комментария,
+    два исполнителя. Пока каждая строка сверялась с остатком поодиночке, две
+    строки по 5 при остатке 6 проходили обе — а списать предстояло 10.
+    Подтверждение, которое здесь для того и стоит («увести склад в минус можно,
+    но с ведома человека»), не спрашивалось вовсе.
+    """
+    item = product(root_client, stock="6")
+    order = order_with(root_client, client_row, item, quantity="5")
+    dobavka = root_client.post(
+        f"{ORDERS}/{order['id']}/lines",
+        json={"product_id": item["id"], "quantity": "5"},
+    )
+    assert dobavka.status_code == 201, dobavka.text
+
+    otkaz = root_client.post(f"{ORDERS}/{order['id']}/close", json={})
+    assert otkaz.status_code == 422, (
+        f"списали 10 при остатке 6 не спросив: {otkaz.status_code} {otkaz.text}"
+    )
+    assert otkaz.json()["error"]["code"] == "not_enough_stock"
+    # Названа ОБЩАЯ потребность, а не половина: иначе человек сверяет и не
+    # понимает, почему 6 меньше 5.
+    assert "10" in otkaz.json()["error"]["message"], otkaz.json()["error"]["message"]
+    assert stock_of(root_client, item["id"]) == 6000
+
+    # С ведома человека — по-прежнему можно.
+    forced = root_client.post(f"{ORDERS}/{order['id']}/close", json={"confirm_negative": True})
+    assert forced.status_code == 200, forced.text
+    assert stock_of(root_client, item["id"]) == -4000
+
+
+def test_dve_stroki_odnogo_tovara_v_predelakh_ostatka_prokhodyat(root_client, client_row):
+    """И наоборот: сумма в пределах остатка отказывать не должна.
+
+    Иначе исправление превратилось бы в запрет повторять товар в заказе.
+    """
+    item = product(root_client, stock="10")
+    order = order_with(root_client, client_row, item, quantity="4")
+    assert root_client.post(
+        f"{ORDERS}/{order['id']}/lines",
+        json={"product_id": item["id"], "quantity": "4"},
+    ).status_code == 201
+
+    zakryt = root_client.post(f"{ORDERS}/{order['id']}/close", json={})
+    assert zakryt.status_code == 200, zakryt.text
+    assert stock_of(root_client, item["id"]) == 2000

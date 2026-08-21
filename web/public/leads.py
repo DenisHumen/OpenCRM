@@ -61,6 +61,12 @@ class LeadIn(BaseModel):
     имя и текст обрезает, адрес и номер отвергает (обрезанный адрес это другой
     адрес). Продублируй мы их тут, два места разошлись бы, и человек получал бы
     отказ вместо принятой заявки. Сверху всё это накрыто потолком тела.
+
+    Состав полей назван ещё и в сервисе (`lead_service.INTAKE_FIELDS` и
+    `HONEYPOT_FIELD`): по нему экран настроек рисует готовый пример запроса для
+    того, кто пишет форму на сайте. Два места держит сторож
+    (`tests/test_leads.py`) — разойдись они молча, и в интерфейсе висела бы
+    инструкция, по которой форма не работает.
     """
 
     name: str = ""
@@ -90,13 +96,13 @@ def submit_lead(payload: LeadIn, request: Request, db: Session = Depends(get_db)
     # с улицы и живёт в памяти процесса, а адрес посетителя это персональные
     # данные (так же сделано у вебхука АТС).
     visitor = tokens.hash_ip(client_ip(request))
-    if lead_limiter.is_blocked(visitor):
+    # Проверка и отметка — одной операцией. Двумя между ними оставалось окно:
+    # пачка одновременных обращений проходила порог целиком, а форма открыта в
+    # интернет, и шлют в неё именно пачками.
+    if lead_limiter.proverit_i_zanyat(visitor):
         raise errors.RateLimitedError(
             "Too many requests from this address", code="lead_rate_limited"
         )
-    # Отмечаем ПОСЛЕ проверки: отметка до неё отняла бы у отправителя одно
-    # обращение из разрешённых ни за что.
-    lead_limiter.record_failure(visitor)
 
     lead_service.check_intake_key(db, request.headers.get(lead_service.INTAKE_KEY_HEADER, ""))
     lead_service.receive(db, payload.model_dump())

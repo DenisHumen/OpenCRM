@@ -3,7 +3,7 @@ from datetime import datetime
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text
 
-from database.types import ExactString, LongText
+from database.types import ExactString, LongText, text_default
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 
@@ -169,6 +169,24 @@ class MailMessage(Base):
         nullable=True,
         index=True,
     )
+
+    # Цепочка переписки: на что это письмо отвечает и вся ветка до него.
+    #
+    # ЗАЧЕМ ХРАНИТЬ, А НЕ СТАВИТЬ НА ЛЕТУ. Почтовые клиенты собирают переписку
+    # по паре `In-Reply-To` + `References`, и `References` у длинной ветки —
+    # это список ВСЕХ предыдущих писем. Взять его неоткуда, кроме как из того
+    # письма, на которое отвечают: не сохранив его при синхронизации, наш ответ
+    # унёс бы ссылку только на одно письмо, и у собеседника ветка распалась бы
+    # на куски начиная с третьего сообщения.
+    #
+    # Текстом, а не связью на строку: письмо, на которое отвечают, может лежать
+    # в чужом ящике или не лежать нигде — переписка начинается не всегда у нас.
+    in_reply_to: Mapped[str] = mapped_column(String(MESSAGE_ID_LENGTH), default="")
+    # Вся ветка одной строкой, через пробел, как в самом заголовке. Хранится
+    # усечённой: у переписки на сотню писем заголовок разрастается до
+    # килобайтов, а для сборки ветки хватает хвоста — клиенты смотрят на
+    # последние ссылки.
+    references: Mapped[str] = mapped_column(Text, default="", server_default=text_default())
 
     is_read: Mapped[bool] = mapped_column(Boolean, default=False)
     # Когда письмо появилось у нас. Отличается от sent_at: письмо трёхдневной

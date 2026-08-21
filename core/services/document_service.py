@@ -19,6 +19,7 @@ from database.models.document import (
     DOCUMENT_LOCALES,
     DOCUMENT_STATUSES,
     KIND_INTAKE,
+    ORDER_KINDS,
     STATUS_CANCELLED,
     STATUS_CLOSED,
     STATUS_ISSUED,
@@ -228,6 +229,34 @@ def get(db: Session, document_id: int) -> Document:
     document = documents_repo.get(db, document_id)
     if document is None:
         raise errors.NotFoundError("Document not found", code="document_not_found")
+    return document
+
+
+def tolko_blank(db: Session, document_id: int) -> Document:
+    """Бланк по номеру записи. Заказ — отказ, и это не придирка.
+
+    **Заказы и бланки живут в ОДНОЙ таблице** (`documents`, `kind`), и ручки
+    бланков брали запись по номеру, ни о чём не спрашивая. То есть `POST
+    /documents/{id}/status` с правом `documents.issue` закрывал ЗАКАЗ: статус
+    менялся на «выдан», история перехода писалась, а склад не двигался вовсе.
+    Заказ отгружается своим путём (`orders.issue`), где считается нехватка,
+    списываются остатки и снимается резерв, — здесь ничего этого нет.
+
+    Получалось две вещи разом: обход права `orders.issue` правом
+    `documents.issue` и заказ, закрытый без единого движения по складу. Второе
+    хуже: остаток остаётся на месте, товар уезжает, и расхождение всплывает на
+    инвентаризации через месяц, когда концов уже не найти.
+
+    Внутренние вызовы это не задевает: `order_service` зовёт `set_status` сам и
+    напрямую — правило стоит на ГРАНИЦЕ, у ручек бланков, а не в общей смене
+    статуса, которой пользуются оба.
+    """
+    document = get(db, document_id)
+    if document.kind in ORDER_KINDS:
+        raise errors.ValidationError(
+            "This is an order, not a document. Use the orders section.",
+            code="document_is_an_order",
+        )
     return document
 
 

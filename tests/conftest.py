@@ -325,3 +325,39 @@ def chistaya_baza(request):
             soedinenie.execute(text(f"DROP DATABASE IF EXISTS {svoyo}"))
             soedinenie.commit()
         sluzhebnyy.dispose()
+
+
+# --- ничьи записи в ленте ловятся при рождении, а не по таблице ----------------
+#
+# `client_notes.author_id` — внешний ключ с `ON DELETE SET NULL`
+# (`database/models/client.py`), и увольнение сотрудника обнуляет его ЗАДНИМ
+# ЧИСЛОМ. Это не беда, а объявленное поведение: то же самое проверяется для
+# журнала в `test_actor_name_survives_renaming_and_dismissal`.
+#
+# Но в прочитанной таблице «автора не протащили» и «автора уволили» выглядят
+# ОДИНАКОВО, а различать их обязательно: первое — беда, второе — быт. Различить
+# по таблице нечем: имени автора лента не хранит, в отличие от
+# `audit_events.actor_name`.
+#
+# База у набора одна на весь прогон, и сотрудников заводят и убирают фикстурами
+# в доброй половине файлов. Поэтому сводная проверка, читавшая таблицу целиком,
+# краснела на полностью исправном коде — поймано прогоном в обратном порядке.
+#
+# Запоминаем вид и автора в момент вставки: там автор ещё жив, и уволить его
+# задним числом уже нельзя. Ширина проверки от этого не теряется — слушатель
+# видит ВСЕ записи прогона, а не только рождённые внутри одного теста.
+RODIVSHIESYA_ZAPISI: list[tuple[str, int | None]] = []
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _zapominat_avtorov_zapisey():
+    from sqlalchemy import event as sa_event
+
+    from database.models import ClientNote
+
+    def _zapomnit(mapper, connection, target):  # noqa: ARG001
+        RODIVSHIESYA_ZAPISI.append((target.kind, target.author_id))
+
+    sa_event.listen(ClientNote, "after_insert", _zapomnit)
+    yield
+    sa_event.remove(ClientNote, "after_insert", _zapomnit)

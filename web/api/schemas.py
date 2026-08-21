@@ -725,6 +725,13 @@ def mail_message_out(message: MailMessage, with_body: bool = False) -> dict:
         "is_read": message.is_read,
         "created_at": _iso(message.created_at),
     }
+    # Кому сервер отказал при отправке. Не колонка, а след одного запроса:
+    # `send_message` вешает его на объект, когда часть адресатов отвергнута.
+    # Хранить незачем — беда уже записана в ящик и в журнал; здесь она нужна
+    # ровно тому, кто нажал «отправить», и ровно сейчас.
+    refused = getattr(message, "refused", None)
+    if refused:
+        data["refused"] = list(refused)
     if with_body:
         data["body_text"] = message.body_text
         data["body_html"] = message.body_html

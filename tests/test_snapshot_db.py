@@ -29,7 +29,15 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from scripts.snapshot_db import METKA, celaya, snyat  # noqa: E402
+from scripts import snapshot_db  # noqa: E402
+from scripts.snapshot_db import (  # noqa: E402
+    METKA,
+    OTKAZY_DOSTUPA,
+    _pochemu_ne_pustil,
+    celaya,
+    kod_oshibki,
+    snyat,
+)
 
 
 class _Otvet:
@@ -214,3 +222,149 @@ def test_znacheniya_ekraniruet_drayver(dvizhok, tmp_path):
     put = tmp_path / "damp.sql"
     snyat(dvizhok, put)
     assert "'О''Коннор'" in put.read_text(encoding="utf-8")
+
+
+# --------------------------------------------------------------------------
+# `ping`: молчание против отказа
+# --------------------------------------------------------------------------
+#
+# Ради этого различения `ping` и живёт. Точка входа ждёт базу три минуты, и
+# ожидание оправдано ровно одним случаем: база поднимается дольше приложения.
+# Неверный пароль в этот случай не входит — сервер работает и отказал по
+# существу, — а выглядел он до этого точно так же, и человек три минуты ждал
+# ошибку, видимую с первой попытки.
+
+
+class _Ohibka(Exception):
+    """Ошибка драйвера: номер первым аргументом, текст вторым — как у pymysql."""
+
+
+class _ObolochkaSQLAlchemy(Exception):
+    """Обёртка SQLAlchemy: настоящую ошибку она кладёт в `orig`."""
+
+    def __init__(self, orig):
+        super().__init__("(pymysql.err.OperationalError) ...")
+        self.orig = orig
+
+
+def test_nomer_oshibki_dostayotsya_iz_obolochki():
+    """Номер лежит под обёрткой, и доставать его надо оттуда.
+
+    Снаружи сюда прилетает то ошибка драйвера, то обёртка SQLAlchemy — смотря
+    где рвануло. Если бы разбор смотрел только на верхний слой, отказ доступа
+    через `engine.connect()` не опознавался бы никогда: у обёртки в `args`
+    стоит текст, а не номер.
+    """
+    pryamaya = _Ohibka(1045, "Access denied for user 'opencrm'@'172.18.0.4'")
+    assert kod_oshibki(pryamaya) == 1045
+    assert kod_oshibki(_ObolochkaSQLAlchemy(pryamaya)) == 1045
+    assert kod_oshibki(Exception("совсем без номера")) is None
+
+
+def test_molchanie_porta_ne_schitaetsya_otkazom():
+    """У «сервера нет» номер тоже есть — и ждать его как раз НАДО.
+
+    Это и есть причина, по которой список отказов белый, а не чёрный. 2003
+    («Can't connect to MySQL server») приходит ровно в том случае, ради
+    которого ожидание заведено: контейнер базы ещё не поднялся. Попади он в
+    список — обычный перезапуск машины снова стал бы аварией, ровно той, из-за
+    которой ожидание и появилось.
+    """
+    assert 2003 not in OTKAZY_DOSTUPA, (
+        "«не дозвонились» попало в отказы доступа: старт быстрее базы теперь "
+        "убивает контейнер вместо того, чтобы подождать"
+    )
+    assert 2013 not in OTKAZY_DOSTUPA, "обрыв соединения — тоже повод подождать"
+    assert kod_oshibki(_Ohibka(2003, "Can't connect to MySQL server on 'db'")) == 2003
+
+
+def test_otkazy_dostupa_nazvany_polnostyu():
+    """Все четыре отказа значат одно: сервер жив и не пустил.
+
+    Список маленький, и каждый его номер стоит там по делу. Пропажа любого
+    возвращает трёхминутное ожидание там, где ответ известен сразу; появление
+    лишнего — наоборот, убивает контейнер там, где надо было подождать.
+    """
+    assert OTKAZY_DOSTUPA == {1044, 1045, 1049, 1698}
+
+
+def test_prichina_otkaza_ne_neset_parol():
+    """Строку отказа мы печатаем в журнал старта — пароля в ней быть не может.
+
+    Драйвер в таких ошибках пишет `using password: YES`, самого пароля не
+    приводит. Проверка стережёт не драйвер, а нас: разбор берёт ПОСЛЕДНИЙ
+    аргумент (текст сервера), а не всё исключение целиком — у обёртки в текст
+    попадает строка подключения, а в ней пароль стоит открытым.
+    """
+    pryamaya = _Ohibka(1045, "Access denied for user 'opencrm'@'x' (using password: YES)")
+    vyshlo = _pochemu_ne_pustil(_ObolochkaSQLAlchemy(pryamaya))
+    assert "using password: YES" in vyshlo
+    assert "1045" not in vyshlo, "номер в тексте лишний — он ничего не объясняет"
+
+
+def _pozvat_ping(monkeypatch, beda: BaseException | None):
+    """Позвать `main()` подкомандой `ping` с движком, который ведёт себя так.
+
+    Проверяется САМ выход, а не помощники: решение «умереть или подождать»
+    точка входа принимает по коду, и коды выше проверены поимённо, а тот, кто
+    их отдаёт, — не был. Между разбором номера и кодом выхода стоит ветвление,
+    и оно ошибается ничуть не реже.
+    """
+
+    class _Soedinenie:
+        def __enter__(self):
+            if beda is not None:
+                raise beda
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def execute(self, *args, **kwargs):
+            return None
+
+    class _Dvizhok:
+        def connect(self):
+            return _Soedinenie()
+
+    monkeypatch.setattr(snapshot_db, "_engine", lambda: _Dvizhok())
+    monkeypatch.setattr(sys, "argv", ["snapshot_db", "ping"])
+    return snapshot_db.main()
+
+
+def test_ping_otdayot_nol_zhivoy_baze(monkeypatch):
+    assert _pozvat_ping(monkeypatch, None) == 0
+
+
+def test_ping_otdayot_edinicu_molchashchemu_portu(monkeypatch):
+    """«Не дозвонились» — это ждать. Ровно ради этого случая ожидание и есть."""
+    beda = _ObolochkaSQLAlchemy(_Ohibka(2003, "Can't connect to MySQL server on 'db'"))
+    assert _pozvat_ping(monkeypatch, beda) == snapshot_db.NE_OTVECHAET == 1
+
+
+def test_ping_otdayot_troyku_otkazu_dostupa(monkeypatch, capsys):
+    """«Ответил и не пустил» — это сдаваться сразу, и говорить об этом вслух."""
+    beda = _ObolochkaSQLAlchemy(
+        _Ohibka(1045, "Access denied for user 'opencrm'@'172.18.0.4' (using password: YES)")
+    )
+    assert _pozvat_ping(monkeypatch, beda) == snapshot_db.NE_PUSTIL == 3
+
+    skazano = capsys.readouterr()
+    assert "Access denied" in skazano.err, (
+        "причина отказа не попала в журнал: человек увидит, что что-то не так, "
+        f"но не увидит ЧТО. Вышло: {skazano.err!r}"
+    )
+    assert skazano.out == "", "разговоры идут в stderr — stdout здесь читает скрипт"
+
+
+def test_kod_otkaza_ne_sovpadaet_s_argparse():
+    """Двойка занята: ею выходит `argparse`, когда его позвали неверно.
+
+    Совпади они — опечатка в имени подкоманды заставила бы точку входа объявить
+    неверный пароль базы и убить контейнер вместо того, чтобы подождать. Сигнал,
+    по которому принимается такое решение, не имеет права совпадать с «ты меня
+    неправильно позвал».
+    """
+    assert snapshot_db.NE_PUSTIL != 2
+    assert snapshot_db.NE_OTVECHAET != snapshot_db.NE_PUSTIL
+    assert 0 not in (snapshot_db.NE_OTVECHAET, snapshot_db.NE_PUSTIL)

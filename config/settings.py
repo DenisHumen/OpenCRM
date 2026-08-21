@@ -103,6 +103,18 @@ class Settings(BaseSettings):
         return self.storage_dir / "avatars"
 
     @property
+    def product_photos_dir(self) -> Path:
+        """Снимки товаров склада. Отдельно от медиа досок и от файлов клиентов.
+
+        Отдельным каталогом, а не подпапкой в `media`: у медиа досок своя
+        обработка, свой набор производных и своя раздача через nginx напрямую —
+        а снимок товара отдаётся только через приложение, как файл клиента.
+        Сложить их вместе значило бы, что правило раздачи зависит от того, чей
+        подкаталог, и первая же правка nginx открыла бы наружу не то.
+        """
+        return self.storage_dir / "product_photos"
+
+    @property
     def max_upload_bytes(self) -> int:
         return self.max_upload_mb * 1024 * 1024
 

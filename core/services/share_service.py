@@ -184,12 +184,14 @@ def media_is_public(db: Session, work_uid: str, pins_held: dict[int, str]) -> bo
 
 def verify_pin(db: Session, link: ShareLink, pin: str, ip: str, limiter) -> bool:
     key = f"{link.id}:{tokens.hash_ip(ip)}"
-    if limiter.is_blocked(key):
+    # Одной операцией, а не «проверил, потом отметил»: между двумя шагами
+    # существовало окно, в котором пачка одновременных запросов проходила порог
+    # целиком. PIN — четыре цифры, и цена этого окна выше, чем у пароля.
+    if limiter.proverit_i_zanyat(key):
         raise errors.RateLimitedError("Too many attempts, try later", code="pin_rate_limited")
     if link.pin_hash and passwords.verify_password(pin.strip(), link.pin_hash):
         limiter.reset(key)
         return True
-    limiter.record_failure(key)
     return False
 
 

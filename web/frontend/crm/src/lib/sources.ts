@@ -8,10 +8,22 @@ import type { TFunc, TranslationKey } from "./i18n";
  * «word of mouth» — один и тот же источник, и отчёт обязан складывать их в одну
  * строку независимо от того, кто заводил клиента.
  */
-export const CLIENT_SOURCES = ["referral", "search", "social", "ads", "repeat", "other"] as const;
+export const CLIENT_SOURCES = [
+  "referral",
+  "search",
+  "social",
+  "ads",
+  // Ставится сам, приёмом заявок с сайта (`core/services/lead_service.py`), но
+  // выбрать его руками тоже надо: клиент, позвонивший после того, как посмотрел
+  // сайт, пришёл оттуда же — а форму при этом не заполнял.
+  "site",
+  "repeat",
+  "other",
+] as const;
 
 const LABELS: Record<string, TranslationKey> = {
   referral: "srcReferral",
+  site: "srcSite",
   search: "srcSearch",
   social: "srcSocial",
   ads: "srcAds",

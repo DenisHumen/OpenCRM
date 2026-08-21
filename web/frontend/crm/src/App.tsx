@@ -30,6 +30,8 @@ import { Deals } from "./screens/Deals";
 import { DocumentCard } from "./screens/DocumentCard";
 import { Documents } from "./screens/Documents";
 import { Files } from "./screens/Files";
+import { SettingsLabels } from "./screens/LabelSettings";
+import { SettingsLeads } from "./screens/LeadsSettings";
 import { Mail } from "./screens/Mail";
 import { Monitoring } from "./screens/Monitoring";
 import { Templates } from "./screens/Templates";
@@ -346,6 +348,18 @@ export default function App() {
               <Route path="/settings/finance" element={<FinanceSettings />} />
             </Route>
           </Route>
+          {/* Настройки бота — на праве КАНАЛА, как и спрашивает сервер
+              (`require_perm("telegram", "manage")` у всех ручек настроек).
+              Стояли они в общей группе `settings.manage`, и расходилось это в
+              обе стороны: тому, кому канал доверили, экран был недоступен, а
+              тот, кто правит логотип сайта, доходил до экрана и получал отказ
+              на первом же запросе. Токен бота и логотип витрины — решения
+              разного веса, ровно как склады и статьи денег выше. */}
+          <Route element={<ModuleRoute module="telegram" />}>
+            <Route element={<PermRoute perm="telegram.manage" />}>
+              <Route path="/settings/telegram" element={<SettingsTelegram />} />
+            </Route>
+          </Route>
           <Route element={<PermRoute perm="settings.manage" />}>
             <Route element={<ModuleRoute module="boards" />}>
               <Route path="/files" element={<Files />} />
@@ -371,14 +385,23 @@ export default function App() {
             <Route element={<ModuleRoute module="telephony" />}>
               <Route path="/settings/telephony" element={<SettingsTelephony />} />
             </Route>
-            <Route element={<ModuleRoute module="telegram" />}>
-              <Route path="/settings/telegram" element={<SettingsTelegram />} />
-            </Route>
+            {/* Приём заявок с сайта — без `ModuleRoute`: своего блока у него нет
+                и не нужно. Форма заводит клиента и работу, а оба эти блока
+                несущие (`core/modules.py`) — выключить их нельзя, значит и
+                прятать экран не от чего. Выключателем служит сам ключ: пустой
+                означает, что приёма не существует. */}
+            <Route path="/settings/leads" element={<SettingsLeads />} />
             {/* разделов настроек будет больше — каждый своим маршрутом,
                 чтобы на них можно было сослаться и открыть из сайдбара */}
             <Route path="/settings" element={<SettingsLayout />}>
               <Route index element={<Navigate to="brand" replace />} />
               <Route path="brand" element={<SettingsBrand />} />
+              {/* Наклейка — настройка ПЕЧАТИ, а не витрины, и живёт она здесь
+                  по одной причине: сохранение у раздела общее. Своего экрана у
+                  неё не было вовсе, хотя ключи в настройках лежали с самого
+                  начала, — то есть размер рулона и состав полей задать было
+                  нечем. */}
+              <Route path="labels" element={<SettingsLabels />} />
               <Route path="contacts" element={<SettingsContacts />} />
               <Route path="showcase" element={<SettingsShowcase />} />
               <Route path="return-button" element={<SettingsReturnButton />} />

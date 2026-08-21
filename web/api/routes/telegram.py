@@ -56,6 +56,8 @@ class NastroykiVhod(BaseModel):
 
     token: str | None = None
     digest_chat: str | None = None
+    #: Куда слать тревоги о сервере. Пусто — туда же, куда сводку.
+    alerts_chat: str | None = None
     bot_username: str | None = None
     #: Сколько месяцев хранить переписку. Ноль — вечно, и это умолчание.
     #:

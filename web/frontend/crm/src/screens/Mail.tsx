@@ -9,6 +9,7 @@ import { useDebounced } from "../lib/debounce";
 import { useFailure } from "../lib/failure";
 import { useGuard } from "../lib/guard";
 import { formatDateTime } from "../lib/format";
+import { can } from "../lib/permissions";
 import { useReference } from "../lib/reference";
 
 export interface MailMessage {
@@ -26,25 +27,31 @@ export interface MailMessage {
   body_html?: string;
 }
 
-export interface MailAccount {
+/**
+ * Ящик, ИЗ КОТОРОГО можно писать. Три поля и только они.
+ *
+ * Не путать с настройкой ящика (`Mailboxes.tsx`): там хосты, порты и логины,
+ * и закрыты они правом `settings.manage`. Чтобы отправить письмо, всего этого
+ * знать не надо — нужен выбор из двух-трёх адресов, и его отдаёт `/mail/senders`
+ * тому, у кого есть право писать.
+ */
+export interface MailSender {
   id: number;
   title: string;
   address: string;
-  is_active: boolean;
-  has_password: boolean;
-  last_sync_at: string | null;
-  last_error: string | null;
 }
 
 type Filter = "all" | "in" | "out" | "unread";
 
 export function Mail() {
-  const { t, locale, toastError } = useApp();
+  const { t, locale, toastError, user } = useApp();
   const [messages, setMessages] = useState<MailMessage[] | null>(null);
   const [total, setTotal] = useState(0);
   const [filter, setFilter] = useState<Filter>("all");
   const [search, setSearch] = useState("");
   const [open, setOpen] = useState<MailMessage | null>(null);
+  /** На какое письмо отвечаем. Не булево: форме нужны и адрес, и тема, и id. */
+  const [otvechaem, setOtvechaem] = useState<MailMessage | null>(null);
   const [composing, setComposing] = useState(false);
 
   const [attempt, setAttempt] = useState(0);
@@ -91,7 +98,11 @@ export function Mail() {
   // Менеджеру он недоступен (это настройка root), поэтому отказ здесь не беда:
   // сервер возьмёт первый активный ящик сам. Важно только не выдать «ящиков
   // нет» за ответ — на это и `null` в крючке справочника.
-  const accounts = useReference<MailAccount>("/mail/accounts");
+  // Ящики для ОТПРАВКИ, а не список настроек: общий список закрыт правом
+  // `settings.manage`, и менеджеру с правом писать он отвечал отказом — ящиков
+  // ноль, выбирать не из чего, кнопка ответа спрятана. Писать письма мог
+  // только владелец системы.
+  const accounts = useReference<MailSender>("/mail/senders");
 
   const openMessage = async (message: MailMessage) => {
     try {
@@ -211,7 +222,34 @@ export function Mail() {
           <div style={{ whiteSpace: "pre-wrap", fontSize: 13.5, lineHeight: 1.6 }}>
             {open.body_text || "—"}
           </div>
+          {/* Ответ — прямо отсюда, а не «напишите новое письмо».
+              Пока кнопки не было, менеджер набирал адрес и тему заново, и
+              собеседник получал ответ ОТДЕЛЬНЫМ письмом: заголовков цепочки в
+              таком письме нет, и почтовый клиент не ставит его под вопросом.
+              Проверено на двух живых серверах. */}
+          {can(user, "mail.create") && (accounts.items ?? []).length > 0 && (
+            <div style={{ marginTop: 18, display: "flex", justifyContent: "flex-end" }}>
+              <button
+                className="btn btn-primary"
+                onClick={() => {
+                  setOtvechaem(open);
+                  setOpen(null);
+                }}
+              >
+                {t("reply")}
+              </button>
+            </div>
+          )}
         </Modal>
+      )}
+
+      {otvechaem && (
+        <MailCompose
+          accounts={accounts.items ?? []}
+          replyTo={otvechaem}
+          onClose={() => setOtvechaem(null)}
+          onSent={reload}
+        />
       )}
 
       {composing && (
@@ -228,22 +266,43 @@ export function Mail() {
 /** Форма отправки. Живёт отдельно: её открывают и из карточки клиента. */
 export function MailCompose({
   accounts,
-  to = "",
+  // Без умолчания "" намеренно: ниже стоит `to ?? …`, а пустая строка не
+  // нулевая — с умолчанием ветка ответа не срабатывала НИКОГДА, и поле адреса
+  // оставалось пустым. Поймано живым осмотром экрана.
+  to,
   clientId,
   dealId,
+  replyTo,
   onClose,
   onSent,
 }: {
-  accounts: MailAccount[];
+  accounts: MailSender[];
   to?: string;
   clientId?: number;
   dealId?: number;
+  /** Письмо, на которое отвечаем. Оно задаёт адрес, тему и цепочку. */
+  replyTo?: MailMessage;
   onClose: () => void;
   onSent?: () => void;
 }) {
   const { t, toast, toastError } = useApp();
-  const [form, setForm] = useState({ to, subject: "", body: "" });
-  const [accountId, setAccountId] = useState<number | "">(accounts[0]?.id ?? "");
+  // Отвечают ОТПРАВИТЕЛЮ входящего и ПОЛУЧАТЕЛЮ исходящего: во втором случае
+  // человек дописывает собеседнику, а не самому себе.
+  const komu =
+    to ??
+    (replyTo ? (replyTo.direction === "in" ? replyTo.from_addr : replyTo.to_addrs.join(", ")) : "");
+  // «Re:» не удваивается: на «Re: Заявка» ответ остаётся «Re: Заявка».
+  const tema = replyTo
+    ? /^\s*re\s*:/i.test(replyTo.subject)
+      ? replyTo.subject
+      : `Re: ${replyTo.subject}`
+    : "";
+  const [form, setForm] = useState({ to: komu, subject: tema, body: "" });
+  const [accountId, setAccountId] = useState<number | "">(
+    // Отвечаем ИЗ ТОГО ЯЩИКА, куда письмо пришло. Ответ с другого адреса
+    // приходит собеседнику от незнакомца и в переписку не встаёт.
+    replyTo?.account_id ?? accounts[0]?.id ?? "",
+  );
   // Засов, а не флаг состояния: отправка идёт через SMTP и отвечает не сразу.
   // Второе нажатие по «неответившей» кнопке слало клиенту второе такое же
   // письмо — и отозвать его уже нельзя ничем.
@@ -259,6 +318,7 @@ export function MailCompose({
         account_id: accountId || null,
         client_id: clientId ?? null,
         deal_id: dealId ?? null,
+        reply_to_id: replyTo?.id ?? null,
       });
       toast(t("letterSent"));
       onSent?.();
@@ -271,7 +331,7 @@ export function MailCompose({
   };
 
   return (
-    <Modal title={t("compose")} onClose={onClose} wide>
+    <Modal title={replyTo ? t("reply") : t("compose")} onClose={onClose} wide>
       {accounts.length > 1 && (
         <div className="field">
           <label className="label">{t("fromMailbox")}</label>

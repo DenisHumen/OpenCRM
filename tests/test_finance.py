@@ -771,3 +771,40 @@ def test_otchyot_s_dalyokim_kontsom_perioda_ne_lozhitsya(root_client, finance_on
     assert otvet.status_code == 200, (
         f"отчёт лёг на дате у края календаря: {otvet.status_code} {otvet.text[:200]}"
     )
+
+
+def test_statyu_pravyat_po_odnomu_polyu(root_client, money):
+    """Правка одного поля не требует пересылать всю статью целиком.
+
+    Раньше `PATCH /finance/categories/{id}` отвечал `422 name Field required` на
+    попытку поменять один `purpose`: схема правки была той же, что и схема
+    заведения, а там название обязательное. У правил начисления частичная правка
+    была с самого начала — рассогласование замечал тот, кто ходит в API руками.
+
+    Сервис к частичному телу был готов всегда: он смотрит на каждое поле
+    отдельно. Не хватало ровно схемы.
+    """
+    _income, expense = money
+
+    odno_pole = root_client.patch(
+        f"{API}/finance/categories/{expense['id']}", json={"purpose": "tax"}
+    )
+    assert odno_pole.status_code == 200, odno_pole.text
+    assert odno_pole.json()["purpose"] == "tax"
+    # Название не тронуто: незаполненное поле означает «не меняй», а не «сотри».
+    assert odno_pole.json()["name"] == expense["name"]
+
+    tolko_imya = root_client.patch(
+        f"{API}/finance/categories/{expense['id']}", json={"name": "Аренда и связь"}
+    )
+    assert tolko_imya.status_code == 200, tolko_imya.text
+    assert tolko_imya.json()["name"] == "Аренда и связь"
+    assert tolko_imya.json()["purpose"] == "tax", "правка имени сбросила назначение"
+
+    # Направление по-прежнему не меняется, и отказ по-прежнему внятный, а не
+    # «лишнее поле»: ради этого `direction` в схеме правки объявлен.
+    perevernut = root_client.patch(
+        f"{API}/finance/categories/{expense['id']}", json={"direction": "income"}
+    )
+    assert perevernut.status_code == 422, perevernut.text
+    assert perevernut.json()["error"]["code"] == "direction_is_fixed"

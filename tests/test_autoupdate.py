@@ -8,8 +8,11 @@
 """
 
 import json
+import os
 import shutil
 import subprocess
+import tempfile
+from pathlib import Path
 
 import pytest
 
@@ -32,6 +35,7 @@ from deploy.updater import (
     STATUS_DEPLOYED,
     STATUS_DISABLED,
     STATUS_ROLLED_BACK,
+    SNAPSHOTS_KEPT,
     STATUS_UP_TO_DATE,
     STATUS_WAITING,
     Updater,
@@ -96,9 +100,13 @@ class FakeProbe:
     ответ должен отличаться от того, из-за которого откат случился.
     """
 
-    def __init__(self, health=(True,), smoke=(True,), smoke_status=200):
+    def __init__(self, health=(True,), smoke=(True,), smoke_status=200, obsluzhivanie=False):
         self.health = list(health)
         self.smoke = list(smoke)
+        # Закрыт ли сайт на работы. Настоящий `/healthz` это поле отдаёт всегда
+        # (web/main.py), и подпись дубля обязана совпадать с настоящей — иначе
+        # проверка стережёт не тот код, который работает.
+        self.obsluzhivanie = obsluzhivanie
         # Чем именно отвечает smoke-адрес, когда он «живой». На боевом сервере с
         # HTTPS это 301 на https://…, а не 200: подпись дубля обязана совпадать
         # с настоящей, иначе тест проверяет не тот код, который работает.
@@ -115,7 +123,9 @@ class FakeProbe:
         self.followed.append(follow)
         if "healthz" in url:
             ok = self._next(self.health)
-            return Response(200, '{"status": "ok"}') if ok else Response(502, "bad gateway")
+            rezhim = "on" if self.obsluzhivanie else "off"
+            telo = '{"status": "ok", "maintenance": "%s"}' % rezhim
+            return Response(200, telo) if ok else Response(502, "bad gateway")
         ok = self._next(self.smoke)
         return Response(self.smoke_status, "<html>ok</html>") if ok else Response(500, "")
 
@@ -1898,3 +1908,558 @@ def test_nemoy_disk_ne_zaklinivaet_obnovleniya(tmp_path, monkeypatch):
     updater = make_updater(tmp_path, config=config)
 
     assert updater.run_once().status == STATUS_DEPLOYED
+
+
+# --- след упавшей миграции: таблицы, которых копия не знает --------------------
+#
+# НАЙДЕНО ЖИВЫМ ОТКАТОМ НА СТЕНДЕ, а не рассуждением. Копия снимается ДО
+# миграций и открывает каждую свою таблицу строкой `DROP TABLE IF EXISTS` — то
+# есть заливка полностью пересобирает всё, что копия знает. Таблицу, которую
+# упавшая миграция успела создать уже ПОСЛЕ снимка, копия не знает, и заливка её
+# не трогает, а `alembic_version` при этом откатывается.
+#
+# Беда от этого тихая: сайт поднимается (schema_check ругается только на
+# нехватку), отчёт зелёный, а ПОВТОРНАЯ попытка того же коммита упирается в
+# `(1050, "Table 'x' already exists")` — и будет упираться всегда, пока человек
+# не удалит таблицу руками. Замерено на стенде: два прогона подряд, оба
+# откатились, и в отчёте оба раза стояло одно и то же «health-check не прошёл».
+
+#: Копия, которая ЗНАЕТ две таблицы. Формат строки — тот же, каким её пишет
+#: `scripts/snapshot_db._odna_tablica`; совпадение стережёт отдельная проверка.
+KOPIYA_S_TABLITSAMI = (
+    "DROP TABLE IF EXISTS `clients`;\n"
+    "CREATE TABLE `clients` (id int);\n"
+    "INSERT INTO `clients` VALUES (1);\n"
+    "DROP TABLE IF EXISTS `orders`;\n"
+    "CREATE TABLE `orders` (id int);\n"
+    + METKA_DAMPA
+    + "\n"
+)
+
+
+def damp_s_tablitsami(config, shell):
+    """Подставной дампер, кладущий копию С именами таблиц."""
+
+    def sdelat():
+        put = shell.calls[-1].rsplit("/app/data/", 1)[1].split()[0]
+        (config.data_dir / put).write_text(KOPIYA_S_TABLITSAMI, encoding="utf-8")
+
+    return sdelat
+
+
+def _otkat_s_tablitsami(tmp_path, zhivye: str):
+    """Прогон до отката, где база отвечает заданным списком таблиц."""
+    config = make_config(tmp_path)
+    shell = FakeShell()
+    shell.effect("scripts.snapshot_db dump", damp_s_tablitsami(config, shell))
+    shell.otvet("SHOW FULL TABLES", zhivye)
+    updater = make_updater(
+        tmp_path, config=config, shell=shell, probe=FakeProbe(health=(False, True))
+    )
+    outcome = updater.run_once()
+    return outcome, shell
+
+
+def _snosy(shell) -> list[str]:
+    return [call for call in shell.calls if "DROP TABLE IF EXISTS" in call]
+
+
+def test_otkat_snimaet_tablitsu_ot_upavshey_migratsii(tmp_path):
+    """Таблица, созданная миграцией после снимка, обязана исчезнуть при откате.
+
+    Иначе тот же коммит не накатится больше никогда: `alembic_version` откачен,
+    миграция пойдёт заново и упрётся в «таблица уже есть». Человек при этом
+    видит «health-check не прошёл» — то же сообщение, что и у просто сломанного
+    кода, и причину ему никто не назовёт.
+    """
+    outcome, shell = _otkat_s_tablitsami(
+        tmp_path,
+        "clients\tBASE TABLE\norders\tBASE TABLE\notkat_sled\tBASE TABLE\n",
+    )
+
+    assert outcome.status == STATUS_ROLLED_BACK
+    snosy = _snosy(shell)
+    assert snosy, (
+        "таблица от упавшей миграции осталась в базе — повторная попытка того "
+        "же коммита упрётся в «таблица уже есть», и так навсегда"
+    )
+    assert "otkat_sled" in snosy[0]
+    assert "clients" not in snosy[0] and "orders" not in snosy[0], (
+        "снесли таблицу, которая ЕСТЬ в копии: восстановленные данные стёрты"
+    )
+    vozvrat = next(step for step in outcome.steps if step.name == "rollback-db")
+    assert vozvrat.ok
+
+
+def test_imya_tablitsy_ekranirovano_dlya_sh(tmp_path):
+    """Обратные кавычки экранированы: строка уезжает в `sh -c`.
+
+    Голая обратная кавычка там открывает подстановку команды. Поймано живым
+    откатом на стенде: `sh` ответил «otkat_sled: command not found», в mysql
+    уехало пустое имя — и снос молча не состоялся при шаге, который по виду
+    отработал.
+    """
+    _, shell = _otkat_s_tablitsami(
+        tmp_path, "clients\tBASE TABLE\norders\tBASE TABLE\notkat_sled\tBASE TABLE\n"
+    )
+
+    snos = _snosy(shell)[0]
+    obratnaya = chr(96)
+    ekran = chr(92) + obratnaya
+    assert ekran + "otkat_sled" + ekran in snos, (
+        f"имя таблицы без экрана — `sh` съест его как подстановку команды: {snos}"
+    )
+
+
+def test_tablitsa_so_strannym_imenem_ne_edet_v_komandnuyu_stroku(tmp_path):
+    """Имя уезжает в командную строку, поэтому пропускаем только простые.
+
+    То же правило и по той же причине стоит на имени базы
+    (`test_stranno_nazvannaya_baza_ne_edet_v_komandnuyu_stroku`).
+    """
+    _, shell = _otkat_s_tablitsami(
+        tmp_path,
+        "clients\tBASE TABLE\norders\tBASE TABLE\nzlo" + chr(96) + "e\tBASE TABLE\n",
+    )
+
+    assert not _snosy(shell), "таблица с непростым именем уехала в команду"
+
+
+def test_bez_lishnih_tablits_nichego_ne_snositsya(tmp_path):
+    """База сошлась с копией — сносить нечего, и лишней команды быть не должно."""
+    _, shell = _otkat_s_tablitsami(tmp_path, "clients\tBASE TABLE\norders\tBASE TABLE\n")
+
+    assert not _snosy(shell)
+
+
+def test_kopiya_bez_imyon_tablits_nichego_ne_snosit(tmp_path):
+    """Разбор не нашёл ни одной таблицы — значит сносить нельзя ВООБЩЕ.
+
+    Такая копия бывает у пустой базы (первый деплой), а бывает при расхождении
+    разбора с дампером. В обоих случаях разница «живое минус известное» — это
+    вся база, и снести её было бы худшим из возможных исходов отката.
+    """
+    config = make_config(tmp_path)
+    shell = FakeShell()
+    # Дампер по умолчанию кладёт копию без строк `DROP TABLE`.
+    shell.otvet("SHOW FULL TABLES", "clients\tBASE TABLE\norders\tBASE TABLE\n")
+    updater = make_updater(
+        tmp_path, config=config, shell=shell, probe=FakeProbe(health=(False, True))
+    )
+
+    outcome = updater.run_once()
+
+    assert outcome.status == STATUS_ROLLED_BACK
+    assert not _snosy(shell), "снесли таблицы по пустому списку известных"
+
+
+def test_nemaya_baza_ne_valit_otkat(tmp_path):
+    """Не перечислить таблицы — говорим и едем дальше.
+
+    Вернуть рабочую базу важнее, чем прибрать за миграцией: заливка дампа к
+    этому моменту уже прошла, и валить откат из-за уборки незачем.
+    """
+    config = make_config(tmp_path)
+    shell = FakeShell()
+    shell.effect("scripts.snapshot_db dump", damp_s_tablitsami(config, shell))
+    shell.fail("SHOW FULL TABLES", "база молчит")
+    updater = make_updater(
+        tmp_path, config=config, shell=shell, probe=FakeProbe(health=(False, True))
+    )
+
+    outcome = updater.run_once()
+
+    vozvrat = next(step for step in outcome.steps if step.name == "rollback-db")
+    assert vozvrat.ok, f"откат свалился на уборке: {vozvrat.detail}"
+    assert not _snosy(shell)
+
+
+def test_razbor_imyon_sovpadaet_s_damperom(tmp_path):
+    """Строка `DROP TABLE` разобрана так же, как её пишет дампер.
+
+    Удвоение между `deploy/` и `scripts/` неизбежно — пакет `deploy` работает
+    на хосте и драйвера базы не имеет, — но молча разойтись эти два места не
+    должны. Разойдись они, `_tablicy_kopii` вернёт пустоту, и разница «живое
+    минус известное» станет всей базой; спасает от беды только защита «пустой
+    список — не сносим ничего», а не сам разбор.
+
+    **Строку спрашиваем У ДАМПЕРА.** Прежде она была переписана сюда руками —
+    и сторож оставался зелёным при любой правке формата: подлог (лишний пробел
+    перед `;` в `scripts/snapshot_db.py`) не покраснел ни одним из ста
+    двадцати двух тестов файла. Тот же приём, что у `SNAPSHOT_MARK` в
+    `tests/test_pre_migrate_snapshot.py`: сверяем два места, а не место с
+    литералом.
+    """
+    from deploy.updater import _tablicy_kopii
+    from scripts.snapshot_db import stroka_drop
+
+    # Ровно та обёртка, в которой дампер печатает строку (`_odna_tablica`).
+    kak_pishet_damper = f"\n--\n-- clients\n--\n{stroka_drop('clients')}\nCREATE TABLE x;\n"
+    fayl = tmp_path / "damp.sql"
+    fayl.write_text(kak_pishet_damper, encoding="utf-8")
+
+    assert _tablicy_kopii(fayl) == {"clients"}, (
+        "разбор имён разошёлся с дампером: откат перестанет убирать за упавшими "
+        "миграциями, и никто об этом не узнает"
+    )
+
+
+def test_razbor_imyon_perezhivaet_gigabaytnyy_damp(tmp_path):
+    """Копия читается ПОТОКОМ: на боевой базе дамп — гигабайт с лишним.
+
+    `read_text` развернул бы его в строку Python по два байта на знак (в дампе
+    кириллица), то есть под два с половиной гигабайта. На VPS это `MemoryError`
+    — и прилетел бы он посреди отката, сразу после заливки базы и ДО подъёма
+    контейнера: сайт лежит, страница обслуживания навсегда показывает «идёт», а
+    демон через пять минут берётся за тот же коммит снова.
+
+    Гигабайт здесь не пишем — проверка не должна занимать минуту. Проверяем то,
+    из-за чего беда и была возможна: что файл не читается целиком.
+    """
+    import ast
+    import inspect
+
+    from deploy import updater
+
+    # Разбираем в дерево, а не ищем подстроку: слово `read_text` стоит в самой
+    # докстроке (там объяснено, почему его нет в коде), и поиск по тексту
+    # краснел на исправной правке.
+    derevo = ast.parse(inspect.getsource(updater._tablicy_kopii))
+    obrashcheniya = {u.attr for u in ast.walk(derevo) if isinstance(u, ast.Attribute)}
+    assert "read_text" not in obrashcheniya, (
+        "копия снова читается целиком — гигабайтный дамп положит откат посередине"
+    )
+    assert any(isinstance(u, ast.For) for u in ast.walk(derevo)), (
+        "чтения по строкам не видно"
+    )
+
+
+def test_nechitaemaya_kopiya_ne_valit_otkat(tmp_path):
+    """Беду чтения копии глотаем: вернуть рабочую базу важнее уборки.
+
+    Пропавший файл, отнятые права, кончившаяся память — всё это прилетало бы
+    наружу из `_snyat_lishnie` в самый неудачный миг отката. Пустое множество —
+    верный ответ: у вызывающего пустота уже значит «сносить нечего».
+    """
+    from deploy.updater import _tablicy_kopii
+
+    assert _tablicy_kopii(tmp_path / "ne-sushchestvuet.sql") == set()
+
+    katalog = tmp_path / "eto-katalog.sql"
+    katalog.mkdir()
+    assert _tablicy_kopii(katalog) == set()
+
+
+# --- отчёт называет причину, а не только «не поднялось» -----------------------
+#
+# Снаружи «сайт не отвечает» одинаково выглядит у трёх разных бед: код сломан,
+# миграции упали, база не пускает. Отчёт про все три говорил «health-check не
+# прошёл за N попыток», и человек шёл разбираться с нуля — при том что контейнер
+# причину ЗНАЕТ и уже записал её в `update-state.json`.
+#
+# Поймано живым откатом на стенде: два обновления подряд откатились по РАЗНЫМ
+# причинам (первое — сломанный код, второе — «таблица уже есть» от таблицы,
+# оставшейся после первого), а в отчёте оба раза стояла одна и та же строка.
+
+
+class ProbaSUpavshimKonteynerom(FakeProbe):
+    """Проба, при которой контейнер успевает записать СВОЮ беду.
+
+    Порядок здесь важнее удобства и повторяет живой. Обновлятор пишет ход
+    (`running health`) сразу после `up -d`, а контейнер стартует и падает
+    позже — значит его запись ложится ПОВЕРХ. Напиши подделка раньше, она бы
+    проверяла обратный порядок, которого на живой машине не бывает, и тест
+    зеленел бы там, где код не работает.
+    """
+
+    def __init__(self, put, step: str, error: str, **kwargs):
+        super().__init__(**kwargs)
+        self._put = put
+        self._step = step
+        self._error = error
+
+    def get(self, url, follow=True):
+        if "healthz" in url:
+            self._put.parent.mkdir(parents=True, exist_ok=True)
+            self._put.write_text(
+                json.dumps(
+                    {
+                        "scope": "update",
+                        "phase": "failed",
+                        "step": self._step,
+                        "started_at": "2026-08-19T18:00:00Z",
+                        "error": self._error,
+                    }
+                ),
+                encoding="utf-8",
+            )
+        return super().get(url, follow=follow)
+
+
+def _proba_s_upavshim(config, step: str, error: str, **kwargs):
+    put = config.data_dir.parent / "storage" / "branding" / "update-state.json"
+    return ProbaSUpavshimKonteynerom(put, step, error, **kwargs)
+
+
+def test_otchyot_nazyvaet_upavshie_migratsii_a_ne_tolko_zdorovye(tmp_path):
+    """«Health-check не прошёл» — это симптом, а не причина.
+
+    Контейнер точно знает, на чём он умер, и уже записал это. Не прочитать его —
+    значит заставить человека разбираться заново с тем, что уже выяснено.
+    """
+    config = make_config(tmp_path)
+    shell = FakeShell()
+    updater = make_updater(
+        tmp_path,
+        config=config,
+        shell=shell,
+        probe=_proba_s_upavshim(
+            config, "migrate", "Table 'otkat_sled' already exists", health=(False, True)
+        ),
+    )
+
+    outcome = updater.run_once()
+
+    assert outcome.status == STATUS_ROLLED_BACK
+    zdorovye = next(step for step in outcome.steps if step.name == "health")
+    assert "миграции" in zdorovye.detail, (
+        "в отчёте нет причины: человек видит «не поднялось» и идёт выяснять то, "
+        f"что контейнер уже выяснил. Вышло: {zdorovye.detail!r}"
+    )
+    assert "already exists" in zdorovye.detail
+
+
+def test_otchyot_ne_vydumyvaet_prichinu_kogda_konteyner_molchit(tmp_path):
+    """Файла нет или он не про беду — говорим только то, что знаем сами."""
+    config = make_config(tmp_path)
+    shell = FakeShell()
+    updater = make_updater(
+        tmp_path, config=config, shell=shell, probe=FakeProbe(health=(False, True))
+    )
+
+    outcome = updater.run_once()
+
+    zdorovye = next(step for step in outcome.steps if step.name == "health")
+    assert "Контейнер сказал" not in zdorovye.detail
+
+
+def test_prichina_ot_konteynera_ne_rastyot_bez_granits(tmp_path):
+    """Хвост причины уезжает в Telegram, где длинное сообщение отбивается целиком."""
+    config = make_config(tmp_path)
+    shell = FakeShell()
+    updater = make_updater(
+        tmp_path,
+        config=config,
+        shell=shell,
+        probe=_proba_s_upavshim(config, "migrate", "ы" * 5000, health=(False, True)),
+    )
+
+    outcome = updater.run_once()
+
+    zdorovye = next(step for step in outcome.steps if step.name == "health")
+    assert len(zdorovye.detail) < 600, f"причина разрослась до {len(zdorovye.detail)} знаков"
+
+
+
+# --- сайт, закрытый на работы, не считается сломанным -------------------------
+
+
+def test_obnovlenie_pri_rezhime_obsluzhivaniya_ne_otkatyvaet_bazu(tmp_path):
+    """НАЙДЕНО РАЗБОРОМ: выкатка на закрытом сайте съедала работу владельца.
+
+    Режим обслуживания отдаёт 503 всем, у кого нет сессии владельца, — значит
+    smoke-тест не проходит НИКОГДА, пока сайт закрыт. Обновление считало это
+    поломкой, откатывало код И БАЗУ (заливало дамп, снятый до сборки, поверх
+    живой) и рапортовало «сломано». Всё, что владелец записал в CRM за это
+    время — а он в ней работает, режим закрывает сайт от посетителей, не от
+    него, — исчезало молча.
+    """
+    config = make_config(tmp_path)
+    shell = FakeShell()
+    updater = make_updater(
+        tmp_path,
+        config=config,
+        shell=shell,
+        # Приложение живо (schema сошлась), сайт закрыт, посетителю — 503.
+        probe=FakeProbe(health=(True,), smoke=(False,), obsluzhivanie=True),
+    )
+
+    outcome = updater.run_once()
+
+    assert outcome.status == STATUS_DEPLOYED, (
+        f"выкатка на закрытом сайте объявлена провалом: {outcome.status}"
+    )
+    zalivki = [line for line, _ in shell.stdins if "mysql -uroot opencrm" in line]
+    assert not zalivki, (
+        "база откачена на закрытом сайте — потеряно всё, что владелец записал "
+        "с момента съёмки копии"
+    )
+    assert not any(shag.name == "rollback-db" for shag in outcome.steps)
+
+
+def test_pri_otkrytom_sayte_smoke_po_prezhnemu_sterezhet(tmp_path):
+    """Пропуск smoke-тестов — только для закрытого сайта, и ни для чего больше.
+
+    Иначе исправление сняло бы проверку вовсе: пятисотая на главной перестала
+    бы останавливать выкатку.
+    """
+    updater = make_updater(
+        tmp_path,
+        probe=FakeProbe(health=(True,), smoke=(False,), obsluzhivanie=False),
+    )
+
+    outcome = updater.run_once()
+
+    # Не `rolled-back`, а «что угодно, кроме успеха»: откат тут случается, но
+    # СТАРЫЙ код тоже отдаёт посетителю ошибку (подстава отвечает 500 всегда),
+    # и обновление честно зовёт это `broken`. Стережём здесь одно — что выкатка
+    # НЕ засчитана; кто именно виноват, разбирают соседние проверки.
+    assert outcome.status != STATUS_DEPLOYED, (
+        "открытый сайт отдаёт посетителю ошибку, а выкатка засчитана"
+    )
+    assert any(shag.name.startswith("rollback") for shag in outcome.steps), (
+        f"smoke-тест не остановил выкатку вовсе: {step_names(outcome)}"
+    )
+
+
+def test_smoke_ne_sprashivayut_kogda_sayt_zakryt(tmp_path):
+    """И не спрашиваем вовсе: ответ известен заранее и ничего не значит."""
+    probe = FakeProbe(health=(True,), smoke=(True,), obsluzhivanie=True)
+    # Адрес задаём тем же ключом, каким его читает `UpdateConfig.from_env`.
+    # Написанное как `smoke_urls=...` уехало бы в словарь окружения мёртвым
+    # ключом, и проверка держалась бы на умолчании, читаясь так, будто задаёт
+    # адрес сама.
+    config = make_config(tmp_path, OPENCRM_UPDATE_SMOKE_URLS="http://sayt-zakryt.test/")
+    updater = make_updater(tmp_path, config=config, probe=probe)
+
+    outcome = updater.run_once()
+
+    assert outcome.status == STATUS_DEPLOYED
+    assert config.smoke_urls == ("http://sayt-zakryt.test/",), (
+        f"адрес не доехал до настроек — проверка держится на умолчании: {config.smoke_urls}"
+    )
+    assert not any("sayt-zakryt.test" in url for url in probe.calls), (
+        f"smoke-адрес спрошен на закрытом сайте: {probe.calls}"
+    )
+    # И об этом сказано в отчёте, а не только в логе демона: зелёный шаг с
+    # пустой подробностью читается как «страницы проверены».
+    zdorovye = next(shag for shag in outcome.steps if shag.name == "health")
+    assert "закрыт на работы" in zdorovye.detail, (
+        f"пропуск smoke не виден в отчёте: {zdorovye.detail!r}"
+    )
+
+
+# --- копии базы не копятся без предела ----------------------------------------
+
+
+def test_snimki_bazy_ne_kopyatsya_bez_predela(tmp_path):
+    """НАЙДЕНО РАЗБОРОМ: обновления однажды вставали совсем.
+
+    Каждое обновление кладёт `pre-update-<коммит>.sql`, каждый откат — ещё и
+    `failed-update-<время>.sql`, и не удалялось из них ничего. На боевой базе
+    дамп — гигабайт с лишним, а `preflight` требует свободных 2 ГБ. Три-четыре
+    обновления — и обновление останавливается навсегда с сообщением про место,
+    в котором про стопку дампов не сказано ни слова.
+    """
+    config = make_config(tmp_path)
+    shell = FakeShell()
+    # Восемь копий с разных прошлых обновлений, от старой к свежей.
+    starye = []
+    for nomer in range(8):
+        put = config.state_dir / f"pre-update-staraya{nomer}.sql"
+        put.write_text("INSERT INTO clients VALUES (1);\n", encoding="utf-8")
+        os.utime(put, (1_600_000_000 + nomer, 1_600_000_000 + nomer))
+        starye.append(put)
+
+    updater = make_updater(tmp_path, config=config, shell=shell)
+    outcome = updater.run_once()
+    assert outcome.status == STATUS_DEPLOYED
+
+    ostalis = sorted(p.name for p in config.state_dir.glob("pre-update-*.sql"))
+    # `SNAPSHOTS_KEPT + 1`, и это не описка: уборка идёт ПЕРВЫМ шагом
+    # обновления, до проверки места и до съёмки, — иначе на забитой дампами
+    # машине preflight отказал бы раньше, чем уборка позвалась. Значит она
+    # оставляет свои `SNAPSHOTS_KEPT`, а сверху ложится свежая копия.
+    assert len(ostalis) == SNAPSHOTS_KEPT + 1, (
+        f"копии не убираются: осталось {len(ostalis)} — {ostalis}"
+    )
+    # Свежая — та, что сняли сейчас; убрали именно САМЫЕ СТАРЫЕ.
+    assert f"pre-update-{NEW[:12]}.sql" in ostalis, "убрали свежую копию — откатывать нечем"
+    assert not starye[0].exists(), "самая старая копия осталась лежать"
+    assert starye[-1].exists(), "убрали свежую копию вместо старой"
+
+
+def test_neudachnye_dampy_ubirayutsya_toy_zhe_meroy(tmp_path):
+    """`failed-update-*.sql` копятся так же и занимают столько же места."""
+    config = make_config(tmp_path)
+    for nomer in range(7):
+        put = config.state_dir / f"failed-update-2026010{nomer}-000000.sql"
+        put.write_text("INSERT INTO clients VALUES (1);\n", encoding="utf-8")
+        os.utime(put, (1_600_000_000 + nomer, 1_600_000_000 + nomer))
+
+    updater = make_updater(tmp_path, config=config)
+    assert updater.run_once().status == STATUS_DEPLOYED
+
+    # Здесь ровно `SNAPSHOTS_KEPT`: свежий `failed-update-*` кладёт только
+    # неудачный откат, а эта выкатка удалась.
+    ostalis = sorted(p.name for p in config.state_dir.glob("failed-update-*.sql"))
+    assert len(ostalis) == SNAPSHOTS_KEPT, f"неудачные дампы копятся: {ostalis}"
+
+
+def test_uborka_ne_valit_obnovlenie(tmp_path):
+    """Беда с уборкой не смертельна: место кончится позже, обновление важнее.
+
+    Неубираемое кладём каталогом с тем же именем: `unlink` на непустом каталоге
+    отказывает по-настоящему, на любой системе, и подменять для этого ничего не
+    нужно — подменённый `unlink` сорвал бы и съёмку свежей копии, то есть
+    проверял бы совсем не то.
+    """
+    config = make_config(tmp_path)
+    upryamyy = config.state_dir / "pre-update-upryamaya.sql"
+    upryamyy.mkdir(parents=True)
+    (upryamyy / "vnutri").write_text("x", encoding="utf-8")
+    os.utime(upryamyy, (1_500_000_000, 1_500_000_000))
+    for nomer in range(SNAPSHOTS_KEPT + 3):
+        put = config.state_dir / f"pre-update-staraya{nomer}.sql"
+        put.write_text("INSERT INTO clients VALUES (1);\n", encoding="utf-8")
+        os.utime(put, (1_600_000_000 + nomer, 1_600_000_000 + nomer))
+
+    outcome = make_updater(tmp_path, config=config).run_once()
+
+    assert outcome.status == STATUS_DEPLOYED, (
+        f"неубираемый файл остановил выкатку: {outcome.status}"
+    )
+    assert upryamyy.exists(), "каталог всё-таки снесли"
+    assert (config.state_dir / f"pre-update-{NEW[:12]}.sql").is_file(), (
+        "свежая копия не снята — откатывать нечем"
+    )
+
+
+def test_bez_polya_maintenance_sayt_schitaetsya_otkrytym(tmp_path):
+    """Поля нет — проверяем страницы. Безопасная сторона именно эта.
+
+    Случай не выдуманный: откат на коммит старше самого поля, переименование
+    поля, чужая сборка. Прими мы «поля нет — значит закрыт», и smoke-тесты
+    перестали бы спрашиваться НА КАЖДОЙ выкатке разом, молча и навсегда.
+
+    Проверка нужна отдельная, потому что дубль `/healthz` теперь отдаёт поле
+    всегда, и случай «старое приложение без него» иначе не проверялся бы вовсе:
+    подлог `payload.get("maintenance") in ("on", None)` оставлял весь файл
+    зелёным.
+    """
+    class BezPolya(FakeProbe):
+        def get(self, url, follow=True):
+            otvet = super().get(url, follow=follow)
+            if "healthz" in url and otvet.status == 200:
+                return Response(200, '{"status": "ok"}')
+            return otvet
+
+    probe = BezPolya(health=(True,), smoke=(False,))
+    outcome = make_updater(tmp_path, probe=probe).run_once()
+
+    assert outcome.status != STATUS_DEPLOYED, (
+        "приложение не сказало про режим обслуживания, а страницы не проверили"
+    )
+    assert any("127.0.0.1" in url for url in probe.calls if "healthz" not in url), (
+        f"smoke-адрес не спрашивали вовсе: {probe.calls}"
+    )

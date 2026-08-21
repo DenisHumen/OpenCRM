@@ -273,6 +273,14 @@ export function FinanceSettings() {
                       : t("finRulePerOrder")}
                     {" · "}
                     {t("finRuleTarget")}: {target ? target.name : "—"}
+                    {/* Признак статьи прямо в строке правила. Подсказка в
+                        модалке лечит будущие ошибки, а уже сделанные остаются
+                        невидимыми: чтобы увидеть их сегодня, надо открыть
+                        каждое правило, посмотреть статью, потом открыть статью
+                        и посмотреть признак. Здесь расхождение видно с одного
+                        взгляда на список. */}
+                    {target?.purpose === "tax" && ` · ${t("finTaxes")}`}
+                    {target?.purpose === "salary" && ` · ${t("finSalaries")}`}
                     {row.base === BASE_PERCENT &&
                       ` · ${
                         source ? t("finRuleOnIncome", { name: source.name }) : t("finAppliesToAny")
@@ -750,7 +758,26 @@ function RuleModal({
               </option>
             ))}
           </select>
-          <div className="field-desc">{t("finRuleTargetHint")}</div>
+          {/*
+            Подсказка говорит про ВЫБРАННУЮ статью, а не вообще, и это не
+            придирка. Отчёт о прибыли выносит отдельной строкой то, что легло в
+            статью с признаком «налог» или «зарплата»; правило про признак не
+            спрашивает вовсе, а итог прибыли верен в обоих случаях. Получалось,
+            что человек настраивал налог в обычную статью, видел в отчёте
+            «налогов 0» — и верил.
+
+            Общая фраза «налог — в налоговую» рядом со списком из десяти статей
+            на вопрос «а ЭТА — налоговая?» не отвечает. Эта отвечает.
+          */}
+          <div className="field-desc">
+            {(() => {
+              const vybrana = categories.find((row) => String(row.id) === String(form.category_id));
+              if (!vybrana) return t("finRuleTargetHint");
+              if (vybrana.purpose === "tax") return t("finRuleTargetTax");
+              if (vybrana.purpose === "salary") return t("finRuleTargetSalary");
+              return t("finRuleTargetGeneral");
+            })()}
+          </div>
           {categories.length === 0 && <div className="field-desc">{t("finNoCategories")}</div>}
         </div>
 

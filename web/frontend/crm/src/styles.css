@@ -88,14 +88,32 @@
   --well-off: #191817;      /* поле, которое не правится */
   --text: #eceae4;          /* было #f5f4ef */
   --num: #ffffff;           /* большие числа — чистый белый */
-  --muted: #9a968b;         /* было #9c998f */
-  --faint: #6a675f;         /* было #706d64 */
-  --sub: #78746b;           /* подписи под числами */
-  --accent: #6c8eef;
-  --brand: #d97757;
+  /* Лестница приглушённого текста сдвинута светлее — вся, а не по ступеньке.
+     Исходная не проходила AA в четырёх местах из своих шести: `--faint` давал
+     3.1:1 на фоне, 2.8:1 на `--surface-2` и 3.1:1 на отключённом поле, `--sub`
+     под числом метрики — 3.6:1. Правка видимая, и это её цена: приглушённый
+     текст стал заметнее по всему интерфейсу.
+
+     Двигать пришлось всё три ступени сразу. Самое тесное место у `--faint` —
+     счётчик в шапке колонки на `--surface-2`; подняв его до 4.5, мы упёрлись
+     бы в прежний `--sub`, и лестница «muted → sub → faint» схлопнулась бы в
+     три почти одинаковых серых. Светлая тема сдвигалась ровно так же, только
+     темнее (см. её блок ниже). Числа — в docs/05-crm-design.md. */
+  --muted: #b3afa4;         /* 7.3:1 на surface-2; было #9a968b */
+  --faint: #8d8980;         /* 4.6:1 на surface-2 — нижняя граница; было #6a675f */
+  --sub: #a09c92;           /* 6.2:1 под числом метрики; было #78746b */
+  --accent: #7394f0;        /* 4.7:1 на своём тинте; было #6c8eef */
+  --brand: #dc8063;         /* 4.7:1 на своём тинте; было #d97757 */
   --success: #58b47c;       /* было #4caf6e */
   --warning: #d99a4e;       /* было #e8a23d — спокойнее */
-  --danger: #e5695e;
+  --danger: #e7746a;        /* 4.7:1 на своём тинте; было #e5695e */
+  /* Красная ЗАЛИВКА — отдельным токеном, а не тем же `--danger`.
+     Роли у них противоположные и в тёмной теме несовместимые: как ТЕКСТ на
+     почти чёрном фоне красный должен быть светлым, как ФОН под белым текстом —
+     тёмным. Пока токен был один, счётчик просроченных в меню давал 3.2:1, и
+     поднять его было нечем: белое светлее не бывает.
+     Мест всего два — счётчик просрочки и кнопка опасного подтверждения. */
+  --danger-solid: #dc3628;  /* 4.6:1 под белым */
   --btn-bg: #f5f4ef;
   --btn-bg-hover: #ffffff;
   --btn-text: #1a1a19;
@@ -116,8 +134,8 @@
      якорь. Из-за кодировки сторож цвета её не видит, поэтому пару
      `--muted`/`--faint` и стрелки правят вместе — разъедутся молча.
      Форма — тот же `chevronDown` из `components/Icon.tsx`, штрих 1.5. */
-  --select-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%239a968b' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
-  --select-arrow-off: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%236a675f' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  --select-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23b3afa4' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  --select-arrow-off: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238d8980' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
 
   /* Полупрозрачные заливки под цветным текстом (чипы, баннеры, врезки).
      Держатся токенами, а не «тем же цветом с alpha»: на светлой теме и цвет
@@ -165,13 +183,13 @@
   --text: #211f1a;          /* 16.5:1 на карточке */
   --num: #131210;
   /* Приглушённый текст на светлом темнее, чем «зеркало» тёмной темы, и это не
-     вкусовщина. В тёмной `--faint` даёт 3.1:1 — ниже AA; на светлом фоне такая
-     же бледность читается ещё хуже, потому что рядом нет тёмного поля, на
-     котором глаз отдыхает. Мерено на живой странице (сводка — в
-     docs/05-crm-design.md): подпись под заголовком 5.3:1, шапка колонки 6.0:1,
-     заголовок раздела меню 4.9:1 — самое тесное место, там `--faint` лежит на
-     фоне сайдбара. Лестница «muted → sub → faint» сохранена, просто вся
-     сдвинута темнее. */
+     вкусовщина: на светлом фоне бледность читается хуже, потому что рядом нет
+     тёмного поля, на котором глаз отдыхает. Мерено на живой странице (сводка —
+     в docs/05-crm-design.md): подпись под заголовком 5.3:1, шапка колонки
+     6.0:1, заголовок раздела меню 4.9:1 — самое тесное место, там `--faint`
+     лежит на фоне сайдбара. Лестница «muted → sub → faint» сохранена, просто
+     вся сдвинута темнее — ровно тем же приёмом, каким её потом сдвинули
+     светлее в тёмной теме. */
   --muted: #5c574d;         /* 6.9:1 на фоне */
   --sub: #655f53;           /* 6.0:1 */
   --faint: #6d6759;         /* 5.3:1 на фоне, 4.7:1 на surface-2 — нижняя граница */
@@ -180,6 +198,11 @@
   --success: #1b6e3e;       /* 6.0:1 */
   --warning: #845413;       /* 6.1:1 */
   --danger: #b32d23;        /* 6.0:1 */
+  /* Заливка совпадает с текстовым красным: на светлой теме он и так достаточно
+     тёмен под белым (6.0:1). Токен всё равно объявлен — обе палитры обязаны
+     называть один набор имён, иначе тема, где имени нет, останется без цвета
+     вовсе (сторож `test_obe_palitry_nazyvayut_odni_i_te_zhe_tokeny`). */
+  --danger-solid: #b32d23;
   --btn-bg: #26241f;        /* главная кнопка меняется местами: тёмная на светлом */
   --btn-bg-hover: #12110e;
   --btn-text: #faf9f6;
@@ -731,6 +754,17 @@ button { font-family: var(--sans); }
 /* Поле внутри строки списка: полная высота разгоняет строку и ломает ритм. */
 .input-sm { height: 28px; font-size: 12px; padding: 0 8px; }
 
+/* Готовый кусок кода, который человек уносит к себе (пример запроса к приёму
+   заявок). Моноширинный и с сохранением переносов — иначе команда из четырёх
+   строк слипается в одну и её приходится разбирать глазами. Прокрутка вбок, а
+   не перенос: разорванная посередине строка команды выглядит как две команды. */
+.code-block {
+  margin: 8px 0 0; padding: 10px 12px; background-color: var(--well);
+  border: 1px solid var(--border); border-radius: 8px; color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11.5px; line-height: 1.6; overflow-x: auto;
+}
+
 /* --- Выпадающий список ----------------------------------------------------
    Одет ЗАКРЫТЫЙ вид: та же высота, рамка, скругление, шрифт и «колодец», что
    у `.input` рядом, плюс своя стрелка вместо системной.
@@ -1172,7 +1206,7 @@ select:disabled {
    статистика: серое число рядом с названием читается как «всего». */
 .nav-badge {
   min-width: 18px; padding: 0 5px; border-radius: 999px;
-  background: var(--danger); color: var(--on-danger);
+  background: var(--danger-solid); color: var(--on-danger);
   font-size: 10.5px; font-weight: 700; line-height: 18px; text-align: center;
   font-variant-numeric: tabular-nums;
 }
@@ -1228,6 +1262,12 @@ select:disabled {
 .month-bar { width: 12px; border-radius: 3px 3px 0 0; }
 .month-bar.won { background: var(--chart-success); }
 .month-bar.lost { background: var(--chart-danger); }
+/* Деньги — своим цветом, чтобы не читаться как ещё одна доля заявок: это
+   другая величина, посчитанная по другой оси. Ушедшие обратно (месяц с
+   возвратами) рисуются приглушённо и тем же цветом, что и полоса потерь: столбик
+   вверх при убыли ввёл бы в заблуждение сильнее, чем отсутствие столбика. */
+.month-bar.money-in { background: var(--chart-brand); }
+.month-bar.money-back { background: var(--chart-danger); opacity: 0.55; }
 .month-label { font-size: 10px; color: var(--faint); white-space: nowrap; }
 
 /* Источники: таблица, у которой полоса выручки лежит под строкой. */
@@ -1804,6 +1844,16 @@ select:disabled {
   padding: 10px 12px;
   border-top: 1px solid var(--line);
 }
+/* Низ переписки у того, кому писать нельзя. Занимает место поля ввода и несёт
+   ту же границу сверху: убери её вовсе — и лента упирается в край окна, что
+   читается как оборванная вёрстка, а не как «мне сюда нельзя». */
+.tg-readonly {
+  padding: 12px;
+  border-top: 1px solid var(--line);
+  color: var(--faint);
+  font-size: 12.5px;
+  text-align: center;
+}
 .tg-compose textarea {
   flex: 1;
   min-height: 38px;
@@ -2136,4 +2186,51 @@ a.tg-file:hover { text-decoration: underline; }
   font: inherit;
   cursor: pointer;
   padding: 0;
+}
+
+/* --- снимки товара -----------------------------------------------------------
+   Сетка подстраивается сама: у товара бывает один снимок и бывает десяток, и
+   раскладка не должна оставлять дыру в первом случае и обрезать во втором. */
+.photo-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+  gap: 10px; margin-top: 12px;
+}
+.photo-cell { position: relative; }
+/* Кнопкой, а не картинкой с обработчиком: снимок открывают, значит это
+   действие, и с клавиатуры оно обязано быть доступно так же, как мышью. */
+.photo-open {
+  display: block; width: 100%; aspect-ratio: 1; padding: 0; overflow: hidden;
+  border: 1px solid var(--border); border-radius: 10px; background: var(--well);
+  cursor: pointer;
+}
+.photo-open:hover { border-color: var(--border-hover); }
+/* `cover`, а не `contain`: плитка отвечает на вопрос «это она?», и поля вокруг
+   картинки отнимают у неё ровно ту площадь, по которой вещь узнают. Целиком
+   снимок смотрят по нажатию. */
+.photo-open img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.photo-first {
+  position: absolute; left: 6px; bottom: 6px; padding: 1px 6px; border-radius: 6px;
+  background: var(--tint-neutral); color: var(--muted); font-size: 10.5px; font-weight: 500;
+}
+.photo-drop {
+  position: absolute; top: 6px; right: 6px; width: 22px; height: 22px;
+  display: flex; align-items: center; justify-content: center;
+  border: none; border-radius: 6px; background: var(--media-chip); color: var(--on-media);
+  cursor: pointer; opacity: 0; transition: opacity 120ms;
+}
+/* Кнопка удаления проявляется по наведению, но при фокусе с клавиатуры видна
+   всегда: спрятанная за наведением, она недостижима для того, кто ходит табом. */
+.photo-cell:hover .photo-drop, .photo-drop:focus-visible { opacity: 1; }
+/* Просмотр целиком. Отдельным слоем поверх страницы, без своей рамки и
+   заголовка: смотрят снимок, а не окно вокруг него. */
+.photo-viewer {
+  position: fixed; inset: 0; z-index: 50; display: flex; align-items: center;
+  justify-content: center; padding: 32px; background: var(--overlay); cursor: zoom-out;
+}
+/* Рамкой, а не тенью: токена тени в палитре нет, и заводить его ради одного
+   места значит завести цвет, который придётся держать в обеих темах. Окна в
+   этом проекте отделяются от задника ровно так же — границей поверх `--overlay`. */
+.photo-viewer img {
+  max-width: 100%; max-height: 100%; border-radius: 12px;
+  border: 1px solid var(--border);
 }

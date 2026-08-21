@@ -53,7 +53,14 @@ jobs:
       OPENCRM_TEST_DB_URL: "mysql+pymysql://root:testy@127.0.0.1:3306/opencrm_test?charset=utf8mb4"
       OPENCRM_REDIS_URL: "redis://127.0.0.1:6379/0"
     steps:
+      # Историю берём ЦЕЛИКОМ. Умолчание `actions/checkout` — один коммит, а
+      # в такой копии граница обрезки выглядит для git корневым коммитом,
+      # где добавлены все файлы разом. Сторож правленых миграций
+      # (`tests/test_migratsii_ne_pravyat.py`) на этом зеленел впустую
+      # полтора месяца — и он поставлен ПОСЛЕ отката боевого сервера.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -97,7 +104,14 @@ jobs:
   shellcheck:
     runs-on: ubuntu-latest
     steps:
+      # Историю целиком. `git ls-files` её НЕ требует — он читает индекс и на
+      # мелком клоне отдаёт тот же список (замерено). Довод здесь один: копия
+      # остаётся такой же, как у прогона тестов выше, а сторож миграций
+      # проверяет ВСЕ шаги checkout — чтобы правка не переехала в джобу без
+      # истории и не зазеленела там впустую.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       # -s sh, а не bash: скрипты обязаны работать под dash — на голой Ubuntu
       # /bin/sh это он, и установщик не имеет права требовать того, что сам
       # ещё не поставил.

@@ -16,6 +16,10 @@ import { can } from "../lib/permissions";
 export function Dashboard() {
   const { user, t, locale, storage, modules, refreshStorage, toastError } = useApp();
   const seesMoney = can(user, "deals.view_amounts");
+  // Раздел «последние клиенты» — только тому, кому карточки открыты. Сервер
+  // теперь отдаёт пустой список без права, и без этой проверки на экране
+  // осталась бы надпись «клиентов пока нет» и ссылка в раздел, куда не пускают.
+  const seesClients = can(user, "clients.view");
   const navigate = useNavigate();
   const [data, setData] = useState<any>(null);
 
@@ -82,15 +86,37 @@ export function Dashboard() {
               </div>
               <div className="metric-sub">{t("dealsOpenNow", { n: openDeals })}</div>
             </div>
+            {/* Плитка денег — первой из двух, и это то самое место, где
+                владелец видел пустой месяц при полной кассе. Считаем по кассе
+                (решение «банк один»): заказ, оплаченный мимо заявки, виден
+                только так.
+
+                «Закрыто за месяц» осталось рядом, а не заменено: это два разных
+                вопроса — «получили» и «продали на», — и расхождение между ними
+                полезное число, а не ошибка. Ось берём из ответа сервера, а не
+                из своей карты блоков. */}
+            {data.money_basis === "cash" && (
+              <div className="card card-pad">
+                <div className="metric-title" style={{ marginBottom: 14 }}>
+                  {t("moneyReceivedThisMonth")}
+                </div>
+                <div className="metric-value money-value">
+                  {formatMoney(data.money_received_this_month, data.currency, locale)}
+                </div>
+                <div className="metric-sub">{t("moneyReceivedHint")}</div>
+              </div>
+            )}
             <div className="card card-pad">
               <div className="metric-title" style={{ marginBottom: 14 }}>
-                {t("moneyWonThisMonth")}
+                {data.money_basis === "cash" ? t("moneyWonValue") : t("moneyWonThisMonth")}
               </div>
               <div className="metric-value money-value">
                 {formatMoney(data.money_won_this_month, data.currency, locale)}
               </div>
               <div className="metric-sub">
-                {t("dealsWonThisMonth", { n: data.won_count_this_month })}
+                {data.money_basis === "cash"
+                  ? t("moneyWonValueHint", { n: data.won_count_this_month })
+                  : t("dealsWonThisMonth", { n: data.won_count_this_month })}
               </div>
             </div>
             <div className="card card-pad">
@@ -271,32 +297,36 @@ export function Dashboard() {
         </>
       )}
 
-      <div className="section-head" style={{ marginBottom: 12 }}>
-        <h2 className="section-title">{t("recentClients")}</h2>
-        <Link to="/clients" className="section-link">
-          {t("allClients")}
-        </Link>
-      </div>
-      <div className="list-card">
-        {data.recent_clients.length === 0 && <EmptyState title={t("noClientsYet")} />}
-        {data.recent_clients.map((client: any) => (
-          <Link to={`/clients/${client.id}`} key={client.id} className="list-row hoverable">
-            <Avatar text={initials(client.name)} />
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ color: "var(--text)", fontSize: 13.5, fontWeight: 500 }}>{client.name}</div>
-              <div style={{ color: "var(--faint)", fontSize: 12 }}>{client.company}</div>
-            </div>
-            <div style={{ display: "flex", gap: 6 }}>
-              {client.tags.slice(0, 2).map((tag: string) => (
-                <Chip key={tag}>{tag}</Chip>
-              ))}
-            </div>
-            <div style={{ color: "var(--faint)", fontSize: 12, width: 150, textAlign: "right", flexShrink: 0 }}>
-              {relativeDay(client.updated_at, locale)}
-            </div>
-          </Link>
-        ))}
-      </div>
+      {seesClients && (
+        <>
+          <div className="section-head" style={{ marginBottom: 12 }}>
+            <h2 className="section-title">{t("recentClients")}</h2>
+            <Link to="/clients" className="section-link">
+              {t("allClients")}
+            </Link>
+          </div>
+          <div className="list-card">
+            {data.recent_clients.length === 0 && <EmptyState title={t("noClientsYet")} />}
+            {data.recent_clients.map((client: any) => (
+              <Link to={`/clients/${client.id}`} key={client.id} className="list-row hoverable">
+                <Avatar text={initials(client.name)} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ color: "var(--text)", fontSize: 13.5, fontWeight: 500 }}>{client.name}</div>
+                  <div style={{ color: "var(--faint)", fontSize: 12 }}>{client.company}</div>
+                </div>
+                <div style={{ display: "flex", gap: 6 }}>
+                  {client.tags.slice(0, 2).map((tag: string) => (
+                    <Chip key={tag}>{tag}</Chip>
+                  ))}
+                </div>
+                <div style={{ color: "var(--faint)", fontSize: 12, width: 150, textAlign: "right", flexShrink: 0 }}>
+                  {relativeDay(client.updated_at, locale)}
+                </div>
+              </Link>
+            ))}
+          </div>
+        </>
+      )}
     </div>
   );
 }

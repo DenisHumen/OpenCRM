@@ -20,11 +20,16 @@ Enter. Никакого драйвера, никакого разрешения 
 API и поле ввода на экране.
 """
 
+from dataclasses import dataclass
+from datetime import date
+from typing import Callable
+
 from sqlalchemy.orm import Session
 
 from core import exceptions as errors
 from core import uniqueness
-from database.models import ProductBarcode
+from core.services import codes as code_render
+from database.models import Product, ProductBarcode
 from database.models.warehouse import (
     BARCODE_CODE128,
     BARCODE_INTERNAL,
@@ -48,6 +53,183 @@ INTERNAL_PREFIX = "2"
 INTERNAL_LENGTH = 8
 
 MAX_CODE = 64
+
+
+
+# --------------------------------------------------------------------------
+# Что печатать на наклейке
+# --------------------------------------------------------------------------
+#
+# РЕЕСТР, а не набор `if` в шаблоне. Состав наклейки — это то, что у каждого
+# дела своё: мастерской нужна единица измерения, магазину цена, складу порог
+# заказа, а тому, кто печатает на самоклейке для клиента, — название фирмы.
+# Угадать набор один раз нельзя, и дописывать его придётся ещё не раз.
+#
+# Поэтому добавление нового поля стоит ОДНОЙ записи здесь. Всё остальное
+# подхватывается само: значение по умолчанию попадает в настройки, ручка
+# `/labels/settings` отдаёт флаг, экран настроек рисует переключатель, шаблон
+# печатает поле в своей зоне. Стережёт это `tests/test_labels.py` — он требует,
+# чтобы у каждой записи реестра был перевод на обоих языках и место в шаблоне.
+#
+# Зона — это где поле стоит, и зон ровно три, потому что наклейка устроена
+# просто: сверху текст, посередине штрихкод, снизу цифры.
+#
+#   verh   — над штрихкодом, каждое поле своей строкой (название, заметка);
+#   stroka — одной строкой в разбивку, слева направо (артикул, единица, цена);
+#   niz    — под цифрами, мелким (название фирмы, дата печати).
+#
+# Отдельно `bok` — QR рядом со штрихкодом: он не текст и своей строкой не встаёт.
+#: Сколько знаков заметки влезает. Больше — и штрихкод уезжает за край даже на
+#: 58×40: строка заметки набирается мелким, но переносится, а высота фиксирована.
+MAX_NOTE_ON_LABEL = 60
+
+#: Единицы измерения словами. Короткими: на наклейке 58 мм «килограмм» съедает
+#: пол-строки, а «кг» понятно всем и всюду.
+UNIT_NAMES = {
+    "ru": {"kg": "кг", "g": "г", "l": "л", "ml": "мл", "m": "м",
+           "m2": "м²", "pack": "упак", "hour": "ч"},
+    "uk": {"kg": "кг", "g": "г", "l": "л", "ml": "мл", "m": "м",
+           "m2": "м²", "pack": "упак", "hour": "год"},
+    "en": {"kg": "kg", "g": "g", "l": "l", "ml": "ml", "m": "m",
+           "m2": "m²", "pack": "pack", "hour": "h"},
+}
+
+#: Приставка у порога заказа: без неё число на наклейке ничего не значит.
+MIN_STOCK_PREFIX = {"ru": "мин", "uk": "мін", "en": "min"}
+
+ZONA_VERH = "verh"
+ZONA_STROKA = "stroka"
+ZONA_NIZ = "niz"
+ZONA_BOK = "bok"
+
+
+@dataclass(frozen=True)
+class PoleNakleyki:
+    """Одно поле наклейки: как зовётся, где стоит и откуда берётся значение.
+
+    `klyuch` даёт имя настройки (`label_show_<klyuch>`) и строки перевода на
+    экране — то есть одно слово связывает базу, API и интерфейс. Разойдись они,
+    поле просто не появится, а искать причину пришлось бы в трёх местах.
+
+    `znachenie` берёт товар, его ОСНОВНОЙ КОД и `sreda` — всё, что не
+    принадлежит ни тому, ни другому (валюта, название фирмы, адрес сайта, язык,
+    дата печати). Код нужен потому, что не всё на наклейке принадлежит товару:
+    размер упаковки записан у кода, и печатается наклейка именно под этот код.
+    Среда собирается ОДИН раз на всю пачку: печатают по сотне наклеек, и лезть
+    за настройками на каждую значило бы сто одинаковых запросов.
+
+    `dengi=True` — поле показывает суммы. Такое поле молчит у того, кому суммы
+    не положены (`warehouse.view_amounts`). Отдельный признак, а не проверка
+    внутри каждой функции: забыть её в новой значит открыть дыру, о которой
+    никто не узнает, — а забыть флаг видно в самой записи реестра.
+    """
+
+    klyuch: str
+    zona: str
+    po_umolchaniyu: bool
+    znachenie: Callable[[Product, object, dict], str]
+    dengi: bool = False
+
+
+def _pole_name(product, kod, sreda) -> str:
+    return product.name or ""
+
+
+def _pole_sku(product, kod, sreda) -> str:
+    return product.sku or ""
+
+
+def _pole_price(product, kod, sreda) -> str:
+    return _money(product.price_minor, sreda["currency"])
+
+
+def _pole_unit(product, kod, sreda) -> str:
+    """Единица измерения словом. Пустая строка у штук — и это осознанно.
+
+    «шт» на наклейке не значит ничего: штука подразумевается по умолчанию, и
+    печатать её — тратить миллиметры на слово, которое никому не сообщает
+    нового. А вот «кг» или «м» меняют смысл всей позиции.
+    """
+    if not product.unit or product.unit == "pcs":
+        return ""
+    return sreda["units"].get(product.unit, product.unit)
+
+
+def _pole_note(product, kod, sreda) -> str:
+    """Заметка о товаре, обрезанная. Длинная выталкивает штрихкод за край.
+
+    Обрезаем по словам и без многоточия: на наклейке 58 мм многоточие — это
+    целый знак, а обрыв на середине слова человек и так поймёт.
+    """
+    text = " ".join((product.note or "").split())
+    return text[:MAX_NOTE_ON_LABEL].rstrip() if text else ""
+
+
+def _pole_min_stock(product, kod, sreda) -> str:
+    """Порог заказа. Тому, кто идёт по полкам, он говорит, что пора заказывать."""
+    if not product.min_stock_milli:
+        return ""
+    return f"{sreda['t_min']} {_kolichestvo(product.min_stock_milli)}"
+
+
+def _pole_company(product, kod, sreda) -> str:
+    return sreda["company"]
+
+
+def _pole_printed_at(product, kod, sreda) -> str:
+    return sreda["printed_at"]
+
+
+def _pole_qr(product, kod, sreda) -> str:
+    """QR со ссылкой на карточку товара — открыть телефоном и увидеть всё.
+
+    Ссылка ведёт в CRM, а не наружу: за ней сессия сотрудника. Смысл в том,
+    чтобы стоящий у стеллажа человек навёл телефон и увидел остаток, снимки и
+    цену, не идя к компьютеру. Постороннему она не откроет ничего — там вход.
+    """
+    if not sreda["base_url"]:
+        return ""
+    return code_render.qr_svg(f"{sreda['base_url']}/warehouse/{product.id}")
+
+
+def _pole_pack(product, kod, sreda) -> str:
+    """Сколько единиц товара в этой упаковке — если не одна.
+
+    **Самое недооценённое поле наклейки.** Размер упаковки записан у КОДА, а не
+    у товара: один и тот же товар имеет код на штуку и код на блок из десяти.
+    Отсканировали блок — в заказ ушло десять штук, и это правильно. Но на самой
+    наклейке об этом до сих пор не было ни слова: две наклейки выглядели
+    одинаково, а значили разное, и понять, какую клеить на коробку, было
+    неоткуда.
+
+    Единица не печатается по той же причине, что и «шт» у единицы измерения:
+    упаковка в одну штуку — это обычный случай, и говорить о нём нечего.
+    """
+    razmer = getattr(kod, "pack_size_milli", None)
+    if not razmer or razmer == QUANTITY_SCALE:
+        return ""
+    return f"×{_kolichestvo(razmer)}"
+
+
+#: Порядок записей — это порядок полей на наклейке сверху вниз.
+POLYA_NAKLEYKI: tuple[PoleNakleyki, ...] = (
+    PoleNakleyki("name", ZONA_VERH, True, _pole_name),
+    PoleNakleyki("note", ZONA_VERH, False, _pole_note),
+    PoleNakleyki("sku", ZONA_STROKA, True, _pole_sku),
+    PoleNakleyki("unit", ZONA_STROKA, False, _pole_unit),
+    PoleNakleyki("pack", ZONA_STROKA, False, _pole_pack),
+    PoleNakleyki("min_stock", ZONA_STROKA, False, _pole_min_stock),
+    # Цена по умолчанию ВЫКЛЮЧЕНА: напечатанная цена устаревает в день смены
+    # прайса и начинает врать клиенту, а наклейка живёт на коробке месяцами.
+    PoleNakleyki("price", ZONA_STROKA, False, _pole_price, dengi=True),
+    PoleNakleyki("company", ZONA_NIZ, False, _pole_company),
+    PoleNakleyki("printed_at", ZONA_NIZ, False, _pole_printed_at),
+    PoleNakleyki("qr", ZONA_BOK, False, _pole_qr),
+)
+
+def nastroyka_polya(klyuch: str) -> str:
+    """Имя настройки для поля. Одно место, где склеивается приставка."""
+    return f"label_show_{klyuch}"
 
 
 def check_digit(digits: str) -> str:
@@ -241,6 +423,10 @@ def label_settings(db: Session) -> dict:
     буквами, случайный перевод строки) ломало бы печать у всех, и виновника в
     отпечатанной ленте было бы не видно.
 
+    Состав полей собирается ИЗ РЕЕСТРА, а не перечисляется здесь. Перечисли его
+    руками — и новое поле пришлось бы дописывать в двух местах, а забытая
+    строка означала бы поле, которое есть в настройках и не печатается никогда.
+
     Печатает браузер, а не сервер: термопринтер стоит на столе в мастерской, и
     с VPS до него дороги нет и не будет.
     """
@@ -250,10 +436,24 @@ def label_settings(db: Session) -> dict:
     return {
         "width_mm": _mm(values.get("label_width_mm"), 58),
         "height_mm": _mm(values.get("label_height_mm"), 40),
-        "show_price": values.get("label_show_price", "0") == "1",
-        "show_name": values.get("label_show_name", "1") == "1",
-        "show_sku": values.get("label_show_sku", "1") == "1",
+        "pokazat": {
+            pole.klyuch: _vklyucheno(values, pole) for pole in POLYA_NAKLEYKI
+        },
     }
+
+
+def _vklyucheno(values: dict, pole: PoleNakleyki) -> bool:
+    """Включено ли поле. Нет записи в базе — берём умолчание реестра.
+
+    Записи может не быть законно: настройки сеются при первом старте, а поле
+    добавлено позже. Считать её отсутствие за «выключено» значило бы, что
+    новое поле у всех, кто обновился, молча не появится, — и разбираться в этом
+    пришлось бы, глядя на отпечатанную ленту.
+    """
+    raw = values.get(nastroyka_polya(pole.klyuch))
+    if raw is None:
+        return pole.po_umolchaniyu
+    return str(raw) == "1"
 
 
 def _mm(value, fallback: int) -> int:
@@ -280,7 +480,13 @@ def _mm(value, fallback: int) -> int:
 MAX_COPIES = 200
 
 
-def print_items(db: Session, product_ids: list[int], copies: int = 1) -> list[dict]:
+def print_items(
+    db: Session,
+    product_ids: list[int],
+    copies: int = 1,
+    locale: str = "ru",
+    amounts: bool = True,
+) -> list[dict]:
     """Наклейки к печати: по `copies` штук на каждый товар, в заданном порядке.
 
     Порядок именно тот, в котором пришли идентификаторы: человек выделил строки
@@ -290,14 +496,25 @@ def print_items(db: Session, product_ids: list[int], copies: int = 1) -> list[di
     Товар без штрихкода из печати НЕ выбрасывается: наклейка выйдет с пометкой
     «кода нет». Молча пропустить его значит отдать пачку, в которой на две
     наклейки меньше, и обнаружить это на коробках.
+
+    Поля собираются по РЕЕСТРУ и раскладываются по зонам, а не перечисляются
+    поимённо: шаблон печатает то, что ему дали, и добавление нового поля его не
+    касается вовсе.
+
+    **`amounts=False` — суммы не печатаются.** Это не украшение, а дыра,
+    найденная разбором: печать закрыта правом `labels.view` и о суммах не
+    спрашивала вовсе, а цену клала безусловно. То есть кладовщик без
+    `warehouse.view_amounts` не видел цену на экране — и печатал её на
+    наклейке, если владелец включил поле. Право у склада заведено ровно затем,
+    чтобы закупочную и продажную видел не всякий, и обходить его печатью нельзя.
     """
     from core.services import settings_service
-    from core.services import codes as code_render
-    from database.repositories import warehouse as warehouse_repo
 
     copies = max(1, min(int(copies), MAX_COPIES))
     settings = label_settings(db)
-    currency = settings_service.get_all(db).get("currency", "USD")
+    pokazat = settings["pokazat"]
+    values = settings_service.get_all(db)
+    sreda = _sreda(values, locale)
 
     products = {p.id: p for p in warehouse_repo.products_by_ids(db, product_ids)}
     barcodes = warehouse_repo.barcodes_by_products(db, product_ids)
@@ -308,15 +525,78 @@ def print_items(db: Session, product_ids: list[int], copies: int = 1) -> list[di
         if product is None:
             continue
         primary = next(iter(barcodes.get(product_id, [])), None)
+        # Зоны отдаём списками уже готовых строк. Пустые поля отсеиваем здесь,
+        # а не в шаблоне: иначе включённое, но пустое поле оставляло бы на
+        # наклейке пустую строку, а миллиметры на ней считанные.
+        zony: dict[str, list[str]] = {
+            ZONA_VERH: [],
+            ZONA_STROKA: [],
+            ZONA_NIZ: [],
+        }
+        qr = ""
+        for pole in POLYA_NAKLEYKI:
+            if not pokazat.get(pole.klyuch):
+                continue
+            if pole.dengi and not amounts:
+                continue
+            znachenie = pole.znachenie(product, primary, sreda)
+            if not znachenie:
+                continue
+            if pole.zona == ZONA_BOK:
+                qr = znachenie
+            else:
+                zony[pole.zona].append(znachenie)
         row = {
-            "name": product.name,
-            "sku": product.sku or "",
-            "price": _money(product.price_minor, currency),
+            "verh": zony[ZONA_VERH],
+            "stroka": zony[ZONA_STROKA],
+            "niz": zony[ZONA_NIZ],
+            "qr": qr,
             "code": primary.code if primary else "",
             "barcode": code_render.barcode_svg(primary.code, label=True) if primary else "",
         }
         items.extend([row] * copies)
     return items
+
+
+def _sreda(values: dict, locale: str) -> dict:
+    """Всё, что нужно полям и не принадлежит товару.
+
+    Собирается ОДИН раз на всю пачку: печатают по сотне наклеек, и лезть за
+    настройками на каждую значило бы сто одинаковых обращений.
+
+    Дата печати берётся местная, а не UTC: наклейку читает человек, стоящий у
+    принтера, и «вчерашнее число» на свежей ленте он посчитает за поломку.
+    """
+    return {
+        "currency": values.get("currency", "USD"),
+        "company": values.get("brand_name", "") or "",
+        "base_url": _adres_sayta(),
+        "printed_at": date.today().strftime("%d.%m.%Y"),
+        "units": UNIT_NAMES.get(locale, UNIT_NAMES["ru"]),
+        "t_min": MIN_STOCK_PREFIX.get(locale, MIN_STOCK_PREFIX["ru"]),
+    }
+
+
+def _adres_sayta() -> str:
+    """Адрес сайта для QR. Пусто — QR не печатаем вовсе.
+
+    Ссылка на `localhost` в QR бесполезна: телефон, наведённый на наклейку, по
+    ней не попадёт никуда. Лучше не напечатать код, чем напечатать нерабочий, —
+    нерабочий человек попробует трижды и решит, что сломан сканер.
+    """
+    from config.settings import get_settings
+
+    adres = (get_settings().base_url or "").rstrip("/")
+    if "localhost" in adres or "127.0.0.1" in adres:
+        return ""
+    return adres
+
+
+def _kolichestvo(milli: int) -> str:
+    """Тысячные строкой. Тем же способом, что и везде: целыми, без float."""
+    from core.services import warehouse_service
+
+    return warehouse_service.format_quantity(milli)
 
 
 def _money(minor: int | None, currency: str) -> str:

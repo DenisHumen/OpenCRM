@@ -40,6 +40,7 @@ from core import exceptions as errors
 from core.services import client_service, deal_service, settings_service, task_service
 from core.utils import is_valid_email, normalize_phone, now_utc
 from database.models import Client, Deal, User
+from database.models import client as client_sources
 from database.models.user import STATUS_ACTIVE
 from database.repositories import leads as leads_repo
 from database.repositories import settings as settings_repo
@@ -57,16 +58,35 @@ SETTING_INTAKE_KEY = "leads_intake_key"
 SETTING_MANAGER_ID = "leads_manager_id"
 
 #: Заголовок, в котором приезжает ключ приёма.
-INTAKE_KEY_HEADER = "x-opencrm-intake-key"
+#:
+#: Записан в привычном виде, а не строчными буквами, потому что его показывают
+#: человеку: экран настроек рисует по нему инструкцию тому, кто пишет форму на
+#: сайте. Сравнению это не мешает — заголовки в HTTP регистронезависимы, и
+#: `request.headers.get` приводит имя к строчным сам.
+INTAKE_KEY_HEADER = "X-OpenCRM-Intake-Key"
 
 #: Источник клиента, заведённого формой. Ключом, а не словом: отчёт по
-#: источникам складывает строки именно по ключу, а свои значения он показывать
-#: умеет (`report_service.by_source`) — заводить ради этого справочник не нужно.
-SOURCE_SITE = "site"
+#: источникам складывает строки именно по ключу.
+#:
+#: Сам ключ живёт в справочнике источников (`database/models/client.py`), а не
+#: здесь: показывают его отчёт и карточка клиента, и ключ, известный одному лишь
+#: приёму, показывался бы в них сырым словом `site`.
+SOURCE_SITE = client_sources.SOURCE_SITE
 
 #: Метка «необработанный». Английская, как весь текст продукта; фильтр по метке
 #: сравнивает её целиком, а не подстрокой (`clients_repo.search`).
 LEAD_TAG = "lead"
+
+#: Поля, которые форма присылает. Названы здесь, а не только в теле запроса
+#: (`web/public/leads.py:LeadIn`), потому что их приходится показывать третьему
+#: лицу — тому, кто пишет форму на сайте. Экран настроек рисует по ним готовый
+#: пример запроса, и переписанное в двух местах имя поля означало бы инструкцию,
+#: по которой форма не работает. Сторож за расхождением — `tests/test_leads.py`.
+INTAKE_FIELDS = ("name", "email", "phone", "message")
+
+#: Поле-ловушка. В форме скрывается стилями: человек его не видит и не
+#: заполняет, бот заполняет всё подряд. Разбор — в `receive`.
+HONEYPOT_FIELD = "website"
 
 #: Заявка с сайта принята. Подробности: `client`, `deal`, `is_new_client`.
 LEAD_RECEIVED = "lead.received"
@@ -136,15 +156,39 @@ def get_settings_values(db: Session) -> dict[str, str]:
 
 
 def public_settings(db: Session) -> dict:
-    """Настройки для экрана: сам ключ не отдаём, только факт, что он задан."""
+    """Настройки для экрана: сам ключ не отдаём, только факт, что он задан.
+
+    Здесь же — всё, из чего экран собирает инструкцию для того, кто пишет форму
+    на сайте: адрес, заголовок с ключом, состав полей и имя ловушки. Всё это
+    отдаётся сервером, а не набирается в разметке экрана, по одной причине:
+    инструкция, разошедшаяся с приёмом, хуже отсутствующей — по ней делают
+    форму, форма не работает, и виноватым выглядит продукт.
+
+    Про ответственного отдаются ДВА ответа, и это не дублирование. `chosen_*` —
+    что выбрано в настройке, `manager_*` — кто получит заявку сейчас. Разойтись
+    они могут ровно в том случае, ради которого написан `responsible`:
+    назначенного отключили, и заявки молча достаются владельцу системы. Отдай мы
+    только действующего — экран показывал бы владельца выбранным, то есть врал
+    бы про настройку; только выбранного — умалчивал бы, что заявки уходят не
+    ему. Обе половины вместе дают экрану сказать это вслух.
+    """
     values = get_settings_values(db)
     manager = responsible(db, silent=True)
+    raw = values[SETTING_MANAGER_ID].strip()
+    chosen = users_repo.get_by_id(db, int(raw)) if raw.isdigit() else None
     return {
         "has_intake_key": bool(values[SETTING_INTAKE_KEY]),
         "manager_id": manager.id if manager else None,
         "manager_name": manager.name if manager else "",
+        # Выбранный может быть отключён, и тогда его нет в списке коллег
+        # (`GET /people` отдаёт только активных) — имя приходится отдавать
+        # отсюда, иначе экран показал бы пустую строку вместо человека.
+        "chosen_id": chosen.id if chosen else None,
+        "chosen_name": chosen.name if chosen else "",
         "intake_path": "/api/v1/public/leads",
         "intake_header": INTAKE_KEY_HEADER,
+        "intake_fields": list(INTAKE_FIELDS),
+        "honeypot_field": HONEYPOT_FIELD,
     }
 
 
@@ -255,7 +299,7 @@ def receive(db: Session, payload: dict) -> Outcome:
     # «отказано», и подбирающий за десяток попыток выяснит, какое поле лишнее, и
     # перестанет его трогать; а так он уверен, что заявки доходят, и продолжает
     # слать их в никуда.
-    if str(payload.get("website") or "").strip():
+    if str(payload.get(HONEYPOT_FIELD) or "").strip():
         logger.info("заявка с сайта отброшена: заполнено поле-ловушка")
         return Outcome(status="ignored")
 

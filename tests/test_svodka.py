@@ -55,7 +55,7 @@ def test_zaprosy_svodki_vypolnyayutsya_na_mysql():
         ("novyh_klientov", za_sutki["novyh_klientov"]),
         ("novyh_zayavok", za_sutki["novyh_zayavok"]),
         ("zakryto", za_sutki["zakryto"]),
-        ("vyruchka_minor", za_sutki["vyruchka_minor"]),
+        ("vyigrano_minor", za_sutki["vyigrano_minor"]),
         ("s_sayta.vsego", s_sayta["vsego"]),
         ("s_sayta.netronutye", s_sayta["netronutye"]),
         ("zvonki.vsego", razgovory["vsego"]),
@@ -389,7 +389,12 @@ def test_pustye_sutki_ne_otmenyayut_svodku(bot_so_svodkoy, monkeypatch):
     # отсутствие строки — нет.
     assert "Заявок новых: <b>0</b>" in tekst, f"пустые сутки промолчали о заявках:\n{tekst}"
     assert "закрыто: <b>0</b>" in tekst, f"пустые сутки промолчали о закрытых:\n{tekst}"
-    assert "выручка: <b>0.00" in tekst, f"пустые сутки промолчали о выручке:\n{tekst}"
+    # Слова «выручка» здесь нет намеренно: при выключенной кассе система не
+    # ведёт полученных денег, и называть выручкой сумму выигранных заявок значит
+    # выдавать одно за другое — ровно то, из-за чего главная показывала пустой
+    # месяц при полной кассе.
+    assert "выиграно на сумму: <b>0.00" in tekst, f"пустые сутки промолчали о деньгах:\n{tekst}"
+    assert "выручка:" not in tekst, f"суммой заявок названа выручка:\n{tekst}"
     assert "Клиентов новых: <b>0</b>" in tekst, f"пустые сутки промолчали о клиентах:\n{tekst}"
 
 

@@ -40,6 +40,14 @@
     font: 7pt/1.15 "Segoe UI", system-ui, -apple-system, Arial, sans-serif;
     -webkit-print-color-adjust: exact; print-color-adjust: exact;
   }
+  /* Верхний блок уступает место, нижний — нет.
+     Штрихкод с цифрами и есть наклейка: без них она не значит ничего. Текста
+     же может оказаться сколько угодно — включили все поля, название длинное,
+     заметка в две строки. Пока обе половины были равноправны, текст выдавливал
+     цифры за край: на рулоне 30×20 с десятью включёнными полями они уезжали
+     ниже наклейки и печатались обрезанными. Замерено живьём. */
+  .verhniy { min-height: 0; overflow: hidden; }
+  .nizhniy { flex: 0 0 auto; }
   .label {
     width: {{ width_mm }}mm;
     height: {{ height_mm }}mm;
@@ -52,18 +60,48 @@
     page-break-after: always;
   }
   .label:last-child { page-break-after: auto; }
-  .name {
-    font-size: 8pt; font-weight: 600; line-height: 1.15;
-    /* Сколько строк названия влезает — считает `name_lines` от высоты рулона:
-       на 58×40 две, на 30×20 одна. Лишнее обрезаем многоточием: неполное
-       название лучше, чем вытолкнутый за край штрихкод. */
-    display: -webkit-box; -webkit-line-clamp: {{ name_lines }}; -webkit-box-orient: vertical;
+  /* Верхняя зона: каждое поле своей строкой. Первое — крупнее прочих: это
+     название, и по нему товар узнают с расстояния вытянутой руки. */
+  .verh > div {
+    font-size: 6.5pt; color: #333; line-height: 1.15;
+    display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical;
     overflow: hidden;
   }
-  .row { display: flex; justify-content: space-between; align-items: baseline; gap: 2mm; }
-  .sku { font-size: 6.5pt; color: #333; }
-  .price { font-size: 10pt; font-weight: 700; white-space: nowrap; }
-  .code { text-align: center; }
+  .verh > div:first-child {
+    font-size: 8pt; font-weight: 600; color: #000;
+    /* Сколько строк влезает — считает `name_lines` от высоты рулона: на 58×40
+       две, на 30×20 одна. Лишнее обрезаем: неполное название лучше, чем
+       вытолкнутый за край штрихкод. */
+    -webkit-line-clamp: {{ name_lines }};
+  }
+  /* Строчная зона: слева направо, с разбивкой. Последнее поле прижимается
+     вправо — там обычно цена, и глазу она нужна на краю, а не в середине. */
+  /* Переносится, а не режется по горизонтали. Пять включённых полей на рулоне
+     30 мм в строку не влезают никак, и выбор тут между «увидеть часть значений
+     целиком» и «увидеть все, но обрубленными посередине». Первое честнее:
+     обрубленную цену человек прочтёт как настоящую. Лишние строки съедает
+     верхний блок (`.verhniy`), штрихкод они не двигают. */
+  .row {
+    display: flex; flex-wrap: wrap; justify-content: space-between;
+    align-items: baseline; gap: 0 2mm; font-size: 6.5pt; color: #333;
+  }
+  .row span { white-space: nowrap; }
+  .row span:last-child { font-weight: 700; font-size: 8pt; color: #000; }
+  .row span:only-child { font-weight: 400; font-size: 6.5pt; color: #333; }
+  /* Нижняя зона: мелким, под цифрами. Название фирмы и дата печати — то, что
+     читают, только если специально ищут. */
+  .niz {
+    display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0 2mm;
+    font-size: 5.5pt; color: #555; margin-top: 0.4mm;
+  }
+  .niz span { white-space: nowrap; }
+  /* Штрихкод и QR рядом. QR фиксированной ширины по высоте полосок: тянуться
+     ему некуда, а штрихкод забирает всё оставшееся — сканеру важна ШИРИНА
+     штриха, и отдать её квадрату значит сделать наклейку нечитаемой. */
+  .kody { display: flex; align-items: flex-end; gap: 1.5mm; }
+  .code { text-align: center; flex: 1; min-width: 0; }
+  .qr { flex: 0 0 {{ bar_mm }}mm; }
+  .qr svg { width: {{ bar_mm }}mm; height: {{ bar_mm }}mm; display: block; }
   /* Ширина — во всю наклейку: узкие полоски сканер берёт хуже, а свободное
      место здесь всё равно ничем не занять. Высота — заданная, от размера
      рулона (см. `bar_mm` вверху), а не производная от ширины: производная
@@ -96,25 +134,44 @@
 </head>
 <body>
 {% for item in items %}
+  {# Что печатать, шаблон не решает. Он получает готовые строки, разложенные
+     по трём зонам, и печатает их подряд — состав задан реестром
+     `core/services/barcode_service.POLYA_NAKLEYKI`. Новое поле сюда не
+     дописывается вовсе: оно приезжает в своей зоне само.
+
+     Пустые поля отсеяны ещё в сервисе: включённое, но пустое оставляло бы на
+     наклейке пустую строку, а миллиметры здесь считанные. #}
   <div class="label">
-    <div>
-      {% if show_name %}<div class="name">{{ item.name }}</div>{% endif %}
-      <div class="row">
-        {% if show_sku and item.sku %}<span class="sku">{{ item.sku }}</span>{% endif %}
-        {# Цена печатается по выбору и по умолчанию выключена: напечатанная цена
-           устаревает в день смены прайса, а наклейка живёт на коробке месяцами.
-           На ценнике она нужна, на складской наклейке — врёт. #}
-        {% if show_price and item.price %}<span class="price">{{ item.price }}</span>{% endif %}
-      </div>
+    <div class="verhniy">
+      {% if item.verh %}
+        <div class="verh">
+          {% for stroka in item.verh %}<div>{{ stroka }}</div>{% endfor %}
+        </div>
+      {% endif %}
+      {% if item.stroka %}
+        <div class="row">
+          {% for znachenie in item.stroka %}<span>{{ znachenie }}</span>{% endfor %}
+        </div>
+      {% endif %}
     </div>
-    {% if item.barcode %}
-      <div class="code">{{ item.barcode|safe }}</div>
-      <div class="digits">{{ item.code }}</div>
-    {% else %}
-      {# Без кода наклейка бессмысленна, но печать не роняем: человек увидит,
-         какой именно позиции кода не хватает, и заведёт его. #}
-      <div class="empty">{{ t.no_code }}</div>
-    {% endif %}
+    <div class="nizhniy">
+      {% if item.barcode %}
+        <div class="kody">
+          <div class="code">{{ item.barcode|safe }}</div>
+          {% if item.qr %}<div class="qr">{{ item.qr|safe }}</div>{% endif %}
+        </div>
+        <div class="digits">{{ item.code }}</div>
+      {% else %}
+        {# Без кода наклейка бессмысленна, но печать не роняем: человек увидит,
+           какой именно позиции кода не хватает, и заведёт его. #}
+        <div class="empty">{{ t.no_code }}</div>
+      {% endif %}
+      {% if item.niz %}
+        <div class="niz">
+          {% for znachenie in item.niz %}<span>{{ znachenie }}</span>{% endfor %}
+        </div>
+      {% endif %}
+    </div>
   </div>
 {% endfor %}
 <div class="bar">

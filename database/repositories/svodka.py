@@ -74,7 +74,10 @@ def za_sutki(db: Session, ot: datetime, do: datetime) -> dict:
         "novyh_klientov": int(novyh_klientov or 0),
         "novyh_zayavok": int(novyh_zayavok or 0),
         "zakryto": zakryto,
-        "vyruchka_minor": vyruchka,
+        # Сумма выигранных заявок. Деньгами она не является — заявку можно
+        # выиграть и не получить по ней ни копейки, — поэтому имя честное, а
+        # «сколько пришло» кладёт рядом служба (`svodka_service`).
+        "vyigrano_minor": vyruchka,
     }
 
 

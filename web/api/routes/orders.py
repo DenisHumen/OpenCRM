@@ -120,7 +120,10 @@ def create_order(
     order, client_created = order_service.create(db, payload.model_dump(), user)
     # «Заведён новый клиент» — часть ответа, а не догадка экрана по тому, был ли
     # `client_id` в запросе: карточку могли и найти по номеру.
-    return {**schemas.order_out(order, [], amounts=True), "client_created": client_created}
+    return {
+        **schemas.order_out(order, [], amounts=permissions_service.sees_amounts(db, user, "orders")),
+        "client_created": client_created,
+    }
 
 
 @router.get("/{order_id}")
@@ -194,7 +197,9 @@ def mark_ready(
     db: Session = Depends(get_db),
 ):
     order = order_service.mark_ready(db, order_id, user)
-    return schemas.order_out(order, order_service.lines(db, order.id), amounts=True)
+    return schemas.order_out(
+        order, order_service.lines(db, order.id), amounts=permissions_service.sees_amounts(db, user, "deals")
+    )
 
 
 @router.post("/{order_id}/close")
@@ -214,7 +219,9 @@ def close_order(
         warehouse_id=payload.warehouse_id,
         confirm_negative=payload.confirm_negative,
     )
-    return schemas.order_out(order, order_service.lines(db, order.id), amounts=True)
+    return schemas.order_out(
+        order, order_service.lines(db, order.id), amounts=permissions_service.sees_amounts(db, user, "orders")
+    )
 
 
 @router.post("/{order_id}/revert")
@@ -225,7 +232,9 @@ def revert_order(
 ):
     """Отменить проведение обратными движениями. Прежние остаются на месте."""
     order = order_service.revert(db, order_id, user)
-    return schemas.order_out(order, order_service.lines(db, order.id), amounts=True)
+    return schemas.order_out(
+        order, order_service.lines(db, order.id), amounts=permissions_service.sees_amounts(db, user, "orders")
+    )
 
 
 @router.post("/{order_id}/cancel")
@@ -236,7 +245,9 @@ def cancel_order(
 ):
     """Отменить непроведённый заказ. Резерв снимется сам — он не хранится."""
     order = order_service.cancel(db, order_id, user)
-    return schemas.order_out(order, order_service.lines(db, order.id), amounts=True)
+    return schemas.order_out(
+        order, order_service.lines(db, order.id), amounts=permissions_service.sees_amounts(db, user, "orders")
+    )
 
 
 #: Подписи печатной формы. Отдельно от квитанции: у заказа таблица позиций и

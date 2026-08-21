@@ -1,7 +1,7 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from tests.conftest import API, login, register
+from tests.conftest import API, login, make_manager, register
 from web.main import app
 
 
@@ -242,3 +242,81 @@ def test_predel_schitaetsya_v_baytakh_a_ne_v_znakakh():
     assert len("".join(vlezaet).encode()) == 72
     ok = register(TestClient(app), "Кир2", "kir2@test.local", password=vlezaet)
     assert ok.status_code == 201, "пароль ровно в предел обязан приниматься"
+
+
+def test_lezhachaya_baza_ne_zapiraet_chestnogo_sotrudnika(root_client, monkeypatch):
+    """Пятисотая от лежащей базы не должна стоить человеку попытки входа.
+
+    Место в счётчике занимается ДО чтения пользователя — иначе подбор успевал
+    бы пройти порог целиком, пока никто не отметился (разбор — в
+    `core/ratelimit.zanyat_mesto`). Но чтение может и не удаться: база ушла на
+    перезапуск, соединение оборвалось. Пароль в этом заходе никто не сверял,
+    значит попыткой подбора это не было.
+
+    Пока занятое место не возвращалось, минута лежащей базы запирала человека
+    на пятнадцать: он вводит ВЕРНЫЙ пароль, получает 500, и пять таких
+    пятисоток съедают весь его запас. База вернулась — а войти нельзя, и
+    непонятно почему.
+
+    Возвращается при этом ОДНА попытка, а не сбрасывается счёт: `reset` снёс бы
+    и чужие, набранные честно, то есть умеющий уронить базу обнулял бы себе
+    счётчик подбора.
+    """
+    from database.repositories import users as users_repo
+
+    email = "lezhachaya-baza@test.local"
+    make_manager(root_client, email)
+
+    def upast(*args, **kwargs):
+        raise RuntimeError("(2013, 'Lost connection to MySQL server during query')")
+
+    monkeypatch.setattr(users_repo, "get_by_email", upast)
+    client = TestClient(app, raise_server_exceptions=False)
+    for _ in range(5):
+        # Наружу пятисотая: беда наша, и притворяться, что всё хорошо, нельзя.
+        assert login(client, email, "manager-pass-123").status_code == 500
+
+    monkeypatch.undo()
+    # База вернулась. Запас обязан быть цел — ни одной попытки не потрачено.
+    vernulsya = login(TestClient(app), email, "manager-pass-123")
+    assert vernulsya.status_code == 200, (
+        "пять пятисоток от лежащей базы съели запас попыток: человек ввёл "
+        "верный пароль и получил "
+        f"{vernulsya.status_code} {vernulsya.text[:200]}"
+    )
+
+
+def test_vozvrat_mesta_ne_obnulyaet_chuzhoy_schyot(root_client, monkeypatch):
+    """Возврат снимает ОДНУ попытку, а не сбрасывает счёт.
+
+    Иначе получилась бы дыра наизнанку: тот, кто умеет вызвать нашу беду
+    (уронить базу), обнулял бы себе счётчик подбора одним лишним запросом —
+    подбирай сколько хочешь, лишь бы каждую пятую попытку ронять базу.
+    """
+    from database.repositories import users as users_repo
+
+    email = "vozvrat-mesta@test.local"
+    make_manager(root_client, email)
+
+    client = TestClient(app)
+    for _ in range(4):
+        assert login(client, email, "sovsem-ne-tot-parol").status_code == 401
+
+    # Пятый заход рушится на чтении пользователя и возвращает СВОЁ место.
+    def upast(*args, **kwargs):
+        raise RuntimeError("база отвалилась")
+
+    monkeypatch.setattr(users_repo, "get_by_email", upast)
+    assert login(
+        TestClient(app, raise_server_exceptions=False), email, "sovsem-ne-tot-parol"
+    ).status_code == 500
+    monkeypatch.undo()
+
+    # Четыре честно набранных промаха обязаны остаться на месте: порог пять,
+    # значит пятая попытка ещё проходит, а шестая — уже нет.
+    assert login(client, email, "sovsem-ne-tot-parol").status_code == 401
+    dobito = login(client, email, "sovsem-ne-tot-parol")
+    assert dobito.status_code == 429, (
+        "счёт подбора обнулился вместе с возвратом одного места — уронивший "
+        f"базу получил себе чистый лист (вышло {dobito.status_code})"
+    )

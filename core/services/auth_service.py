@@ -68,17 +68,41 @@ def register(db: Session, name: str, email: str, password: str) -> User:
 
 def login(db: Session, email: str, password: str, limiter) -> tuple[User, str]:
     email = normalize_email(email)
-    if limiter.is_blocked(email):
+    # Место занимается ОДНОЙ операцией, а не «проверил, потом отметил». Пока
+    # это были два шага, между ними существовало окно: шестнадцать
+    # одновременных запросов читали ноль, проходили все, и порог в пять попыток
+    # превращался в шестнадцать. Подбор идёт именно так, а не по одной попытке.
+    #
+    # С меткой, а не просто «да/нет»: ниже стоит чтение пользователя, и от него
+    # можно не дождаться ответа.
+    metka = limiter.zanyat_mesto(email)
+    if metka is None:
         raise errors.RateLimitedError("Too many attempts, try later", code="login_rate_limited")
-    user = users_repo.get_by_email(db, email)
+    try:
+        user = users_repo.get_by_email(db, email)
+    except Exception:  # noqa: BLE001 — беда базы, а не стучащего
+        # Упавшее чтение — НАША беда: пароль в этом заходе никто не сверял,
+        # значит попыткой подбора это не было, и платить за неё человеку не за
+        # что. Снимаем ровно свою попытку (`vernut`, не `reset`: сброс снёс бы
+        # и чужие, набранные честно).
+        #
+        # Найдено разбором правки. Пока место не возвращалось, минута лежащей
+        # базы запирала честного сотрудника на пятнадцать: он вводит ВЕРНЫЙ
+        # пароль, получает 500 (пользователя нечем прочитать), и пять таких
+        # пятисоток съедают весь его запас. База вернулась — а войти нельзя.
+        limiter.vernut(email, metka)
+        raise
     if user is None or not passwords.verify_password(password, user.password_hash):
-        limiter.record_failure(email)
         raise errors.AuthError("Invalid email or password", code="invalid_credentials")
+    # Пароль верен — счётчик обнуляется СРАЗУ, до проверки состояния учётной
+    # записи. Иначе одобрения ждущий человек, пробующий войти каждые пять минут,
+    # выбирал бы свой же лимит: пароль он вводит правильный, и подбором это не
+    # является ни в каком смысле.
+    limiter.reset(email)
     if user.status == STATUS_PENDING:
         raise errors.ForbiddenError("Account is waiting for approval", code="account_pending")
     if user.status == STATUS_DISABLED:
         raise errors.ForbiddenError("Account is disabled", code="account_disabled")
-    limiter.reset(email)
 
     token = tokens.new_session_token()
     ttl = timedelta(days=get_settings().session_ttl_days)

@@ -60,7 +60,13 @@ def session():
 
 @pytest.fixture(scope="module")
 def intake_key(base_client) -> str:
-    """Ключ приёма. Задаётся сервисом: своей ручки настроек у него пока нет."""
+    """Ключ приёма на весь файл.
+
+    Задаётся сервисом, а не ручкой настроек, хотя ручка теперь есть: она
+    показывает ключ ОДИН раз, и фикстура, дёргающая её, отняла бы у проверок
+    ниже возможность прислать заявку. Сами ручки проверяются отдельно, в разделе
+    «настройки приёма».
+    """
     db = SessionLocal()
     try:
         key = lead_service.regenerate_intake_key(db)
@@ -485,3 +491,166 @@ def test_dvoynaya_dostavka_ne_zavodit_dve_kartochki(intake_key, session):
     assert zayavok == 1, (
         f"заявок по одному обращению стало {zayavok} — менеджер сделает работу дважды"
     )
+
+
+# --- настройки приёма ------------------------------------------------------
+#
+# До появления экрана настроек этот раздел был пуст, и это чувствовалось: сами
+# ручки существовали, а трогал их только человек с консолью. Проверки ниже
+# написаны на то, чем экран пользуется, — и в первую очередь на то, чего он
+# показать не должен.
+
+def test_sostav_poley_ne_rashoditsya_s_priyomom():
+    """Поля, названные сервисом, — ровно те, что принимает ручка.
+
+    Экран настроек рисует по ним готовый пример запроса. Разойдись эти два
+    места — и в интерфейсе висела бы инструкция, по которой форма не работает, а
+    узнал бы об этом тот, кто её по ней сделал.
+    """
+    from web.public.leads import LeadIn
+
+    assert set(LeadIn.model_fields) == set(lead_service.INTAKE_FIELDS) | {
+        lead_service.HONEYPOT_FIELD
+    }
+
+
+def test_istochnik_zayavki_est_v_spravochnike():
+    """Карточка, заведённая формой, называет источник словом, а не ключом.
+
+    Ключа не было в справочнике, и `sourceLabel` показывал его как есть — в
+    карточке клиента стояло `site`. Выбрать этот источник руками тоже было
+    нельзя, хотя повод обычный: человек посмотрел сайт и позвонил.
+    """
+    from database.models.client import CLIENT_SOURCES
+
+    assert lead_service.SOURCE_SITE in CLIENT_SOURCES
+
+
+def test_nastroyki_ne_otdayut_klyuch(root_client, intake_key):
+    """Наружу — только «задан или нет». Ответ ручки уезжает в браузер."""
+    response = root_client.get(f"{API}/leads/settings")
+    assert response.status_code == 200, response.text
+    assert intake_key not in response.text, "ключ приёма уехал в браузер"
+
+    data = response.json()
+    assert data["has_intake_key"] is True
+    # Всё, из чего экран собирает инструкцию тому, кто пишет форму на сайте.
+    assert data["intake_path"] == LEADS
+    assert data["intake_header"] == lead_service.INTAKE_KEY_HEADER
+    assert data["intake_fields"] == list(lead_service.INTAKE_FIELDS)
+    assert data["honeypot_field"] == lead_service.HONEYPOT_FIELD
+
+
+def test_klyuch_sozdayotsya_ruchkoy_i_zakryvaet_prezhniy(root_client, intake_key):
+    """Новый ключ показывается один раз и отменяет прежний в ту же секунду.
+
+    Второе — не побочное следствие, а единственный способ отозвать доступ:
+    подписи у формы нет, и отличить «наш сайт» от «чужой сайт со старым ключом»
+    больше нечем.
+    """
+    created = root_client.post(f"{API}/leads/settings/key")
+    assert created.status_code == 201, created.text
+    svezhiy = created.json()["key"]
+    assert svezhiy and svezhiy != intake_key
+
+    try:
+        assert send(svezhiy, name="Новым Ключом", email="novym@example.com").status_code == 202
+        staryy = send(intake_key, name="Старым Ключом", email="starym@example.com")
+        assert staryy.status_code == 401, staryy.text
+        assert staryy.json()["error"]["code"] == "bad_intake_key"
+        assert clients_named(root_client, "starym@example.com") == []
+        # Второй раз ключ не покажется: ручка настроек знает только «задан».
+        assert svezhiy not in root_client.get(f"{API}/leads/settings").text
+    finally:
+        db = SessionLocal()
+        try:
+            settings_repo.write(db, lead_service.SETTING_INTAKE_KEY, intake_key)
+            db.commit()
+        finally:
+            db.close()
+
+
+def test_priyom_zakryvaetsya_ruchkoy(root_client, intake_key):
+    """«Закрыть приём» — это стереть ключ, а не завести второй выключатель."""
+    closed = root_client.delete(f"{API}/leads/settings/key")
+    assert closed.status_code == 200, closed.text
+    assert closed.json()["has_intake_key"] is False
+
+    try:
+        response = send(intake_key, name="После Закрытия", email="posle@example.com")
+        assert response.status_code == 401, response.text
+        assert response.json()["error"]["code"] == "intake_not_configured"
+        assert clients_named(root_client, "posle@example.com") == []
+    finally:
+        db = SessionLocal()
+        try:
+            settings_repo.write(db, lead_service.SETTING_INTAKE_KEY, intake_key)
+            db.commit()
+        finally:
+            db.close()
+
+
+def test_otvetstvennyy_vybiraetsya_ruchkoy(root_client, intake_key):
+    """Выбор ответственного и возврат к владельцу системы."""
+    sotrudnik = make_manager(root_client, "leads-nastroyki@test.local")
+    me = sotrudnik.get(f"{API}/auth/me").json()
+    try:
+        vybran = root_client.patch(
+            f"{API}/leads/settings/manager", json={"manager_id": me["id"]}
+        )
+        assert vybran.status_code == 200, vybran.text
+        assert vybran.json()["chosen_id"] == me["id"]
+        assert vybran.json()["manager_id"] == me["id"]
+
+        pusto = root_client.patch(f"{API}/leads/settings/manager", json={"manager_id": None})
+        assert pusto.status_code == 200, pusto.text
+        assert pusto.json()["chosen_id"] is None
+        # Никто не выбран — заявки достаются владельцу системы, а не никому.
+        assert pusto.json()["manager_id"] is not None
+    finally:
+        db = SessionLocal()
+        try:
+            lead_service.set_manager(db, None)
+            db.commit()
+        finally:
+            db.close()
+
+
+def test_otklyuchennyy_otvetstvennyy_viden_kak_podmena(root_client, intake_key):
+    """Назначенного отключили — экрану есть чем сказать об этом вслух.
+
+    Настройка при этом остаётся: вернут человека на работу — заявки вернутся к
+    нему. Молчаливой была бы ровно та беда, ради которой подмена и написана:
+    обращения продолжают приходить, а тот, кому их поручили, их не видит.
+    """
+    sotrudnik = make_manager(root_client, "leads-otklyuchennyy@test.local")
+    me = sotrudnik.get(f"{API}/auth/me").json()
+    root_client.patch(f"{API}/leads/settings/manager", json={"manager_id": me["id"]})
+    try:
+        off = root_client.post(f"{API}/staff/{me['id']}/disable")
+        assert off.status_code == 200, off.text
+
+        data = root_client.get(f"{API}/leads/settings").json()
+        assert data["chosen_id"] == me["id"], "настройка потерялась вместе с человеком"
+        assert data["chosen_name"], "имя выбранного неоткуда взять: в списке коллег его уже нет"
+        assert data["manager_id"] != me["id"], "заявки уходят отключённому"
+        assert data["manager_name"], "и не сказано, кому они уходят на самом деле"
+    finally:
+        root_client.post(f"{API}/staff/{me['id']}/enable")
+        db = SessionLocal()
+        try:
+            lead_service.set_manager(db, None)
+            db.commit()
+        finally:
+            db.close()
+
+
+def test_nastroyki_priyoma_zakryty_ot_menedzhera(root_client, manager_client, intake_key):
+    """Ключ приёма правит тот же, кто правит настройки сайта, и никто больше."""
+    assert manager_client.get(f"{API}/leads/settings").status_code == 403
+    assert manager_client.post(f"{API}/leads/settings/key").status_code == 403
+    assert manager_client.delete(f"{API}/leads/settings/key").status_code == 403
+    otvet = manager_client.patch(f"{API}/leads/settings/manager", json={"manager_id": None})
+    assert otvet.status_code == 403, otvet.text
+    # Ключ на месте: ни одна из отбитых попыток не успела ничего сделать.
+    assert send(intake_key, name="Проверка Ключа", email="klyuch-tsel@example.com").status_code == 202

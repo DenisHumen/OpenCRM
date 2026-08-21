@@ -39,7 +39,7 @@ from database.models import (
     User,
 )
 from database.models.audit import SOURCE_MANUAL
-from database.models.document import KIND_SALES_ORDER
+from database.models.document import KIND_SALES_ORDER, STATUS_CANCELLED
 from database.models.finance import (
     BASE_INCOME_PERCENT,
     BASES,
@@ -1059,9 +1059,22 @@ def money_of_document(db: Session, document_id: int) -> dict:
     Колонок `documents.paid_total`, `paid_at` и `is_paid` нет и не появится: все
     четыре числа рождаются заново на каждый запрос, и разойтись им не с чем.
 
-    Сумма бланка приходит пустой при выключенных бланках — тогда пустым остаётся
-    и остаток. Это не половина ответа, а правда о системе без бланков: получено
-    столько-то, а сравнивать не с чем.
+    **Пустой остаток означает две разные вещи, и различает их `status`.**
+
+    Первая — блок бланков выключен: суммы нет, сравнивать не с чем. Это не
+    половина ответа, а правда о системе без бланков; `status` тогда тоже пуст.
+
+    Вторая — бланк отменён. У отменённого «сколько ещё с человека взять» не
+    равно нулю и не равно сумме: **вопрос не задан**. Раньше здесь честно
+    считалось `сумма минус полученное`, и у отменённого заказа с возвращёнными
+    деньгами получалась полная сумма заказа — то есть врезка показывала долг,
+    которого нет. Ноль на его месте был бы враньём той же природы, только
+    обратным: он читается как «рассчитались», а с отменённым не рассчитывались.
+
+    То же и с `paid`: у отменённого бланка нет ни «оплачен», ни «не оплачен».
+    Что там на самом деле с деньгами, говорит `received` — и его отменой не
+    трогают: возврат денег и отмена бумаги это разные действия, и сделать можно
+    только одно из двух.
     """
     received = finance_repo.received_of(db, document_id=document_id)
     heads = finance_repo.accruals_of_document(db, document_id)
@@ -1098,13 +1111,19 @@ def money_of_document(db: Session, document_id: int) -> dict:
             }
         )
 
-    total = _document_total(db, document_id)
+    bumaga = _document_total(db, document_id)
+    total, status = (None, None) if bumaga is None else bumaga
+    otmenen = status == STATUS_CANCELLED
+    schitaem = total is not None and not otmenen
     return {
         "document_id": document_id,
         "total": total,
+        # Состояние бланка — чтобы различить два «остатка нет»: бланков нет
+        # вовсе и бланк отменён. Разбор — в докстроке.
+        "status": status,
         "received": received,
-        "due": None if total is None else total - received,
-        "paid": None if total is None else total - received <= 0,
+        "due": (total - received) if schitaem else None,
+        "paid": (total - received <= 0) if schitaem else None,
         "accruals": accruals,
     }
 
@@ -1125,19 +1144,73 @@ def money_of_deal(db: Session, deal_id: int) -> dict:
     return {"deal_id": deal_id, "received": finance_repo.received_of(db, deal_id=deal_id)}
 
 
-def _document_total(db: Session, document_id: int) -> int | None:
-    """Сумма бланка по его строкам. None — блок бланков выключен.
+def _document_total(db: Session, document_id: int) -> tuple[int, str] | None:
+    """Сумма бланка по его строкам и его состояние. None — бланки выключены.
 
-    Считает её `document_service.total_minor` — та самая единственная точка, где
-    по строкам считаются деньги. Своего счёта здесь нет намеренно: второй означал
-    бы два места, где округляют, и они разошлись бы на первой же скидке.
+    Сумму считает `document_service.total_minor` — та самая единственная точка,
+    где по строкам считаются деньги. Своего счёта здесь нет намеренно: второй
+    означал бы два места, где округляют, и они разошлись бы на первой же скидке.
+
+    Состояние возвращается вместе с суммой, а не отдельным вызовом: строка
+    бланка уже прочитана, и второе обращение за ней означало бы два запроса за
+    одним и тем же ради одного поля.
     """
     if not modules_service.is_enabled(db, "documents"):
         return None
     from core.services import document_service
 
     document = document_service.get(db, document_id)
-    return document_service.total_minor(document_service.lines(db, document.id))
+    return document_service.total_minor(document_service.lines(db, document.id)), document.status
+
+
+# --- чем меряем выручку -------------------------------------------------------
+#
+# Решение владельца от 19.08.2026: **банк один**. Деньги лежат в одном месте, с
+# него списывают, туда добавляют — и источник правды о деньгах один, финансовые
+# операции. Заявки и заказы деньги ПОРОЖДАЮТ, но сами счётом не являются.
+#
+# До этого счётов было два и они не сходились: заказ на 12 000 оплачен, касса
+# полна, а главная показывала пустой месяц — потому что отчёт считал выигранные
+# заявки, а заказ к заявке привязан не был. Владелец видит пустой месяц при
+# полной кассе, перестаёт верить системе и заводит таблицу рядом.
+#
+# Ответ «по чему считаем» живёт ЗДЕСЬ и только здесь. Напиши его в отчётах, на
+# главной и в утренней сводке по отдельности — через месяц они разойдутся, и
+# вместо двух счётов станет три.
+
+#: Считаем по кассе: сколько денег пришло.
+BAZIS_KASSA = "cash"
+#: Считаем по выигранным заявкам: кассы в системе нет.
+BAZIS_ZAYAVKI = "deals"
+
+
+def bazis_vyruchki(db: Session) -> str:
+    """Чем меряется выручка при нынешних настройках.
+
+    Выключенный блок «Финансы» означает, что операций не существует вовсе —
+    считать нечего, и отчёт честно возвращается к сумме выигранных заявок. Это
+    не «две формулы на выбор», а единственный ответ в каждом из двух случаев;
+    важно лишь, чтобы экран назвал, какой из них сейчас, — молчаливая подмена
+    одного счёта другим и есть та беда, с которой всё началось.
+    """
+    return BAZIS_KASSA if modules_service.is_enabled(db, "finance") else BAZIS_ZAYAVKI
+
+
+def postupleniya_po_mesyatsam(
+    db: Session,
+    buckets: list[tuple[datetime, datetime]],
+    only_manager_id: int | None = None,
+) -> dict[int, dict[str, int]] | None:
+    """Поступления в кассу по месяцам. `None` — кассы в системе нет.
+
+    Отдельная обёртка над запросом, а не прямой вызов репозитория из отчётов:
+    гейт по блоку обязан стоять в одном месте с ответом «чем меряем», иначе
+    отчёт однажды спросит кассу при выключенном блоке и получит честный ноль —
+    который прочитают как «денег не было».
+    """
+    if bazis_vyruchki(db) != BAZIS_KASSA:
+        return None
+    return finance_repo.postupleniya_po_mesyatsam(db, buckets, only_manager_id)
 
 
 # --- прибыль ---

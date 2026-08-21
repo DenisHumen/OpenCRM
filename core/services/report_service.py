@@ -36,7 +36,7 @@ from datetime import date, datetime, timedelta
 from sqlalchemy.orm import Session
 
 from core import exceptions as errors
-from core.services import pipeline_service
+from core.services import finance_service, pipeline_service
 from core.utils import divide_money, konets_dnya, now_utc
 from database.models.client import CLIENT_SOURCES
 from database.models.pipeline import KIND_LOST, KIND_OPEN, KIND_WON
@@ -247,9 +247,30 @@ def revenue(
     db: Session, start_day: date, end_day: date, tz_offset: int,
     only_manager_id: int | None = None,
 ) -> dict:
-    """Деньги по месяцам, по видам этапов и средний чек."""
+    """Деньги по месяцам, по видам этапов и средний чек.
+
+    **Чисел про деньги здесь два, и они отвечают на разные вопросы.**
+
+    `received_*` — сколько пришло в кассу: это и есть выручка по решению
+    владельца («банк один»), потому что заказ, оплаченный мимо заявки, виден
+    только так. `won_*` — на сколько выиграно заявок; величина полезная («столько
+    мы продали»), но деньгами не являющаяся: заявку можно выиграть и не получить
+    по ней ни копейки.
+
+    Пока эти два числа стояли под одним словом «выручка», система показывала
+    пустой месяц при полной кассе. Поэтому имена разные, и на экране они
+    подписаны по-разному — молчаливая подмена одного другим и есть та беда.
+
+    Касса выключена — `received_*` приходят пустыми, а не нулевыми: «блока нет,
+    не считается» и «денег не приходило» — разные ответы. Чем меряем сейчас,
+    говорит `basis`.
+    """
     buckets = month_buckets(start_day, end_day, tz_offset)
     money = reports_repo.money_by_month(
+        db, [(s, e) for _label, s, e in buckets], only_manager_id
+    )
+    basis = finance_service.bazis_vyruchki(db)
+    kassa = finance_service.postupleniya_po_mesyatsam(
         db, [(s, e) for _label, s, e in buckets], only_manager_id
     )
 
@@ -267,11 +288,28 @@ def revenue(
         # Средний чек месяца — по сделкам этого месяца с названной ценой. Месяц
         # без таких сделок даёт прочерк, а не ноль.
         row["avg_check"] = _avg(money.get((index, KIND_WON)))
+        # Поступления месяца. Пусто при выключенной кассе; внутри кассы ноль —
+        # настоящий ноль, а не «не назвали»: деньги либо приходили, либо нет.
+        row["received_amount"] = None if kassa is None else kassa.get(index, {}).get("total", 0)
         months.append(row)
 
     won, lost = totals[KIND_WON], totals[KIND_LOST]
+    postupilo = (
+        None
+        if kassa is None
+        else {
+            "total": sum(cell["total"] for cell in kassa.values()),
+            "count": sum(cell["count"] for cell in kassa.values()),
+        }
+    )
     return {
         "months": months,
+        # Чем меряется выручка при нынешних настройках. Экран берёт ось ОТСЮДА,
+        # а не из своей карты блоков: два ответа на один вопрос — верный способ
+        # снова получить два числа под одной подписью.
+        "basis": basis,
+        "received_amount": None if postupilo is None else postupilo["total"],
+        "received_count": None if postupilo is None else postupilo["count"],
         "won_amount": _sum(won),
         "won_count": won["count"],
         "won_priced": won["priced"],
@@ -413,8 +451,23 @@ CSV_HEADERS = {
         "ru": ["Этап", "Вид", "Вошло заявок", "Конверсия к предыдущему, %"],
     },
     "revenue": {
-        "en": ["Month", "Won", "Won with a price", "Revenue", "Lost", "Lost value", "Average deal"],
-        "ru": ["Месяц", "Выиграно", "Из них с ценой", "Выручка", "Потеряно", "Сумма потерь", "Средний чек"],
+        # «Выиграно на сумму» вместо прежней «Выручки», и это не косметика.
+        # Выручка — это полученные деньги (решение владельца: банк один), а
+        # сумма выигранных заявок деньгами не является: заявку можно выиграть и
+        # не получить по ней ни копейки. Пока обе величины назывались одним
+        # словом, выгрузка спорила с кассой.
+        #
+        # «Получено» добавлено В КОНЕЦ намеренно: у людей уже сложились таблицы
+        # поверх этой выгрузки, и вставка колонки в середину увела бы их
+        # столбцами. Пустая ячейка там означает «кассы в системе нет».
+        "en": [
+            "Month", "Won", "Won with a price", "Won value",
+            "Lost", "Lost value", "Average deal", "Money in",
+        ],
+        "ru": [
+            "Месяц", "Выиграно", "Из них с ценой", "Выиграно на сумму",
+            "Потеряно", "Сумма потерь", "Средний чек", "Получено",
+        ],
     },
     "sources": {
         # Последний столбец называется так же, как на экране: это доля
@@ -511,6 +564,7 @@ def revenue_csv(data: dict, locale: str) -> bytes:
             month["lost_count"],
             money_cell(month["lost_amount"]),
             money_cell(month["avg_check"]),
+            money_cell(month["received_amount"]),
         ]
         for month in data["months"]
     ]

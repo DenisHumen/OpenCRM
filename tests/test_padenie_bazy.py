@@ -271,6 +271,26 @@ POPYTKA_SEK = 4
 SROK_POPYTOK = 3          # то есть срок 3 × 2 = 6 секунд
 
 
+def _put_dlya_sh(katalog: pathlib.Path) -> str:
+    """Путь к каталогу так, как его понимает `sh`.
+
+    Нужен ровно из-за Windows. `sh` здесь стоит из Git for Windows и разбирает
+    в `PATH` только POSIX-пути: запись вида `C:/Temp/...` он не находит вовсе.
+    Подстава при этом молча не подхватывается — `python` берётся настоящий,
+    отвечает 1 («нет такой команды» или обычная беда), и проверка зеленеет, ни
+    разу не тронув то, ради чего написана. Поймано на подставе, которая должна
+    была вернуть 2, а вернула 1.
+
+    На Linux (и в CI) `cygpath` отсутствует, путь и так POSIX — отдаём как есть.
+    """
+    if shutil.which("cygpath") is None:
+        return str(katalog)
+    gotovo = subprocess.run(
+        ["cygpath", "-u", str(katalog)], capture_output=True, text=True, timeout=30
+    )
+    return gotovo.stdout.strip() or str(katalog)
+
+
 def _vyrezat_zhdat_bazu() -> str:
     text = TOCHKA_VHODA.read_text(encoding="utf-8")
     try:
@@ -310,7 +330,8 @@ def test_ozhidanie_bazy_ogranicheno_vremenem_a_ne_chislom_popytok():
         podstava.chmod(0o755)
 
         stsenariy = (
-            f'PATH="{katalog}:$PATH"\n'
+            "set -e\n"
+            f'PATH="{_put_dlya_sh(katalog)}:$PATH"\n'
             f'OPENCRM_DB_WAIT_TRIES={SROK_POPYTOK}\n'
             + _vyrezat_zhdat_bazu()
             + "\nzhdat_bazu && echo OTVETILA || echo SDALAS\n"
@@ -329,6 +350,132 @@ def test_ozhidanie_bazy_ogranicheno_vremenem_a_ne_chislom_popytok():
             f"ожидание длилось {proshlo:.1f} с при сроке {srok} с. Похоже, считаются "
             f"попытки, а не время: по попыткам вышло бы около {po_popytkam} с, и на "
             "живой машине с неразрешимым именем базы это семнадцать минут вместо трёх"
+        )
+    finally:
+        shutil.rmtree(katalog, ignore_errors=True)
+
+
+def _vyrezat_razbor_itoga() -> str:
+    """Кусок, который разбирает ИТОГ ожидания. Функция без него ничего не решает."""
+    text = TOCHKA_VHODA.read_text(encoding="utf-8")
+    try:
+        nachalo = text.index("\nDB_ITOG=0\nzhdat_bazu ||")
+        konets = text.index('if [ "$DB_ITOG" -ne 0 ]', nachalo)
+        konets = text.index("\nfi\n", konets) + len("\nfi\n")
+    except ValueError:  # pragma: no cover
+        pytest.fail(
+            "в docker/entrypoint.sh не нашёлся разбор DB_ITOG — проверку надо "
+            "чинить вместе с переименованием"
+        )
+    return text[nachalo:konets]
+
+
+@pytest.mark.skipif(shutil.which(_SH) is None, reason="sh рядом нет")
+def test_otkaz_dostupa_ne_uhodit_v_ozhidanie():
+    """Неверный пароль базы — не гонка старта, и ждать его три минуты нечего.
+
+    Ожидание заведено под ОДИН случай: база поднимается дольше приложения. У
+    неверного пароля (или чужого имени базы) всё наоборот — сервер работает,
+    запрос разобрал и отказал по существу. За три минуты это само не поправится
+    ни разу.
+
+    А выглядело оно ровно как молчание: `ping` на любую беду отвечал единицей,
+    цикл честно крутил девяносто попыток и на выходе говорил «база не ответила
+    за 180 с» — про базу, которая ответила с первой попытки. Человек три минуты
+    ждал ошибку, видимую сразу, и шёл читать `logs db`, где ничего плохого нет.
+
+    Здесь `ping` подделан отказом доступа. Ожидание обязано кончиться сразу и
+    кодом 3, а не сроком: со старым разбором проверка уходила бы в полный срок.
+    """
+    katalog = pathlib.Path(tempfile.mkdtemp(prefix="opencrm-otkaz-"))
+    try:
+        podstava = katalog / "python"
+        podstava.write_text(
+            "#!/bin/sh\n"
+            'echo "сервер базы ответил и не пустил: Access denied for user" >&2\n'
+            "exit 3\n",
+            encoding="utf-8",
+        )
+        podstava.chmod(0o755)
+
+        stsenariy = (
+            "set -e\n"
+            f'PATH="{_put_dlya_sh(katalog)}:$PATH"\n'
+            f"OPENCRM_DB_WAIT_TRIES={SROK_POPYTOK}\n"
+            + _vyrezat_zhdat_bazu()
+            + "\n_k=0; zhdat_bazu || _k=$?; echo KOD=$_k\n"
+        )
+        nachalo = datetime.now(timezone.utc)
+        vyhod = subprocess.run(
+            [_SH, "-c", stsenariy], capture_output=True, text=True, timeout=120
+        )
+        proshlo = (datetime.now(timezone.utc) - nachalo).total_seconds()
+
+        assert "KOD=3" in vyhod.stdout, (
+            "ожидание не отличило отказ доступа от молчания: "
+            f"{vyhod.stdout!r} / {vyhod.stderr!r}"
+        )
+        assert proshlo < SROK_POPYTOK * 2, (
+            f"ожидание длилось {proshlo:.1f} с при сроке {SROK_POPYTOK * 2} с — "
+            "значит отказ доступа снова крутится в цикле вместо мгновенного отказа"
+        )
+        assert "Access denied" in vyhod.stderr, (
+            "причина отказа не дошла до журнала: человек увидит, что что-то не "
+            f"так, но не увидит ЧТО. Вышло: {vyhod.stderr!r}"
+        )
+    finally:
+        shutil.rmtree(katalog, ignore_errors=True)
+
+
+@pytest.mark.skipif(shutil.which(_SH) is None, reason="sh рядом нет")
+def test_otkaz_dostupa_nazyvaet_chto_chinit():
+    """Сообщение обязано назвать ключи `docker/.env`, а не слать в `logs db`.
+
+    Отличить «база лежит» от «база не пускает» человеку неоткуда: контейнер
+    базы в обоих случаях жив, и в его журнале ничего не происходит. Поэтому
+    строку, которую он увидит, пишем мы, и в ней должны стоять имена настроек,
+    которые надо сверить, — иначе различение внутри скрипта останется знанием
+    скрипта, а не человека.
+    """
+    katalog = pathlib.Path(tempfile.mkdtemp(prefix="opencrm-itog-"))
+    try:
+        podstava = katalog / "python"
+        podstava.write_text("#!/bin/sh\nexit 3\n", encoding="utf-8")
+        podstava.chmod(0o755)
+
+        stsenariy = (
+            "set -e\n"
+            f'PATH="{_put_dlya_sh(katalog)}:$PATH"\n'
+            f"OPENCRM_DB_WAIT_TRIES={SROK_POPYTOK}\n"
+            'write_state() { echo "STATE $*"; }\n'
+            + _vyrezat_zhdat_bazu()
+            + _vyrezat_razbor_itoga()
+            + "\necho DOSHLI_DALSHE\n"
+        )
+        vyhod = subprocess.run(
+            [_SH, "-c", stsenariy], capture_output=True, text=True, timeout=120
+        )
+
+        assert "DOSHLI_DALSHE" not in vyhod.stdout, (
+            "точка входа пошла дальше с базой, которая не пускает: следом идут "
+            "копия и миграции, а им работать нечем"
+        )
+        assert vyhod.returncode == 1, (
+            f"выход не единицей ({vyhod.returncode}) — докер не поймёт, "
+            "что старт не удался"
+        )
+        vsyo = vyhod.stdout + vyhod.stderr
+        # Имена ровно те, что стоят в `docker/.env`. Приблизительные
+        # (`DB_USER` вместо `OPENCRM_DB_USER`) отправили бы человека искать
+        # ключ, которого в файле нет, — а он и так уже в неприятной ситуации.
+        for klyuch in ("OPENCRM_DB_USER", "OPENCRM_DB_PASSWORD", "OPENCRM_DB_NAME"):
+            assert klyuch in vsyo, (
+                f"в сообщении об отказе не назван {klyuch}. Человеку сказали, что "
+                f"не пустили, но не сказали, где смотреть: {vsyo!r}"
+            )
+        assert "STATE failed migrate" in vyhod.stdout, (
+            "ход обновления не отмечен неудачей — страница так и будет обещать "
+            f"миграции, которых не будет: {vyhod.stdout!r}"
         )
     finally:
         shutil.rmtree(katalog, ignore_errors=True)

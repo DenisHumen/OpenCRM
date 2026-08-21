@@ -448,17 +448,30 @@ def shortages(db: Session, rows, warehouse_id: int) -> list[str]:
 
     Называем позиции поимённо: отказ «не хватает товара» без списка отправляет
     человека сверять бумагу со складом построчно руками.
+
+    **Считаем по товару, а не по строке.** Один товар в бумаге встречается
+    дважды запросто: две цены, два комментария, два исполнителя. Пока каждая
+    строка сверялась с остатком поодиночке, две строки по 5 при остатке 6
+    проходили обе — а списать предстояло 10. Остаток уходил в минус молча, мимо
+    подтверждения, которое здесь для того и стоит: увести склад в минус можно,
+    но только с ведома человека.
     """
-    stock = warehouse_repo.stock_by_product(
-        db, [row.product_id for row in rows], warehouse_id=warehouse_id
-    )
-    short = []
+    # Складываем одноимённые строки, сохраняя порядок первого появления: список
+    # нехватки человек сверяет с бумагой сверху вниз.
+    nuzhno: dict[int, int] = {}
+    imena: dict[int, str] = {}
     for row in rows:
-        have = stock.get(row.product_id, 0)
-        if have < row.quantity_milli:
+        nuzhno[row.product_id] = nuzhno.get(row.product_id, 0) + row.quantity_milli
+        imena.setdefault(row.product_id, row.name_snapshot)
+
+    stock = warehouse_repo.stock_by_product(db, list(nuzhno), warehouse_id=warehouse_id)
+    short = []
+    for product_id, trebuetsya in nuzhno.items():
+        have = stock.get(product_id, 0)
+        if have < trebuetsya:
             short.append(
-                f"{row.name_snapshot} ({format_quantity(have)}"
-                f" of {format_quantity(row.quantity_milli)})"
+                f"{imena[product_id]} ({format_quantity(have)}"
+                f" of {format_quantity(trebuetsya)})"
             )
     return short
 

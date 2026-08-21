@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { Icon } from "../components/Icon";
 import { ProductBarcodes } from "../components/ProductBarcodes";
+import { ProductPhotos } from "../components/ProductPhotos";
 import {
   TransferLog,
   TransferModal,
@@ -181,6 +182,11 @@ export function ProductCard() {
       {/* Раздел сам решает, показываться ли: выключен блок или нет права —
           возвращает null. Услуге штрихкод не нужен, её не сканируют с полки. */}
       {!product.is_service && <ProductBarcodes productId={product.id} />}
+
+      {/* Снимки — и услуге тоже. «Выезд мастера» на полке не лежит, но
+          фотография у услуги осмысленна: так выглядит результат работы, и
+          показать её клиенту проще, чем описать. */}
+      <ProductPhotos productId={product.id} />
 
       <div className="section-head" style={{ marginTop: 28 }}>
         <h2 className="section-title">{t("moves")}</h2>

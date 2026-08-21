@@ -1155,3 +1155,140 @@ def test_only_root_makes_another_root(root_client, role_maker, staff_maker):
     promoted = root_client.post(f"{STAFF}/{victim_id}/role", json={"role": "root"})
     assert promoted.status_code == 200, promoted.text
     root_client.post(f"{STAFF}/{victim_id}/role", json={"role": "manager"})
+
+
+def test_knopki_zakaza_ne_otdayut_summ_bez_prava(root_client, role_maker, staff_maker):
+    """НАЙДЕНО РАЗБОРОМ: право `orders.view_amounts` обходилось нажатием кнопки.
+
+    Список и карточка право спрашивали, а `ready`, `close`, `revert` и `cancel`
+    отдавали заказ с `amounts=True` всегда — прямо в вызове. Сборщик без права
+    на суммы не видел цен нигде, но стоило ему нажать «готов», как ответ
+    приходил с итогом и ценами строк.
+
+    Та же беда, что в `test_the_warehouse_card_hides_prices_in_write_responses_too`
+    выше: `amounts` в сериализаторе по умолчанию `True`, и всякая ручка, забывшая
+    спросить право, становится обходом.
+    """
+    for key in ("documents", "warehouse", "orders"):
+        root_client.post(f"{API}/modules/{key}", json={"enabled": True})
+    client = root_client.post(f"{API}/clients", json={"name": "Покупатель прав"}).json()
+    tovar = root_client.post(
+        f"{API}/warehouse/products",
+        json={"name": "Товар кнопок", "unit": "pcs", "price": 500_00, "cost": 100_00},
+    ).json()
+    root_client.post(
+        f"{API}/warehouse/moves",
+        json={"product_id": tovar["id"], "kind": "in", "quantity": "10"},
+    )
+    zakaz = root_client.post(
+        f"{API}/orders", json={"kind": "sales_order", "client_id": client["id"]}
+    ).json()
+    root_client.post(
+        f"{API}/orders/{zakaz['id']}/lines",
+        json={"product_id": tovar["id"], "quantity": "2"},
+    )
+
+    rol = role_maker(
+        "Сборщик без сумм",
+        ["orders.view", "orders.create", "orders.edit", "warehouse.view", "clients.view"],
+    )
+    sborshchik = staff_maker("sborka-bez-summ@test.local", rol["id"])
+    try:
+        # Чтение уже закрыто — с него и сверяемся.
+        v_kartochke = sborshchik.get(f"{API}/orders/{zakaz['id']}").json()
+        assert v_kartochke["total"] is None, v_kartochke
+
+        gotov = sborshchik.post(f"{API}/orders/{zakaz['id']}/ready")
+        assert gotov.status_code == 200, gotov.text
+        assert gotov.json()["total"] is None, (
+            f"кнопка «готов» отдала итог без права: {gotov.json()}"
+        )
+        assert all(s["price"] is None for s in gotov.json()["lines"]), (
+            f"кнопка «готов» отдала цены строк без права: {gotov.json()['lines']}"
+        )
+
+        otmena = sborshchik.post(f"{API}/orders/{zakaz['id']}/cancel")
+        assert otmena.status_code == 200, otmena.text
+        assert otmena.json()["total"] is None, (
+            f"кнопка «отменить» отдала итог без права: {otmena.json()}"
+        )
+    finally:
+        root_client.delete(f"{API}/warehouse/products/{tovar['id']}")
+
+
+def test_zavedenie_zakaza_ne_otdayot_summ_bez_prava(root_client, role_maker, staff_maker):
+    """Заведение — та же карточка, и `client_created` рядом ничего не меняет."""
+    for key in ("documents", "warehouse", "orders"):
+        root_client.post(f"{API}/modules/{key}", json={"enabled": True})
+    client = root_client.post(f"{API}/clients", json={"name": "Покупатель заведения"}).json()
+
+    rol = role_maker(
+        "Заводит без сумм", ["orders.view", "orders.create", "warehouse.view", "clients.view"]
+    )
+    sborshchik = staff_maker("zavodit-bez-summ@test.local", rol["id"])
+
+    zaveden = sborshchik.post(
+        f"{API}/orders", json={"kind": "sales_order", "client_id": client["id"]}
+    )
+    assert zaveden.status_code == 201, zaveden.text
+    assert zaveden.json()["total"] is None, zaveden.json()
+    # Признак нового клиента при этом на месте: закрыты деньги, а не ответ.
+    assert "client_created" in zaveden.json()
+
+
+def test_s_pravom_summy_po_prezhnemu_vidny(root_client):
+    """Владелец право имеет — и итог обязан видеть после каждой кнопки.
+
+    Иначе исправление превратилось бы в «сумм не видит никто».
+    """
+    for key in ("documents", "warehouse", "orders"):
+        root_client.post(f"{API}/modules/{key}", json={"enabled": True})
+    client = root_client.post(f"{API}/clients", json={"name": "Покупатель владельца"}).json()
+    zakaz = root_client.post(
+        f"{API}/orders", json={"kind": "sales_order", "client_id": client["id"]}
+    ).json()
+
+    gotov = root_client.post(f"{API}/orders/{zakaz['id']}/ready")
+    assert gotov.status_code == 200, gotov.text
+    assert gotov.json()["total"] is not None, gotov.json()
+
+
+def test_svodka_ne_pokazyvaet_kartochek_bez_prava(root_client, role_maker, staff_maker):
+    """НАЙДЕНО РАЗБОРОМ: телефоны клиентов уезжали на первый экран после входа.
+
+    Список последних карточек брался всем, у кого есть сессия сотрудника, безо
+    всякого права. Сотрудник без `clients.view` не мог открыть ни раздел
+    клиентов, ни отдельную карточку, но пять свежих — с именем, компанией и
+    метками — получал на сводке сразу после входа.
+
+    Правило то же, что у денег строкой ниже в том же обработчике: **сводка
+    сужается тем же правом, что раздел**, а не показывает выжимку из закрытого.
+    """
+    root_client.post(f"{API}/clients", json={"name": "Клиент со сводки", "phone": "+7 900 111-22-33"})
+
+    rol = role_maker("Сводка без клиентов", ["deals.view", "documents.view"])
+    bez_klientov = staff_maker("svodka-bez-klientov@test.local", rol["id"])
+
+    # Раздел ему закрыт — с этого и сверяемся.
+    assert bez_klientov.get(f"{API}/clients").status_code == 403
+
+    svodka = bez_klientov.get(f"{API}/dashboard")
+    assert svodka.status_code == 200, svodka.text
+    assert svodka.json()["recent_clients"] == [], (
+        f"карточки клиентов уехали на сводку без права: {svodka.json()['recent_clients']}"
+    )
+
+
+def test_svodka_pokazyvaet_kartochki_tomu_komu_polozheno(root_client, role_maker, staff_maker):
+    """И наоборот: с правом карточки обязаны быть.
+
+    Иначе исправление превратилось бы в «сводка пуста у всех».
+    """
+    root_client.post(f"{API}/clients", json={"name": "Клиент видимый"})
+
+    rol = role_maker("Сводка с клиентами", ["clients.view", "deals.view"])
+    s_klientami = staff_maker("svodka-s-klientami@test.local", rol["id"])
+
+    svodka = s_klientami.get(f"{API}/dashboard")
+    assert svodka.status_code == 200, svodka.text
+    assert svodka.json()["recent_clients"], "с правом карточки пропали"

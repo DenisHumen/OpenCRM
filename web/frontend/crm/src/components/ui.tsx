@@ -320,7 +320,13 @@ export function ConfirmModal({
         </button>
         <button
           className="btn btn-primary btn-sm"
-          style={danger ? { background: "var(--danger)", color: "var(--on-danger)" } : undefined}
+          style={
+            danger
+              ? // Заливкой — `--danger-solid`, а не текстовый `--danger`: под
+                // белым он в тёмной теме даёт 3.2:1. Разбор — у токена.
+                { background: "var(--danger-solid)", color: "var(--on-danger)" }
+              : undefined
+          }
           onClick={() => {
             onConfirm();
             onClose();

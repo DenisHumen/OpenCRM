@@ -24,6 +24,8 @@ import pathlib
 import pytest
 from sqlalchemy import event
 
+from core.services import finance_service
+from database.session import SessionLocal
 from tests.conftest import API
 
 FINANCE = f"{API}/finance"
@@ -773,16 +775,55 @@ def test_zakrytoe_pravilo_ne_nachislyaet_a_vyklyuchennoe_vklyuchaetsya_obratno(
     assert money_of(root_client, loud["id"])["accruals"][0]["amount"] == 8_000
 
 
-def test_migratsiya_ne_seet_ni_odnoy_stavki(root_client):
-    """Чужая ставка, появившаяся молча, начнёт откладывать деньги без спроса.
+def test_migratsii_ne_seyut_stavok_vovse():
+    """Ни одна миграция не заводит ставок. Проверка по САМИМ миграциям.
 
-    Проверяем не «список пуст» (соседние тесты успели завести свои), а то, что
-    среди правил нет ни одного, которого никто в этом наборе не создавал: посев
-    ставил бы их с приметными именами вроде «Налог» и «Упаковка».
+    Чужая ставка, появившаяся молча, начнёт откладывать деньги без спроса: она
+    рождает начисления с каждого прихода, и владелец увидит расход, которого не
+    назначал.
+
+    Смотрим текст миграций, а не живую базу, и вот почему. Прежняя редакция
+    спрашивала список ставок и считала «своими» те, чьё имя начинается с
+    «Правило » — то есть держалась на договорённости о названиях. Сосед по
+    прогону, заведший ставку с другим именем и не убравший её (база у набора
+    ОБЩАЯ), выглядел для неё посевом миграции: проверка краснела на исправном
+    коде. Так и вышло — поймано прогоном в обратном порядке файлов.
+
+    По тексту миграций это решается однозначно и не зависит ни от порядка
+    файлов, ни от соседей: посев — это `INSERT`, `bulk_insert` или `op.execute`
+    с таблицей ставок, и найти его можно, не поднимая базы вовсе.
     """
+    import pathlib
+    import re
+
+    versii = pathlib.Path(__file__).resolve().parent.parent / "database" / "migrations" / "versions"
+    seyut = []
+    for put in sorted(versii.glob("*.py")):
+        text = put.read_text(encoding="utf-8")
+        # Строки с `finance_rules`, где рядом стоит запись данных, а не DDL.
+        for stroka in text.splitlines():
+            if "finance_rules" not in stroka:
+                continue
+            if re.search(r"insert|bulk_insert|op\.execute", stroka, re.I):
+                seyut.append(f"{put.name}: {stroka.strip()[:90]}")
+    assert not seyut, (
+        "миграция заводит ставки — они начнут откладывать деньги без спроса:\n  "
+        + "\n  ".join(seyut)
+    )
+
+
+def test_v_svezhey_baze_stavok_net(root_client):
+    """И на живой базе тоже: ставок, кроме заведённых людьми, быть не должно.
+
+    Проверка слабее предыдущей — база у набора общая, и соседи успевают завести
+    свои, — но она смотрит на настоящую базу, а не на текст. Поэтому здесь
+    только одно требование: у каждой ставки есть человеческое имя и она не
+    выглядит заводской заготовкой.
+    """
+    zavodskie = {"Налог", "Упаковка", "Комиссия", "Эквайринг", "НДС"}
     items = root_client.get(f"{FINANCE}/rules", params={"include_closed": True}).json()["items"]
-    seeded = [row for row in items if not row["name"].startswith("Правило ")]
-    assert seeded == [], f"миграция засеяла ставки: {seeded}"
+    seeded = [row for row in items if row["name"].strip() in zavodskie]
+    assert seeded == [], f"в базе появились заводские ставки: {seeded}"
 
 
 @pytest.mark.parametrize("bad", ["5.5", 0, -1, None, "", True, 10_001])
@@ -1368,3 +1409,85 @@ def test_mestnyy_nomer_nahodit_kartochku_zavedyonnuyu_mezhdunarodnym(root_client
         assert found.json()["client_created"] is False
     finally:
         root_client.patch(f"{API}/settings", json={"values": {"default_country_code": ""}})
+
+
+# --- отменённый бланк: остатка к оплате не бывает -------------------------------
+#
+# «Осталось оплатить» отвечает на вопрос «сколько ещё с человека взять». У
+# отменённого заказа такого числа не существует — не ноль, а вопрос не задан.
+# Пока оно считалось как «сумма минус полученное», врезка показывала полную
+# сумму заказа: долг, которого нет. Ноль на его месте был бы враньём той же
+# природы, только обратным — он читается как «рассчитались».
+
+
+def test_u_otmenennogo_zakaza_net_ostatka_k_oplate(root_client, income_category):
+    """Деньги вернули, заказ отменён — остатка нет, и это не ноль.
+
+    `total` при этом остаётся суммой бланка: чего заказ стоил, знать надо и
+    после отмены, иначе строка в журнале становится безымянной.
+    """
+    item = product(root_client)
+    order = order_with(root_client, item)
+    # Отменяют НЕПРОВЕДЁННЫЙ заказ: у закрытого сначала отменяют проведение
+    # (`revert`), и это разные действия с разными последствиями для склада.
+    pay(root_client, income_category["id"], 100_000, document_id=order["id"])
+    # Возврат — отдельным действием, как в жизни: отрицательная сумма по той же
+    # доходной статье.
+    pay(root_client, income_category["id"], -100_000, document_id=order["id"])
+
+    otmenen = root_client.post(f"{ORDERS}/{order['id']}/cancel")
+    assert otmenen.status_code == 200, otmenen.text
+
+    dengi = money_of(root_client, order["id"])
+    assert dengi["status"] == "cancelled", "состояние бланка наружу не доехало"
+    assert dengi["due"] is None, "у отменённого посчитан остаток к оплате"
+    assert dengi["paid"] is None, "у отменённого нет ни «оплачен», ни «не оплачен»"
+    assert dengi["received"] == 0, "возврат не учтён"
+    assert dengi["total"] is not None, "сумма бланка потерялась вместе с отменой"
+
+
+def test_otmenennyy_zakaz_s_nevozvrashchennoy_oplatoy_ne_uspokaivayet(
+    root_client, income_category
+):
+    """Отмена бумаги и возврат денег — РАЗНЫЕ действия, и делают их порознь.
+
+    Заказ отменён, а деньги клиента у нас — обычное состояние, и молчать о нём
+    нельзя: «платить нечего» здесь успокаивало бы ровно там, где мы держим
+    чужое. Пустой остаток к оплате про это не врёт (брать и правда нечего), но
+    ответ обязан позволить экрану сказать «к возврату столько-то» — для этого в
+    нём и остаётся `received`.
+    """
+    item = product(root_client)
+    order = order_with(root_client, item)
+    pay(root_client, income_category["id"], 100_000, document_id=order["id"])
+
+    assert root_client.post(f"{ORDERS}/{order['id']}/cancel").status_code == 200
+
+    dengi = money_of(root_client, order["id"])
+    assert dengi["status"] == "cancelled"
+    assert dengi["due"] is None
+    assert dengi["paid"] is not True, "отменённый заказ объявлен оплаченным"
+    assert dengi["received"] == 100_000, (
+        "полученные деньги пропали вместе с отменой — экрану нечем сказать «к возврату»"
+    )
+
+
+def test_bez_blankov_ostatok_pust_po_drugoy_prichine(root_client):
+    """Два «остатка нет» различаются состоянием, а не догадкой.
+
+    Выключенные бланки дают пустой остаток потому, что сравнивать не с чем;
+    отменённый — потому что вопрос не задан. Раньше эти два случая были
+    неразличимы снаружи, и экран не мог сказать про них разное.
+    """
+    item = product(root_client)
+    order = order_with(root_client, item)
+    vykl = root_client.post(f"{API}/modules/documents", json={"enabled": False})
+    assert vykl.status_code == 200, vykl.text
+    try:
+        with SessionLocal() as db:
+            dengi = finance_service.money_of_document(db, order["id"])
+        assert dengi["total"] is None
+        assert dengi["status"] is None, "у выключенных бланков состояния быть не может"
+        assert dengi["due"] is None
+    finally:
+        root_client.post(f"{API}/modules/documents", json={"enabled": True})

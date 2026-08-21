@@ -12,9 +12,65 @@
 from sqlalchemy import Select, func, or_, select, update
 from sqlalchemy.orm import Session
 
-from database.models import Product, ProductBarcode, StockMove
+from database.models import Product, ProductBarcode, ProductPhoto, StockMove
 from database.models.warehouse import QUANTITY_SCALE
 from database.query import as_int, contains, page_of
+
+
+def list_product_photos(db: Session, product_id: int) -> list[ProductPhoto]:
+    """Снимки товара в заданном человеком порядке.
+
+    `id` вторым ключом сортировки, а не для красоты: у снимков, загруженных
+    подряд, `sort_order` совпадает до первой перестановки, и без второго ключа
+    порядок выдачи зависел бы от плана запроса — то есть менялся бы сам.
+    """
+    return list(
+        db.scalars(
+            select(ProductPhoto)
+            .where(ProductPhoto.product_id == product_id)
+            .order_by(ProductPhoto.sort_order.asc(), ProductPhoto.id.asc())
+        )
+    )
+
+
+def get_product_photo(db: Session, product_id: int, photo_id: int) -> ProductPhoto | None:
+    """Снимок ЭТОГО товара. Товар в условии обязателен, а не для удобства:
+    иначе чужой номер снимка отдавал бы чужую картинку по прямому адресу."""
+    return db.scalar(
+        select(ProductPhoto).where(
+            ProductPhoto.id == photo_id, ProductPhoto.product_id == product_id
+        )
+    )
+
+
+def next_photo_order(db: Session, product_id: int) -> int:
+    """Место в конце списка. Считается запросом — хранимого счётчика нет."""
+    posledniy = db.scalar(
+        select(func.max(ProductPhoto.sort_order)).where(ProductPhoto.product_id == product_id)
+    )
+    return 0 if posledniy is None else int(posledniy) + 1
+
+
+def photos_of_products(db: Session, product_ids) -> dict[int, ProductPhoto]:
+    """Первый снимок каждого товара — для списка, где место есть под один.
+
+    Одним запросом на страницу, а не по запросу на строку: список товаров
+    показывает полсотни позиций, и полсотни запросов за картинками — это ровно
+    та беда, от которой в проекте отдельный сторож
+    (`test_raskladka_stoit_odin_zapros_na_stranitsu`).
+    """
+    product_ids = [i for i in set(product_ids) if i]
+    if not product_ids:
+        return {}
+    rows = db.scalars(
+        select(ProductPhoto)
+        .where(ProductPhoto.product_id.in_(product_ids))
+        .order_by(ProductPhoto.sort_order.asc(), ProductPhoto.id.asc())
+    )
+    pervye: dict[int, ProductPhoto] = {}
+    for row in rows:
+        pervye.setdefault(row.product_id, row)
+    return pervye
 
 
 def get_product(db: Session, product_id: int, include_deleted: bool = False) -> Product | None:
