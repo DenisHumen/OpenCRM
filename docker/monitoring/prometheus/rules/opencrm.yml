@@ -73,9 +73,11 @@ groups:
           severity: critical
         annotations:
           summary: "Сайт не отвечает: {{ $labels.instance }}"
-          description: >-
-            Внешняя проверка не проходит уже 2 минуты.
-            Смотреть: ./opencrm.sh doctor, затем ./opencrm.sh logs nginx и logs app.
+          description: "Внешняя проверка не проходит уже 2 минуты."
+          lechenie: |-
+            ./opencrm.sh doctor
+            ./opencrm.sh logs nginx
+            ./opencrm.sh logs app
 
       - alert: SiteSlow
         # Медленно — это ещё не лежит, поэтому выдержка длинная: короткая
@@ -100,9 +102,10 @@ groups:
           severity: critical
         annotations:
           summary: "Сертификат истекает через {{ $value | printf \"%.0f\" }} дней"
-          description: >-
-            Автопродление не сработало. Проверить: ./opencrm.sh logs certbot,
-            выпустить заново: ./opencrm.sh https
+          description: "Автопродление не сработало."
+          lechenie: |-
+            ./opencrm.sh logs certbot
+            ./opencrm.sh https
 
       - alert: HighErrorRate
         # Доля пятисоток за пять минут. Знаменатель ограничен снизу и по частоте,
@@ -125,9 +128,8 @@ groups:
           severity: critical
         annotations:
           summary: "Доля ответов 5xx — {{ $value | humanizePercentage }} (порог 5%)"
-          description: >-
-            Столько запросов заканчивается ошибкой сервера.
-            Логи: ./opencrm.sh logs app
+          description: "Столько запросов заканчивается ошибкой сервера."
+          lechenie: "./opencrm.sh logs app"
 
       - alert: HighClientErrorRate
         # Четырёхсотки сами по себе норма (чужие боты, старые закладки), но
@@ -152,9 +154,8 @@ groups:
           severity: warning
         annotations:
           summary: "Доля ответов 4xx — {{ $value | humanizePercentage }} (порог 40%)"
-          description: >-
-            Похоже на сломанный фронтенд или чужой перебор адресов.
-            Логи: ./opencrm.sh logs nginx
+          description: "Похоже на сломанный фронтенд или чужой перебор адресов."
+          lechenie: "./opencrm.sh logs nginx"
 
   - name: opencrm-host
     rules:
@@ -175,9 +176,10 @@ groups:
           severity: critical
         annotations:
           summary: "На диске свободно {{ $value | humanizePercentage }} (порог 10%)"
-          description: >-
-            Освободить: ./opencrm.sh doctor, очистка корзины в настройках,
-            docker image prune.
+          description: "Место кончается: дальше встанут загрузки, копии и сборка обновления."
+          lechenie: |-
+            ./opencrm.sh doctor
+            docker image prune
 
       - alert: HostMemoryLow
         expr: node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes < 0.10
@@ -226,7 +228,8 @@ groups:
           summary: >-
             Контейнер {{ $labels.service }} перезапустился
             {{ $value | printf "%.0f" }} раза за 15 минут
-          description: "Причина — в логе: ./opencrm.sh logs {{ $labels.service }}"
+          description: "Причина — в логе контейнера."
+          lechenie: "./opencrm.sh logs {{ $labels.service }}"
 
       - alert: ContainerUnhealthy
         # Не то же самое, что «упал». Контейнер работает, docker его не трогает,
@@ -242,9 +245,8 @@ groups:
           severity: critical
         annotations:
           summary: "Контейнер {{ $labels.service }} нездоров"
-          description: >-
-            Проверка здоровья не проходит пять минут подряд.
-            Смотреть: ./opencrm.sh logs {{ $labels.service }}
+          description: "Проверка здоровья не проходит пять минут подряд."
+          lechenie: "./opencrm.sh logs {{ $labels.service }}"
 
   - name: opencrm-operations
     rules:
@@ -258,9 +260,10 @@ groups:
           severity: critical
         annotations:
           summary: "Резервной копии нет уже {{ $value | humanizeDuration }}"
-          description: >-
-            Последняя копия старше 25 часов. Проверить расписание:
-            systemctl list-timers opencrm-backup; снять вручную: ./opencrm.sh backup
+          description: "Последняя копия старше 25 часов — одна ночь пропущена целиком."
+          lechenie: |-
+            systemctl list-timers opencrm-backup
+            ./opencrm.sh backup
 
       - alert: DigestMissing
         # Утренняя сводка — сама по себе признак живого канала: пока она
@@ -278,9 +281,9 @@ groups:
           severity: warning
         annotations:
           summary: "Сводка не приходила уже {{ $value | humanizeDuration }}"
-          description: >-
-            Утренняя сводка не уходила больше суток. Проверить расписание:
-            systemctl list-timers opencrm-svodka; послать вручную:
+          description: "Утренняя сводка не уходила больше суток."
+          lechenie: |-
+            systemctl list-timers opencrm-svodka
             ./opencrm.sh svodka
 
       - alert: BackupBroken
@@ -293,7 +296,8 @@ groups:
           severity: critical
         annotations:
           summary: "Последняя резервная копия НЕГОДНА"
-          description: "Подробности: ~/opencrm/data/backups/last-check.json"
+          description: "Копия, не прошедшая проверку годности, хуже отсутствующей: на неё рассчитывают."
+          lechenie: "cat ~/opencrm/data/backups/last-check.json"
 
       - alert: DeployRolledBack
         # Откат — это уже сработавшая защита: сайт живой, но приехавший коммит
@@ -309,9 +313,8 @@ groups:
           severity: critical
         annotations:
           summary: "Обновление откатилось"
-          description: >-
-            Последний деплой не встал и был отменён. Что именно:
-            ./opencrm.sh history
+          description: "Последний деплой не встал и был отменён."
+          lechenie: "./opencrm.sh history"
 
       - alert: DatabaseSchemaMismatch
         # Приложение с несошедшейся схемой не поднимается вовсе, поэтому сюда
@@ -326,7 +329,8 @@ groups:
           severity: critical
         annotations:
           summary: "Схема базы не совпадает с моделями"
-          description: "Подробности: GET /api/v1/system/schema либо ./opencrm.sh doctor"
+          description: "Живая база разошлась с моделями — приложение с такой схемой не поднимется."
+          lechenie: "./opencrm.sh doctor"
 
       - alert: RateLimiterUnavailable
         # Общий счётчик попыток (Redis) не отвечает. Пока это длится, вход, PIN
@@ -351,7 +355,8 @@ groups:
           description: >-
             Приложение не достучалось до Redis. Защита от подбора не может
             работать, поэтому вход, PIN публичных ссылок и приём заявок
-            отказывают, а не пропускают. Смотреть: ./opencrm.sh logs redis
+            отказывают, а не пропускают.
+          lechenie: "./opencrm.sh logs redis"
 
       - alert: RedisDown
         # Прямой опрос: `RateLimiterUnavailable` выше срабатывает только когда
@@ -368,7 +373,8 @@ groups:
           summary: "Redis не отвечает"
           description: >-
             Общий счётчик попыток недоступен. Вход, PIN и приём заявок будут
-            отвечать 503 до его возвращения. Смотреть: ./opencrm.sh logs redis
+            отвечать 503 до его возвращения.
+          lechenie: "./opencrm.sh logs redis"
 
       - alert: RateLimiterNotShared
         # А это — беда БЕСШУМНАЯ, и потому опаснее предыдущей. Счётчик в памяти
@@ -384,8 +390,9 @@ groups:
           summary: "Счётчик попыток не общий на процессы"
           description: >-
             OPENCRM_REDIS_URL пуст: защита от подбора пароля и PIN считает
-            попытки в памяти каждого процесса отдельно. Проверить:
-            ./opencrm.sh doctor, строка «счётчик попыток».
+            попытки в памяти каждого процесса отдельно — то есть порог молча
+            умножается на число процессов.
+          lechenie: "./opencrm.sh doctor   # строка «счётчик попыток»"
 
       - alert: UploadsBlocked
         expr: opencrm_uploads_blocked == 1
@@ -445,8 +452,9 @@ groups:
           summary: >-
             Соединений к базе — {{ $value | humanizePercentage }} от потолка (порог 80%)
           description: >-
-            Запас до «Too many connections» кончается. Смотреть, кто их держит:
-            ./opencrm.sh logs app; потолок — max_connections на сервере базы.
+            Запас до «Too many connections» кончается; потолок — max_connections
+            на сервере базы.
+          lechenie: "./opencrm.sh logs app"
 
       - alert: DatabaseLockWaits
         # Ожидание блокировки строки — это запрос, который стоит и ждёт чужой
@@ -545,7 +553,7 @@ groups:
           description: >-
             Чаще всего не заведён пользователь наблюдателя — запрос на создание
             лежит в docker/.env.example рядом с OPENCRM_DB_EXPORTER_PASSWORD.
-            Смотреть: ./opencrm.sh logs db-exporter.
+          lechenie: "./opencrm.sh logs db-exporter"
 
       - alert: RedisEvictingKeys
         # Единственное правило в группе, которое про безопасность, а не про

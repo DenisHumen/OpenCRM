@@ -19,6 +19,7 @@
 
 from datetime import datetime, timedelta
 
+import pytest
 from sqlalchemy import select
 
 from core.services import report_service
@@ -621,8 +622,13 @@ def test_revenue_csv_leaves_an_unnamed_total_empty(manager_client):
     lines = text.splitlines()
     header, row = lines[0].split(";"), lines[1].split(";")
 
-    assert row[header.index("Revenue")] == "", "выручка без названной цены выгрузилась нулём"
+    assert row[header.index("Won value")] == "", "сумма выигранных без цены выгрузилась нулём"
     assert row[header.index("Lost value")] == "", "сумма потерь без цены выгрузилась нулём"
+    # «Выручка» из заголовка ушла намеренно: выручка — это полученные деньги, а
+    # сумма выигранных заявок деньгами не является. Пока обе величины назывались
+    # одним словом, выгрузка спорила с кассой.
+    assert "Revenue" not in header, "в выгрузке снова две величины под одним словом"
+    assert len(row) == len(header), "строка и заголовок разошлись столбцами"
 
 
 def test_hidden_amounts_do_not_show_through_the_order_of_rows(root_client):
@@ -965,3 +971,132 @@ def test_money_is_divided_without_float():
     assert report_service.divide_money(-201, 2) == -101, "знак поменял правило округления"
     assert report_service.divide_money(1, 3) == 0
     assert report_service.divide_money(2, 3) == 1
+
+
+# --- выручка считается по кассе -------------------------------------------------
+#
+# Решение владельца от 19.08.2026: банк один, источник правды о деньгах —
+# финансовые операции. До него счётов было два и они не сходились: заказ на
+# 12 000 оплачен, касса полна, а отчёт показывал пустой месяц — потому что
+# считал выигранные заявки, а заказ к заявке привязан не был.
+
+
+@pytest.fixture()
+def kassa(root_client):
+    """Блок «Финансы» на время проверки. По умолчанию он выключен."""
+    vklyuchen = root_client.post(f"{MODULES}/finance", json={"enabled": True})
+    assert vklyuchen.status_code == 200, vklyuchen.text
+    yield
+    root_client.post(f"{MODULES}/finance", json={"enabled": False})
+
+
+def _dohodnaya(root_client) -> dict:
+    sozdana = root_client.post(
+        f"{API}/finance/categories",
+        json={"name": f"Касса отчёта {at(1).isoformat()}", "direction": "income"},
+    )
+    assert sozdana.status_code == 201, sozdana.text
+    return sozdana.json()
+
+
+def _oplata(root_client, category_id: int, amount: int, when=None) -> None:
+    otvet = root_client.post(
+        f"{API}/finance/operations",
+        json={
+            "category_id": category_id,
+            "amount": amount,
+            "happened_at": (when or at(10)).isoformat(),
+        },
+    )
+    assert otvet.status_code == 201, otvet.text
+
+
+def test_dengi_bez_zayavki_vidny_v_otchyote(root_client, kassa):
+    """Дословный сценарий карточки: оплата, не привязанная ни к какой заявке.
+
+    Заказ у стойки законно живёт без заявки, и по прежнему счёту он был не виден
+    вовсе: отчёт складывал суммы выигранных ЗАЯВОК. Владелец открывал главную,
+    видел пустой месяц при полной кассе — и переставал верить системе.
+    """
+    do = report(root_client, "revenue")
+    statya = _dohodnaya(root_client)
+    _oplata(root_client, statya["id"], 12_000_00)
+
+    itog = report(root_client, "revenue")
+    assert itog["basis"] == "cash", "отчёт считает не по кассе при включённом блоке"
+    # Приростом, а не абсолютом: база и отчётное окно у проверок общие, и
+    # соседняя оплата сдвинула бы итог — приём тот же, что у проверок воронки.
+    assert itog["received_amount"] - (do["received_amount"] or 0) == 12_000_00
+    assert itog["received_count"] - (do["received_count"] or 0) == 1
+    assert sum(m["received_amount"] for m in itog["months"]) == itog["received_amount"]
+
+
+def test_bez_kassy_otchyot_govorit_chem_meryaet(root_client):
+    """Блок выключен — считаем по заявкам и НАЗЫВАЕМ это, а не молчим.
+
+    Пустое, а не ноль: «кассы в системе нет» и «денег не приходило» — разные
+    ответы, и ноль на месте первого читался бы как второй.
+    """
+    itog = report(root_client, "revenue")
+    assert itog["basis"] == "deals"
+    assert itog["received_amount"] is None
+    assert itog["received_count"] is None
+    assert all(m["received_amount"] is None for m in itog["months"])
+
+
+def test_vozvrat_umenshayet_postupleniya(root_client, kassa):
+    """Возврат клиенту — доходная операция с минусом, и касса от неё убывает.
+
+    Суммы заявок отрицательными не бывают, а касса — бывает: это разные
+    величины, и складывать их в одну колонку было бы враньём в обе стороны.
+    """
+    do = report(root_client, "revenue")
+    statya = _dohodnaya(root_client)
+    _oplata(root_client, statya["id"], 5_000_00)
+    _oplata(root_client, statya["id"], -2_000_00)
+
+    itog = report(root_client, "revenue")
+    assert itog["received_amount"] - do["received_amount"] == 3_000_00
+
+
+def test_nachislennoe_pravilom_ne_schitaetsya_postupleniem(root_client, kassa):
+    """Начисление в доходную статью деньгами в кассе не является.
+
+    Возврат переплаченного налога — законная доходная статья, но денег от него
+    не приходило. Сторож на `rule_id IS NULL`: потеряв это условие, отчёт
+    разошёлся бы с врезкой «получено по заказу» на той же неделе.
+    """
+    dohod = _dohodnaya(root_client)
+    do = report(root_client, "revenue")
+    _oplata(root_client, dohod["id"], 1_000_00)
+
+    vozvrat = root_client.post(
+        f"{API}/finance/categories",
+        json={"name": f"Возврат налога {at(2).isoformat()}", "direction": "income"},
+    ).json()
+    pravilo = root_client.post(
+        f"{API}/finance/rules",
+        json={
+            "name": "Возврат переплаты",
+            "base": "income_percent",
+            "category_id": vozvrat["id"],
+            "rate_bp": 1000,
+        },
+    )
+    assert pravilo.status_code == 201, pravilo.text
+    try:
+        # Начисление рождается от прихода: платим ещё раз и смотрим, что в кассу
+        # попал только сам платёж, а не начисленные с него десять процентов.
+        _oplata(root_client, dohod["id"], 1_000_00)
+
+        itog = report(root_client, "revenue")
+        assert itog["received_amount"] - do["received_amount"] == 2_000_00, (
+            "в кассу попало начисленное правилом — потеряно условие «не начисление»"
+        )
+    finally:
+        # Убираем за собой. База у прогона ОБЩАЯ, и оставленная ставка живёт до
+        # конца набора: сосед `test_finance_rules.py` считает всякую ставку
+        # с непривычным именем засеянной миграцией и краснеет.
+        # Поймано прогоном в обратном порядке файлов — тем самым, что
+        # CI гоняет вторым заходом ровно ради таких сцепок.
+        root_client.delete(f"{API}/finance/rules/{pravilo.json()['id']}")

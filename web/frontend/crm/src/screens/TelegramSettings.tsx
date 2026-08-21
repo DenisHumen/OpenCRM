@@ -36,6 +36,8 @@ interface TelegramConfig {
   configured: boolean;
   token_tail: string;
   digest_chat: string;
+  /** Куда уходят тревоги о сервере. Пусто — туда же, куда сводка. */
+  alerts_chat: string;
   bot_username: string;
   webhook_secret_set: boolean;
   /** Ноль — хранить вечно. Это и есть значение по умолчанию. */
@@ -60,6 +62,7 @@ export function SettingsTelegram() {
   const [config, setConfig] = useState<TelegramConfig | null>(null);
   const [token, setToken] = useState("");
   const [chat, setChat] = useState("");
+  const [alerts, setAlerts] = useState("");
   const [botName, setBotName] = useState("");
   // Срок хранения переписки. Ноль — вечно, и с него всё начинается: пока
   // владелец не назвал срок, не удаляется ничего.
@@ -69,6 +72,10 @@ export function SettingsTelegram() {
   // Засов на подключение: второе нажатие послало бы телеграму тот же
   // `setWebhook` ещё раз, пока первый в пути.
   const guard = useGuard();
+  // Свой засов у отправки сводки, а не общий с подключением: это разные
+  // разговоры с телеграмом, и запирать их одним значило бы гасить кнопку
+  // «Подключить» на время, пока уходит сводка.
+  const svodkaGuard = useGuard();
   // Приглашение подгружается отдельно и только когда есть чем: без имени бота
   // ссылка выглядела бы настоящей и не работала.
   const [invite, setInvite] = useState<{ url: string; qr_svg: string } | null>(null);
@@ -82,6 +89,7 @@ export function SettingsTelegram() {
       .then((svezhee) => {
         setConfig(svezhee);
         setChat(svezhee.digest_chat);
+        setAlerts(svezhee.alerts_chat);
         setBotName(svezhee.bot_username);
         setSrok(svezhee.retention_months);
       })
@@ -112,6 +120,7 @@ export function SettingsTelegram() {
       // меняй»: экран настоящего токена не знает и вернуть его не может.
       const telo: Record<string, string> = {
         digest_chat: chat,
+        alerts_chat: alerts,
         bot_username: botName,
       };
       if (token.trim()) telo.token = token.trim();
@@ -137,6 +146,33 @@ export function SettingsTelegram() {
     } finally {
       guard.free();
       setBusy(false);
+    }
+  };
+
+  /**
+   * Отправить сводку прямо сейчас.
+   *
+   * Ручка была, кнопки не было: посмотреть, как сводка выглядит, можно было
+   * только дождавшись утра — а оформление правят итерациями.
+   *
+   * Ответ приходит с состоянием, а не отказом: ненастроенный канал — не ошибка
+   * ручки, человек мог открыть экран раньше, чем ввёл токен. Поэтому три исхода
+   * разбираются здесь, и «не ушла» показывается вместе с причиной от телеграма:
+   * без неё «не ушла» отправляет искать поломку наугад.
+   */
+  const poslatSvodku = async () => {
+    if (!svodkaGuard.take()) return;
+    try {
+      const otvet = await api.post<{ status: string; reason?: string; error?: string }>(
+        "/telegram/digest/send",
+      );
+      if (otvet.status === "sent") toast(t("tgDigestSent"));
+      else if (otvet.status === "failed") toast(t("tgDigestFailed", { error: otvet.error ?? "" }), true);
+      else toast(t("tgDigestSkipped"), true);
+    } catch (beda) {
+      toastError(beda);
+    } finally {
+      svodkaGuard.free();
     }
   };
 
@@ -230,6 +266,32 @@ export function SettingsTelegram() {
               inputMode="numeric"
             />
             <div className="field-desc">{t("tgDigestChatHint")}</div>
+            {/* «Отправить сейчас» стоит у самого поля, а не в общем ряду кнопок:
+                проверяют этим не бота вообще, а именно этот чат — дошло ли до
+                него и как выглядит. Кнопка не сохраняет: сводка уйдёт по тому
+                чату, что записан, и разойдись она с полем — человек решил бы,
+                что проверил новое значение. */}
+            <button
+              type="button"
+              className="text-link"
+              style={{ marginTop: 8 }}
+              disabled={svodkaGuard.busy || !config.configured || !config.digest_chat}
+              onClick={() => void poslatSvodku()}
+            >
+              {t("tgDigestSendNow")}
+            </button>
+          </div>
+
+          <div>
+            <label className="label">{t("tgAlertsChat")}</label>
+            <input
+              className="input"
+              value={alerts}
+              onChange={(e) => setAlerts(e.target.value)}
+              placeholder={chat || "123456789"}
+              inputMode="numeric"
+            />
+            <div className="field-desc">{t("tgAlertsChatHint")}</div>
           </div>
         </div>
 

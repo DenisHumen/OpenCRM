@@ -375,3 +375,68 @@ def test_two_people_closing_one_form_do_not_tear_its_history(manager_client):
     card = manager_client.get(f"{DOCS}/{doc['id']}").json()
     chain = [(e["from_status"], e["to_status"]) for e in card["events"]]
     assert ("issued", "ready") not in chain, "записан переход, которого не было"
+
+
+def test_zakaz_ne_zakryvaetsya_ruchkoy_blankov(root_client):
+    """НАЙДЕНО РАЗБОРОМ: заказ закрывался мимо склада.
+
+    Заказы и бланки живут в ОДНОЙ таблице (`documents`, разница в `kind`), а
+    `POST /documents/{id}/status` брал запись по номеру, ни о чём не спрашивая.
+    То есть с правом `documents.issue` заказ переводился в «выдан»: статус
+    менялся, история перехода писалась, а склад не двигался вовсе.
+
+    Получалось две вещи разом: обход права `orders.issue` правом
+    `documents.issue` и заказ, закрытый без единого движения по складу. Второе
+    хуже — остаток остаётся на месте, товар уезжает, и расхождение всплывает на
+    инвентаризации через месяц, когда концов уже не найти.
+    """
+    for key in ("documents", "warehouse", "orders"):
+        root_client.post(f"{API}/modules/{key}", json={"enabled": True})
+    client = root_client.post(f"{API}/clients", json={"name": "Покупатель обхода"}).json()
+    tovar = root_client.post(
+        f"{API}/warehouse/products",
+        json={"name": "Товар обхода", "unit": "pcs", "price": 500_00, "cost": 100_00},
+    ).json()
+    root_client.post(
+        f"{API}/warehouse/moves",
+        json={"product_id": tovar["id"], "kind": "in", "quantity": "10"},
+    )
+    zakaz = root_client.post(
+        f"{API}/orders", json={"kind": "sales_order", "client_id": client["id"]}
+    ).json()
+    root_client.post(
+        f"{API}/orders/{zakaz['id']}/lines",
+        json={"product_id": tovar["id"], "quantity": "3"},
+    )
+
+    try:
+        otkaz = root_client.post(
+            f"{DOCS}/{zakaz['id']}/status", json={"status": "closed"}
+        )
+        assert otkaz.status_code == 422, (
+            f"заказ закрыт ручкой бланков: {otkaz.status_code} {otkaz.text}"
+        )
+        assert otkaz.json()["error"]["code"] == "document_is_an_order", otkaz.text
+
+        # Склад не тронут, и заказ не закрыт: не половина беды, а ничего.
+        ostatok = root_client.get(f"{API}/warehouse/products/{tovar['id']}").json()
+        assert ostatok["stock_milli"] == 10_000, (
+            f"склад тронули отказавшей ручкой: {ostatok['stock_milli']}"
+        )
+        assert root_client.get(f"{API}/orders/{zakaz['id']}").json()["status"] != "closed"
+    finally:
+        root_client.post(f"{API}/orders/{zakaz['id']}/cancel")
+        root_client.delete(f"{API}/warehouse/products/{tovar['id']}")
+
+
+def test_blank_ruchkoy_blankov_po_prezhnemu_zakryvaetsya(root_client, manager_client):
+    """Обычный бланк той же ручкой закрываться обязан.
+
+    Иначе исправление превратилось бы в «статус бланка не меняется никем».
+    """
+    root_client.post(f"{API}/modules/documents", json={"enabled": True})
+    blank = make_doc(manager_client)
+
+    gotov = root_client.post(f"{DOCS}/{blank['id']}/status", json={"status": "ready"})
+    assert gotov.status_code == 200, gotov.text
+    assert gotov.json()["status"] == "ready"

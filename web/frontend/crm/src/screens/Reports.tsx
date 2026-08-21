@@ -103,9 +103,15 @@ export function Reports() {
   // `?? 0` не украшение: месяц, в котором ни у одной сделки не названа цена,
   // приходит с прочерком (null), а `Math.max(null, null)` дал бы 0 молча, зато
   // `null / maxMonth` ниже — высоту столбика NaN.
+  // Касса берётся ПО МОДУЛЮ: месяц с возвратами уходит в минус (возврат клиенту
+  // — доходная операция с отрицательной суммой), а суммы заявок отрицательными
+  // не бывают. Без модуля такой месяц дал бы столбик в два пикселя вверх, то
+  // есть «почти ноль» вместо «убыли», и убыль стала бы невидимой.
   const maxMonth = Math.max(
     1,
-    ...revenue.months.map((m: any) => Math.max(m.won_amount ?? 0, m.lost_amount ?? 0)),
+    ...revenue.months.map((m: any) =>
+      Math.max(m.won_amount ?? 0, m.lost_amount ?? 0, Math.abs(m.received_amount ?? 0)),
+    ),
   );
   const maxSource = Math.max(1, ...sources.items.map((row: any) => row.revenue ?? 0));
 
@@ -219,12 +225,42 @@ export function Reports() {
         </div>
 
         <div className="report-grid">
-          <Figure
-            title={t("repRevenue")}
-            value={money(revenue.won_amount)}
-            sub={t("repPriced", { n: revenue.won_priced })}
-            money
-          />
+          {/*
+            Две плитки вместо одной, и это главное на экране.
+
+            «Получено» — деньги, пришедшие в кассу; по решению владельца («банк
+            один») это и есть выручка, и только так виден заказ, оплаченный мимо
+            заявки. «Выиграно на сумму» — сумма выигранных заявок: величина
+            полезная, но деньгами не являющаяся, заявку можно выиграть и не
+            получить по ней ни копейки.
+
+            Пока обе стояли под словом «Выручка», система показывала пустой
+            месяц при полной кассе. Ось берётся из ответа (`basis`), а не из
+            своей карты блоков: два ответа на один вопрос снова развели бы числа.
+          */}
+          {revenue.basis === "cash" ? (
+            <Figure
+              title={t("repMoneyIn")}
+              value={money(revenue.received_amount)}
+              sub={t("repMoneyInHint")}
+              money
+            />
+          ) : (
+            <Figure
+              title={t("repWonValue")}
+              value={money(revenue.won_amount)}
+              sub={t("repRevenueByDeals")}
+              money
+            />
+          )}
+          {revenue.basis === "cash" && (
+            <Figure
+              title={t("repWonValue")}
+              value={money(revenue.won_amount)}
+              sub={t("repWonValueHint", { n: revenue.won_priced })}
+              money
+            />
+          )}
           {/* Средний чек без единой сделки с ценой — прочерк, а не ноль: ноль
               прочитают как «работаем даром». */}
           <Figure
@@ -267,6 +303,23 @@ export function Reports() {
                   style={{ height: Math.max(2, Math.round(((month.lost_amount ?? 0) / maxMonth) * 96)) }}
                   title={money(month.lost_amount)}
                 />
+                {/* Третья полоса — деньги. Рисуется по модулю и своим цветом:
+                    месяц, в котором вернули больше, чем получили, обязан быть
+                    виден как убыль, а не как «почти ноль». */}
+                {month.received_amount !== null && month.received_amount !== undefined && (
+                  <div
+                    className={
+                      "month-bar " + (month.received_amount < 0 ? "money-back" : "money-in")
+                    }
+                    style={{
+                      height: Math.max(
+                        2,
+                        Math.round((Math.abs(month.received_amount) / maxMonth) * 96),
+                      ),
+                    }}
+                    title={money(month.received_amount)}
+                  />
+                )}
               </div>
               <span className="month-label">{month.month.slice(5)}.{month.month.slice(2, 4)}</span>
             </div>
@@ -291,7 +344,9 @@ export function Reports() {
               <span className="src-num">{t("clients")}</span>
               <span className="src-num">{t("repWon")}</span>
               <span className="src-num">{t("repLost")}</span>
-              <span className="src-money">{t("repRevenue")}</span>
+              {/* «Выиграно на сумму», а не «Выручка»: колонка считается по
+                  заявкам, и слово «выручка» на экране означает деньги. */}
+              <span className="src-money">{t("repWonValue")}</span>
               <span className="src-num">{t("repWinRate")}</span>
             </div>
             {sources.items.map((row: any) => (

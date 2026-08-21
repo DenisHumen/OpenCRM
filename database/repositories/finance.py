@@ -16,10 +16,17 @@
 
 from datetime import date, datetime
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.orm import Session
 
-from database.models import FinanceBudget, FinanceCategory, FinanceOperation, FinanceRule
+from database.models import (
+    Client,
+    Deal,
+    FinanceBudget,
+    FinanceCategory,
+    FinanceOperation,
+    FinanceRule,
+)
 from database.models.finance import (
     BASE_INCOME_PERCENT,
     BASE_PER_ORDER,
@@ -410,16 +417,123 @@ def received_of(
     stmt = (
         select(func.coalesce(func.sum(FinanceOperation.amount_minor), 0))
         .join(FinanceCategory, FinanceCategory.id == FinanceOperation.category_id)
-        .where(
-            FinanceCategory.direction == DIRECTION_INCOME,
-            FinanceOperation.rule_id.is_(None),
-        )
+        .where(*_postupleniya())
     )
     if document_id is not None:
         stmt = stmt.where(FinanceOperation.document_id == document_id)
     if deal_id is not None:
         stmt = stmt.where(FinanceOperation.deal_id == deal_id)
     return int(db.scalar(stmt) or 0)
+
+
+def _postupleniya():
+    """Что считается пришедшими в кассу деньгами. Одно условие на весь файл.
+
+    Вынесено отдельно, потому что тем же отбором считаются ДВА разных числа:
+    «получено по этому заказу» во врезке и «поступило за месяц» в отчёте о
+    выручке. Напиши их порознь — и разойдутся они не сразу, а на первом же
+    правиле, кладущем начисленное в доходную статью; в чужой цифре это выглядит
+    как ошибка отчёта, и искать её будут в отчёте.
+
+    Оба условия обязательны. Направление СТАТЬИ отсекает расходы. `rule_id IS
+    NULL` отсекает начисленное правилом: возврат переплаченного налога —
+    законная доходная статья, но денег в кассу от него не приходило.
+    """
+    return (
+        FinanceCategory.direction == DIRECTION_INCOME,
+        FinanceOperation.rule_id.is_(None),
+    )
+
+
+def _moi_dengi(only_manager_id: int | None):
+    """Сужение кассы до своих денег — двумя ступенями, а не одной.
+
+    Сузить только по заявке значит воспроизвести ровно ту слепоту, ради которой
+    всё это и затевалось: заказ законно живёт без заявки (у стойки сначала
+    набивают позиции), и менеджер снова увидел бы ноль при полной кассе.
+    Поэтому вторая ступень — клиент; та же пара осей, по которой уже считается
+    отчёт по источникам.
+
+    Деньги без заявки И без клиента (прохожий у стойки) не принадлежат никому и
+    в суженный отчёт не попадают. Это не пропажа: их видит тот, у кого есть
+    право на чужие заявки, — и об этом сказано на экране.
+    """
+    if only_manager_id is None:
+        return ()
+    return (
+        or_(
+            Deal.manager_id == only_manager_id,
+            and_(
+                FinanceOperation.deal_id.is_(None),
+                Client.manager_id == only_manager_id,
+            ),
+        ),
+    )
+
+
+def postupleniya_po_mesyatsam(
+    db: Session,
+    buckets: list[tuple[datetime, datetime]],
+    only_manager_id: int | None = None,
+) -> dict[int, dict[str, int]]:
+    """Сколько денег пришло в кассу по месяцам — одним запросом.
+
+    Ось времени здесь `happened_at` («когда деньги двинулись»), а не
+    `created_at`: задним числом внесённый платёж принадлежит своему дню, иначе
+    закрытый месяц зависел бы от того, когда до него дошли руки.
+
+    Границы месяцев приходят готовыми, а не считаются в SQL, — по тому же
+    доводу, что у соседа (`reports.money_by_month`): `strftime` диалектен и
+    считал бы месяц по UTC.
+
+    Ключ результата — номер месяца в списке.
+    """
+    if not buckets:
+        return {}
+
+    bucket = case(
+        *[
+            (
+                and_(
+                    FinanceOperation.happened_at >= start,
+                    FinanceOperation.happened_at < end,
+                ),
+                index,
+            )
+            for index, (start, end) in enumerate(buckets)
+        ],
+        else_=None,
+    )
+    stmt = (
+        select(
+            bucket.label("bucket"),
+            func.count(),
+            func.coalesce(func.sum(FinanceOperation.amount_minor), 0),
+        )
+        .join(FinanceCategory, FinanceCategory.id == FinanceOperation.category_id)
+        .where(
+            *_postupleniya(),
+            FinanceOperation.happened_at >= buckets[0][0],
+            FinanceOperation.happened_at < buckets[-1][1],
+        )
+        .group_by(bucket)
+    )
+    if only_manager_id is not None:
+        # Присоединяем внешним: операция без заявки или без клиента обязана
+        # дойти до условия, а не отсеяться самим соединением.
+        stmt = stmt.outerjoin(Deal, Deal.id == FinanceOperation.deal_id).outerjoin(
+            Client, Client.id == FinanceOperation.client_id
+        )
+        stmt = stmt.where(*_moi_dengi(only_manager_id))
+
+    itog: dict[int, dict[str, int]] = {}
+    for index, count, total in db.execute(stmt).all():
+        if index is None:
+            continue
+        yacheyka = itog.setdefault(int(index), {"count": 0, "total": 0})
+        yacheyka["count"] += int(count or 0)
+        yacheyka["total"] += int(total or 0)
+    return itog
 
 
 # --- прибыль: считается запросом и нигде не хранится ---

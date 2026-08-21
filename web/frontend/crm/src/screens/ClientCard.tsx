@@ -27,7 +27,7 @@ import { type Gated, moduleOn, shown } from "../lib/modules";
 import { can } from "../lib/permissions";
 import { useReference } from "../lib/reference";
 import { term } from "../lib/terms";
-import { MailCompose, type MailAccount } from "./Mail";
+import { MailCompose, type MailSender } from "./Mail";
 
 /** Виды записей, которые ставит система, а не человек.
  *
@@ -115,7 +115,7 @@ export function ClientCard() {
   const boards = useReference<any>(hasBoards ? `/boards?client_id=${id}` : null);
   // Список ящиков нужен только выбору отправителя и доступен только root.
   // Не ответило — форма всё равно работает: сервер возьмёт первый активный.
-  const mailAccounts = useReference<MailAccount>(hasMail ? "/mail/accounts" : null);
+  const mailAccounts = useReference<MailSender>(hasMail ? "/mail/senders" : null);
 
   const { failure, fail, clear } = useFailure();
 

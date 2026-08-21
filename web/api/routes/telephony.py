@@ -197,11 +197,13 @@ async def webhook(request: Request, db: Session = Depends(get_db)):
     превращался бы в открытую ручку, принимающую что угодно от кого угодно.
     """
     ip_key = tokens.hash_ip(client_ip(request))
-    if webhook_limiter.is_blocked(ip_key):
+    # Считаем каждый запрос, а не только неудачный: ограничиваем поток, а не
+    # подбор — подбор подписи ограничивается им же заодно. Спрашиваем и
+    # отмечаем ОДНОЙ операцией: двумя между ними оставалось окно, и пачка
+    # одновременных обращений проходила порог целиком. Станция шлёт события
+    # именно пачками, так что случай не редкий, а обычный.
+    if webhook_limiter.proverit_i_zanyat(ip_key):
         raise errors.RateLimitedError("Too many webhook calls", code="webhook_rate_limited")
-    # считаем каждый запрос, а не только неудачный: ограничиваем поток, а не
-    # подбор — подбор подписи ограничивается им же заодно
-    webhook_limiter.record_failure(ip_key)
 
     body = await request.body()
     secret = telephony_service.get_settings_values(db)[telephony_service.SETTING_WEBHOOK_SECRET]

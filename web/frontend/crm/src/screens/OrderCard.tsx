@@ -283,7 +283,10 @@ interface OrderMoneyData {
   document_id: number;
   /** Пусто — блок бланков выключен, и сравнивать полученное не с чем. */
   total: number | null;
+  /** Состояние бланка. Пусто — бланки выключены. Различает два «остатка нет». */
+  status: string | null;
   received: number;
+  /** Пусто у отменённого и при выключенных бланках: вопрос «сколько взять» не задан. */
   due: number | null;
   paid: boolean | null;
   accruals: Accrual[];
@@ -388,19 +391,48 @@ function OrderMoney({ order }: { order: Order }) {
             {sum(money.received)}
           </div>
         </div>
-        {money.due !== null && (
+        {/*
+          Отменённый бланк разводится на два случая, и это главное здесь.
+
+          «Остаток к оплате» отвечает на вопрос «сколько ещё с человека взять».
+          У отменённого такого числа не существует — не ноль, а вопрос не задан;
+          сервер поэтому и отдаёт `due: null`, отличая это от выключенных
+          бланков состоянием (`status`).
+
+          Но пустой остаток ещё не значит «все в расчёте». Отмена бумаги и
+          возврат денег — РАЗНЫЕ действия, и сделать можно только одно: заказ
+          отменён, а оплата не возвращена — обычное состояние. Единый чип
+          «платить нечего» на нём успокаивал бы ровно там, где мы держим чужие
+          деньги. Поэтому при непустом `received` показывается «К возврату».
+        */}
+        {money.status === "cancelled" ? (
           <div className="report-figure">
             <div className="metric-title" style={{ marginBottom: 10 }}>
-              {t("finDueLeft")}
+              {money.received > 0 ? t("orderToRefund") : t("finDueLeft")}
             </div>
-            {money.paid ? (
-              <Chip variant="success">{t("dealPaidInFull")}</Chip>
-            ) : (
+            {money.received > 0 ? (
               <div className="metric-value money-value" style={{ fontSize: 22 }}>
-                {sum(money.due)}
+                {sum(money.received)}
               </div>
+            ) : (
+              <Chip>{t("orderNothingToPay")}</Chip>
             )}
           </div>
+        ) : (
+          money.due !== null && (
+            <div className="report-figure">
+              <div className="metric-title" style={{ marginBottom: 10 }}>
+                {t("finDueLeft")}
+              </div>
+              {money.paid ? (
+                <Chip variant="success">{t("dealPaidInFull")}</Chip>
+              ) : (
+                <div className="metric-value money-value" style={{ fontSize: 22 }}>
+                  {sum(money.due)}
+                </div>
+              )}
+            </div>
+          )
         )}
       </div>
 

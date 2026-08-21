@@ -18,7 +18,7 @@ import { useReference } from "../lib/reference";
 import { term } from "../lib/terms";
 import { OrdersOfCard } from "../components/OrdersOfCard";
 import { NewDocumentModal } from "./Documents";
-import { MailCompose, type MailAccount } from "./Mail";
+import { MailCompose, type MailSender } from "./Mail";
 import { QuickTask } from "./Tasks";
 
 type Stage = { key: string; name: string; kind: "open" | "won" | "lost" };
@@ -99,7 +99,7 @@ export function DealCard() {
   const tasks = useReference<any>(hasTasks ? `/tasks?deal_id=${id}` : null);
   // Ящики нужны только выбору отправителя и доступны только root. Не ответило —
   // форма работает: сервер возьмёт первый активный ящик сам.
-  const mailAccounts = useReference<MailAccount>(hasMail ? "/mail/accounts" : null);
+  const mailAccounts = useReference<MailSender>(hasMail ? "/mail/senders" : null);
 
   useEffect(() => {
     void load();

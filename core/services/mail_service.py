@@ -29,6 +29,8 @@ from database.models.mail import (
     DIRECTION_IN,
     DIRECTION_OUT,
     HOST_LENGTH,
+    MESSAGE_ID_DIGEST_PREFIX,
+    MESSAGE_ID_LENGTH,
     TITLE_LENGTH,
     message_id_key,
 )
@@ -367,6 +369,19 @@ def store_incoming(db: Session, account: MailAccount, item: FetchedMessage) -> M
         to_addrs=", ".join(item.to_addrs),
         sent_at=_sent_at_not_ahead_of_us(item.sent_at),
         has_attachments=item.has_attachments,
+        # Цепочку входящего сохраняем ПРИ СИНХРОНИЗАЦИИ, а не собираем потом:
+        # взять её позже неоткуда — заголовки живут в самом письме, а тело мы
+        # храним без них. Не сохрани мы её здесь, ответ на третье письмо
+        # переписки унёс бы ссылку только на второе, и у собеседника ветка
+        # распалась бы надвое.
+        in_reply_to=item.in_reply_to[:MESSAGE_ID_LENGTH],
+        # Обрезаем ХВОСТОМ, а не началом: клиенты собирают ветку по последним
+        # ссылкам. Без обрезки письмо из очень длинной ветки (тикет-система,
+        # рассылочный лист) даёт строку длиннее 65 535 байт, MySQL отвечает
+        # 1406 «Data too long», письмо откатывается и не попадает в CRM
+        # НИКОГДА — `last_uid` уезжает вперёд по соседям, и второго захода за
+        # ним не будет.
+        references=_hvost_vetki(item.references),
         client_id=client.id if client else None,
         is_read=False,
     )
@@ -400,6 +415,61 @@ def _sent_at_not_ahead_of_us(sent_at: datetime) -> datetime:
 
 # --- отправка ---
 
+#: Сколько ссылок цепочки уносим в ответ.
+#:
+#: У переписки на сотню писем `References` разрастается до килобайтов, а
+#: почтовые клиенты собирают ветку по ПОСЛЕДНИМ ссылкам. Двадцать — с запасом
+#: на любую живую переписку и без риска, что заголовок перестанет влезать.
+MAX_REFERENCES = 20
+
+
+def _hvost_vetki(references: str) -> str:
+    """Последние `MAX_REFERENCES` ссылок ветки. Столько же уносит и ответ."""
+    return " ".join((references or "").split()[-MAX_REFERENCES:])
+
+
+def _pismo_dlya_otveta(db: Session, message_id: int) -> MailMessage:
+    """Письмо, на которое отвечают. Нет его — внятный отказ, а не тихий ответ
+    в никуда: без исходного письма ответ не встанет в переписку, и человек
+    узнает об этом только от собеседника."""
+    pismo = mail_repo.get_message(db, message_id)
+    if pismo is None:
+        raise errors.NotFoundError("Message not found", code="mail_message_not_found")
+    return pismo
+
+
+def _tsepochka(pismo: MailMessage | None) -> tuple[str, str]:
+    """`In-Reply-To` и `References` для ответа на это письмо.
+
+    По RFC 5322 ответ ссылается на само письмо (`In-Reply-To`) и несёт всю
+    ветку до него (`References` исходного плюс его собственный `Message-ID`).
+    Одного `In-Reply-To` мало: у переписки длиннее двух писем клиенты собирают
+    ветку именно по `References`, и без неё она распадается на куски.
+    """
+    if pismo is None:
+        return "", ""
+    svoy = (pismo.message_id or "").strip()
+    if not svoy:
+        return "", ""
+    # В колонке лежит КЛЮЧ ИДЕМПОТЕНТНОСТИ, а не всегда сам заголовок: у письма
+    # с Message-ID длиннее 320 знаков (рассылка, тикет-система) туда кладётся
+    # отпечаток `opencrm-sha256:…`. Поставь мы его в `In-Reply-To` — собеседник
+    # получил бы ссылку на письмо, которого у него нет, то есть ответ снова
+    # встал бы отдельно, только теперь молча. Заодно наш внутренний ключ уехал
+    # бы в заголовки чужого сервера.
+    #
+    # Настоящего заголовка у нас в этом случае нет нигде, и выдумать его нельзя.
+    # Честный ответ — не ставить заголовков вовсе: письмо придёт отдельным, как
+    # и раньше, но без вранья в цепочке.
+    if svoy.startswith(MESSAGE_ID_DIGEST_PREFIX):
+        return "", ""
+    if not svoy.startswith("<"):
+        svoy = f"<{svoy}>"
+    bylo = (pismo.references or "").split()
+    vetka = [*bylo, svoy][-MAX_REFERENCES:]
+    return svoy, " ".join(vetka)
+
+
 def send_message(
     db: Session,
     author: User,
@@ -409,6 +479,7 @@ def send_message(
     account_id: int | None = None,
     client_id: int | None = None,
     deal_id: int | None = None,
+    reply_to_id: int | None = None,
 ) -> MailMessage:
     recipients = [addr.strip() for addr in to_addrs if addr and addr.strip()]
     if not recipients:
@@ -432,19 +503,42 @@ def send_message(
     # несуществующая заявка роняла запрос уже ПОСЛЕ доставки: адресат письмо
     # получил, в базе не осталось ничего, человек видит 500 и жмёт «отправить»
     # снова — клиенту приходит второе письмо.
+    # Письмо, на которое отвечаем, читаем ПЕРВЫМ делом: от него зависят и
+    # привязки, и ящик, и цепочка. Наследование ПОСЛЕ проверки ссылок было
+    # ошибкой — унаследованный клиент не проходил `_agree_client_and_deal`, и
+    # ответ мог унести заявку чужого клиента.
+    otvechaem = _pismo_dlya_otveta(db, reply_to_id) if reply_to_id else None
+    if otvechaem is not None:
+        client_id = client_id or otvechaem.client_id
+        deal_id = deal_id or otvechaem.deal_id
+
     client_id = references.client(db, client_id)
     deal_id = references.deal(db, deal_id)
     client_id = _agree_client_and_deal(db, client_id, deal_id)
 
+    # Отвечаем ИЗ ТОГО ЯЩИКА, куда письмо пришло, если ящик не назвали явно.
+    # Ответ с другого адреса приходит собеседнику от незнакомца и в переписку
+    # не встаёт — а интерфейс мог и не подставить ящик: ручка открыта не только
+    # ему.
+    if account_id is None and otvechaem is not None:
+        account_id = otvechaem.account_id
     account = get_account(db, account_id) if account_id else mail_repo.first_active_account(db)
     if account is None:
         raise errors.ValidationError("No mailbox is configured", code="no_mail_account")
     if not account.is_active:
         raise errors.ValidationError("Mailbox is switched off", code="mail_account_inactive")
 
+    in_reply_to, vetka = _tsepochka(otvechaem)
+
     try:
         sent = make_transport(account).send(
-            OutgoingMessage(to_addrs=recipients, subject=subject.strip(), body_text=body_text)
+            OutgoingMessage(
+                to_addrs=recipients,
+                subject=subject.strip(),
+                body_text=body_text,
+                in_reply_to=in_reply_to,
+                references=vetka,
+            )
         )
     except MailTransportError as exc:
         _remember_error(db, account, str(exc))
@@ -468,6 +562,8 @@ def send_message(
         to_addrs=", ".join(recipients),
         sent_at=sent.sent_at,
         has_attachments=False,
+        in_reply_to=in_reply_to[:MESSAGE_ID_LENGTH],
+        references=vetka,
         client_id=client_id,
         deal_id=deal_id,
         is_read=True,  # своё письмо читать не надо, его только что написали
@@ -475,6 +571,16 @@ def send_message(
     db.add(message)
     db.flush()
     _add_feed_entry(db, message, author_id=author.id)
+
+    # Часть адресатов отвергнута — письмо ушло остальным, и запись о нём уже
+    # есть. Молчать нельзя: человек будет ждать ответа от того, кто письма не
+    # получал. Пишем беду в ящик — там её видно на экране почтовых ящиков — и
+    # отдаём наверх, чтобы отправляющий увидел её сразу.
+    if sent.refused:
+        _remember_error(
+            db, account, "не доставлено: " + ", ".join(sent.refused)
+        )
+        message.refused = list(sent.refused)
     return message
 
 

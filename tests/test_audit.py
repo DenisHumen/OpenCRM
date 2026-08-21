@@ -28,7 +28,7 @@ from database.models.audit import (
 )
 from database.models.client import KIND_STAGE
 from database.session import SessionLocal
-from tests.conftest import API, make_manager
+from tests.conftest import API, RODIVSHIESYA_ZAPISI, make_manager
 from tests.test_deals import DEALS, make_client
 
 AUDIT = f"{API}/audit"
@@ -646,16 +646,83 @@ def test_no_stray_notes_without_an_author(root_client, manager_client, deal, ses
 
     Исходящие в телеграме автора имеют — там отвечает живой менеджер, и его имя
     в ленте обязано стоять.
+
+    **Смотрим на МИГ РОЖДЕНИЯ записи, а не на таблицу.** Прежде проверка
+    сканировала `client_notes` целиком — и не могла отличить «автора не
+    протащили» от «автора уволили». У `client_notes.author_id` стоит
+    `ondelete="SET NULL"` (иначе удалить сотрудника было бы нельзя вовсе, а
+    висячий номер в колонке хуже пустоты), поэтому запись, честно подписанная
+    живым человеком, становится ничьей ровно в тот миг, когда человека
+    увольняют. Само это поведение объявлено нормой в
+    `test_actor_name_survives_renaming_and_dismissal` выше.
+
+    База у набора ОБЩАЯ, а сотрудников заводят и убирают фикстурами в доброй
+    половине файлов. Достаточно соседу завести сборщика, дать ему аннулировать
+    заказ и убрать сборщика за собой — и сводная проверка краснела на полностью
+    исправном коде. Так и вышло: сцепку поймал прогон в обратном порядке файлов,
+    тот самый, что CI гоняет вторым заходом.
+
+    Ширина при этом НЕ потеряна, и это важнее удобства: слушатель
+    `_zapominat_avtorov_zapisey` (tests/conftest.py) запоминает вид и автора при
+    каждой вставке за весь прогон. Сузить проверку до записей одного теста
+    значило бы выменять ложную тревогу на слепоту, а стеречь надо как раз то,
+    чего никто не ждёт.
     """
     manager_client.post(f"{DEALS}/{deal['id']}/move", json={"stage": "done"})
 
-    orphans = session.scalars(
-        select(ClientNote).where(ClientNote.author_id.is_(None))
-    ).all()
-    assert all(note.kind in ("email", "call", "telegram") for note in orphans), (
-        "ничья запись в ленте у вида, где человек есть: "
-        + ", ".join(sorted({n.kind for n in orphans}))
+    nichi = sorted({
+        vid for vid, avtor in RODIVSHIESYA_ZAPISI
+        if avtor is None and vid not in ("email", "call", "telegram")
+    })
+    assert nichi == [], "ничья запись в ленте у вида, где человек есть: " + ", ".join(nichi)
+
+    # И сам список не пуст: иначе проверка зеленела бы оттого, что слушатель
+    # отвалился, а выглядела бы рабочей.
+    assert len(RODIVSHIESYA_ZAPISI) > 5, (
+        f"слушатель записей не сработал ни разу ({len(RODIVSHIESYA_ZAPISI)}) — "
+        "проверка ничего не стережёт"
     )
+
+
+def test_uvolennyy_sotrudnik_ne_unosit_zapis_iz_lenty(root_client, session):
+    """Запись остаётся, автор пустеет. Это НЕ то же, что «автора не протащили».
+
+    Разбор стоит рядом с проверкой выше: она из-за этой самой пары и перешла на
+    слушателя. Здесь показано, что пара действительно такова, — иначе переход
+    выглядел бы поблажкой самому себе.
+
+    Терять запись при увольнении нельзя: лента отвечает на вопрос «что было с
+    клиентом», а не «кто у нас сейчас работает». Уволенный менеджер — причина
+    открыть архив, а не стереть год переписки.
+
+    Сотрудник здесь СВОЙ, заведённый на один тест: общий `manager_client` унёс
+    бы с собой все следующие проверки файла, а база у набора одна.
+    """
+    uhodyashchiy = make_manager(root_client, "uhodit-iz-lenty@test.local")
+    klient = uhodyashchiy.post(f"{API}/clients", json={"name": "Клиент уходящего"}).json()
+    zapis = uhodyashchiy.post(
+        f"{API}/clients/{klient['id']}/notes", json={"body": "Договорились на вторник"}
+    )
+    assert zapis.status_code == 201, zapis.text
+    zapis_id = zapis.json()["id"]
+
+    avtor_id = next(
+        u["id"] for u in root_client.get(f"{API}/staff").json()["items"]
+        if u["email"] == "uhodit-iz-lenty@test.local"
+    )
+
+    # Увольняем ручкой, а не запросом мимо кода.
+    assert root_client.delete(f"{API}/staff/{avtor_id}").status_code == 200
+    session.expire_all()
+
+    ostalas = session.get(ClientNote, zapis_id)
+    assert ostalas is not None, "запись исчезла вместе с сотрудником — потерян год ленты"
+    assert ostalas.author_id is None, (
+        "автор уцелел висячим номером — на такого пользователя уже никто не ответит"
+    )
+    assert ostalas.body == "Договорились на вторник", "текст записи пострадал при увольнении"
+    # Пользователя и правда не стало: иначе проверка выше ничего не значит.
+    assert session.get(User, avtor_id) is None
 
 
 def test_bringing_a_client_back_is_recorded_too(root_client, manager_client):

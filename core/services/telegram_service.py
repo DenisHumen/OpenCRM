@@ -68,6 +68,18 @@ SETTINGS_PREFIX = "telegram_"
 SETTING_TOKEN = "telegram_bot_token"
 #: Куда слать утреннюю сводку. Идентификатор чата, а не имя: имя меняют.
 SETTING_DIGEST_CHAT = "telegram_digest_chat"
+#: Куда слать тревоги о сервере. Читает его наблюдатель
+#: (`core/services/trevogi_service.py`), а живёт ключ здесь, вместе с остальными
+#: настройками бота, и по двум причинам.
+#:
+#: Первая — это адрес, по которому пишет НАШ бот, то есть свойство канала, а не
+#: наблюдения: сменили бота — сменились оба чата разом.
+#:
+#: Вторая важнее и она про порядок зависимостей. Наблюдатель уже знает про канал
+#: (`trevogi_service` импортирует этот модуль ради отправки), обратной стрелки
+#: нет и заводить её нельзя — вышло бы кольцо, и приём тревог начал бы зависеть
+#: от того, что в нём не участвует.
+SETTING_ALERTS_CHAT = "telegram_alerts_chat"
 #: Секрет вебхука. Телеграм присылает его заголовком на каждый запрос, и это
 #: единственное, чем приём отличает настоящий телеграм от того, кто узнал адрес.
 SETTING_WEBHOOK_SECRET = "telegram_webhook_secret"
@@ -114,6 +126,10 @@ def nastroyki(db: Session) -> dict:
         "configured": bool(token),
         "token_tail": _hvost(token),
         "digest_chat": vse.get(SETTING_DIGEST_CHAT, ""),
+        # Пустой чат тревог — рабочее состояние, а не пробел: наблюдатель шлёт
+        # их тогда в чат сводки. Экран говорит об этом вслух, иначе пустое поле
+        # читается как «тревоги никуда не идут».
+        "alerts_chat": vse.get(SETTING_ALERTS_CHAT, ""),
         "bot_username": vse.get(SETTING_USERNAME, ""),
         "webhook_secret_set": bool(vse.get(SETTING_WEBHOOK_SECRET, "")),
         # Рост переписки: сколько лежит, во что обойдётся каждый срок хранения
@@ -145,6 +161,24 @@ def digest_chat(db: Session) -> str:
     return _vse(db).get(SETTING_DIGEST_CHAT, "")
 
 
+def _chat_id(value, pole: str) -> str:
+    """Проверить идентификатор чата. Пусто — законно, это «не задан».
+
+    Одной проверкой на оба чата: правило у них общее, а разъехавшись, они дали
+    бы отказ на значении, которое соседнее поле принимает.
+
+    Отрицательное число — не опечатка: у групп и каналов идентификаторы такие
+    (`-1001234567890`), а служебный чат обычно как раз группа.
+    """
+    chat = str(value or "").strip()
+    if chat and not chat.lstrip("-").isdigit():
+        raise errors.ValidationError(
+            f"{pole} must be a number, like 123456789 or -1001234567890",
+            code="bad_chat_id",
+        )
+    return chat
+
+
 def zadat(db: Session, data: dict) -> dict:
     """Записать настройки бота.
 
@@ -172,14 +206,10 @@ def zadat(db: Session, data: dict) -> dict:
                 izmeneniya[SETTING_WEBHOOK_SECRET] = secrets.token_urlsafe(32)
 
     if "digest_chat" in data:
-        chat = str(data.get("digest_chat") or "").strip()
-        # Идентификатор чата бывает отрицательным (группы) — это законно.
-        if chat and not chat.lstrip("-").isdigit():
-            raise errors.ValidationError(
-                "Chat id must be a number, like 123456789 or -1001234567890",
-                code="bad_chat_id",
-            )
-        izmeneniya[SETTING_DIGEST_CHAT] = chat
+        izmeneniya[SETTING_DIGEST_CHAT] = _chat_id(data.get("digest_chat"), "Digest chat id")
+
+    if "alerts_chat" in data:
+        izmeneniya[SETTING_ALERTS_CHAT] = _chat_id(data.get("alerts_chat"), "Alerts chat id")
 
     if "bot_username" in data:
         izmeneniya[SETTING_USERNAME] = str(data.get("bot_username") or "").strip().lstrip("@")[:64]
@@ -279,6 +309,48 @@ def _vyzov(token: str, metod: str, polya: dict, opener=None) -> dict:
     if not telo.get("ok"):
         raise TelegramOtkaz(str(telo.get("description") or "unknown error"))
     return telo.get("result") or {}
+
+
+#: По чему узнаётся отказ ИМЕННО из-за разметки.
+#:
+#: Телеграм отвечает на такое кодом 400 и описанием вида «can't parse entities:
+#: Unsupported start tag ...». Кода у нас под рукой нет — `TelegramOtkaz` несёт
+#: только описание, — поэтому узнаём по нему.
+#:
+#: Узко, а не «любой отказ», и это важно. Запасной путь шлёт сообщение ВТОРОЙ
+#: раз; сработай он на таймауте, когда первое уже доехало, — в чат ушло бы два
+#: сообщения об одной аварии. На отказе по разбору такого не бывает: телеграм
+#: отбивает сообщение целиком, ничего не доставив.
+_OTKAZ_RAZBORA = "can't parse"
+
+
+def _bez_razmetki(text: str) -> str:
+    """Тот же текст без тегов. Снимаем ровно теги, содержимое остаётся."""
+    import re as _re
+
+    return _re.sub(r"<[^>]+>", "", text)
+
+
+def _s_razmetkoy(token: str, metod: str, dannye: dict, opener=None) -> dict:
+    """Отправить оформленное, а на отказ по разбору — то же самое без тегов.
+
+    **Запасной путь обязателен, и он один на всех.** Ошибка в оформлении не
+    имеет права заглушить сообщение: молчание сводки читается как «всё
+    сломалось», а неотправленная авария — хуже вдвойне, потому что о ней узнают
+    не из чата, а от рассерженного клиента.
+
+    Всё остальное (сеть, 429, отозванный токен) пробрасываем как есть: это не
+    про оформление, и вторая попытка тем же телом ничего не изменит.
+    """
+    try:
+        return _vyzov(token, metod, dannye, opener)
+    except TelegramOtkaz as beda:
+        if _OTKAZ_RAZBORA not in str(beda).lower():
+            raise
+        logger.warning("телеграм не разобрал разметку, шлём плоским текстом: %s", beda)
+        ploskie = {k: v for k, v in dannye.items() if k != "parse_mode"}
+        ploskie["text"] = _bez_razmetki(str(dannye.get("text", "")))
+        return _vyzov(token, metod, ploskie, opener)
 
 
 def poslat_tekst(
@@ -494,6 +566,7 @@ def poslat_s_knopkami(
     knopki: list[list[dict]],
     opener=None,
     tiho: bool = False,
+    razmetka: str | None = None,
 ) -> dict:
     """Сообщение с клавиатурой под ним.
 
@@ -501,6 +574,12 @@ def poslat_s_knopkami(
     телеграм отводит **64 байта**, и это не рекомендация: длиннее — отказ всего
     сообщения. Поэтому туда кладут короткий опознаватель («ack:42»), а не
     состояние.
+
+    `razmetka` — необязательная и по умолчанию пустая. Умолчание здесь не
+    лень, а защита: тем же вызовом отвечают клиенту, а его текст сочиняет
+    менеджер, и первое же «<» в нём отбило бы сообщение целиком. Включают
+    разметку там, где текст сочиняем мы сами и всё чужое в нём экранируем, —
+    сейчас это тревоги мониторинга.
     """
     dannye: dict = {
         "chat_id": chat_id,
@@ -512,7 +591,10 @@ def poslat_s_knopkami(
         # концу месяца кончится» учит выключать звук всему чату — вместе с
         # авариями, ради которых чат и заведён.
         dannye["disable_notification"] = True
-    return _vyzov(token, "sendMessage", dannye, opener)
+    if not razmetka:
+        return _vyzov(token, "sendMessage", dannye, opener)
+    dannye["parse_mode"] = razmetka
+    return _s_razmetkoy(token, "sendMessage", dannye, opener)
 
 
 def otvetit_na_nazhatie(
@@ -534,16 +616,29 @@ def otvetit_na_nazhatie(
 
 
 def perepisat_soobshchenie(
-    token: str, chat_id: int, message_id: int, text: str, knopki=None, opener=None
+    token: str,
+    chat_id: int,
+    message_id: int,
+    text: str,
+    knopki=None,
+    opener=None,
+    razmetka: str | None = None,
 ) -> dict:
     """Переписать уже отправленное сообщение — обычно чтобы убрать кнопки.
 
     Тревога, которую приняли, обязана перестать выглядеть непринятой: иначе
     второй дежурный жмёт «принять» по той же самой, а третий идёт её чинить.
+
+    `razmetka` — та же, что при отправке, и передавать её обязательно: сообщение
+    собирается заново целиком, и переписать оформленное неоформленным значит
+    показать читателю голые теги вместо аварии.
     """
     dannye: dict = {"chat_id": chat_id, "message_id": message_id, "text": text}
     dannye["reply_markup"] = json.dumps({"inline_keyboard": knopki or []})
-    return _vyzov(token, "editMessageText", dannye, opener)
+    if not razmetka:
+        return _vyzov(token, "editMessageText", dannye, opener)
+    dannye["parse_mode"] = razmetka
+    return _s_razmetkoy(token, "editMessageText", dannye, opener)
 
 
 #: Обработчики нажатий: приставка `callback_data` → что сделать.
@@ -1238,32 +1333,20 @@ def poslat_tekst_razmetkoy(token: str, chat_id: int, text: str, opener=None) -> 
     бы сообщение целиком. Здесь текст сочиняем мы сами и всё чужое в нём
     экранируем — значит разметку можно и нужно: сводка со сворачиваемым блоком
     читается, а сплошная простыня нет.
-
-    **Запасной путь обязателен.** Телеграм отбивает сообщение по разбору
-    разметки кодом 400. Получив его, шлём то же самое плоским текстом. Свойство,
-    ради которого это написано: ошибка в оформлении не имеет права заглушить
-    сводку — а молчание сводки читается как «всё сломалось».
     """
-    try:
-        return _vyzov(
-            token,
-            "sendMessage",
-            {
-                "chat_id": chat_id,
-                "text": text,
-                "parse_mode": "HTML",
-                # Ссылок в сводке нет, а предпросмотр к ним превратил бы её в
-                # простыню картинок.
-                "disable_web_page_preview": True,
-            },
-            opener,
-        )
-    except TelegramOtkaz as beda:
-        logger.warning("сводка не разобралась как HTML, шлём плоским текстом: %s", beda)
-        import re as _re
-
-        ploskiy = _re.sub(r"<[^>]+>", "", text)
-        return _vyzov(token, "sendMessage", {"chat_id": chat_id, "text": ploskiy}, opener)
+    return _s_razmetkoy(
+        token,
+        "sendMessage",
+        {
+            "chat_id": chat_id,
+            "text": text,
+            "parse_mode": "HTML",
+            # Ссылок в сводке нет, а предпросмотр к ним превратил бы её в
+            # простыню картинок.
+            "disable_web_page_preview": True,
+        },
+        opener,
+    )
 
 
 # --- то, ради чего канал внутри CRM ------------------------------------------

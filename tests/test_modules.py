@@ -715,10 +715,21 @@ def test_reports_do_not_depend_on_the_modules_around_them(root_client, manager_c
     Равенство «до» и «после» здесь сильнее, чем «ответ 200»: оно показывает, что
     выключение соседних блоков не убавило отчёту ни строки, а значит он их и не
     складывал.
+
+    **Касса — законное исключение, и оно ровно одно.** Выручка считается по
+    полученным деньгам (решение владельца: банк один), а без блока «Финансы»
+    операций не существует вовсе — считать нечего, и отчёт честно возвращается к
+    сумме выигранных заявок. Поэтому от выключения кассы отчёт о выручке ОБЯЗАН
+    измениться, и обязан сказать, чем он теперь меряет: молчаливая подмена
+    одного счёта другим и есть та беда, ради которой всё затевалось.
+
+    Проверяем поэтому две вещи врозь: соседние блоки не меняют в отчётах ни
+    строки, а касса меняет ровно названные поля и ничего больше.
     """
     switch_all(root_client, True)
     names = ("funnel", "revenue", "sources")
     before = {name: manager_client.get(f"{API}/reports/{name}").json() for name in names}
+    assert before["revenue"]["basis"] == "cash", "при включённой кассе отчёт считает не по ней"
 
     for key in SWITCHABLE:
         if key == "reports":
@@ -728,7 +739,25 @@ def test_reports_do_not_depend_on_the_modules_around_them(root_client, manager_c
     for name in names:
         response = manager_client.get(f"{API}/reports/{name}")
         assert response.status_code == 200, f"{name}: {response.text}"
-        assert response.json() == before[name], f"отчёт «{name}» изменился от чужих блоков"
+        posle = response.json()
+        if name != "revenue":
+            assert posle == before[name], f"отчёт «{name}» изменился от чужих блоков"
+            continue
+
+        # Выручка: изменилось ровно то, что связано с кассой.
+        assert posle["basis"] == "deals", "отчёт не сказал, что считает теперь по заявкам"
+        assert posle["received_amount"] is None, "без кассы поступления обязаны быть пустыми"
+        assert posle["received_count"] is None
+        assert all(m["received_amount"] is None for m in posle["months"])
+
+        pole_kassy = {"basis", "received_amount", "received_count"}
+        ostalnoe_do = {k: v for k, v in before[name].items() if k not in pole_kassy | {"months"}}
+        ostalnoe_posle = {k: v for k, v in posle.items() if k not in pole_kassy | {"months"}}
+        assert ostalnoe_posle == ostalnoe_do, "выключение блоков задело счёт по заявкам"
+        for do, posle_mes in zip(before[name]["months"], posle["months"]):
+            assert {k: v for k, v in posle_mes.items() if k != "received_amount"} == {
+                k: v for k, v in do.items() if k != "received_amount"
+            }, "месяцы отчёта поехали от чужих блоков"
 
 
 def test_search_drops_the_results_of_a_switched_off_module(root_client, manager_client):

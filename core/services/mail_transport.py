@@ -49,6 +49,17 @@ class FetchedMessage:
     body_text: str = ""
     body_html: str = ""
     has_attachments: bool = False
+    #: Цепочка входящего письма — чтобы наш ответ продолжил её, а не начал свою.
+    in_reply_to: str = ""
+    references: str = ""
+    #: Кому сервер отказал при отправке. Пусто — досталось всем.
+    #:
+    #: Полем, а не исключением, и это исправление исправления. Первая редакция
+    #: бросала отказ — но письмо к этому моменту УЖЕ доставлено остальным, и
+    #: записи в CRM не оставалось: человек видел ошибку, жал «отправить» снова,
+    #: и получившие письмо получали его дважды. Отправка состоялась частично,
+    #: и честный ответ на это — «состоялась, но не всем», а не «не состоялась».
+    refused: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -56,6 +67,14 @@ class OutgoingMessage:
     to_addrs: list[str] = field(default_factory=list)
     subject: str = ""
     body_text: str = ""
+    #: `Message-ID` письма, на которое отвечаем, и вся цепочка до него.
+    #:
+    #: Без них ответ приходит к человеку ОТДЕЛЬНЫМ письмом, а не под своим
+    #: вопросом: почтовые клиенты собирают переписку именно по этим двум
+    #: заголовкам. Проверено живьём на двух серверах — ответ вставал в ящике
+    #: сам по себе, и связь с исходным письмом восстанавливал только человек.
+    in_reply_to: str = ""
+    references: str = ""
 
 
 class MailTransport(ABC):
@@ -121,7 +140,14 @@ class ImapSmtpTransport(MailTransport):
     def check(self) -> None:
         connection = self._imap()
         try:
-            connection.select("INBOX", readonly=True)
+            # Статус ответа проверяем САМИ. `imaplib` на «NO» исключения не
+            # бросает — он возвращает ('NO', …) и остаётся в прежнем состоянии.
+            # Пока статус не смотрели, проверка ящика отвечала «всё хорошо» и
+            # на том сервере, где INBOX открыть нечем: человек видел зелёную
+            # галочку, а письма не приходили никогда.
+            status, otvet = connection.select("INBOX", readonly=True)
+            if status != "OK":
+                raise MailTransportError(f"IMAP SELECT INBOX: {_kratko(otvet)}")
         except imaplib.IMAP4.error as exc:
             raise MailTransportError(f"IMAP: {exc}") from exc
         finally:
@@ -133,7 +159,9 @@ class ImapSmtpTransport(MailTransport):
         try:
             # readonly: синхронизация не должна ставить письмам «прочитано» в чужом
             # почтовом клиенте — человек может читать тот же ящик из телефона.
-            connection.select("INBOX", readonly=True)
+            status, otvet = connection.select("INBOX", readonly=True)
+            if status != "OK":
+                raise MailTransportError(f"IMAP SELECT INBOX: {_kratko(otvet)}")
             criterion = f"{(since_uid or 0) + 1}:*"
             status, data = connection.uid("SEARCH", None, "UID", criterion)
             if status != "OK":
@@ -177,18 +205,25 @@ class ImapSmtpTransport(MailTransport):
     def send(self, message: OutgoingMessage) -> FetchedMessage:
         letter = EmailMessage()
         letter["From"] = self.address
-        letter["To"] = ", ".join(message.to_addrs)
-        letter["Subject"] = message.subject
+        letter["To"] = ", ".join(_odna_stroka(a) for a in message.to_addrs)
+        letter["Subject"] = _odna_stroka(message.subject)
         # Message-ID генерируем сами и запоминаем: по нему письмо не задвоится,
         # когда та же переписка вернётся из ящика при следующей синхронизации.
         message_id = make_msgid(domain=self.address.split("@")[-1] or None)
         letter["Message-ID"] = message_id
         letter["Date"] = email.utils.formatdate(localtime=True)
+        # Заголовки цепочки — только когда есть на что отвечать. Пустой
+        # `In-Reply-To` хуже отсутствующего: часть клиентов считает его ссылкой
+        # в никуда и прячет письмо из переписки вовсе.
+        if message.in_reply_to:
+            letter["In-Reply-To"] = _odna_stroka(message.in_reply_to)
+        if message.references:
+            letter["References"] = _odna_stroka(message.references)
         letter.set_content(message.body_text)
 
         server = self._smtp()
         try:
-            server.send_message(letter)
+            otkazali = server.send_message(letter)
         except (OSError, smtplib.SMTPException) as exc:
             raise MailTransportError(f"SMTP: {exc}") from exc
         finally:
@@ -197,6 +232,18 @@ class ImapSmtpTransport(MailTransport):
             except Exception:  # noqa: BLE001 — соединение уже закрыто, письмо ушло
                 pass
 
+        # Отказ по ЧАСТИ адресатов — не успех, но и не провал.
+        #
+        # `send_message` бросает исключение, только когда отвергнуты ВСЕ; при
+        # частичном отказе он молча возвращает словарь тех, кому не досталось.
+        # Пока этот словарь выбрасывался, в CRM появлялась запись «отправлено»,
+        # а половина адресатов письма не получала — и узнать об этом было
+        # неоткуда. Замерено на двух живых серверах: письмо дошло одному из
+        # двух, транспорт отчитался успехом.
+        #
+        # Отдаём список, а не бросаем: к этому месту письмо уже у остальных, и
+        # отказ означал бы, что записи в CRM нет — человек нажмёт «отправить»
+        # снова, и получившие получат его дважды. Отозвать письмо нельзя ничем.
         return FetchedMessage(
             uid=None,
             message_id=message_id,
@@ -205,7 +252,42 @@ class ImapSmtpTransport(MailTransport):
             to_addrs=list(message.to_addrs),
             sent_at=now_utc(),
             body_text=message.body_text,
+            in_reply_to=message.in_reply_to,
+            references=message.references,
+            # Ключи словаря `smtplib` — адреса строкой, но приводим на всякий
+            # случай: сервер отвечает байтами, и один экзотический сервер уже
+            # ловился на этом в другом месте проекта.
+            refused=tuple(sorted(_stroka(a) for a in otkazali)),
         )
+
+
+def _stroka(znachenie) -> str:
+    """Байты или строка — всегда строка."""
+    if isinstance(znachenie, bytes):
+        return znachenie.decode("utf-8", "replace")
+    return str(znachenie)
+
+
+def _odna_stroka(znachenie: str) -> str:
+    """Значение заголовка без переводов строк.
+
+    **Это защита от подделки письма, а не опрятность.** Заголовок с `\n` внутри
+    дописывает в письмо ЧУЖИЕ заголовки: тема вида `Счёт\nBcc: vor@example.com`
+    отправила бы копию постороннему. Библиотека такое значение отвергает, но
+    отвергает `ValueError`, а он летит мимо `MailTransportError` — наружу это
+    выходило пятисотой ошибкой вместо внятного отказа.
+    """
+    return " ".join(_stroka(znachenie).split())
+
+
+def _kratko(otvet) -> str:
+    """Ответ сервера строкой. `imaplib` отдаёт список байтов, и как есть он в
+    сообщении об ошибке выглядит как мусор из скобок."""
+    if isinstance(otvet, (list, tuple)):
+        otvet = b" ".join(x for x in otvet if isinstance(x, bytes))
+    if isinstance(otvet, bytes):
+        otvet = otvet.decode("utf-8", "replace")
+    return str(otvet)[:200]
 
 
 def _close_quietly(connection: imaplib.IMAP4) -> None:
@@ -249,6 +331,12 @@ def parse_raw_message(raw: bytes, uid: int | None = None) -> FetchedMessage:
         body_text=text,
         body_html=html,
         has_attachments=has_attachments,
+        # Цепочка входящего — чтобы наш ответ продолжил её, а не начал свою.
+        # `References` у длинной переписки складывается из всех предыдущих
+        # писем, и наш ответ обязан унести её целиком: клиент собирает ветку
+        # по ней, а не по одному `In-Reply-To`.
+        in_reply_to=(letter.get("In-Reply-To") or "").strip(),
+        references=" ".join((letter.get("References") or "").split()),
     )
 
 

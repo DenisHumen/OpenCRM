@@ -315,7 +315,19 @@ export function Sidebar({
     // то, чем пользуются каждый день.
     { module: "mail", perm: "settings.manage", to: "/settings/mailboxes", label: t("mailboxes") },
     { module: "telephony", perm: "settings.manage", to: "/settings/telephony", label: t("telephony") },
-    { module: "telegram", perm: "settings.manage", to: "/settings/telegram", label: t("modTelegram") },
+    // Настройки бота — на праве КАНАЛА, а не на общем `settings.manage`. Так
+    // спрашивает сервер (`require_perm("telegram", "manage")`), и расхождение
+    // было двусторонним: тот, кому канал доверили, пункта не видел вовсе, а
+    // тот, кто правит логотип сайта, видел пункт и получал отказ на первом же
+    // открытии.
+    { module: "telegram", perm: "telegram.manage", to: "/settings/telegram", label: t("modTelegram") },
+    // Заявки с сайта — рядом с каналами общения и без привязки к блоку: это
+    // четвёртый способ, которым клиент до нас достучится, и держится он на
+    // несущих блоках (клиент и работа), выключить которые нельзя.
+    { perm: "settings.manage", to: "/settings/leads", label: t("leads") },
+    // Наклейка — под блоком `labels`: выключен блок, и печатать нечего, а
+    // пункт настроек, ведущий в никуда, — это обещание, которого нет.
+    { module: "labels", perm: "settings.manage", to: "/settings/labels", label: t("labelSettings") },
     { perm: "settings.manage", to: "/settings/brand", label: t("brand") },
     { perm: "settings.manage", to: "/settings/contacts", label: t("contacts") },
     { perm: "settings.manage", to: "/settings/showcase", label: t("showcase") },

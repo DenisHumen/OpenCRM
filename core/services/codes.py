@@ -62,7 +62,7 @@ def barcode_svg(text: str, *, label: bool = False) -> str:
     buffer = io.BytesIO()
     options = _LABEL_OPTIONS if label else _BARCODE_OPTIONS
     barcode.get("code128", text, writer=SVGWriter()).write(buffer, options)
-    return _inline(buffer.getvalue().decode("utf-8"))
+    return _s_ramkoy(_inline(buffer.getvalue().decode("utf-8")))
 
 
 def qr_svg(text: str, scale: float = 2.4) -> str:
@@ -77,7 +77,56 @@ def qr_svg(text: str, scale: float = 2.4) -> str:
     # segno пишет байты даже для SVG — StringIO тут падает с TypeError.
     buffer = io.BytesIO()
     segno.make(text, error="m").save(buffer, kind="svg", scale=scale, border=2, xmldecl=False)
-    return _inline(buffer.getvalue().decode("utf-8"))
+    return _s_ramkoy(_inline(buffer.getvalue().decode("utf-8")))
+
+
+#: Размер картинки в атрибутах SVG. Единицы бывают разные: segno пишет пиксели
+#: без единиц, python-barcode — миллиметры.
+#: Миллиметр в пользовательских единицах SVG: 96 точек на дюйм, 25,4 мм в дюйме.
+MM_V_EDINITSAH = 96 / 25.4
+
+_RAZMER = re.compile(r'width="([\d.]+)(?:mm)?"\s+height="([\d.]+)(?:mm)?"')
+
+
+def _s_ramkoy(svg: str) -> str:
+    """Дописать `viewBox`, если его нет. Без него картинка не ужимается, а вылезает.
+
+    **Найдено живым осмотром наклейки, а не чтением.** Обе библиотеки ставят
+    SVG только `width` и `height`. Пока картинку показывают как есть, этого
+    хватает — но стоит задать ей размер стилями, и рамка ужимается, а рисунок
+    внутри остаётся прежним и просто выходит за неё. Обрезанный штрихкод не
+    читается вовсе, а увидеть это можно только на отпечатанной ленте.
+
+    Поймано на двух сразу. QR на наклейке 58×40 вылез за правый край на 3,7 мм.
+    А у штрихкода то же самое оказалось ДАВНИМ: шаблон обещает «ширина — во всю
+    наклейку» (`.code svg { width: 100% }`), но полоски всё это время печатались
+    своей природной шириной 37,4 мм. На рулоне 58 мм это совпало случайно, а на
+    30 мм штрихкод выходил за край на 8 мм — то есть на мелких рулонах наклейка
+    не работала никогда.
+
+    `viewBox` теми же числами ничего не меняет тем, кто размер не задаёт (бланк,
+    страница привязки бота): собственный размер картинки остаётся прежним. Зато
+    всякий, кто задаст, получит ужатый рисунок, а не обрезанный.
+    """
+    if "viewBox" in svg:
+        return svg
+    razmer = _RAZMER.search(svg)
+    if not razmer:
+        return svg
+    # Единицы `viewBox` — те же, в каких нарисовано СОДЕРЖИМОЕ, а не те, что
+    # стоят в `width`. python-barcode пишет размер в миллиметрах, а полоски
+    # внутри — тоже в миллиметрах, и миллиметр в пользовательских единицах SVG
+    # равен 96/25.4 ≈ 3,78. Поставь мы `viewBox="0 0 37.44 12"` — рисунок вышел
+    # бы ровно в 3,78 раза крупнее рамки. Замерено живьём: полоски вылезали за
+    # край на 134 пикселя при рамке в 66.
+    mnozhitel = MM_V_EDINITSAH if razmer.group(0).count("mm") else 1
+    shirina = float(razmer.group(1)) * mnozhitel
+    vysota = float(razmer.group(2)) * mnozhitel
+    return svg.replace(
+        razmer.group(0),
+        f'{razmer.group(0)} viewBox="0 0 {shirina:.3f} {vysota:.3f}"',
+        1,
+    )
 
 
 def _inline(svg: str) -> str:

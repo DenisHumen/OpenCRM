@@ -65,6 +65,9 @@ class MailSendIn(BaseModel):
     account_id: int | None = None
     client_id: int | None = None
     deal_id: int | None = None
+    #: На какое письмо это ответ. Отсюда берутся заголовки цепочки, а клиент и
+    #: заявка наследуются от исходного письма, если своих не назвали.
+    reply_to_id: int | None = None
 
 
 class MailReadIn(BaseModel):
@@ -134,6 +137,35 @@ def sync_account(
 
 # --- письма ---
 
+@router.get("/senders")
+def list_senders(
+    _: User = Depends(require_perm("mail", "create")),
+    db: Session = Depends(get_db),
+):
+    """Ящики, из которых можно писать. Только имя и адрес.
+
+    **Отдельная ручка, а не общий список ящиков.** Список ящиков закрыт
+    `settings.manage` и правильно закрыт: там хосты, порты и логины — настройка
+    уровня фирмы. Но чтобы ОТПРАВИТЬ письмо, всего этого знать не надо, нужен
+    выбор из двух-трёх адресов.
+
+    Пока ручки не было, экран почты спрашивал общий список — и менеджеру с
+    правом писать он отвечал отказом. Ящиков ноль, выбирать не из чего, кнопка
+    ответа спрятана: писать письма мог только владелец системы. Найдено
+    разбором правки, а типами и тестами не ловилось никак.
+
+    Выключённые ящики не отдаём: письмо из них всё равно не уйдёт, а выбор,
+    который отвечает отказом, хуже отсутствующего.
+    """
+    return {
+        "items": [
+            {"id": a.id, "title": a.title, "address": a.address}
+            for a in mail_repo.list_accounts(db)
+            if a.is_active
+        ]
+    }
+
+
 @router.get("/messages")
 def list_messages(
     account_id: int | None = None,
@@ -188,5 +220,6 @@ def send(
         account_id=payload.account_id,
         client_id=payload.client_id,
         deal_id=payload.deal_id,
+        reply_to_id=payload.reply_to_id,
     )
     return schemas.mail_message_out(message, with_body=True)

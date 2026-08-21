@@ -9,12 +9,20 @@
 from datetime import datetime
 from email.utils import make_msgid
 
+import re
+from pathlib import Path
+
 import pytest
 from fastapi.testclient import TestClient
 
 from core.security import secretbox
 from core.services import mail_service
-from core.services.mail_transport import FetchedMessage, MailTransport, MailTransportError
+from core.services.mail_transport import (
+    FetchedMessage,
+    MailTransport,
+    MailTransportError,
+    OutgoingMessage,
+)
 from core.utils import now_utc
 from database.models.mail import MESSAGE_ID_LENGTH
 from database.repositories import mail as mail_repo
@@ -22,6 +30,7 @@ from database.session import SessionLocal
 from tests.conftest import API, make_manager
 
 MAIL = f"{API}/mail"
+SCREENS = Path(__file__).resolve().parent.parent / "web" / "frontend" / "crm" / "src"
 MAILBOX_PASSWORD = "s3cret-mailbox-pw"
 
 
@@ -60,6 +69,11 @@ class FakeTransport(MailTransport):
             to_addrs=list(message.to_addrs),
             sent_at=now_utc(),
             body_text=message.body_text,
+            # Как у настоящего транспорта: отправленное письмо помнит свою
+            # цепочку. Без этого подделка молчала бы о заголовках, которых у
+            # неё и не спрашивают, — и проверка цепочки стерегла бы саму себя.
+            in_reply_to=message.in_reply_to,
+            references=message.references,
         )
         FakeTransport.sent.append(sent)
         return sent
@@ -804,3 +818,519 @@ def test_a_broken_message_does_not_take_the_whole_batch_with_it(root_client, mai
     # Ящик остался рабочим: следующий заход не упирается в то же письмо.
     again = root_client.post(f"{API}/mail/accounts/{account['id']}/sync")
     assert again.status_code == 200, again.text
+
+
+# --- цепочка переписки --------------------------------------------------------
+#
+# ПРОВЕРЕНО НА ДВУХ ЖИВЫХ ПОЧТОВЫХ СЕРВЕРАХ, а не рассуждением. В лаборатории
+# (два независимых maddy, свой DNS, свой удостоверяющий центр) ответ из CRM
+# приходил собеседнику ОТДЕЛЬНЫМ письмом: почтовые клиенты собирают переписку
+# по паре `In-Reply-To` + `References`, а транспорт не ставил ни того, ни
+# другого. Человек получал ответ, не понимая, на что именно.
+#
+# Одного `In-Reply-To` мало: у ветки длиннее двух писем клиенты смотрят на
+# `References`, а взять её неоткуда, кроме как из письма, на которое отвечают.
+# Поэтому цепочка сохраняется при синхронизации и уносится в ответ целиком.
+
+
+def _vhodyashchee(root_client, account, *, uid, message_id, subject, from_addr,
+                  in_reply_to="", references=""):
+    """Положить в ящик входящее письмо и вернуть его запись в CRM."""
+    FakeTransport.inbox = [
+        FetchedMessage(
+            uid=uid,
+            message_id=message_id,
+            subject=subject,
+            from_addr=from_addr,
+            to_addrs=[account["address"]],
+            sent_at=datetime(2026, 8, 20, 9, 0),
+            body_text="Текст письма.",
+            in_reply_to=in_reply_to,
+            references=references,
+        )
+    ]
+    otvet = root_client.post(f"{MAIL}/accounts/{account['id']}/sync")
+    assert otvet.status_code == 200, otvet.text
+    pisma = root_client.get(f"{MAIL}/messages").json()["items"]
+    return next(p for p in pisma if p["subject"] == subject)
+
+
+def test_otvet_vstayot_pod_svoim_voprosom(root_client, mail_on):
+    """Ответ несёт `In-Reply-To` того письма, на которое отвечает."""
+    account = make_account(root_client, "vetka1@studio.test")
+    vhodyashchee = _vhodyashchee(
+        root_client, account,
+        uid=901, message_id="<vopros-klienta@beta.test>",
+        subject="Когда будет готово?", from_addr="client@beta.test",
+    )
+
+    otvet = root_client.post(
+        f"{MAIL}/send",
+        json={
+            "to": ["client@beta.test"],
+            "subject": "Re: Когда будет готово?",
+            "body": "Завтра к обеду.",
+            "account_id": account["id"],
+            "reply_to_id": vhodyashchee["id"],
+        },
+    )
+    assert otvet.status_code == 201, otvet.text
+    assert FakeTransport.sent[-1].in_reply_to == "<vopros-klienta@beta.test>", (
+        "ответ ушёл без `In-Reply-To` — у собеседника он встанет отдельным письмом"
+    )
+
+
+def test_vetka_neset_vsyu_perepisku_a_ne_odno_pismo(root_client, mail_on):
+    """`References` — это ВСЯ ветка, а не последнее письмо.
+
+    Унеси мы одну ссылку — с третьего сообщения переписка распалась бы на куски.
+    """
+    account = make_account(root_client, "vetka2@studio.test")
+    vhodyashchee = _vhodyashchee(
+        root_client, account,
+        uid=902, message_id="<tretye@beta.test>",
+        subject="И ещё вопрос", from_addr="client@beta.test",
+        in_reply_to="<vtoroe@beta.test>",
+        references="<pervoe@alpha.test> <vtoroe@beta.test>",
+    )
+
+    assert root_client.post(
+        f"{MAIL}/send",
+        json={
+            "to": ["client@beta.test"],
+            "subject": "Re: И ещё вопрос",
+            "body": "Отвечаю.",
+            "account_id": account["id"],
+            "reply_to_id": vhodyashchee["id"],
+        },
+    ).status_code == 201
+
+    vetka = FakeTransport.sent[-1].references.split()
+    assert vetka == ["<pervoe@alpha.test>", "<vtoroe@beta.test>", "<tretye@beta.test>"], (
+        f"ветка собрана неверно: {vetka}. У собеседника переписка распадётся"
+    )
+
+
+def test_otvet_nasleduet_klienta_ishodnogo_pisma(root_client, mail_on):
+    """Ответ остаётся при том же клиенте, что и письмо, на которое отвечают.
+
+    Иначе переписка по заявке рвалась бы на первом же ответе: входящее
+    привязано к клиенту, а ответ на него — ни к чему.
+    """
+    account = make_account(root_client, "vetka3@studio.test")
+    client = make_client(root_client, "Знакомый", "znakomyy@beta.test")
+    vhodyashchee = _vhodyashchee(
+        root_client, account,
+        uid=903, message_id="<ot-znakomogo@beta.test>",
+        subject="Вопрос от клиента", from_addr="znakomyy@beta.test",
+    )
+    assert vhodyashchee["client_id"] == client["id"], "письмо не связалось с клиентом"
+
+    otvet = root_client.post(
+        f"{MAIL}/send",
+        json={
+            "to": ["znakomyy@beta.test"],
+            "subject": "Re: Вопрос от клиента",
+            "body": "Отвечаю.",
+            "account_id": account["id"],
+            "reply_to_id": vhodyashchee["id"],
+        },
+    )
+    assert otvet.status_code == 201, otvet.text
+    assert otvet.json()["client_id"] == client["id"], (
+        "ответ потерял клиента: переписка по заявке рвётся на первом же ответе"
+    )
+
+
+def test_otvet_na_nesushchestvuyushchee_pismo_otkazyvayut(root_client, mail_on):
+    """Нет исходного письма — внятный отказ, а не тихий ответ без цепочки."""
+    account = make_account(root_client, "vetka4@studio.test")
+    otvet = root_client.post(
+        f"{MAIL}/send",
+        json={
+            "to": ["client@beta.test"],
+            "subject": "Re: ничего",
+            "body": "Текст.",
+            "account_id": account["id"],
+            "reply_to_id": 99999999,
+        },
+    )
+    assert otvet.status_code == 404, otvet.text
+
+
+def test_pismo_bez_otveta_ne_neset_pustykh_zagolovkov(root_client, mail_on):
+    """Обычное письмо уходит БЕЗ заголовков цепочки.
+
+    Пустой `In-Reply-To` хуже отсутствующего: часть клиентов считает его
+    ссылкой в никуда и прячет письмо из переписки вовсе.
+    """
+    account = make_account(root_client, "vetka5@studio.test")
+    assert root_client.post(
+        f"{MAIL}/send",
+        json={
+            "to": ["client@beta.test"],
+            "subject": "Просто письмо",
+            "body": "Текст.",
+            "account_id": account["id"],
+        },
+    ).status_code == 201
+    ushlo = FakeTransport.sent[-1]
+    assert ushlo.in_reply_to == ""
+    assert ushlo.references == ""
+
+
+def test_tsepochka_vhodyashchego_sohranyaetsya_pri_sinkhronizatsii(root_client, mail_on):
+    """Заголовки цепочки живут в самом письме, и взять их позже неоткуда.
+
+    Тело мы храним без заголовков; не сохрани мы цепочку при синхронизации,
+    ответ на третье письмо переписки унёс бы ссылку только на второе.
+    """
+    account = make_account(root_client, "vetka6@studio.test")
+    vhodyashchee = _vhodyashchee(
+        root_client, account,
+        uid=904, message_id="<s-vetkoy@beta.test>",
+        subject="С цепочкой", from_addr="client@beta.test",
+        in_reply_to="<predydushchee@alpha.test>",
+        references="<pervoe@alpha.test> <predydushchee@alpha.test>",
+    )
+
+    from database.models import MailMessage
+
+    with SessionLocal() as db:
+        zapis = db.get(MailMessage, vhodyashchee["id"])
+        assert zapis.in_reply_to == "<predydushchee@alpha.test>"
+        assert zapis.references == "<pervoe@alpha.test> <predydushchee@alpha.test>"
+
+
+# --- отказ по части адресатов -------------------------------------------------
+#
+# ЗАМЕРЕНО НА ЖИВЫХ СЕРВЕРАХ: письмо дошло одному адресату из двух, а транспорт
+# отчитался успехом. `smtplib.send_message` бросает исключение, только когда
+# отвергнуты ВСЕ; при частичном отказе он молча возвращает словарь тех, кому не
+# досталось. Пока этот словарь выбрасывался, в CRM появлялась запись
+# «отправлено», а половина адресатов письма не получала — и узнать об этом было
+# неоткуда.
+#
+# Проверки ниже щупают НАСТОЯЩИЙ `ImapSmtpTransport`, а не подделку: подделка
+# отвечает так, как её научили, и стерегла бы сама себя. Сеть при этом не
+# нужна — подменяется только соединение.
+
+
+class _PodstavnoySMTP:
+    """Соединение SMTP: отвечает заданным словарём отвергнутых адресатов."""
+
+    def __init__(self, otvergnutye: dict):
+        self.otvergnutye = otvergnutye
+        self.otpravleno = []
+
+    def send_message(self, letter):
+        self.otpravleno.append(letter)
+        return dict(self.otvergnutye)
+
+    def quit(self):
+        pass
+
+
+def _transport_s_podstavoy(otvergnutye: dict) -> tuple:
+    from core.services.mail_transport import ImapSmtpTransport
+
+    t = ImapSmtpTransport(
+        address="crm@studio.test", login="crm@studio.test", password="x",
+        imap_host="imap.studio.test", imap_port=993, imap_ssl=True,
+        smtp_host="smtp.studio.test", smtp_port=465, smtp_ssl=True,
+    )
+    server = _PodstavnoySMTP(otvergnutye)
+    t._smtp = lambda: server  # noqa: SLF001 — подменяем ровно соединение
+    return t, server
+
+
+def test_chastichnyy_otkaz_nazvan_no_pismo_ne_poteryano():
+    """Один адресат отвергнут — письмо ушло остальным, и это надо СКАЗАТЬ.
+
+    Бросить отказ здесь нельзя, и это исправление исправления. К моменту, когда
+    сервер называет отвергнутых, письмо остальным УЖЕ доставлено; отказ означал
+    бы, что записи в CRM нет — человек нажмёт «отправить» снова, и получившие
+    получат его дважды. Отозвать письмо нельзя ничем.
+    """
+    t, _ = _transport_s_podstavoy({"net@beta.test": (550, b"User doesn't exist")})
+
+    itog = t.send(
+        OutgoingMessage(
+            to_addrs=["est@beta.test", "net@beta.test"],
+            subject="Двоим",
+            body_text="Текст.",
+        )
+    )
+    assert itog.message_id, "письмо потеряно: записи о нём не будет, и его пошлют заново"
+    assert itog.refused == ("net@beta.test",), (
+        f"не назван адресат, которому не дошло: {itog.refused}. "
+        "Человек будет ждать ответа от того, кто письма не получал"
+    )
+
+
+def test_vse_adresaty_prinyaty_otpravka_udalas():
+    """Пустой словарь отвергнутых — обычная удачная отправка."""
+    t, server = _transport_s_podstavoy({})
+    itog = t.send(
+        OutgoingMessage(to_addrs=["est@beta.test"], subject="Одному", body_text="Текст.")
+    )
+    assert itog.message_id, "письмо ушло без Message-ID"
+    assert len(server.otpravleno) == 1
+
+
+def test_zagolovki_tsepochki_stavyatsya_tolko_kogda_est_na_chto_otvechat():
+    """Пустой `In-Reply-To` хуже отсутствующего: часть клиентов считает его
+    ссылкой в никуда и прячет письмо из переписки вовсе."""
+    t, server = _transport_s_podstavoy({})
+    t.send(OutgoingMessage(to_addrs=["a@beta.test"], subject="Новое", body_text="Текст."))
+    obychnoe = server.otpravleno[-1]
+    assert "In-Reply-To" not in obychnoe
+    assert "References" not in obychnoe
+
+    t.send(
+        OutgoingMessage(
+            to_addrs=["a@beta.test"], subject="Re: Новое", body_text="Текст.",
+            in_reply_to="<vopros@beta.test>",
+            references="<pervoe@alpha.test> <vopros@beta.test>",
+        )
+    )
+    otvet = server.otpravleno[-1]
+    assert otvet["In-Reply-To"] == "<vopros@beta.test>"
+    assert otvet["References"] == "<pervoe@alpha.test> <vopros@beta.test>"
+
+
+# --- экран ответа -------------------------------------------------------------
+
+
+def test_forma_otveta_ne_glushit_podstanovku_adresa():
+    """У `to` в `MailCompose` не должно быть умолчания `""`.
+
+    ПОЙМАНО ЖИВЫМ ОСМОТРОМ ЭКРАНА. Адрес получателя подставляется выражением
+    `to ?? (…ветка ответа…)`, а `??` пропускает только `undefined` — пустая
+    строка нулевой не считается. С умолчанием `to = ""` ветка ответа не
+    срабатывала НИКОГДА: тема подставлялась, а поле адреса оставалось пустым, и
+    человек набирал его руками — то есть кнопка «ответить» делала половину
+    обещанного.
+
+    Ни один тест этого не ловил и не мог: проверок интерфейса в проекте нет, а
+    типы здесь сходятся. Видно было только глазами.
+    """
+    ekran = (SCREENS / "screens" / "Mail.tsx").read_text(encoding="utf-8")
+    kusok = re.search(r"export function MailCompose\(\{(.*?)\}:", ekran, re.S)
+    assert kusok, "не нашлась форма отправки MailCompose"
+    assert not re.search(r"^\s*to\s*=", kusok.group(1), re.M), (
+        "у `to` появилось умолчание: подстановка адреса в ответе замолчит, "
+        "а тема будет подставляться — то есть поломка выглядит как полработы"
+    )
+
+
+def test_knopka_otveta_zakryta_tem_zhe_pravom_chto_i_otpravka():
+    """Интерфейс прячет то, что всё равно получит отказ.
+
+    Сервер закрывает `POST /mail/send` правом `mail.create`. Покажи мы кнопку
+    без него — человек нажал бы и получил отказ, а понять, чего ему не хватает,
+    было бы неоткуда.
+    """
+    ekran = (SCREENS / "screens" / "Mail.tsx").read_text(encoding="utf-8")
+    assert 'can(user, "mail.create")' in ekran, (
+        "кнопка ответа не закрыта правом `mail.create` — она будет отвечать отказом"
+    )
+
+
+# --- писать письма может не только владелец -----------------------------------
+
+
+def test_spisok_otpravitelei_otkryt_tomu_kto_pishet(root_client, mail_on):
+    """НАЙДЕНО РАЗБОРОМ: писать письма мог только владелец системы.
+
+    Экран почты спрашивал общий список ящиков, а он закрыт `settings.manage` —
+    там хосты, порты и логины. Менеджеру с правом писать он отвечал отказом:
+    ящиков ноль, выбирать не из чего, кнопки отправки и ответа спрятаны.
+    Ни типами, ни тестами это не ловилось.
+    """
+    make_account(root_client, "otpravitel@studio.test")
+    # Роль заводится ЗДЕСЬ: нужен человек ровно с правом писать и БЕЗ права на
+    # настройки. Возьми мы готового менеджера — проверка зависела бы от того,
+    # что кому выдали по умолчанию.
+    from tests.conftest import make_manager
+
+    rol = root_client.post(
+        f"{API}/roles",
+        json={"name": "Пишет письма", "permissions": ["mail.view", "mail.create"]},
+    )
+    assert rol.status_code == 201, rol.text
+    pochta = "pisatel@test.local"
+    menedzher = make_manager(root_client, pochta)
+    lyudi = root_client.get(f"{API}/staff").json()["items"]
+    user_id = next(u["id"] for u in lyudi if u["email"] == pochta)
+    assert root_client.post(
+        f"{API}/roles/assign/{user_id}", json={"role_id": rol.json()["id"]}
+    ).status_code == 200
+
+    try:
+        otvet = menedzher.get(f"{MAIL}/senders")
+        assert otvet.status_code == 200, otvet.text
+        assert otvet.json()["items"], "менеджеру не из чего выбрать — кнопка отправки спрятана"
+
+        # Настройки ящика ему по-прежнему закрыты: там хосты и логины.
+        assert menedzher.get(f"{MAIL}/accounts").status_code == 403
+    finally:
+        root_client.delete(f"{API}/staff/{user_id}")
+        root_client.delete(f"{API}/roles/{rol.json()['id']}")
+
+
+def test_spisok_otpravitelei_ne_neset_nastroek_yashchika(root_client, mail_on):
+    """Хостов, портов и логина в этом списке быть не должно.
+
+    Иначе ручка, открытая всякому пишущему, стала бы обходом права на настройки.
+    """
+    make_account(root_client, "bez-nastroek@studio.test")
+    yashchiki = root_client.get(f"{MAIL}/senders").json()["items"]
+    assert yashchiki
+    lishnee = set(yashchiki[0]) - {"id", "title", "address"}
+    assert not lishnee, f"в списке отправителей уехали настройки ящика: {sorted(lishnee)}"
+
+
+def test_ekran_pochty_sprashivaet_otpravitelei_a_ne_nastroyki():
+    """Экраны, откуда пишут письма, обязаны спрашивать `/mail/senders`.
+
+    Спроси они общий список — вернулась бы та же беда: у всех, кроме владельца,
+    кнопки отправки нет.
+    """
+    for imya in ("Mail.tsx", "ClientCard.tsx", "DealCard.tsx"):
+        ekran = (SCREENS / "screens" / imya).read_text(encoding="utf-8")
+        assert '"/mail/accounts"' not in ekran, (
+            f"{imya} спрашивает список настроек ящиков — у менеджера он пуст, "
+            "и письмо отправить нечем"
+        )
+
+
+# --- цепочка не строится на выдумке -------------------------------------------
+
+
+def test_otvet_na_pismo_s_dlinnym_message_id_ne_vydumyvaet_tsepochku(root_client, mail_on):
+    """У письма с Message-ID длиннее 320 знаков в базе лежит ОТПЕЧАТОК.
+
+    Поставь мы его в `In-Reply-To` — собеседник получил бы ссылку на письмо,
+    которого у него нет: ответ снова встал бы отдельно, только теперь молча.
+    Заодно наш внутренний ключ уехал бы в заголовки чужого сервера.
+    """
+    account = make_account(root_client, "dlinnyy@studio.test")
+    dlinnyy = "<" + "a" * 400 + "@mailer.test>"
+    vhodyashchee = _vhodyashchee(
+        root_client, account,
+        uid=905, message_id=dlinnyy,
+        subject="Из рассылки", from_addr="list@beta.test",
+    )
+
+    assert root_client.post(
+        f"{MAIL}/send",
+        json={
+            "to": ["list@beta.test"],
+            "subject": "Re: Из рассылки",
+            "body": "Отвечаю.",
+            "account_id": account["id"],
+            "reply_to_id": vhodyashchee["id"],
+        },
+    ).status_code == 201
+
+    ushlo = FakeTransport.sent[-1]
+    assert not ushlo.in_reply_to.startswith("<opencrm-sha256:"), (
+        f"в цепочку уехал наш внутренний ключ: {ushlo.in_reply_to}"
+    )
+    assert ushlo.in_reply_to == "", (
+        "настоящего Message-ID у нас нет, и выдумывать его нельзя — "
+        f"честнее не ставить заголовков вовсе, а стоит {ushlo.in_reply_to!r}"
+    )
+
+
+def test_dlinnaya_vetka_vhodyashchego_obrezaetsya(root_client, mail_on):
+    """`references` кладётся в TEXT, а это 65 535 БАЙТ.
+
+    Письмо из очень длинной ветки (тикет-система, рассылочный лист) дало бы
+    строку длиннее — MySQL отвечает 1406, письмо откатывается и не попадает в
+    CRM НИКОГДА: `last_uid` уезжает вперёд по соседям, и второго захода за ним
+    не будет.
+    """
+    account = make_account(root_client, "dlinnaya-vetka@studio.test")
+    ogromnaya = " ".join(f"<pismo-{i}@beta.test>" for i in range(2000))
+    vhodyashchee = _vhodyashchee(
+        root_client, account,
+        uid=906, message_id="<konets-vetki@beta.test>",
+        subject="Конец длинной ветки", from_addr="list@beta.test",
+        references=ogromnaya,
+    )
+
+    from database.models import MailMessage
+
+    with SessionLocal() as db:
+        zapis = db.get(MailMessage, vhodyashchee["id"])
+        ssylki = zapis.references.split()
+    assert len(ssylki) <= mail_service.MAX_REFERENCES, (
+        f"ветка не обрезана: {len(ssylki)} ссылок, строка длиннее колонки"
+    )
+    assert ssylki[-1] == "<pismo-1999@beta.test>", (
+        "обрезали начало вместо хвоста: клиенты собирают ветку по ПОСЛЕДНИМ ссылкам"
+    )
+
+
+# --- заголовки без подделки ---------------------------------------------------
+
+
+def test_perevod_stroki_v_teme_ne_dopisyvaet_chuzhikh_zagolovkov():
+    """Тема с `\\n` дописывает в письмо чужие заголовки.
+
+    `Счёт\\nBcc: vor@example.com` отправила бы копию постороннему. Библиотека
+    такое отвергает, но отвергает `ValueError` — он летит мимо
+    `MailTransportError`, и наружу это выходило пятисотой ошибкой.
+    """
+    t, server = _transport_s_podstavoy({})
+    t.send(
+        OutgoingMessage(
+            to_addrs=["a@beta.test"],
+            subject="Счёт\nBcc: vor@example.com",
+            body_text="Текст.",
+        )
+    )
+    pismo = server.otpravleno[-1]
+    assert pismo["Bcc"] is None, "перевод строки в теме дописал чужой заголовок"
+    assert "\n" not in pismo["Subject"], f"тема осталась многострочной: {pismo['Subject']!r}"
+
+
+def test_razbor_vhodyashchego_beryot_tsepochku_iz_zagolovkov():
+    """Цепочку читает `parse_raw_message`, и проверять надо ИМЕННО его.
+
+    Прежняя проверка подавала готовые поля мимо разбора — то есть стерегла
+    подделку, а не код, который работает.
+    """
+    from core.services.mail_transport import parse_raw_message
+
+    syroe = (
+        b"From: client@beta.test\r\n"
+        b"To: crm@alpha.test\r\n"
+        b"Subject: Re: vopros\r\n"
+        b"Message-ID: <tretye@beta.test>\r\n"
+        b"In-Reply-To: <vtoroe@alpha.test>\r\n"
+        b"References: <pervoe@alpha.test>\r\n\t<vtoroe@alpha.test>\r\n"
+        b"Date: Thu, 20 Aug 2026 10:00:00 +0000\r\n"
+        b"\r\n"
+        b"Text.\r\n"
+    )
+    pismo = parse_raw_message(syroe, uid=7)
+    assert pismo.in_reply_to == "<vtoroe@alpha.test>"
+    assert pismo.references == "<pervoe@alpha.test> <vtoroe@alpha.test>", (
+        "многострочный References не склеен — ветка уедет обрывком"
+    )
+
+
+def test_pismo_bez_zagolovkov_tsepochki_razbiraetsya():
+    """Обычное письмо цепочки не несёт, и это не беда."""
+    from core.services.mail_transport import parse_raw_message
+
+    syroe = (
+        b"From: a@beta.test\r\nTo: b@alpha.test\r\nSubject: Hi\r\n"
+        b"Message-ID: <odno@beta.test>\r\n\r\nText.\r\n"
+    )
+    pismo = parse_raw_message(syroe, uid=8)
+    assert pismo.in_reply_to == ""
+    assert pismo.references == ""

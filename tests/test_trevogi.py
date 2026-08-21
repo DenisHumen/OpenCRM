@@ -112,6 +112,7 @@ def _dostavka(
     alertname: str = "SiteDown",
     severity: str = "critical",
     metki: dict | None = None,
+    poyasneniya: dict | None = None,
 ) -> dict:
     """Доставка от Alertmanager в том виде, в каком он её шлёт."""
     return {
@@ -127,6 +128,7 @@ def _dostavka(
                 "annotations": {
                     "summary": "Сайт не отвечает: https://example.com/healthz",
                     "description": "Внешняя проверка не проходит уже 2 минуты.",
+                    **(poyasneniya or {}),
                 },
                 "startsAt": "2026-08-18T10:00:00.000Z",
                 "endsAt": "0001-01-01T00:00:00Z",
@@ -879,7 +881,7 @@ def test_preduprezhdenie_po_prezhnemu_prihodit_bez_zvuka(monkeypatch):
 
     poslannoe = []
 
-    def podstava(kluch, chat_id, text, knopki, opener=None, tiho=False):
+    def podstava(kluch, chat_id, text, knopki, opener=None, tiho=False, razmetka=None):
         poslannoe.append(tiho)
         return {"message_id": 100 + len(poslannoe)}
 
@@ -1025,4 +1027,236 @@ echo "$TEMPLATE"
     assert "alertmanager.yml.template" in vybrano('{"ready":true}', shablon_est=False), (
         "шаблон не примонтирован, а выбран: sed по отсутствующему файлу под "
         "set -e уронит точку входа, и Alertmanager уйдёт в цикл перезапуска"
+    )
+
+
+# --- чат тревог задаётся из интерфейса ----------------------------------------
+#
+# До появления поля на экране настроек `telegram_alerts_chat` можно было
+# записать только правкой базы. Тревоги при этом работали — но лишь у того, кто
+# знал про строку в `site_settings`; остальным доставались кнопки, до которых
+# нельзя было дойти из интерфейса. Проверки ниже — на проводку «поле → база →
+# доставка», а не на саму доставку: за неё отвечают проверки выше.
+
+CHAT_SVODKI = "-1007700000002"
+
+
+def test_chat_trevog_zadayotsya_ruchkoy_nastroek(root_client, bot, kanal):
+    """Названный чат тревог перебивает чат сводки — и делает это сразу."""
+    zapis = root_client.put(f"{TG}/settings", json={"alerts_chat": CHAT_SVODKI})
+    assert zapis.status_code == 200, zapis.text
+    assert zapis.json()["alerts_chat"] == CHAT_SVODKI
+
+    otvet = _poslat(root_client, _dostavka("fp-svoy-chat"))
+    assert otvet.json()["sent"] == 1
+    poslano = _poslannye(bot)
+    assert str(poslano[0]["chat_id"]) == CHAT_SVODKI, (
+        "тревога ушла не в тот чат, который задали на экране"
+    )
+
+
+def test_pustoy_chat_trevog_uvodit_ih_v_chat_svodki(root_client, bot, kanal):
+    """Пустое поле — рабочее состояние, а не пробел.
+
+    У маленькой конторы служебный чат один, и требовать вписать один и тот же
+    идентификатор дважды значило бы завести способ ошибиться. Стереть значение
+    экран обязан уметь: иначе назначенный однажды чат нельзя было бы вернуть к
+    общему.
+    """
+    root_client.put(f"{TG}/settings", json={"alerts_chat": CHAT_SVODKI})
+    stjorli = root_client.put(f"{TG}/settings", json={"alerts_chat": ""})
+    assert stjorli.status_code == 200, stjorli.text
+    assert stjorli.json()["alerts_chat"] == ""
+
+    assert _poslat(root_client, _dostavka("fp-zapasnoy-put")).json()["sent"] == 1
+    # CHAT_TREVOG у `kanal` записан именно чатом СВОДКИ — на него и должен
+    # уходить запасной путь.
+    assert str(_poslannye(bot)[0]["chat_id"]) == CHAT_TREVOG
+
+
+def test_chat_trevog_proveryaetsya_kak_i_chat_svodki(root_client, kanal):
+    """Не число — отказ с тем же кодом, что у соседнего поля.
+
+    Разъедься проверки, и одно поле принимало бы то, что другое отвергает, —
+    а человек узнавал бы об этом молчащей доставкой, а не отказом формы.
+    """
+    krivoy = root_client.put(f"{TG}/settings", json={"alerts_chat": "@nash_chat"})
+    assert krivoy.status_code == 422, krivoy.text
+    assert krivoy.json()["error"]["code"] == "bad_chat_id"
+
+    sosed = root_client.put(f"{TG}/settings", json={"digest_chat": "@nash_chat"})
+    assert sosed.status_code == 422, sosed.text
+    assert sosed.json()["error"]["code"] == "bad_chat_id"
+
+
+def test_pravka_sosednego_polya_ne_steraet_chat_trevog(root_client, kanal):
+    """Сохранение имени бота не должно уносить чат тревог.
+
+    Беда обычная для частичной правки: поле, которого не было в теле, приезжает
+    как `None` и затирает записанное. Здесь она стоила бы тревог, уходящих не
+    туда, — и заметить это можно было бы только по первой аварии.
+    """
+    root_client.put(f"{TG}/settings", json={"alerts_chat": CHAT_SVODKI})
+    root_client.put(f"{TG}/settings", json={"bot_username": "nash_bot"})
+
+    svezhee = root_client.get(f"{TG}/settings")
+    assert svezhee.status_code == 200, svezhee.text
+    assert svezhee.json()["alerts_chat"] == CHAT_SVODKI
+    assert svezhee.json()["bot_username"] == "nash_bot"
+
+
+# --- читаемость сообщения ------------------------------------------------------
+#
+# Ради читаемости тревогу и забрали у Alertmanager — а забрав, потеряли ровно то
+# оформление, которое у него было: сообщение уходило сплошным текстом. Проверки
+# ниже про то, что оно вернулось и что вернувшаяся разметка не стала новым
+# способом потерять аварию.
+
+
+def test_trevoga_prihodit_oformlennoy(root_client, bot, kanal):
+    """Суть жирным, подробности в сворачиваемой цитате, команды моноширинным.
+
+    В списке чатов видна только первая строка, и она обязана отвечать «идти
+    смотреть или нет». Пока всё уходило одной простынёй, две тревоги подряд были
+    там неотличимы.
+    """
+    otvet = _poslat(
+        root_client,
+        _dostavka("fp-oformlenie", poyasneniya={"lechenie": "./opencrm.sh doctor"}),
+    )
+    assert otvet.json()["sent"] == 1
+
+    poslano = _poslannye(bot)[0]
+    assert poslano.get("parse_mode") == "HTML", "разметку не включили — оформление не доедет"
+    tekst = poslano["text"]
+    assert tekst.startswith("<b>"), "суть не выделена: в списке чатов её не отличить"
+    assert "<blockquote expandable>" in tekst, "подробности не свёрнуты"
+    assert "<code>./opencrm.sh doctor</code>" in tekst, (
+        "команда не моноширинная — с телефона её придётся выделять по буквам"
+    )
+    # «Что делать» — последним: подробности разворачивают не всегда, а команда
+    # обязана оставаться на виду.
+    assert tekst.index("<blockquote") < tekst.index("▸ Что делать")
+
+
+def test_chuzhoy_ugolok_ne_otbivaet_trevogu(root_client, bot, kanal):
+    """Описание с «<» обязано доехать, а не отбиться телеграмом целиком.
+
+    Ровно этого боялись, когда отказывались от разметки: в тексте тревоги стоит
+    чужое — имя контейнера, адрес, кусок конфига. Теперь оно экранируется, и
+    экранируется ОДИН раз: двойное дало бы в чате «&amp;lt;» вместо «<».
+    """
+    otvet = _poslat(
+        root_client,
+        _dostavka(
+            "fp-ugolok",
+            poyasneniya={"description": "nginx: unknown log format <opencrm_json> & прочее"},
+        ),
+    )
+    assert otvet.json()["sent"] == 1
+
+    tekst = _poslannye(bot)[0]["text"]
+    assert "&lt;opencrm_json&gt;" in tekst, "чужой уголок не экранирован — телеграм отобьёт всё"
+    assert "&amp;lt;" not in tekst, "экранировали дважды — в чате будет мусор вместо знаков"
+    assert "&amp;" in tekst, "амперсанд тоже надо экранировать"
+
+
+def test_dlinnoe_opisanie_ne_teryaet_ni_suti_ni_lecheniya(root_client, bot, kanal):
+    """Обрезаются подробности, а не то, ради чего сообщение читают.
+
+    Без обрезки длинное описание отбивается телеграмом целиком — то есть авария
+    не приходит НИКАК. Обрезать при этом надо осмысленно: сообщение, потерявшее
+    строку «что делать», бесполезно ровно тогда, когда нужно.
+    """
+    otvet = _poslat(
+        root_client,
+        _dostavka(
+            "fp-dlinnoe",
+            poyasneniya={"description": "ш" * 9000, "lechenie": "./opencrm.sh doctor"},
+        ),
+    )
+    assert otvet.json()["sent"] == 1
+
+    tekst = _poslannye(bot)[0]["text"]
+    vidimyy = re.sub(r"<[^>]+>", "", tekst)
+    assert len(vidimyy) <= 4096, f"сообщение длиной {len(vidimyy)} — телеграм его отобьёт"
+    assert "Сайт не отвечает" in tekst, "обрезали суть"
+    assert "<code>./opencrm.sh doctor</code>" in tekst, "обрезали «что делать»"
+    assert "…" in tekst, "обрезали молча — читающий не узнает, что подробности неполны"
+
+
+def test_otkaz_razbora_ne_glushit_trevogu(monkeypatch):
+    """Не разобралась разметка — авария уходит плоским текстом, а не пропадает.
+
+    Третья подпорка под разметкой: первые две (экранирование и предел) делают
+    отказ невозможным и редким, эта ловит то, чего не предусмотрели.
+    """
+    vyzovy = []
+
+    def podstava(token, metod, polya, opener=None):
+        vyzovy.append(polya)
+        if polya.get("parse_mode"):
+            raise telegram_service.TelegramOtkaz("Bad Request: can't parse entities")
+        return {"message_id": 7}
+
+    monkeypatch.setattr(telegram_service, "_vyzov", podstava)
+
+    itog = telegram_service.poslat_s_knopkami(
+        "123:AAA", -100, "<b>Авария</b>", [[{"text": "✅", "callback_data": "x"}]], razmetka="HTML"
+    )
+    assert itog == {"message_id": 7}
+    assert len(vyzovy) == 2, "запасного пути не было — авария потерялась бы"
+    assert "parse_mode" not in vyzovy[1]
+    assert vyzovy[1]["text"] == "Авария"
+    assert vyzovy[1]["reply_markup"] == vyzovy[0]["reply_markup"], "кнопки потерялись по дороге"
+
+
+def test_prochiy_otkaz_ne_shlet_vtoroe_soobshchenie(monkeypatch):
+    """429 и обрыв сети — не про оформление, и вторая попытка тут вредна.
+
+    Запасной путь шлёт сообщение ЗАНОВО. Сработай он на таймауте, когда первое
+    уже доехало, — в чат ушло бы два сообщения об одной аварии, и «принято» на
+    одном из них ничего не значило бы.
+    """
+    vyzovy = []
+
+    def podstava(token, metod, polya, opener=None):
+        vyzovy.append(polya)
+        raise telegram_service.TelegramOtkaz("Too Many Requests: retry after 30")
+
+    monkeypatch.setattr(telegram_service, "_vyzov", podstava)
+
+    with pytest.raises(telegram_service.TelegramOtkaz):
+        telegram_service.poslat_s_knopkami("123:AAA", -100, "<b>Авария</b>", [], razmetka="HTML")
+    assert len(vyzovy) == 1, "на отказе не про разбор попробовали второй раз"
+
+
+def test_u_pravil_est_chto_delat():
+    """«Что делать» — отдельной запиской у правила, а не хвостом описания.
+
+    Пока команды были вклеены в описание обычным текстом, скопировать их с
+    телефона можно было только выделением по буквам. Отдельная записка даёт
+    показать их моноширинным, то есть в одно нажатие.
+    """
+    import yaml
+
+    pravila = yaml.safe_load(
+        (ROOT / "docker" / "monitoring" / "prometheus" / "rules" / "opencrm.yml").read_text(
+            encoding="utf-8"
+        )
+    )
+    vse = [r for g in pravila["groups"] for r in g["rules"]]
+    assert len(vse) > 20, f"правил собрано {len(vse)} — проверка смотрит не туда"
+
+    s_komandoy_v_opisanii = [
+        r["alert"]
+        for r in vse
+        if "./opencrm.sh" in str((r.get("annotations") or {}).get("description", ""))
+        or "systemctl" in str((r.get("annotations") or {}).get("description", ""))
+    ]
+    assert s_komandoy_v_opisanii == [], (
+        "команда осталась внутри описания, а не в «lechenie»: " + ", ".join(s_komandoy_v_opisanii)
+    )
+    assert sum(1 for r in vse if (r.get("annotations") or {}).get("lechenie")) >= 5, (
+        "записок «что делать» почти нет — переносить команды было незачем"
     )

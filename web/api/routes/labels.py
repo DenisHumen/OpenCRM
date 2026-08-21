@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from core import exceptions as errors
-from core.services import barcode_service, warehouse_service
+from core.services import barcode_service, permissions_service, warehouse_service
 from database.models import User
 from database.models.document import DOCUMENT_LOCALES
 from database.models.warehouse import BARCODE_CODE128, QUANTITY_SCALE
@@ -29,9 +29,9 @@ router = APIRouter(
     dependencies=[Depends(require_module("labels"))],
 )
 
-#: Подписи печатной страницы. Их две, поэтому отдельного файла строк, как у
-#: бланков, здесь нет: наклейка — это штрихкод и название товара, а всё
-#: остальное на ней только отнимает миллиметры.
+#: Подписи печатной страницы. Их три, поэтому отдельного файла строк, как у
+#: бланков, здесь нет: всё остальное на наклейке — это значения полей, и их
+#: собирает сервис, потому что зависят они от товара, а не от страницы.
 PRINT_STRINGS = {
     "ru": {"title": "Наклейки", "no_code": "код не задан", "print": "Печать"},
     "en": {"title": "Labels", "no_code": "no barcode", "print": "Print"},
@@ -137,7 +137,7 @@ def print_labels(
     # а термобумага не переиспользуется.
     preview: bool = False,
     locale: str | None = None,
-    _: User = Depends(require_perm("labels", "view")),
+    user: User = Depends(require_perm("labels", "view")),
     db: Session = Depends(get_db),
 ):
     """Страница наклеек — ровно по размеру рулона, печатает её браузер.
@@ -161,12 +161,25 @@ def print_labels(
 
     lang = locale if locale in DOCUMENT_LOCALES else "ru"
     settings = barcode_service.label_settings(db)
+    # Язык уезжает в сервис, а не только в шаблон: значения полей от него
+    # зависят («кг» против «kg», «мин» против «min»), а собирает их сервис.
     html = public_routes.templates.get_template("label_print.html").render(
-        items=barcode_service.print_items(db, product_id, copies),
+        items=barcode_service.print_items(
+            db,
+            product_id,
+            copies,
+            locale=lang,
+            # Право на суммы спрашиваем ЗДЕСЬ, а не полагаемся на то, что
+            # человек их и так не видел. Найдено разбором: печать закрыта
+            # только `labels.view`, и кладовщик без `warehouse.view_amounts`
+            # не видел цену на экране — но печатал её на наклейке.
+            amounts=permissions_service.sees_amounts(db, user, "warehouse"),
+        ),
         locale=lang,
         t=PRINT_STRINGS[lang],
         preview=preview,
-        **settings,
+        width_mm=settings["width_mm"],
+        height_mm=settings["height_mm"],
     )
     return HTMLResponse(html)
 
@@ -180,5 +193,25 @@ def label_settings(
 
     Отдельной ручкой, а не куском общих настроек: общие читает только root
     (там реквизиты и ключи), а размер рулона нужен всякому, кто печатает.
+
+    Поля отдаются СПИСКОМ в порядке реестра, а не словарём флагов. Порядок и
+    зона нужны экрану настроек, чтобы нарисовать переключатели так же, как они
+    лягут на наклейку; словарь этого не несёт, и экрану пришлось бы знать
+    порядок отдельно — то есть повторять реестр у себя.
     """
-    return barcode_service.label_settings(db)
+    settings = barcode_service.label_settings(db)
+    return {
+        "width_mm": settings["width_mm"],
+        "height_mm": settings["height_mm"],
+        "min_mm": barcode_service.MIN_LABEL_MM,
+        "max_mm": barcode_service.MAX_LABEL_MM,
+        "fields": [
+            {
+                "key": pole.klyuch,
+                "zone": pole.zona,
+                "on": settings["pokazat"][pole.klyuch],
+                "setting": barcode_service.nastroyka_polya(pole.klyuch),
+            }
+            for pole in barcode_service.POLYA_NAKLEYKI
+        ],
+    }

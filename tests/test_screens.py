@@ -177,6 +177,11 @@ def test_a_screen_does_not_offer_what_the_server_will_refuse():
         "Staff.tsx": ("staff.manage", "deletePermanently"),
         "Companies.tsx": ("companies.create", "newCompany"),
         "CompanyCard.tsx": ("companies.edit", "companyReadOnly"),
+        # Мессенджер спрашивал права соседей (клиенты, заявки, напоминания), а
+        # собственное право канала — ни разу. Смотрящему с одним `telegram.view`
+        # показывали поле ввода, скрепку, шаблоны, кнопку «ответить» и пункт
+        # «привязать карточку»; сервер отвечал отказом на каждое.
+        "Telegram.tsx": ("telegram.create", "tgReadOnly"),
     }
     for name, (permission, marker) in rules.items():
         text = (SCREENS / "screens" / name).read_text(encoding="utf-8")
@@ -1172,3 +1177,218 @@ def test_kartochka_klienta_znaet_vse_vidy_zapisey_lenty():
             + ", ".join(propali)
             + ". В ленте клиента такая запись выходит без подписи или без значка."
         )
+
+
+def test_nastroyki_kanala_stoyat_na_prave_kanala():
+    """Экран настроек бота закрыт тем же правом, что спрашивают его ручки.
+
+    Расхождение здесь двустороннее, и обе стороны одинаково неприятны. Экран
+    стоял в общей группе `settings.manage`: тот, кому доверили канал и выдали
+    `telegram.manage`, пункта в меню не видел вовсе и попадал на главную по
+    прямому адресу; а тот, кто правит логотип витрины, до экрана доходил — и
+    получал отказ на первом же запросе, потому что все ручки настроек канала
+    спрашивают `telegram.manage` (`web/api/routes/telegram.py`).
+
+    Проверка смотрит и маршрут, и пункт меню: закрыть один, забыв другой, —
+    ровно тот случай, который эта беда и породил.
+    """
+    marshruty = (SCREENS / "App.tsx").read_text(encoding="utf-8")
+    menyu = (SCREENS / "components" / "Sidebar.tsx").read_text(encoding="utf-8")
+
+    # Оболочки маршрута стоят непосредственно над ним: `<Route element={<ModuleRoute…`
+    # и `<Route element={<PermRoute…`. Берём то, что написано прямо перед
+    # объявлением пути, — там и должно стоять право канала.
+    do_puti = marshruty[: marshruty.index('path="/settings/telegram"')]
+    obolochki = do_puti[do_puti.rindex("<Route element=") - 200 :]
+    assert 'perm="telegram.manage"' in obolochki, (
+        "маршрут настроек бота закрыт не правом канала:\n" + obolochki
+    )
+    assert 'module="telegram"' in obolochki, (
+        "маршрут настроек бота перестал исчезать вместе с выключенным блоком"
+    )
+
+    stroka = next(s for s in menyu.splitlines() if '"/settings/telegram"' in s)
+    assert 'perm: "telegram.manage"' in stroka, (
+        "пункт меню настроек бота стоит на чужом праве: "
+        "тот, кому доверили канал, его не увидит"
+    )
+
+
+def test_myortvaya_shina_ne_ostavlyaet_messendzher_zamershim():
+    """Шины нет — экран говорит об этом и перечитывает ленту сам.
+
+    Сервер шлёт признак первым же сообщением потока (`{"type": "ready",
+    "bus": …}` в `web/api/routes/telegram.py`), и ложь в нём означает
+    недоступный Redis. Соединение при этом ЖИВОЕ: сердцебиение идёт, ошибки нет,
+    браузеру переподключаться не от чего, — а событий не будет ни одного.
+
+    Признак этот интерфейс не читал вовсе. Дочитывание пропущенного звал только
+    обработчик события, то есть при мёртвой шине его не звал никто: лента
+    замирала, счётчик непрочитанного не рос, и выглядело это в точности как
+    «сегодня никто не писал». Молчаливая поломка ровно того класса, который в
+    этом проекте закрывают сторожами, а не памятью.
+    """
+    text = (SCREENS / "screens" / "Telegram.tsx").read_text(encoding="utf-8")
+
+    assert 'dannye.type === "ready"' in text, (
+        "экран не читает признак готовности шины — про мёртвый Redis он не узнает"
+    )
+    assert "tgLiveOff" in text, "про неработающее живое обновление человеку не сказано"
+    assert re.search(r"setInterval\(\s*\(\)\s*=>\s*\{[^}]*dochitat\(\)", text), (
+        "нет запасного перечитывания: при мёртвой шине лента останется замершей"
+    )
+
+    potok = (SCREENS / "lib" / "tgpotok.ts").read_text(encoding="utf-8")
+    assert "bus?: boolean" in potok, "признак шины не объявлен в типе события"
+
+
+# --- контраст палитр -----------------------------------------------------------
+#
+# Мерили руками, в браузере, и мерили дважды: сначала когда заводили светлую
+# тему, потом когда чинили тёмную. Оба раза находка была одна и та же — палитра
+# не проходит AA в местах, на которые никто не смотрит: счётчик в шапке колонки,
+# отключённое поле, чип на своей заливке. Глазами это не ловится вовсе: бледный
+# серый выглядит «просто бледным», а не «нечитаемым», и жалуются на него не
+# сразу, а те, кто работает при дневном свете с ноутбука.
+#
+# Поэтому замер переехал в проверку. Она считает то же самое, что считал бы
+# браузер: композитный цвет полупрозрачных заливок и отношение яркостей по WCAG.
+
+
+def _tsvet(znachenie: str):
+    """`#rgb`, `#rrggbb` или `rgba(...)` → (r, g, b, прозрачность)."""
+    znachenie = znachenie.split("/*")[0].strip()
+    if znachenie.startswith("#"):
+        telo = znachenie[1:]
+        if len(telo) == 3:
+            telo = "".join(znak * 2 for znak in telo)
+        return (int(telo[0:2], 16), int(telo[2:4], 16), int(telo[4:6], 16), 1.0)
+    chasti = [c.strip() for c in re.match(r"rgba?\(([^)]+)\)", znachenie).group(1).split(",")]
+    r, g, b = (int(float(c)) for c in chasti[:3])
+    return (r, g, b, float(chasti[3]) if len(chasti) > 3 else 1.0)
+
+
+def _poverh(sverhu, snizu):
+    """Полупрозрачный цвет поверх непрозрачного — то же, что делает браузер."""
+    return tuple(
+        round(sverhu[i] * sverhu[3] + snizu[i] * (1 - sverhu[3])) for i in range(3)
+    ) + (1.0,)
+
+
+def _kontrast(a, b) -> float:
+    def yarkost(tsvet):
+        def kanal(v):
+            v /= 255
+            return v / 12.92 if v <= 0.03928 else ((v + 0.055) / 1.055) ** 2.4
+
+        return 0.2126 * kanal(tsvet[0]) + 0.7152 * kanal(tsvet[1]) + 0.0722 * kanal(tsvet[2])
+
+    svetlee, temnee = sorted((yarkost(a), yarkost(b)), reverse=True)
+    return (svetlee + 0.05) / (temnee + 0.05)
+
+
+#: (текст, фон, подложка под полупрозрачным фоном, где это видно человеку).
+#:
+#: Пары названы поимённо, а не перебором «каждый цвет на каждом фоне»: перебор
+#: краснел бы на сочетаниях, которых на экране не бывает, и его пришлось бы
+#: обвешивать исключениями до потери смысла. Здесь каждая строка — то, что
+#: человек действительно читает.
+PARY_KONTRASTA = [
+    ("--text", "--surface", None, "название заявки, строка списка"),
+    ("--muted", "--bg", None, "клиент на карточке, ответственный"),
+    ("--muted", "--surface-2", None, "шапка колонки, деньги колонки"),
+    ("--sub", "--surface", None, "подпись под числом метрики"),
+    ("--faint", "--bg", None, "подпись под заголовком, доля воронки"),
+    ("--faint", "--bg-sidebar", None, "заголовок раздела меню"),
+    ("--faint", "--surface-2", None, "счётчик в шапке колонки"),
+    ("--faint", "--well-off", None, "отключённое поле"),
+    ("--success", "--tint-success", "--surface", "чип «оплачено»"),
+    ("--warning", "--tint-warning", "--surface", "чип места на диске"),
+    ("--danger", "--tint-danger", "--surface", "баннер «место кончилось»"),
+    ("--accent", "--tint-accent", "--surface", "чип «новое», значок файла"),
+    ("--brand", "--tint-brand", "--surface", "чип бренда, знак пространства"),
+    ("--on-danger", "--danger-solid", None, "счётчик просроченных в меню"),
+    ("--btn-text", "--btn-bg", None, "главная кнопка экрана"),
+]
+
+#: AA для обычного текста. Крупного в этих парах нет: всё перечисленное — 10–14
+#: пунктов, то есть послабление 3:1 сюда не относится ни к одной строке.
+AA = 4.5
+
+
+def _palitra(selektor: str) -> dict:
+    styles = (SCREENS / "styles.css").read_text(encoding="utf-8")
+    blok = re.search(re.escape(selektor) + r"\s*\{(.*?)\n\}", styles, re.S)
+    assert blok, f"в styles.css не нашёлся блок {selektor} — проверка смотрит не туда"
+    return dict(re.findall(r"^\s*(--[\w-]+)\s*:\s*([^;]+);", blok.group(1), re.M))
+
+
+def test_obe_temy_prohodyat_aa():
+    """Ни одной пары ниже 4.5:1 — ни в тёмной теме, ни в светлой.
+
+    Девять пар тёмной темы этой границы не проходили, и не из-за регрессии: так
+    было с самого начала, а светлую тему завели уже с замером. Хуже всего было
+    там, где текста меньше всего, — счётчик в шапке колонки давал 2.8:1, а белый
+    на красной плашке просрочки 3.2:1.
+    """
+    for selektor, imya in (
+        (':root,\n:root[data-theme="dark"]', "тёмная"),
+        (':root[data-theme="light"]', "светлая"),
+    ):
+        palitra = _palitra(selektor)
+        ploho = []
+        for tekst, fon, podlozhka, gde in PARY_KONTRASTA:
+            assert tekst in palitra, f"{imya}: нет токена {tekst}"
+            assert fon in palitra, f"{imya}: нет токена {fon}"
+            tsvet_fona = _tsvet(palitra[fon])
+            if tsvet_fona[3] < 1:
+                tsvet_fona = _poverh(tsvet_fona, _tsvet(palitra[podlozhka]))
+            otnoshenie = _kontrast(_tsvet(palitra[tekst]), tsvet_fona)
+            if otnoshenie < AA:
+                ploho.append(f"{imya}: {tekst} на {fon} — {otnoshenie:.2f}:1 ({gde})")
+
+        assert not ploho, (
+            "палитра не проходит AA:\n  "
+            + "\n  ".join(ploho)
+            + "\n\nЛестница «muted → sub → faint» двигается ЦЕЛИКОМ: подняв одну "
+            "ступень до порога, соседнюю обгонишь, и три оттенка серого станут "
+            "неразличимы. Числа для документа — docs/05-crm-design.md."
+        )
+
+
+def test_strelka_spiska_odnogo_tsveta_s_tokenom():
+    """Цвет стрелки выпадающего списка не разъехался с `--muted` и `--faint`.
+
+    Стрелка — картинка в `data:`-URI, и цвет вписан внутрь неё: `currentColor`
+    там не работает, а `var(--…)` внутрь `url()` не подставляется. Значит цвет
+    живёт в двух местах сразу, и сторож цвета его не видит — `%23` это
+    закодированная решётка. Разъехаться они могут только молча: список просто
+    останется со стрелкой прежнего оттенка, и заметит это тот, кто откроет
+    именно этот экран.
+    """
+    for selektor, imya in (
+        (':root,\n:root[data-theme="dark"]', "тёмная"),
+        (':root[data-theme="light"]', "светлая"),
+    ):
+        palitra = _palitra(selektor)
+        for token, strelka in (("--muted", "--select-arrow"), ("--faint", "--select-arrow-off")):
+            vpisan = re.search(r"stroke='%23([0-9a-fA-F]{6})'", palitra[strelka])
+            assert vpisan, f"{imya}: в {strelka} не нашёлся цвет обводки"
+            assert "#" + vpisan.group(1).lower() == palitra[token].split("/*")[0].strip(), (
+                f"{imya}: стрелка {strelka} нарисована цветом #{vpisan.group(1)}, "
+                f"а {token} сейчас {palitra[token].split('/*')[0].strip()}"
+            )
+
+
+def test_ekran_svodki_pryachet_razdel_klientov():
+    """И на экране раздел прячется целиком, а не пустеет.
+
+    Пустой список без этой проверки дал бы надпись «клиентов пока нет» и ссылку
+    в раздел, куда не пускают: хуже, чем ничего, — человек решит, что клиентов
+    в фирме нет.
+    """
+    ekran = (SCREENS / "screens" / "Dashboard.tsx").read_text(encoding="utf-8")
+    assert 'can(user, "clients.view")' in ekran, (
+        "сводка не спрашивает право на карточки — раздел покажется пустым, "
+        "а не спрячется"
+    )

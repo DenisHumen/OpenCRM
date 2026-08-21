@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from core.services import (
+    finance_service,
     modules_service,
     permissions_service,
     pipeline_service,
@@ -62,7 +63,20 @@ def dashboard(user: User = Depends(require_staff), db: Session = Depends(get_db)
         # календаря в двух местах разъедется раньше, чем окупится один запрос.
         views_by_day = [{**day, "count": 0} for day in views_by_day]
 
-    recent_clients, _total = clients_repo.search(db, page=1, per_page=5)
+    # Последние карточки — ТОЛЬКО тому, кому карточки вообще открыты.
+    #
+    # Разбор: список брался всем, у кого есть сессия сотрудника, безо всякого
+    # права. Сотрудник без `clients.view` не мог открыть ни раздел клиентов, ни
+    # отдельную карточку, но пять свежих — с именем, телефоном и почтой —
+    # получал на первом же экране после входа. Это ровно то, от чего право и
+    # ставят: телефоны клиентов уносят при уходе, и уносят их с экрана, который
+    # открывается сам.
+    #
+    # Правило то же, что строкой ниже у денег: **сводка сужается тем же правом,
+    # что раздел**, а не показывает выжимку из закрытого.
+    recent_clients = []
+    if permissions_service.has(db, user, "clients", "view"):
+        recent_clients, _total = clients_repo.search(db, page=1, per_page=5)
 
     # Деньги с начала текущего месяца, а не за последние 30 дней: владелец
     # сверяет их с месячной отчётностью, и скользящее окно давало бы число,
@@ -73,6 +87,15 @@ def dashboard(user: User = Depends(require_staff), db: Session = Depends(get_db)
     # оборот фирмы и было целью.
     mine_only = permissions_service.deals_scope(db, user)
     money = deals_repo.money_summary(db, month_start, only_manager_id=mine_only)
+    # Сколько ПРИШЛО в кассу с начала месяца — по решению «банк один» это и есть
+    # выручка. Отдельным числом рядом с суммой выигранных заявок, а не вместо
+    # неё: это два разных вопроса («продали на» и «получили»), и расхождение
+    # между ними — полезное число, а не ошибка. Пусто — кассы в системе нет.
+    basis = finance_service.bazis_vyruchki(db)
+    kassa = finance_service.postupleniya_po_mesyatsam(
+        db, [(month_start, now)], only_manager_id=mine_only
+    )
+    money["received_since"] = None if kassa is None else kassa.get(0, {}).get("total", 0)
     # Плитки с деньгами пустеют вместе с правом на суммы. Пустые значения, а не
     # отсутствующие ключи — то же правило, что у выключенных блоков выше.
     #
@@ -117,6 +140,11 @@ def dashboard(user: User = Depends(require_staff), db: Session = Depends(get_db)
         "currency": settings_service.get_all(db).get("currency", "USD"),
         "money_in_work": money["in_work"],
         "money_won_this_month": money["won_since"],
+        # Чем меряется выручка сейчас — экран берёт ось отсюда, а не из своей
+        # карты блоков: два ответа на один вопрос снова дали бы два числа под
+        # одной подписью.
+        "money_basis": basis,
+        "money_received_this_month": money["received_since"],
         "avg_check": money["avg_check"],
         "won_count_this_month": money["won_count"],
         "deals_by_stage": stages,

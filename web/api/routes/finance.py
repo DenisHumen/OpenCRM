@@ -51,6 +51,27 @@ class CategoryIn(BaseModel):
     note: str | None = None
 
 
+class CategoryPatchIn(BaseModel):
+    """Правка статьи. Все поля необязательные — как у правил начисления.
+
+    Отдельной схемой, а не той же `CategoryIn`, потому что у той `name`
+    обязательное: заведение статьи без названия бессмысленно, а вот правка
+    одного `purpose` — обычное дело, и она отвечала `422 name Field required`.
+    Рассогласование заметно тому, кто ходит в API руками: у правил частичная
+    правка была, у статей нет.
+
+    Сервис к частичному телу готов давно (`update_category` смотрит на каждое
+    поле отдельно) — не хватало ровно этой схемы.
+    """
+
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    #: Принимается, но сменить направление нельзя — отказ с причиной в сервисе.
+    #: Поле объявлено, чтобы отказ был внятным, а не «лишнее поле».
+    direction: str | None = None
+    purpose: str | None = None
+    note: str | None = None
+
+
 class OperationIn(BaseModel):
     category_id: int
     #: Сумма в минорных единицах, в терминах статьи: у расходной «50 000»
@@ -313,7 +334,7 @@ def create_category(
 @router.patch("/categories/{category_id}")
 def update_category(
     category_id: int,
-    payload: CategoryIn,
+    payload: CategoryPatchIn,
     user: User = Depends(require_perm("finance", "manage")),
     db: Session = Depends(get_db),
 ):

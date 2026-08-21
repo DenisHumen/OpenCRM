@@ -167,6 +167,9 @@ def change_status(
     user: User = Depends(require_perm("documents", "issue")),
     db: Session = Depends(get_db),
 ):
+    # Заказ сюда не пускаем: он живёт в той же таблице, а отгружается
+    # своим путём, со списанием склада. Разбор — в `tolko_blank`.
+    document_service.tolko_blank(db, document_id)
     document = document_service.set_status(db, document_id, payload.status, user, payload.note)
     return schemas.document_out(document)
 

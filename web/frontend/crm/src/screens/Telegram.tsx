@@ -71,6 +71,9 @@ interface Watcher {
 /** Как часто подтверждаем «я в этом чате». Срок жизни отметки — 15 секунд. */
 const PULS_PRISUTSTVIYA = 5000;
 
+/** Как часто перечитывать ленту, пока шина событий недоступна. Разбор — у эффекта. */
+const ZAPASNOY_OPROS = 10000;
+
 /**
  * Предел телеграма на файл от бота — пятьдесят мегабайт.
  *
@@ -141,6 +144,15 @@ export function Telegram() {
   const [vybran, setVybran] = useState<number | null>(null);
   const [messages, setMessages] = useState<TgMessage[]>([]);
   const [watchers, setWatchers] = useState<Watcher[]>([]);
+  /**
+   * Работает ли живое обновление. Правду говорит сервер признаком `bus` в
+   * первом же сообщении потока.
+   *
+   * Начинаем с «да», а не с «нет»: до первого сообщения ничего не известно, и
+   * полоса «живое не работает», мигнувшая на каждом открытии экрана, обесценила
+   * бы саму полосу. Тот же довод, что у карты блоков в `lib/modules.ts`.
+   */
+  const [zhivoe, setZhivoe] = useState(true);
   const [tekst, setTekst] = useState("");
   /** На какое сообщение отвечаем. Само сообщение, а не номер: цитату надо
    *  показать над полем ввода, а лезть за ней в ленту при каждом наборе
@@ -211,6 +223,22 @@ export function Telegram() {
   // повторять нечего, и выключенный блок обязан исчезнуть целиком, а не
   // остаться жалобой на сервер.
   const shablony_dostupny = moduleOn(modules, "templates") && can(user, "templates.view");
+
+  /**
+   * Можно ли писать клиенту.
+   *
+   * Правило `lib/permissions.ts`: интерфейс прячет то, что всё равно получит
+   * отказ. Здесь оно держалось только наполовину — заявку и напоминание из
+   * диалога экран уже прятал за их правами, а собственное право канала не
+   * спрашивал ни разу. Смотрящему с одним `telegram.view` показывали поле
+   * ввода, скрепку, шаблоны, кнопку «ответить» и пункт «привязать карточку», и
+   * каждое из них отвечало отказом сервера.
+   *
+   * Одним признаком на всё перечисленное, а не тремя разными: сервер спрашивает
+   * у них одно и то же право (`telegram.create` у отправки текста, отправки
+   * файла и привязки диалога), и разъехаться они не должны.
+   */
+  const mozhno_pisat = can(user, "telegram.create");
   const shablony = useReference<any>(
     shablony_dostupny ? "/templates?per_page=100" : null,
   );
@@ -452,9 +480,35 @@ export function Telegram() {
         }
       } else if (dannye.type === "presence" && dannye.chat_id === vybran) {
         setWatchers(dannye.watchers || []);
+      } else if (dannye.type === "ready") {
+        // Сервер говорит это первым же сообщением каждого соединения — и после
+        // переподключения тоже, так что признак возвращается к правде сам,
+        // когда Redis поднимется.
+        setZhivoe(dannye.bus !== false);
       }
     });
   }, [vybran, zagruzit_chats, dochitat]);
+
+  /**
+   * Запасное перечитывание, пока шины нет.
+   *
+   * Недоступный Redis канал не роняет: сообщения лежат в базе, ручки отвечают,
+   * и экран умеет дочитать пропущенное запросом «что после». Но звал этот
+   * запрос только обработчик события — то есть при мёртвой шине его не звал
+   * никто, и мессенджер молча замирал: лента не двигалась, счётчик
+   * непрочитанного не рос, а выглядело это ровно как «сегодня никто не писал».
+   *
+   * Десять секунд, а не пять: это запасной путь на время аварии, а не второй
+   * механизм живости. Чаще — значит держать на упавшем Redis нагрузку, которой
+   * не бывает в норме; реже — значит отвечать клиенту с заметной задержкой.
+   */
+  useEffect(() => {
+    if (zhivoe || vybran == null) return;
+    const chasy = window.setInterval(() => {
+      void dochitat().then(() => zagruzit_chats());
+    }, ZAPASNOY_OPROS);
+    return () => window.clearInterval(chasy);
+  }, [zhivoe, vybran, dochitat, zagruzit_chats]);
 
   // Какой диалог открыт — знать обязана и оболочка: сигнал о сообщении в
   // ОТКРЫТОМ и видимом чате не подаётся. Убираем отметку, уходя с экрана,
@@ -996,6 +1050,54 @@ export function Telegram() {
                   {menyu && (
                     <div className="user-menu tg-menu">
                       {/*
+                        Карточка — первым делом, и не для красоты: заявку не на
+                        что заводить, пока диалог ничей.
+
+                        До этого оба действия жили ТОЛЬКО в третьей колонке, а
+                        она прячется стилями до 1360 px (`styles.css`). На
+                        обычном ноутбуке 1366×768 — и на любом окне при
+                        масштабе 125 % — завести карточку из разговора было
+                        нечем вовсе: оставалось уйти в раздел клиентов, завести
+                        руками, вернуться и выбрать в списке, то есть ровно те
+                        три перехода посреди разговора, от которых уходили.
+
+                        Кнопки в колонке при этом остались: там они стоят
+                        вплотную к полям, из-за которых их жмут («номер есть в
+                        диалоге, в карточке пусто»). Меню отвечает за
+                        достижимость, колонка — за уместность; вызов у обеих
+                        один и тот же.
+                      */}
+                      {otkrytyy.client_id == null && can(user, "clients.create") && (
+                        <button
+                          type="button"
+                          className="user-menu-item"
+                          disabled={kartochkaGuard.busy}
+                          onClick={() => {
+                            setMenyu(false);
+                            void zavesti_kartochku();
+                          }}
+                        >
+                          <Icon name="user" size={14} />
+                          {t("tgMakeClient")}
+                        </button>
+                      )}
+                      {otkrytyy.client_id != null &&
+                        can(user, "clients.edit") &&
+                        est_chto_perenesti(otkrytyy, delo) && (
+                          <button
+                            type="button"
+                            className="user-menu-item"
+                            disabled={kartochkaGuard.busy}
+                            onClick={() => {
+                              setMenyu(false);
+                              void obnovit_kartochku();
+                            }}
+                          >
+                            <Icon name="refresh" size={14} />
+                            {t("tgClientRefresh")}
+                          </button>
+                        )}
+                      {/*
                         Пункт стоит за тем же правом, что спросит сервер:
                         заводится ЗАЯВКА, и решает раздел заявок. Без права его
                         нет вовсе — иначе он отвечал бы отказом на каждое
@@ -1039,18 +1141,24 @@ export function Telegram() {
                           {t("tgMakeTask")}
                         </button>
                       )}
-                      <div className="user-menu-sep" />
-                      <button
-                        type="button"
-                        className="user-menu-item"
-                        onClick={() => {
-                          setMenyu(false);
-                          setPrivyazka(true);
-                        }}
-                      >
-                        <Icon name="link" size={14} />
-                        {otkrytyy.client_id != null ? t("tgRelink") : t("tgLink")}
-                      </button>
+                      {/* Привязка — это `PATCH /telegram/chats/{id}`, а он
+                          спрашивает то же `telegram.create`, что и отправка. */}
+                      {mozhno_pisat && (
+                        <>
+                          <div className="user-menu-sep" />
+                          <button
+                            type="button"
+                            className="user-menu-item"
+                            onClick={() => {
+                              setMenyu(false);
+                              setPrivyazka(true);
+                            }}
+                          >
+                            <Icon name="link" size={14} />
+                            {otkrytyy.client_id != null ? t("tgRelink") : t("tgLink")}
+                          </button>
+                        </>
+                      )}
                       {otkrytyy.source && (
                         <>
                           <div className="user-menu-sep" />
@@ -1098,6 +1206,23 @@ export function Telegram() {
                 </label>
               )}
             </header>
+
+            {!zhivoe && (
+              /*
+               * Тишина обязана шуметь. Шины нет — новые сообщения сами не
+               * появятся, и снаружи это неотличимо от спокойного дня; поэтому
+               * говорим прямо, а не оставляем человека гадать.
+               *
+               * Полоса называет и то, что канал при этом работает: сообщения в
+               * базе, ручки отвечают, лента перечитывается сама. Без второй
+               * половины полоса читалась бы как «мессенджер сломан», и человек
+               * пошёл бы отвечать клиенту в личный телеграм.
+               */
+              <div className="tg-banner" role="status">
+                <Icon name="alert" />
+                {t("tgLiveOff")}
+              </div>
+            )}
 
             {sosedi.length > 0 && (
               /*
@@ -1148,15 +1273,19 @@ export function Telegram() {
                     .filter(Boolean)
                     .join(" ")}
                 >
-                  <button
-                    type="button"
-                    className="tg-reply"
-                    onClick={() => setOtvechaem(stroka)}
-                    aria-label={t("tgReply")}
-                    title={t("tgReply")}
-                  >
-                    <Icon name="send" size={12} />
-                  </button>
+                  {/* «Ответить» — начало отправки, и без права на неё кнопка
+                      вела бы к полю ввода, которого нет. */}
+                  {mozhno_pisat && (
+                    <button
+                      type="button"
+                      className="tg-reply"
+                      onClick={() => setOtvechaem(stroka)}
+                      aria-label={t("tgReply")}
+                      title={t("tgReply")}
+                    >
+                      <Icon name="send" size={12} />
+                    </button>
+                  )}
                   {stroka.reply_to_id != null && (
                     /*
                       Цитата отвечает на вопрос «а на что это ответ». Берём из
@@ -1310,6 +1439,12 @@ export function Telegram() {
                 </button>
               </div>
             )}
+            {/* Смотрящему — строка вместо поля ввода, а не пустота под лентой.
+                Молча убранный низ экрана читается как поломка вёрстки: человек
+                ищет, куда писать, и не находит даже места, где это должно
+                быть. Тот же довод, что у выбора шаблонов выше. */}
+            {!mozhno_pisat && <div className="tg-readonly">{t("tgReadOnly")}</div>}
+            {mozhno_pisat && (
             <footer className="tg-compose">
               {/*
                 Выбор стоит на месте всегда, пока блок включён и право есть, —
@@ -1390,6 +1525,7 @@ export function Telegram() {
                 <Icon name="send" />
               </button>
             </footer>
+            )}
           </>
         )}
       </section>

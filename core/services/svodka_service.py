@@ -28,7 +28,12 @@ from sqlalchemy.orm import Session
 
 from core import modules as core_modules
 from core.utils import now_utc
-from core.services import modules_service, settings_service, telegram_service
+from core.services import (
+    finance_service,
+    modules_service,
+    settings_service,
+    telegram_service,
+)
 from database.repositories import settings as settings_repo
 from database.repositories import svodka as svodka_repo
 
@@ -109,6 +114,17 @@ def sobrat(db: Session, seychas: datetime | None = None) -> dict:
             return None
 
     itog["delo"] = bezopasno("работа за сутки", lambda: svodka_repo.za_sutki(db, ot, do))
+    # Чем меряется выручка — тем же одним местом, что у отчёта и у главной.
+    # Утренняя сводка была ТРЕТЬИМ независимым счётом: починив экран и оставив
+    # её, мы получили бы ту же беду заново — только спорить стали бы сообщение и
+    # экран, а сообщение нельзя открыть и перепроверить.
+    itog["bazis"] = finance_service.bazis_vyruchki(db)
+    itog["postupilo"] = bezopasno(
+        "поступления в кассу",
+        lambda: (finance_service.postupleniya_po_mesyatsam(db, [(ot, do)]) or {})
+        .get(0, {})
+        .get("total"),
+    )
     itog["s_sayta"] = bezopasno(
         "заявки с сайта", lambda: svodka_repo.zayavki_s_sayta(db, ot, do, ISTOCHNIK_SAYT)
     )
@@ -133,7 +149,8 @@ def oformit(db: Session, dannye: dict) -> str:
 
     delo = dannye.get("delo") or {}
     zakryto = delo.get("zakryto", 0)
-    vyruchka = delo.get("vyruchka_minor", 0)
+    vyigrano = delo.get("vyigrano_minor", 0)
+    postupilo = dannye.get("postupilo")
 
     stroki = [
         f"☀️ <b>Сводка за {e(dannye['den'])}</b>",
@@ -143,9 +160,20 @@ def oformit(db: Session, dannye: dict) -> str:
     if dannye.get("delo") is None:
         stroki.append("▸ Работа за сутки — не сосчиталась")
     else:
+        # Деньги и заявки — врозь. «Выручка» означает полученное (решение
+        # владельца: банк один), а сумма выигранных заявок деньгами не является:
+        # под одним словом они и дали пустой месяц при полной кассе. Кассы нет —
+        # говорим «выиграно на сумму», не выдавая одно за другое.
+        if postupilo is None:
+            dengi = f"выиграно на сумму: <b>{e(_dengi(vyigrano, valyuta))}</b>"
+        else:
+            dengi = (
+                f"получено: <b>{e(_dengi(postupilo, valyuta))}</b> · "
+                f"выиграно на сумму: <b>{e(_dengi(vyigrano, valyuta))}</b>"
+            )
         stroki.append(
             f"▸ Заявок новых: <b>{delo.get('novyh_zayavok', 0)}</b> · "
-            f"закрыто: <b>{zakryto}</b> · выручка: <b>{e(_dengi(vyruchka, valyuta))}</b>"
+            f"закрыто: <b>{zakryto}</b> · {dengi}"
         )
         stroki.append(f"▸ Клиентов новых: <b>{delo.get('novyh_klientov', 0)}</b>")
 

@@ -522,3 +522,146 @@ def test_a_search_string_longer_than_the_cap_is_refused(root_client, warehouse_o
 
     too_long = root_client.get(f"{WH}/products", params={"search": "я" * (MAX_SEARCH + 1)})
     assert too_long.status_code == 422, too_long.text
+
+
+# --- снимки товара -------------------------------------------------------------
+#
+# Название опознаёт вещь плохо: «шлейф 40-pin» и «шлейф 40-pin (узкий)» —
+# отличить их на полке можно только глазами. Проверки ниже про то, что снимок
+# доезжает целым, не пускает к себе чужого и уносит за собой файлы.
+
+
+def _snimok(client: TestClient, product_id: int, name: str = "detal.png", **kw):
+    from tests.conftest import png_bytes
+
+    return client.post(
+        f"{WH}/products/{product_id}/photos",
+        files={"file": (name, kw.pop("content", None) or png_bytes(), "image/png")},
+    )
+
+
+def test_snimok_dobavlyaetsya_i_otdayotsya_dvumya_razmerami(root_client):
+    """Два размера делаются сразу: плитку показывают, снимок открывают.
+
+    Один размер не годится ни в ту, ни в другую сторону: оригинал с телефона на
+    полсотни позиций — это мегабайты на каждое открытие списка, а плитка в 320
+    точек не годится, чтобы рассмотреть маркировку.
+    """
+    item = new_product(root_client, name="Шлейф 40-pin")
+    sozdan = _snimok(root_client, item["id"])
+    assert sozdan.status_code == 201, sozdan.text
+    photo = sozdan.json()
+    assert photo["size_bytes"] > 0, "вес обоих файлов не посчитан"
+
+    spisok = root_client.get(f"{WH}/products/{item['id']}/photos")
+    assert spisok.status_code == 200, spisok.text
+    assert [p["id"] for p in spisok.json()["items"]] == [photo["id"]]
+
+    for razmer in ("view", "thumb"):
+        otdan = root_client.get(
+            f"{WH}/products/{item['id']}/photos/{photo['id']}", params={"size": razmer}
+        )
+        assert otdan.status_code == 200, f"{razmer}: {otdan.text}"
+        # Оба размера лежат в webp: хранить исходный jpeg рядом незачем, а
+        # разный тип у двух файлов одного снимка означал бы два пути раздачи.
+        assert otdan.headers["content-type"] == "image/webp"
+        assert otdan.content[:4] == b"RIFF", f"{razmer} — не webp"
+
+
+def test_pervyy_snimok_tot_chto_pokazyvayut(root_client):
+    """Порядок задаёт человек, и первый — тот, что идёт в список.
+
+    Признака «главная» нет намеренно: он завёл бы инвариант «ровно одна», а
+    такие в проекте держатся запросами. Порядок разъехаться сам не может.
+    """
+    item = new_product(root_client, name="Корпус в сборе")
+    pervyy = _snimok(root_client, item["id"], "a.png").json()
+    vtoroy = _snimok(root_client, item["id"], "b.png").json()
+
+    poryadok = root_client.put(
+        f"{WH}/products/{item['id']}/photos/order",
+        json={"order": [vtoroy["id"], pervyy["id"]]},
+    )
+    assert poryadok.status_code == 200, poryadok.text
+    assert [p["id"] for p in poryadok.json()["items"]] == [vtoroy["id"], pervyy["id"]]
+
+    # Неполный порядок отвергается: он оставил бы снимки, места которых никто не
+    # назвал, и выдача зависела бы от плана запроса.
+    krivoy = root_client.put(
+        f"{WH}/products/{item['id']}/photos/order", json={"order": [vtoroy["id"]]}
+    )
+    assert krivoy.status_code == 422, krivoy.text
+    assert krivoy.json()["error"]["code"] == "bad_photo_order"
+
+
+def test_chuzhoy_snimok_ne_otdayotsya_po_pryamomu_adresu(root_client):
+    """Номер товара в адресе — не украшение, а условие отбора.
+
+    Без него номер снимка от соседнего товара отдавал бы чужую картинку тому,
+    кто его угадал или запомнил.
+    """
+    odin = new_product(root_client, name="Товар первый")
+    drugoy = new_product(root_client, name="Товар второй")
+    photo = _snimok(root_client, odin["id"]).json()
+
+    chuzhoy = root_client.get(f"{WH}/products/{drugoy['id']}/photos/{photo['id']}")
+    assert chuzhoy.status_code == 404, chuzhoy.text
+    assert chuzhoy.json()["error"]["code"] == "photo_not_found"
+
+
+def test_ne_kartinku_ne_prinimayem(root_client):
+    """Тип определяется подписью файла, а не расширением в имени.
+
+    `.png` в имени не гарантирует ничего, а SVG — это документ со скриптом
+    внутри, а не растр: приняв его, склад стал бы носителем чужого кода.
+    """
+    item = new_product(root_client, name="Не картинка")
+    otkaz = _snimok(root_client, item["id"], "virus.png", content=b"%PDF-1.4 not an image")
+    assert otkaz.status_code == 422, otkaz.text
+
+    svg = b'<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>'
+    otkaz_svg = _snimok(root_client, item["id"], "kartinka.svg", content=svg)
+    assert otkaz_svg.status_code == 422, otkaz_svg.text
+    assert otkaz_svg.json()["error"]["code"] == "bad_photo_type"
+
+
+def test_udalenie_snimka_unosit_oba_fayla(root_client):
+    """Строка ушла — файлов на диске не осталось.
+
+    Снимаются они ПОСЛЕ фиксации: откат вернул бы строку, а файла уже не было
+    бы, и карточка обещала бы снимок, которого физически нет.
+    """
+    from core.services import product_photo_service
+    from database.session import SessionLocal
+
+    item = new_product(root_client, name="Под удаление")
+    photo = _snimok(root_client, item["id"]).json()
+
+    with SessionLocal() as db:
+        row = product_photo_service.poluchit(db, item["id"], photo["id"])
+        puti = [
+            product_photo_service.put_na_diske(row, "view"),
+            product_photo_service.put_na_diske(row, "thumb"),
+        ]
+    assert all(p.exists() for p in puti), "файлы снимка не легли на диск"
+
+    ubran = root_client.delete(f"{WH}/products/{item['id']}/photos/{photo['id']}")
+    assert ubran.status_code == 200, ubran.text
+    assert root_client.get(f"{WH}/products/{item['id']}/photos").json()["items"] == []
+    assert not any(p.exists() for p in puti), "файлы снимка остались на диске"
+
+
+def test_bez_bloka_snimkov_net(root_client):
+    """Выключенный блок уносит и снимки — целиком, а не «пустым списком»."""
+    item = new_product(root_client, name="Со снимком")
+    _snimok(root_client, item["id"])
+
+    vykl = root_client.post(f"{API}/modules/warehouse", json={"enabled": False})
+    assert vykl.status_code == 200, vykl.text
+    try:
+        zakryto = root_client.get(f"{WH}/products/{item['id']}/photos")
+        assert zakryto.status_code == 403, zakryto.text
+        assert zakryto.json()["error"]["code"] == "module_disabled"
+    finally:
+        root_client.post(f"{API}/modules/warehouse", json={"enabled": True})
+        modules_service.invalidate()

@@ -15,6 +15,8 @@
 рабочих процесса с одним хранилищем.
 """
 
+import uuid
+
 import pytest
 
 from core import exceptions as errors
@@ -25,8 +27,8 @@ from core.ratelimit import SlidingWindowLimiter
 class FakeRedis:
     """Подставной Redis: сортированные множества в словаре.
 
-    Знает `zadd`, `zremrangebyscore`, `zcard`, `expire`, `delete` и `scan_iter`
-    — весь словарь ограничителя. Конвейер (`pipeline`) исполняется по-честному
+    Знает `zadd`, `zrem`, `zremrangebyscore`, `zcard`, `expire`, `delete`,
+    `scan_iter` и `eval` — весь словарь ограничителя. Конвейер (`pipeline`) исполняется по-честному
     по очереди: атомарность здесь изображать нечем и незачем, проверяется
     поведение счётчика, а не гарантии сервера.
     """
@@ -63,6 +65,41 @@ class FakeRedis:
     def scan_iter(self, match=None, count=None):
         pristavka = match.rstrip("*") if match else ""
         return [k for k in list(self.data) if k.startswith(pristavka)]
+
+    def eval(self, script, numkeys, *args):
+        """Единственный скрипт ограничителя (`_ZANYAT`), переписанный на python.
+
+        ЧЕСТНО О ЦЕНЕ. Это КОПИЯ смысла скрипта, а не его исполнение: разойдись
+        `_ZANYAT` с этой копией — проверки здесь не заметят, за совпадение
+        отвечает живой прогон с настоящим Redis. Настоящее здесь всё остальное,
+        и ради него копия и написана: общее хранилище на два ограничителя,
+        приставка в ключе, срок, окно, отказ при недоступном сервере.
+
+        Атомарность не изображается — изображать её нечем, а проверяется она
+        потоками на том хранилище, которое стоит в бою.
+        """
+        if "zremrangebyscore" not in script or "zcard" not in script:
+            raise NotImplementedError("подставной Redis знает один скрипт — _ZANYAT")
+        klyuch = args[0]
+        nizhe, ochko, metka, predel, srok = args[1:6]
+        self.zremrangebyscore(klyuch, "-inf", nizhe)
+        if self.zcard(klyuch) >= int(predel):
+            return 1
+        self.zadd(klyuch, {metka: float(ochko)})
+        self.expire(klyuch, srok)
+        return 0
+
+    def zrem(self, key, *chleny):
+        hranilishche = self.data.get(key)
+        if not hranilishche:
+            return 0
+        ubrano = 0
+        for chlen in chleny:
+            if hranilishche.pop(chlen, None) is not None:
+                ubrano += 1
+        if not hranilishche:
+            del self.data[key]
+        return ubrano
 
     # --- конвейер ---
     def pipeline(self, transaction=True):
@@ -444,3 +481,192 @@ def test_pustoy_adres_ostavlyaet_schyotchik_v_pamyati(monkeypatch, bez_klienta):
     limiter.record_failure("ivan@example.com")
     limiter.record_failure("ivan@example.com")
     assert limiter.is_blocked("ivan@example.com")
+
+
+# --- гонка «проверил → записал» -------------------------------------------------
+
+
+def test_odnovremennye_popytki_ne_prohodyat_mimo_poroga():
+    """Порог держится и при одновременных запросах, а не только при последовательных.
+
+    **Ровно эта дыра и была.** Проверка и отметка были двумя операциями, и между
+    ними существовало окно: шестнадцать одновременных запросов читали один и тот
+    же счёт (ноль), проходили проверку все шестнадцать, и порог в пять попыток
+    превращался в шестнадцать. Подбор идёт именно так — пачкой, а не по одной
+    попытке в секунду, — то есть защита не работала ровно в том случае, ради
+    которого написана.
+
+    Последовательным набором это не ловится вовсе: там окна не бывает. Поэтому
+    проверка бьёт потоками и стартует их по барьеру, чтобы они пришли разом.
+    """
+    import threading
+
+    predel = 5
+    limiter = SlidingWindowLimiter(predel, 60, name=f"gonka-{uuid.uuid4().hex[:8]}")
+    limiter.ochistit()
+
+    zheludkov = 24
+    razom = threading.Barrier(zheludkov)
+    proshli: list[bool] = []
+    zamok = threading.Lock()
+
+    def udar():
+        razom.wait()
+        zanyato = limiter.proverit_i_zanyat("odin-adres")
+        with zamok:
+            proshli.append(not zanyato)
+
+    potoki = [threading.Thread(target=udar) for _ in range(zheludkov)]
+    for p in potoki:
+        p.start()
+    for p in potoki:
+        p.join()
+
+    assert sum(proshli) == predel, (
+        f"порог {predel}, а прошло {sum(proshli)} из {zheludkov} одновременных — "
+        "между проверкой и отметкой снова окно"
+    )
+    # И следующая попытка тоже упирается: занятые места никуда не делись.
+    assert limiter.proverit_i_zanyat("odin-adres") is True
+    limiter.ochistit()
+
+
+def test_zanyatye_mesta_ne_meshayut_sosednemu_klyuchu():
+    """Счёт ведётся по ключу, а не общий: один перебирающий не запирает остальных."""
+    limiter = SlidingWindowLimiter(2, 60, name=f"sosedi-{uuid.uuid4().hex[:8]}")
+    limiter.ochistit()
+    assert limiter.proverit_i_zanyat("adres-a") is False
+    assert limiter.proverit_i_zanyat("adres-a") is False
+    assert limiter.proverit_i_zanyat("adres-a") is True, "порог у своего ключа не сработал"
+    assert limiter.proverit_i_zanyat("adres-b") is False, "чужой ключ заперт вместе с этим"
+    limiter.ochistit()
+
+
+def test_udachnyy_vhod_osvobozhdayet_zanyatoe():
+    """Занятое место — не наказание: вошедший обнуляет счёт.
+
+    Без этого считать ПОПЫТКИ вместо неудач было бы нельзя: человек, входящий по
+    десять раз на дню, выбирал бы свой же лимит на ровном месте.
+    """
+    limiter = SlidingWindowLimiter(3, 60, name=f"sbros-{uuid.uuid4().hex[:8]}")
+    limiter.ochistit()
+    assert limiter.proverit_i_zanyat("chelovek") is False
+    assert limiter.proverit_i_zanyat("chelovek") is False
+    limiter.reset("chelovek")
+    for _ in range(3):
+        assert limiter.proverit_i_zanyat("chelovek") is False, "сброс не освободил места"
+    assert limiter.proverit_i_zanyat("chelovek") is True
+    limiter.ochistit()
+
+
+# --- занять место: то же обещание, но для того пути, которым ходят в бою ------
+#
+# ПОЧЕМУ ЭТИ ПРОВЕРКИ ПОЯВИЛИСЬ ОТДЕЛЬНО. Проверки выше бьют в `is_blocked`, а
+# после закрытия гонки ни один из пяти путей, обязанных отказывать при лежащем
+# счётчике, туда больше не ходит: вход, PIN, заявки, вебхук АТС и страница
+# состояния заказа зовут `zanyat_mesto`/`proverit_i_zanyat`. Сторож остался
+# сторожить метод, которым это обещание больше никто не исполняет — то есть
+# правка «а давайте при недоступном Redis считать в памяти» прошла бы мимо
+# всего набора. Найдено разбором самой правки.
+
+
+def test_zanyat_mesto_pri_nedostupnom_redise_ne_puskaet(slomannyy):
+    """То же решение, что и у `is_blocked`, и оно обязано держаться здесь.
+
+    Соблазн конкретный и в одну строку: двумя строками выше в `zanyat_mesto`
+    стоит `if client is None: return self._zanyat_mesto_local(key)`, и написать
+    то же самое в `except` кажется естественным. Итог — восемь воркеров, восемь
+    независимых счётчиков и порог, умноженный на восемь, ровно на время аварии
+    и бесшумно для подбирающего.
+    """
+    limiter = SlidingWindowLimiter(5, 900, name="login")
+    with pytest.raises(errors.LimiterUnavailableError) as beda:
+        limiter.zanyat_mesto("ivan@example.com")
+    assert beda.value.http_status == 503, "429 значит «повтори», а дело не в стучащем"
+    assert beda.value.code == "limiter_unavailable"
+
+
+def test_proverit_i_zanyat_pri_nedostupnom_redise_ne_puskaet(slomannyy):
+    """Короткая обёртка обязана нести то же обещание, что и полная."""
+    limiter = SlidingWindowLimiter(5, 900, name="pin")
+    with pytest.raises(errors.LimiterUnavailableError):
+        limiter.proverit_i_zanyat("hash-adresa")
+
+
+def test_avariya_na_zanyatii_mesta_schitaetsya(slomannyy):
+    """Тихого варианта нет и здесь: авария уезжает в метрику, по ней тревога."""
+    bylo = ratelimit.unavailable_total()
+    limiter = SlidingWindowLimiter(5, 900, name="login")
+    with pytest.raises(errors.LimiterUnavailableError):
+        limiter.zanyat_mesto("ivan@example.com")
+    assert ratelimit.unavailable_total() > bylo, "авария нигде не считается"
+
+
+def test_vozvrat_popytki_ne_ronyaet_zapros(slomannyy):
+    """Возврат места — бухгалтерия, как и отметка неудачи.
+
+    Зовут его тогда, когда запрос УЖЕ рушится (упало чтение пользователя), и
+    вторая беда поверх первой ничего не улучшит: человек всё равно получит
+    пятисотую, а лишняя занятая попытка отпустит сама по истечении окна.
+    """
+    limiter = SlidingWindowLimiter(5, 900, name="login")
+    limiter.vernut("ivan@example.com", "1.0:abc")  # не должно бросить
+
+
+def test_zanyatoe_mesto_vozvrashchaetsya_po_odnoy_shtuke(obshchiy):
+    """`vernut` снимает ОДНУ попытку, а не сбрасывает счёт.
+
+    Разница не косметическая. `reset` сносит ключ целиком — вместе со всеми
+    попытками, набранными до нас. Тот, кто умеет вызвать нашу беду (уронить
+    базу), обнулял бы этим весь набранный счёт подбора, и возврат места стал бы
+    способом обойти ограничитель.
+    """
+    limiter = SlidingWindowLimiter(3, 60, name="login")
+    pervaya = limiter.zanyat_mesto("ivan@example.com")
+    limiter.zanyat_mesto("ivan@example.com")
+    moya = limiter.zanyat_mesto("ivan@example.com")
+    assert limiter.proverit_i_zanyat("ivan@example.com"), "порог не сработал вовсе"
+
+    limiter.vernut("ivan@example.com", moya)
+
+    assert not limiter.proverit_i_zanyat("ivan@example.com"), "возвращённое место не освободилось"
+    assert limiter.proverit_i_zanyat("ivan@example.com"), (
+        "вернулась не одна попытка, а больше: чужие, набранные честно, пропали"
+    )
+    assert pervaya is not None
+
+
+def test_u_zanyatogo_mesta_est_srok(obshchiy, monkeypatch):
+    """TTL ставится и на этом пути, а не только при отметке неудачи.
+
+    Ключи наполняются с улицы (адрес почты, хэш адреса посетителя). Ключ без
+    срока в ОБЩЕМ хранилище остаётся там навсегда, и уборка по порогу
+    (`SWEEP_AFTER`) здесь не поможет: хранилище чужое, процессов много,
+    договориться, кто убирает, некому.
+    """
+    postavleno = []
+    nastoyashchiy = obshchiy.expire
+    monkeypatch.setattr(
+        obshchiy, "expire", lambda key, ttl: (postavleno.append(ttl), nastoyashchiy(key, ttl))[1]
+    )
+    SlidingWindowLimiter(5, 900, name="login").zanyat_mesto("ivan@example.com")
+    assert postavleno, "ключ записан без срока — он останется в хранилище навсегда"
+    assert postavleno[0] >= 900, "срок короче окна: блокировка отпустит досрочно"
+
+
+def test_mesta_schitayutsya_obshchim_hranilishchem(obshchiy):
+    """Два процесса делят один счёт и на этом пути — иначе всё затевалось зря."""
+    pervyy = SlidingWindowLimiter(3, 60, name="login")
+    vtoroy = SlidingWindowLimiter(3, 60, name="login")
+
+    assert not pervyy.proverit_i_zanyat("ivan@example.com")
+    assert not pervyy.proverit_i_zanyat("ivan@example.com")
+    # Третье место занимает СОСЕД — и оно обязано добить порог, а не начать
+    # счёт заново.
+    assert not vtoroy.proverit_i_zanyat("ivan@example.com")
+
+    assert pervyy.proverit_i_zanyat("ivan@example.com")
+    assert vtoroy.proverit_i_zanyat("ivan@example.com"), (
+        "второй процесс считает свои места отдельно — порог умножается на число "
+        "процессов, и снаружи это выглядит как работающая защита"
+    )

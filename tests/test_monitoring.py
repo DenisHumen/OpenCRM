@@ -693,15 +693,22 @@ def test_alertmanager_shlyot_signal_tolko_pri_nastoyashchem_rasxozhdenii(tmp_pat
     )
     signaly = tmp_path / "signaly"
 
+    # Пути в сценарий подставляются через `as_posix`, а не как есть. На Linux
+    # это ничего не меняет, а на Windows — единственный способ вообще получить
+    # верный сценарий: `tmp_path` там выглядит `C:\\Users\\...`, а обратная
+    # косая в оболочке экранирует следующий знак. Разделители съедались, и
+    # `render` писал файл с именем `C:UsersdenishumenAppData...` — прямо в
+    # корень репозитория, а проверка краснела на исправном коде.
+    kuda = tmp_path.as_posix()
     scenariy = f"""
 TOKEN=t
 CHAT=c
 API=a
-TEMPLATE={shablon}
-TARGET={tmp_path}/gotovyy.yml
-NOVYY={tmp_path}/gotovyy.yml.new
+TEMPLATE={shablon.as_posix()}
+TARGET={kuda}/gotovyy.yml
+NOVYY={kuda}/gotovyy.yml.new
 sleep() {{ :; }}
-kill() {{ echo HUP >> {signaly}; }}
+kill() {{ echo HUP >> {signaly.as_posix()}; }}
 render() {{
 {render.group(1)}
 }}

@@ -16,6 +16,7 @@ from database.models.mail import MailAccount, MailMessage
 from database.models.warehouse import (
     Product,
     ProductBarcode,
+    ProductPhoto,
     StockMove,
     StockTransfer,
     Warehouse,
@@ -58,6 +59,7 @@ __all__ = [
     "MailMessage",
     "Product",
     "ProductBarcode",
+    "ProductPhoto",
     "StockMove",
     "StockTransfer",
     "Warehouse",

@@ -8,16 +8,35 @@
 агрегата репозитория (`database/repositories/warehouse.py`).
 """
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, UploadFile
+from fastapi.responses import FileResponse
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from core.services import permissions_service, settings_service, warehouse_service
+from core import exceptions as errors
+from core.services import (
+    permissions_service,
+    product_photo_service,
+    settings_service,
+    warehouse_service,
+)
 from database.models import User
 from database.repositories import users as users_repo
 from database.repositories import warehouse as warehouse_repo
 from database.repositories import warehouses as places_repo
 from web.api import schemas
 from web.api.deps import MAX_SEARCH, get_db, require_module, require_perm
+
+class PhotoOrderIn(BaseModel):
+    """Полный порядок снимков товара.
+
+    Целиком, а не «подвинуть этот на одну позицию»: частичная перестановка
+    требует знать, что было до неё, и двое, двигающие соседние снимки, получили
+    бы порядок, которого не задавал ни один.
+    """
+
+    order: list[int]
+
 
 router = APIRouter(
     prefix="/warehouse",
@@ -377,3 +396,100 @@ def revert_transfer(
     moves = places_repo.moves_of_transfer(db, header.id)
     names = places_repo.names_of(db, [header.from_warehouse_id, header.to_warehouse_id])
     return schemas.transfer_out(header, moves, names)
+
+
+# --- снимки товара -------------------------------------------------------------
+#
+# Название опознаёт вещь плохо: «шлейф 40-pin» и «шлейф 40-pin (узкий)» —
+# отличить их на полке можно только глазами. Разбор устройства — в
+# `core/services/product_photo_service.py`.
+
+
+def _photo_out(photo) -> dict:
+    return {
+        "id": photo.id,
+        "original_name": photo.original_name,
+        "size_bytes": photo.size_bytes,
+        "sort_order": photo.sort_order,
+        "created_at": photo.created_at.isoformat() if photo.created_at else None,
+    }
+
+
+@router.get("/products/{product_id}/photos")
+def list_photos(
+    product_id: int,
+    _: User = Depends(require_perm("warehouse", "view")),
+    db: Session = Depends(get_db),
+):
+    warehouse_service.get_product(db, product_id)  # нет товара — честный 404
+    return {"items": [_photo_out(p) for p in product_photo_service.spisok(db, product_id)]}
+
+
+@router.post("/products/{product_id}/photos", status_code=201)
+async def add_photo(
+    product_id: int,
+    file: UploadFile,
+    user: User = Depends(require_perm("warehouse", "edit")),
+    db: Session = Depends(get_db),
+):
+    content = await file.read()
+    photo = product_photo_service.dobavit(
+        db, product_id, user, file.filename or "photo", content
+    )
+    return _photo_out(photo)
+
+
+@router.get("/products/{product_id}/photos/{photo_id}")
+def download_photo(
+    product_id: int,
+    photo_id: int,
+    size: str = Query("view", pattern="^(view|thumb)$"),
+    _: User = Depends(require_perm("warehouse", "view")),
+    db: Session = Depends(get_db),
+):
+    """Отдать снимок. Через приложение, а не статикой.
+
+    Тот же довод, что у файлов клиента: остаток на складе и то, как выглядит
+    деталь, — сведения фирмы, и ссылка на них не должна работать у всякого, кто
+    её узнал. Медиа досок отдаётся напрямую nginx, но там это осознанный обмен:
+    витрину показывают клиенту.
+    """
+    photo = product_photo_service.poluchit(db, product_id, photo_id)
+    put = product_photo_service.put_na_diske(photo, size)
+    if not put.exists():
+        raise errors.NotFoundError("Photo is missing on disk", code="photo_missing")
+    return FileResponse(
+        put,
+        media_type="image/webp",
+        headers={
+            "X-Content-Type-Options": "nosniff",
+            # Имя файла на диске неизменяемо, содержимое под ним — тоже:
+            # правка снимка означает новый снимок. Значит кэшировать можно
+            # надолго, и список товаров перестаёт перекачивать плитки.
+            "Cache-Control": "private, max-age=86400",
+        },
+    )
+
+
+@router.delete("/products/{product_id}/photos/{photo_id}")
+def delete_photo(
+    product_id: int,
+    photo_id: int,
+    user: User = Depends(require_perm("warehouse", "edit")),
+    db: Session = Depends(get_db),
+):
+    product_photo_service.udalit(db, product_id, photo_id, user)
+    return {"message": "Photo deleted"}
+
+
+@router.put("/products/{product_id}/photos/order")
+def reorder_photos(
+    product_id: int,
+    payload: PhotoOrderIn,
+    _: User = Depends(require_perm("warehouse", "edit")),
+    db: Session = Depends(get_db),
+):
+    """Задать порядок. Первый снимок — тот, что показывают везде, где место одно."""
+    warehouse_service.get_product(db, product_id)
+    items = product_photo_service.perestavit(db, product_id, payload.order)
+    return {"items": [_photo_out(p) for p in items]}

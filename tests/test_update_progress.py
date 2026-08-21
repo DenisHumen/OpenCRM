@@ -462,3 +462,115 @@ def test_an_unwritable_storage_does_not_stop_the_container(tmp_path):
 
     assert done.returncode == 0, done.stderr
     assert "жив" in done.stdout
+
+
+# --- причина упавших миграций: одна строка, а не хвост трассировки ------------
+#
+# Хвостом (`tail -n 3`) она бралась раньше, и хвост у трассировки Python — это
+# не беда, а её оформление. Живой прогон на стенде: миграция упала на
+# «Table 'otkat_sled' already exists», а на страницу и в отчёт уехало
+# `] (Background on this error at: https://sqlalche.me/e/20/e3q8)`. Человек
+# читает эту строку вместо той единственной, которая всё объясняет.
+
+#: Настоящий хвост журнала alembic на упавшей миграции. Скопирован с прогона на
+#: стенде: сочинённый был бы проверкой сочинения, а не работы.
+ZHURNAL_UPAVSHEY_MIGRATSII = """INFO  [alembic.runtime.migration] Context impl MySQLImpl.
+INFO  [alembic.runtime.migration] Running upgrade e2f6b81d3c47 -> dead0000otkat
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1963, in _exec_single_context
+    self.dialect.do_execute(
+  File "/usr/local/lib/python3.12/site-packages/pymysql/err.py", line 154, in raise_mysql_exception
+    raise errorclass(errno, errval, sqlstate=sqlstate)
+pymysql.err.OperationalError: (1050, "Table 'otkat_sled' already exists")
+sqlalchemy.exc.OperationalError: (pymysql.err.OperationalError) (1050, "Table 'otkat_sled' already exists")
+[SQL:\x20
+CREATE TABLE otkat_sled (
+\tid INTEGER NOT NULL AUTO_INCREMENT,\x20
+\tmetka VARCHAR(64) NOT NULL,\x20
+\tPRIMARY KEY (id)
+)
+
+]
+(Background on this error at: https://sqlalche.me/e/20/e3q8)
+"""
+
+
+def prichina_migratsii(tmp_path, zhurnal: str) -> str:
+    """Позвать `prichina_migratsii` из entrypoint.sh на заданном журнале.
+
+    Кусок вырезается из файла, а не переписывается сюда: копия разошлась бы с
+    оригиналом в первый же день, и проверять мы стали бы её.
+    """
+    text = _read(ENTRYPOINT)
+    kusok = re.search(r"^prichina_migratsii\(\).*?^\}$", text, re.S | re.M)
+    assert kusok, "в entrypoint.sh не нашлась prichina_migratsii — проверку чинить вместе с ней"
+
+    log = tmp_path / "migrate.log"
+    log.write_text(zhurnal, encoding="utf-8", newline="\n")
+    done = subprocess.run(
+        ["sh", "-s", str(log).replace("\\", "/")],
+        input=kusok.group(0) + '\nprichina_migratsii "$1"\n',
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    return done.stdout
+
+
+@needs_sh
+def test_prichina_migratsiy_eto_sama_oshibka_a_ne_hvost_trassirovki(tmp_path):
+    """Из журнала берётся строка, по которой ПОНЯТНО, что случилось.
+
+    Проверено живым прогоном на стенде: хвостом уезжало
+    `] (Background on this error at: …)` — то есть человек в аварии читал
+    ссылку на документацию SQLAlchemy вместо номера ошибки MySQL и имени
+    таблицы.
+    """
+    vyshlo = prichina_migratsii(tmp_path, ZHURNAL_UPAVSHEY_MIGRATSII)
+
+    assert "1050" in vyshlo and "otkat_sled" in vyshlo, (
+        f"причина не называет ни номера ошибки, ни таблицы: {vyshlo!r}"
+    )
+    assert "Background on this error" not in vyshlo, "уехал хвост оформления, а не беда"
+    assert "\n" not in vyshlo.strip(), "причина в одну строку: она уезжает и в Telegram"
+
+
+@needs_sh
+def test_prichina_ot_samogo_alembika_tozhe_vidna(tmp_path):
+    """`FAILED:` alembic печатает без трассировки вовсе — разошедшиеся головы,
+    ненайденная ревизия. Пропусти мы этот вид, самая частая беда с миграциями
+    осталась бы без объяснения."""
+    vyshlo = prichina_migratsii(
+        tmp_path,
+        "INFO  [alembic.runtime.migration] Context impl MySQLImpl.\n"
+        "FAILED: Can't locate revision identified by 'dead0000otkat'\n",
+    )
+
+    assert "Can't locate revision" in vyshlo, vyshlo
+
+
+@needs_sh
+def test_neponyatnyy_zhurnal_ne_ostavlyaet_cheloveka_ni_s_chem(tmp_path):
+    """Ни трассировки, ни `FAILED:` — отдаём хвост. Хуже, но лучше пустоты."""
+    vyshlo = prichina_migratsii(tmp_path, "что-то пошло не так\nи вот так тоже\n")
+
+    assert vyshlo.strip(), "причина пустая — человек не увидит вообще ничего"
+
+
+def test_prichina_beryotsya_imenno_ottuda_gde_padayut_migratsii():
+    """Помощник обязан быть ПОЗВАН, а не просто существовать.
+
+    Проверено ломанием: проверки выше зеленели и с прежним `tail -n 3` на месте
+    вызова — они щупали помощника напрямую. Такая проверка хуже отсутствующей:
+    она обещает, что беда объяснена, а объясняет её по-прежнему хвост.
+    """
+    text = _read(ENTRYPOINT)
+    stroka = next(
+        (s for s in text.splitlines() if "write_state failed migrate" in s and "MIGRATE_LOG" in s),
+        "",
+    )
+    assert stroka, "не нашлась запись причины упавших миграций"
+    assert "prichina_migratsii" in stroka, (
+        "причина снова берётся хвостом журнала: в отчёт уедет оформление "
+        f"трассировки вместо самой ошибки ({stroka.strip()!r})"
+    )

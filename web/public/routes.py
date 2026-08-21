@@ -477,7 +477,10 @@ def document_status(number: str, request: Request, db: Session = Depends(get_db)
     #
     # Порядок «сначала спросить, потом отметить» даёт ровно `max_attempts`
     # пропущенных обращений; отметка перед проверкой отняла бы у человека одно
-    # из них ни за что.
+    # из них ни за что. Живёт этот порядок ВНУТРИ одной операции
+    # (`proverit_i_zanyat`): двумя вызовами между ними оставалось окно, и пачка
+    # одновременных обращений проходила порог целиком — а перебирают номера
+    # бланков именно пачками, по одному это никому не нужно.
     visitor = client_ip(request)
     # Общего счётчика нет — отвечаем «занято, попробуйте позже», а не пускаем.
     # Довод целиком — в шапке `core/ratelimit.py`: не имея счётчика,
@@ -486,9 +489,8 @@ def document_status(number: str, request: Request, db: Session = Depends(get_db)
     # Здесь это страница, а не JSON, поэтому ошибка ловится на месте: человеку
     # с телефоном у квитанции нужен понятный текст, а не тело ответа.
     try:
-        if document_limiter.is_blocked(visitor):
+        if document_limiter.proverit_i_zanyat(visitor):
             return _closed_page(request, db, status_code=429, busy=True)
-        document_limiter.record_failure(visitor)
     except errors.LimiterUnavailableError:
         return _closed_page(request, db, status_code=503, busy=True)
 
