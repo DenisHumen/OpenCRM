@@ -531,3 +531,52 @@ def test_arhiv_idyot_potokom_a_ne_sobiraetsya_v_pamyati(tmp_path):
     arhiv = zipfile.ZipFile(io.BytesIO(sobrano))
     assert arhiv.namelist() == ["a.bin", "b.bin"]
     assert arhiv.read("b.bin") == krupnyy
+
+
+def test_novaya_doska_srazu_opublikovana(manager_client):
+    """Доску заводят, чтобы показать: другого повода нет.
+
+    Прежде она создавалась выключенной, и это давало лишний шаг ровно там, где
+    он никому не нужен. Хуже: ссылку отправляли с непубликованной доски —
+    посетитель видел отказ, а автор был уверен, что всё отдал.
+    """
+    doska = manager_client.post(f"{API}/boards", json={"title": "Свежая витрина"})
+    assert doska.status_code == 201, doska.text
+    assert doska.json()["is_published"] is True, doska.json()
+
+
+def test_publikaciyu_po_prezhnemu_mozhno_snyat(manager_client):
+    """Обратное действие не потеряно: спрятать доску — осознанное решение."""
+    doska = manager_client.post(f"{API}/boards", json={"title": "Прячется"}).json()
+    snyato = manager_client.patch(
+        f"{API}/boards/{doska['id']}", json={"is_published": False}
+    )
+    assert snyato.status_code == 200, snyato.text
+    assert snyato.json()["is_published"] is False
+
+
+def test_publikaciya_sama_po_sebe_nichego_ne_otkryvaet(manager_client, root_client):
+    """Опубликованная доска БЕЗ ссылки наружу не видна, и это главное.
+
+    Иначе смена умолчания была бы не удобством, а дырой: заводя доску, автор
+    открывал бы её всему свету, ни о чём не попросив.
+    """
+    from core.services import share_service
+    from database.session import SessionLocal
+
+    doska = manager_client.post(f"{API}/boards", json={"title": "Без ссылки"}).json()
+    rabota = manager_client.post(
+        f"{API}/boards/{doska['id']}/works",
+        files={"file": ("kartinka.png", png_bytes(), "image/png")},
+    )
+    # 202, а не 201: файл принят, а превью считается фоном.
+    assert rabota.status_code == 202, rabota.text
+
+    # `work_uid` наружу не отдаётся — это имя каталога на диске, и в ответе ему
+    # делать нечего. Берём из базы.
+    from database.models import Work
+
+    with SessionLocal() as db:
+        rabota_v_baze = db.get(Work, rabota.json()["id"])
+        vidno = share_service.media_is_public(db, rabota_v_baze.work_uid, {})
+    assert vidno is False, "опубликованная доска без ссылки отдала файл наружу"

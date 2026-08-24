@@ -9,8 +9,39 @@ import { useApp } from "../lib/app";
 import { useFailure } from "../lib/failure";
 import { useGuard } from "../lib/guard";
 import { copyText } from "../lib/clipboard";
-import { formatDateTime, formatDuration } from "../lib/format";
+import { formatBytes, formatDateTime, formatDuration } from "../lib/format";
 import { useReference } from "../lib/reference";
+
+/**
+ * Остаток времени коротко: «12 с», «3 мин», «1 ч 20 мин».
+ *
+ * Округляем ВВЕРХ и грубо. Точность здесь не нужна и даже вредна: «осталось
+ * 47 секунд», сменяющееся на «осталось 52 секунды», читается как поломка, а не
+ * как уточнение. Человеку нужен порядок величины — ждать ли рядом или уйти за
+ * чаем.
+ */
+function srok(sekund: number): string {
+  if (sekund < 60) return `${Math.ceil(sekund)} s`;
+  if (sekund < 3600) return `${Math.ceil(sekund / 60)} min`;
+  const chasov = Math.floor(sekund / 3600);
+  const minut = Math.round((sekund % 3600) / 60);
+  return minut ? `${chasov} h ${minut} min` : `${chasov} h`;
+}
+
+/** Файл на пути к серверу: сколько ушло, как быстро и сколько ещё ждать. */
+interface Zaliv {
+  klyuch: string;
+  imya: string;
+  vsego: number;
+  ushlo: number;
+  /** Байт в секунду по последнему отрезку. Ноль — считать ещё не по чему. */
+  skorost: number;
+  /** Секунд до конца. `null` — скорости пока нет, и врать числом не будем. */
+  ostalos: number | null;
+  /** Пошли байты или файл ещё ждёт очереди. */
+  idyot: boolean;
+  otmenit: (() => void) | null;
+}
 
 export function BoardEditor() {
   const { id } = useParams();
@@ -24,6 +55,9 @@ export function BoardEditor() {
   const [pinOpen, setPinOpen] = useState(false);
   const [pinDraft, setPinDraft] = useState("");
   const [dragId, setDragId] = useState<number | null>(null);
+  //: Файлы, которые сейчас едут на сервер. Живут только на экране: сервер о них
+  //: ещё не знает, и после ответа строка исчезает, уступая настоящей карточке.
+  const [zalivki, setZalivki] = useState<Zaliv[]>([]);
   const [linkWork, setLinkWork] = useState<any>(null);
   const [cropWork, setCropWork] = useState<any>(null);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -152,12 +186,83 @@ export function BoardEditor() {
 
   const uploadFiles = async (list: FileList | null) => {
     if (!list) return;
-    for (const file of Array.from(list)) {
+    const fayly = Array.from(list);
+    if (fayly.length === 0) return;
+
+    // Заглушки появляются СРАЗУ и на все файлы, ещё до первого байта.
+    //
+    // Это и есть главная правка. Прежде между «выбрал файл» и «карточка
+    // появилась» не происходило ничего видимого: на большом файле или медленном
+    // канале человек не знал, идёт ли загрузка вообще, и жал ещё раз. Пустое
+    // место — худший из возможных ответов, потому что читается как «ничего не
+    // случилось».
+    const novye: Zaliv[] = fayly.map((file, nomer) => ({
+      klyuch: `${Date.now()}-${nomer}-${file.name}`,
+      imya: file.name,
+      vsego: file.size,
+      ushlo: 0,
+      skorost: 0,
+      ostalos: null,
+      idyot: false,
+      otmenit: null,
+    }));
+    setZalivki((bylo) => [...bylo, ...novye]);
+
+    // По одному, а не разом: параллельная заливка десяти файлов делит канал на
+    // десять и каждый ползёт вдесятеро дольше. Ждущие показаны «в очереди» —
+    // это честный ответ, а не застывшая на нуле полоса.
+    for (let nomer = 0; nomer < fayly.length; nomer++) {
+      const file = fayly[nomer];
+      const klyuch = novye[nomer].klyuch;
+      // Скорость считаем по ПОСЛЕДНЕМУ отрезку, а не по среднему с начала:
+      // среднее помнит медленный разгон и до конца врёт про остаток.
+      let bylo_vremya = performance.now();
+      let bylo_ushlo = 0;
+
       try {
-        const work = await api.upload(`/boards/${id}/works`, file);
-        setBoard((prev: any) => ({ ...prev, works: [...prev.works, work], works_count: prev.works_count + 1 }));
+        const zalivka = api.zagruzka<any>(`/boards/${id}/works`, file, ({ ushlo, vsego }) => {
+          const teper = performance.now();
+          const proshlo = (teper - bylo_vremya) / 1000;
+          setZalivki((spisok) =>
+            spisok.map((z) => {
+              if (z.klyuch !== klyuch) return z;
+              // Отрезки короче четверти секунды пропускаем: на них скорость
+              // скачет от сотни килобайт до десятков мегабайт, и число под
+              // полосой мельтешит так, что читать его нельзя.
+              if (proshlo < 0.25) return { ...z, ushlo, vsego, idyot: true };
+              const skorost = (ushlo - bylo_ushlo) / proshlo;
+              const ostatok = vsego - ushlo;
+              return {
+                ...z,
+                ushlo,
+                vsego,
+                idyot: true,
+                skorost,
+                ostalos: skorost > 0 ? ostatok / skorost : null,
+              };
+            }),
+          );
+          if (proshlo >= 0.25) {
+            bylo_vremya = teper;
+            bylo_ushlo = ushlo;
+          }
+        });
+
+        setZalivki((spisok) =>
+          spisok.map((z) => (z.klyuch === klyuch ? { ...z, otmenit: zalivka.otmenit } : z)),
+        );
+
+        const work = await zalivka.gotovo;
+        setBoard((prev: any) => ({
+          ...prev,
+          works: [...prev.works, work],
+          works_count: prev.works_count + 1,
+        }));
       } catch (e) {
-        toastError(e);
+        // Отменил сам — не беда, и ругаться незачем.
+        if ((e as any)?.code !== "canceled") toastError(e);
+      } finally {
+        setZalivki((spisok) => spisok.filter((z) => z.klyuch !== klyuch));
       }
     }
   };
@@ -253,6 +358,54 @@ export function BoardEditor() {
       <div className="editor-layout">
         <div style={{ flex: 1, minWidth: 0 }}>
           <div className="works-grid">
+            {/* Заглушки идут ПЕРВЫМИ, а не в хвосте списка.
+                Человек только что нажал «загрузить» и смотрит туда, куда
+                смотрел, — в начало сетки. Дописанная в конец полоса на доске из
+                сорока работ оказывается за краем экрана, и вопрос «грузится ли
+                вообще» остаётся без ответа ровно так же, как без неё. */}
+            {zalivki.map((z) => {
+              const dolya = z.vsego > 0 ? Math.min(1, z.ushlo / z.vsego) : 0;
+              return (
+                <div key={z.klyuch} className="work-card work-card--zaliv">
+                  <div className="work-media work-media--zaliv">
+                    <div className="zaliv-polosa">
+                      <div className="zaliv-polosa__hod" style={{ width: `${dolya * 100}%` }} />
+                    </div>
+                    <div className="zaliv-cifry">
+                      <span>{z.idyot ? t("uploading") : t("uploadQueued")}</span>
+                      {z.idyot && (
+                        <span>
+                          {formatBytes(z.ushlo)} / {formatBytes(z.vsego)}
+                        </span>
+                      )}
+                      {/* Скорость и остаток показываем ТОЛЬКО когда они
+                          посчитаны. Ноль под полосой читается как «встало», а
+                          «осталось 0 с» на пятисотмегабайтном файле — прямая
+                          ложь. Молчание честнее. */}
+                      {z.idyot && z.skorost > 0 && (
+                        <span>{formatBytes(z.skorost)}/s</span>
+                      )}
+                      {z.idyot && z.ostalos !== null && z.ostalos > 1 && (
+                        <span>{t("uploadLeft", { time: srok(z.ostalos) })}</span>
+                      )}
+                    </div>
+                    {z.otmenit && (
+                      <button
+                        type="button"
+                        className="zaliv-otmena"
+                        title={t("uploadCancel")}
+                        onClick={() => z.otmenit?.()}
+                      >
+                        <Icon name="x" size={14} />
+                      </button>
+                    )}
+                  </div>
+                  <div className="work-foot">
+                    <span className="zaliv-imya">{z.imya}</span>
+                  </div>
+                </div>
+              );
+            })}
             {board.works.map((work: any) => (
               <div
                 key={work.id}

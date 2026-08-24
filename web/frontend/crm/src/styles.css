@@ -1053,6 +1053,69 @@ select:disabled {
 .work-card:hover { border-color: var(--border-hover); }
 .work-card.drag-over { border-color: var(--accent); }
 .work-media { position: relative; background: var(--surface-2); }
+
+/* --- заглушка загружаемого файла ------------------------------------------
+   Серая плитка ровно того же размера, что и будущая карточка: когда файл
+   долетит, на её месте окажется картинка, и сетка не дрогнет. Прыгающая при
+   каждой загрузке вёрстка сама по себе читается как сбой. */
+.work-card--zaliv { border-style: dashed; }
+.work-media--zaliv {
+  min-height: 120px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 16px 14px;
+  background: var(--surface-2);
+}
+.zaliv-polosa {
+  width: 100%;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--border);
+  overflow: hidden;
+}
+.zaliv-polosa__hod {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 999px;
+  /* Плавно, но коротко: длинный переход отстаёт от настоящего хода, и полоса
+     доезжает до конца заметно позже, чем файл. */
+  transition: width 0.2s linear;
+}
+.zaliv-cifry {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 4px 10px;
+  font-size: 11.5px;
+  color: var(--faint);
+  text-align: center;
+}
+.zaliv-otmena {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--faint);
+  cursor: pointer;
+}
+.zaliv-otmena:hover { color: var(--text); }
+.zaliv-imya {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--faint);
+}
 .work-media img { width: 100%; height: auto; display: block; min-height: 120px; object-fit: cover; }
 .work-foot { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-top: 1px solid var(--line); color: var(--faint); }
 .work-name { flex: 1; color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; background: none; border: none; text-align: left; padding: 0; font-family: var(--sans); cursor: text; }
