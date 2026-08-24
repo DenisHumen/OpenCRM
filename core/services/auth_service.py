@@ -117,19 +117,36 @@ def logout(db: Session, token: str) -> None:
 
 
 def get_user_by_session(db: Session, token: str) -> User | None:
-    session = users_repo.get_session_by_hash(db, tokens.sha256_hex(token))
-    if session is None or session.expires_at < now_utc():
+    """Кто пришёл. `None` — не пустить.
+
+    **Самый частый запрос в системе**, поэтому он ровно один: сессия и её
+    хозяин берутся одним соединением (`get_session_with_user`). Пока их было
+    два, два круга к базе платились на каждом обращении вошедшего и умножались
+    на число картинок на странице — витрина на тридцать плиток стоила
+    шестидесяти кругов только за проверку «кто пришёл».
+    """
+    para = users_repo.get_session_with_user(db, tokens.sha256_hex(token))
+    if para is None:
         return None
-    user = users_repo.get_by_id(db, session.user_id)
-    if user is None or user.status != STATUS_ACTIVE:
+    session, user = para
+    if session.expires_at < now_utc():
+        return None
+    if user.status != STATUS_ACTIVE:
         return None
     # присутствие: обновляем last_seen не чаще раза в минуту, чтобы не писать на каждый
     # запрос, но достаточно часто для индикатора «в сети». last_seen на пользователе
     # переживает logout — так остаётся «последний раз в сети».
+    #
+    # Отметка ставится ТОЛЬКО пользователю. У сессии колонка `last_seen_at` тоже
+    # есть, и в неё писали то же значение — но не читал его никто: перебором по
+    # всему дереву (py, ts, tsx) наружу уезжает только `users.last_seen_at`
+    # (`web/api/schemas.py`), а «в сети» считает `core/utils.is_online` по нему
+    # же. То есть это была вторая запись в строку, которую никто никогда не
+    # спрашивал, — на пути, который выполняется чаще всех прочих. Саму колонку не
+    # сносим: миграция ради мёртвого поля дороже самого поля.
     now = now_utc()
     if user.last_seen_at is None or (now - user.last_seen_at).total_seconds() > PRESENCE_TOUCH_SECONDS:
         user.last_seen_at = now
-        session.last_seen_at = now
     return user
 
 

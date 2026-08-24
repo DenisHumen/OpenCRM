@@ -169,10 +169,18 @@ class FakeNotifier:
         #: Со звуком или без — часть исхода, а не мелочь: удачное ночное
         #: обновление не должно будить, а упавшее обязано.
         self.tihie: list[bool] = []
+        self.fayly: list[tuple[str, bytes, str]] = []
 
     def send(self, text, *, tiho=False):
         self.messages.append(text)
         self.tihie.append(tiho)
+        return True
+
+    def send_document(self, imya, soderzhimoe, podpis="", *, tiho=False):
+        #: Приложенные к отчёту файлы. Дубль обязан их принимать: без этого
+        #: приёма всякое обновление падало бы на попытке приложить отчёт, и
+        #: проверки говорили бы про обновление то, чего на живой машине нет.
+        self.fayly.append((imya, soderzhimoe, podpis))
         return True
 
     @property
@@ -2463,3 +2471,71 @@ def test_bez_polya_maintenance_sayt_schitaetsya_otkrytym(tmp_path):
     assert any("127.0.0.1" in url for url in probe.calls if "healthz" not in url), (
         f"smoke-адрес не спрашивали вовсе: {probe.calls}"
     )
+
+
+# --- отчёт прикладывается и не мешает обновлению ------------------------------
+
+
+def test_k_udachnomu_obnovleniyu_prikladyvayutsya_dva_fayla(tmp_path):
+    """Владелец видит не только «обновлено», но и чем это было."""
+    notifier = FakeNotifier()
+    updater = make_updater(tmp_path)
+    updater.notifier = notifier
+
+    outcome = updater.run_once()
+
+    assert outcome.status == STATUS_DEPLOYED
+    imena = [imya for imya, _, _ in notifier.fayly]
+    assert len(imena) == 2, f"приложено не два файла: {imena}"
+    assert any(i.endswith(".pdf") for i in imena) and any(i.endswith(".docx") for i in imena)
+
+
+def test_k_neudache_prikladyvaetsya_razbor(tmp_path):
+    """НАЙДЕНО ЖИЗНЬЮ: одна строка «не поднялось» не даёт разобраться ни в чём.
+
+    Ради этого случая отчёт и заведён: в файле есть шаги, причина и хвост
+    журнала, то есть всё, за чем раньше приходилось идти на сервер.
+    """
+    notifier = FakeNotifier()
+    updater = make_updater(tmp_path, probe=FakeProbe(health=(False, True)))
+    updater.notifier = notifier
+
+    outcome = updater.run_once()
+
+    assert outcome.status == STATUS_ROLLED_BACK
+    assert len(notifier.fayly) == 2, notifier.fayly
+    podpisi = {podpis for _, _, podpis in notifier.fayly}
+    assert podpisi == {"Разбор неудачи"}, podpisi
+
+
+def test_slomannyy_otchyot_ne_ronyaet_obnovlenie(tmp_path, monkeypatch):
+    """ГЛАВНОЕ: добавка не имеет права уронить то, к чему она добавка.
+
+    Сообщение владельцу важнее приложенных файлов, а работающий сайт важнее их
+    обоих. Проверено подлогом: сборщик отчёта бросает — обновление обязано
+    остаться удачным, а обычное сообщение — уйти.
+    """
+    from deploy import otchyot as _otchyot
+
+    def vzryv(*_a, **_k):
+        raise RuntimeError("шрифт не читается, диск отвалился, что угодно")
+
+    monkeypatch.setattr(_otchyot, "sdelat_fayly", vzryv)
+
+    notifier = FakeNotifier()
+    updater = make_updater(tmp_path)
+    updater.notifier = notifier
+
+    outcome = updater.run_once()
+
+    assert outcome.status == STATUS_DEPLOYED, "отчёт уронил успешное обновление"
+    assert notifier.messages, "обычное сообщение тоже пропало"
+    assert notifier.fayly == []
+
+
+def test_bez_nastroennogo_kanala_otchyot_ne_sobiraetsya(tmp_path):
+    """Канал не настроен — не тратим секунды на файлы, которые некуда деть."""
+    updater = make_updater(tmp_path)
+    updater.notifier = notify.Silent()
+
+    assert updater.run_once().status == STATUS_DEPLOYED

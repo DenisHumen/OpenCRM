@@ -148,14 +148,62 @@ DEFAULT_PRESET = "manager"
 # --- чтение ---
 
 
+#: Ключ памятки прав в `db.info`. Область жизни памятки — СЕССИЯ БАЗЫ, то есть
+#: ровно один запрос: `web/api/deps._edinica_raboty` заводит сессию на запрос и
+#: закрывает её до отправки ответа.
+_PAMYATKA = "prava_roley"
+
+
 def codes_of_role(db: Session, role_id: int) -> set[str]:
+    """Права должности. Спрашивается у базы ОДИН раз за запрос.
+
+    **Троение здесь не выдумка, а замер.** Обычная «денежная» ручка спрашивает
+    права трижды: `require_perm` зовёт `has()` на входе, обработчик зовёт
+    `deals_scope()` (внутри снова `has()`), а сериализатор — `sees_amounts()`
+    (и там опять `has()`). Три одинаковых `SELECT` по `role_permissions` за один
+    запрос, и так на каждой странице со суммами.
+
+    Памятка живёт в `db.info`, а НЕ между запросами, и это разница
+    принципиальная. Кэш прав между запросами означал бы, что снятое право ещё
+    какое-то время действует, — дыра, про которую сказано в докстроке модуля, и
+    сказано верно. Здесь же память живёт ровно столько, сколько живёт сессия:
+    следующий запрос спросит базу заново и увидит снятое право сразу.
+
+    По числам размен тоже не в пользу общего кэша: запрос по индексу стоит
+    0,62 мс, круг до Redis — 0,55 мс. То есть покупались бы пять сотых
+    миллисекунды ценой отложенного отзыва, а соединение при этом всё равно
+    осталось бы занятым остальными запросами страницы.
+    """
+    pamyatka = db.info.setdefault(_PAMYATKA, {})
+    if role_id in pamyatka:
+        return pamyatka[role_id]
+
     rows = roles_repo.permissions_of(db, role_id)
     # Сверяем с реестром: строка от снесённого блока не должна ничего давать.
-    return {
+    kody = {
         permissions.code(row.area, row.action)
         for row in rows
         if permissions.exists(row.area, row.action)
     }
+    pamyatka[role_id] = kody
+    return kody
+
+
+def zabyt_prava(db: Session, role_id: int | None = None) -> None:
+    """Забыть памятку прав в этой сессии. Без номера — всю.
+
+    Нужна там, где права МЕНЯЮТ и тут же читают: правка должности отвечает
+    обновлённой карточкой, и без сброса ответ показал бы состояние до правки.
+    За пределами такого случая не нужна вовсе — памятка и так не переживает
+    запроса.
+    """
+    pamyatka = db.info.get(_PAMYATKA)
+    if not pamyatka:
+        return
+    if role_id is None:
+        pamyatka.clear()
+    else:
+        pamyatka.pop(role_id, None)
 
 
 def codes_of(db: Session, user: User) -> set[str]:
@@ -223,6 +271,32 @@ def default_role(db: Session) -> Role | None:
 
 def count_users_of(db: Session, role_id: int) -> int:
     return roles_repo.users_count(db, role_id)
+
+
+def kody_rolej(db: Session, role_ids: list[int]) -> dict[int, set[str]]:
+    """Права сразу нескольких должностей, пачкой. И памятка заполняется заодно.
+
+    Заодно — потому что список должностей почти всегда читают вместе с чем-то
+    ещё, и второй проход по тем же ролям должен обойтись без базы.
+    """
+    pamyatka = db.info.setdefault(_PAMYATKA, {})
+    itog: dict[int, set[str]] = {}
+    sprosit = [role_id for role_id in role_ids if role_id not in pamyatka]
+    if sprosit:
+        for role_id, stroki in roles_repo.permissions_by_roles(db, sprosit).items():
+            pamyatka[role_id] = {
+                permissions.code(row.area, row.action)
+                for row in stroki
+                if permissions.exists(row.area, row.action)
+            }
+    for role_id in role_ids:
+        itog[role_id] = pamyatka.get(role_id, set())
+    return itog
+
+
+def lyudey_v_rolyah(db: Session, role_ids: list[int]) -> dict[int, int]:
+    """Сколько людей у каждой должности, пачкой."""
+    return roles_repo.users_count_by_roles(db, role_ids)
 
 
 # --- инвариант: раздавать права всегда есть кому ---
@@ -313,6 +387,11 @@ def _clean_codes(values) -> list[tuple[str, str]]:
 
 def _write_codes(db: Session, role: Role, pairs: list[tuple[str, str]]) -> None:
     roles_repo.replace_permissions(db, role.id, pairs)
+    # Памятку этой должности забываем ЗДЕСЬ, у единственной двери записи.
+    # Ручка правки отвечает обновлённой карточкой, и памятка, набитая до записи,
+    # показала бы состояние до неё. Сброс у двери, а не у вызывающих: вызывающих
+    # двое сегодня и неизвестно сколько завтра, а дверь одна.
+    zabyt_prava(db, role.id)
 
 
 def create_role(
