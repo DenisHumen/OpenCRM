@@ -61,12 +61,18 @@ def matrix(_: User = Depends(require_staff)):
 @router.get("")
 def list_roles(_: User = Depends(require_perm("roles", "view")), db: Session = Depends(get_db)):
     roles = permissions_service.list_roles(db)
+    # Пачкой, а не по строке: было плюс два запроса на КАЖДУЮ должность (права и
+    # число людей), то есть двадцать три запроса на десяти ролях вместо пяти.
+    # Наклон замерен сторожем формы — `tests/test_speed.py`.
+    nomera = [role.id for role in roles]
+    kody = permissions_service.kody_rolej(db, nomera)
+    lyudey = permissions_service.lyudey_v_rolyah(db, nomera)
     return {
         "items": [
             schemas.role_out(
                 role,
-                codes=sorted(permissions_service.codes_of_role(db, role.id)),
-                users_count=permissions_service.count_users_of(db, role.id),
+                codes=sorted(kody.get(role.id, set())),
+                users_count=lyudey.get(role.id, 0),
             )
             for role in roles
         ]

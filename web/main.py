@@ -1,5 +1,7 @@
 import mimetypes
 from contextlib import asynccontextmanager
+
+from anyio import to_thread
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -29,7 +31,7 @@ from database import models  # noqa: F401 — регистрирует моде�
 from database import schema_check
 from database.models import User
 from database.repositories import users as users_repo
-from database.session import Base, SessionLocal, engine
+from database.session import Base, SessionLocal, engine, predel_odnovremennyh
 from web.api.routes import (
     arcade,
     audit,
@@ -167,6 +169,22 @@ def _assert_schema_matches():
     )
 
 
+def nastroit_predel_potokov(workers: int) -> int:
+    """Выставить предел одновременных обработчиков. Возвращает выставленное.
+
+    Отдельной функцией, а не строкой внутри `lifespan`, ровно затем, чтобы её
+    можно было ПРОВЕРИТЬ. Предел живёт в цикле событий: `anyio.run` из теста
+    заводит свой цикл со своим пределом и о выставленном в приложении не знает.
+    Значит проверять надо вызов, а не наблюдение со стороны, — а вызов сначала
+    должен иметь имя.
+
+    Разбор самих чисел — в докстроке вызывающего и в `database.session.razmer_pula`.
+    """
+    predel = predel_odnovremennyh(workers)
+    to_thread.current_default_thread_limiter().total_tokens = predel
+    return predel
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
@@ -180,6 +198,25 @@ async def lifespan(app: FastAPI):
         )
     for message in settings.config_warnings():
         print(f"[opencrm] ВНИМАНИЕ: {message}")
+
+    # Одновременных обработчиков — ровно столько, сколько соединений к базе.
+    #
+    # Ручки у нас синхронные (`def`, не `async def`), и Starlette уводит такую в
+    # поток. Предел потоков anyio по умолчанию СОРОК, а соединений у процесса
+    # было десять — четырёхкратный перебор. Лишние обработчики стоят в очереди
+    # за соединением до `pool_timeout` (тридцать секунд), и кто не дождался,
+    # получает не медленный ответ, а `QueuePool limit ... reached` и пятисотую.
+    #
+    # Так и вышло на боевом сервере 24 августа 2026: витрина доски с тремя
+    # десятками плиток — пачка запросов `/media/<uid>/thumb.webp` разом, каждая
+    # плитка стоит трёх вопросов к базе. Ответ вырос до восьми секунд (это те,
+    # кто соединение дождался), часть плиток отдала пятисотую, и всё «само
+    # прошло», когда пачка кончилась.
+    #
+    # Ограничивать надо ЗДЕСЬ, а не увеличивать пул до сорока на всякий случай:
+    # соединение стоит базе памяти, а `max_connections` у mysql:8.0 — 151 на
+    # всех, включая того, кто пришёл чинить. Разбор чисел — у `razmer_pula`.
+    nastroit_predel_potokov(settings.workers)
 
     for directory in (
         settings.media_dir,

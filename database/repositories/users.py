@@ -135,6 +135,30 @@ def get_session_by_hash(db: Session, token_hash: str) -> UserSession | None:
     return db.scalar(select(UserSession).where(UserSession.token_hash == token_hash))
 
 
+def get_session_with_user(db: Session, token_hash: str) -> tuple[UserSession, User] | None:
+    """Сессия ВМЕСТЕ с хозяином — одним запросом. `None` — сессии нет.
+
+    **Это самый частый запрос в системе.** Он выполняется на КАЖДОМ обращении
+    вошедшего человека: на каждой странице, на каждой плитке витрины, на каждом
+    фото товара. Пока их было два (сессия по отпечатку, потом хозяин по номеру),
+    два круга к базе платились всегда и умножались на число картинок: витрина на
+    тридцать плиток — это шестьдесят кругов только за проверку «кто пришёл».
+
+    Соединение, а не два запроса, здесь ничего не меняет по смыслу: сессия без
+    хозяина и раньше означала «не пустить» — служба проверяла `user is None` и
+    отвечала отказом. Разница только в числе кругов.
+
+    Возвращаем ОБА объекта, а не одного хозяина: у сессии спрашивают срок
+    (`expires_at`), и второй запрос за ним свёл бы выигрыш на нет.
+    """
+    stroka = db.execute(
+        select(UserSession, User).join(User, User.id == UserSession.user_id).where(
+            UserSession.token_hash == token_hash
+        )
+    ).first()
+    return (stroka[0], stroka[1]) if stroka is not None else None
+
+
 def delete_session(db: Session, session: UserSession) -> None:
     db.delete(session)
 

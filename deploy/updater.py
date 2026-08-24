@@ -59,7 +59,7 @@ import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from deploy import notify
+from deploy import notify, otchyot
 from deploy.config import UpdateConfig
 from deploy.github import CHECKS_FAILURE, CHECKS_PENDING, GitHub, GitHubError
 # _atomic_write, а не своя запись: гарантия ровно та же, что у состояния демона —
@@ -262,7 +262,24 @@ class Updater:
         log=None,
     ) -> None:
         self.config = config
-        self.log = log or (lambda _message: None)
+        # Журнал копится в памяти РАДИ ОТЧЁТА: `log` сегодня только отдаёт строку
+        # наружу и нигде её не держит, а отчёт о неудаче без вырезок из журнала
+        # — это та же строчка «не поднялось», ради замены которой он и заведён.
+        #
+        # Кольцом на `STROK_ZHURNALA * 3`, а не списком без предела: обновление
+        # с застрявшей сборкой пишет тысячи строк, и держать их все в процессе,
+        # который живёт на боевой машине, незачем. Тройной запас — чтобы в отчёт
+        # попал именно хвост, а не всё подряд.
+        self._zhurnal: list[str] = []
+        vneshniy = log or (lambda _message: None)
+
+        def zapomnit(soobshchenie: str) -> None:
+            self._zhurnal.append(str(soobshchenie))
+            if len(self._zhurnal) > otchyot.STROK_ZHURNALA * 3:
+                del self._zhurnal[: len(self._zhurnal) - otchyot.STROK_ZHURNALA * 3]
+            vneshniy(soobshchenie)
+
+        self.log = zapomnit
         self.journal = journal or Journal(config.state_file, config.history_file)
         self.github = github or GitHub(config.repo, config.github_token)
         self.shell = shell or Shell(log=self.log)
@@ -1427,6 +1444,31 @@ class Updater:
             )
 
         self.notifier.send("\n".join(stroki), tiho=tiho and not upali)
+        self._prilozhit_otchyot(outcome, tiho=tiho and not upali)
+
+    def _prilozhit_otchyot(self, outcome: Outcome, *, tiho: bool) -> None:
+        """Приложить к переписке PDF и Word с разбором того, что произошло.
+
+        **Под `try/except` целиком, и это не перестраховка.** Отчёт — приятная
+        добавка; сообщение владельцу важнее её, а работающий сайт важнее их
+        обоих. Собрался отчёт наполовину — уйдёт половина; не собрался вовсе —
+        останется обычное сообщение, ровно как было до отчётов. Единственное,
+        чего эта добавка не имеет права сделать, — уронить обновление, которое
+        уже прошло.
+
+        Молчим и о собственной беде тоже: писать в телеграм «не смог сделать
+        отчёт» значит слать второе сообщение вместо содержания. Строка уходит в
+        журнал демона, и этого достаточно.
+        """
+        if not getattr(self.notifier, "configured", False):
+            return
+        try:
+            fayly = otchyot.sdelat_fayly(outcome, self.config, self._zhurnal)
+            podpis = "Разбор обновления" if outcome.ok else "Разбор неудачи"
+            for imya, soderzhimoe in fayly:
+                self.notifier.send_document(imya, soderzhimoe, podpis, tiho=tiho)
+        except Exception as beda:  # noqa: BLE001 — добавка не роняет обновление
+            self.log(f"отчёт об обновлении не собрался: {beda}")
 
     def _sam_ustarel(self, outcome: Outcome) -> bool:
         """Написано ли это сообщение кодом, который обновление только что заменило.

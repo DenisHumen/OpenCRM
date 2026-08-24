@@ -53,6 +53,44 @@ def permissions_of(db: Session, role_id: int) -> list[RolePermission]:
     return list(db.scalars(select(RolePermission).where(RolePermission.role_id == role_id)))
 
 
+def permissions_by_roles(db: Session, role_ids: list[int]) -> dict[int, list[RolePermission]]:
+    """Права сразу нескольких должностей. Один запрос на весь список.
+
+    **Список должностей спрашивал по запросу на строку**, и наклон был ровно
+    плюс два на роль: права и число людей. Десять должностей — двадцать три
+    запроса вместо пяти; замерено сторожем формы в `tests/test_speed.py`.
+
+    Образец, как надо, стоит рядом — `documents_repo.lines_by_documents`.
+    """
+    if not role_ids:
+        return {}
+    itog: dict[int, list[RolePermission]] = {role_id: [] for role_id in role_ids}
+    stroki = db.scalars(select(RolePermission).where(RolePermission.role_id.in_(role_ids)))
+    for stroka in stroki:
+        itog.setdefault(stroka.role_id, []).append(stroka)
+    return itog
+
+
+def users_count_by_roles(db: Session, role_ids: list[int]) -> dict[int, int]:
+    """Сколько людей у каждой должности. Один запрос на весь список.
+
+    Ноль для должности без людей приходит из заготовки, а не из базы: `GROUP BY`
+    пустых групп не возвращает, и без заготовки такая должность выпала бы из
+    ответа вовсе.
+    """
+    if not role_ids:
+        return {}
+    itog = {role_id: 0 for role_id in role_ids}
+    stroki = db.execute(
+        select(User.role_id, func.count())
+        .where(User.role_id.in_(role_ids))
+        .group_by(User.role_id)
+    )
+    for role_id, skolko in stroki:
+        itog[role_id] = int(skolko)
+    return itog
+
+
 def replace_permissions(db: Session, role_id: int, pairs: list[tuple[str, str]]) -> None:
     """Переписать набор прав роли целиком.
 

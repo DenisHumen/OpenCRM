@@ -142,24 +142,49 @@ class MaintenanceMode:
             await self.app(scope, receive, send)
             return
 
+        # **Соединение к базе отпускаем ДО того, как позвать приложение.**
+        #
+        # Стояло здесь наоборот: `await self.app(...)` вызывался ВНУТРИ открытой
+        # сессии, и на обычном пути (режим выключен — то есть всегда) посредник
+        # держал соединение весь запрос целиком. Значит каждый запрос стоил ДВУХ
+        # соединений: одно посреднику, второе обработчику через `get_db`.
+        #
+        # Это не «в полтора раза теснее», это ВЗАИМНАЯ БЛОКИРОВКА. Пачка из
+        # десяти запросов при пуле на десять: все десять занимают по первому
+        # соединению, все десять ждут второго — и ждут `pool_timeout`, тридцать
+        # секунд, после чего получают `QueuePool limit ... reached` и пятисотую.
+        #
+        # Так и вышло на боевом сервере 24 августа 2026: витрина доски открыла
+        # три десятка плиток разом (`/media/` проксируется в приложение), ответ
+        # сайта вырос до восьми секунд, часть плиток отдала пятисотую, и всё
+        # «само прошло», когда пачка кончилась.
+        #
+        # Набор такого не ловит по устройству: он ходит по одному запросу за раз,
+        # и второму соединению не с кем соперничать. Стережёт это
+        # `tests/test_pool_sizing.py` — он считает занятые соединения ВНУТРИ
+        # запроса.
         db = SessionLocal()
         try:
             mode = maintenance_mode.state(db)
-            if not mode["enabled"]:
-                await self.app(scope, receive, send)
-                return
-            # Режим включён: root проходит в CRM как обычно, остальные — на
-            # заглушку. На клиентские страницы не проходит никто.
-            if not path.startswith(MAINTENANCE_PUBLIC_PREFIXES):
-                token = request.cookies.get(SESSION_COOKIE)
-                user = auth_service.get_user_by_session(db, token) if token else None
-                if user is not None and user.role == ROLE_ROOT:
-                    await self.app(scope, receive, send)
-                    return
-            note = mode["note"]
-            locale = settings_service.get_all(db).get("showcase_locale", "en")
+            vklyuchen = bool(mode["enabled"])
+            propustit = False
+            note = ""
+            locale = "en"
+            if vklyuchen:
+                # Режим включён: root проходит в CRM как обычно, остальные — на
+                # заглушку. На клиентские страницы не проходит никто.
+                if not path.startswith(MAINTENANCE_PUBLIC_PREFIXES):
+                    token = request.cookies.get(SESSION_COOKIE)
+                    user = auth_service.get_user_by_session(db, token) if token else None
+                    propustit = user is not None and user.role == ROLE_ROOT
+                note = mode["note"]
+                locale = settings_service.get_all(db).get("showcase_locale", "en")
         finally:
             db.close()
+
+        if not vklyuchen or propustit:
+            await self.app(scope, receive, send)
+            return
 
         if path.startswith("/api/"):
             response: Response = JSONResponse(

@@ -20,6 +20,7 @@
 Каждый сторож проверен на покраснение: снимаешь починку — он падает.
 """
 
+import itertools
 from datetime import datetime
 
 import pytest
@@ -497,3 +498,291 @@ def test_smena_preseta_ne_zavisit_ot_chisla_zayavok(root_client):
         f"{s_odnoy} при одной — счёт растёт от числа заявок. Запас тут "
         f"тринадцатикратный: запрос на заявку дал бы +24"
     )
+
+
+# --- потолок числа запросов на ручку -----------------------------------------
+#
+# **Без этой таблицы всякая починка скорости отменяется одной строкой в чужом
+# коммите, и заметить это нечем.** Ни время ответа на пустой базе, ни сам ответ
+# не изменятся: лишний запрос на строку виден только счётом. Ровно так и
+# накопились нынешние числа — никто не добавлял двадцать пять запросов на
+# сводку разом, их добавляли по одному.
+#
+# Потолок, а не точное равенство: проверка обязана краснеть на РОСТЕ и молчать
+# на починке. Иначе всякое улучшение начиналось бы с правки сторожа, и сторож
+# перестал бы что-либо значить.
+#
+# Числа сняты замером на этой же обвязке (root, кэши прогреты) и округлены вверх
+# С ЗАПАСОМ. Запас здесь не небрежность, а необходимость: база у набора ОБЩАЯ, и
+# часть ручек стоит дороже от чужих данных — `/deals/board` спрашивает по
+# запросу на ЭТАП воронки, а этапы заводят соседние файлы. Точность до единицы
+# сделала бы сторожа мигающим, то есть выключенным.
+#
+# Поэтому здесь ловится СКАЧОК (запрос на строку, забытая пачечная загрузка), а
+# не единица. За тем, что счёт не растёт С ЧИСЛОМ СТРОК, следят отдельные
+# проверки выше — они устойчивы к чужим данным по построению и потому строже.
+POTOLKI = {
+    "/auth/me": 3,
+    "/modules": 5,
+    "/workspace": 4,
+    "/tasks/summary": 7,
+    "/system/storage": 5,
+    "/clients?per_page=50": 5,
+    "/deals?per_page=50": 8,
+    "/deals/board": 16,
+    "/documents?per_page=50": 5,
+    "/staff": 5,
+    "/finance/operations?per_page=50": 6,
+    "/reports/revenue": 7,
+    "/audit?per_page=50": 5,
+}
+
+#: `/dashboard` и `/search` в таблице НЕ стоят, и это не забывчивость.
+#:
+#: Их цена растёт с ДАННЫМИ: сводка спрашивает по блокам, поиск — по видам
+#: найденного. На общей базе набора соседний файл заводит доску, и число
+#: подскакивает, хотя код не менялся. Абсолютный потолок на такой ручке —
+#: мигающий сторож, то есть выключенный.
+#:
+#: Стерегутся они иначе и строже: проверками формы ниже — «цена не растёт с
+#: числом найденного». Такая проверка заводит данные сама и к чужим равнодушна
+#: по построению.
+
+_schyotchik_metok = itertools.count(1)
+
+
+def uniq_metka() -> str:
+    """Метка, по которой ищет проверка выше. Своя на каждый заход."""
+    return f"{next(_schyotchik_metok):04d}"
+
+
+#: Блоки, которые нужны замерам: без них часть ручек отвечает отказом, и потолок
+#: мерил бы стоимость отказа, а не работы.
+NUZHNYE_BLOKI = ("documents", "warehouse", "orders", "finance", "boards", "labels")
+
+
+@pytest.fixture(scope="module")
+def vse_bloki(root_client):
+    """Все нужные блоки включены — и ВЫКЛЮЧЕНЫ обратно после замеров.
+
+    **Возврат состояния здесь обязателен, и это не аккуратность.** Состояние
+    блоков — общее на всю систему, а база у набора одна. Оставленный включённым
+    `finance` меняет то, как считается выручка, и соседний файл получает другой
+    ответ на том же коде: `test_reports.py::test_csv_leaves_an_unnamed_amount_empty`
+    ждал пустую ячейку среднего чека, а получал «0,00».
+
+    Поймано прогоном в обратном порядке — тем самым, что CI гоняет вторым
+    заходом ровно ради таких сцепок. Замеряющая проверка, меняющая мир вокруг
+    себя, тем и опасна, что сама остаётся зелёной.
+    """
+    bylo = root_client.get(f"{API}/modules").json()
+    sostoyanie = {
+        z["key"]: bool(z.get("enabled"))
+        for z in (bylo.get("items") if isinstance(bylo, dict) else bylo) or []
+    }
+
+    for key in NUZHNYE_BLOKI:
+        root_client.post(f"{API}/modules/{key}", json={"enabled": True})
+    try:
+        yield root_client
+    finally:
+        # Возвращаем ровно то, что было: «выключить всё» испортило бы соседей
+        # ничуть не меньше, чем «включить всё».
+        for key in NUZHNYE_BLOKI:
+            if key in sostoyanie:
+                root_client.post(f"{API}/modules/{key}", json={"enabled": sostoyanie[key]})
+
+
+@pytest.mark.parametrize("put,potolok", sorted(POTOLKI.items()))
+def test_ruchka_ne_dorozhe_potolka(vse_bloki, put, potolok):
+    """Ручка не стала спрашивать базу чаще, чем ей позволено.
+
+    Растёт этот счёт незаметно: добавили поле в ответ — плюс запрос, добавили
+    проверку права — плюс ещё. На малой базе это не видно ни по времени, ни
+    глазом, а на боевой пачке умножается на число строк и плиток.
+    """
+    adres = f"{API}{put}"
+    # Прогрев: первый заход набивает кэши блоков и настроек, и его счёт не
+    # показателен. Меряем установившееся состояние, как на живом сервере.
+    vse_bloki.get(adres)
+
+    with Zaprosy() as z:
+        otvet = vse_bloki.get(adres)
+
+    assert otvet.status_code == 200, otvet.text
+    assert len(z.spisok) <= potolok, (
+        f"{put} стоит {len(z.spisok)} запросов при потолке {potolok}.\n"
+        "Если это осознанное усложнение — подними потолок вместе с доводом; "
+        "если нет — где-то появился запрос на строку."
+    )
+
+
+def test_poisk_ne_dorozhaet_ot_chisla_naydennogo(vse_bloki):
+    """Цена поиска не растёт с числом найденного.
+
+    Поиск идёт по нескольким видам сразу (клиенты, заявки, бланки, товары,
+    доски), и соблазн — спросить подробности по каждому найденному отдельно.
+    Тогда одно нажатие в поле поиска превращается в запрос на строку, и заметить
+    это по времени на малой базе нельзя.
+
+    Проверка заводит данные САМА и потому не зависит от того, что оставили
+    соседи по прогону: сравниваются два замера на одной и той же обвязке, между
+    которыми добавилось десять совпадений.
+    """
+    metka = f"ЩЩЩ{uniq_metka()}"
+
+    def tsena() -> int:
+        vse_bloki.get(f"{API}/search?q={metka}")  # прогрев
+        with Zaprosy() as z:
+            otvet = vse_bloki.get(f"{API}/search?q={metka}")
+        assert otvet.status_code == 200, otvet.text
+        return len(z.spisok)
+
+    zavedennye = []
+    try:
+        # Два совпадения ДО замера: пачечная выборка при нуле найденного не
+        # выполняется вовсе, и сравнение «ноль против десяти» показало бы её
+        # постоянную цену как рост. Мерим непустое против непустого.
+        for nomer in range(2):
+            klient = vse_bloki.post(f"{API}/clients", json={"name": f"{metka} основа {nomer}"})
+            assert klient.status_code == 201, klient.text
+            zavedennye.append(klient.json()["id"])
+
+        bylo = tsena()
+        for nomer in range(10):
+            klient = vse_bloki.post(f"{API}/clients", json={"name": f"{metka} клиент {nomer}"})
+            assert klient.status_code == 201, klient.text
+            zavedennye.append(klient.json()["id"])
+
+        stalo = tsena()
+        assert stalo <= bylo, (
+            f"поиск подорожал с {bylo} до {stalo} запросов от десяти найденных — "
+            "где-то появился запрос на строку"
+        )
+    finally:
+        for klient_id in zavedennye:
+            vse_bloki.delete(f"{API}/clients/{klient_id}")
+
+
+def test_svodka_ne_dorozhaet_ot_chisla_dosok(vse_bloki):
+    """Цена сводки не растёт с числом досок.
+
+    Сводка показывает четыре свежих витрины, и подробности по каждой (просмотры,
+    число работ) — ровно то место, где запрос на строку заводится сам собой.
+    Образец, как надо, стоит рядом: `stats_repo.views_by_board` собирает всё
+    одним запросом с группировкой.
+    """
+    def tsena() -> int:
+        vse_bloki.get(f"{API}/dashboard")  # прогрев
+        with Zaprosy() as z:
+            otvet = vse_bloki.get(f"{API}/dashboard")
+        assert otvet.status_code == 200, otvet.text
+        return len(z.spisok)
+
+    doski = []
+    try:
+        # Две доски ДО замера, и по той же причине: `cards.board_cards` при
+        # пустом списке возвращается сразу, а с первой же доской платит свои
+        # четыре пачечных запроса. Сравнение «ноль против четырёх» показало бы
+        # эту постоянную цену ростом — сторож краснел бы на исправном коде.
+        for nomer in range(2):
+            doska = vse_bloki.post(f"{API}/boards", json={"title": f"Доска основы {nomer}"})
+            assert doska.status_code == 201, doska.text
+            doski.append(doska.json()["id"])
+
+        bylo = tsena()
+        for nomer in range(4):
+            doska = vse_bloki.post(f"{API}/boards", json={"title": f"Доска скорости {nomer}"})
+            assert doska.status_code == 201, doska.text
+            doski.append(doska.json()["id"])
+
+        stalo = tsena()
+        assert stalo <= bylo, (
+            f"сводка подорожала с {bylo} до {stalo} запросов от четырёх досок — "
+            "подробности спрашиваются по доске, а не пачкой"
+        )
+    finally:
+        for doska_id in doski:
+            vse_bloki.delete(f"{API}/boards/{doska_id}")
+
+
+def test_kto_prishyol_sprashivaetsya_odnim_zaprosom(vse_bloki):
+    """Проверка «кто пришёл» стоит РОВНО одного запроса. Не двух.
+
+    Это самый частый запрос в системе: он выполняется на каждом обращении
+    вошедшего — на каждой странице, на каждой плитке витрины, на каждом фото
+    товара. Пока их было два (сессия по отпечатку, потом хозяин по номеру), лишний
+    круг к базе платился всегда и умножался на число картинок: витрина на
+    тридцать плиток стоила шестидесяти кругов только за «кто пришёл».
+
+    Сторож отдельный, а не потолок на ручку: потолки несут запас (база у набора
+    общая, часть ручек дорожает от чужих данных), и внутри этого запаса второй
+    запрос за сессией прошёл бы незамеченным. Проверено подлогом — так и было.
+    """
+    for put in ("/auth/me", "/clients?per_page=50", "/modules"):
+        vse_bloki.get(f"{API}{put}")  # прогрев
+        with Zaprosy() as z:
+            otvet = vse_bloki.get(f"{API}{put}")
+        assert otvet.status_code == 200, otvet.text
+
+        sessii = z.s_upominaniem("user_sessions")
+        assert len(sessii) == 1, (
+            f"{put}: за сессией ходили {len(sessii)} раза вместо одного: "
+            + "; ".join(s.split(chr(10))[0][:80] for s in sessii)
+        )
+        # И хозяин приходит ТЕМ ЖЕ запросом — то есть в нём есть соединение
+        # с таблицей людей. Проверяем именно это, а не «нет других запросов
+        # к users»: пачечная выборка имён через `IN (...)` законна и есть,
+        # например, у списка блоков — сторож на неё краснел бы зря.
+        assert "JOIN users" in sessii[0], (
+            f"{put}: сессия взята без хозяина — значит за ним пойдёт второй "
+            "запрос: " + sessii[0].split(chr(10))[0][:80]
+        )
+
+
+def test_spisok_dolzhnostey_ne_dorozhaet_ot_ih_chisla(vse_bloki):
+    """Цена списка должностей не растёт с их числом.
+
+    Наклон был ровно плюс два на роль: права и число людей спрашивались по
+    строке. Десять должностей — двадцать три запроса вместо пяти. На малой базе
+    это не видно ни по времени, ни глазом, а список ролей открывают с первого
+    дня и с каждой новой должностью он дорожает.
+
+    Проверка заводит должности САМА и потому не зависит от того, что оставили
+    соседи по прогону: сравниваются два замера, между которыми добавилось шесть.
+    """
+    def tsena() -> int:
+        vse_bloki.get(f"{API}/roles")  # прогрев
+        with Zaprosy() as z:
+            otvet = vse_bloki.get(f"{API}/roles")
+        assert otvet.status_code == 200, otvet.text
+        return len(z.spisok)
+
+    zavedennye = []
+    try:
+        # Две до замера: пачечная выборка при пустом списке не выполняется вовсе.
+        for nomer in range(2):
+            rol = vse_bloki.post(
+                f"{API}/roles",
+                json={"name": f"Скорость основа {uniq_metka()}", "permissions": ["clients.view"]},
+            )
+            assert rol.status_code == 201, rol.text
+            zavedennye.append(rol.json()["id"])
+
+        bylo = tsena()
+        for nomer in range(6):
+            rol = vse_bloki.post(
+                f"{API}/roles",
+                json={"name": f"Скорость {uniq_metka()}", "permissions": ["clients.view"]},
+            )
+            assert rol.status_code == 201, rol.text
+            zavedennye.append(rol.json()["id"])
+
+        stalo = tsena()
+        assert stalo <= bylo, (
+            f"список должностей подорожал с {bylo} до {stalo} запросов от шести "
+            "новых ролей — права или число людей спрашиваются по строке"
+        )
+    finally:
+        for rol_id in zavedennye:
+            vse_bloki.delete(f"{API}/roles/{rol_id}")

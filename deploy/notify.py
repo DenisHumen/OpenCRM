@@ -31,6 +31,7 @@ from __future__ import annotations
 import html
 import json
 import re
+import uuid
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -68,6 +69,18 @@ class Silent:
 
     def send(self, text: str, *, tiho: bool = False) -> bool:  # noqa: ARG002
         return False
+
+    def send_document(  # noqa: ARG002
+        self, imya: str, soderzhimoe: bytes, podpis: str = "", *, tiho: bool = False
+    ) -> bool:
+        return False
+
+
+#: Предел телеграма на файл от бота — 50 МиБ. Наши отчёты весят меньше мегабайта
+#: (из них семьсот килобайт — вшитый шрифт), но проверка стоит здесь, а не «мы же
+#: знаем»: журнал однажды вырастет, и упереться в отказ телеграма лучше заранее и
+#: с внятной записью, чем молчаливой неудачей отправки.
+PREDEL_FAYLA = 50 * 1024 * 1024
 
 
 class Telegram:
@@ -110,6 +123,61 @@ class Telegram:
         request.add_header("Content-Type", "application/x-www-form-urlencoded")
         try:
             with self._open(request, timeout=self.timeout) as response:
+                return 200 <= response.status < 300
+        except (urllib.error.HTTPError, OSError):
+            return False
+
+    def send_document(
+        self, imya: str, soderzhimoe: bytes, podpis: str = "", *, tiho: bool = False
+    ) -> bool:
+        """Приложить файл к переписке. `True` — телеграм принял.
+
+        Форма собирается руками, потому что в `urllib` многочастной отправки
+        нет, а тянуть ради неё `requests` в пакет, который работает на хосте
+        системным питоном без venv, нельзя (разбор — в шапке
+        `deploy/dokumenty.py`). Кода здесь на двадцать строк, и он не меняется.
+
+        Отдельным таймаутом: файл на сотни килобайт уходит дольше строки текста,
+        и десяти секунд, которых хватает сообщению, здесь мало. Не уложились —
+        возвращаем `False`, а не роняем обновление: файл к отчёту приятен, но
+        сообщение владельцу важнее, а работающий сайт важнее их обоих.
+        """
+        if not soderzhimoe or len(soderzhimoe) > PREDEL_FAYLA:
+            return False
+
+        granica = "----OpenCRMOtchyot" + uuid.uuid4().hex
+        chasti: list[bytes] = []
+
+        def pole(imya_polya: str, znachenie: str) -> None:
+            chasti.append(
+                f"--{granica}\r\n"
+                f'Content-Disposition: form-data; name="{imya_polya}"\r\n\r\n'
+                f"{znachenie}\r\n".encode("utf-8")
+            )
+
+        pole("chat_id", self.chat_id)
+        if podpis:
+            # Подпись телеграм режет на 1024 знаках — режем сами, иначе он
+            # отвергнет весь запрос, и файл не уйдёт вовсе.
+            pole("caption", podpis[:1024])
+            pole("parse_mode", "HTML")
+        if tiho:
+            pole("disable_notification", "true")
+
+        chasti.append(
+            f"--{granica}\r\n"
+            f'Content-Disposition: form-data; name="document"; filename="{imya}"\r\n'
+            f"Content-Type: application/octet-stream\r\n\r\n".encode("utf-8")
+        )
+        chasti.append(soderzhimoe)
+        chasti.append(f"\r\n--{granica}--\r\n".encode("utf-8"))
+
+        telo = b"".join(chasti)
+        request = urllib.request.Request(f"{API}/bot{self.token}/sendDocument", data=telo)
+        request.add_header("Content-Type", f"multipart/form-data; boundary={granica}")
+        request.add_header("Content-Length", str(len(telo)))
+        try:
+            with self._open(request, timeout=max(self.timeout, 60.0)) as response:
                 return 200 <= response.status < 300
         except (urllib.error.HTTPError, OSError):
             return False
