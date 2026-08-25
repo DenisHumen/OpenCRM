@@ -1038,7 +1038,18 @@ S_CHISLOM = (
     "HostSwapping",
     "ContainerRestartLoop",
     "BackupTooOld",
-    "RateLimiterUnavailable",
+    # `RateLimiterUnavailable` здесь БЫЛ и ушёл вместе со сменой выражения.
+    #
+    # Он считал прирост счётчика, живущего в памяти процесса, и число в
+    # заголовке было осмысленным: «столько-то отказов за пять минут». Но при
+    # нескольких рабочих процессах такой счётчик врёт — Prometheus скребёт один
+    # адрес и попадает на случайный процесс, ряд скачет, и `increase` показывает
+    # прирост там, где его нет. Тревога переехала на СОСТОЯНИЕ
+    # (`opencrm_ratelimiter_recently_unavailable`, ноль или единица), а у
+    # состояния числа не бывает: «1 отказов» — не сведение, а шум.
+    #
+    # Рядом ровно тот же случай и то же решение: `RedisDown` в этом списке
+    # никогда и не стоял, потому что «Redis не отвечает» — тоже состояние.
     "DatabaseConnectionsHigh",
     "DatabaseLockWaits",
     "DatabaseSlowQueries",
@@ -2018,3 +2029,70 @@ def test_razmer_sprashivaetsya_zaprosom_a_ne_molchaniem():
         assert zapreshcheno not in sborshchik, (
             f"запрос переехал в маршрут ({zapreshcheno}) — это нарушение границы базы"
         )
+
+
+# --- метрики, устойчивые к нескольким рабочим процессам ----------------------
+
+
+def test_trevoga_ne_derzhitsya_za_schyotchik_v_pamyati_processa():
+    """`RateLimiterUnavailable` обязана смотреть на СОСТОЯНИЕ, а не на счётчик.
+
+    **Разбор.** `opencrm_ratelimiter_unavailable_total` живёт в памяти ПРОЦЕССА,
+    а Prometheus скребёт один адрес: nginx отдаёт запрос случайному рабочему
+    процессу. При нескольких воркерах ряд заскачет между их независимыми
+    значениями (5, 0, 3, 0…), и для типа `counter` каждое понижение читается как
+    перезапуск — `increase` покажет прирост там, где его нет.
+
+    Цена: тревога уровня `critical` зазвонит навсегда после первой в жизни
+    неудачи Redis, и настоящую аварию в этом звоне никто не отличит. Хуже
+    молчащей тревоги только звонящая без повода — её выключают, и вместе с ней
+    выключают все остальные.
+
+    Состояние такой беды не имеет по построению: Redis у процессов общий, и
+    ответ «сбоил ли ограничитель в последнюю минуту» у всех одинаков.
+    """
+    bloki = _pravila_blokami()
+    assert "RateLimiterUnavailable" in bloki, "правило исчезло — проверка смотрит не туда"
+    # Берём ТОЛЬКО выражение, а не блок целиком: слово `unavailable_total`
+    # стоит в объяснении рядом, и поиск по блоку краснел бы на исправном
+    # правиле. Помощник для этого в файле уже есть.
+    vyrazhenie = _vyrazhenie(bloki["RateLimiterUnavailable"])
+    assert vyrazhenie, "у правила нет выражения — проверка смотрит не туда"
+
+    assert "unavailable_total" not in vyrazhenie, (
+        "тревога снова считает прирост счётчика из памяти процесса — при "
+        "нескольких воркерах она зазвонит на ровном месте"
+    )
+    assert "recently_unavailable" in vyrazhenie, (
+        "тревога не смотрит на состояние ограничителя"
+    )
+
+
+def test_sostoyanie_ogranichitelya_est_v_metrikah(metrics_module, monkeypatch):
+    """Метрика, на которую переехала тревога, обязана существовать.
+
+    Иначе правило ссылается в пустоту: выражение верное, ряда нет, тревога молчит
+    всегда — и это худший вид немоты, потому что выглядит как «всё хорошо».
+
+    Блок мониторинга включается фикстурой: маршрут закрыт им, и без неё проверка
+    мерила бы отказ, а не метрики.
+    """
+    otvet = _client(metrics_module, enabled=True, monkeypatch=monkeypatch).get(
+        "/api/v1/metrics"
+    )
+    assert otvet.status_code == 200, otvet.text
+    telo = otvet.text
+
+    assert "opencrm_ratelimiter_recently_unavailable" in telo, (
+        "нет метрики состояния ограничителя — тревога ссылается в пустоту"
+    )
+    # И она о состоянии, а не о накоплении: ноль или единица.
+    for stroka in telo.splitlines():
+        if stroka.startswith("opencrm_ratelimiter_recently_unavailable "):
+            znachenie = stroka.rsplit(" ", 1)[1]
+            assert znachenie in ("0", "1", "0.0", "1.0"), (
+                f"состояние отдано числом {znachenie} — это уже не состояние"
+            )
+            break
+    else:
+        raise AssertionError("строка метрики не найдена вовсе")
