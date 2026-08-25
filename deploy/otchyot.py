@@ -23,6 +23,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 
+from deploy import vyzhimka
 from deploy.dokumenty import (
     CVET_BEDA,
     CVET_TIHIY,
@@ -53,6 +54,8 @@ class Ishod:
     shagi: list[tuple[str, bool, str]]
     prichina: str
     zhurnal: list[str]
+    #: Как выбраны строки журнала. Печатается рядом с ними — см. `_podrezat`.
+    zhurnal_sposob: str
     chto_dalshe: list[str]
 
 
@@ -83,13 +86,15 @@ def sobrat_ishod(outcome, config, zhurnal: list[str] | None = None) -> Ishod:
 
     shagi = [(s.name, s.ok, (s.detail or "").strip()) for s in (outcome.steps or [])]
 
+    stroki_zhurnala, sposob = _podrezat(zhurnal or [])
     return Ishod(
         zagolovok=zagolovok,
         udacha=udacha,
         stroki_shapki=shapka,
         shagi=shagi,
         prichina=(outcome.reason or "").strip(),
-        zhurnal=_podrezat(zhurnal or []),
+        zhurnal=stroki_zhurnala,
+        zhurnal_sposob=sposob,
         chto_dalshe=_chto_dalshe(outcome),
     )
 
@@ -101,17 +106,27 @@ def _dlitelnost(sekund: float) -> str:
     return f"{sekund // 60} мин {sekund % 60:02d} с"
 
 
-def _podrezat(stroki: list[str]) -> list[str]:
-    """Последние строки журнала, каждая — не длиннее разумного.
+def _podrezat(stroki: list[str]) -> tuple[list[str], str]:
+    """Строки журнала для отчёта — и способ, которым они выбраны.
 
-    Последние, а не первые: беда всегда в хвосте, а начало журнала одинаково у
-    удачного и у неудачного захода.
+    **Здесь стоял хвост, и довод был написан прямо: «беда всегда в хвосте».**
+    Довод неверен. Журнал обновления кончается уборкой: остановкой контейнеров
+    тестового стека, откатом ветки, сообщением об исходе. Всё это идёт ПОСЛЕ
+    беды, и последние двести строк описывают именно уборку — тем аккуратнее,
+    чем хуже всё прошло.
+
+    Теперь строки выбираются по содержанию (`deploy/vyzhimka.py`), и способ
+    выбора возвращается вместе с ними. Пара, а не строка: способ обязан дойти
+    до бумаги, иначе читатель не отличит найденную причину от наугад взятого
+    хвоста — а выглядят они одинаково.
     """
-    hvost = [s.rstrip() for s in stroki if s and s.strip()][-STROK_ZHURNALA:]
+    zhivye = [s.rstrip() for s in stroki if s and s.strip()]
+    tsely = "\n".join(zhivye)
+    vybrano, sposob = vyzhimka.vyzhat(tsely, STROK_ZHURNALA)
     return [
         s if len(s) <= ZNAKOV_V_STROKE else s[:ZNAKOV_V_STROKE] + " …"
-        for s in hvost
-    ]
+        for s in vybrano
+    ], sposob
 
 
 def _chto_dalshe(outcome) -> list[str]:
@@ -180,8 +195,15 @@ def _nalozhit(list_, ishod: Ishod) -> None:
 
     if ishod.zhurnal:
         list_.zagolovok("Журнал обновления")
+        # Подпись говорит, КАК выбраны строки, а не сколько их.
+        #
+        # Раньше здесь стояло «последние N строк», и это было правдой ровно до
+        # того дня, когда выбор перестал быть хвостом. Подпись, пережившая свою
+        # причину, — это не мелочь: читатель по ней решает, доверять вырезке
+        # как разбору или как случайному куску, а «последние N» подсказывает
+        # второе даже тогда, когда перед ним первое.
         list_.tekst(
-            f"последние {len(ishod.zhurnal)} строк",
+            f"{len(ishod.zhurnal)} строк, выбраны {ishod.zhurnal_sposob}",
             kegl=8,
             cvet=CVET_TIHIY,
         )

@@ -59,7 +59,7 @@ import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from deploy import notify, otchyot
+from deploy import notify, otchyot, vyzhimka
 from deploy.config import UpdateConfig
 from deploy.github import CHECKS_FAILURE, CHECKS_PENDING, GitHub, GitHubError
 # _atomic_write, а не своя запись: гарантия ровно та же, что у состояния демона —
@@ -1337,9 +1337,21 @@ class Updater:
         )
 
     def _step(self, steps: list[Step], name: str, result: Result, fatal: bool = True) -> Result:
-        steps.append(Step(name, result.ok, "" if result.ok else result.tail()))
+        """Записать шаг, а при неудаче — сказать, ЧТО именно не вышло.
+
+        Раньше здесь стоял `result.tail()` — последние строки вывода. На
+        `docker build` это работало, на `docker compose up` не работает
+        никогда: компоуз пишет ход контейнеров в поток ошибок, а `Result.text`
+        приклеивает поток ошибок ПОСЛЕ обычного, и хвост — это гарантированно
+        «Container … Stopped», а не упавший тест.
+
+        Так и вышло 25.08.2026: обновление откатилось на шаге `tests`, а в
+        сообщении владельцу про тесты не было ни слова. Разбор — в
+        `deploy/vyzhimka.py`.
+        """
+        steps.append(Step(name, result.ok, "" if result.ok else vyzhimka.vyzhat_strokoy(result.text)))
         if not result.ok and fatal:
-            raise _Stop(f"{name}: {result.tail(4)}")
+            raise _Stop(f"{name}: {vyzhimka.vyzhat_strokoy(result.text, 4)}")
         return result
 
     #: Как выглядит исход: значок, заголовок и надо ли звенеть на телефоне.
