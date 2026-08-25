@@ -369,3 +369,71 @@ def test_editor_knows_the_shape_of_every_place(manager_client):
     ratios = [w["place_ratio"] for w in detail["works"]]
     assert len(ratios) == 4
     assert all(ratio > 0 for ratio in ratios)
+
+
+# --- память: полноразмерных копий быть не должно ------------------------------
+
+
+def test_proizvodnye_ne_delayut_polnorazmernyh_kopiy():
+    """`derive` выделяет РЕЗУЛЬТАТ, а не копию оригинала.
+
+    **НАЙДЕНО ЗАМЕРОМ В БОЕВОМ ОБРАЗЕ.** Прежде здесь стоял `im.copy()` с
+    последующим `thumbnail`: на каждую из трёх производных выделялась
+    полноразмерная копия. PNG 7100×7042 (0,67 МБ файлом!) давал пик 612 МБ на
+    один поток и 1185 МБ на два — при том, что комментарий над `_razzhatie`
+    обещал «предсказуемый пик 382 МБ». После правки те же замеры: 293 и 550 МБ.
+
+    Проверяем не память (замер мигал бы на чужой машине), а её причину: в теле
+    не должно быть полноразмерного дубля. Тот же приём, что у сторожа чтения
+    копии базы в `tests/test_autoupdate.py`.
+    """
+    import ast
+    import inspect
+
+    from core.services import media_service
+
+    for imya in ("derive", "compute_blurhash"):
+        telo = ast.parse(inspect.getsource(getattr(media_service, imya)))
+        obrashcheniya = {u.attr for u in ast.walk(telo) if isinstance(u, ast.Attribute)}
+        assert "copy" not in obrashcheniya, (
+            f"{imya} снова делает полноразмерную копию — вернулся пик втрое выше"
+        )
+        assert "thumbnail" not in obrashcheniya, (
+            f"{imya} снова правит картинку на месте, а значит требует копии"
+        )
+
+
+def test_razmery_proizvodnyh_ne_izmenilis():
+    """Отказ от копии не имеет права сдвинуть ни одного пикселя.
+
+    `resize` считает цель сам, `thumbnail` считал её внутри — и разойтись они
+    могли бы на округлении, на вырожденных сторонах и на длинных картинках, где
+    правило своё. Проверяем на всех трёх видах разом.
+    """
+    from PIL import Image
+
+    from core.services.media_service import WEBP_MAX_SIDE, derive, is_long_image
+
+    def po_staromu(im, box):
+        variant = im.copy()
+        if not is_long_image(im.width, im.height):
+            variant.thumbnail((box, box), Image.LANCZOS)
+            return variant.size
+        width = min(im.width, box)
+        height = round(width * im.height / im.width)
+        if height > WEBP_MAX_SIDE:
+            height = WEBP_MAX_SIDE
+            width = max(1, round(height * im.width / im.height))
+        variant.thumbnail((width, height), Image.LANCZOS)
+        return variant.size
+
+    sluchai = [
+        (4000, 3000), (3000, 4000), (1000, 1000), (200, 150),
+        (800, 12000), (12000, 800), (1, 5000), (5000, 1), (2560, 1080),
+    ]
+    for shirina, vysota in sluchai:
+        im = Image.new("RGB", (shirina, vysota))
+        for box in (1600, 640, 320, 32):
+            assert derive(im, box).size == po_staromu(im, box), (
+                f"{shirina}x{vysota} при коробке {box}: размер производной уехал"
+            )

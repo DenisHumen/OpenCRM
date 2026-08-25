@@ -206,25 +206,47 @@ def sanitize_svg(content: bytes) -> bytes:
 
 # --- обработка (фоновая задача после загрузки) ---
 
-def derive(im: Image.Image, box: int) -> Image.Image:
-    """Производная размером `box` по длинной стороне; у длинных — по ширине.
+def _cel(im: Image.Image, box: int) -> tuple[int, int]:
+    """Во что ужимаем. Считается ДО всякого выделения памяти.
 
     Обычный ``thumbnail`` вписывает картинку в квадрат `box`×`box`, то есть
     ужимает **длинную** сторону. Для лонгрида 1:10 это означало бы `card`
     шириной 80px — на витрине сплошное мыло. Поэтому у длинных изображений
     ограничиваем ширину, а высоте позволяем расти (до предела формата).
+
+    Вверх не растягиваем никогда: исходник мельче коробки отдаётся как есть.
+    ``thumbnail`` вёл себя так же, и терять это свойство нельзя — растянутая
+    вчетверо миниатюра весит больше оригинала и выглядит хуже него.
     """
-    variant = im.copy()
     if not is_long_image(im.width, im.height):
-        variant.thumbnail((box, box), Image.LANCZOS)
-        return variant
+        k = max(im.width / box, im.height / box, 1.0)
+        return max(1, round(im.width / k)), max(1, round(im.height / k))
     width = min(im.width, box)
     height = round(width * im.height / im.width)
     if height > WEBP_MAX_SIDE:
         height = WEBP_MAX_SIDE
         width = max(1, round(height * im.width / im.height))
-    variant.thumbnail((width, height), Image.LANCZOS)
-    return variant
+    return max(1, width), max(1, height)
+
+
+def derive(im: Image.Image, box: int) -> Image.Image:
+    """Производная размером `box` по длинной стороне; у длинных — по ширине.
+
+    **Целевой размер считается заранее, а `resize` делает сразу его.**
+    Прежде здесь стоял `im.copy()` с последующим `thumbnail`, и это выделяло
+    ПОЛНОРАЗМЕРНУЮ копию оригинала на каждую производную — то есть три копии по
+    150 МБ ради трёх картинок, самая большая из которых 1600 точек по стороне.
+
+    Замерено в боевом образе на PNG 7100×7042 (49,99 Мпикс, 0,67 МБ файлом):
+    одно разжатие давало пик 612 МБ при 227 МБ до работы, два потока — 1185 МБ.
+    Комментарий над `_razzhatie` при этом обещал «предсказуемый пик 382 МБ»: он
+    считал только сам разжатый кадр и не знал про копии.
+
+    `resize` выделяет РЕЗУЛЬТАТ и ничего сверх него. Качество то же: `thumbnail`
+    внутри зовёт тот же `resize` тем же фильтром, разница только в том, что он
+    правит картинку на месте и потому требует копии.
+    """
+    return im.resize(_cel(im, box), Image.LANCZOS)
 
 
 #: Сколько мегапикселей позволено РАЗЖАТЬ за раз. Не размер файла и не размер
@@ -265,8 +287,30 @@ MAX_DECODE_MEGAPIXELS = 50
 #: машине с двумя.
 #:
 #: Два, а не один: превью строятся в фоне, и очередь из двадцати фотографий
-#: пойдёт вдвое быстрее, а пик остаётся предсказуемым — 382 МБ, что машина
-#: переживает вместе с базой.
+#: пойдёт вдвое быстрее.
+#:
+#: ЗАМЕРЕНО В БОЕВОМ ОБРАЗЕ, а не выведено из цены разжатия. PNG 7100×7042
+#: (49,99 Мпикс — впритык под предел, 0,67 МБ файлом), пик VmHWM процесса:
+#:
+#:     потоков   было      стало
+#:     1         612 МБ    293 МБ
+#:     2        1185 МБ    550 МБ
+#:     6        1577 МБ    937 МБ
+#:
+#: «Было» — это до того, как из `derive` и `compute_blurhash` убрали
+#: полноразмерные копии. Прежняя редакция этого комментария обещала «пик 382 МБ»
+#: и была НЕВЕРНА уже при одном процессе: она считала только сам разжатый кадр и
+#: не знала про три копии оригинала, которые `derive` делал ради трёх
+#: производных, и ещё две, которые делал `compute_blurhash` ради картинки 32×32.
+#:
+#: Холостое потребление процесса — 227 МБ; значит сама работа стоит теперь
+#: 66 МБ на поток вместо 385. Отсюда и предел: два потока держат пик около
+#: 550 МБ, что машина переживает вместе с базой.
+#:
+#: **Замок живёт в памяти ПРОЦЕССА.** При нескольких рабочих процессах порог
+#: умножается на их число — тот же класс беды, что у ограничителя входа, только
+#: платят памятью. Прежде чем поднимать `OPENCRM_WORKERS`, замок обязан стать
+#: общим (разбор — в `docs/08-deployment.md`).
 _razzhatie = threading.BoundedSemaphore(2)
 
 
@@ -343,8 +387,13 @@ def process_image(work_uid: str, original: Path) -> dict:
 
 def compute_blurhash(im: Image.Image) -> str | None:
     try:
-        small = im.convert("RGB").copy()
-        small.thumbnail((32, 32), Image.LANCZOS)
+        # Ужимаем СНАЧАЛА, преобразуем ПОТОМ.
+        #
+        # Прежде стояло `im.convert("RGB").copy()`: `convert` выделяет
+        # полноразмерную картинку, `.copy()` — ещё одну такую же, и обе живут
+        # ради результата в тридцать два пикселя по стороне. На 50 Мпикс это
+        # 300 МБ впустую.
+        small = im.resize(_cel(im, 32), Image.LANCZOS).convert("RGB")
         w, h = small.size
         pixels = [[list(small.getpixel((x, y))) for x in range(w)] for y in range(h)]
         return blurhash_lib.encode(pixels, components_x=4, components_y=3)
@@ -394,10 +443,11 @@ def process_video(work_uid: str, video_path: Path) -> dict:
                 directory = video_path.parent
                 with Image.open(frame) as im:
                     im.load()
+                    # Через `derive`, а не своим `copy` + `thumbnail`: у кадра
+                    # видео та же цена полноразмерной копии, что у снимка, и
+                    # правило про длинные картинки для него верно так же.
                     for name, size in (("poster", SIZE_LARGE), ("card", SIZE_CARD), ("thumb", SIZE_THUMB)):
-                        variant = im.copy()
-                        variant.thumbnail((size, size), Image.LANCZOS)
-                        variant.save(directory / f"{name}.webp", "WEBP", quality=85)
+                        derive(im, size).save(directory / f"{name}.webp", "WEBP", quality=85)
                     meta["blurhash"] = compute_blurhash(im)
     except (subprocess.SubprocessError, OSError):
         pass  # постер — best effort; видео остаётся играбельным
