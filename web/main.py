@@ -104,13 +104,36 @@ def _ensure_schema() -> None:
     # подменён, отметил бы чужую базу, а расхождение осталось бы неисправленным.
     config.set_main_option("sqlalchemy.url", engine.url.render_as_string(hide_password=False))
 
+    # ВСЯ работа со схемой — под общим замком.
+    #
+    # **Без него несколько рабочих процессов убивают контейнер на старте.**
+    # Замерено на настоящей MySQL: четыре процесса, поднявшись разом, идут сюда
+    # одновременно, и на пустой базе три из четырёх умирают за 0,28 секунды.
+    # Гасит при этом не воркера, а весь контейнер: uvicorn считает отказ старта
+    # непоправимым, `/healthz` замолкает, и обновление откатывается.
+    #
+    # Прежняя терпимость к соседу ловила исключение и проверяла `has_table`
+    # у одной таблицы — и не работала: `create_all` идёт топологическим
+    # порядком и падает на той таблице, до которой дошёл (у нас на `roles`), а
+    # не на `users`; дубликат отметки миграции прилетает `IntegrityError`, до
+    # этого `except` не доходящим вовсе. Догадка заменена ожиданием: дождавшийся
+    # видит готовую схему и уходит обычным путём.
+    with schema_check.zamok_shemy(engine):
+        _shema_pod_zamkom(config)
+
+
+def _shema_pod_zamkom(config) -> None:
+    """Привести схему к нужному виду. Зовётся ТОЛЬКО под общим замком.
+
+    У `config` нет подписи типа намеренно, и ввозы стоят внутри тела:
+    alembic тянет за собой пол-SQLAlchemy, и платить этим при каждом
+    запуске незачем. То же правило, что у `_ensure_schema` выше.
+    """
+    from alembic import command
+
     if schema_check.is_empty(engine):
-        try:
-            Base.metadata.create_all(engine)
-            command.stamp(config, "head")
-        except (OperationalError, ProgrammingError):
-            if not inspect(engine).has_table(User.__tablename__):
-                raise
+        Base.metadata.create_all(engine)
+        command.stamp(config, "head")
         return
 
     # База населена, но не отмечена ни одной миграцией — так выглядит база,
