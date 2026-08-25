@@ -369,7 +369,7 @@ export function BoardEditor() {
                 <div key={z.klyuch} className="work-card work-card--zaliv">
                   <div className="work-media work-media--zaliv">
                     <div className="zaliv-polosa">
-                      <div className="zaliv-polosa__hod" style={{ width: `${dolya * 100}%` }} />
+                      <div className="zaliv-hod" style={{ width: `${dolya * 100}%` }} />
                     </div>
                     <div className="zaliv-cifry">
                       <span>{z.idyot ? t("uploading") : t("uploadQueued")}</span>
