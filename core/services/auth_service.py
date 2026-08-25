@@ -4,6 +4,7 @@ from datetime import timedelta
 from sqlalchemy.orm import Session
 
 from config.settings import get_settings
+from core import bezopasnost
 from core import exceptions as errors
 from core import uniqueness
 from core.security import passwords, tokens
@@ -77,6 +78,10 @@ def login(db: Session, email: str, password: str, limiter) -> tuple[User, str]:
     # можно не дождаться ответа.
     metka = limiter.zanyat_mesto(email)
     if metka is None:
+        # Отметка идёт ДО исключения: после `raise` сюда уже не вернутся, а
+        # запрет — это как раз то событие, ради которого счётчик и заведён.
+        # Он говорит не «кому-то плохо», а «защита сработала».
+        bezopasnost.otmetit("vhod_zapert")
         raise errors.RateLimitedError("Too many attempts, try later", code="login_rate_limited")
     try:
         user = users_repo.get_by_email(db, email)
@@ -93,6 +98,13 @@ def login(db: Session, email: str, password: str, limiter) -> tuple[User, str]:
         limiter.vernut(email, metka)
         raise
     if user is None or not passwords.verify_password(password, user.password_hash):
+        # Несуществующая почта и неверный пароль считаются ОДНИМ видом нарочно.
+        # Разделить их значило бы завести на панели ряд «сколько раз спросили
+        # несуществующего пользователя», то есть выложить наружу подсказку,
+        # которую сам ответ старательно не выдаёт: сообщение здесь одно на оба
+        # случая именно для того, чтобы подбирающий не узнал, какие почты
+        # заведены. График, разделивший их, сдал бы это за нас.
+        bezopasnost.otmetit("vhod_promah")
         raise errors.AuthError("Invalid email or password", code="invalid_credentials")
     # Пароль верен — счётчик обнуляется СРАЗУ, до проверки состояния учётной
     # записи. Иначе одобрения ждущий человек, пробующий войти каждые пять минут,

@@ -6,6 +6,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
 from config.settings import get_settings
+from core import bezopasnost
 from core import exceptions as errors
 from core.security import tokens
 from core.services import (
@@ -490,6 +491,7 @@ def document_status(number: str, request: Request, db: Session = Depends(get_db)
     # с телефоном у квитанции нужен понятный текст, а не тело ответа.
     try:
         if document_limiter.proverit_i_zanyat(visitor):
+            bezopasnost.otmetit("blank_zapert")
             return _closed_page(request, db, status_code=429, busy=True)
     except errors.LimiterUnavailableError:
         return _closed_page(request, db, status_code=503, busy=True)
@@ -497,6 +499,15 @@ def document_status(number: str, request: Request, db: Session = Depends(get_db)
     try:
         doc = document_service.by_number(db, number)
     except errors.NotFoundError:
+        # Промах по номеру бланка — самый говорящий из всех счётчиков.
+        #
+        # Номера сквозные («2026-000001» и дальше по порядку), и человек с
+        # квитанцией в руках промахивается разве что опечаткой — то есть почти
+        # никогда. Зато перебор состоит из промахов почти целиком: подбирающий
+        # идёт по числам подряд и попадает в чужие заказы лишь изредка. Поэтому
+        # ровный ручеёк на этом графике означает не «люди путаются», а «кто-то
+        # считает от единицы».
+        bezopasnost.otmetit("blank_promah")
         return _closed_page(request, db)
 
     return templates.TemplateResponse(

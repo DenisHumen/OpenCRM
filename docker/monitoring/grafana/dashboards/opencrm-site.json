@@ -125,6 +125,7 @@
                     "RateLimiterUnavailable": {"text": "Счётчик попыток недоступен, вход отвечает 503 (RateLimiterUnavailable)", "index": 14},
                     "RedisDown": {"text": "Redis не отвечает (RedisDown)", "index": 15},
                     "RateLimiterNotShared": {"text": "Счётчик попыток не общий на процессы (RateLimiterNotShared)", "index": 16},
+                    "BruteForceBurst": {"text": "Похоже на подбор: больше сотни промахов за пять минут (BruteForceBurst)", "index": 26},
                     "UploadsBlocked": {"text": "Загрузка файлов остановлена нехваткой места (UploadsBlocked)", "index": 17},
                     "DatabaseConnectionsHigh": {"text": "Соединений к базе больше 80% от потолка (DatabaseConnectionsHigh)", "index": 18},
                     "DatabaseLockWaits": {"text": "Запросы стоят в очереди за блокировками строк (DatabaseLockWaits)", "index": 19},
