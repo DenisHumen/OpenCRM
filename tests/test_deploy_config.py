@@ -456,3 +456,78 @@ def test_baza_vorot_ne_boevaya():
     text = _read(COMPOSE_TESTS)
     assert "name: opencrm-tests" in text, "у ворот нет своего имени проекта"
     assert "tmpfs:" in text, "база ворот пишет на диск, а должна в память"
+
+
+# --- число рабочих процессов доезжает до контейнера --------------------------
+
+
+def test_chislo_vorkerov_doezzhaet_do_konteynera():
+    """`OPENCRM_WORKERS` обязан быть в окружении службы `app`.
+
+    **НАЙДЕНО РАЗБОРОМ, и это была немота.** Переменная описана в
+    `docker/.env.example`, но `docker/.env` — файл подстановки переменных
+    COMPOSE: его значения идут в `${...}` внутри YAML и в контейнер сами по себе
+    не попадают. Службе `app` переменная не передавалась ни через `env_file`
+    (там `config/.env`), ни в `environment`.
+
+    Значит выставивший её не получал ничего: `entrypoint.sh` читал умолчание,
+    приложение видело один процесс, и ни ошибки, ни строчки в логе. Хуже самой
+    немоты то, что она обесценивает замеры: подняв число процессов и не увидев
+    разницы, легко заключить «многопроцессность не помогает», хотя процесс всё
+    это время был один.
+
+    Тот же класс беды, что уже разобран у `OPENCRM_TRUSTED_PROXY_HOPS`: там
+    `environment` перекрывает `env_file`, и забытая строка молча ничего не
+    делает.
+    """
+    stroki = (ROOT / "docker" / "docker-compose.yml").read_text(encoding="utf-8").splitlines()
+
+    # Вырезаем блок службы `app` построчно, а не разбором YAML: разборщик — это
+    # ещё одна зависимость, которой у набора нет, а нам нужно ровно одно —
+    # понять, где кончается служба. Кончается она на следующей строке с тем же
+    # отступом в два пробела: так устроен файл, и так его читает сам compose.
+    vnutri = False
+    blok_strok: list[str] = []
+    for stroka in stroki:
+        if stroka.startswith("  app:"):
+            vnutri = True
+            continue
+        if vnutri:
+            golaya = stroka.strip()
+            if golaya and not stroka.startswith("    ") and not stroka.startswith("#"):
+                break
+            blok_strok.append(stroka)
+    blok = "\n".join(blok_strok)
+    assert blok.strip(), "не нашлось службы `app` — проверка смотрит не туда"
+    assert "env_file:" in blok, "вырезали не тот блок: у службы `app` есть env_file"
+
+    assert "OPENCRM_WORKERS:" in blok, (
+        "число рабочих процессов не передаётся контейнеру — выставить его можно, "
+        "а подействует оно никогда, и молча"
+    )
+    # Со значением по умолчанию: без него `docker compose` ругается на
+    # незаданную переменную у всех, кто её не трогал.
+    assert "${OPENCRM_WORKERS:-1}" in blok, (
+        "нет значения по умолчанию: у тех, кто переменную не задавал, compose "
+        "подставит пустую строку, и `${OPENCRM_WORKERS:-1}` в entrypoint её не "
+        "спасёт — пустая строка это не «не задано»"
+    )
+
+
+def test_storozh_vorkerov_bez_redis_na_meste():
+    """Несколько процессов без общего счётчика — молча ослабленная защита.
+
+    Проверка стоит в двух местах сразу (`docker/entrypoint.sh` и
+    `config/settings.py`), и это не дублирование: контейнер поднимается точкой
+    входа, а на ноутбуке приложение запускают напрямую. Убери одну — половина
+    случаев останется без предупреждения.
+    """
+    vhod = (ROOT / "docker" / "entrypoint.sh").read_text(encoding="utf-8")
+    nastroyki = (ROOT / "config" / "settings.py").read_text(encoding="utf-8")
+
+    assert "OPENCRM_WORKERS" in vhod and "REDIS" in vhod, (
+        "точка входа перестала проверять пару «много процессов + Redis»"
+    )
+    assert "workers" in nastroyki and "redis" in nastroyki.lower(), (
+        "приложение перестало проверять пару «много процессов + Redis»"
+    )

@@ -30,9 +30,10 @@
 идёт с настоящим автогенератором alembic и на пустой базе, где оно осмысленно.
 """
 
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 
-from sqlalchemy import inspect
+from sqlalchemy import func, inspect, select
 from sqlalchemy.engine import Engine
 
 from database.session import Base
@@ -130,6 +131,73 @@ def current_revision(engine: Engine) -> str | None:
     with engine.connect() as connection:
         row = connection.execute(text("SELECT version_num FROM alembic_version")).first()
     return row[0] if row else None
+
+
+#: Как называется общий замок на работу со схемой и сколько его ждать.
+#:
+#: Пять минут, а не пять секунд: под замком идут МИГРАЦИИ, и на населённой базе
+#: они занимают минуты. Проигравший обязан дождаться победителя, а не решить,
+#: что тот завис.
+#:
+#: В контейнере до этого места обычно не доходит: `docker/entrypoint.sh` гоняет
+#: `alembic upgrade head` ДО старта uvicorn, и к появлению рабочих процессов
+#: схема уже на голове — замок берётся и отпускается мгновенно. Долгий путь
+#: остаётся снаружи докера, где приложение запускают напрямую.
+IMYA_ZAMKA_SHEMY = "opencrm_shema"
+ZHDAT_ZAMOK_SEKUND = 300
+
+
+@contextmanager
+def zamok_shemy(engine: Engine):
+    """Общий на все процессы замок на работу со схемой.
+
+    **Без него несколько рабочих процессов убивают контейнер на старте.**
+    Замерено на настоящей MySQL: четыре процесса, поднявшись разом, идут в
+    `_ensure_schema` одновременно, и на пустой базе три из четырёх умирают за
+    0,28 секунды — `create_all` не терпит соседа, который создаёт те же таблицы.
+    Вторая ветка (база без отметки миграций) даёт то же самое за 0,48 секунды с
+    `Duplicate entry ... for key 'alembic_version.PRIMARY'`.
+    и это не «один воркер не поднялся»: uvicorn при отказе старта гасит ВЕСЬ
+    контейнер, `/healthz` замолкает, и обновление откатывается.
+
+    **Проигравший ЖДЁТ, а не угадывает по исключению.** Прежняя терпимость к
+    соседу ловила `OperationalError` и проверяла `has_table(users)` — но
+    `create_all` идёт топологическим порядком и падает на той таблице, до
+    которой дошёл, а не на `users`; и `IntegrityError` от дубликата отметки в
+    это `except` не попадал вовсе. Дождавшийся видит уже готовую схему и уходит
+    обычным путём.
+
+    Именованный замок MySQL, а не своя таблица: он живёт на сервере базы,
+    снимается сам при обрыве соединения и не требует ни строчки схемы — что
+    важно, ведь схемы в этот момент может не быть вовсе. Тот же приём, что у
+    приёма заявок (`database/repositories/leads.zapert_priyom`).
+
+    Не дождались за `ZHDAT_ZAMOK_SEKUND` — отказ, а не «пойдём без замка».
+    Здесь ровно наоборот, чем у заявок: там потерять заявку хуже, чем завести
+    дубль, а тут работа со схемой наперегонки кончается мёртвым контейнером.
+    """
+    # SQLite именованных замков не знает, а на ней и процесс один: писатель у
+    # неё единственный, и `OPENCRM_WORKERS` больше единицы она не допускает.
+    if engine.dialect.name != "mysql":
+        yield
+        return
+
+    with engine.connect() as soedinenie:
+        vzyat = soedinenie.execute(
+            select(func.get_lock(IMYA_ZAMKA_SHEMY, ZHDAT_ZAMOK_SEKUND))
+        ).scalar()
+        if not vzyat:
+            raise RuntimeError(
+                f"не дождался общего замка на схему за {ZHDAT_ZAMOK_SEKUND} с. "
+                "Другой процесс работает со схемой дольше обычного — или "
+                "остался висеть. Проверьте `SHOW PROCESSLIST` на базе."
+            )
+        try:
+            yield
+        finally:
+            # Снимаем ЯВНО, не полагаясь на закрытие соединения: пул может
+            # придержать его, и следующий процесс ждал бы впустую.
+            soedinenie.execute(select(func.release_lock(IMYA_ZAMKA_SHEMY)))
 
 
 def is_empty(engine: Engine) -> bool:

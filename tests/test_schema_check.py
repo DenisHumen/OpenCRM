@@ -283,3 +283,95 @@ def test_healthz_ne_vryot_pri_lezhachey_baze(monkeypatch):
         "при лежачей базе /healthz ответил 200 — обновление сочтёт такой деплой "
         "удачным и не откатится"
     )
+
+
+# --- общий замок на схему -----------------------------------------------------
+
+
+def test_rabota_so_shemoy_idyot_pod_obshchim_zamkom():
+    """`_ensure_schema` обязан брать общий замок, а не догадываться по ошибке.
+
+    **НАЙДЕНО ЗАМЕРОМ.** Четыре процесса, поднявшись разом на пустой базе, без
+    замка дают такую картину (воспроизведено на настоящей MySQL):
+
+        процесс 1: УПАЛ за 0.27 с — (1050, "Table 'roles' already exists")
+        процесс 2: УПАЛ за 0.27 с — (1050, "Table 'roles' already exists")
+        процесс 0: поднял схему за 8.95 с
+
+    И это не «один воркер не поднялся»: uvicorn считает отказ старта
+    непоправимым и гасит ВЕСЬ контейнер — `/healthz` замолкает, обновление
+    откатывается. С замком поднимаются все четыре.
+
+    Обратите внимание на имя таблицы: падение приходит на `roles`, а прежняя
+    терпимость к соседу проверяла `has_table(users)`. `create_all` идёт
+    топологическим порядком и валится на той таблице, до которой дошёл, — то
+    есть догадка не работала никогда.
+    """
+    import ast
+    import inspect
+
+    from web import main as web_main
+
+    telo = ast.parse(inspect.getsource(web_main._ensure_schema))
+    imena = {u.attr for u in ast.walk(telo) if isinstance(u, ast.Attribute)}
+    assert "zamok_shemy" in imena, (
+        "работа со схемой идёт без общего замка — три процесса из четырёх умрут "
+        "на старте и утащат за собой контейнер"
+    )
+
+    # И догадки по исключению больше нет: она молчаливо не работала.
+    #
+    # Смотрим ДЕРЕВО, а не текст: слово `has_table` стоит в объяснении выше, и
+    # поиск по строке краснел бы на исправном коде. Ровно та же ловушка, что
+    # была со сторожем чтения копии базы.
+    pod_zamkom = ast.parse(inspect.getsource(web_main._shema_pod_zamkom))
+    for derevo in (telo, pod_zamkom):
+        obrashcheniya = {u.attr for u in ast.walk(derevo) if isinstance(u, ast.Attribute)}
+        assert "has_table" not in obrashcheniya, (
+            "вернулась догадка по исключению вместо ожидания"
+        )
+
+
+def test_zamok_shemy_pravda_ne_puskaet_vtorogo():
+    """Замок обязан РАЗВОДИТЬ, а не просто существовать.
+
+    Проверка на деле, а не по имени: два соединения к той же базе, второе не
+    должно получить замок, пока держит первое. Иначе «замок» окажется
+    украшением, и узнать об этом можно будет только на боевом сервере.
+    """
+    import threading
+
+    from sqlalchemy import func, select
+
+    from database.schema_check import IMYA_ZAMKA_SHEMY, zamok_shemy
+    from database.session import engine
+
+    if engine.dialect.name != "mysql":
+        pytest.skip("именованные замки есть только у MySQL")
+
+    vtoroy_vzyal = []
+    derzhim = threading.Event()
+    otpuskaem = threading.Event()
+
+    def pervyy():
+        with zamok_shemy(engine):
+            derzhim.set()
+            otpuskaem.wait(timeout=10)
+
+    potok = threading.Thread(target=pervyy)
+    potok.start()
+    try:
+        assert derzhim.wait(timeout=10), "первый не взял замок вовсе"
+        # Ноль секунд ожидания: нам нужен ответ «занято», а не очередь.
+        with engine.connect() as vtoroye:
+            vtoroy_vzyal.append(
+                vtoroye.execute(select(func.get_lock(IMYA_ZAMKA_SHEMY, 0))).scalar()
+            )
+    finally:
+        otpuskaem.set()
+        potok.join(timeout=10)
+
+    assert vtoroy_vzyal == [0], (
+        f"второй получил замок, пока его держит первый: {vtoroy_vzyal} — "
+        "замок не разводит, и гонка на старте остаётся"
+    )
