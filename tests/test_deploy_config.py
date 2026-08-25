@@ -531,3 +531,46 @@ def test_storozh_vorkerov_bez_redis_na_meste():
     assert "workers" in nastroyki and "redis" in nastroyki.lower(), (
         "приложение перестало проверять пару «много процессов + Redis»"
     )
+
+
+def test_u_prilozheniya_est_potolok_pamyati():
+    """Без потолка нехватку памяти разбирает ядро, и разбирает молча.
+
+    Оно выбирает жертву по наибольшему потреблению и уносит её без единой строки
+    в логе — процесс просто исчезает. Соседние службы наблюдения потолки имеют
+    давно, и довод там записан тот же: пусть упадёт наблюдатель, а не сайт. У
+    самого сайта потолка не было вовсе.
+
+    Число не «на глаз»: замерено в боевом образе — холостой процесс 227 МБ, два
+    одновременных разжатия картинок дают пик 550 МБ. При четырёх рабочих
+    процессах худший случай 2,2 ГБ, и три гигабайта покрывают его с запасом на
+    машине с 7937 МБ.
+    """
+    stroki = (ROOT / "docker" / "docker-compose.yml").read_text(encoding="utf-8").splitlines()
+
+    vnutri = False
+    blok: list[str] = []
+    for stroka in stroki:
+        if stroka.startswith("  app:"):
+            vnutri = True
+            continue
+        if vnutri:
+            golaya = stroka.strip()
+            if golaya and not stroka.startswith("    ") and not stroka.startswith("#"):
+                break
+            blok.append(stroka)
+    telo = "\n".join(blok)
+    assert "env_file:" in telo, "вырезали не ту службу"
+
+    predel = [s.strip() for s in blok if s.strip().startswith("mem_limit:")]
+    assert predel, (
+        "у приложения нет потолка памяти — при нехватке ядро унесёт самый "
+        "крупный процесс молча, и это может оказаться база"
+    )
+    # Потолок обязан вмещать четыре рабочих процесса на пике: 4 × 550 МБ.
+    znachenie = predel[0].split(":", 1)[1].strip().lower()
+    assert znachenie.endswith("g"), f"потолок задан не в гигабайтах: {znachenie}"
+    assert float(znachenie[:-1]) >= 3, (
+        f"потолок {znachenie} мал: четыре воркера на пике дают 2,2 ГБ, и "
+        "контейнер начнёт умирать на обычной работе"
+    )
