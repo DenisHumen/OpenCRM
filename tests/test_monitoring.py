@@ -203,10 +203,26 @@ def test_metrics_ne_vynosit_lishnego(metrics_module, monkeypatch):
     #: Метки, которые вообще бывают. Список закрытый: `path`, `client`, `user`
     #: или `email` здесь означали бы журнал посещений, разложенный по рядам
     #: Prometheus, — с бесконечной кардинальностью и без срока давности.
-    allowed = {"version", "status"}
+    #:
+    #: `vid` — вид события безопасности. Он в списке потому, что берётся из
+    #: ЗАКРЫТОГО набора `core.bezopasnost.VIDY` (семь значений), а не из того,
+    #: что прислал посетитель: снаружи повлиять на это имя нельзя никак. Именно
+    #: это и отличает допустимую метку от недопустимой — не смысл, а то, кто
+    #: задаёт её значения. Проверка ниже держит границу набора отдельно.
+    allowed = {"version", "status", "vid"}
     for name, labels, _value in _samples(body):
         extra = set(labels) - allowed
         assert not extra, f"{name}: метки вне закрытого списка: {sorted(extra)}"
+        # Само ЗНАЧЕНИЕ `vid` тоже обязано быть из набора, а не любым словом.
+        # Разрешив метку, легко потом начать класть в неё что придётся, и
+        # список выше останется на месте, перестав что-либо стеречь.
+        if "vid" in labels:
+            from core.bezopasnost import VIDY
+
+            assert labels["vid"] in VIDY, (
+                f"{name}: vid={labels['vid']!r} не из закрытого набора "
+                f"core.bezopasnost.VIDY — метка перестала быть перечислением"
+            )
 
 
 def test_metrics_zakryvaetsya_vmeste_s_blokom(metrics_module, monkeypatch):
