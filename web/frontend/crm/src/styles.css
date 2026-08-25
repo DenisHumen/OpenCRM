@@ -1076,7 +1076,7 @@ select:disabled {
   background: var(--border);
   overflow: hidden;
 }
-.zaliv-polosa__hod {
+.zaliv-hod {
   height: 100%;
   background: var(--accent);
   border-radius: 999px;
