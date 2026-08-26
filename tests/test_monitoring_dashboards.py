@@ -460,6 +460,92 @@ def test_panel_trevog_stoit_pervoy_a_ne_posledney():
     )
 
 
+#: Панели, которым ЗАКОННО показывать пустоту зелёной, — и почему.
+#:
+#: Список закрытый, как и прочие реестры в этом наборе: строка без причины здесь
+#: и есть та самая тихая эрозия.
+ZELYONAYA_PUSTOTA_RAZRESHENA = {
+    # «Ошибок за сутки» читается НЕ В ОДИНОЧКУ, и это записано в её же подписи:
+    # рядом стоит счётчик ВСЕХ строк приложения. Пусто у обеих — логи не идут;
+    # пусто только здесь — ошибок вправду нет. Пару стережёт соседняя проверка
+    # `test_pustaya_panel_oshibok_otlichima_ot_slomannoy`.
+    "Ошибок за сутки",
+}
+
+
+def test_pustota_ne_vyglyadit_blagopoluchiem():
+    """«Копий нет» на зелёном — худшая надпись из возможных, и она была.
+
+    Владелец прислал снимок боевой панели: крупными белыми буквами «копий нет»
+    на ярко-зелёном поле. Grafana красит текст `noValue` цветом БАЗОВОГО порога,
+    а базовый был зелёным — тем самым, которым красится свежая копия.
+
+    Причин у пустоты две, и обе плохие: копий вправду нет либо метрики
+    приложения не доезжают вовсе (у владельца был как раз второй случай —
+    `/api/v1/metrics` отвечал 403). Ни в одном прочтении это не хорошая новость.
+
+    Проверка требует: если панель заготовила текст на случай пустоты, этот
+    случай не должен краситься зелёным. Либо база порога не зелёная, либо
+    пустоты не бывает вовсе (`or vector(...)` даёт число всегда), либо панель
+    названа в списке исключений с доводом.
+    """
+    vinovnye = []
+    for name, dash in _dashboards().items():
+        for panel in _paneli(dash):
+            if panel.get("type") != "stat":
+                continue
+            zagolovok = panel.get("title", "")
+            if zagolovok in ZELYONAYA_PUSTOTA_RAZRESHENA:
+                continue
+            defaults = panel.get("fieldConfig", {}).get("defaults", {})
+            if not defaults.get("noValue"):
+                continue
+            stupeni = defaults.get("thresholds", {}).get("steps") or []
+            baza = stupeni[0].get("color") if stupeni else None
+            if baza not in ("green", None):
+                continue
+            # Пустоты не бывает: запрос всегда возвращает число.
+            if any("or vector(" in (t.get("expr") or "") for t in _tseli(panel)):
+                continue
+            vinovnye.append(f"{name}: «{zagolovok}» → {defaults['noValue']!r} на зелёном")
+
+    assert not vinovnye, (
+        "пустота выдаётся за благополучие:\n  " + "\n  ".join(vinovnye)
+        + "\n\nЛибо база порога не зелёная, либо `or vector(...)` вместо пустоты, "
+        "либо строка в ZELYONAYA_PUSTOTA_RAZRESHENA с доводом."
+    )
+
+
+def test_kopiya_otlichaet_net_kopiy_ot_net_metrik():
+    """Две разные беды не имеют права выглядеть одинаково.
+
+    Ряд `opencrm_backup_last_timestamp_seconds` пропадает и когда копий нет, и
+    когда метрик нет вовсе. Различитель приложение отдаёт САМО:
+    `opencrm_backup_count` пишется всегда, нулём при отсутствии копий, — именно
+    затем, и это записано в докстроке `_collect_backups`. Панель им не
+    пользовалась.
+    """
+    dash = _dashboards()["opencrm-site.json"]
+    panel = next(
+        (p for p in _paneli(dash) if p.get("title") == "Последняя копия"), None
+    )
+    assert panel, "исчезла панель последней копии"
+
+    vyrazheniya = " ".join(t.get("expr", "") for t in _tseli(panel))
+    assert "opencrm_backup_count" in vyrazheniya, (
+        "панель копии снова смотрит только на метку времени: «копий нет» и "
+        "«метрик нет» станут неразличимы"
+    )
+    podstanovki = json.dumps(
+        panel["fieldConfig"]["defaults"].get("mappings", []), ensure_ascii=False
+    )
+    for slova in ("копий нет", "метрик нет"):
+        assert slova in podstanovki, f"в подстановках панели нет случая «{slova}»"
+    assert '"green"' not in podstanovki, (
+        "особый случай на панели копии покрашен зелёным — ровно то, что чинилось"
+    )
+
+
 def test_pustaya_panel_trevog_chitaetsya_kak_spokoyno():
     """«No data» на панели тревог — самая опасная надпись из возможных.
 
