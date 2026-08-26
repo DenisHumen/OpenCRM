@@ -3219,15 +3219,650 @@ menu_item() { printf '  %s%2s)%s %s\n' "$CYAN" "$1" "$R" "$2"; }
 _TTY_STATE=""
 tty_zapomnit() {
     [ -r /dev/tty ] || return 0
-    _TTY_STATE=$(stty -g < /dev/tty 2>/dev/null || true)
+    # Гасим stderr ВСЕЙ группы, а не одного `stty`.
+    #
+    # `/dev/tty` бывает на месте и при этом не открывается: так устроен запуск
+    # без управляющего терминала — cron, systemd, `docker run` без `-t`. Отказ
+    # печатает сама оболочка, ДО того как `stty` запустится, и его собственный
+    # `2>/dev/null` этого сообщения не касается. В выводе появлялась строка
+    # «can't open /dev/tty», пугающая ровно там, где всё в порядке.
+    { _TTY_STATE=$(stty -g < /dev/tty) || _TTY_STATE=""; } 2>/dev/null
 }
 tty_vernut() {
     [ -n "$_TTY_STATE" ] || return 0
-    stty "$_TTY_STATE" < /dev/tty 2>/dev/null || true
+    { stty "$_TTY_STATE" < /dev/tty || true; } 2>/dev/null
+}
+
+# --------------------------------------------------------------------------
+# Живое меню (TUI)
+# --------------------------------------------------------------------------
+#
+# **Зачем.** Прежнее меню печатало семнадцать строк и ждало номер. Работало это
+# безотказно, но отвечало ровно на один вопрос — «какой пункт», — а человек
+# приходит сюда с другим: «что сейчас с сайтом». Чтобы узнать это, приходилось
+# выбрать пункт, дождаться вывода, прочитать, нажать Enter и вернуться. Живая
+# шапка отвечает на него до того, как что-либо нажато.
+#
+# **Чем это НЕ является.** Не заменой прежнего меню, а надстройкой над ним.
+# Номерное меню остаётся на месте и включается всюду, где живому нельзя:
+#
+#   - вывод не в терминал (`curl … | sh`, cron, systemd, перенаправление в файл);
+#   - `OPENCRM_INPUT=stdin` — отдушина для тестов и чужой автоматизации, которые
+#     скармливают меню заранее заготовленные ответы;
+#   - `-y` (ASSUME_YES): молчаливый прогон вопросов не задаёт вовсе;
+#   - терминал без цвета, `TERM=dumb`, узкое окно, отсутствующий `stty`.
+#
+# Список этих условий — не перестраховка. Пульт боевого сервера обязан работать
+# в самом бедном окружении, какое бывает: аварийная консоль хостера, `ssh` из
+# телефона, вывод, уехавший в файл. Живое меню там либо не нужно, либо вредно.
+#
+# **Главная опасность — оставленный сырой режим.** В нём `read` не ждёт перевода
+# строки, а Ctrl+C не доходит как сигнал; со стороны это неотличимо от зависшего
+# скрипта, и выход остаётся один — переподключиться по ssh. В скрипте уже есть
+# `tty_zapomnit`/`tty_vernut` именно потому, что это однажды случилось. Здесь
+# сырой режим включается НАМЕРЕННО, поэтому возврат повешен на `trap` для выхода
+# и сигналов: как бы цикл ни кончился — обрывом, ошибкой, Ctrl+C, — терминал
+# вернётся в то состояние, в котором его застали.
+
+#: Живое меню разрешено. Проверки идут от дешёвых к дорогим.
+tui_dostupen() {
+    [ "${OPENCRM_TUI:-1}" != "0" ] || return 1
+    [ "$ASSUME_YES" != "1" ] || return 1
+    [ "${OPENCRM_INPUT:-tty}" != "stdin" ] || return 1
+    [ -t 1 ] || return 1
+    [ -r /dev/tty ] && [ -w /dev/tty ] || return 1
+    [ "${TERM:-dumb}" != "dumb" ] || return 1
+    # Без цвета живое меню превращается в мигающий текст без выделения выбора:
+    # тот же список, только хуже прежнего. Цвет здесь — не украшение, а
+    # единственный способ показать, на чём стоит курсор.
+    [ -n "$B" ] || return 1
+    command -v stty >/dev/null 2>&1 || return 1
+    command -v od >/dev/null 2>&1 || return 1
+    tui_razmer
+    # Ниже двадцати строк шапка со списком не помещаются вместе, и меню начнёт
+    # само себя прокручивать. Прежнее в таком окне читается лучше.
+    [ "$TUI_STROK" -ge 20 ] && [ "$TUI_STOLBCOV" -ge 60 ] || return 1
+    return 0
+}
+
+TUI_STROK=24
+TUI_STOLBCOV=80
+
+tui_razmer() {
+    # `stty size` есть не везде, `tput` — не всегда настроен. Спрашиваем оба и
+    # оставляем разумное умолчание: ошибиться в размере не страшно, а вот
+    # свалиться на его определении — страшно.
+    _tui_razmer=$(stty size < /dev/tty 2>/dev/null || true)
+    case "$_tui_razmer" in
+        *' '*)
+            TUI_STROK=${_tui_razmer%% *}
+            TUI_STOLBCOV=${_tui_razmer##* }
+            ;;
+        *)
+            TUI_STROK=$(tput lines 2>/dev/null || echo 24)
+            TUI_STOLBCOV=$(tput cols 2>/dev/null || echo 80)
+            ;;
+    esac
+    case "$TUI_STROK" in ''|*[!0-9]*) TUI_STROK=24 ;; esac
+    case "$TUI_STOLBCOV" in ''|*[!0-9]*) TUI_STOLBCOV=80 ;; esac
+}
+
+#: ESC отдельной переменной, а не `\033` внутри `sed`.
+#:
+#: POSIX sed не разбирает `\033` как escape — для него это четыре обычных знака,
+#: и выражение снятия цвета не совпадало НИ РАЗУ. Управляющие последовательности
+#: оставались в строке, счётчик знаков считал их за текст, и правая рамка
+#: уезжала ровно на длину раскраски. Видно только глазами на живом терминале: ни
+#: `sh -n`, ни набор тестов такого не ловят.
+TUI_ESC=$(printf '\033')
+
+#: Видимая ширина строки в ЗНАКАХ, без управляющих последовательностей.
+#:
+#: `wc -m` считает знаки, а не байты, — замерено на Debian и Alpine: строка из
+#: 44 кириллических знаков даёт 44 при 75 байтах. Байтовый счёт разносил бы
+#: рамку на любой русской подписи.
+tui_shirina() {
+    printf '%s' "$1" | sed "s/${TUI_ESC}\[[0-9;?]*[A-Za-z]//g" | wc -m | tr -d ' '
+}
+
+#: Кусок строки по ЗНАКАМ: с какого и по какой.
+#:
+#: Через `sed`, а не `cut -c` или `awk substr`. Замерено на тех же двух
+#: системах: оба режут БАЙТЫ и оставляют половину буквы — «последнее \xd0»
+#: вместо «последнее обновление».
+#:
+#: Перевод строки в замене — обратной косой с настоящим переносом, а не `\n`:
+#: последнее — расширение GNU, а в Ubuntu под именем awk живёт mawk, и такие
+#: расширения молча не работают. Тот же урок записан у раскраски.
+tui_srez() {
+    printf '%s' "$1" | sed 's/./&\
+/g' | sed -n "$2,$3p" | tr -d '\n'
+}
+
+#: Рисовать рамками или палочками. UTF-8 есть не в каждой консоли хостера, а
+#: рамка, распавшаяся на вопросительные знаки, хуже честного минуса.
+tui_ramki() {
+    case "${LC_ALL:-${LC_CTYPE:-${LANG:-}}}" in
+        *[Uu][Tt][Ff]*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+TUI_SYROY=0
+
+tui_vklyuchit() {
+    # `min 0 time 10` — ключ ко всему живому: чтение возвращается пустым через
+    # секунду, даже если никто ничего не нажал. Без этого цикл висел бы на
+    # клавише, и шапка обновлялась бы только по нажатию — то есть не была бы
+    # живой.
+    stty raw -echo min 0 time 10 < /dev/tty 2>/dev/null || return 1
+    TUI_SYROY=1
+    printf '\033[?25l' > /dev/tty   # спрятать курсор: он мигает посреди списка
+    return 0
+}
+
+tui_vyklyuchit() {
+    [ "$TUI_SYROY" = "1" ] || return 0
+    TUI_SYROY=0
+    printf '\033[?25h\033[0m' > /dev/tty   # вернуть курсор и снять цвет
+    tty_vernut
+}
+
+#: Одна клавиша словом: up, down, left, right, enter, quit, цифра или пусто.
+#:
+#: Через `od`, а не подстановкой команды: `$(…)` срезает переводы строк, и
+#: Enter в сыром режиме (одиночный CR) от него не отличить. Числовой код
+#: однозначен и не зависит от локали.
+tui_klavisha() {
+    _tui_kod=$(dd bs=1 count=1 2>/dev/null < /dev/tty | od -An -tu1 2>/dev/null | tr -d ' \n')
+    case "$_tui_kod" in
+        "")   printf 'timeout'; return 0 ;;
+        27)
+            # Escape-последовательность стрелки: ESC [ A|B|C|D. Одиночный ESC
+            # (человек нажал его сам) отличается тем, что продолжения нет —
+            # `min 0` вернёт пустоту, и мы поймём это как «назад».
+            _tui_k2=$(dd bs=1 count=1 2>/dev/null < /dev/tty | od -An -tu1 2>/dev/null | tr -d ' \n')
+            [ "$_tui_k2" = "91" ] || { printf 'left'; return 0; }
+            _tui_k3=$(dd bs=1 count=1 2>/dev/null < /dev/tty | od -An -tu1 2>/dev/null | tr -d ' \n')
+            case "$_tui_k3" in
+                65) printf 'up' ;;
+                66) printf 'down' ;;
+                67) printf 'right' ;;
+                68) printf 'left' ;;
+                *)  printf 'timeout' ;;
+            esac
+            return 0 ;;
+        10|13) printf 'enter'; return 0 ;;
+        113|81) printf 'quit'; return 0 ;;
+        3)  printf 'quit'; return 0 ;;          # Ctrl+C в сыром режиме приходит байтом
+        107) printf 'up'; return 0 ;;           # k — как в less и vim
+        106) printf 'down'; return 0 ;;         # j
+        104) printf 'left'; return 0 ;;         # h
+        108) printf 'right'; return 0 ;;        # l
+        48|49|50|51|52|53|54|55|56|57)
+            printf 'cifra:%s' "$(printf "\\$(printf '%03o' "$_tui_kod")")"
+            return 0 ;;
+        *)  printf 'timeout'; return 0 ;;
+    esac
+}
+
+# --- живая сводка ---------------------------------------------------------
+#
+# Собирается В ФОНЕ и кладётся в файл, а рисуется из файла. Иначе не выйдет:
+# `compose ps`, `curl` и `autoupdate status` (это python) вместе стоят пару
+# секунд, и собирай мы их в цикле отрисовки — меню замирало бы на эти секунды
+# при каждом обновлении. Замирающий пульт хуже неподвижного: непонятно, он
+# думает или сломался.
+#
+# Формат — строки `ключ=значение`. Не JSON: разбирать его в POSIX sh нечем, а
+# заводить ради шапки зависимость от python значило бы, что шапка исчезнет
+# ровно там, где python и сломался.
+
+TUI_SVODKA=""
+TUI_SBOR_PID=""
+TUI_SVODKA_KOGDA=0
+
+tui_svodka_sobrat() {
+    _tui_u=$(env_get "$APP_ENV" OPENCRM_BASE_URL 2>/dev/null || true)
+    printf 'url=%s\n' "${_tui_u:-—}"
+
+    if curl -fsS --max-time 3 http://127.0.0.1/healthz 2>/dev/null | grep -q '"ok"'; then
+        printf 'zdorov=1\n'
+    else
+        printf 'zdorov=0\n'
+    fi
+    # Режим обслуживания — отдельное состояние, а не разновидность «не
+    # отвечает»: сайт закрыт НАМЕРЕННО, и путать это с аварией нельзя.
+    if [ -f "$(home_dir)/data/maintenance.on" ] 2>/dev/null; then
+        printf 'obsluzhivanie=1\n'
+    else
+        printf 'obsluzhivanie=0\n'
+    fi
+
+    _tui_vsego=$(compose ps --services 2>/dev/null | grep -c . || echo 0)
+    _tui_zhivyh=$(compose ps --services --filter status=running 2>/dev/null | grep -c . || echo 0)
+    printf 'konteynerov=%s\n' "${_tui_vsego:-0}"
+    printf 'zhivyh=%s\n' "${_tui_zhivyh:-0}"
+    # Имена лежачих — то, ради чего вообще смотрят на счётчик.
+    _tui_legli=$(compose ps --services 2>/dev/null | while IFS= read -r _tui_s; do
+        compose ps --services --filter status=running 2>/dev/null | grep -qx "$_tui_s" || printf '%s ' "$_tui_s"
+    done)
+    printf 'legli=%s\n' "$(printf '%s' "$_tui_legli" | sed 's/ *$//')"
+
+    # Версия и обновления — у обновлятора, он единственный знает про ветку и
+    # про то, чем кончился прошлый заход.
+    _tui_st=$(autoupdate status 2>/dev/null || true)
+    printf 'versiya=%s\n' "$(printf '%s' "$_tui_st" | sed -n 's/^развёрнуто: *//p' | head -1)"
+    printf 'obnova=%s\n'  "$(printf '%s' "$_tui_st" | sed -n 's/^обновление: *//p' | head -1)"
+    printf 'avto=%s\n'    "$(printf '%s' "$_tui_st" | sed -n 's/^автообновление: *//p' | head -1)"
+    printf 'poslednee=%s\n' "$(printf '%s' "$_tui_st" | sed -n 's/^последнее: *//p' | head -1)"
+
+    # `-h`, а не `-P`: в блоках по килобайту свободное место выглядит как
+    # «958484660», и прочитать это глазом нельзя. Флаг не из POSIX, но соседний
+    # `cmd_status` пользуется им давно, то есть на этих системах он есть.
+    #
+    # Каталог берём существующий: у неустановленного сайта `home_dir` указывает
+    # туда, где ещё ничего нет, и `df` молчит — строка «диск» в шапке пустела.
+    _tui_kuda=$(home_dir)
+    [ -d "$_tui_kuda" ] || _tui_kuda="$REPO_DIR"
+    _tui_disk=$(df -h "$_tui_kuda" 2>/dev/null | tail -1)
+    printf 'disk=%s\n' "$(printf '%s' "$_tui_disk" | awk '{print $4" свободно"}')"
+}
+
+#: Запустить сбор, если прошлый уже закончился. Больше одного разом — незачем:
+#: они спрашивают одно и то же и мешают друг другу у докера.
+tui_svodka_obnovit() {
+    if [ -n "$TUI_SBOR_PID" ] && kill -0 "$TUI_SBOR_PID" 2>/dev/null; then
+        return 0
+    fi
+    ( tui_svodka_sobrat > "$TUI_SVODKA.new" 2>/dev/null \
+        && mv "$TUI_SVODKA.new" "$TUI_SVODKA" ) &
+    TUI_SBOR_PID=$!
+    TUI_SVODKA_KOGDA=$(tui_teper)
+}
+
+tui_teper() { date +%s 2>/dev/null || echo 0; }
+
+tui_pole() {
+    [ -f "$TUI_SVODKA" ] || return 0
+    sed -n "s/^$1=//p" "$TUI_SVODKA" | head -1
+}
+
+# --- отрисовка ------------------------------------------------------------
+
+#: Кадр бегущей строки. Текст короче поля — отдаём как есть; длиннее — крутим.
+#:
+#: Бегущая строка тут не для красоты: адрес сайта с длинным доменом и строка
+#: «последнее обновление» не помещаются в узкое окно, а обрезать их значит
+#: спрятать ровно тот хвост, ради которого их читают.
+tui_begushchaya() {
+    _tui_tekst=$1; _tui_shirina=$2; _tui_faza=$3
+    # Поле уже поля — крутить нечего, отдаём как есть: обрезанная в ноль строка
+    # хуже вылезшей за край.
+    [ "$_tui_shirina" -ge 4 ] || { printf '%s' "$_tui_tekst"; return 0; }
+    # По ЗНАКАМ, а не по `${#…}`: последнее в POSIX sh считает байты, и русская
+    # строка объявлялась бы длинной вдвое — бежала бы и та, что помещается.
+    _tui_dlina=$(tui_shirina "$_tui_tekst")
+    if [ "$_tui_dlina" -le "$_tui_shirina" ]; then
+        printf '%s' "$_tui_tekst"
+        return 0
+    fi
+    _tui_lenta="$_tui_tekst   ·   "
+    _tui_period=$(tui_shirina "$_tui_lenta")
+    _tui_sdvig=$(( _tui_faza % _tui_period ))
+    tui_srez "$_tui_lenta$_tui_lenta" $(( _tui_sdvig + 1 )) $(( _tui_sdvig + _tui_shirina ))
+}
+
+TUI_VERTUSHKA_KADR=0
+
+tui_vertushka() {
+    if tui_ramki; then
+        _tui_kadry='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
+    else
+        _tui_kadry='|/-\'
+    fi
+    _tui_vsego=$(printf '%s' "$_tui_kadry" | wc -m | tr -d ' ')
+    _tui_n=$(( TUI_VERTUSHKA_KADR % _tui_vsego ))
+    tui_srez "$_tui_kadry" $(( _tui_n + 1 )) $(( _tui_n + 1 ))
+}
+
+tui_liniya() {
+    _tui_znak=$1; _tui_skolko=$2
+    _tui_out=""
+    _tui_i=0
+    while [ "$_tui_i" -lt "$_tui_skolko" ]; do
+        _tui_out="$_tui_out$_tui_znak"
+        _tui_i=$(( _tui_i + 1 ))
+    done
+    printf '%s' "$_tui_out"
+}
+
+tui_shapka() {
+    if tui_ramki; then _tui_g='─'; _tui_v='│'; _tui_ul='╭'; _tui_ur='╮'; _tui_dl='╰'; _tui_dr='╯'; _tui_tochka='●'
+    else _tui_g='-'; _tui_v='|'; _tui_ul='+'; _tui_ur='+'; _tui_dl='+'; _tui_dr='+'; _tui_tochka='*'
+    fi
+    _tui_w=$(( TUI_STOLBCOV - 2 ))
+    [ "$_tui_w" -gt 100 ] && _tui_w=100
+    _tui_vnutri=$(( _tui_w - 2 ))
+
+    printf '%s%s%s%s%s\n' "$CYAN" "$_tui_ul" "$(tui_liniya "$_tui_g" "$_tui_w")" "$_tui_ur$R" ""
+
+    # Строка 1: имя, состояние, вертушка сбора.
+    _tui_obsl=$(tui_pole obsluzhivanie)
+    _tui_zd=$(tui_pole zdorov)
+    if [ "$_tui_obsl" = "1" ]; then
+        _tui_sost="${YELLOW}${_tui_tochka} обслуживание${R}"
+        _tui_sost_en="${YELLOW}${_tui_tochka} maintenance${R}"
+    elif [ "$_tui_zd" = "1" ]; then
+        _tui_sost="${GREEN}${_tui_tochka} работает${R}"; _tui_sost_en="${GREEN}${_tui_tochka} running${R}"
+    elif [ -f "$TUI_SVODKA" ]; then
+        _tui_sost="${RED}${_tui_tochka} не отвечает${R}"; _tui_sost_en="${RED}${_tui_tochka} not responding${R}"
+    else
+        _tui_sost="${D}${_tui_tochka} проверяю…${R}"; _tui_sost_en="${D}${_tui_tochka} checking…${R}"
+    fi
+    _tui_zanyat=""
+    if [ -n "$TUI_SBOR_PID" ] && kill -0 "$TUI_SBOR_PID" 2>/dev/null; then
+        _tui_zanyat=" ${D}$(tui_vertushka)${R}"
+    fi
+    tui_stroka_ramki "$_tui_v" "$_tui_vnutri" "${B}OpenCRM${R}  $(tr_ "$_tui_sost" "$_tui_sost_en")$_tui_zanyat"
+
+    # Строка 2: адрес — бегущей строкой, если не влезает.
+    tui_stroka_ramki "$_tui_v" "$_tui_vnutri" "${D}$(tui_begushchaya "$(tui_pole url)" $(( _tui_vnutri - 2 )) "$TUI_VERTUSHKA_KADR")${R}"
+
+    # Строка 3: версия, обновление, автообновление.
+    _tui_ver=$(tui_pole versiya)
+    _tui_obn=$(tui_pole obnova)
+    _tui_avto=$(tui_pole avto)
+    case "$_tui_obn" in
+        есть) _tui_obn_cvet="${YELLOW}$(tr_ "есть обновление" "update available")${R}" ;;
+        нет)  _tui_obn_cvet="${D}$(tr_ "последняя версия" "up to date")${R}" ;;
+        *)    _tui_obn_cvet="${D}—${R}" ;;
+    esac
+    tui_stroka_ramki "$_tui_v" "$_tui_vnutri" \
+        "$(tr_ "версия" "version") ${B}${_tui_ver:-—}${R}  ·  $_tui_obn_cvet  ·  $(tr_ "автообновление" "auto-update") ${_tui_avto:-—}"
+
+    # Строка 4: контейнеры и диск.
+    _tui_vsego=$(tui_pole konteynerov); _tui_zhivyh=$(tui_pole zhivyh); _tui_legli=$(tui_pole legli)
+    if [ -n "$_tui_legli" ]; then
+        _tui_kont="${RED}${_tui_zhivyh:-0}/${_tui_vsego:-0}${R} ${D}($_tui_legli)${R}"
+    elif [ -n "$_tui_vsego" ] && [ "$_tui_vsego" != "0" ]; then
+        _tui_kont="${GREEN}${_tui_zhivyh}/${_tui_vsego}${R}"
+    else
+        _tui_kont="${D}—${R}"
+    fi
+    tui_stroka_ramki "$_tui_v" "$_tui_vnutri" \
+        "$(tr_ "контейнеры" "containers") $_tui_kont  ·  $(tr_ "диск" "disk") ${D}$(tui_pole disk)${R}"
+
+    # Строка 5: чем кончилось прошлое обновление — бегущей строкой.
+    _tui_p=$(tui_pole poslednee)
+    [ -n "$_tui_p" ] && tui_stroka_ramki "$_tui_v" "$_tui_vnutri" \
+        "${D}$(tr_ "последнее обновление" "last update"): $(tui_begushchaya "$_tui_p" $(( _tui_vnutri - 24 )) "$TUI_VERTUSHKA_KADR")${R}"
+
+    printf '%s%s%s%s\n' "$CYAN" "$_tui_dl" "$(tui_liniya "$_tui_g" "$_tui_w")" "$_tui_dr$R"
+}
+
+#: Строка внутри рамки с выравниванием по видимой ширине.
+#:
+#: Считать длину напрямую нельзя: в тексте живут управляющие
+#: последовательности цвета, и `${#s}` посчитал бы их знаками, а рамка уехала
+#: бы вправо ровно на длину раскраски.
+tui_stroka_ramki() {
+    _tui_v=$1; _tui_shirina=$2; _tui_tekst=$3
+    _tui_vidno=$(tui_shirina "$_tui_tekst")
+    _tui_hvost=$(( _tui_shirina - _tui_vidno ))
+    [ "$_tui_hvost" -lt 0 ] && _tui_hvost=0
+    printf '%s%s%s %s%s %s%s%s\n' "$CYAN" "$_tui_v" "$R" "$_tui_tekst" "$(tui_liniya ' ' "$_tui_hvost")" "$CYAN" "$_tui_v" "$R"
+}
+
+# --- дерево пунктов -------------------------------------------------------
+#
+# Список строками `действие|подпись|пояснение`, а не разбросанным по коду
+# `case`: подпись, пояснение и вызов стоят вместе, и добавить пункт — значит
+# дописать одну строку, а не три в разных местах. Разъехаться им негде.
+#
+# Разделов шесть, и деление не выдумано: оно повторяет то, зачем сюда приходят.
+# «Посмотреть» отделено от «сделать», а редкое и опасное (восстановление,
+# фаервол, обслуживание) убрано с первого экрана, чтобы не жать по привычке.
+
+tui_punkty() {
+    case "$1" in
+    glavnoe)
+        tr_ 'razdel:sostoyanie|Состояние|Что сейчас с сайтом, контейнерами и диском
+razdel:upravlenie|Управление|Запуск, перезапуск, остановка, логи
+razdel:obnovlenie|Обновление|Обновить сейчас, автообновление, журнал заходов
+razdel:kopii|Копии|Снять копию, восстановиться из копии
+razdel:dostup|Доступ и сеть|Домен, HTTPS, фаервол, пароль администратора
+razdel:nablyudenie|Наблюдение|Мониторинг, оповещения, диагностика
+razdel:redkoe|Редкое|Обслуживание, починка прав после sudo
+vyhod|Выход|Закрыть меню' \
+'razdel:sostoyanie|Status|What is going on with the site, containers and disk
+razdel:upravlenie|Control|Start, restart, stop, logs
+razdel:obnovlenie|Updates|Update now, auto-update, update journal
+razdel:kopii|Backups|Take a backup, restore from one
+razdel:dostup|Access and network|Domain, HTTPS, firewall, admin password
+razdel:nablyudenie|Observability|Monitoring, alerts, diagnostics
+razdel:redkoe|Rare|Maintenance mode, ownership repair after sudo
+vyhod|Exit|Close the menu' ;;
+    sostoyanie)
+        tr_ 'cmd_status|Состояние и здоровье|Контейнеры, ответ сайта, версия, свободное место
+cmd_doctor|Диагностика|Полная проверка установки: схема, копии, метрики, сертификат
+nazad|Назад|К главному списку' \
+'cmd_status|Status and health|Containers, site answer, version, free space
+cmd_doctor|Diagnostics|Full check: schema, backups, metrics, certificate
+nazad|Back|To the main list' ;;
+    upravlenie)
+        tr_ 'cmd_start|Запустить|Поднять контейнеры и дождаться ответа сайта
+cmd_restart|Перезапустить|Перезапустить контейнеры, не трогая данные
+tui_stop|Остановить|Погасить сайт (спросит подтверждение)
+cmd_logs|Логи|Живой поток всех служб; Ctrl+C — выйти
+nazad|Назад|К главному списку' \
+'cmd_start|Start|Bring the containers up and wait for the site
+cmd_restart|Restart|Restart the containers, data untouched
+tui_stop|Stop|Take the site down (asks for confirmation)
+cmd_logs|Logs|Live stream of all services; Ctrl+C to leave
+nazad|Back|To the main list' ;;
+    obnovlenie)
+        tr_ 'cmd_update|Обновить сейчас|Вытянуть свежий код, прогнать проверки, пересобрать
+cmd_autoupdate|Автообновление|Включить или выключить обновление по расписанию
+cmd_history|Журнал обновлений|Чем кончились прошлые заходы
+nazad|Назад|К главному списку' \
+'cmd_update|Update now|Pull the latest code, run the checks, rebuild
+cmd_autoupdate|Auto-update|Turn scheduled updates on or off
+cmd_history|Update journal|How the previous attempts ended
+nazad|Back|To the main list' ;;
+    kopii)
+        tr_ 'cmd_backup|Снять копию|Дамп базы, архив файлов, ключ шифрования и проверка годности
+cmd_restore|Восстановить из копии|Вернуть базу и файлы; спросит, из какой именно
+nazad|Назад|К главному списку' \
+'cmd_backup|Take a backup|Database dump, files archive, secret key and a validity check
+cmd_restore|Restore from a backup|Bring back the database and files; asks which one
+nazad|Back|To the main list' ;;
+    dostup)
+        tr_ 'cmd_domain|Домен и HTTPS|Привязать домен, выпустить или обновить сертификат
+cmd_firewall|Фаервол|Закрыть лишние порты, оставить нужные
+cmd_password|Пароль администратора|Сбросить пароль владельца системы
+nazad|Назад|К главному списку' \
+'cmd_domain|Domain and HTTPS|Attach a domain, issue or renew the certificate
+cmd_firewall|Firewall|Close the extra ports, keep the needed ones
+cmd_password|Admin password|Reset the owner password
+nazad|Back|To the main list' ;;
+    nablyudenie)
+        tr_ 'cmd_monitoring|Мониторинг и оповещения|Панель, тревоги в телеграм, метрики базы и Redis
+cmd_doctor|Диагностика|Полная проверка установки
+nazad|Назад|К главному списку' \
+'cmd_monitoring|Monitoring and alerts|Dashboard, Telegram alerts, database and Redis metrics
+cmd_doctor|Diagnostics|Full check of the installation
+nazad|Back|To the main list' ;;
+    redkoe)
+        tr_ 'menu_maintenance|Режим обслуживания|Закрыть сайт заглушкой или открыть обратно
+cmd_repair|Починка прав|Вернуть владельца файлам после запуска под sudo
+nazad|Назад|К главному списку' \
+'menu_maintenance|Maintenance mode|Close the site behind a stub page or open it back
+cmd_repair|Repair ownership|Give files back to their owner after a run under sudo
+nazad|Back|To the main list' ;;
+    esac
+}
+
+#: Остановка — единственное действие, которое гасит сайт, и потому спрашивает.
+tui_stop() {
+    if confirm "$(tr_ "    Остановить сайт?" "    Stop the site?")" n; then
+        cmd_stop
+    else
+        info "$(tr_ "отменено" "cancelled")"
+    fi
+}
+
+tui_pole_stroki() { printf '%s' "$1" | cut -d'|' -f"$2"; }
+
+# --- главный цикл ---------------------------------------------------------
+
+tui_narisovat() {
+    _tui_razdel=$1; _tui_vybor=$2
+    # `\033[H` вместо очистки: курсор в начало и дорисовка поверх. Полная
+    # очистка на каждом кадре даёт мигание, заметное в ssh с задержкой.
+    printf '\033[H' > /dev/tty
+    {
+        tui_shapka
+        printf '\n'
+        _tui_n=0
+        printf '%s\n' "$(tui_punkty "$_tui_razdel")" | while IFS= read -r _tui_stroka; do
+            [ -n "$_tui_stroka" ] || continue
+            _tui_n=$(( _tui_n + 1 ))
+            _tui_deystvie=$(tui_pole_stroki "$_tui_stroka" 1)
+            _tui_podpis=$(tui_pole_stroki "$_tui_stroka" 2)
+            case "$_tui_deystvie" in
+                razdel:*) _tui_znak=$(tui_ramki && printf '▸' || printf '>') ;;
+                nazad)    _tui_znak=$(tui_ramki && printf '◂' || printf '<') ;;
+                vyhod)    _tui_znak=$(tui_ramki && printf '×' || printf 'x') ;;
+                *)        _tui_znak=' ' ;;
+            esac
+            if [ "$_tui_n" = "$_tui_vybor" ]; then
+                printf '  %s%s %-40s%s\n' "$CYAN$B" "$_tui_znak" "$_tui_podpis" "$R"
+            else
+                printf '  %s %s\n' "$_tui_znak" "$_tui_podpis"
+            fi
+        done
+        printf '\n'
+        # Пояснение к выбранному — бегущей строкой, если длинное.
+        _tui_tek=$(printf '%s\n' "$(tui_punkty "$_tui_razdel")" | sed -n "${_tui_vybor}p")
+        printf '  %s%s%s\n' "$D" \
+            "$(tui_begushchaya "$(tui_pole_stroki "$_tui_tek" 3)" $(( TUI_STOLBCOV - 6 )) "$TUI_VERTUSHKA_KADR")" "$R"
+        printf '\n'
+        printf '  %s%s%s\n' "$D" \
+            "$(tr_ '↑↓ выбор · → Enter открыть · ← назад · 1-9 быстрый выбор · q выход' \
+                   '↑↓ move · → Enter open · ← back · 1-9 quick pick · q quit')" "$R"
+        # Дочищаем хвост экрана: прошлый кадр мог быть длиннее нынешнего.
+        printf '\033[J'
+    } > /dev/tty
+}
+
+#: Выполнить пункт: выйти из сырого режима, отдать терминал команде, вернуться.
+#:
+#: Выход из сырого режима обязателен. Команды спрашивают подтверждения через
+#: `ask`, а он читает строку целиком — в сыром режиме `read` вернулся бы после
+#: первого же знака, и человек отвечал бы «y» на вопрос, которого не дочитал.
+tui_vypolnit() {
+    _tui_deystvie=$1
+    tui_vyklyuchit
+    printf '\033[?25h' > /dev/tty
+    clear 2>/dev/null || printf '\033[2J\033[H' > /dev/tty
+    # Ошибка внутри команды не должна ронять меню: человек остался бы без пульта
+    # ровно в тот момент, когда что-то пошло не так.
+    "$_tui_deystvie" || warn "$(tr_ "команда закончилась ошибкой" "the command ended with an error")"
+    printf '\n%s' "$D"
+    ask "$(tr_ "  Enter — вернуться в меню" "  Enter — back to the menu")" "" >/dev/null
+    printf '%s' "$R"
+    tui_vklyuchit
+    clear 2>/dev/null || printf '\033[2J\033[H' > /dev/tty
+    # После возврата сводка почти наверняка устарела — команда могла всё
+    # поменять (запустить, остановить, обновить).
+    rm -f "$TUI_SVODKA"
+    tui_svodka_obnovit
+}
+
+tui_menu() {
+    TUI_SVODKA=$(mktemp 2>/dev/null) || return 1
+    # Терминал возвращается КАК БЫ ЦИКЛ НИ КОНЧИЛСЯ. Сырой режим, оставленный
+    # после обрыва, — это потеря управления сервером до переподключения по ssh.
+    trap 'tui_vyklyuchit; rm -f "$TUI_SVODKA" "$TUI_SVODKA.new"; exit 0' INT TERM
+    trap 'tui_vyklyuchit; rm -f "$TUI_SVODKA" "$TUI_SVODKA.new"' EXIT
+
+    tui_vklyuchit || { rm -f "$TUI_SVODKA"; return 1; }
+    clear 2>/dev/null || printf '\033[2J\033[H' > /dev/tty
+    tui_svodka_obnovit
+
+    _razdel=glavnoe
+    _vybor=1
+    _stek=""
+    while :; do
+        tui_razmer
+        _vsego=$(printf '%s\n' "$(tui_punkty "$_razdel")" | grep -c .)
+        [ "$_vybor" -gt "$_vsego" ] && _vybor=$_vsego
+        [ "$_vybor" -lt 1 ] && _vybor=1
+        tui_narisovat "$_razdel" "$_vybor"
+
+        _k=$(tui_klavisha)
+        TUI_VERTUSHKA_KADR=$(( TUI_VERTUSHKA_KADR + 1 ))
+
+        case "$_k" in
+            timeout)
+                # Пятнадцать секунд — не «почаще, чтобы живее». `compose ps` и
+                # `autoupdate status` дёргают докер и python; раз в секунду они
+                # съедали бы процессор сервера ради шапки, на которую смотрят
+                # минуту в день.
+                if [ $(( $(tui_teper) - TUI_SVODKA_KOGDA )) -ge 15 ]; then
+                    tui_svodka_obnovit
+                fi
+                continue ;;
+            up)    _vybor=$(( _vybor - 1 )); [ "$_vybor" -lt 1 ] && _vybor=$_vsego ;;
+            down)  _vybor=$(( _vybor + 1 )); [ "$_vybor" -gt "$_vsego" ] && _vybor=1 ;;
+            left)
+                if [ -n "$_stek" ]; then
+                    _razdel=${_stek%%:*}
+                    _vybor=${_stek#*:}
+                    _stek=""
+                fi ;;
+            cifra:*)
+                _n=${_k#cifra:}
+                [ "$_n" -ge 1 ] && [ "$_n" -le "$_vsego" ] && _vybor=$_n || continue
+                _k=enter ;;
+            quit) break ;;
+        esac
+
+        case "$_k" in right|enter)
+            _tek=$(printf '%s\n' "$(tui_punkty "$_razdel")" | sed -n "${_vybor}p")
+            _deystvie=$(tui_pole_stroki "$_tek" 1)
+            case "$_deystvie" in
+                razdel:*)
+                    _stek="$_razdel:$_vybor"
+                    _razdel=${_deystvie#razdel:}
+                    _vybor=1 ;;
+                nazad)
+                    if [ -n "$_stek" ]; then
+                        _razdel=${_stek%%:*}; _vybor=${_stek#*:}; _stek=""
+                    fi ;;
+                vyhod) break ;;
+                *) tui_vypolnit "$_deystvie" ;;
+            esac ;;
+        esac
+    done
+
+    tui_vyklyuchit
+    rm -f "$TUI_SVODKA" "$TUI_SVODKA.new"
+    trap - INT TERM EXIT
+    clear 2>/dev/null || printf '\033[2J\033[H' > /dev/tty
+    return 0
 }
 
 menu() {
     tty_zapomnit
+    # Живое меню — если терминал его выдержит. Разбор условий и почему их так
+    # много — в шапке блока TUI выше. Не выдержал (пайп, cron, `-y`, узкое
+    # окно, TERM=dumb) — работает номерное меню ниже, без единого отличия от
+    # того, каким оно было.
+    if tui_dostupen && tui_menu; then
+        return 0
+    fi
     while :; do
         tty_vernut
         menu_header
