@@ -76,6 +76,9 @@ def _stend(tmp_path: pathlib.Path) -> pathlib.Path:
     )
     (dom / "bin" / "python3").write_text(
         "#!/bin/sh\n"
+        # Записывает, С ЧЕМ его позвали: проверка ниже сверяет, что шапка
+        # спрашивает обновление запомненным ответом, а не запросом в GitHub.
+        f"printf '%s\\n' \"$*\" >> {dom}/vyzovy.log\n"
         "sleep 0.5\n"
         'case "$*" in\n'
         "  *status*)\n"
@@ -254,6 +257,35 @@ def test_ekran_ne_rassypaetsya_lesenkoy(tmp_path):
 
 
 @nuzhen_pty
+def test_shapka_sprashivaet_obnovlenie_bez_seti(tmp_path):
+    """Шапка обязана спрашивать `--cached`. Это не про скорость.
+
+    Обычный `status` ходит в GitHub. Шапка обновляется раз в пятнадцать секунд,
+    то есть без ключа давала бы 240 обращений в час при лимите GitHub в 60 для
+    анонимного клиента. Дальше приходит 403 — и ломается не шапка, а НАСТОЯЩЕЕ
+    обновление, потому что лимит один на весь адрес. Ровно это и случилось на
+    боевом сервере в первый же час после выкатки живого меню.
+
+    Проверяется по журналу вызовов подставного `python3`: с чем позвали, а не
+    что написано в исходнике. Совпадение подстроки в скрипте зеленело бы и
+    тогда, когда ключ стоит в соседней, никем не вызываемой ветке.
+    """
+    dom = _stend(tmp_path)
+    _pokazat(dom)
+
+    zhurnal = dom / "vyzovy.log"
+    assert zhurnal.exists(), "подставной python3 не звали вовсе"
+    pro_status = [
+        s for s in zhurnal.read_text(encoding="utf-8").splitlines() if "status" in s
+    ]
+    assert pro_status, "шапка не спрашивала обновление"
+    bez_klyucha = [s for s in pro_status if "--cached" not in s]
+    assert not bez_klyucha, (
+        "шапка спросила обновление с выходом в сеть: " + "; ".join(bez_klyucha)
+    )
+
+
+@nuzhen_pty
 def test_perevod_stroki_neset_vozvrat_karetki(tmp_path):
     """Прямая проверка причины, а не следствия.
 
@@ -394,6 +426,14 @@ def test_zhivoe_menyu_otklyuchaetsya_peremennoy():
     dostupen = dostupen[: dostupen.index("\n}")]
     for uslovie in ("OPENCRM_TUI", "ASSUME_YES", "OPENCRM_INPUT", "-t 1", "TERM"):
         assert uslovie in dostupen, f"живое меню не проверяет {uslovie}"
+
+    # И названа она там, куда человек за ней придёт. Отдушина, про которую
+    # знает только тот, кто её написал, не отдушина: спрашивать «а как
+    # вернуть прежнее меню» будут в тот час, когда живое сломалось, и
+    # искать ответ будут в `--help`, а не в исходнике.
+    podskazka = text[text.index("usage() {"):]
+    podskazka = podskazka[: podskazka.index(chr(10) + "}")]
+    assert "OPENCRM_TUI" in podskazka, "отдушина не названа в подсказке"
 
 
 def test_syroy_rezhim_snimaetsya_lovushkoy():

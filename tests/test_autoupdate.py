@@ -2539,3 +2539,120 @@ def test_bez_nastroennogo_kanala_otchyot_ne_sobiraetsya(tmp_path):
     updater.notifier = notify.Silent()
 
     assert updater.run_once().status == STATUS_DEPLOYED
+
+
+# --- лимит запросов к GitHub --------------------------------------------------
+#
+# Живое меню обновляет шапку раз в пятнадцать секунд. Пока `status` ходил в сеть
+# безусловно, это давало 240 обращений в час при лимите GitHub в 60 для
+# анонимного клиента, и дальше приходил 403 — на НАСТОЯЩЕЕ обновление тоже,
+# потому что лимит один на весь адрес. Три проверки ниже стерегут три половины
+# этого лечения: не спрашивать зря, спрашивать условно, и не сломать при этом
+# демона.
+
+
+def test_zapomnennyy_otvet_ne_hodit_v_set(tmp_path):
+    """`status(fresh=False)` не делает НИ ОДНОГО запроса.
+
+    Ноль, а не «поменьше»: шапку рисует цикл, и любая ненулевая цена в нём
+    умножается на частоту отрисовки.
+    """
+    github = FakeGitHub()
+    updater = make_updater(tmp_path, github=github)
+    updater.journal.write(available_sha=NEW, available_at=100.0)
+
+    state = updater.status(fresh=False)
+
+    assert github.etags_seen == [], "запомненный ответ всё равно сходил в GitHub"
+    assert github.checks_asked == [], "запомненный ответ спросил про проверки"
+    assert state["available"] == NEW
+    assert state["available_at"] == 100.0
+
+
+def test_status_sprashivaet_uslovno(tmp_path):
+    """С прошлым ETag, а не начисто.
+
+    Раньше здесь стояло «без ETag: `status` спрашивают, чтобы узнать правду, а
+    не сэкономить запрос». Правда и экономия тут не спорят: на 304 голова ветки
+    та же, что запомнена, и ответ выходит тем же самым, только дешевле.
+    """
+    github = FakeGitHub()
+    updater = make_updater(tmp_path, github=github)
+
+    updater.status()
+    updater.status()
+
+    assert github.etags_seen[0] == "", "первый запрос не с чего было делать условным"
+    assert github.etags_seen[1] == 'W/"new"', "второй запрос ушёл без прошлого ETag"
+
+
+def test_status_ne_sedaet_izmenenie_u_demona(tmp_path):
+    """Главная ловушка всей затеи, и она стоит отдельной проверки.
+
+    Возьми `status` общий с демоном ETag — и первый же вызов запомнил бы новый,
+    ничего не выкатив; демон следом получил бы 304 и решил, что обновлять
+    нечего. Автообновление встало бы намертво, а виновата была бы команда,
+    которая ничего не меняет и потому вне подозрений.
+    """
+    github = FakeGitHub()
+    updater = make_updater(tmp_path, github=github)
+
+    updater.status()
+
+    assert updater.journal.etag == "", "status записал ETag демона"
+    assert updater.journal.read().get("status_etag") == 'W/"new"'
+
+
+def test_na_304_otdayotsya_zapomnennaya_golova(tmp_path):
+    """304 значит «та же голова», а не «головы нет».
+
+    Без этого условный запрос ломал бы ответ: «в ветке —» и «обновление нет» на
+    сайте, который на самом деле отстал на десяток коммитов.
+    """
+    github = FakeGitHub(changed=False)
+    updater = make_updater(tmp_path, github=github)
+    updater.journal.write(available_sha=NEW, status_etag='W/"старый"')
+
+    state = updater.status()
+
+    assert state["available"] == NEW
+    assert state["update_available"] is True
+
+
+def test_demon_zapominaet_golovu_dlya_shapki(tmp_path):
+    """Опрос демона наполняет то, что читает `--cached`.
+
+    Иначе шапка показывала бы прочерк до тех пор, пока человек сам не спросит
+    `status`, — то есть ровно до того часа, когда она уже не нужна.
+    """
+    updater = make_updater(tmp_path)
+    updater.run_once()
+    assert updater.journal.read().get("available_sha") == NEW
+    assert updater.journal.read().get("available_at")
+
+
+def test_403_po_limitu_nazyvaet_srok_i_lekarstvo():
+    """«GitHub ответил 403» — загадка, а не сообщение.
+
+    У 403 два разных смысла, и лечатся они противоположным: исчерпанный лимит
+    пройдёт сам к названному часу, отобранный доступ не пройдёт никогда. Пока
+    сообщение было одно на оба, разобрать боевой случай было нечем.
+    """
+    import email.message
+    import urllib.error
+
+    from deploy.github import _pochemu
+
+    zagolovki = email.message.Message()
+    zagolovki["x-ratelimit-remaining"] = "0"
+    zagolovki["x-ratelimit-reset"] = "1000000000"
+    otkaz = urllib.error.HTTPError("http://x", 403, "Forbidden", zagolovki, None)
+
+    text = _pochemu(otkaz)
+    assert "лимит" in text
+    assert "OPENCRM_UPDATE_GITHUB_TOKEN" in text, "не сказано, чем лечить"
+
+    zakryt = email.message.Message()
+    zakryt["x-ratelimit-remaining"] = "42"
+    text = _pochemu(urllib.error.HTTPError("http://x", 403, "Forbidden", zakryt, None))
+    assert "доступ закрыт" in text, "отобранный доступ выдан за исчерпанный лимит"
