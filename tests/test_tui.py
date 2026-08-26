@@ -54,8 +54,16 @@ def _stend(tmp_path: pathlib.Path) -> pathlib.Path:
     )
     (dom / "docker" / ".env").write_text("OPENCRM_LANG=ru\n", encoding="utf-8")
 
+    # Подставы отвечают НЕ МГНОВЕННО, и это не придирка к точности.
+    # Мгновенные выигрывали гонку у первой отрисовки: сводка успевала
+    # собраться до первого кадра, все кадры выходили одной высоты — той
+    # самой, при которой сдвига не бывает. Проверка сдвига оказывалась
+    # зелёной всегда, включая намеренно сломанный код. На боевом
+    # `compose ps` и `autoupdate status` идут секунды, и первые кадры
+    # рисуются с пустой шапкой.
     (dom / "bin" / "docker").write_text(
         "#!/bin/sh\n"
+        "sleep 0.3\n"
         'case "$*" in\n'
         '  *"ps --services --filter status=running"*) printf "app\\ndb\\n" ;;\n'
         '  *"ps --services"*) printf "app\\ndb\\nnginx\\n" ;;\n'
@@ -68,11 +76,19 @@ def _stend(tmp_path: pathlib.Path) -> pathlib.Path:
     )
     (dom / "bin" / "python3").write_text(
         "#!/bin/sh\n"
+        "sleep 0.5\n"
         'case "$*" in\n'
         "  *status*)\n"
         '    printf "развёрнуто:     abc1234\\n"\n'
         '    printf "обновление:     есть\\n"\n'
-        '    printf "автообновление: включено\\n" ;;\n'
+        '    printf "автообновление: включено\\n"\n'
+        # Строка «последнее» — не украшение стенда, а условие беды: она
+        # появляется, только когда сводка собралась, и шапка от этого
+        # становится на строку выше. Без неё все кадры одной высоты, и
+        # проверка сдвига проходила вхолостую: подрыв (снял стирание
+        # строки) её не покраснел.
+        '    printf "последнее:      2026-08-27 03:14 обновление удалось, '
+        'пересобраны app и nginx\\n" ;;\n'
         "esac\n",
         encoding="utf-8",
     )
@@ -149,6 +165,111 @@ def _pokazat(dom: pathlib.Path, klavishi: str = "", sekund: float = 7.0) -> str:
     except OSError:
         pass
     return vyvod.decode("utf-8", "replace")
+
+
+def _ekran(potok: str, strok: int = 30, stolbcov: int = 100) -> list[str]:
+    """Крошечный эмулятор терминала: что человек ВИДИТ, а не что послано.
+
+    **Зачем свой, а не поиск подстрок.** Прежние проверки искали слова в потоке
+    байтов и были зелёными в тот час, когда меню на боевом сервере рассыпалось
+    лесенкой через весь экран: слова в потоке были, просто ложились не туда.
+    Разложить их по клеткам — единственный способ увидеть то же, что видит глаз.
+
+    Понимает ровно то, чем меню пользуется: возврат каретки, перевод строки,
+    `ESC[H`, `ESC[J`, `ESC[K`, и пропускает всё прочее (раскраску, скрытие
+    курсора). Больше не нужно, а чем меньше эмулятор, тем меньше в нём
+    собственных ошибок.
+    """
+    setka = [[" "] * stolbcov for _ in range(strok)]
+    ryad = stolbec = 0
+    i = 0
+    while i < len(potok):
+        z = potok[i]
+        if z == "\x1b" and i + 1 < len(potok) and potok[i + 1] == "[":
+            konets = i + 2
+            while konets < len(potok) and potok[konets] not in "@ABCDEFGHJKSTfminsulh":
+                konets += 1
+            bukva = potok[konets] if konets < len(potok) else ""
+            if bukva == "H":
+                ryad = stolbec = 0
+            elif bukva == "J":
+                for r in range(ryad + 1, strok):
+                    setka[r] = [" "] * stolbcov
+                for c in range(stolbec, stolbcov):
+                    setka[ryad][c] = " "
+            elif bukva == "K":
+                for c in range(stolbec, stolbcov):
+                    setka[ryad][c] = " "
+            i = konets + 1
+            continue
+        if z == "\r":
+            stolbec = 0
+        elif z == "\n":
+            ryad = min(ryad + 1, strok - 1)
+        else:
+            if stolbec < stolbcov:
+                setka[ryad][stolbec] = z
+            stolbec += 1
+        i += 1
+    return ["".join(r).rstrip() for r in setka]
+
+
+@nuzhen_pty
+def test_ekran_ne_rassypaetsya_lesenkoy(tmp_path):
+    """Каждый пункт виден РОВНО ОДИН раз, и рамка стоит ровно.
+
+    Две беды сразу, обе найдены на боевом терминале, обе невидимы для проверок
+    по подстрокам:
+
+    1. `stty raw` выключает и обработку ВЫВОДА. Без неё перевод строки опускает
+       строку, но не возвращает каретку: каждая следующая начинается там, где
+       кончилась прошлая, и меню уезжает лесенкой через весь экран. Нужен не
+       сырой режим, а посимвольный ввод — `-icanon`.
+
+    2. Кадры разной высоты (строка «последнее обновление» появляется, когда
+       сводка собралась) сдвигали список на строку вниз, а стирание одного
+       хвоста экрана оставляло прошлый кадр висеть выше: «Состояние»
+       показывалось дважды, «Копии» наезжали на «Доступ и сеть».
+    """
+    ekran = _ekran(_pokazat(_stend(tmp_path)))
+    vidno = [s for s in ekran if s.strip()]
+
+    for punkt in ("Состояние", "Управление", "Обновление", "Копии", "Редкое"):
+        # По вхождению, а не по концу строки: остаток прошлого кадра
+        # оставляет за подписью чужой хвост («Состояниее»), и проверка по
+        # `endswith` намеренную поломку не увидела бы.
+        skolko = sum(s.count(punkt) for s in vidno)
+        assert skolko == 1, (
+            f"пункт «{punkt}» виден {skolko} раз вместо одного — экран рассыпался:\n"
+            + "\n".join(vidno)
+        )
+
+    ramka = [s for s in ekran if s.lstrip().startswith(("╭", "│", "╰"))]
+    assert len(ramka) >= 4, "шапка не нарисовалась:\n" + "\n".join(vidno)
+    otstupy = {len(s) - len(s.lstrip()) for s in ramka}
+    assert len(otstupy) == 1, (
+        f"строки рамки начинаются в разных колонках {sorted(otstupy)} — лесенка:\n"
+        + "\n".join(ramka)
+    )
+
+
+@nuzhen_pty
+def test_perevod_stroki_neset_vozvrat_karetki(tmp_path):
+    """Прямая проверка причины, а не следствия.
+
+    Соседняя ловит рассыпавшийся экран; эта называет причину числом. Мастер pty
+    видит возврат каретки перед переводом строки, только пока включена
+    обработка вывода (`onlcr`). `stty raw` её снимает — и переводы приходят
+    голыми. На боевом сервере было 99 голых из 99.
+    """
+    potok = _pokazat(_stend(tmp_path)).encode("utf-8", "replace")
+    vsego = potok.count(b"\n")
+    s_vozvratom = potok.count(b"\r\n")
+    assert vsego, "меню ничего не нарисовало"
+    assert s_vozvratom == vsego, (
+        f"{vsego - s_vozvratom} переводов строки из {vsego} пришли без возврата "
+        "каретки — терминал в сыром режиме, экран уедет лесенкой"
+    )
 
 
 # --- то, ради чего всё ------------------------------------------------------

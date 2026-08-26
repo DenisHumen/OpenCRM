@@ -3316,6 +3316,16 @@ tui_razmer() {
 #: `sh -n`, ни набор тестов такого не ловят.
 TUI_ESC=$(printf '\033')
 
+#: Стереть строку до конца — ПЕРЕД переводом строки.
+#:
+#: Кадры бывают разной высоты: строка «последнее обновление» появляется, только
+#: когда сводка собралась, и список пунктов съезжает на строку вниз. Стирание
+#: одного хвоста экрана (`ESC[J` в конце кадра) убирает то, что НИЖЕ, а строка,
+#: оставшаяся от прошлого кадра выше, продолжает висеть. На боевом терминале это
+#: выглядело так: «Состояние» показано дважды, «Копии» наехали на «Доступ и
+#: сеть». Поэтому стирается каждая строка в момент отрисовки.
+TUI_KE=$(printf '\033[K')
+
 #: Видимая ширина строки в ЗНАКАХ, без управляющих последовательностей.
 #:
 #: `wc -m` считает знаки, а не байты, — замерено на Debian и Alpine: строка из
@@ -3351,11 +3361,25 @@ tui_ramki() {
 TUI_SYROY=0
 
 tui_vklyuchit() {
+    # `-icanon -echo`, а НЕ `raw`, и это не мелочь настройки.
+    #
+    # `raw` выключает разом всё, включая обработку ВЫВОДА (`opost`/`onlcr`).
+    # Без неё `\n` опускает строку, но НЕ возвращает каретку в нулевую колонку:
+    # каждая следующая строка начинается там, где кончилась прошлая, и меню
+    # рассыпается лесенкой вправо через весь экран. Снято с боевого терминала —
+    # 99 переводов строки, ни одного с возвратом каретки.
+    #
+    # Нужен здесь не сырой режим, а посимвольный ввод: `-icanon` отдаёт байты, не
+    # дожидаясь Enter, и этого достаточно. Обработка вывода остаётся на месте.
+    #
+    # Побочная выгода: `isig` тоже остаётся, то есть Ctrl+C приходит НАСТОЯЩИМ
+    # сигналом и попадает в `trap`, а не байтом, который надо узнавать вручную.
+    #
     # `min 0 time 10` — ключ ко всему живому: чтение возвращается пустым через
     # секунду, даже если никто ничего не нажал. Без этого цикл висел бы на
     # клавише, и шапка обновлялась бы только по нажатию — то есть не была бы
     # живой.
-    stty raw -echo min 0 time 10 < /dev/tty 2>/dev/null || return 1
+    stty -icanon -echo min 0 time 10 < /dev/tty 2>/dev/null || return 1
     TUI_SYROY=1
     printf '\033[?25l' > /dev/tty   # спрятать курсор: он мигает посреди списка
     return 0
@@ -3556,7 +3580,7 @@ tui_shapka() {
     [ "$_tui_w" -gt 100 ] && _tui_w=100
     _tui_vnutri=$(( _tui_w - 2 ))
 
-    printf '%s%s%s%s%s\n' "$CYAN" "$_tui_ul" "$(tui_liniya "$_tui_g" "$_tui_w")" "$_tui_ur$R" ""
+    printf '%s%s%s%s%s%s\n' "$TUI_KE" "$CYAN" "$_tui_ul" "$(tui_liniya "$_tui_g" "$_tui_w")" "$_tui_ur$R" ""
 
     # Строка 1: имя, состояние, вертушка сбора.
     _tui_obsl=$(tui_pole obsluzhivanie)
@@ -3609,7 +3633,7 @@ tui_shapka() {
     [ -n "$_tui_p" ] && tui_stroka_ramki "$_tui_v" "$_tui_vnutri" \
         "${D}$(tr_ "последнее обновление" "last update"): $(tui_begushchaya "$_tui_p" $(( _tui_vnutri - 24 )) "$TUI_VERTUSHKA_KADR")${R}"
 
-    printf '%s%s%s%s\n' "$CYAN" "$_tui_dl" "$(tui_liniya "$_tui_g" "$_tui_w")" "$_tui_dr$R"
+    printf '%s%s%s%s%s\n' "$TUI_KE" "$CYAN" "$_tui_dl" "$(tui_liniya "$_tui_g" "$_tui_w")" "$_tui_dr$R"
 }
 
 #: Строка внутри рамки с выравниванием по видимой ширине.
@@ -3622,7 +3646,7 @@ tui_stroka_ramki() {
     _tui_vidno=$(tui_shirina "$_tui_tekst")
     _tui_hvost=$(( _tui_shirina - _tui_vidno ))
     [ "$_tui_hvost" -lt 0 ] && _tui_hvost=0
-    printf '%s%s%s %s%s %s%s%s\n' "$CYAN" "$_tui_v" "$R" "$_tui_tekst" "$(tui_liniya ' ' "$_tui_hvost")" "$CYAN" "$_tui_v" "$R"
+    printf '%s%s%s%s %s%s %s%s%s\n' "$TUI_KE" "$CYAN" "$_tui_v" "$R" "$_tui_tekst" "$(tui_liniya ' ' "$_tui_hvost")" "$CYAN" "$_tui_v" "$R"
 }
 
 # --- дерево пунктов -------------------------------------------------------
@@ -3734,7 +3758,7 @@ tui_narisovat() {
     printf '\033[H' > /dev/tty
     {
         tui_shapka
-        printf '\n'
+        printf '%s\n' "$TUI_KE"
         _tui_n=0
         printf '%s\n' "$(tui_punkty "$_tui_razdel")" | while IFS= read -r _tui_stroka; do
             [ -n "$_tui_stroka" ] || continue
@@ -3748,18 +3772,18 @@ tui_narisovat() {
                 *)        _tui_znak=' ' ;;
             esac
             if [ "$_tui_n" = "$_tui_vybor" ]; then
-                printf '  %s%s %-40s%s\n' "$CYAN$B" "$_tui_znak" "$_tui_podpis" "$R"
+                printf '%s  %s%s %-40s%s\n' "$TUI_KE" "$CYAN$B" "$_tui_znak" "$_tui_podpis" "$R"
             else
-                printf '  %s %s\n' "$_tui_znak" "$_tui_podpis"
+                printf '%s  %s %s\n' "$TUI_KE" "$_tui_znak" "$_tui_podpis"
             fi
         done
-        printf '\n'
+        printf '%s\n' "$TUI_KE"
         # Пояснение к выбранному — бегущей строкой, если длинное.
         _tui_tek=$(printf '%s\n' "$(tui_punkty "$_tui_razdel")" | sed -n "${_tui_vybor}p")
-        printf '  %s%s%s\n' "$D" \
+        printf '%s  %s%s%s\n' "$TUI_KE" "$D" \
             "$(tui_begushchaya "$(tui_pole_stroki "$_tui_tek" 3)" $(( TUI_STOLBCOV - 6 )) "$TUI_VERTUSHKA_KADR")" "$R"
-        printf '\n'
-        printf '  %s%s%s\n' "$D" \
+        printf '%s\n' "$TUI_KE"
+        printf '%s  %s%s%s\n' "$TUI_KE" "$D" \
             "$(tr_ '↑↓ выбор · → Enter открыть · ← назад · 1-9 быстрый выбор · q выход' \
                    '↑↓ move · → Enter open · ← back · 1-9 quick pick · q quit')" "$R"
         # Дочищаем хвост экрана: прошлый кадр мог быть длиннее нынешнего.
