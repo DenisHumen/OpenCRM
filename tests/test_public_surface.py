@@ -389,6 +389,15 @@ def test_kartinki_nelzya_vstavit_v_chuzhuyu_stranitsu():
 OGRANICHITELI = {
     "location = /monitoring/login": {"opencrm_panel_login", "opencrm_basic_auth"},
     "location /monitoring/": {"opencrm_basic_auth"},
+    # Живое соединение панели уехало в свой блок ради часового таймаута, и
+    # ограничитель обязан был уехать вместе с ним.
+    #
+    # Точное совпадение (`=`) выигрывает у префикса `/monitoring/`, то есть
+    # запросы на этот адрес в соседний блок больше НЕ ПОПАДАЮТ — и остались бы
+    # без счёта, не будь этой строки. Подбор пароля через `Authorization: Basic`
+    # идёт по любому адресу панели, включая этот; оставить один адрес без
+    # ограничителя значит оставить открытую дверь рядом с запертой.
+    "location = /monitoring/api/live/ws": {"opencrm_basic_auth"},
     "location = /api/v1/auth/login": {"opencrm_crm_login"},
     "location = /api/v1/auth/register": {"opencrm_crm_register"},
 }
