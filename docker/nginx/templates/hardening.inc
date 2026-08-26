@@ -118,6 +118,32 @@ map $scheme $opencrm_hsts {
     https   "max-age=15768000";
 }
 
+# Переключение протокола для WebSocket. Нужен ровно одному месту — панели
+# мониторинга, — но `map` в `server`-блоке не живёт, поэтому объявлен здесь.
+#
+# **Что было без него.** Grafana держит своё живое соединение на
+# `/monitoring/api/live/ws`. Без `Upgrade` и `Connection` nginx передаёт этот
+# запрос обычным HTTP-запросом, Grafana отвечает 400, её фронтенд повторяет
+# попытку примерно раз в секунду — вечно, в каждой открытой вкладке панели.
+#
+# Замерено на боевом сервере 26.08.2026: эти четырёхсотки составили **41–43 % от
+# ВСЕХ ответов сайта**. Правило `HighClientErrorRate` (порог 40 %) звонило и
+# отбивалось по кругу сутками. Хуже самого шума то, что он делает: настоящий
+# всплеск ошибок клиента в таком фоне уже не разглядеть, а тревогу, которая
+# звонит каждый день без причины, перестают читать.
+#
+# `close` для обычных запросов — не потеря: без `proxy_http_version 1.1` nginx и
+# так ходит к upstream по HTTP/1.0 с закрытием соединения, то есть поведение
+# ровно то же, что было.
+#
+# Приложения это не касается: живой поток CRM сделан на SSE именно для того,
+# чтобы не править nginx (разбор — `docs/12-realtime.md`, раздел 3), и в
+# `proxy-headers.inc` эти строки не добавляются.
+map $http_upgrade $opencrm_connection_upgrade {
+    default upgrade;
+    ""      close;
+}
+
 limit_req_zone $binary_remote_addr  zone=opencrm_panel_login:1m   rate=12r/m;
 limit_req_zone $opencrm_basic_probe zone=opencrm_basic_auth:1m    rate=12r/m;
 limit_req_zone $binary_remote_addr  zone=opencrm_crm_login:1m     rate=30r/m;

@@ -540,6 +540,64 @@ def test_grafana_vidna_tolko_cherez_nginx():
     assert "resolver 127.0.0.11" in config
 
 
+def test_panel_propuskaet_pereklyuchenie_protokola():
+    """Без этого Grafana бьётся в 400 раз в секунду — и топит тревогу о 4xx.
+
+    Grafana держит живое соединение на `/monitoring/api/live/ws`. Если nginx не
+    передаёт `Upgrade` и `Connection`, запрос доезжает обычным, Grafana отвечает
+    400, а её фронтенд повторяет попытку примерно раз в секунду — вечно, в
+    каждой открытой вкладке панели.
+
+    Замерено на боевом сервере 26.08.2026: эти четырёхсотки составили **41–43 %
+    ОТ ВСЕХ ответов сайта**, и правило `HighClientErrorRate` (порог 40 %)
+    звонило и отбивалось по кругу сутками. Хуже самого шума то, что он делает с
+    наблюдением: настоящий всплеск ошибок в таком фоне не разглядеть, а тревогу,
+    которая звонит каждый день без причины, перестают читать.
+
+    Проверяется весь набор из четырёх частей: без `map` две другие строки не
+    соберутся вовсе (переменной нет), без `proxy_http_version 1.1` переключение
+    протокола невозможно по HTTP/1.0, а без самих заголовков Grafana не поймёт,
+    чего от неё хотят.
+    """
+    config = _read(LOCATIONS)
+    hardening = _read(ROOT / "docker" / "nginx" / "templates" / "hardening.inc")
+
+    assert re.search(r"map\s+\$http_upgrade\s+\$opencrm_connection_upgrade", hardening), (
+        "исчез map для переключения протокола — Grafana Live снова будет отвечать 400"
+    )
+
+    block = re.search(r"location /monitoring/ \{(.*?)\n\}", config, re.S)
+    assert block, "нет прохода к панели через nginx"
+    telo = block.group(1)
+    for stroka in (
+        "proxy_http_version 1.1;",
+        "proxy_set_header Upgrade $http_upgrade;",
+        "proxy_set_header Connection $opencrm_connection_upgrade;",
+    ):
+        assert stroka in telo, (
+            f"в блоке панели нет строки {stroka!r} — живое соединение Grafana "
+            f"будет отвечать 400 раз в секунду"
+        )
+
+
+def test_pereklyuchenie_protokola_ne_uehalo_v_obshchiy_fayl():
+    """Пятерым из шести мест оно не нужно, и молчаливая строка там вредна.
+
+    `proxy-headers.inc` подключён в шесть мест: корень сайта, медиа витрины, два
+    входа в CRM, панель и её страница входа. WebSocket нужен ровно панели —
+    живой поток самой CRM сделан на SSE именно затем, чтобы обойтись без правки
+    nginx (`docs/12-realtime.md`, раздел 3).
+
+    Строка, которая ничего не делает в пяти местах из шести, однажды будет
+    прочитана как «здесь тоже WebSocket» — и следующий разбор пойдёт не туда.
+    """
+    obshchiy = _read(ROOT / "docker" / "nginx" / "templates" / "proxy-headers.inc")
+    assert "Upgrade" not in obshchiy, (
+        "переключение протокола уехало в общий файл заголовков: оно нужно одной "
+        "панели, а подключён он в шесть мест"
+    )
+
+
 # --- потолки хранения --------------------------------------------------------
 
 
