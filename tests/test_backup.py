@@ -529,6 +529,82 @@ def _vozrasty(katalog: Path) -> set[int]:
 
 
 @nuzhen_sh
+def test_chuzhoy_fayl_ne_sryvaet_proverku_kopii(tmp_path):
+    """Гигиена прав не имеет права стоить проверки копии.
+
+    **Живой случай, найденный по журналу боевого сервера.** В каталоге копий
+    файлы двух владельцев, и это устройство, а не поломка: `./opencrm.sh backup`
+    создаёт дамп НА ХОСТЕ, а `scripts/backup.sh` работает ВНУТРИ контейнера под
+    `opencrm` и переносит готовый файл — перенос владельца не меняет. Со второго
+    захода `chmod` встречает файлы прошлых заходов и получает отказ:
+
+        chmod: changing permissions of '.../db-2026-08-23.sql': Operation not permitted
+
+    Сам по себе пустяк: файлы и так лежат с правами 600. Беда в том, что было
+    дальше — при `set -eu` ненулевой код `find` обрывал ВЕСЬ скрипт, а следующим
+    шагом идёт проверка годности. То есть каждая копия, кроме самой первой,
+    оставалась непроверенной, и в выводе не было даже строки `backup done`.
+
+    Проверяется не «нет ошибки chmod», а то, ради чего всё: скрипт дошёл до
+    конца и копию ПРОВЕРИЛ.
+    """
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    nastoyashchiy = shutil.which("chmod") or "/bin/chmod"
+    # Подставной `chmod` отказывает ровно на чужом файле — как на сервере, где
+    # чужой владелец. Остальным файлам он не мешает: их скрипт создаёт сам, и
+    # там `chmod` идёт без `|| true`.
+    (bin_dir / "chmod").write_text(
+        "#!/bin/sh" + chr(10)
+        + "for _a in \"$@\"; do" + chr(10)
+        + "  case \"$_a\" in" + chr(10)
+        + "    *chuzhoy*)" + chr(10)
+        + "      echo \"chmod: changing permissions of '$_a': Operation not permitted\" >&2" + chr(10)
+        + "      exit 1 ;;" + chr(10)
+        + "  esac" + chr(10)
+        + "done" + chr(10)
+        + f"exec {nastoyashchiy} \"$@\"" + chr(10),
+        encoding="utf-8",
+    )
+    (bin_dir / "chmod").chmod(0o755)
+
+    backups = tmp_path / "backups"
+    (backups / "daily").mkdir(parents=True)
+    (backups / "weekly").mkdir(parents=True)
+    chuzhoy = backups / "daily" / "db-chuzhoy-2026-08-23.sql"
+    chuzhoy.write_text("копия прошлого захода", encoding="utf-8")
+
+    hranilishche = tmp_path / "storage"
+    hranilishche.mkdir(exist_ok=True)
+    (hranilishche / "fayl.txt").write_text("файл витрины", encoding="utf-8")
+    good_dump(tmp_path / "incoming.sql", users=3)
+
+    zapusk = subprocess.run(
+        ["sh", "scripts/backup.sh"],
+        capture_output=True, text=True, encoding="utf-8", timeout=180,
+        env=_okruzhenie(
+            PATH=f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
+            OPENCRM_BACKUP_DIR=backups,
+            OPENCRM_STORAGE_DIR=hranilishche,
+            OPENCRM_DB_DUMP=tmp_path / "incoming.sql",
+            OPENCRM_SECRET_KEY="kluch-iz-nabora",
+            OPENCRM_IP_HASH_SALT="sol-iz-nabora",
+        ),
+    )
+
+    assert zapusk.returncode == 0, (
+        "скрипт оборвался на чужом файле:" + chr(10) + zapusk.stdout + zapusk.stderr
+    )
+    assert "backup done" in zapusk.stdout, (
+        "нет строки `backup done` — скрипт не дошёл до конца:"
+        + chr(10) + zapusk.stdout + zapusk.stderr
+    )
+    # И главное: проверка годности отработала. Без неё копия — это надежда.
+    assert (backups / "daily" / "verify-report.txt").exists() or "OK" in zapusk.stdout, (
+        "копия не проверена: шаг проверки не отработал" + chr(10) + zapusk.stdout
+    )
+
+
 def test_kopiya_ne_chitaetsya_postoronnimi(tmp_path):
     """Дамп базы — это вся система в одном файле.
 
