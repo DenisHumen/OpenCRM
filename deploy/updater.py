@@ -299,26 +299,59 @@ class Updater:
 
     # --- то, что вызывают снаружи ---
 
-    def status(self) -> dict:
+    def status(self, fresh: bool = True) -> dict:
+        """Что развёрнуто, что в ветке и чем кончился прошлый заход.
+
+        **`fresh=False` не спрашивает GitHub вовсе** — отвечает тем, что
+        запомнено с прошлого опроса. Заведено не ради скорости: живое меню
+        обновляет шапку раз в пятнадцать секунд, и безусловный запрос из неё
+        давал 240 обращений в час при лимите GitHub в 60 для анонимного
+        клиента. Дальше 403 — и он ломал не только шапку, а настоящее
+        обновление, потому что лимит один на весь IP. Снято с боевого сервера.
+
+        **`fresh=True` спрашивает УСЛОВНО**, с прошлым ETag. Раньше здесь стояло
+        «без ETag: `status` спрашивают, чтобы узнать правду, а не сэкономить
+        запрос» — но правда и экономия тут не спорят: на 304 голова ветки та же,
+        что запомнена, и ответ выходит тем же самым, только дешевле.
+
+        ETag у `status` СВОЙ (`status_etag`), и это главное здесь. Возьми он
+        общий с `run_once` — и первый же `status` съел бы изменение: запомнил
+        новый ETag, не выкатив коммит, а демон следом получил бы 304 и решил,
+        что обновлять нечего. Автообновление встало бы намертво, и виновата
+        была бы команда, которая ничего не меняет.
+        """
         state = self.journal.read()
         current = self.head_sha()
-        available, error = "", ""
+        available = str(state.get("available_sha") or "")
+        provereno = float(state.get("available_at") or 0)
+        error = ""
         checks = None
-        try:
-            # Без ETag: `status` спрашивают, чтобы узнать правду, а не сэкономить запрос.
-            available = self.github.head(self.config.branch).sha
-            # Почему сайт не обновляется — вопрос, который задают этой команде.
-            # Без строки о проверках «обновление: есть» и тишина выглядят
-            # поломкой, хотя это гейт штатно ждёт зелёного CI.
-            if available and available != current and self.config.require_ci:
-                checks = self.github.checks(available)
-        except GitHubError as failure:
-            error = str(failure)
+        if fresh:
+            try:
+                head = self.github.head(self.config.branch, str(state.get("status_etag") or ""))
+                provereno = time.time()
+                if head.changed:
+                    available = head.sha
+                    self.journal.write(
+                        status_etag=head.etag,
+                        available_sha=head.sha,
+                        available_at=provereno,
+                    )
+                else:
+                    self.journal.write(available_at=provereno)
+                # Почему сайт не обновляется — вопрос, который задают этой
+                # команде. Без строки о проверках «обновление: есть» и тишина
+                # выглядят поломкой, хотя это гейт штатно ждёт зелёного CI.
+                if available and available != current and self.config.require_ci:
+                    checks = self.github.checks(available)
+            except GitHubError as failure:
+                error = str(failure)
         return {
             "repo": self.config.repo,
             "branch": self.config.branch,
             "deployed": current,
             "available": available,
+            "available_at": provereno,
             "update_available": bool(available and available != current),
             "autoupdate": self.journal.autoupdate_enabled,
             "failed_sha": state.get("failed_sha", ""),
@@ -342,7 +375,12 @@ class Updater:
 
         if not head.changed:
             return Outcome(STATUS_UP_TO_DATE, from_sha=self.head_sha())
-        self.journal.write(etag=head.etag)
+        # Голову ветки запоминаем ЗДЕСЬ же, а не только в `status`: демон
+        # опрашивает GitHub раз в пять минут, и живому меню этого хватает без
+        # единого собственного запроса. Иначе шапка показывала бы «—» до тех
+        # пор, пока человек сам не спросит `status`, — то есть ровно до того
+        # момента, когда она уже не нужна.
+        self.journal.write(etag=head.etag, available_sha=head.sha, available_at=time.time())
 
         current = self.head_sha()
         if head.sha == current and not force:

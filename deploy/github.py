@@ -14,6 +14,7 @@ JSON-простыни коммита, а `If-None-Match` с прошлым ETag 
 from __future__ import annotations
 
 import json
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -36,6 +37,38 @@ BAD_CONCLUSIONS = frozenset(
 
 class GitHubError(RuntimeError):
     pass
+
+
+def _pochemu(error: urllib.error.HTTPError) -> str:
+    """Человеческая причина отказа вместо голого номера.
+
+    «GitHub ответил 403» — это загадка, а не сообщение: у 403 два совершенно
+    разных смысла, и лечатся они противоположным. Исчерпанный лимит проходит
+    сам, к названному часу; закрытый доступ сам не пройдёт никогда, и ждать
+    его — потерянный день.
+
+    Различает их сам GitHub: при исчерпанном лимите он присылает
+    `x-ratelimit-remaining: 0` и время сброса. Снято с боевого сервера, где
+    403 по лимиту (шапка меню опрашивала ветку раз в пятнадцать секунд) выглядел
+    ровно как отобранный доступ.
+    """
+    if error.code not in (403, 429):
+        return f"GitHub ответил {error.code}"
+    ostalos = (error.headers or {}).get("x-ratelimit-remaining")
+    if ostalos not in (None, "0"):
+        return f"GitHub ответил {error.code}: доступ закрыт (лимит не исчерпан)"
+    sbros = (error.headers or {}).get("x-ratelimit-reset")
+    kogda = ""
+    try:
+        if sbros:
+            kogda = time.strftime(" — до %H:%M", time.localtime(int(sbros)))
+    except (TypeError, ValueError):
+        kogda = ""
+    return (
+        f"GitHub ответил {error.code}: исчерпан лимит запросов{kogda}"
+        ". Токен поднимает лимит с 60 запросов в час до 5000: "
+        "OPENCRM_UPDATE_GITHUB_TOKEN в autoupdate.env"
+    )
 
 
 @dataclass(frozen=True)
@@ -83,7 +116,7 @@ class GitHub:
         except urllib.error.HTTPError as error:
             if error.code == 304:
                 return Head(sha="", etag=etag, changed=False)
-            raise GitHubError(f"GitHub ответил {error.code} на голову ветки {branch}") from error
+            raise GitHubError(f"{_pochemu(error)} на голову ветки {branch}") from error
         except OSError as error:
             raise GitHubError(f"GitHub недоступен: {error}") from error
 
@@ -142,7 +175,7 @@ class GitHub:
             with self._open(self._request(url), timeout=self.timeout) as response:
                 payload = json.loads(response.read().decode("utf-8", "replace"))
         except urllib.error.HTTPError as error:
-            raise GitHubError(f"GitHub ответил {error.code} на {url}") from error
+            raise GitHubError(f"{_pochemu(error)} на {url}") from error
         except OSError as error:
             raise GitHubError(f"GitHub недоступен: {error}") from error
         except ValueError as error:

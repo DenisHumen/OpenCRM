@@ -1,9 +1,20 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy import (
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    event,
+    inspect,
+    select,
+)
+from sqlalchemy.orm import Mapped, Session, mapped_column, object_session
+from sqlalchemy.orm import util as orm_util
 from sqlalchemy.sql import func
 
+from core import exceptions as errors
 from database.session import Base
 
 # Виды бланков.
@@ -375,3 +386,181 @@ class DocumentLine(Base):
     #: пересчёта коробки у выдачи.
     picked_milli: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
+
+
+# --- накладная после проведения не меняется -----------------------------------
+#
+# Четвёртый рубеж неизменяемости, и он ставится по образцу
+# `database/models/audit.py`: не вежливой проверкой в службе, а событиями
+# мэппера. Довод тот же, уже проверенный на журнале, — службу обходят не
+# злонамеренно, а по невнимательности: `db.delete(line)` из соседнего модуля,
+# правка из скрипта обслуживания, разбор как раз того случая, ради которого
+# бумага и велась.
+#
+# Три рубежа, что были до этого, остаются на месте и не отменяются: право
+# (`waybills.issue` против `waybills.edit`), проверка в службе
+# (`waybill_service._tolko_chernovik` плюс условная смена статуса) и список
+# `SKLADSKIE_KINDS` на границе общей ручки. Доказательство их недостаточности —
+# сам факт, что третий пришлось дописывать задним числом, после того как общая
+# ручка смены статуса закрывала заказы мимо склада неизвестно сколько.
+#
+# Граница честная и та же, что у журнала: **прямой SQL мимо ORM это не
+# закрывает**. Триггер в базе закрыл бы и его, но триггера нет в
+# `Base.metadata`, а значит он был бы невидим для `database/schema_check.py` —
+# сторожа, который как раз обязан ловить расхождения живой схемы с моделями.
+# Обещать больше, чем сделано, хуже, чем не обещать.
+
+_NEIZMENYAEMA = "A posted waybill cannot be changed"
+_KOD = "waybill_immutable"
+
+
+def _bumaga_stroki(connection, target) -> tuple[str | None, str | None]:
+    """Вид и статус бумаги, которой принадлежит строка.
+
+    Сначала — из карты объектов сессии, и это не преждевременная бережливость.
+    Сторож стоит на ВСЕХ строках, а не только на накладных: у заказа с полусотней
+    позиций запрос на каждую превратил бы одно сохранение в полсотни лишних, и
+    потолок из `tests/test_speed.py` покраснел бы первым. Служба бумагу всегда
+    только что читала, поэтому в карте она есть; запрос уходит лишь там, где её
+    там нет.
+    """
+    sessiya = object_session(target)
+    if sessiya is not None:
+        bumaga = sessiya.identity_map.get(
+            orm_util.identity_key(Document, target.document_id)
+        )
+        if bumaga is not None:
+            return bumaga.kind, bumaga.status
+    stroka = connection.execute(
+        select(Document.kind, Document.status).where(Document.id == target.document_id)
+    ).first()
+    return (stroka[0], stroka[1]) if stroka else (None, None)
+
+
+def _zakryta(connection, target) -> bool:
+    """Строка принадлежит накладной, которую уже нельзя трогать.
+
+    Не «проведённой», а «не черновику»: отменённый черновик тоже менять незачем,
+    а лишний законный случай в стороже — это дырка, про которую забудут.
+    """
+    kind, status = _bumaga_stroki(connection, target)
+    return kind in WAYBILL_KINDS and status != STATUS_DRAFT
+
+
+def _izmenyonnye(target) -> set[str]:
+    """Какие поля объекта поменялись до отправки в базу.
+
+    `history` намеренно не поднимает незагруженные поля: сторож не должен
+    дочитывать объект ради того, чтобы разрешить или запретить.
+    """
+    sostoyanie = inspect(target)
+    return {
+        svoystvo.key
+        for svoystvo in sostoyanie.attrs
+        if svoystvo.history.has_changes()
+    }
+
+
+@event.listens_for(DocumentLine, "before_insert", propagate=True)
+def _v_provedyonnuyu_ne_dopisyvayut(mapper, connection, target) -> None:
+    if _zakryta(connection, target):
+        raise errors.ForbiddenError(_NEIZMENYAEMA, code=_KOD)
+
+
+@event.listens_for(DocumentLine, "before_delete", propagate=True)
+def _iz_provedyonnoy_ne_udalyayut(mapper, connection, target) -> None:
+    if _zakryta(connection, target):
+        raise errors.ForbiddenError(_NEIZMENYAEMA, code=_KOD)
+
+
+@event.listens_for(DocumentLine, "before_update", propagate=True)
+def _stroki_provedyonnoy_ne_pravyat(mapper, connection, target) -> None:
+    """Правка строки проведённой — отказ. Кроме одного поля и одного перехода.
+
+    **Ловушка, из-за которой сторож в лоб сломал бы само проведение.**
+    Себестоимость снимается ПОСЛЕ смены статуса: `waybill_service.provesti`
+    сперва захватывает статус условным `UPDATE` (иначе двойное нажатие пройдёт
+    дважды), и только потом идёт по строкам и проставляет `cost_minor`. В этот
+    момент бумага уже не черновик, и запрет «не править строки непроведённой»
+    отказал бы в самом проведении.
+
+    Из двух выходов — переставить порядок или назвать исключение — взят второй.
+    Переставить нельзя у акта: там себестоимость снимает подписчик склада,
+    который зовётся уже после захвата статуса, и событие обязано подниматься
+    именно после, иначе проигравший гонку позовёт склад. Значит перестановка
+    вылечила бы одного вызывающего из двух.
+
+    Исключение узкое намеренно: разрешён переход `NULL → число`, и только он.
+    Себестоимость по замыслу снимается при проведении ровно один раз;
+    «число → другое число» — это переписывание того, во сколько поставка
+    обошлась, то есть ровно то, что мы и защищаем.
+    """
+    if not _zakryta(connection, target):
+        return
+
+    izmeneno = _izmenyonnye(target)
+    if not izmeneno:
+        # Объект попал в грязные, но ничего не поменялось. Без этой ветки
+        # сторож ниже полез бы за прежним значением и запретил бы пустоту.
+        return
+    if izmeneno - {"cost_minor"}:
+        raise errors.ForbiddenError(_NEIZMENYAEMA, code=_KOD)
+
+    istoriya = inspect(target).attrs.cost_minor.history
+    if istoriya.deleted:
+        bylo = istoriya.deleted[0]
+    else:
+        # Поля не было в памяти — спрашиваем базу. Редкий путь: строки при
+        # проведении читаются целиком, но «редкий» и «невозможный» — разное.
+        bylo = connection.execute(
+            select(DocumentLine.cost_minor).where(DocumentLine.id == target.id)
+        ).scalar()
+    if bylo is not None:
+        raise errors.ForbiddenError(_NEIZMENYAEMA, code=_KOD)
+
+
+@event.listens_for(Document, "before_update", propagate=True)
+def _shapka_provedyonnoy_ne_pravitsya(mapper, connection, target) -> None:
+    """Шапку проведённой накладной не правят вовсе.
+
+    Статуса это не запрещает, и не по недосмотру: законные переходы идут через
+    `documents_repo.take_status` — условный `UPDATE` запросом, мимо мэппера.
+    Так сделано ради гонки (двое нажали «провести» разом), и побочно выходит,
+    что единственный законный путь смены статуса сторожу не показывается вовсе,
+    а любая правка через объект — показывается вся.
+
+    `updated_at` исключён: он проставляется сам при любой записи и меняется не
+    потому, что кто-то его менял.
+    """
+    if target.kind not in WAYBILL_KINDS or target.status == STATUS_DRAFT:
+        return
+    if _izmenyonnye(target) - {"updated_at"}:
+        raise errors.ForbiddenError(_NEIZMENYAEMA, code=_KOD)
+
+
+@event.listens_for(Session, "do_orm_execute")
+def _nikakih_massovyh_pravok_strok(state) -> None:
+    """Массовая правка строк закрыта целиком, а не только у накладных.
+
+    Три сторожа выше стоят на ОБЪЕКТЕ: их зовёт flush, разбирая изменённые и
+    удалённые экземпляры. Массовая операция объектов не трогает вовсе —
+    `session.execute(update(DocumentLine).values(...))` уезжает в базу одним
+    запросом, мимо мэппера и мимо всех трёх. Точно та же дыра была у журнала и
+    закрыта там точно так же.
+
+    Почему без разбора вида бумаги. У массового запроса нет объекта, у которого
+    можно спросить вид: он адресован таблице целиком, а накладные лежат в ней
+    вперемешку с заказами и актами. Разбирать `WHERE` значило бы гадать.
+    Сегодня массовых правок строк в коде нет ни одной (проверено поиском), и
+    появиться такая должна решением, а не молча, — отказ здесь этого решения и
+    потребует.
+
+    Чтения не касаемся: строки читают, и читать их надо.
+    """
+    if not (state.is_update or state.is_delete):
+        return
+    tablica = getattr(state.statement, "table", None)
+    if getattr(tablica, "name", None) == DocumentLine.__tablename__:
+        raise errors.ForbiddenError(
+            "document_lines cannot be changed in bulk", code=_KOD
+        )

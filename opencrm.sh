@@ -3482,7 +3482,16 @@ tui_svodka_sobrat() {
 
     # Версия и обновления — у обновлятора, он единственный знает про ветку и
     # про то, чем кончился прошлый заход.
-    _tui_st=$(autoupdate status 2>/dev/null || true)
+    #
+    # `--cached` обязателен, и это не бережливость. Обычный `status` спрашивает
+    # GitHub; шапка обновляется раз в пятнадцать секунд, то есть давала бы 240
+    # обращений в час при лимите в 60 для анонимного клиента. Дальше GitHub
+    # отвечает 403 — и ломается не шапка, а НАСТОЯЩЕЕ обновление, потому что
+    # лимит один на весь адрес. Ровно это и случилось на боевом сервере.
+    #
+    # Запомненный ответ не устаревает: демон опрашивает ветку раз в пять минут и
+    # кладёт голову в состояние, откуда её и берёт `--cached`.
+    _tui_st=$(autoupdate status --cached 2>/dev/null || true)
     printf 'versiya=%s\n' "$(printf '%s' "$_tui_st" | sed -n 's/^развёрнуто: *//p' | head -1)"
     printf 'obnova=%s\n'  "$(printf '%s' "$_tui_st" | sed -n 's/^обновление: *//p' | head -1)"
     printf 'avto=%s\n'    "$(printf '%s' "$_tui_st" | sed -n 's/^автообновление: *//p' | head -1)"
@@ -3506,8 +3515,12 @@ tui_svodka_obnovit() {
     if [ -n "$TUI_SBOR_PID" ] && kill -0 "$TUI_SBOR_PID" 2>/dev/null; then
         return 0
     fi
-    ( tui_svodka_sobrat > "$TUI_SVODKA.new" 2>/dev/null \
-        && mv "$TUI_SVODKA.new" "$TUI_SVODKA" ) &
+    # Ошибки гасятся у ВСЕЙ подоболочки, а не у одного сбора. Иначе на выходе
+    # из меню человек получает `mv: cannot stat '/tmp/tmp.XXXX.new'`: ловушка
+    # сносит временные файлы, пока сборщик ещё идёт, и его `mv` ругается в
+    # терминал уже после того, как меню закрылось. Снято с боевого сервера.
+    ( tui_svodka_sobrat > "$TUI_SVODKA.new" \
+        && mv "$TUI_SVODKA.new" "$TUI_SVODKA" ) 2>/dev/null &
     TUI_SBOR_PID=$!
     TUI_SVODKA_KOGDA=$(tui_teper)
 }
@@ -3810,19 +3823,35 @@ tui_vypolnit() {
     tui_vklyuchit
     clear 2>/dev/null || printf '\033[2J\033[H' > /dev/tty
     # После возврата сводка почти наверняка устарела — команда могла всё
-    # поменять (запустить, остановить, обновить).
-    rm -f "$TUI_SVODKA"
+    # поменять (запустить, остановить, обновить). Через `tui_ubrat`, а не
+    # голым `rm`: сборщик мог остаться с прошлого кадра, и его `mv` вернул бы
+    # только что снесённую сводку обратно — уже неверную.
+    tui_ubrat
     tui_svodka_obnovit
+}
+
+#: Убрать за собой: сначала сборщик, потом его файлы.
+#:
+#: Порядок обязателен. Снеси файлы первыми — и живой ещё сборщик доедет до
+#: `mv`, не найдёт своего `.new` и напишет об этом в терминал, из которого меню
+#: уже вышло. Человек видит ругань про `/tmp/tmp.XXXX.new` вместо приглашения
+#: оболочки и справедливо считает, что что-то сломал.
+tui_ubrat() {
+    if [ -n "$TUI_SBOR_PID" ]; then
+        kill "$TUI_SBOR_PID" 2>/dev/null || true
+        TUI_SBOR_PID=""
+    fi
+    rm -f "$TUI_SVODKA" "$TUI_SVODKA.new"
 }
 
 tui_menu() {
     TUI_SVODKA=$(mktemp 2>/dev/null) || return 1
     # Терминал возвращается КАК БЫ ЦИКЛ НИ КОНЧИЛСЯ. Сырой режим, оставленный
     # после обрыва, — это потеря управления сервером до переподключения по ssh.
-    trap 'tui_vyklyuchit; rm -f "$TUI_SVODKA" "$TUI_SVODKA.new"; exit 0' INT TERM
-    trap 'tui_vyklyuchit; rm -f "$TUI_SVODKA" "$TUI_SVODKA.new"' EXIT
+    trap 'tui_vyklyuchit; tui_ubrat; exit 0' INT TERM
+    trap 'tui_vyklyuchit; tui_ubrat' EXIT
 
-    tui_vklyuchit || { rm -f "$TUI_SVODKA"; return 1; }
+    tui_vklyuchit || { tui_ubrat; return 1; }
     clear 2>/dev/null || printf '\033[2J\033[H' > /dev/tty
     tui_svodka_obnovit
 
@@ -3893,7 +3922,7 @@ tui_menu() {
     done
 
     tui_vyklyuchit
-    rm -f "$TUI_SVODKA" "$TUI_SVODKA.new"
+    tui_ubrat
     trap - INT TERM EXIT
     clear 2>/dev/null || printf '\033[2J\033[H' > /dev/tty
     return 0
@@ -3995,6 +4024,11 @@ OpenCRM v$VERSION — установка и управление
   --domain example.com   домен сайта; --domain "" — работать по IP без HTTPS
   --email you@example.com  логин администратора и контакт для Let's Encrypt
   --yes                    не задавать вопросов, брать значения по умолчанию
+
+Переменные окружения:
+  OPENCRM_TUI=0            прежнее номерное меню вместо живого
+                           (OPENCRM_TUI=0 ./opencrm.sh)
+  OPENCRM_LANG=ru|en       язык вывода скрипта
 EOF
 }
 

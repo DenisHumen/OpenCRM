@@ -37,12 +37,25 @@ def _short(sha: str) -> str:
     return sha[:12] if sha else "—"
 
 
-def cmd_status(updater: Updater) -> int:
-    state = updater.status()
+def cmd_status(state: dict) -> int:
+    """Печатает УЖЕ СОБРАННОЕ состояние.
+
+    Раньше собирала сама, и `--cached` пришлось бы протаскивать сюда вторым
+    путём. Два пути к одному запросу — это ровно то, из-за чего запрос однажды
+    уходит в сеть там, где обещано не уходить.
+    """
     print(f"репозиторий:    {state['repo']}@{state['branch']}")
     print(f"развёрнуто:     {_short(state['deployed'])}")
     print(f"в ветке:        {_short(state['available'])}" + (f"  ({state['github_error']})" if state["github_error"] else ""))
-    print(f"обновление:     {'есть' if state['update_available'] else 'нет'}")
+    if state.get("available_at"):
+        print(f"проверено:      {time.strftime('%Y-%m-%d %H:%M', time.localtime(state['available_at']))}")
+    # «Неизвестно», а не «нет». Разница не в вежливости: с `--cached` до первого
+    # опроса голова ветки неизвестна, и «обновление: нет» означало бы «всё
+    # свежее» — самый спокойный из возможных ответов там, где мы не спрашивали.
+    if state["available"]:
+        print(f"обновление:     {'есть' if state['update_available'] else 'нет'}")
+    else:
+        print("обновление:     неизвестно")
     if state.get("checks"):
         names = {"success": "зелёные", "pending": "идут", "failure": "красные"}
         print(f"проверки:       {names.get(state['checks'], state['checks'])} — {state['checks_detail']}")
@@ -93,6 +106,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("-n", "--limit", type=int, default=10, help="сколько записей истории показать")
     parser.add_argument("--json", action="store_true", help="status/check машинным форматом")
+    parser.add_argument(
+        "--cached",
+        action="store_true",
+        help="status: не спрашивать GitHub, ответить запомненным с прошлого опроса",
+    )
     args = parser.parse_args(argv)
 
     config = UpdateConfig.from_env()
@@ -106,10 +124,11 @@ def main(argv: list[str] | None = None) -> int:
     updater = Updater(config, journal=journal, log=log)
 
     if args.command == "status":
+        state = updater.status(fresh=not args.cached)
         if args.json:
-            print(json.dumps(updater.status(), ensure_ascii=False, indent=2))
+            print(json.dumps(state, ensure_ascii=False, indent=2))
             return 0
-        return cmd_status(updater)
+        return cmd_status(state)
     if args.command == "history":
         return cmd_history(updater, args.limit)
     if args.command == "watch":

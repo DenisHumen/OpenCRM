@@ -13,7 +13,10 @@
 import itertools
 
 import pytest
+from sqlalchemy import delete, select, update
 
+from core import exceptions as errors
+from database.models.document import Document, DocumentLine
 from tests.conftest import API
 
 WAYBILLS = f"{API}/waybills"
@@ -274,6 +277,184 @@ def test_obshchaya_smena_statusa_ne_beryot_nakladnuyu(root_client, client_row):
     assert otvet.status_code == 422, "накладную закрыли общей ручкой бланков"
     assert otvet.json()["error"]["code"] == "document_is_a_waybill"
     assert ostatok(root_client, item) == 10_000
+
+
+# --- сторожа на ORM: обход службы -----------------------------------------------
+#
+# Проверки выше идут через API и стерегут службу. Эти идут МИМО неё — прямо по
+# объектам сессии, как ходит соседний модуль или скрипт обслуживания. Довод тот
+# же, что записан у журнала действий: службу обходят не злонамеренно, а по
+# невнимательности, и обходят её ровно в тот заход, когда разбирают случай, ради
+# которого бумага и велась.
+#
+# Граница у сторожей честная и здесь же названа: `text("UPDATE ...")` и любой
+# клиент базы снаружи ими не закрыты. Проверять то, чего нет, нечем.
+
+
+def provedennaya(root_client, client_row):
+    """Проведённая накладная и её единственная строка."""
+    item = product(root_client, stock="10")
+    waybill = chernovik(root_client, client_row, item, quantity="3")
+    assert root_client.post(f"{WAYBILLS}/{waybill['id']}/post", json={}).status_code == 200
+    return waybill, item
+
+
+def test_storozh_ne_dayot_dopisat_stroku_mimo_sluzhby(root_client, client_row, db):
+    waybill, item = provedennaya(root_client, client_row)
+
+    db.add(
+        DocumentLine(
+            document_id=waybill["id"],
+            product_id=item["id"],
+            name_snapshot="дописано мимо службы",
+            quantity_milli=1_000,
+        )
+    )
+    with pytest.raises(errors.ForbiddenError) as otkaz:
+        db.flush()
+    assert otkaz.value.code == "waybill_immutable"
+    db.rollback()
+
+    assert len(root_client.get(f"{WAYBILLS}/{waybill['id']}").json()["lines"]) == 1
+
+
+def test_storozh_ne_dayot_popravit_stroku_mimo_sluzhby(root_client, client_row, db):
+    waybill, _ = provedennaya(root_client, client_row)
+    stroka = db.scalars(
+        select(DocumentLine).where(DocumentLine.document_id == waybill["id"])
+    ).one()
+
+    stroka.quantity_milli = 99_000
+    with pytest.raises(errors.ForbiddenError) as otkaz:
+        db.flush()
+    assert otkaz.value.code == "waybill_immutable"
+    db.rollback()
+
+    posle = root_client.get(f"{WAYBILLS}/{waybill['id']}").json()
+    assert posle["lines"][0]["quantity_milli"] == 3_000
+
+
+def test_storozh_ne_dayot_udalit_stroku_mimo_sluzhby(root_client, client_row, db):
+    waybill, _ = provedennaya(root_client, client_row)
+    stroka = db.scalars(
+        select(DocumentLine).where(DocumentLine.document_id == waybill["id"])
+    ).one()
+
+    db.delete(stroka)
+    with pytest.raises(errors.ForbiddenError) as otkaz:
+        db.flush()
+    assert otkaz.value.code == "waybill_immutable"
+    db.rollback()
+
+    assert len(root_client.get(f"{WAYBILLS}/{waybill['id']}").json()["lines"]) == 1
+
+
+def test_sebestoimost_pishetsya_odin_raz(root_client, client_row, db):
+    """Самая узкая щель во всём стороже — и потому проверяется отдельно.
+
+    Проведение снимает себестоимость ПОСЛЕ смены статуса, то есть пишет в
+    строку уже непроведённой бумаги. Запрет в лоб отказал бы в самом проведении,
+    поэтому в стороже назван один законный переход: `NULL → число`.
+
+    Проверяется он с обеих сторон, иначе исключение незаметно превращается в
+    дыру: первая половина — проведение прошло и себестоимость записана (значит
+    щель открыта там, где нужно); вторая — «число → другое число» отбито
+    (значит щель не шире, чем объявлено).
+    """
+    waybill, item = provedennaya(root_client, client_row)
+    stroka = db.scalars(
+        select(DocumentLine).where(DocumentLine.document_id == waybill["id"])
+    ).one()
+    # Сверяем с карточкой товара, а не с числом в тексте: себестоимость
+    # хранится в минорных единицах, и записанная сюда «сотня» разошлась бы
+    # с ней молча при первой же смене единиц.
+    assert stroka.cost_minor == item["cost"], "проведение не записало себестоимость"
+
+    stroka.cost_minor = 1
+    with pytest.raises(errors.ForbiddenError) as otkaz:
+        db.flush()
+    assert otkaz.value.code == "waybill_immutable"
+    db.rollback()
+
+
+def test_storozh_ne_dayot_popravit_shapku(root_client, client_row, db):
+    """Шапка проведённой не меняется вовсе — кроме статуса, и не через объект.
+
+    Статус исключён не послаблением: законный путь у него один —
+    `documents_repo.take_status`, условный `UPDATE` запросом. Он уезжает мимо
+    мэппера, а значит мимо этого сторожа, и приёмка (`issued → closed`) им не
+    задета. Проверяется тут же, второй половиной.
+    """
+    waybill, _ = provedennaya(root_client, client_row)
+    bumaga = db.get(Document, waybill["id"])
+
+    bumaga.client_id = None
+    with pytest.raises(errors.ForbiddenError) as otkaz:
+        db.flush()
+    assert otkaz.value.code == "waybill_immutable"
+    db.rollback()
+
+    assert root_client.post(f"{WAYBILLS}/{waybill['id']}/confirm", json={}).status_code == 200
+    assert root_client.get(f"{WAYBILLS}/{waybill['id']}").json()["status"] == "closed"
+
+
+def test_massovuyu_pravku_strok_storozh_ne_propuskaet(root_client, client_row, db):
+    """Три сторожа выше стоят на ОБЪЕКТЕ, массовый запрос объектов не трогает.
+
+    Ровно эта дыра была у журнала действий: одна строка из соседней службы
+    переписывала таблицу целиком, мимо мэппера и мимо всех запретов. Здесь она
+    закрыта так же — на сессии.
+    """
+    waybill, _ = provedennaya(root_client, client_row)
+
+    with pytest.raises(errors.ForbiddenError):
+        db.execute(
+            update(DocumentLine)
+            .where(DocumentLine.document_id == waybill["id"])
+            .values(quantity_milli=1)
+        )
+    db.rollback()
+
+    with pytest.raises(errors.ForbiddenError):
+        db.execute(delete(DocumentLine).where(DocumentLine.document_id == waybill["id"]))
+    db.rollback()
+
+    posle = root_client.get(f"{WAYBILLS}/{waybill['id']}").json()
+    assert posle["lines"][0]["quantity_milli"] == 3_000
+
+
+def test_storozh_ne_shire_chem_obyavlen(root_client, client_row, db):
+    """Две половины одного вопроса: не задел ли сторож лишнего.
+
+    Сторож, отбивающий заодно черновики и заказы, покраснел бы не сразу, а на
+    первой же правке чужого бланка — и разбирались бы с ним как с поломкой
+    заказов, а не как с перегнутым запретом. Поэтому обе законные правки
+    проверяются здесь, рядом с запретами.
+    """
+    item = product(root_client, stock="10")
+
+    # Черновик накладной правится и мимо службы: запрет про СТАТУС, а не про вид.
+    waybill = chernovik(root_client, client_row, item, quantity="3")
+    stroka = db.scalars(
+        select(DocumentLine).where(DocumentLine.document_id == waybill["id"])
+    ).one()
+    stroka.quantity_milli = 4_000
+    db.flush()
+    db.rollback()
+
+    # Строка заказа — тем более: заказ не накладная, у него своя жизнь.
+    zakaz = root_client.post(
+        ORDERS, json={"kind": "sales_order", "client_id": client_row["id"]}
+    ).json()
+    root_client.post(
+        f"{ORDERS}/{zakaz['id']}/lines", json={"product_id": item["id"], "quantity": "2"}
+    )
+    stroka_zakaza = db.scalars(
+        select(DocumentLine).where(DocumentLine.document_id == zakaz["id"])
+    ).one()
+    stroka_zakaza.quantity_milli = 5_000
+    db.flush()
+    db.rollback()
 
 
 # --- сторнирование ------------------------------------------------------------
