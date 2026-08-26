@@ -39,6 +39,7 @@ const AREA_LABEL: Record<string, TranslationKey> = {
   warehouse: "modWarehouse",
   labels: "modLabels",
   orders: "modOrders",
+  waybills: "modWaybills",
   reports: "modReports",
   mail: "modMail",
   templates: "templates",

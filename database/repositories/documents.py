@@ -27,6 +27,21 @@ def get(db: Session, document_id: int) -> Document | None:
     return db.get(Document, document_id)
 
 
+def po_osnovaniyu(db: Session, basis_id: int) -> list[Document]:
+    """Бумаги, выписанные на основании этой: накладные заказа, сторно накладной.
+
+    Отбор по `basis_id`, под который стоит индекс. Сортировка по номеру записи,
+    а не по времени: у двух накладных, выписанных в одну секунду, порядок должен
+    быть определённым — иначе список «по нему отгружено вот этим» на двух
+    открытиях подряд показывает разное, и человек решает, что данные меняются.
+    """
+    return list(
+        db.execute(
+            select(Document).where(Document.basis_id == basis_id).order_by(Document.id)
+        ).scalars()
+    )
+
+
 def get_by_number(db: Session, number: str) -> Document | None:
     """Бланк по номеру. Номер приходит со штрихкода или из адреса в QR."""
     return db.scalar(select(Document).where(Document.number == (number or "").strip()))

@@ -23,6 +23,8 @@ from database.models.document import (
     STATUS_CANCELLED,
     STATUS_CLOSED,
     STATUS_ISSUED,
+    WAYBILL_KINDS,
+    statuses_for,
 )
 from database.repositories import clients as clients_repo
 from database.repositories import deals as deals_repo
@@ -134,8 +136,19 @@ def next_number(db: Session) -> str:
     return f"{prefix}{counter:06d}"
 
 
-def _insert_with_free_number(db: Session, **fields) -> Document:
+def _insert_with_free_number(db: Session, status: str = STATUS_ISSUED, **fields) -> Document:
     """Вставить бланк, заняв следующий свободный номер.
+
+    `status` — параметром, а не жёстко «выдан». До накладной все виды бумаги
+    рождались выданными, и разницы не было; накладная рождается ЧЕРНОВИКОМ, её
+    собирают по складу со сканером. Номер она при этом занимает сразу, вместе с
+    черновиком, и это решение: кладовщик называет номер по рации («грузим по
+    сто восемнадцатой») задолго до того, как бумага проведена, а номер, выданный
+    при проведении, до этого момента не существовал бы.
+
+    Цена решения — дыры в нумерации от брошенных черновиков. Она принята
+    сознательно: сквозной номер здесь нужен для РАЗГОВОРА, а не для отчётности
+    перед кем-то, кто спросит, куда делся сто семнадцатый.
 
     Номер считается как «максимум по году плюс один», и между счётом и вставкой
     есть окно. У стойки в него попадают: двое приёмщиков выдают бумагу
@@ -150,7 +163,7 @@ def _insert_with_free_number(db: Session, **fields) -> Document:
     """
     return uniqueness.insert_retrying(
         db,
-        lambda: Document(number=next_number(db), status=STATUS_ISSUED, **fields),
+        lambda: Document(number=next_number(db), status=status, **fields),
         taken=lambda row: documents_repo.number_exists(db, row.number),
         message="Could not take a free number, try again",
         code="document_number_taken",
@@ -161,6 +174,22 @@ def create(db: Session, data: dict, author: User) -> Document:
     kind = data.get("kind") or KIND_INTAKE
     if kind not in DOCUMENT_KINDS:
         raise errors.ValidationError(f"Unknown document kind: {kind}", code="unknown_kind")
+    # Накладная заводится СВОИМ путём, и здесь ей отказ.
+    #
+    # **Только накладная, хотя склад двигают и заказы.** Заказ приходит сюда
+    # законно: `order_service.create` дособирает поля и зовёт эту же функцию —
+    # бумага у них общая, и второй раз писать выдачу номера незачем. Накладная
+    # так не делает: у неё свой статус при рождении (черновик), свой склад и
+    # своё основание, и `_insert_with_free_number` она зовёт сама.
+    #
+    # Первая версия этой проверки отвергала `SKLADSKIE_KINDS` целиком — то есть
+    # и заказы, — и создание заказов перестало работать вовсе. Поймано набором
+    # тестов заказов, а не глазами: разница между «двигает склад» и «заводится
+    # своим путём» на вид невелика, а последствия у неё разные.
+    if kind in WAYBILL_KINDS:
+        raise errors.ValidationError(
+            f"{kind} has its own creation path", code="kind_has_own_path"
+        )
 
     locale = data.get("locale") or "ru"
     if locale not in DOCUMENT_LOCALES:
@@ -257,6 +286,17 @@ def tolko_blank(db: Session, document_id: int) -> Document:
             "This is an order, not a document. Use the orders section.",
             code="document_is_an_order",
         )
+    # Накладная попала сюда сразу, а не после такого же случая, как заказ.
+    # Довод дословно тот же: общая смена статуса меняет статус и пишет переход,
+    # а склада не касается. Пропусти она накладную — бумага закрылась бы, товар
+    # остался бы на полке, и расхождение всплыло бы на инвентаризации через
+    # месяц. Проводится накладная своим путём (`waybill_service.provesti`), где
+    # считается нехватка и пишутся движения.
+    if document.kind in WAYBILL_KINDS:
+        raise errors.ValidationError(
+            "This is a waybill, not a document. Use the waybills section.",
+            code="document_is_a_waybill",
+        )
     return document
 
 
@@ -273,6 +313,19 @@ def set_status(db: Session, document_id: int, status: str, author: User, note: s
         raise errors.ValidationError(f"Unknown status: {status}", code="unknown_status")
 
     document = get(db, document_id)
+    # Набор статусов у каждого вида свой, и до появления накладной это было
+    # только описанием: словарь `KIND_STATUSES` стоял в модели и не читался
+    # НИКЕМ, а проверка выше сверялась со всеми статусами разом. Пока наборы
+    # совпадали, разницы не было.
+    #
+    # С черновиком она появилась: `draft` попал в общий набор, и без этой
+    # проверки квитанцию можно было бы отправить в черновик — состояние, для неё
+    # бессмысленное, ничем не предусмотренное и не имеющее обратного пути.
+    if status not in statuses_for(document.kind):
+        raise errors.ValidationError(
+            f"Status {status} does not apply to {document.kind}",
+            code="status_not_for_kind",
+        )
     if document.status in (STATUS_CLOSED, STATUS_CANCELLED) and status != document.status:
         # Закрытый бланк — уже отданная вещь. Открывать его заново нельзя:
         # иначе история перестаёт отвечать на вопрос «когда клиент забрал».

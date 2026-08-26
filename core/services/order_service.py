@@ -548,6 +548,28 @@ def close(
         # обнаружить это, когда клиент придёт за товаром.
         raise errors.ValidationError("This order has no lines", code="order_is_empty")
 
+    # К остатку ведёт ровно один путь — вторая половина взаимного запрета.
+    #
+    # Заказ двигает склад здесь, накладная — при своём проведении. Пройди по
+    # одному заказу оба, и товар уедет со склада дважды, а остаток покажет
+    # минус, которого никто не объяснит. Первая половина запрета — в
+    # `waybill_service._proverit_dvoynuyu_otgruzku`, там же и разбор, почему
+    # пока запрет, а не переписывание этой функции на накладную.
+    #
+    # Проверка стоит ДО занятия замков и до смены статуса: отказать дешевле,
+    # чем откатывать.
+    otgruzheno = [
+        w.number
+        for w in documents_repo.po_osnovaniyu(db, order.id)
+        if w.status in (STATUS_ISSUED, STATUS_CLOSED)
+    ]
+    if otgruzheno:
+        raise errors.ValidationError(
+            "Stock has already moved by waybill " + ", ".join(otgruzheno)
+            + "; closing the order would ship the goods twice",
+            code="already_shipped_by_waybill",
+        )
+
     # Услуги отбрасываем сразу: остатка у них нет, и в проверке нехватки они
     # всегда выглядели бы недостачей — «доставки на складе ноль». Отгрузка
     # заказа, где есть хоть одна услуга, вставала бы намертво.
