@@ -23,6 +23,7 @@ export const LABEL: Record<string, TranslationKey> = {
   warehouse: "modWarehouse",
   labels: "modLabels",
   orders: "modOrders",
+  waybills: "modWaybills",
   reports: "modReports",
   mail: "modMail",
   templates: "templates",
@@ -42,6 +43,7 @@ const ABOUT: Record<string, TranslationKey> = {
   warehouse: "modWarehouseAbout",
   labels: "modLabelsAbout",
   orders: "modOrdersAbout",
+  waybills: "modWaybillsAbout",
   reports: "modReportsAbout",
   mail: "modMailAbout",
   templates: "modTemplatesAbout",
@@ -61,6 +63,10 @@ const ICON: Record<string, string> = {
   warehouse: "warehouse",
   labels: "scan",
   orders: "receipt",
+  // «arrowOut» — товар уезжает. Значок отличается от заказов нарочно:
+  // заказ обещает, накладная отдаёт, и в меню они стоят рядом. Одинаковый
+  // значок у соседних пунктов заставляет читать подписи каждый раз.
+  waybills: "arrowOut",
   reports: "analytics",
   mail: "email",
   templates: "note",

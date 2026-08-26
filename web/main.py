@@ -61,6 +61,7 @@ from web.api.routes import (
     tasks,
     templates,
     warehouse,
+    waybills,
     telegram,
     telephony,
     trevogi,
@@ -387,6 +388,7 @@ def create_app() -> FastAPI:
     app.include_router(tasks.router, prefix=api_prefix)
     app.include_router(templates.router, prefix=api_prefix)
     app.include_router(orders.router, prefix=api_prefix)
+    app.include_router(waybills.router, prefix=api_prefix)
     app.include_router(warehouse.router, prefix=api_prefix)
     app.include_router(warehouse.places_router, prefix=api_prefix)
     app.include_router(metrics.router, prefix=api_prefix)

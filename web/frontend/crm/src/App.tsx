@@ -51,7 +51,9 @@ import {
 } from "./screens/Settings";
 import { SettingsModules } from "./screens/SettingsModules";
 import { OrderCard } from "./screens/OrderCard";
+import { WaybillCard } from "./screens/WaybillCard";
 import { Orders } from "./screens/Orders";
+import { Waybills } from "./screens/Waybills";
 import { SettingsRoles } from "./screens/SettingsRoles";
 import { Setup } from "./screens/Setup";
 import { SettingsWarehouses } from "./screens/SettingsWarehouses";
@@ -273,6 +275,10 @@ export default function App() {
             <Route element={<ModuleRoute module="orders" />}>
               <Route path="/orders" element={<Orders />} />
               <Route path="/orders/:id" element={<ById><OrderCard /></ById>} />
+            </Route>
+            <Route element={<ModuleRoute module="waybills" />}>
+              <Route path="/waybills" element={<Waybills />} />
+              <Route path="/waybills/:id" element={<ById><WaybillCard /></ById>} />
             </Route>
           </Route>
           {/* Деньги отделены от отчётов правом, а не только блоком: отчёты

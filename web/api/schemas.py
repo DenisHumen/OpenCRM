@@ -946,6 +946,41 @@ def act_out(act, lines: list | None = None, amounts: bool = True) -> dict:
     }
 
 
+def waybill_out(waybill, lines: list | None = None, amounts: bool = True) -> dict:
+    """Накладная вместе со строками.
+
+    Отдельно от `order_out`, хотя половина полей совпадает, — по тому же доводу,
+    по которому отдельно живёт `act_out`. У накладной нет собранного сканером
+    (её собирают, но `picked_milli` про заказ), зато есть три поля, которых нет
+    ни у кого: склад, основание и признак «правится ли ещё».
+
+    `pravitsya` считается здесь, а не догадывается экраном по статусу. Правило
+    «черновик правится, проведённая нет» живёт в службе
+    (`waybill_service._tolko_chernovik`), и экран, вычисляющий его заново,
+    завёл бы второй ответ на тот же вопрос. Разойдутся они в тот день, когда в
+    службе появится ещё одно условие.
+    """
+    from core.services import waybill_service
+
+    rows = lines or []
+    return {
+        "id": waybill.id,
+        "number": waybill.number,
+        "kind": waybill.kind,
+        "status": waybill.status,
+        "client_id": waybill.client_id,
+        "deal_id": waybill.deal_id,
+        "basis_id": waybill.basis_id,
+        "warehouse_id": waybill.warehouse_id,
+        "locale": waybill.locale,
+        "pravitsya": waybill.status == waybill_service.STATUS_DRAFT,
+        "lines": [order_line_out(line, amounts=amounts) for line in rows],
+        "total": waybill_service.total_minor(rows) if amounts else None,
+        "created_at": _iso(waybill.created_at),
+        "updated_at": _iso(waybill.updated_at),
+    }
+
+
 def order_out(order, lines: list | None = None, amounts: bool = True) -> dict:
     """Заказ вместе со строками.
 

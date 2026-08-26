@@ -461,15 +461,40 @@ def test_switching_a_module_records_both_states(root_client):
     порядком файлов.
     """
     # У блока нет числового идентификатора — его имя лежит в снимке названия.
+    #
+    # Отбор по имени идёт НА СЕРВЕРЕ (`search`), а не только здесь, и это не
+    # ускорение. Страница журнала отдаёт полсотни строк; отбирая на своей
+    # стороне, мы фильтруем то, что уже отрезано пагинацией, — и как только
+    # соседние файлы нащёлкают полсотни своих переключений, записи про `tasks`
+    # просто не доедут до этой строки. Так и случилось, когда в наборе появился
+    # ещё один файл, включающий блоки (`tests/test_waybills.py`).
+    #
+    # Проверка на `entity_label` оставлена рядом нарочно: серверный поиск ищет и
+    # по имени исполнителя тоже, и «tasks» теоретически может совпасть с чем-то
+    # ещё. Сервер сужает, эта строка отбирает точно.
     about_tasks = lambda: [
-        e for e in entries(root_client, action="module.switched") if e["entity_label"] == "tasks"
+        e
+        for e in entries(root_client, action="module.switched", search="tasks")
+        if e["entity_label"] == "tasks"
     ]
-    before = len(about_tasks())
+    # Считаем НОВЫЕ записи по номеру, а не общее количество.
+    #
+    # Количество здесь не работает в принципе, и это не мелочь настройки.
+    # Страница журнала отдаёт полсотни строк; как только соседние файлы
+    # нащёлкают полсотни переключений `tasks`, счёт упирается в потолок
+    # страницы и «стало на две больше» перестаёт наступать НАВСЕГДА. Замерено
+    # ровно так: `assert 50 == 50 + 2`.
+    #
+    # Номер последней записи потолком не ограничен: две новые всегда окажутся
+    # первыми на первой странице, потому что журнал отдаётся от свежих к старым.
+    bylo = about_tasks()
+    posledniy = bylo[0]["id"] if bylo else 0
+
     assert root_client.post(f"{API}/modules/tasks", json={"enabled": False}).status_code == 200
     assert root_client.post(f"{API}/modules/tasks", json={"enabled": True}).status_code == 200
 
-    logged = about_tasks()
-    assert len(logged) == before + 2
+    logged = [e for e in about_tasks() if e["id"] > posledniy]
+    assert len(logged) == 2, f"переключений записано {len(logged)}, а их было два"
     assert (logged[1]["value_before"], logged[1]["value_after"]) == ("on", "off")
     assert (logged[0]["value_before"], logged[0]["value_after"]) == ("off", "on")
 
