@@ -317,7 +317,14 @@ def test_obsluzhivanie_est_v_menyu():
     устройству режима и видит сайт рабочим).
     """
     text = source()
-    menyu = text[text.index("menu() {") : text.index("usage() {")]
+    # Привязка к НАЧАЛУ СТРОКИ, а не к подстроке.
+    #
+    # `text.index("menu() {")` находит первое вхождение где угодно, в том
+    # числе внутри имени другой функции: `tui_menu() {` содержит эти знаки
+    # целиком. Срез тогда начинается внутри чужого тела, и проверка порядка
+    # строк падает, хотя само меню в полном порядке. Ловушка не разовая: так
+    # сломала бы её любая будущая функция с именем на `_menu`.
+    menyu = text[text.index(chr(10) + "menu() {") + 1 : text.index(chr(10) + "usage() {")]
     assert "Режим обслуживания" in menyu, "пункт «Режим обслуживания» пропал из меню"
     assert "menu_maintenance" in menyu, "пункт есть, а вызова menu_maintenance нет"
 
@@ -397,7 +404,14 @@ def test_menyu_vozvrashchaet_terminal_kak_bylo():
     assert "stty sane" not in kod, (
         "`stty sane` навязывает свои настройки тому, у кого они намеренно другие"
     )
-    menyu = text[text.index("menu() {") : text.index("usage() {")]
+    # Привязка к НАЧАЛУ СТРОКИ, а не к подстроке.
+    #
+    # `text.index("menu() {")` находит первое вхождение где угодно, в том
+    # числе внутри имени другой функции: `tui_menu() {` содержит эти знаки
+    # целиком. Срез тогда начинается внутри чужого тела, и проверка порядка
+    # строк падает, хотя само меню в полном порядке. Ловушка не разовая: так
+    # сломала бы её любая будущая функция с именем на `_menu`.
+    menyu = text[text.index(chr(10) + "menu() {") + 1 : text.index(chr(10) + "usage() {")]
     assert "tty_zapomnit" in menyu, "меню не запоминает состояние терминала"
     assert "tty_vernut" in menyu, "меню не возвращает состояние терминала"
     assert menyu.index("tty_zapomnit") < menyu.index("while :;"), (
