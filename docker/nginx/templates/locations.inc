@@ -47,6 +47,7 @@ location /media/ {
     set $opencrm_media app;
     proxy_pass http://$opencrm_media:8000;
     include /opencrm/templates/proxy-headers.inc;
+    proxy_read_timeout 120s;
     error_page 502 503 504 =503 /__opencrm-maintenance;
 }
 
@@ -141,6 +142,7 @@ location = /monitoring/login {
     set $opencrm_grafana_login grafana;
     proxy_pass http://$opencrm_grafana_login:3000;
     include /opencrm/templates/proxy-headers.inc;
+    proxy_read_timeout 120s;
     error_page 502 503 504 = @opencrm_monitoring_off;
 }
 
@@ -170,14 +172,14 @@ location = /monitoring/api/live/ws {
     set $opencrm_grafana_ws grafana;
     proxy_pass http://$opencrm_grafana_ws:3000;
 
-    # Заголовки перечислены здесь, а не взяты из `proxy-headers.inc`, и это
-    # вынужденно: там стоит `proxy_read_timeout 120s`, а nginx на повторный
-    # `proxy_read_timeout` в том же блоке отвечает «is duplicate» и не
-    # поднимается вовсе. Из четырёх строк общего файла три важны и повторены
-    # дословно; расхождение с ним поймает сторож в `tests/test_monitoring.py`.
-    proxy_set_header Host $host;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
+    # Общий файл заголовков — как у всех шести проходов внутрь. Раньше здесь
+    # стояли три строки, переписанные из него руками: в файле лежал ещё и
+    # `proxy_read_timeout 120s`, а повторить эту директиву в блоке нельзя —
+    # nginx отвечает `is duplicate` и не поднимается. Ценой была потеря
+    # `X-Forwarded-For`, от которого зависит вся защита от подбора; сторож
+    # `tests/test_public_surface.py` это поймал и был прав. Таймаут из файла
+    # убран и пишется своей строкой в каждом блоке — см. сам файл.
+    include /opencrm/templates/proxy-headers.inc;
 
     proxy_http_version 1.1;
     proxy_set_header Upgrade $http_upgrade;
@@ -208,6 +210,7 @@ location /monitoring/ {
     set $opencrm_grafana grafana;
     proxy_pass http://$opencrm_grafana:3000;
     include /opencrm/templates/proxy-headers.inc;
+    proxy_read_timeout 120s;
 
     # Переключение протокола — ТОЛЬКО здесь, а не в общем `proxy-headers.inc`.
     #
@@ -263,6 +266,7 @@ location = /api/v1/auth/login {
     set $opencrm_login app;
     proxy_pass http://$opencrm_login:8000;
     include /opencrm/templates/proxy-headers.inc;
+    proxy_read_timeout 120s;
     error_page 502 503 504 =503 /__opencrm-maintenance;
 }
 
@@ -271,6 +275,7 @@ location = /api/v1/auth/register {
     set $opencrm_register app;
     proxy_pass http://$opencrm_register:8000;
     include /opencrm/templates/proxy-headers.inc;
+    proxy_read_timeout 120s;
     error_page 502 503 504 =503 /__opencrm-maintenance;
 }
 
@@ -278,6 +283,7 @@ location / {
     set $opencrm_app app;
     proxy_pass http://$opencrm_app:8000;
     include /opencrm/templates/proxy-headers.inc;
+    proxy_read_timeout 120s;
 
     # Пока приложение не отвечает — обновление, миграции, перезапуск — вместо
     # nginx'ового «502 Bad Gateway» показываем страницу обслуживания.
