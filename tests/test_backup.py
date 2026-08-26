@@ -528,6 +528,12 @@ def _vozrasty(katalog: Path) -> set[int]:
     return {int(p.stem.rsplit("-", 1)[1]) for p in katalog.glob("db-star-*.sql")}
 
 
+#: Копия «прошлого захода», которую подставной chmod отказывается трогать.
+#: Имя одно на два места — сам файл и сверку в подставе; разъедься они, проверка
+#: позеленела бы, ничего не проверив.
+CHUZHOY_FAYL = "db-2020-01-01.sql"
+
+
 @nuzhen_sh
 def test_chuzhoy_fayl_ne_sryvaet_proverku_kopii(tmp_path):
     """Гигиена прав не имеет права стоить проверки копии.
@@ -552,13 +558,19 @@ def test_chuzhoy_fayl_ne_sryvaet_proverku_kopii(tmp_path):
     bin_dir.mkdir(exist_ok=True)
     nastoyashchiy = shutil.which("chmod") or "/bin/chmod"
     # Подставной `chmod` отказывает ровно на чужом файле — как на сервере, где
-    # чужой владелец. Остальным файлам он не мешает: их скрипт создаёт сам, и
+    # у файла другой владелец. Остальным он не мешает: их скрипт создаёт сам, и
     # там `chmod` идёт без `|| true`.
+    #
+    # Сверяем ИМЯ ФАЙЛА, а не путь целиком, и это не придирка: pytest называет
+    # временный каталог по имени теста, а в имени теста есть слово «chuzhoy».
+    # Сверка по пути отказывала и свежему дампу — скрипт умирал раньше той
+    # строки, ради которой проверка написана, и краснела она по неверной
+    # причине. Поймано шлюзом деплоя (локально этот тест на Windows пропускается).
     (bin_dir / "chmod").write_text(
         "#!/bin/sh" + chr(10)
         + "for _a in \"$@\"; do" + chr(10)
-        + "  case \"$_a\" in" + chr(10)
-        + "    *chuzhoy*)" + chr(10)
+        + "  case \"${_a##*/}\" in" + chr(10)
+        + "    " + CHUZHOY_FAYL + ")" + chr(10)
         + "      echo \"chmod: changing permissions of '$_a': Operation not permitted\" >&2" + chr(10)
         + "      exit 1 ;;" + chr(10)
         + "  esac" + chr(10)
@@ -571,7 +583,7 @@ def test_chuzhoy_fayl_ne_sryvaet_proverku_kopii(tmp_path):
     backups = tmp_path / "backups"
     (backups / "daily").mkdir(parents=True)
     (backups / "weekly").mkdir(parents=True)
-    chuzhoy = backups / "daily" / "db-chuzhoy-2026-08-23.sql"
+    chuzhoy = backups / "daily" / CHUZHOY_FAYL
     chuzhoy.write_text("копия прошлого захода", encoding="utf-8")
 
     hranilishche = tmp_path / "storage"
@@ -599,9 +611,12 @@ def test_chuzhoy_fayl_ne_sryvaet_proverku_kopii(tmp_path):
         "нет строки `backup done` — скрипт не дошёл до конца:"
         + chr(10) + zapusk.stdout + zapusk.stderr
     )
-    # И главное: проверка годности отработала. Без неё копия — это надежда.
-    assert (backups / "daily" / "verify-report.txt").exists() or "OK" in zapusk.stdout, (
-        "копия не проверена: шаг проверки не отработал" + chr(10) + zapusk.stdout
+    # И главное: проверка годности отработала и вынесла вердикт. Без неё копия —
+    # это надежда. Ищем её собственные слова, а не косвенный признак: строка
+    # «копия годна» печатается только `scripts/verify_backup`, и напечатать её
+    # больше некому.
+    assert "копия годна" in zapusk.stdout, (
+        "копия не проверена — шаг проверки не отработал:" + chr(10) + zapusk.stdout
     )
 
 
