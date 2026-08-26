@@ -2,12 +2,18 @@
   "uid": "opencrm-security",
   "title": "OpenCRM — безопасность и ошибки",
   "description": "Кто и как щупает защиту, и что при этом отвечает сервер. Отделено от дашборда сайта нарочно: там числа о том, работает ли всё, здесь — о том, ломятся ли к нам. Оба вопроса важны, но задаются в разное время и разными людьми, а слитые на один экран мешают друг другу. Успешные запросы здесь не показываются вовсе — их место на дашборде сайта.",
-  "tags": ["opencrm", "security"],
+  "tags": [
+    "opencrm",
+    "security"
+  ],
   "timezone": "browser",
   "schemaVersion": 39,
   "version": 1,
   "refresh": "1m",
-  "time": { "from": "now-24h", "to": "now" },
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
   "editable": true,
   "panels": [
     {
@@ -15,8 +21,16 @@
       "type": "stat",
       "title": "Ошибок сервера за час",
       "description": "Ответы 5xx: приложение упало, не ответило или его не было. Ноль на зелёном — это ответ, а не пустота: в запросе стоит `or vector(0)`, поэтому «No data» здесь появиться не может, а появившись, означало бы, что не доезжают логи nginx.",
-      "datasource": { "type": "prometheus", "uid": "opencrm-prometheus" },
-      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 0 },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "opencrm-prometheus"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 0,
+        "y": 0
+      },
       "fieldConfig": {
         "defaults": {
           "unit": "short",
@@ -25,9 +39,18 @@
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green", "value": null },
-              { "color": "orange", "value": 1 },
-              { "color": "red", "value": 20 }
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 20
+              }
             ]
           }
         },
@@ -37,7 +60,13 @@
         "colorMode": "background",
         "graphMode": "area",
         "textMode": "auto",
-        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
       },
       "targets": [
         {
@@ -51,8 +80,16 @@
       "type": "stat",
       "title": "Промахов подбора за сутки",
       "description": "Неверный пароль, неверный PIN, несуществующий номер бланка — вместе. Единицы в сутки означают опечатки живых людей. Десятки и сотни означают, что кто-то перебирает: человек не ошибается сорок раз подряд.",
-      "datasource": { "type": "prometheus", "uid": "opencrm-prometheus" },
-      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 0 },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "opencrm-prometheus"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 6,
+        "y": 0
+      },
       "fieldConfig": {
         "defaults": {
           "unit": "short",
@@ -61,10 +98,22 @@
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green", "value": null },
-              { "color": "yellow", "value": 20 },
-              { "color": "orange", "value": 100 },
-              { "color": "red", "value": 500 }
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 20
+              },
+              {
+                "color": "orange",
+                "value": 100
+              },
+              {
+                "color": "red",
+                "value": 500
+              }
             ]
           }
         },
@@ -74,7 +123,13 @@
         "colorMode": "background",
         "graphMode": "area",
         "textMode": "auto",
-        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
       },
       "targets": [
         {
@@ -88,8 +143,16 @@
       "type": "stat",
       "title": "Защита не пустила, за сутки",
       "description": "Сколько раз ограничитель отказал: попытки у стучащегося кончились. Это число говорит не «плохо», а «защита сработала» — и потому читается иначе, чем соседнее. Ноль при большом числе промахов рядом означает, что до порога никто не дошёл; большое число здесь — что защита сегодня работала, и это хорошая новость, а не плохая.",
-      "datasource": { "type": "prometheus", "uid": "opencrm-prometheus" },
-      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 0 },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "opencrm-prometheus"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 12,
+        "y": 0
+      },
       "fieldConfig": {
         "defaults": {
           "unit": "short",
@@ -98,8 +161,14 @@
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green", "value": null },
-              { "color": "blue", "value": 1 }
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "blue",
+                "value": 1
+              }
             ]
           }
         },
@@ -109,7 +178,13 @@
         "colorMode": "background",
         "graphMode": "area",
         "textMode": "auto",
-        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
       },
       "targets": [
         {
@@ -123,8 +198,16 @@
       "type": "stat",
       "title": "Прощупываний за сутки",
       "description": "Запросы по известным путям чужих дыр: /wp-login.php, /.env, /phpmyadmin и им подобные. Ничего из этого в проекте не существовало никогда, поэтому такой запрос не может быть случайным. Ноль здесь бывает редко: интернет сканируют непрерывно, и небольшое ровное число — это фон, а не тревога. Смотреть надо на всплески.",
-      "datasource": { "type": "prometheus", "uid": "opencrm-prometheus" },
-      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 0 },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "opencrm-prometheus"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 18,
+        "y": 0
+      },
       "fieldConfig": {
         "defaults": {
           "unit": "short",
@@ -133,9 +216,18 @@
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green", "value": null },
-              { "color": "yellow", "value": 50 },
-              { "color": "orange", "value": 500 }
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 50
+              },
+              {
+                "color": "orange",
+                "value": 500
+              }
             ]
           }
         },
@@ -145,7 +237,13 @@
         "colorMode": "background",
         "graphMode": "area",
         "textMode": "auto",
-        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
       },
       "targets": [
         {
@@ -154,24 +252,47 @@
         }
       ]
     },
-
     {
       "id": 10,
       "type": "timeseries",
       "title": "Ошибки сервера по кодам",
       "description": "Именно по кодам, а не одним рядом «5xx», и это главная панель дашборда. 500 — приложение подняло исключение; 502 — nginx не достучался до него вовсе (контейнер лежит или перезапускается); 503 — отказ по перегрузке; 504 — приложение думает дольше, чем nginx готов ждать. Три разные аварии чинятся тремя разными способами, а слитые в «5xx» дают один и тот же график.",
-      "datasource": { "type": "prometheus", "uid": "opencrm-prometheus" },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 5 },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "opencrm-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 5
+      },
       "fieldConfig": {
         "defaults": {
           "unit": "reqps",
-          "custom": { "fillOpacity": 20, "lineWidth": 1, "stacking": { "mode": "normal" } }
+          "custom": {
+            "fillOpacity": 20,
+            "lineWidth": 1,
+            "stacking": {
+              "mode": "normal"
+            }
+          }
         },
         "overrides": []
       },
       "options": {
-        "legend": { "displayMode": "table", "placement": "right", "showLegend": true, "calcs": ["sum"] },
-        "tooltip": { "mode": "multi", "sort": "desc" }
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "calcs": [
+            "sum"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
       },
       "targets": [
         {
@@ -186,18 +307,42 @@
       "type": "timeseries",
       "title": "Отказы клиенту по кодам (4xx)",
       "description": "401 — не вошёл, 403 — вошёл, но не имеет права, 404 — нет такого, 429 — ограничитель не пустил. Эта четвёрка читается вместе: всплеск 401 без всплеска 429 означает, что подбор идёт медленно и до порога не доходит; 429 без 401 — что порог держит; 404 стеной — что кто-то перебирает адреса.",
-      "datasource": { "type": "prometheus", "uid": "opencrm-prometheus" },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 5 },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "opencrm-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 5
+      },
       "fieldConfig": {
         "defaults": {
           "unit": "reqps",
-          "custom": { "fillOpacity": 20, "lineWidth": 1, "stacking": { "mode": "normal" } }
+          "custom": {
+            "fillOpacity": 20,
+            "lineWidth": 1,
+            "stacking": {
+              "mode": "normal"
+            }
+          }
         },
         "overrides": []
       },
       "options": {
-        "legend": { "displayMode": "table", "placement": "right", "showLegend": true, "calcs": ["sum"] },
-        "tooltip": { "mode": "multi", "sort": "desc" }
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "calcs": [
+            "sum"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
       },
       "targets": [
         {
@@ -207,24 +352,45 @@
         }
       ]
     },
-
     {
       "id": 20,
       "type": "timeseries",
       "title": "Подбор: промахи по видам",
       "description": "Что именно перебирают. `vhod_promah` — пароль к CRM, `pin_promah` — PIN к витрине доски, `blank_promah` — номер бланка заказа. Последний самый говорящий: номера сквозные и человек с квитанцией в руках промахивается разве что опечаткой, поэтому ровный ручеёк на этом ряду означает счёт от единицы, а не путаницу.",
-      "datasource": { "type": "prometheus", "uid": "opencrm-prometheus" },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 13 },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "opencrm-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 13
+      },
       "fieldConfig": {
         "defaults": {
           "unit": "short",
-          "custom": { "fillOpacity": 20, "lineWidth": 1 }
+          "custom": {
+            "fillOpacity": 20,
+            "lineWidth": 1
+          }
         },
         "overrides": []
       },
       "options": {
-        "legend": { "displayMode": "table", "placement": "right", "showLegend": true, "calcs": ["sum", "max"] },
-        "tooltip": { "mode": "multi", "sort": "desc" }
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "calcs": [
+            "sum",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
       },
       "targets": [
         {
@@ -239,18 +405,40 @@
       "type": "timeseries",
       "title": "Защита: сколько раз не пустила",
       "description": "Отказы ограничителя по видам. Рядом с соседней панелью читается как ответ на вопрос «держит ли»: промахи растут, а этот ряд ноль — значит порог ещё не достигнут и подбор идёт медленно; растут оба — значит защита работает; растёт только этот — значит кто-то долбится в уже закрытую дверь.",
-      "datasource": { "type": "prometheus", "uid": "opencrm-prometheus" },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 13 },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "opencrm-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 13
+      },
       "fieldConfig": {
         "defaults": {
           "unit": "short",
-          "custom": { "fillOpacity": 20, "lineWidth": 1 }
+          "custom": {
+            "fillOpacity": 20,
+            "lineWidth": 1
+          }
         },
         "overrides": []
       },
       "options": {
-        "legend": { "displayMode": "table", "placement": "right", "showLegend": true, "calcs": ["sum", "max"] },
-        "tooltip": { "mode": "multi", "sort": "desc" }
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "calcs": [
+            "sum",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
       },
       "targets": [
         {
@@ -265,24 +453,47 @@
         }
       ]
     },
-
     {
       "id": 30,
       "type": "timeseries",
       "title": "Прощупывание известных дыр",
       "description": "По видам: wordpress — /wp-login.php и родня; sekrety — /.env, /.git, ключи; php — phpMyAdmin и файлы .php; obolochka — попытки исполнить команду (cgi-bin, обход каталога); chuzhaya-panel — чужие админки (actuator, jenkins, solr); vygruzka — поиск дампов и архивов. Ни один такой путь в проекте не существовал, поэтому здесь нет и не может быть честных посетителей.",
-      "datasource": { "type": "prometheus", "uid": "opencrm-prometheus" },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 21 },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "opencrm-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 21
+      },
       "fieldConfig": {
         "defaults": {
           "unit": "short",
-          "custom": { "fillOpacity": 20, "lineWidth": 1, "stacking": { "mode": "normal" } }
+          "custom": {
+            "fillOpacity": 20,
+            "lineWidth": 1,
+            "stacking": {
+              "mode": "normal"
+            }
+          }
         },
         "overrides": []
       },
       "options": {
-        "legend": { "displayMode": "table", "placement": "right", "showLegend": true, "calcs": ["sum"] },
-        "tooltip": { "mode": "multi", "sort": "desc" }
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "calcs": [
+            "sum"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
       },
       "targets": [
         {
@@ -297,18 +508,39 @@
       "type": "timeseries",
       "title": "404: перебор против честных промахов",
       "description": "Два ряда об одном и том же числе, и в разнице весь смысл. «Узнанный перебор» — запросы по известным чужим путям. «Остальные 404» — всё прочее: старые ссылки, опечатки, битые закладки. Второй ряд обязан быть маленьким и ровным; если он вырос, значит либо что-то в продукте перестало отдавать страницу, либо перебор идёт по путям, которых распознаватель не знает, — и тогда его список надо дописать.",
-      "datasource": { "type": "prometheus", "uid": "opencrm-prometheus" },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 21 },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "opencrm-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 21
+      },
       "fieldConfig": {
         "defaults": {
           "unit": "short",
-          "custom": { "fillOpacity": 10, "lineWidth": 2 }
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 2
+          }
         },
         "overrides": []
       },
       "options": {
-        "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["sum"] },
-        "tooltip": { "mode": "multi", "sort": "desc" }
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "sum"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
       },
       "targets": [
         {
@@ -323,26 +555,47 @@
         }
       ]
     },
-
     {
       "id": 40,
       "type": "stat",
       "title": "Строк от приложения за сутки",
       "description": "Счётчик ВСЕХ строк, а не ошибок. Он стоит рядом с панелью ошибок ради одной вещи: пустая панель ошибок означает либо «ошибок нет», либо «логи до нас не доезжают», и более спокойным выглядит худший случай. Число здесь есть — молчание панели справа означает спокойствие. Число пусто — молчание не означает ничего.",
-      "datasource": { "type": "loki", "uid": "opencrm-loki" },
-      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 29 },
+      "datasource": {
+        "type": "loki",
+        "uid": "opencrm-loki"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 29
+      },
       "fieldConfig": {
-        "defaults": { "unit": "short", "decimals": 0, "noValue": "логи не доезжают" },
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "noValue": "логи не доезжают"
+        },
         "overrides": []
       },
       "options": {
         "colorMode": "value",
         "graphMode": "none",
         "textMode": "auto",
-        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
       },
       "targets": [
-        { "refId": "A", "expr": "sum(count_over_time({service=\"app\"}[24h]))", "instant": true }
+        {
+          "refId": "A",
+          "expr": "sum(count_over_time({service=\"app\"}[24h]))",
+          "instant": true
+        }
       ]
     },
     {
@@ -350,29 +603,59 @@
       "type": "stat",
       "title": "Строк от nginx за сутки",
       "description": "То же самое для nginx. Ноль здесь при работающем сайте означает, что сбор логов сломался, — и тогда ВСЕ числа на этом дашборде, кроме счётчиков приложения, показывают пустоту, а не спокойствие.",
-      "datasource": { "type": "loki", "uid": "opencrm-loki" },
-      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 33 },
+      "datasource": {
+        "type": "loki",
+        "uid": "opencrm-loki"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 33
+      },
       "fieldConfig": {
-        "defaults": { "unit": "short", "decimals": 0, "noValue": "логи не доезжают" },
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "noValue": "логи не доезжают"
+        },
         "overrides": []
       },
       "options": {
         "colorMode": "value",
         "graphMode": "none",
         "textMode": "auto",
-        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
       },
       "targets": [
-        { "refId": "A", "expr": "sum(count_over_time({service=\"nginx\"}[24h]))", "instant": true }
+        {
+          "refId": "A",
+          "expr": "sum(count_over_time({service=\"nginx\"}[24h]))",
+          "instant": true
+        }
       ]
     },
     {
       "id": 42,
       "type": "logs",
       "title": "Только ошибки приложения",
-      "description": "Отбор по метке `level`, которую ставит promtail, приведя её к нижнему регистру. Успешных строк здесь нет намеренно: за ними идут на дашборд сайта, а тут нужен разбор беды, и лишние строки ему только мешают.",
-      "datasource": { "type": "loki", "uid": "opencrm-loki" },
-      "gridPos": { "h": 8, "w": 18, "x": 6, "y": 29 },
+      "description": "Отбор по метке `level`, которую ставит promtail, приведя её к нижнему регистру. Успешных строк здесь нет намеренно: за ними идут на дашборд сайта, а тут нужен разбор беды, и лишние строки ему только мешают. Окно панели — три часа, а не сутки дашборда. Панель журнала за сутки по самому объёмному потоку не успевает отработать до следующего обновления (раз в минуту), Grafana отменяет запрос, и в журнале Loki копятся «failed mapping AST: context canceled» — 102 штуки за час с четвертью на боевом сервере. Отменённый запрос вдобавок ничего не рисует, то есть панель тем чаще пуста, чем больше в ней строк. Для вопроса «что ломается прямо сейчас» трёх часов достаточно; за сутками идут в поиск по логам.",
+      "datasource": {
+        "type": "loki",
+        "uid": "opencrm-loki"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 18,
+        "x": 6,
+        "y": 29
+      },
       "options": {
         "showTime": true,
         "wrapLogMessage": true,
@@ -380,16 +663,29 @@
         "enableLogDetails": true
       },
       "targets": [
-        { "refId": "A", "expr": "{service=\"app\", level=~\"error|critical|traceback\"}" }
-      ]
+        {
+          "refId": "A",
+          "expr": "{service=\"app\", level=~\"error|critical|traceback\"}",
+          "maxLines": 200
+        }
+      ],
+      "timeFrom": "3h"
     },
     {
       "id": 43,
       "type": "logs",
       "title": "Только отказы nginx (4xx и 5xx)",
-      "description": "Метка `kod` есть лишь у ответов 4xx и 5xx: на успешных она пуста, а пустую метку Loki считает отсутствующей. Поэтому `kod=~\".+\"` — это и есть «покажи только отказы», без перечисления кодов и без риска пропустить новый. Успешные ответы сюда не попадают вовсе.",
-      "datasource": { "type": "loki", "uid": "opencrm-loki" },
-      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 37 },
+      "description": "Метка `kod` есть лишь у ответов 4xx и 5xx: на успешных она пуста, а пустую метку Loki считает отсутствующей. Поэтому `kod=~\".+\"` — это и есть «покажи только отказы», без перечисления кодов и без риска пропустить новый. Успешные ответы сюда не попадают вовсе. Окно панели — три часа, а не сутки дашборда. Панель журнала за сутки по самому объёмному потоку не успевает отработать до следующего обновления (раз в минуту), Grafana отменяет запрос, и в журнале Loki копятся «failed mapping AST: context canceled» — 102 штуки за час с четвертью на боевом сервере. Отменённый запрос вдобавок ничего не рисует, то есть панель тем чаще пуста, чем больше в ней строк. Для вопроса «что ломается прямо сейчас» трёх часов достаточно; за сутками идут в поиск по логам.",
+      "datasource": {
+        "type": "loki",
+        "uid": "opencrm-loki"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 37
+      },
       "options": {
         "showTime": true,
         "wrapLogMessage": true,
@@ -397,8 +693,13 @@
         "enableLogDetails": true
       },
       "targets": [
-        { "refId": "A", "expr": "{service=\"nginx\", kod=~\".+\"}" }
-      ]
+        {
+          "refId": "A",
+          "expr": "{service=\"nginx\", kod=~\".+\"}",
+          "maxLines": 200
+        }
+      ],
+      "timeFrom": "3h"
     }
   ]
 }

@@ -2014,6 +2014,46 @@ monitoring_apply() {
     own_monitoring_dirs
     run_painted compose up -d --remove-orphans
     reload_nginx
+    warn_module_off
+}
+
+# Второй выключатель, о котором никто не помнит.
+#
+# Этот скрипт поднимает ПРОФИЛЬ ДОКЕРА. Блок «Мониторинг» внутри CRM —
+# отдельный переключатель, в интерфейсе, и выключенный он закрывает
+# `/api/v1/metrics`: Prometheus получает 403 на каждом опросе, а рядов
+# `opencrm_*` не появляется вовсе.
+#
+# Заметить это самому почти невозможно. Панели машины, базы и Redis полны —
+# их наполняют наблюдатели, а не приложение; пустыми остаются только ряды
+# приложения, и пустота читается как «пока ничего не происходило». Молчат при
+# этом тревоги о старой копии базы, разошедшейся схеме, ограничителе без Redis
+# и подборе паролей: все они считаются по `opencrm_*`.
+#
+# Живой случай (26.08.2026): `GET /api/v1/metrics 403` шло в журнале сервера
+# непрерывно — до обновления и после, — и ни одна проверка об этом не говорила.
+#
+# Сами включить блок отсюда мы не можем: он меняется через API под сессией
+# владельца, а у скрипта её нет. Поэтому — сказать вслух в тот момент, когда
+# человек как раз занят мониторингом и помнит, зачем пришёл.
+warn_module_off() {
+    _mcode=$(compose exec -T app python -c "$(printf '%s' '
+import urllib.request, urllib.error, sys
+try:
+    with urllib.request.urlopen("http://127.0.0.1:8000/api/v1/metrics", timeout=5) as o:
+        sys.stdout.write(str(o.status))
+except urllib.error.HTTPError as e:
+    sys.stdout.write(str(e.code))
+except Exception:
+    sys.stdout.write("")
+')" 2>/dev/null || true)
+    [ "$_mcode" = "403" ] || return 0
+    warn "$(tr_ "стек поднят, но блок «Мониторинг» в CRM выключен — метрики приложения не собираются" \
+                "the stack is up, but the Monitoring module is switched off in the CRM — application metrics are not collected")"
+    say "$(tr_ "        Включите его в Настройках → Модули, иначе рядов opencrm_* не будет, а тревоги о копии базы, схеме и подборе не сработают" \
+             "        Switch it on in Settings → Modules, otherwise there will be no opencrm_* series and alerts about backups, schema and brute force will never fire")"
+    say "$(tr_ "        Проверить — ./opencrm.sh doctor, строка «метрики приложения»" \
+             "        Check it with ./opencrm.sh doctor, the \"application metrics\" line")"
 }
 
 monitoring_remove() {
@@ -2920,6 +2960,56 @@ cmd_doctor() {
                     probe "$(tr_ "метрики базы" "database metrics")" 1 "$(tr_ "собираются под пользователем $_dxuser" "collected as user $_dxuser")" ;;
             esac
         fi
+
+        # Метрики САМОГО ПРИЛОЖЕНИЯ. Два выключателя, один результат — и об
+        # этом не говорило ничто.
+        #
+        # `./opencrm.sh monitoring on` поднимает профиль докера: Prometheus,
+        # Grafana, наблюдатели за машиной, базой и Redis. Блок «Мониторинг»
+        # ВНУТРИ CRM — отдельный переключатель, в интерфейсе. Выключенный, он
+        # закрывает `/api/v1/metrics` вместе с остальным своим API, и Prometheus
+        # получает 403 на каждом опросе.
+        #
+        # Снаружи это выглядит работающим мониторингом: панели машины, базы и
+        # Redis полны — их данные приходят от наблюдателей, а не от приложения.
+        # Пустыми остаются только ряды `opencrm_*`, и пустота читается как «пока
+        # ничего не происходило». А не работает при этом целый класс тревог:
+        # старая копия базы, разошедшаяся схема, ограничитель без Redis,
+        # заблокированная загрузка, подбор паролей — все они считаются по
+        # `opencrm_*` и не сработают никогда.
+        #
+        # Живой случай (26.08.2026): в журнале сервера `GET /api/v1/metrics 403`
+        # шло непрерывно, до обновления и после, а `doctor` был полностью
+        # зелёным.
+        #
+        # Правила «цель не отвечает» на приложение нет намеренно — выключенный
+        # блок это законное состояние, и звонить о нём ночью незачем (разбор — в
+        # шапке `docker/monitoring/prometheus/rules/opencrm.yml`). Поэтому
+        # состояние говорится ЗДЕСЬ, где его смотрят руками.
+        #
+        # Спрашиваем само приложение изнутри его контейнера: это ровно тот путь,
+        # которым ходит Prometheus, и он отвечает на вопрос «собираются ли»,
+        # а не «что записано в настройках».
+        _mcode=$(compose exec -T app python -c "$(printf '%s' '
+import urllib.request, urllib.error, sys
+try:
+    with urllib.request.urlopen("http://127.0.0.1:8000/api/v1/metrics", timeout=5) as o:
+        sys.stdout.write(str(o.status))
+except urllib.error.HTTPError as e:
+    sys.stdout.write(str(e.code))
+except Exception:
+    sys.stdout.write("")
+')" 2>/dev/null || true)
+        case "$_mcode" in
+            200)
+                probe "$(tr_ "метрики приложения" "application metrics")" 1 "$(tr_ "собираются" "collected")" ;;
+            403)
+                probe "$(tr_ "метрики приложения" "application metrics")" 0 "$(tr_ "блок «Мониторинг» в CRM выключен — рядов opencrm_* нет, и тревоги о копии, схеме и подборе не сработают; включите его в Настройках → Модули" "the Monitoring module is switched off in the CRM — there are no opencrm_* series, and alerts about backups, schema and brute force will never fire; switch it on in Settings → Modules")" ;;
+            "")
+                probe "$(tr_ "метрики приложения" "application metrics")" 1 "$(tr_ "не проверить — приложение не ответило" "cannot check — the application did not answer")" ;;
+            *)
+                probe "$(tr_ "метрики приложения" "application metrics")" 0 "$(tr_ "приложение ответило $_mcode вместо 200 — Prometheus получает то же самое" "the application answered $_mcode instead of 200 — Prometheus gets the same")" ;;
+        esac
 
         # Проверка сайта обязана идти по ИМЕНИ САЙТА. По внутреннему адресу она
         # зелёная и тогда, когда nginx не поднялся, а 443 никто не слушает, —

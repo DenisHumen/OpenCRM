@@ -144,6 +144,50 @@ location = /monitoring/login {
     error_page 502 503 504 = @opencrm_monitoring_off;
 }
 
+# Живое соединение панели — отдельным блоком ради ОДНОЙ вещи: своего таймаута.
+#
+# Точное совпадение (`=`) выигрывает у префикса `/monitoring/`, где бы блок ни
+# лежал; написано рядом ради чтения.
+#
+# **Почему не хватило общего блока.** Он включает `proxy-headers.inc` с
+# `proxy_read_timeout 120s`, и в комментарии рядом было написано, что живому
+# соединению этого хватает: «Grafana шлёт пульс чаще». Боевой журнал это
+# опроверг — соединение продержалось 119,074 с и оборвалось:
+#
+#     "status":"101", "request_time":"119.074", "path":"/monitoring/api/live/ws"
+#
+# 119,07 при потолке 120 — это не совпадение, это сам потолок. Значит с той
+# стороны в течение двух минут не приходило ничего, и nginx закрывал соединение.
+# Grafana после этого переподключается — вечно, раз в две минуты, в каждой
+# открытой вкладке. Лучше четырёхсотки раз в секунду, но всё ещё не работа.
+#
+# Час, а не «побольше»: живое соединение на то и живое, чтобы висеть открытым, и
+# ограничивать его временем незачем. Опасности «повисший запрос держит рабочего
+# процесса час» здесь нет — соседний блок остаётся при своих 120 с, а этот
+# адрес обслуживает ровно один вид запроса.
+location = /monitoring/api/live/ws {
+    limit_req zone=opencrm_basic_auth burst=5 nodelay;
+    set $opencrm_grafana_ws grafana;
+    proxy_pass http://$opencrm_grafana_ws:3000;
+
+    # Заголовки перечислены здесь, а не взяты из `proxy-headers.inc`, и это
+    # вынужденно: там стоит `proxy_read_timeout 120s`, а nginx на повторный
+    # `proxy_read_timeout` в том же блоке отвечает «is duplicate» и не
+    # поднимается вовсе. Из четырёх строк общего файла три важны и повторены
+    # дословно; расхождение с ним поймает сторож в `tests/test_monitoring.py`.
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection $opencrm_connection_upgrade;
+    proxy_read_timeout 3600s;
+    proxy_send_timeout 3600s;
+
+    error_page 502 503 504 = @opencrm_monitoring_off;
+}
+
 location /monitoring/ {
     # Подбор пароля через `Authorization: Basic` идёт МИМО страницы входа — он
     # стучится прямо в `/monitoring/api/...`. Считаются только запросы с этим
@@ -179,8 +223,10 @@ location /monitoring/ {
     # Править шестерых ради одного значит завести пять мест, где эта строка
     # ничего не делает и однажды будет прочитана как «здесь тоже WebSocket».
     #
-    # `proxy_read_timeout` из общего файла (120 с) для живого соединения хватает:
-    # Grafana шлёт пульс чаще.
+    # Строки остаются и здесь, хотя главное живое соединение уехало в свой блок
+    # выше: Grafana открывает WebSocket не только на `/api/live/ws` (так ходят
+    # некоторые источники данных и плагины), и оставить остальные адреса без
+    # переключения значило бы починить один из них.
     proxy_http_version 1.1;
     proxy_set_header Upgrade $http_upgrade;
     proxy_set_header Connection $opencrm_connection_upgrade;
