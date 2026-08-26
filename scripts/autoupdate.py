@@ -25,6 +25,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from deploy.config import UpdateConfig  # noqa: E402
+from deploy.github import chas  # noqa: E402
 from deploy.journal import Journal  # noqa: E402
 from deploy.updater import STATUS_UP_TO_DATE, Updater  # noqa: E402
 
@@ -47,6 +48,13 @@ def cmd_status(state: dict) -> int:
     print(f"репозиторий:    {state['repo']}@{state['branch']}")
     print(f"развёрнуто:     {_short(state['deployed'])}")
     print(f"в ветке:        {_short(state['available'])}" + (f"  ({state['github_error']})" if state["github_error"] else ""))
+    # Ожидание лимита — первое, что надо увидеть: пока оно стоит, ни «в
+    # ветке», ни «обновление» не обновятся, сколько ни спрашивай.
+    if state.get("github_wait", 0) > time.time():
+        print(
+            "лимит GitHub:   исчерпан, опрос возобновится в "
+            + chas(state["github_wait"])
+        )
     if state.get("available_at"):
         print(f"проверено:      {time.strftime('%Y-%m-%d %H:%M', time.localtime(state['available_at']))}")
     # «Неизвестно», а не «нет». Разница не в вежливости: с `--cached` до первого

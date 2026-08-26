@@ -36,10 +36,38 @@ BAD_CONCLUSIONS = frozenset(
 
 
 class GitHubError(RuntimeError):
-    pass
+    """Отказ GitHub. `do_kogda` — момент, раньше которого спрашивать бессмысленно.
+
+    Ноль значит «спрашивать можно хоть сейчас»: сеть отвалилась, ответ пришёл
+    порченый, репозиторий переименовали. Ненулевым он бывает ровно у одной
+    причины — исчерпанного лимита, и её GitHub сам называет вместе со временем
+    сброса. Без этого поля демон бился бы в закрытую дверь каждые пять минут
+    целый час, засыпая лог одной и той же строкой; тонуть в ней будет как раз
+    тот, кто пришёл разбираться, почему сайт не обновился.
+    """
+
+    def __init__(self, message: str, *, do_kogda: float = 0.0) -> None:
+        super().__init__(message)
+        self.do_kogda = do_kogda
 
 
-def _pochemu(error: urllib.error.HTTPError) -> str:
+def chas(kogda: float) -> str:
+    """Момент времени так, как его прочтёт человек.
+
+    Дата дописывается, только если момент не сегодняшний. Сброс лимита GitHub
+    всегда в пределах часа, и «до 14:05» там читается лучше полной даты; но
+    то же число попадает в состояние и в `status`, а «до 02:00» у момента,
+    отстоящего на годы, — это не короткая запись, это неверная.
+    """
+    if not kogda:
+        return ""
+    segodnya = time.strftime("%Y-%m-%d")
+    den = time.strftime("%Y-%m-%d", time.localtime(kogda))
+    obrazets = "%H:%M" if den == segodnya else "%d.%m.%Y %H:%M"
+    return time.strftime(obrazets, time.localtime(kogda))
+
+
+def _pochemu(error: urllib.error.HTTPError) -> tuple[str, float]:
     """Человеческая причина отказа вместо голого номера.
 
     «GitHub ответил 403» — это загадка, а не сообщение: у 403 два совершенно
@@ -53,21 +81,21 @@ def _pochemu(error: urllib.error.HTTPError) -> str:
     ровно как отобранный доступ.
     """
     if error.code not in (403, 429):
-        return f"GitHub ответил {error.code}"
+        return f"GitHub ответил {error.code}", 0.0
     ostalos = (error.headers or {}).get("x-ratelimit-remaining")
     if ostalos not in (None, "0"):
-        return f"GitHub ответил {error.code}: доступ закрыт (лимит не исчерпан)"
-    sbros = (error.headers or {}).get("x-ratelimit-reset")
-    kogda = ""
+        return f"GitHub ответил {error.code}: доступ закрыт (лимит не исчерпан)", 0.0
+    sbros = 0.0
     try:
-        if sbros:
-            kogda = time.strftime(" — до %H:%M", time.localtime(int(sbros)))
+        sbros = float((error.headers or {}).get("x-ratelimit-reset") or 0)
     except (TypeError, ValueError):
-        kogda = ""
+        sbros = 0.0
+    kogda = f" — до {chas(sbros)}" if sbros else ""
     return (
         f"GitHub ответил {error.code}: исчерпан лимит запросов{kogda}"
         ". Токен поднимает лимит с 60 запросов в час до 5000: "
-        "OPENCRM_UPDATE_GITHUB_TOKEN в autoupdate.env"
+        "OPENCRM_UPDATE_GITHUB_TOKEN в autoupdate.env",
+        sbros,
     )
 
 
@@ -116,7 +144,10 @@ class GitHub:
         except urllib.error.HTTPError as error:
             if error.code == 304:
                 return Head(sha="", etag=etag, changed=False)
-            raise GitHubError(f"{_pochemu(error)} на голову ветки {branch}") from error
+            prichina, do_kogda = _pochemu(error)
+            raise GitHubError(
+                f"{prichina} на голову ветки {branch}", do_kogda=do_kogda
+            ) from error
         except OSError as error:
             raise GitHubError(f"GitHub недоступен: {error}") from error
 
@@ -175,7 +206,8 @@ class GitHub:
             with self._open(self._request(url), timeout=self.timeout) as response:
                 payload = json.loads(response.read().decode("utf-8", "replace"))
         except urllib.error.HTTPError as error:
-            raise GitHubError(f"{_pochemu(error)} на {url}") from error
+            prichina, do_kogda = _pochemu(error)
+            raise GitHubError(f"{prichina} на {url}", do_kogda=do_kogda) from error
         except OSError as error:
             raise GitHubError(f"GitHub недоступен: {error}") from error
         except ValueError as error:

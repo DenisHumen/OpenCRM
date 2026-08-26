@@ -61,7 +61,7 @@ from pathlib import Path
 
 from deploy import notify, otchyot, vyzhimka
 from deploy.config import UpdateConfig
-from deploy.github import CHECKS_FAILURE, CHECKS_PENDING, GitHub, GitHubError
+from deploy.github import CHECKS_FAILURE, CHECKS_PENDING, GitHub, GitHubError, chas
 # _atomic_write, а не своя запись: гарантия ровно та же, что у состояния демона —
 # недописанного JSON на диске не бывает. Ход обновления читают в произвольный
 # момент, и половина файла разобралась бы у страницы как порча.
@@ -75,8 +75,18 @@ STATUS_ABORTED = "aborted"  # остановились до подмены — �
 STATUS_WAITING = "waiting-checks"  # коммит хороший, но CI ещё не досчитал
 STATUS_ROLLED_BACK = "rolled-back"
 STATUS_BROKEN = "broken"  # откат тоже не поднялся
+#: Лимит GitHub исчерпан — круг пропущен, сети не касались.
+#:
+#: Отдельный исход, а не разновидность `aborted`, потому что отвечает на
+#: другой вопрос. `aborted` значит «попробовали и не смогли», а здесь мы даже
+#: не пробовали: до названного часа ответом будет тот же отказ. Смешай их — и
+#: в логе не отличить «GitHub молчит» от «мы сами решили подождать».
+STATUS_RATE_LIMITED = "rate-limited"
 
-QUIET = {STATUS_DISABLED, STATUS_UP_TO_DATE}
+#: Исходы, о которых демон молчит: они означают «ничего не случилось», а
+#: строка о том, что ничего не случилось, повторённая раз в пять минут,
+#: прячет ту единственную, ради которой лог и читают.
+QUIET = {STATUS_DISABLED, STATUS_UP_TO_DATE, STATUS_RATE_LIMITED}
 
 # Файлы, из которых работает сам демон обновления. Изменились — процессу нужен
 # перезапуск: Python загрузил их при старте и правку на диске не заметит.
@@ -346,6 +356,11 @@ class Updater:
                     checks = self.github.checks(available)
             except GitHubError as failure:
                 error = str(failure)
+                # Час сброса запоминаем и здесь: человек спросил `status`,
+                # напоролся на лимит — демону незачем узнавать то же самое
+                # заново собственным отказом.
+                if getattr(failure, "do_kogda", 0):
+                    self.journal.write(github_do=failure.do_kogda)
         return {
             "repo": self.config.repo,
             "branch": self.config.branch,
@@ -358,6 +373,7 @@ class Updater:
             "checks": checks.state if checks else "",
             "checks_detail": checks.detail if checks else "",
             "github_error": error,
+            "github_wait": float(self.journal.read().get("github_do") or 0),
             "last": self.journal.last(),
         }
 
@@ -365,13 +381,27 @@ class Updater:
         if not force and not self.journal.autoupdate_enabled:
             return Outcome(STATUS_DISABLED, from_sha=self.head_sha())
 
+        # Пока лимит GitHub исчерпан, спрашивать нечего: ответом будет тот же
+        # 403. Молча пропускаем круг — иначе демон писал бы одну и ту же строку
+        # каждые пять минут целый час, и в ней утонул бы тот, кто пришёл
+        # разбираться, почему сайт не обновился. Момент сброса называет сам
+        # GitHub; `force` проходит всегда — человек имеет право попробовать.
+        zhdyom = float(self.journal.read().get("github_do") or 0)
+        if not force and zhdyom > self._clock():
+            return Outcome(STATUS_RATE_LIMITED, reason=_do_kogda(zhdyom))
+
         try:
             head = self.github.head(self.config.branch, "" if force else self.journal.etag)
         except GitHubError as failure:
             # Сетевые сбои в историю не пишем: при опросе раз в пять минут они
             # затопили бы журнал. Видно их в логе демона и в `status`.
             self.log(f"опрос не удался: {failure}")
+            if getattr(failure, "do_kogda", 0):
+                self.journal.write(github_do=failure.do_kogda)
             return Outcome(STATUS_ABORTED, reason=str(failure))
+        # Спросили и ответили — значит дверь снова открыта.
+        if zhdyom:
+            self.journal.write(github_do=0)
 
         if not head.changed:
             return Outcome(STATUS_UP_TO_DATE, from_sha=self.head_sha())
@@ -613,7 +643,19 @@ class Updater:
             raise _Stop(f"git status не отвечает: {dirty.tail(4)}")
         if dirty.out.strip() and not self.config.allow_dirty:
             steps.append(Step("preflight", False, dirty.out.strip()[:400]))
-            raise _Stop("в рабочем дереве есть несохранённые правки — обновление затёрло бы их")
+            # Отказ обязан назвать лекарство. Без него человек знает только, что
+            # обновление не идёт, — и дальше либо ждёт, либо сносит каталог
+            # целиком. Правку правил руками он же, значит и решение стереть её
+            # принимать ему; наше дело — сказать, чем именно стирается.
+            #
+            # `checkout -- .` возвращает только ОТСЛЕЖИВАЕМОЕ. `git clean` тут
+            # не назван намеренно: он снёс бы и то, чего в репозитории нет, а
+            # у части установок в этом же каталоге лежат данные сайта.
+            raise _Stop(
+                "в рабочем дереве есть несохранённые правки — обновление затёрло бы их. "
+                f"Стереть свои правки: git -C {self.config.project_dir} checkout -- . "
+                "(и удалить лишние файлы, если они перечислены выше)"
+            )
 
         # Место на диске — здесь, до первой записи.
         #
@@ -1555,6 +1597,11 @@ class Updater:
             podrobno = f" — {shag.detail}" if shag.detail else ""
             vnutri.append(f"{znak} {e(shag.name)}{e(podrobno)}")
         return "<blockquote expandable>" + "\n".join(vnutri) + "</blockquote>"
+
+
+def _do_kogda(kogda: float) -> str:
+    """«жду до 14:05» — человеку нужен час, а не число секунд от эпохи."""
+    return f"лимит GitHub исчерпан, жду до {chas(kogda)}"
 
 
 def _dlitelnost(sekund: float) -> str:

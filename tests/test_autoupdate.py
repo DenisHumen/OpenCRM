@@ -34,6 +34,7 @@ from deploy.updater import (
     STATUS_BROKEN,
     STATUS_DEPLOYED,
     STATUS_DISABLED,
+    STATUS_RATE_LIMITED,
     STATUS_ROLLED_BACK,
     SNAPSHOTS_KEPT,
     STATUS_UP_TO_DATE,
@@ -462,8 +463,13 @@ def test_a_real_edit_still_stops_the_update(tmp_path):
     (repo / "opencrm.sh").write_text("#!/bin/sh\necho правка руками\n", encoding="utf-8")
 
     updater = real_updater(tmp_path, repo)
-    with pytest.raises(_Stop, match="несохранённые правки"):
+    with pytest.raises(_Stop, match="несохранённые правки") as stop:
         updater._preflight([])
+
+    # Отказ обязан назвать лекарство. Без команды человек знает только, что
+    # обновление не идёт, и дальше либо ждёт, либо сносит каталог целиком —
+    # так и случилось на боевом сервере, где правку внесли руками.
+    assert "checkout -- ." in str(stop.value), "не сказано, чем это лечится"
 
 
 @needs_git
@@ -2648,11 +2654,128 @@ def test_403_po_limitu_nazyvaet_srok_i_lekarstvo():
     zagolovki["x-ratelimit-reset"] = "1000000000"
     otkaz = urllib.error.HTTPError("http://x", 403, "Forbidden", zagolovki, None)
 
-    text = _pochemu(otkaz)
+    text, do_kogda = _pochemu(otkaz)
     assert "лимит" in text
     assert "OPENCRM_UPDATE_GITHUB_TOKEN" in text, "не сказано, чем лечить"
+    assert do_kogda == 1000000000.0, "час сброса потерян — отступать будет некуда"
 
     zakryt = email.message.Message()
     zakryt["x-ratelimit-remaining"] = "42"
-    text = _pochemu(urllib.error.HTTPError("http://x", 403, "Forbidden", zakryt, None))
+    text, do_kogda = _pochemu(
+        urllib.error.HTTPError("http://x", 403, "Forbidden", zakryt, None)
+    )
     assert "доступ закрыт" in text, "отобранный доступ выдан за исчерпанный лимит"
+    # Отступать тут нельзя: отобранный доступ сам не вернётся, и молчаливое
+    # ожидание превратило бы поломку в тишину.
+    assert do_kogda == 0.0
+
+
+def _otkaz_po_limitu(do_kogda=2_000_000_000.0):
+    """Отказ GitHub «лимит исчерпан», как его отдаёт настоящий клиент."""
+    return GitHubError("исчерпан лимит запросов", do_kogda=do_kogda)
+
+
+class ZapertyyGitHub(FakeGitHub):
+    """GitHub, который отвечает отказом по лимиту и считает попытки."""
+
+    def __init__(self, do_kogda=2_000_000_000.0):
+        super().__init__()
+        self.do_kogda = do_kogda
+        self.popytok = 0
+
+    def head(self, branch, etag=""):
+        self.popytok += 1
+        raise _otkaz_po_limitu(self.do_kogda)
+
+
+def test_posle_limita_demon_ne_stuchit_v_zakrytuyu_dver(tmp_path):
+    """Второй круг не делает запроса вовсе.
+
+    Не бережливость: пока лимит исчерпан, ответом будет тот же 403, а строка о
+    нём, повторённая раз в пять минут целый час, — это дюжина записей, в
+    которых утонет та единственная, ради которой лог и читают.
+    """
+    github = ZapertyyGitHub()
+    updater = make_updater(tmp_path, github=github)
+
+    pervyy = updater.run_once()
+    vtoroy = updater.run_once()
+
+    assert github.popytok == 1, "постучали в закрытую дверь второй раз"
+    assert pervyy.status == STATUS_ABORTED
+    assert vtoroy.status == STATUS_RATE_LIMITED
+    assert "жду до" in vtoroy.reason
+
+
+def test_ruchnoy_zapusk_prohodit_i_v_ozhidanii(tmp_path):
+    """`force-update` человек нажимает сам и имеет право попробовать.
+
+    Отступление заведено против бессмысленного ПОВТОРЕНИЯ, а не против
+    человека: он мог только что добавить токен, и первый же запрос это покажет.
+    """
+    github = ZapertyyGitHub()
+    updater = make_updater(tmp_path, github=github)
+    updater.run_once()
+
+    updater.run_once(force=True)
+
+    assert github.popytok == 2, "ручной запуск не пропустили"
+
+
+def test_otstuplenie_snimaetsya_kogda_dver_otkrylas(tmp_path):
+    """Иначе демон замолчал бы навсегда после единственного отказа."""
+    updater = make_updater(tmp_path)
+    updater.journal.write(github_do=100.0)
+    # Часы стенда стоят на нуле, поэтому час сброса «проходит» их сдвигом,
+    # а не подобранным числом: подобранное однажды разошлось бы со стендом
+    # молча, и проверка стала бы зелёной навсегда.
+    updater._clock = lambda: 200.0
+
+    updater.run_once()
+
+    assert not updater.journal.read().get("github_do"), "отступление осталось висеть"
+
+
+def test_status_tozhe_zapominaet_chas_sbrosa(tmp_path):
+    """Напоролся человек — знать об этом должен и демон.
+
+    Иначе демон узнавал бы про закрытую дверь заново, собственным отказом, и
+    первая же строка в логе была бы лишней. Место нашлось подрывом: запись
+    здесь ничем не проверялась, и снятие её не покраснело ни одной проверки.
+    """
+    updater = make_updater(tmp_path, github=ZapertyyGitHub())
+
+    updater.status()
+
+    assert updater.journal.read().get("github_do") == 2_000_000_000.0
+
+
+def test_ozhidanie_vidno_v_sostoyanii(tmp_path):
+    """«Почему не обновляется» — вопрос, который задают `status`.
+
+    Без этой строки ответ выглядел бы как «обновление: нет» — то есть как
+    полный порядок, ровно там, где опрос не идёт вовсе.
+    """
+    updater = make_updater(tmp_path, github=ZapertyyGitHub())
+    updater.run_once()
+
+    assert updater.status(fresh=False)["github_wait"] == 2_000_000_000.0
+
+
+def test_chas_dopisyvaet_datu_kogda_ona_ne_segodnyashnyaya():
+    """Короткая запись хороша ровно до тех пор, пока она верна.
+
+    Сброс лимита GitHub всегда в пределах часа, и «до 14:05» там читается
+    лучше полной даты. Но то же число попадает в состояние и в `status`, и
+    момент, отстоящий на годы, показанный как «02:00», — это не короткая
+    запись, а неверная: человек прочтёт её как «через пару часов».
+    """
+    import time as chasy
+
+    from deploy.github import chas
+
+    segodnya = chasy.mktime(chasy.localtime()[:3] + (14, 5, 0, 0, 0, -1))
+    assert chas(segodnya) == "14:05"
+    assert chas(0) == ""
+    daleko = chasy.mktime((2100, 1, 1, 2, 0, 0, 0, 0, -1))
+    assert chas(daleko) == "01.01.2100 02:00"
