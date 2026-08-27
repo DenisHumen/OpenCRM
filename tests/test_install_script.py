@@ -9,6 +9,8 @@
 пропасть они могут молча, а обнаружится это на очередном боевом сервере.
 """
 
+import os
+import re
 import shutil
 import subprocess
 import sys
@@ -324,16 +326,24 @@ def test_obsluzhivanie_est_v_menyu():
     # целиком. Срез тогда начинается внутри чужого тела, и проверка порядка
     # строк падает, хотя само меню в полном порядке. Ловушка не разовая: так
     # сломала бы её любая будущая функция с именем на `_menu`.
+    # Список пунктов и разбор ответа живут в РАЗНЫХ функциях, и это не
+    # случайность: разбор вынесен в `menu_vypolnit`, чтобы звать его проверяемо
+    # (`menu_vypolnit … || warn`). Голый вызов внутри `case` внутри `while` —
+    # не проверяемый контекст, и под `set -e` ненулевой код любой команды
+    # выбрасывал человека из меню в приглашение оболочки без объяснения.
+    # Поэтому берём обе половины.
     menyu = text[text.index(chr(10) + "menu() {") + 1 : text.index(chr(10) + "usage() {")]
+    razbor = text[text.index(chr(10) + "menu_vypolnit() {") + 1 :]
+    razbor = razbor[: razbor.index(chr(10) + "}" + chr(10))]
     assert "Режим обслуживания" in menyu, "пункт «Режим обслуживания» пропал из меню"
-    assert "menu_maintenance" in menyu, "пункт есть, а вызова menu_maintenance нет"
+    assert "menu_maintenance" in razbor, "пункт есть, а вызова menu_maintenance нет"
 
     # Номера пунктов и разбор ответа обязаны сойтись: пункт, который печатается,
     # но не разбирается, отвечает «нет такого пункта».
     import re
 
     napechatano = set(re.findall(r"menu_item (\d+)\s", menyu))
-    razobrano = set(re.findall(r"^\s*(\d+)\)", menyu, re.MULTILINE))
+    razobrano = set(re.findall(r"^\s*(\d+)\)", razbor, re.MULTILINE))
     propali = napechatano - razobrano - {"0"}
     assert not propali, f"пункты печатаются, но не разбираются: {sorted(propali)}"
 
@@ -419,4 +429,306 @@ def test_menyu_vozvrashchaet_terminal_kak_bylo():
     )
     assert menyu.index("tty_vernut") < menyu.index("menu_header"), (
         "терминал возвращают после отрисовки — прибирать надо ДО неё"
+    )
+
+
+# --- общие переменные между функциями -----------------------------------------
+#
+# В POSIX sh нет локальных переменных: всё, что присвоено внутри функции, —
+# глобальное. Отсюда самая дорогая ошибка живого меню: `tui_shapka` держала
+# счётчик контейнеров в `_vsego` — том же имени, каким цикл меню считает пункты.
+# Отрисовка шапки затирала счётчик ЧУЖИМ числом, и цифровой выбор сверялся с
+# числом контейнеров: «4» работала, пока их было четыре, и переставала на трёх.
+#
+# Заметить это чтением невозможно: обе функции по отдельности верны. Соседняя
+# проверка (`test_pomoshchniki_ne_zatirayut_peremennye_tsikla`) держит границу
+# между помощниками меню и его циклом; эта — то же правило для ВСЕГО скрипта,
+# без списка имён.
+
+
+def _bez_podstanovok(stroka: str) -> str:
+    """Вырезает `$( ... )` и обратные кавычки, считая вложенность.
+
+    Вызов внутри подстановки уезжает в ПОДОБОЛОЧКУ: что он там присвоит, до
+    вызывающей не долетит, и столкновением это не является. Простым выражением
+    не обойтись — внутри подстановки почти всегда сидит ещё одна
+    (`$(ask "$(tr_ ...)")`), и нежадный шаблон обрывается на первой закрывающей
+    скобке. Из-за этого проверка сначала выдавала полтора десятка ложных пар и
+    была бы отключена первым же, кто её прочитал.
+    """
+    out = []
+    i = 0
+    glubina = 0
+    v_kavychkah = False
+    while i < len(stroka):
+        if not v_kavychkah and stroka.startswith("$(", i):
+            glubina += 1
+            i += 2
+            continue
+        if glubina and stroka[i] == "(":
+            glubina += 1
+        elif glubina and stroka[i] == ")":
+            glubina -= 1
+            i += 1
+            continue
+        if stroka[i] == "`":
+            v_kavychkah = not v_kavychkah
+            i += 1
+            continue
+        if not glubina and not v_kavychkah:
+            out.append(stroka[i])
+        i += 1
+    return "".join(out)
+
+
+def _funktsii(text: str) -> dict:
+    """Тела функций верхнего уровня: имя → (номер первой строки, строки тела)."""
+    nachalo_f = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)\(\)\s*\{\s*$")
+    razobrano = {}
+    imya = None
+    nachalo = 0
+    glubina = 0
+    telo = []
+    for nomer, stroka in enumerate(text.splitlines(), 1):
+        if imya is None:
+            sovpalo = nachalo_f.match(stroka)
+            if sovpalo:
+                imya, nachalo, glubina, telo = sovpalo.group(1), nomer, 1, []
+            continue
+        telo.append(stroka)
+        glubina += stroka.count("{") - stroka.count("}")
+        if glubina <= 0:
+            razobrano[imya] = (nachalo, telo)
+            imya = None
+    return razobrano
+
+
+def _stolknoveniya(text: str) -> list[str]:
+    """Пары «A зовёт B, обе пишут V, и A читает V ПОСЛЕ вызова».
+
+    Читает после — ключевое условие. До вызова чужая запись ещё не случилась,
+    после — уже затёрла; пара, где вызывающая к переменной больше не
+    возвращается, беды не несёт и в список не идёт.
+    """
+    prisvoenie = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)=")
+    cikl = re.compile(r"^\s*for\s+([A-Za-z_][A-Za-z0-9_]*)\s+in\b")
+    chtenie = re.compile(r"\bread\s+(?:-r\s+)?([A-Za-z_][A-Za-z0-9_]*)")
+
+    funktsii = _funktsii(text)
+    pishet = {}
+    zovyot = {}
+    for imya, (_, telo) in funktsii.items():
+        p, z = set(), []
+        for sdvig, stroka in enumerate(telo):
+            bez_komm = re.sub(r"#.*$", "", stroka)
+            for vyrazhenie in (prisvoenie, cikl, chtenie):
+                for sovpalo in vyrazhenie.finditer(bez_komm):
+                    p.add(sovpalo.group(1))
+            vidimoe = _bez_podstanovok(bez_komm)
+            for drugaya in funktsii:
+                if drugaya == imya:
+                    continue
+                if re.search(r"(^|[\s;(&|])" + re.escape(drugaya) + r"([\s;)&|\"]|$)", vidimoe):
+                    z.append((sdvig, drugaya))
+        pishet[imya], zovyot[imya] = p, z
+
+    nayden = []
+    for imya, (nachalo, telo) in funktsii.items():
+        for sdvig, drugaya in zovyot[imya]:
+            for peremennaya in sorted(pishet[imya] & pishet.get(drugaya, set())):
+                if peremennaya == "IFS":
+                    continue
+                posle = "\n".join(telo[sdvig + 1:])
+                if re.search(r"\$\{?" + re.escape(peremennaya) + r"\b", posle):
+                    nayden.append(
+                        f"opencrm.sh:{nachalo + sdvig + 1}: {imya} зовёт {drugaya}, "
+                        f"обе пишут ${peremennaya}, и {imya} читает её после вызова"
+                    )
+    return sorted(set(nayden))
+
+
+def test_funktsii_ne_zatirayut_peremennye_drug_druga():
+    """Ни одна функция не затирает переменную, которую вызывающая ещё читает.
+
+    Правило, а не список имён. Список пришлось бы дополнять каждый раз, когда
+    заводится новая переменная, — то есть он отставал бы ровно на ту правку,
+    которая беду и приносит.
+
+    Разбор приблизительный: это не оболочка, а поиск подозрительных пар. Ложное
+    срабатывание лечится своим префиксом у функции (образец — `sync_alert_channel`
+    с `_sac_*`), и это ровно то, что и следует сделать: беды сегодня может не
+    быть, но пара остаётся заряженной до первой перестановки строк.
+    """
+    nayden = _stolknoveniya(source())
+    assert not nayden, "функции делят переменные:\n  " + "\n  ".join(nayden)
+
+
+def test_razbor_stolknoveniy_vidit_podlozhennoe():
+    """Проверка самой проверки: подложенное столкновение обязано находиться.
+
+    Разбор с вырезанием подстановок легко сделать слишком щедрым — и он станет
+    зелёным навсегда. Поэтому рядом стоит образец беды: функция, вызванная НЕ из
+    подстановки, затирает переменную, которую вызывающая читает следом.
+    """
+    obrazets = "\n".join([
+        "vneshnyaya() {",
+        "    _schet=5",
+        "    vnutrennyaya",
+        '    echo "$_schet"',
+        "}",
+        "vnutrennyaya() {",
+        "    _schet=9",
+        "}",
+    ])
+    assert _stolknoveniya(obrazets), "разбор не увидел подложенного столкновения"
+
+    # И обратная сторона: та же пара через подстановку — не столкновение,
+    # потому что подоболочка своих присвоений наружу не отдаёт.
+    bezopasno = obrazets.replace("    vnutrennyaya\n", "    _drugoe=$(vnutrennyaya)\n")
+    assert not _stolknoveniya(bezopasno), "разбор считает бедой вызов в подоболочке"
+
+
+def test_doctor_nazyvaet_lekarstvo_ot_gryaznogo_dereva():
+    """Диагностика обязана сказать не только «что», но и «чем».
+
+    Остальные строки доктора этому и следуют: `./opencrm.sh logs redis`,
+    `./opencrm.sh monitoring reload`. Строка про несохранённые правки была
+    единственной, которая нарушала собственное правило файла, — и стоила
+    ровно того: на боевом сервере обновление встало, а команду пришлось
+    спрашивать на стороне.
+
+    Проверяется само присутствие команды, а не её точная запись: важно,
+    чтобы человек не уходил за ней в другое место.
+    """
+    text = source()
+    telo = text[text.index("cmd_doctor() {"):]
+    telo = telo[: telo.index(chr(10) + "}")]
+    stroka = [s for s in telo.splitlines() if "несохранённые правки" in s]
+    assert stroka, "доктор перестал проверять чистоту репозитория"
+    # ДВА раза, по разу на язык. Строка собрана из `tr_ "русское" "english"`,
+    # и команда, оставшаяся в одной половине, — это лекарство, которого нет у
+    # половины читателей. Найдено подрывом: снятие русской половины проверку
+    # не покраснело, потому что английская держала её одна.
+    assert stroka[0].count("checkout -- .") >= 2, (
+        "доктор говорит про несохранённые правки, но не говорит на обоих языках, "
+        "чем их стереть: " + stroka[0].strip()
+    )
+
+
+# --- согласие и отказ ----------------------------------------------------------
+
+
+def _confirm_pod_sh(otvet: str) -> bool:
+    """Гоняет НАСТОЯЩУЮ `confirm` из opencrm.sh настоящим `sh` с готовым ответом.
+
+    Не поиск подстроки в исходнике: беда была именно в том, КАК оболочка
+    разбирает образец, а не в том, что написано. Текст `[yYдД]*` выглядит
+    безупречно и читается как «y, Y, д или Д» — беда только в исполнении.
+
+    `ask` подменяется заглушкой: проверяем разбор ответа, а не чтение с
+    терминала, которого в наборе тестов нет.
+    """
+    text = source()
+    nachalo = text.index("confirm() {")
+    telo = text[nachalo : text.index(chr(10) + "}", nachalo) + 2]
+    skript = (
+        'ask() { printf "%s" "$OTVET"; }' + chr(10)
+        + telo + chr(10)
+        + 'if confirm "Продолжить?" n; then echo SOGLASIE; else echo OTKAZ; fi'
+    )
+    gotovo = subprocess.run(
+        [SH, "-c", skript],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        env={**os.environ, "OTVET": otvet, "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8"},
+    )
+    assert "SOGLASIE" in gotovo.stdout or "OTKAZ" in gotovo.stdout, gotovo
+    return "SOGLASIE" in gotovo.stdout
+
+
+@pytest.mark.skipif(
+    SH is None or sys.platform == "win32",
+    # На Windows `sh` — это bash, а bash собирает многобайтные знаки в
+    # скобочном наборе и отвечает ВЕРНО. Проверка зеленела бы на сломанном
+    # коде — то есть была бы хуже отсутствующей. Работает она там, где работает
+    # и скрипт: на Linux, в докерном шлюзе и в CI.
+    reason="нет sh или Windows: там bash, и беды не видно",
+)
+@pytest.mark.parametrize(
+    "otvet",
+    ["нет", "Нет", "НЕТ", "нельзя", "отмена", "не надо", "no", "n", "", "0", "ЯЯЯ"],
+)
+def test_otkaz_ostayotsya_otkazom(otvet):
+    """«нет» обязано означать нет. На боевом сервере оно означало да.
+
+    `[yYдД]*` — скобочный набор с многобайтными знаками. dash сопоставляет
+    образцы побайтно и такой знак не собирает: набор разворачивался во
+    множество БАЙТОВ {y, Y, D0, B4, 94}, а байтом D0 начинается любая
+    кириллическая буква от «А» до «п». Совпадало всё: «нет», «нельзя»,
+    «отмена».
+
+    Цена: «Продолжить?» перед заливкой дампа поверх живой базы, «Остановить
+    сайт?», установка ufw с `default deny incoming`. Ответ «нет» делал ровно
+    то, от чего человек отказывался.
+    """
+    assert not _confirm_pod_sh(otvet), (
+        f"ответ «{otvet}» принят за согласие — опасные вопросы больше ничего не спрашивают"
+    )
+
+
+@pytest.mark.skipif(
+    SH is None or sys.platform == "win32",
+    reason="нет sh или Windows: там bash, и беды не видно",
+)
+@pytest.mark.parametrize("otvet", ["да", "Да", "ДА", "д", "Д", "y", "Y", "yes", "Yes"])
+def test_soglasie_ostayotsya_soglasiem(otvet):
+    """Обратная сторона: чинить отказ, сломав согласие, — не починка.
+
+    Без этой половины правка «выкинуть кириллицу из набора» прошла бы как
+    верная, а человек, отвечающий «да», получал бы отказ и не мог бы ни
+    восстановиться из копии, ни включить фаервол.
+    """
+    assert _confirm_pod_sh(otvet), f"ответ «{otvet}» не принят за согласие"
+
+
+@pytest.mark.skipif(
+    SH is None or sys.platform == "win32",
+    reason="нет sh или Windows: путь не переводится в WSL",
+)
+def test_autoupdate_ne_vypuskaet_okruzhenie_naruzhu(tmp_path):
+    """`autoupdate` втягивает свой env-файл, и ничего из него не должно вытечь.
+
+    В файле лежит `OPENCRM_HOME`, а у `docker compose` переменная окружения
+    СИЛЬНЕЕ файла `docker/.env`. К `${OPENCRM_HOME}` привязаны все тома стека,
+    включая каталог данных MySQL. Стоило двум файлам разойтись — а починка
+    прав после sudo правит их по отдельности, — и любой `compose up -d` после
+    вызова автообновления в том же запуске поднимал бы стек на ДРУГИХ
+    каталогах: пустая база, сайт с нуля, настоящие данные целыми лежат по
+    прежнему пути и выглядят пропавшими.
+
+    Проверяется прогоном настоящей функции: разница между `.` в текущей
+    оболочке и в подоболочке видна только в исполнении.
+    """
+    text = source()
+    nachalo = text.index("autoupdate() {")
+    telo = text[nachalo : text.index(chr(10) + "}", nachalo) + 2]
+
+    env_file = tmp_path / "autoupdate.env"
+    env_file.write_text("OPENCRM_HOME=/chuzhoy/put" + chr(10), encoding="utf-8")
+    skript = (
+        f'home_dir() {{ printf "%s" "{tmp_path.as_posix()}"; }}' + chr(10)
+        + 'python3() { :; }' + chr(10)
+        + 'REPO_DIR=/nety' + chr(10)
+        + telo + chr(10)
+        + 'OPENCRM_HOME=/pravilnyy' + chr(10)
+        + 'autoupdate status >/dev/null 2>&1 || true' + chr(10)
+        + 'printf "%s" "$OPENCRM_HOME"'
+    )
+    gotovo = subprocess.run(
+        [SH, "-c", skript], capture_output=True, text=True, encoding="utf-8"
+    )
+    assert gotovo.stdout == "/pravilnyy", (
+        "autoupdate вытолкнул OPENCRM_HOME наружу: " + repr(gotovo.stdout)
+        + ". Следующий в этом же запуске `compose up -d` поднимет стек на чужих томах."
     )
