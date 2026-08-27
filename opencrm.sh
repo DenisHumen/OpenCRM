@@ -172,8 +172,24 @@ ask() {
 
 confirm() {
     _reply=$(ask "$1 (y/n)" "${2:-y}")
+    # Кириллица вынесена ИЗ скобочного набора, и это не косметика записи.
+    #
+    # dash сопоставляет образцы ПОБАЙТНО и многобайтный знак внутри `[...]` не
+    # собирает. `[yYдД]` разворачивался во множество байтов {y, Y, D0, B4, 94},
+    # и любой ответ, начинающийся с байта D0 — то есть с любой кириллической
+    # буквы от «А» до «п», — совпадал. **«нет» означало согласие.**
+    #
+    # Задеты были все опасные вопросы разом: «Продолжить?» перед заливкой дампа
+    # поверх живой базы (`cmd_restore`), «Остановить сайт?» (`tui_stop` и пункт
+    # меню), установка ufw с `default deny incoming`. Ответ «нет» делал ровно
+    # то, от чего человек отказывался.
+    #
+    # На разработческой машине беды не видно вовсе: bash собирает многобайтные
+    # знаки в наборе и отвечает верно. Видно её только там, где `sh` — это dash,
+    # то есть на боевом сервере. Поэтому охранник в `tests/test_install_script.py`
+    # гоняет эту функцию настоящим `sh` и пропускается на Windows.
     case "$_reply" in
-        [yYдД]*) return 0 ;;
+        [yY]*|д*|Д*) return 0 ;;
         *) return 1 ;;
     esac
 }
@@ -341,9 +357,19 @@ apt_install() {
 install_base_packages() {
     step "$(tr_ "Базовые пакеты" "Base packages")"
     _missing=""
-    for _pkg in git curl ca-certificates; do
+    for _pkg in git curl; do
         has "$_pkg" || _missing="$_missing $_pkg"
     done
+    # ca-certificates — ПАКЕТ, а не программа: исполняемого файла с таким
+    # именем нет, и `has` для него ложен всегда. Из-за этого ранний выход был
+    # недостижим, и каждый заход обязательно шёл в apt. На только что
+    # загруженном VPS, где ещё работает apt-daily, `apt-get update` под
+    # `set -e` клал весь мастер установки на первом же шаге — на ровном месте.
+    if has dpkg-query; then
+        if ! dpkg-query -W -f='${Status}' ca-certificates 2>/dev/null | grep -q "install ok installed"; then
+            _missing="$_missing ca-certificates"
+        fi
+    fi
     if [ -z "$_missing" ]; then
         ok "$(tr_ "git, curl, ca-certificates уже есть" "git, curl, ca-certificates already present")"
         return 0
@@ -437,8 +463,14 @@ install_python() {
 # Ресурсы машины
 # --------------------------------------------------------------------------
 
-mem_mb()  { awk '/^MemTotal:/  {print int($2/1024)}' /proc/meminfo 2>/dev/null || printf '0'; }
-swap_mb() { awk '/^SwapTotal:/ {print int($2/1024)}' /proc/meminfo 2>/dev/null || printf '0'; }
+# Ноль печатается и тогда, когда файл ПРОЧИТАЛСЯ, а нужной строки в нём нет.
+# Прежняя страховка `|| printf '0'` ловила только отказ awk; при живом
+# /proc/meminfo без `SwapTotal:` (контейнер, ядро без подкачки) помощник отдавал
+# ПУСТОТУ. В переменной пустота законно считается нулём, а прямо в арифметике
+# `$(( $(mem_mb) + $(swap_mb) ))` она превращает выражение в «1024 + » —
+# синтаксическую ошибку, которая под `set -e` кладёт скрипт целиком.
+mem_mb()  { awk '/^MemTotal:/  {print int($2/1024); f=1} END {if (!f) print 0}' /proc/meminfo 2>/dev/null || printf '0'; }
+swap_mb() { awk '/^SwapTotal:/ {print int($2/1024); f=1} END {if (!f) print 0}' /proc/meminfo 2>/dev/null || printf '0'; }
 free_mb() { df -Pm "$1" 2>/dev/null | awk 'NR==2 {print $4}'; }
 
 add_swap() {
@@ -969,7 +1001,19 @@ configure_domain() {
     # Secure-cookie по обычному HTTP, а её браузер молча выбросит — вход стал бы
     # «залогинился и тут же вылетел». Поэтому https появляется только вместе с
     # сертификатом (см. issue_certificate).
-    if [ -d "$(home_dir)/letsencrypt/live/$_domain" ]; then
+    # Сам ФАЙЛ, а не каталог, и ровно тот, что смотрит nginx. Тот же разбор
+    # записан у `issue_certificate` двумя сотнями строк ниже: каталог
+    # `live/<домен>/` остаётся после оборванного выпуска (Ctrl+C, отказ по
+    # лимиту Let's Encrypt, убитый `compose run`) и от переезда со старого
+    # сервера, а сертификата в нём нет.
+    #
+    # Цена расхождения здесь выше, чем там. По пустому каталогу сюда писался
+    # `https://домен` при отсутствующем сертификате — и приложение начинало
+    # ставить cookie с флагом Secure, а nginx по тому же fullchain.pem держал
+    # только HTTP. Браузер Secure-cookie по HTTP молча выбрасывает: вход
+    # превращался в «залогинился и тут же вылетел», то есть ровно в ту беду, от
+    # которой этот блок и написан.
+    if $SUDO test -f "$(home_dir)/letsencrypt/live/$_domain/fullchain.pem"; then
         env_set "$APP_ENV" OPENCRM_BASE_URL "https://$_domain"
         ok "$(tr_ "домен: $_domain (сертификат на месте)" "domain: $_domain (certificate in place)")"
     else
@@ -1245,29 +1289,35 @@ setup_db_exporter() {
 # Значения переносятся в docker/.env, а не читаются из autoupdate.env напрямую.
 # Причина не в удобстве: в autoupdate.env рядом лежит токен GitHub, и подключать
 # весь файл к контейнеру Alertmanager значило бы отдать ему заодно и его.
+#: Свои имена (`_sac_*`) — не украшение. В POSIX sh переменные общие, а эту
+#: функцию зовут прямо из `configure_monitoring`, где `_tok` и `_cha` тоже
+#: заняты. Сегодня беды нет: вызывающая перечитывает оба значения из `ask`
+#: заново. Но именно так и выглядела самая дорогая ошибка живого меню —
+#: `_vsego` в шапке против `_vsego` в цикле, — и там она тоже была
+#: безвредной ровно до тех пор, пока порядок строк не поменяли.
 sync_alert_channel() {
-    _auto="$(home_dir)/autoupdate.env"
-    _tok=$(env_get "$DOCKER_ENV" OPENCRM_MONITORING_TELEGRAM_TOKEN 2>/dev/null || true)
-    _cha=$(env_get "$DOCKER_ENV" OPENCRM_MONITORING_TELEGRAM_CHAT 2>/dev/null || true)
-    if [ -z "$_tok" ] && [ -f "$_auto" ]; then
-        _tok=$(env_get "$_auto" OPENCRM_UPDATE_TELEGRAM_TOKEN 2>/dev/null || true)
-        _cha=$(env_get "$_auto" OPENCRM_UPDATE_TELEGRAM_CHAT 2>/dev/null || true)
+    _sac_auto="$(home_dir)/autoupdate.env"
+    _sac_tok=$(env_get "$DOCKER_ENV" OPENCRM_MONITORING_TELEGRAM_TOKEN 2>/dev/null || true)
+    _sac_cha=$(env_get "$DOCKER_ENV" OPENCRM_MONITORING_TELEGRAM_CHAT 2>/dev/null || true)
+    if [ -z "$_sac_tok" ] && [ -f "$_sac_auto" ]; then
+        _sac_tok=$(env_get "$_sac_auto" OPENCRM_UPDATE_TELEGRAM_TOKEN 2>/dev/null || true)
+        _sac_cha=$(env_get "$_sac_auto" OPENCRM_UPDATE_TELEGRAM_CHAT 2>/dev/null || true)
     fi
-    if [ -z "$_tok" ] || [ -z "$_cha" ]; then
+    if [ -z "$_sac_tok" ] || [ -z "$_sac_cha" ]; then
         return 1
     fi
     # Alertmanager принимает chat_id только числом. Имя канала (@name) он
     # отвергнет при разборе конфига и не поднимется вовсе — а узнать об этом
     # хотелось бы сейчас, а не в день первой аварии.
-    case "$_cha" in
+    case "$_sac_cha" in
         ''|*[!0-9-]*)
-            warn "$(tr_ "chat_id «$_cha» не число — Alertmanager такой не примет" "chat_id \"$_cha\" is not a number — Alertmanager will not take it")"
+            warn "$(tr_ "chat_id «$_sac_cha» не число — Alertmanager такой не примет" "chat_id \"$_sac_cha\" is not a number — Alertmanager will not take it")"
             say "$(tr_ "        Нужен числовой id чата (у групп он отрицательный), а не @имя." "        A numeric chat id is required (negative for groups), not @name.")"
             return 1
             ;;
     esac
-    env_set "$DOCKER_ENV" OPENCRM_MONITORING_TELEGRAM_TOKEN "$_tok"
-    env_set "$DOCKER_ENV" OPENCRM_MONITORING_TELEGRAM_CHAT "$_cha"
+    env_set "$DOCKER_ENV" OPENCRM_MONITORING_TELEGRAM_TOKEN "$_sac_tok"
+    env_set "$DOCKER_ENV" OPENCRM_MONITORING_TELEGRAM_CHAT "$_sac_cha"
     return 0
 }
 
@@ -1446,6 +1496,19 @@ apply_env_change() {
     # редиректу.
     sync_monitor_url
     run_painted compose up -d --force-recreate app
+    # nginx — тоже. Домен доезжает до него ОКРУЖЕНИЕМ (`OPENCRM_DOMAIN` в
+    # описании службы), а окружение контейнера замораживается в момент создания.
+    # `reload.sh` берёт домен из своего окружения и им же выбирает шаблон по
+    # наличию `live/$DOMAIN/fullchain.pem` — то есть после смены домена он
+    # перерисовывал конфиг со СТАРЫМ доменом, не находил сертификата и оставлял
+    # только 80. Скрипт при этом рапортовал «HTTPS включён»: сертификат вправду
+    # выпущен, просто nginx о нём не знает.
+    #
+    # Без `--force-recreate`: compose сам сверит описание службы с запущенным
+    # контейнером и пересоздаст его, только если оно изменилось. Домен тот же —
+    # ничего не происходит, и штатный простой в 1-3 секунды, ради устранения
+    # которого перезапуск отсюда когда-то и убрали, не возвращается.
+    run_painted compose up -d nginx
     # nginx проксирует в app и до его готовности отдаёт 502 — ждём здесь, иначе
     # каждый вызывающий получал бы «сайт лежит» сразу после успешной настройки.
     if wait_health 90; then
@@ -1867,17 +1930,37 @@ need_install() {
 }
 
 autoupdate() {
-    _home=$(home_dir)
-    _env_file="$_home/autoupdate.env"
-    if [ -f "$_env_file" ]; then
-        # Директива обязана стоять вплотную к `.`, поэтому он на отдельной
-        # строке: в связке `set -a; . файл; set +a` она относилась бы к `set`.
-        set -a
-        # shellcheck disable=SC1090  # путь известен только в рантайме
-        . "$_env_file"
-        set +a
+    _au_home=$(home_dir)
+    _au_env="$_au_home/autoupdate.env"
+    if [ -f "$_au_env" ]; then
+        # ПОДОБОЛОЧКА обязательна, и это не аккуратность ради аккуратности.
+        #
+        # `set -a` экспортирует всё, что есть в файле, а `.` в текущей оболочке
+        # оставляет это до конца работы скрипта. Среди прочего там лежит
+        # `OPENCRM_HOME` — и у `docker compose` переменная окружения СИЛЬНЕЕ
+        # файла `docker/.env`. К `${OPENCRM_HOME}` привязаны все тома стека,
+        # включая каталог данных MySQL.
+        #
+        # Значит стоило двум файлам разойтись (а разойтись им есть отчего —
+        # починка прав после sudo правит их по отдельности), и любой `compose
+        # up -d` ПОСЛЕ вызова автообновления в том же запуске поднимал бы стек
+        # на других каталогах: пустая база, сайт с нуля, а настоящие данные
+        # целыми лежат по прежнему пути и выглядят пропавшими.
+        #
+        # Путей до этого хватало: `cmd_status`, `cmd_history`, `cmd_autoupdate`
+        # зовут `autoupdate` напрямую, а меню зовёт их подряд в одном запуске.
+        (
+            # Директива обязана стоять вплотную к `.`, поэтому он на отдельной
+            # строке: в связке `set -a; . файл; set +a` она относилась бы к `set`.
+            set -a
+            # shellcheck disable=SC1090  # путь известен только в рантайме
+            . "$_au_env"
+            set +a
+            OPENCRM_UPDATE_PROJECT_DIR="$REPO_DIR" python3 "$REPO_DIR/scripts/autoupdate.py" "$@"
+        )
+    else
+        OPENCRM_UPDATE_PROJECT_DIR="$REPO_DIR" python3 "$REPO_DIR/scripts/autoupdate.py" "$@"
     fi
-    OPENCRM_UPDATE_PROJECT_DIR="$REPO_DIR" python3 "$REPO_DIR/scripts/autoupdate.py" "$@"
 }
 
 cmd_status() {
@@ -1977,10 +2060,46 @@ own_monitoring_dirs() {
     _mgid=$(env_get "$DOCKER_ENV" OPENCRM_GID 2>/dev/null || true)
     [ -n "$_muid" ] || _muid=$(id -u)
     [ -n "$_mgid" ] || _mgid=$(id -g)
+    _mne_smog=""
     for _msub in prometheus grafana alertmanager loki; do
-        $SUDO mkdir -p "$_mhome/monitoring/$_msub"
-        $SUDO chown -R "$_muid:$_mgid" "$_mhome/monitoring/$_msub"
+        _mdir="$_mhome/monitoring/$_msub"
+        if [ ! -d "$_mdir" ]; then
+            # Создали сами — владелец уже верный, трогать нечего.
+            if ! mkdir -p "$_mdir" 2>/dev/null; then
+                _mne_smog="$_mne_smog $_msub"
+            fi
+            continue
+        fi
+        # Владелец сошёлся — не трогаем ВОВСЕ. Это обычный случай, и он обязан
+        # оставаться бесплатным: `chown` на каталоге Prometheus с полугодом
+        # метрик обходит десятки тысяч файлов на каждом включении мониторинга.
+        _mvlad=$(stat -c '%u:%g' "$_mdir" 2>/dev/null || printf '%s' "$_muid:$_mgid")
+        if [ "$_mvlad" = "$_muid:$_mgid" ]; then
+            continue
+        fi
+        if chown -R "$_muid:$_mgid" "$_mdir" 2>/dev/null; then
+            continue
+        fi
+        if [ -n "$SUDO" ] && $SUDO chown -R "$_muid:$_mgid" "$_mdir" 2>/dev/null; then
+            continue
+        fi
+        _mne_smog="$_mne_smog $_msub"
     done
+    # Предупреждение, а не отказ, и это главное здесь.
+    #
+    # Прежде тут стоял безусловный `$SUDO chown`. Но `cmd_monitoring` не зовёт
+    # `detect_sudo` — и правильно не зовёт: спрашивать пароль на `monitoring
+    # logs` незачем. Значит `$SUDO` пуст, `chown` на доставшемся от докера
+    # root-овском каталоге отвечает «Operation not permitted», а под `set -eu`
+    # это не предупреждение, а КОНЕЦ КОМАНДЫ — без единого слова про мониторинг
+    # и уже после того, как профиль включён в файлах. Оставалось состояние
+    # «включено в файлах, выключено на деле», и связать его с чем-либо было
+    # нечем.
+    if [ -n "$_mne_smog" ]; then
+        warn "$(tr_ "каталоги мониторинга принадлежат другому пользователю:$_mne_smog" "monitoring directories belong to another user:$_mne_smog")"
+        say "        sudo chown -R $_muid:$_mgid $_mhome/monitoring"
+    fi
+    return 0
 }
 
 # Поднять (или снять) службы мониторинга И ОБЯЗАТЕЛЬНО дать об этом знать nginx.
@@ -2400,6 +2519,15 @@ cmd_restore() {
     say ""
     _n=$(ask "$(tr_ "    Номер копии (Enter — отмена)" "    Backup number (Enter — cancel)")" "")
     [ -n "$_n" ] || { info "$(tr_ "отменено" "cancelled")"; return 0; }
+    # Номер проверяется ДО подстановки в sed. Всё, что человек набрал, уезжает
+    # в выражение `sed -n "${_n}p"`, и на «y», «-1», «2:» sed отвечает своей
+    # ошибкой и кодом 1. Он последний в конвейере, значит подстановка возвращает
+    # 1, значит присваивание возвращает 1, и под `set -e` скрипт кончается ТУТ
+    # ЖЕ. Заготовленное строкой ниже понятное «нет такого номера» не
+    # срабатывало никогда, а человек получал невнятную ругань sed на опечатку.
+    case "$_n" in
+        ''|*[!0-9]*) die "$(tr_ "нет такого номера" "no such number")" ;;
+    esac
     # shellcheck disable=SC2012  # имена копий делает сам скрипт
     _db=$(ls -1t "$_dir"/db-*.db "$_dir"/db-*.sql "$_dirw"/db-*.sql 2>/dev/null | sed -n "${_n}p")
     [ -n "$_db" ] || die "$(tr_ "нет такого номера" "no such number")"
@@ -2458,7 +2586,12 @@ cmd_restore() {
     # shellcheck disable=SC2016  # пароль раскрывается внутри контейнера, см. dump_mysql
     if ! compose exec -T db sh -c 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" exec mysql --default-character-set=utf8mb4 -u root "$MYSQL_DATABASE"' < "$_db"; then
         run_painted compose up -d
-        die "$(tr_ "дамп не залился — прежняя база осталась как была, её копия в $_before" "the dump did not load — the previous database is unchanged, its copy is at $_before")"
+        # Не «осталась как была». Дамп начинается с `DROP TABLE`, и клиент
+        # выполняет его по мере чтения: отказ на середине означает базу,
+        # подменённую НАПОЛОВИНУ. Прежнее сообщение успокаивало ровно там, где
+        # надо было немедленно вернуться из $_before, — и человек, поверив ему,
+        # шёл искать причину, пока сайт работал на половине таблиц.
+        die "$(tr_ "дамп долился не до конца — база подменена частично; прежняя целиком лежит в $_before, вернуть её: ./opencrm.sh restore" "the dump did not load fully — the database is partially replaced; the previous one is whole at $_before, bring it back with ./opencrm.sh restore")"
     fi
     # storage восстанавливаем прежним путём, а базу приложению трогать нечем —
     # она уже на месте.
@@ -2466,7 +2599,18 @@ cmd_restore() {
     # --entrypoint sh обязателен: у образа ENTRYPOINT — это entrypoint.sh, и
     # `compose run app <команда>` передаёт команду ему аргументами, а не вместо
     # него. Без переопределения вместо восстановления поднимался бы uvicorn.
-    run_painted compose run --rm -T --entrypoint sh -e OPENCRM_SKIP_DB=1 app scripts/restore.sh         "/app/data/backups/$(basename "$(dirname "$_db")")/$(basename "$_db")"         "/app/data/backups/$(basename "$(dirname "$_storage")")/$(basename "$_storage")"
+    # Отказ обязан ПОДНЯТЬ САЙТ и объяснить, куда откатываться. Обе соседние
+    # ветки так и сделаны, а эта единственная выпала — и стоила бы дорого:
+    # приложение уже остановлено, база уже подменена, и `set -e` на голой
+    # команде завершал скрипт молча. Человек оставался с погашенным сайтом,
+    # подменённой базой и без единого слова о том, что произошло.
+    if ! run_painted compose run --rm -T --entrypoint sh -e OPENCRM_SKIP_DB=1 app \
+        scripts/restore.sh \
+        "/app/data/backups/$(basename "$(dirname "$_db")")/$(basename "$_db")" \
+        "/app/data/backups/$(basename "$(dirname "$_storage")")/$(basename "$_storage")"; then
+        run_painted compose up -d
+        die "$(tr_ "файлы не восстановились — база УЖЕ подменена копией от $_stamp, прежняя лежит в $_before" "the files were not restored — the database is ALREADY replaced by the backup from $_stamp, the previous one is at $_before")"
+    fi
     run_painted compose up -d
     if wait_health 60; then
         ok "$(tr_ "восстановлено, сайт отвечает" "restored, the site is answering")"
@@ -2746,7 +2890,20 @@ cmd_repair() {
     if $SUDO test -f "$_auto_env"; then
         env_set "$_auto_env" OPENCRM_HOME "$_want_home"
         env_set "$_auto_env" OPENCRM_UPDATE_PROJECT_DIR "$REPO_DIR"
-        chmod 600 "$_auto_env"
+        # Тот же `chown` ПОСЛЕ `env_set`, что и у docker/.env десятью строками
+        # выше, и по той же причине: `env_set` правит файл не на месте, а через
+        # временный и `mv`, то есть создаёт НОВЫЙ файл от имени текущего
+        # пользователя. Под sudo это root — и файл, только что отданный
+        # владельцу, снова становился root-овским ровно в починке, которая
+        # затевалась ради него.
+        #
+        # Дальше владелец его не прочитает, а `autoupdate` втягивает файл через
+        # `.` — dash на неоткрываемом файле обрывает скрипт целиком. То есть
+        # «починка» ломала автообновление насмерть, отрапортовав об успехе.
+        #
+        # `chmod` тоже через `$SUDO`: после `chown` файл уже не наш.
+        $SUDO chmod 600 "$_auto_env"
+        $SUDO chown "$_want_uid:$_want_gid" "$_auto_env"
         ok "$(tr_ "автообновление: пути исправлены" "auto-update: paths fixed")"
     fi
 
@@ -2821,7 +2978,13 @@ cmd_doctor() {
     # Поднята ли база. Строка нужна не ради любопытства: почти всё остальное —
     # от копий до восстановления — идёт через неё, и первым делом надо знать,
     # жива ли она вообще.
-    if compose ps db 2>/dev/null | grep -q "healthy"; then
+    # `(healthy)` со скобками, а не голое слово. В строке состояния докера
+    # «healthy» лежит внутри «unhealthy» — `Up 5 minutes (unhealthy)`, — и
+    # больная база сходила за здоровую ровно в том случае, ради которого сюда и
+    # смотрят. Ветка «не здоров» ниже была при этом недостижима вовсе.
+    #
+    # Тот же разбор записан в шапке `wait_db`: там урок был учтён, здесь — нет.
+    if compose ps db 2>/dev/null | grep -q "(healthy)"; then
         probe "$(tr_ "база" "database")" 1 "MySQL ($(tr_ "контейнер db здоров" "container db is healthy"))"
     elif compose ps db 2>/dev/null | grep -q "db"; then
         probe "$(tr_ "база" "database")" 0 "MySQL ($(tr_ "контейнер db не здоров — ./opencrm.sh logs db" "container db is not healthy — ./opencrm.sh logs db"))"
@@ -2932,8 +3095,18 @@ cmd_doctor() {
             probe "$(tr_ "пароль панели" "dashboard password")" 0 "$(tr_ "пуст — Grafana пустит по admin/admin; ./opencrm.sh monitoring password" "empty — Grafana will accept admin/admin; ./opencrm.sh monitoring password")"
         fi
 
-        if [ -n "$(env_get "$DOCKER_ENV" OPENCRM_MONITORING_TELEGRAM_TOKEN 2>/dev/null || true)" ]; then
+        # По ПАРЕ, а не по одному токену. Точка входа Alertmanager решает ровно
+        # так же: нет токена ИЛИ нет chat_id — уходит на молчащий конфиг. Значит
+        # полупара «токен есть, чата нет» — это мониторинг, который всё видит и
+        # молчит, а диагностика ставила ему зелёный плюс. Породить полупару умеет
+        # штатный путь: `configure_monitoring` пишет оба значения безусловно, и
+        # пустой ответ на вопрос про chat_id её и даёт.
+        _dtok=$(env_get "$DOCKER_ENV" OPENCRM_MONITORING_TELEGRAM_TOKEN 2>/dev/null || true)
+        _dcha=$(env_get "$DOCKER_ENV" OPENCRM_MONITORING_TELEGRAM_CHAT 2>/dev/null || true)
+        if [ -n "$_dtok" ] && [ -n "$_dcha" ]; then
             probe "$(tr_ "тревоги" "alerts")" 1 "Telegram"
+        elif [ -n "$_dtok" ]; then
+            probe "$(tr_ "тревоги" "alerts")" 0 "$(tr_ "токен есть, chat_id пуст — Alertmanager поднят с молчащим конфигом; ./opencrm.sh monitoring" "the token is set but chat_id is empty — Alertmanager runs a silent config; ./opencrm.sh monitoring")"
         else
             probe "$(tr_ "тревоги" "alerts")" 0 "$(tr_ "канал не настроен — о поломке узнают глазами; ./opencrm.sh monitoring" "no channel — breakage will be spotted by eye; ./opencrm.sh monitoring")"
         fi
@@ -3117,7 +3290,11 @@ except Exception:
         if [ -z "$_dirty" ]; then
             probe "$(tr_ "репозиторий" "repository")" 1 "$(tr_ "чистый" "clean")"
         else
-            probe "$(tr_ "репозиторий" "repository")" 0 "$(tr_ "есть несохранённые правки — автообновление остановится" "uncommitted changes — auto-update will stop")"
+            # Лекарство названо прямо здесь. Отказ, который сообщает только о
+            # беде, заставляет искать команду на стороне — а ищут её в тот час,
+            # когда сайт не обновляется и разбираться некогда. `git clean` не
+            # предлагаем: он снёс бы и то, чего в репозитории нет.
+            probe "$(tr_ "репозиторий" "repository")" 0 "$(tr_ "есть несохранённые правки — автообновление остановится; стереть их: git -C $REPO_DIR checkout -- ." "uncommitted changes — auto-update will stop; discard them: git -C $REPO_DIR checkout -- .")"
         fi
     fi
 
@@ -3152,11 +3329,26 @@ why_down() {
     say ""
     say "$(tr_ "    Порты:" "    Ports:")"
     _ports=""
+    # Без префикса `$_as_root`, и это не упрощение записи. Та переменная
+    # заполняется в `cmd_doctor` и принимает три значения: пусто, `sudo -n` и —
+    # когда sudo не установлен — САМО ПЕРЕВЕДЁННОЕ СЛОВО «нельзя»/«no». В позиции
+    # команды последнее означает запуск программы с именем «нельзя», а `sudo -n`
+    # молча падает всюду, где sudo просит пароль. Оба отказа немы (stderr
+    # погашен), `_ports` остаётся пустым — и раздел печатал «80 и 443 никто не
+    # слушает» как установленный факт на сайте, у которого с портами всё в
+    # порядке.
+    #
+    # Root тут не нужен вовсе: `ss -lntH` перечисляет слушающие сокеты любому,
+    # права нужны только для `-p` (кто именно слушает), а его мы не просим.
     if has ss; then
-        _ports=$(${_as_root:-} ss -lntH 2>/dev/null | awk '$4 ~ /:(80|443)$/ {print "      " $4}' || true)
+        _ports=$(ss -lntH 2>/dev/null | awk '$4 ~ /:(80|443)$/ {print "      " $4}')
     fi
     if [ -n "$_ports" ]; then
         printf '%s\n' "$_ports"
+    elif ! has ss; then
+        # «Не смогли спросить» и «никто не слушает» — разные ответы, и путать их
+        # нельзя: второй уводит разбираться с nginx там, где просто нет `ss`.
+        say "$(tr_ "      нечем посмотреть порты (нет ss)" "      no way to check the ports (ss is missing)")"
     else
         say "$(tr_ "      80 и 443 никто не слушает" "      nobody is listening on 80 or 443")"
         say "$(tr_ \
@@ -3397,24 +3589,48 @@ tui_vyklyuchit() {
 #: Через `od`, а не подстановкой команды: `$(…)` срезает переводы строк, и
 #: Enter в сыром режиме (одиночный CR) от него не отличить. Числовой код
 #: однозначен и не зависит от локали.
+#: Один байт с клавиатуры кодом или пустота, если за секунду не нажали.
+tui_bayt() {
+    dd bs=1 count=1 2>/dev/null < /dev/tty | od -An -tu1 2>/dev/null | tr -d ' \n'
+}
+
 tui_klavisha() {
-    _tui_kod=$(dd bs=1 count=1 2>/dev/null < /dev/tty | od -An -tu1 2>/dev/null | tr -d ' \n')
+    _tui_kod=$(tui_bayt)
     case "$_tui_kod" in
         "")   printf 'timeout'; return 0 ;;
         27)
-            # Escape-последовательность стрелки: ESC [ A|B|C|D. Одиночный ESC
-            # (человек нажал его сам) отличается тем, что продолжения нет —
-            # `min 0` вернёт пустоту, и мы поймём это как «назад».
-            _tui_k2=$(dd bs=1 count=1 2>/dev/null < /dev/tty | od -An -tu1 2>/dev/null | tr -d ' \n')
-            [ "$_tui_k2" = "91" ] || { printf 'left'; return 0; }
-            _tui_k3=$(dd bs=1 count=1 2>/dev/null < /dev/tty | od -An -tu1 2>/dev/null | tr -d ' \n')
-            case "$_tui_k3" in
-                65) printf 'up' ;;
-                66) printf 'down' ;;
-                67) printf 'right' ;;
-                68) printf 'left' ;;
-                *)  printf 'timeout' ;;
+            # Escape-последовательность стрелки: ESC [ A|B|C|D, а в режиме
+            # приложения — ESC O A|B|C|D. Одиночный ESC (человек нажал его сам)
+            # отличается тем, что продолжения нет — `min 0` вернёт пустоту, и мы
+            # поймём это как «назад».
+            _tui_k2=$(tui_bayt)
+            case "$_tui_k2" in
+                91|79) : ;;
+                *) printf 'left'; return 0 ;;
             esac
+            _tui_k3=$(tui_bayt)
+            case "$_tui_k3" in
+                65) printf 'up'; return 0 ;;
+                66) printf 'down'; return 0 ;;
+                67) printf 'right'; return 0 ;;
+                68) printf 'left'; return 0 ;;
+            esac
+            # Хвост НЕЗНАКОМОЙ последовательности дочитываем до конца, и это не
+            # педантизм. Брошенный хвост остаётся в буфере терминала и читается
+            # дальше как отдельные нажатия: у Shift+стрелки (`ESC [ 1 ; 2 B`) и
+            # у F5..F12 (`ESC [ 1 5 ~`) в остатке лежит ЦИФРА, а цифра в меню не
+            # просто переводит подсветку — она ставит `enter` и ТУТ ЖЕ исполняет
+            # пункт. Shift+Down в разделе «Копии» открывал восстановление из
+            # копии; человек при этом ничего похожего не нажимал.
+            #
+            # Строение последовательности: параметры 0x30–0x3F, промежуточные
+            # 0x20–0x2F, и конечный байт 0x40–0x7E. Читаем, пока байт меньше 64;
+            # пустота (тайм-аут) цикл тоже обрывает, поэтому зависнуть на
+            # оборванной последовательности нельзя.
+            while [ -n "$_tui_k3" ] && [ "$_tui_k3" -lt 64 ]; do
+                _tui_k3=$(tui_bayt)
+            done
+            printf 'timeout'
             return 0 ;;
         10|13) printf 'enter'; return 0 ;;
         113|81) printf 'quit'; return 0 ;;
@@ -3506,7 +3722,10 @@ tui_svodka_sobrat() {
     _tui_kuda=$(home_dir)
     [ -d "$_tui_kuda" ] || _tui_kuda="$REPO_DIR"
     _tui_disk=$(df -h "$_tui_kuda" 2>/dev/null | tail -1)
-    printf 'disk=%s\n' "$(printf '%s' "$_tui_disk" | awk '{print $4" свободно"}')"
+    # Сводка отдаёт ЗНАЧЕНИЕ, а не готовую фразу: слово «свободно» было вшито
+    # сюда мимо `tr_`, и в английском интерфейсе шапка говорила «disk 27G
+    # свободно». Язык решается при отрисовке, где `tr_` и живёт.
+    printf 'disk=%s\n' "$(printf '%s' "$_tui_disk" | awk '{print $4}')"
 }
 
 #: Запустить сбор, если прошлый уже закончился. Больше одного разом — незачем:
@@ -3621,13 +3840,21 @@ tui_shapka() {
     _tui_ver=$(tui_pole versiya)
     _tui_obn=$(tui_pole obnova)
     _tui_avto=$(tui_pole avto)
+    # Значение приходит из `scripts/autoupdate.py`, а тот печатает
+    # «включено»/«выключено» по-русски всегда — в английской шапке выходило
+    # «auto-update включено». Переводим здесь, где `tr_` и живёт.
+    case "$_tui_avto" in
+        включено)  _tui_avto_slovo=$(tr_ "включено" "on") ;;
+        выключено) _tui_avto_slovo=$(tr_ "выключено" "off") ;;
+        *)         _tui_avto_slovo="—" ;;
+    esac
     case "$_tui_obn" in
         есть) _tui_obn_cvet="${YELLOW}$(tr_ "есть обновление" "update available")${R}" ;;
         нет)  _tui_obn_cvet="${D}$(tr_ "последняя версия" "up to date")${R}" ;;
         *)    _tui_obn_cvet="${D}—${R}" ;;
     esac
     tui_stroka_ramki "$_tui_v" "$_tui_vnutri" \
-        "$(tr_ "версия" "version") ${B}${_tui_ver:-—}${R}  ·  $_tui_obn_cvet  ·  $(tr_ "автообновление" "auto-update") ${_tui_avto:-—}"
+        "$(tr_ "версия" "version") ${B}${_tui_ver:-—}${R}  ·  $_tui_obn_cvet  ·  $(tr_ "автообновление" "auto-update") $_tui_avto_slovo"
 
     # Строка 4: контейнеры и диск.
     _tui_vsego=$(tui_pole konteynerov); _tui_zhivyh=$(tui_pole zhivyh); _tui_legli=$(tui_pole legli)
@@ -3639,7 +3866,7 @@ tui_shapka() {
         _tui_kont="${D}—${R}"
     fi
     tui_stroka_ramki "$_tui_v" "$_tui_vnutri" \
-        "$(tr_ "контейнеры" "containers") $_tui_kont  ·  $(tr_ "диск" "disk") ${D}$(tui_pole disk)${R}"
+        "$(tr_ "контейнеры" "containers") $_tui_kont  ·  $(tr_ "диск" "disk") ${D}$(tui_pole disk) $(tr_ "свободно" "free")${R}"
 
     # Строка 5: чем кончилось прошлое обновление — бегущей строкой.
     _tui_p=$(tui_pole poslednee)
@@ -3928,6 +4155,39 @@ tui_menu() {
     return 0
 }
 
+#: Выполнить пункт номерного меню. Отдельной функцией — ради проверяемого
+#: вызова.
+#:
+#: Голый вызов внутри `case` внутри `while` — НЕ проверяемый контекст, и под
+#: `set -e` ненулевой код любой команды завершал скрипт целиком: человек
+#: вылетал в приглашение оболочки без объяснения и без «Enter — вернуться в
+#: меню», ровно в ту минуту, когда что-то пошло не так и пульт нужнее всего.
+#: В живом меню это давно защищено (`"$_tui_deystvie" || warn ...`), в
+#: номерном — не было.
+menu_vypolnit() {
+    case "$1" in
+        1)  cmd_status ;;
+        2)  cmd_start ;;
+        3)  cmd_restart ;;
+        4)  if confirm "$(tr_ "    Остановить сайт?" "    Stop the site?")" n; then cmd_stop; else info "$(tr_ "отменено" "cancelled")"; fi ;;
+        5)  cmd_update ;;
+        6)  cmd_autoupdate ;;
+        7)  cmd_history ;;
+        8)  cmd_logs ;;
+        9)  cmd_backup ;;
+        10) cmd_restore ;;
+        11) cmd_domain ;;
+        12) cmd_firewall ;;
+        13) cmd_password ;;
+        14) cmd_doctor ;;
+        15) cmd_repair ;;
+        16) cmd_monitoring ;;
+        17) menu_maintenance ;;
+        0|q|Q|"") say ""; exit 0 ;;
+        *)  warn "$(tr_ "нет такого пункта" "no such item")" ;;
+    esac
+}
+
 menu() {
     tty_zapomnit
     # Живое меню — если терминал его выдержит. Разбор условий и почему их так
@@ -3966,27 +4226,8 @@ menu() {
         menu_item 0  "$(tr_ "Выход" "Exit")"
         say ""
         _choice=$(ask "$(tr_ "  Выбор" "  Choice")" "0")
-        case "$_choice" in
-            1)  cmd_status ;;
-            2)  cmd_start ;;
-            3)  cmd_restart ;;
-            4)  if confirm "$(tr_ "    Остановить сайт?" "    Stop the site?")" n; then cmd_stop; else info "$(tr_ "отменено" "cancelled")"; fi ;;
-            5)  cmd_update ;;
-            6)  cmd_autoupdate ;;
-            7)  cmd_history ;;
-            8)  cmd_logs ;;
-            9)  cmd_backup ;;
-            10) cmd_restore ;;
-            11) cmd_domain ;;
-            12) cmd_firewall ;;
-            13) cmd_password ;;
-            14) cmd_doctor ;;
-            15) cmd_repair ;;
-            16) cmd_monitoring ;;
-            17) menu_maintenance ;;
-            0|q|Q|"") say ""; exit 0 ;;
-            *)  warn "$(tr_ "нет такого пункта" "no such item")" ;;
-        esac
+        menu_vypolnit "$_choice" \
+            || warn "$(tr_ "команда закончилась ошибкой" "the command ended with an error")"
         # Явный if, а не `[ ] && exit`: под `set -e` невыполнившийся тест в конце
         # списка сам по себе завершает скрипт с ненулевым кодом.
         if [ "$ASSUME_YES" = "1" ]; then exit 0; fi
@@ -4046,8 +4287,25 @@ main() {
     _command=""
     while [ $# -gt 0 ]; do
         case "$1" in
-            --domain) ARG_DOMAIN=${2:-}; ARG_DOMAIN_SET=1; shift 2 ;;
-            --email)  ARG_EMAIL=${2:-}; shift 2 ;;
+            # Значение проверяется ДО сдвига. `${2:-}` написано затем, чтобы
+            # пережить отсутствующее значение под `set -u`, — но следом стоял
+            # `shift 2`, а `shift` специальная встроенная команда: когда просят
+            # сдвинуть больше, чем есть, dash печатает «shift: can't shift that
+            # many» и ЗАВЕРШАЕТ неинтерактивную оболочку немедленно. До
+            # заготовленной пустоты дело не доходило никогда.
+            #
+            # Пустой домен обязан остаться законным (`--domain ""` — работа по
+            # IP), поэтому смотрим на число аргументов, а не на пустоту значения.
+            --domain)
+                if [ $# -lt 2 ]; then
+                    die "$(tr_ "--domain без значения; работа по IP — это --domain \"\"" "--domain needs a value; for IP-only use --domain \"\"")"
+                fi
+                ARG_DOMAIN=$2; ARG_DOMAIN_SET=1; shift 2 ;;
+            --email)
+                if [ $# -lt 2 ]; then
+                    die "$(tr_ "--email без значения" "--email needs a value")"
+                fi
+                ARG_EMAIL=$2; shift 2 ;;
             --yes|-y) ASSUME_YES=1; shift ;;
             -h|--help|help) usage; exit 0 ;;
             *) if [ -z "$_command" ]; then _command=$1; shift; else break; fi ;;
