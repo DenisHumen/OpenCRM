@@ -281,19 +281,44 @@ def _odna_tablica(c, f, imya: str, escape) -> int:
     return vsego
 
 
-def celaya(put: Path) -> bool:
-    """Дочитана ли копия до метки конца.
+def pochemu_ne_celaya(put: Path) -> str:
+    """Пусто — копия годна. Иначе строка, называющая, ЧТО не так.
 
-    Проверяется сразу после снятия и по хвосту, а не по размеру: оборванный
-    дамп — это обычный текстовый файл, и негодность у него не видна ничем,
-    кроме отсутствующего хвоста.
+    Раньше здесь был `bool`, и все три разных беды — файла нет, файл пуст,
+    метки нет — выходили наружу одним и тем же предложением «снята не до
+    конца». На боевом сервере обновление встало ровно на нём, и разобрать по
+    сообщению было нечего: оно одинаково для пропавшего файла и для
+    оборванного на середине, а лечатся они по-разному.
+
+    Проверяем по хвосту, а не по размеру: оборванный дамп — обычный
+    текстовый файл, и негодность у него не видна ничем, кроме отсутствующего
+    хвоста.
     """
-    if not put.is_file() or put.stat().st_size == 0:
-        return False
+    if not put.exists():
+        return f"файла {put} нет вовсе — его снесли или он не создавался"
+    if not put.is_file():
+        return f"{put} — не файл"
+    razmer = put.stat().st_size
+    if razmer == 0:
+        return f"файл {put} пуст (0 байт)"
     with put.open("rb") as f:
-        f.seek(max(0, put.stat().st_size - 4096))
+        f.seek(max(0, razmer - 4096))
         hvost = f.read().decode("utf-8", "replace")
-    return METKA in hvost
+    if METKA in hvost:
+        return ""
+    # Последняя строка — то, на чём дамп оборвался. Без неё разбор
+    # начинается с догадок, а файла к тому времени уже нет: неудачный
+    # снимок убирают следом.
+    posledniaya = (hvost.rstrip(chr(10)).rsplit(chr(10), 1) or [""])[-1]
+    return (
+        f"в файле {put} ({razmer} Б) нет метки конца; последнее, что в нём "
+        f"написано: {posledniaya[:200]!r}"
+    )
+
+
+def celaya(put: Path) -> bool:
+    """Годна ли копия. Обёртка для тех, кому причина не нужна."""
+    return not pochemu_ne_celaya(put)
 
 
 def main() -> int:
@@ -343,8 +368,16 @@ def main() -> int:
 
     put = Path(args.fayl)
     tablic, strok = snyat(engine, put)
-    if not celaya(put):
-        print(f"копия {put} снята не до конца — метки конца в ней нет", file=sys.stderr)
+    beda = pochemu_ne_celaya(put)
+    if beda:
+        # Сколько дампер СЧИТАЕТ, что записал, — рядом с тем, что вышло на
+        # деле. Расхождение между «строк 110 000» и пустым файлом означает
+        # совсем не то же, что их совпадение.
+        print(
+            f"копия снята не до конца: {beda}. Дампер прошёл таблиц {tablic}, "
+            f"строк {strok}",
+            file=sys.stderr,
+        )
         return 1
     print(f"снято: таблиц {tablic}, строк {strok}, файл {put} ({put.stat().st_size} байт)")
     return 0
