@@ -403,3 +403,38 @@ def test_otkaz_nazyvaet_kakaya_imenno_beda(dvizhok, tmp_path):
     godnaya = tmp_path / "годная.sql"
     snyat(dvizhok, godnaya)
     assert pochemu_ne_celaya(godnaya) == ""
+
+
+def test_pod_itogovym_imenem_ne_byvaet_ogryzka(dvizhok, tmp_path, monkeypatch):
+    """Дамп пишется рядом и переименовывается — под своим именем он всегда цел.
+
+    Имя снимка перед обновлением складывается из коммита, то есть у повторного
+    захода на ту же версию оно ТО ЖЕ САМОЕ. Два захода внахлёст — и открытие
+    на запись во втором обрезает файл, пока первый ещё пишет: на диске остаётся
+    мешанина без метки конца. Разово это и случилось на боевом сервере, а
+    ручной прогон следом снимал копию безупречно — потому что был один.
+
+    Здесь падение подкладывается посреди дампа: под итоговым именем не должно
+    остаться НИЧЕГО, и рядом тоже — огрызок ничем не отличается от годной
+    копии, кроме отсутствующего хвоста, и однажды его попробуют залить.
+    """
+    import scripts.snapshot_db as dumper
+
+    put = tmp_path / "damp.sql"
+    put.write_text("прежняя годная копия", encoding="utf-8")
+
+    nastoyashchaya = dumper._odna_tablica
+
+    def padaet(*args, **kwargs):
+        nastoyashchaya(*args, **kwargs)
+        raise RuntimeError("контейнер убили посреди дампа")
+
+    monkeypatch.setattr(dumper, "_odna_tablica", padaet)
+    with pytest.raises(RuntimeError):
+        snyat(dvizhok, put)
+
+    assert put.read_text(encoding="utf-8") == "прежняя годная копия", (
+        "оборванный дамп затёр то, что лежало под этим именем"
+    )
+    ostatki = [x.name for x in tmp_path.iterdir() if "chernovik" in x.name]
+    assert not ostatki, f"огрызок остался лежать рядом: {ostatki}"
