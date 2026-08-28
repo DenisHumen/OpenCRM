@@ -128,6 +128,37 @@ def _started_at(raw: str) -> float:
         return 0.0
 
 
+#: Сколько сборов сорвалось с прошлого запуска. Растёт, а не гасит всё разом.
+SRYVOV = 0
+
+
+def docker_myagko(path: str, chto: str):
+    """Запрос к docker, который НЕ роняет весь сбор.
+
+    Прежде любая заминка на одном контейнере выбрасывала исключение наверх, и
+    наружу уходило `opencrm_containers_exporter_up 0` — то есть метрик не
+    оставалось НИ ПО ОДНОМУ контейнеру. А заминки рядовые: `stats` докер
+    считает сам, и на занятой машине (сборка образа, перезапуск стека) один
+    ответ приходит секунды. Снято с боевого: три сорванных сбора подряд
+    `TimeoutError('timed out')`, и в эти минуты панель контейнеров была пуста
+    целиком — ровно тогда, когда на неё и смотрят.
+
+    Частичный ответ лучше пустого: по остальным контейнерам данные верные, а
+    о пропаже видно по счётчику срывов.
+    """
+    global SRYVOV
+    try:
+        return docker(path)
+    except Exception as failure:  # noqa: BLE001 — сборщик не имеет права упасть
+        SRYVOV += 1
+        print(
+            f"[containers-exporter] {chto} не ответил: {failure!r}",
+            file=sys.stderr,
+            flush=True,
+        )
+        return None
+
+
 def collect() -> str:
     report = Report()
     report.add(
@@ -154,7 +185,9 @@ def collect() -> str:
             }
         )
     )
-    listing = docker(f"/containers/json?all=1&filters={filters}")
+    # Список — единственный запрос, без которого сбора не бывает вовсе:
+    # не зная контейнеров, отдавать нечего. Он же самый дешёвый.
+    listing = docker_myagko("/containers/json?all=1&filters=" + filters, "список контейнеров")
     if not listing:
         return report.text()
 
@@ -173,7 +206,7 @@ def collect() -> str:
             labels=labels,
         )
 
-        details = docker(f"/containers/{container_id}/json") or {}
+        details = docker_myagko(f"/containers/{container_id}/json", f"inspect {name}") or {}
         state = details.get("State") or {}
 
         # Счётчик перезапусков ведёт сам docker. Именно по нему видно цикл
@@ -215,7 +248,10 @@ def collect() -> str:
         # контейнеров это дюжина секунд на каждый опрос — дольше, чем весь
         # таймаут сбора. Проценты нам и не нужны: наружу уходит накопленный
         # счётчик, а скорость по нему считает уже Prometheus (`rate`).
-        stats = docker(f"/containers/{container_id}/stats?stream=false&one-shot=true") or {}
+        stats = docker_myagko(
+            f"/containers/{container_id}/stats?stream=false&one-shot=true",
+            f"stats {name}",
+        ) or {}
         cpu = ((stats.get("cpu_stats") or {}).get("cpu_usage") or {}).get("total_usage")
         if isinstance(cpu, (int, float)):
             report.add(
@@ -250,6 +286,13 @@ def collect() -> str:
                 labels=labels,
             )
 
+    report.add(
+        "opencrm_containers_exporter_failures_total",
+        SRYVOV,
+        help_text="Сколько запросов к docker сорвалось с запуска сборщика.",
+        kind="counter",
+        labels={},
+    )
     return report.text()
 
 
