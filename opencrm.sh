@@ -2061,7 +2061,7 @@ own_monitoring_dirs() {
     [ -n "$_muid" ] || _muid=$(id -u)
     [ -n "$_mgid" ] || _mgid=$(id -g)
     _mne_smog=""
-    for _msub in prometheus grafana alertmanager loki; do
+    for _msub in prometheus grafana alertmanager loki promtail; do
         _mdir="$_mhome/monitoring/$_msub"
         if [ ! -d "$_mdir" ]; then
             # Создали сами — владелец уже верный, трогать нечего.

@@ -25,6 +25,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+import yaml
 
 from core.services import monitoring_service
 from tests.conftest import API as API_PREFIX
@@ -2170,3 +2171,127 @@ def test_sostoyanie_ogranichitelya_est_v_metrikah(metrics_module, monkeypatch):
             break
     else:
         raise AssertionError("строка метрики не найдена вовсе")
+
+
+# --- то, что нашлось в боевом логе ---------------------------------------------
+#
+# Три беды, снятые с работающего сервера 27-28.08.2026. Ни одну не видно в
+# интерфейсе, все три видны в логе, и первая из них отвечала пятисотками на
+# вход и на запросы панелей.
+
+
+def test_grafana_derzhit_bazu_v_zhurnalnom_rezhime():
+    """WAL у SQLite. Одна настройка против полутора сотен ошибок.
+
+    Без журнала чтения ждут записи, и на занятой базе Grafana отвечает
+    «database is locked (5) (SQLITE_BUSY)». В боевом логе за полдня из этого
+    выросло: 40 отказов аутентификации, срыв обхода готовых панелей, срыв
+    чтения настроек входа и **44 ответа 500** на `/api/ds/query` и `/login`,
+    каждый по семь с половиной секунд.
+
+    Оттуда же сотня строк в логе Loki «failed mapping AST, context canceled»:
+    браузер бросал запрос, не дождавшись ответа. Искать беду в Loki было бы
+    напрасно — он тут пострадавший, и это главная причина, по которой настройка
+    закреплена проверкой: снявший её будет чинить не то.
+    """
+    blok = _grafana_blok(_read(COMPOSE))
+    assert re.search(r'GF_DATABASE_WAL:\s*"?true"?', blok), (
+        "у Grafana снят журнальный режим SQLite — вернутся 500 на /login и на "
+        "запросы панелей, а виноватым будет выглядеть Loki"
+    )
+
+
+def test_promtail_pomnit_dokuda_prochital():
+    """Отметка о прочитанном обязана пережить перезапуск.
+
+    Прежде она лежала в /tmp с доводом «потеряется — промотает логи заново, это
+    дешевле, чем ещё один каталог состояния». Довод оказался неверным: промотка
+    заново означает отправку в Loki записей недельной давности, а тот старше
+    `reject_old_samples_max_age` не принимает и отвечает 400 на ВЕСЬ пакет —
+    вместе со свежими строками, которые в нём ехали. Снято с боевого:
+    «entry for stream has timestamp too old: 2026-08-14, oldest acceptable is
+    2026-08-18». То есть перезапуск promtail не тратил время, а терял логи.
+    """
+    config = _read(MONITORING / "promtail" / "promtail.yml")
+    razobrano = yaml.safe_load(config)
+    put = razobrano["positions"]["filename"]
+    assert not put.startswith("/tmp/"), (
+        f"позиции promtail снова в /tmp ({put}) — после перезапуска он пошлёт в "
+        "Loki недельные записи, тот ответит 400 на весь пакет, и свежие строки "
+        "уедут вместе со старыми"
+    )
+    katalog = put.rsplit("/", 1)[0]
+    compose = _read(COMPOSE)
+    # До следующей службы, а не до первой строки с двумя пробелами: тело
+    # службы всё отбито глубже, и наивная резка давала пустоту.
+    blok = re.split(
+        r"\\n  \\w[\\w-]*:",
+        compose.split(chr(10) + "  promtail:", 1)[1],
+        maxsplit=1,
+    )[0]
+    assert f":{katalog}" in blok, (
+        f"{katalog} не примонтирован службе promtail — отметка ляжет внутрь "
+        "контейнера и пропадёт вместе с ним"
+    )
+
+
+def test_katalog_promtail_sozdayotsya_ustanovshchikom():
+    """Том без каталога — это каталог, созданный докером от root.
+
+    Дальше владелец в него не пишет, и разбираться приходят через неделю, когда
+    логов за эту неделю нет.
+    """
+    skript = (ROOT / "opencrm.sh").read_text(encoding="utf-8")
+    stroka = [s for s in skript.splitlines() if "for _msub in" in s]
+    assert stroka, "список каталогов мониторинга пропал из установщика"
+    assert "promtail" in stroka[0], (
+        "каталог promtail не создаётся установщиком: " + stroka[0].strip()
+    )
+
+
+def test_zaminka_odnogo_konteynera_ne_ronyaet_ves_sbor():
+    """Частичный ответ лучше пустого.
+
+    `stats` докер считает сам, и на занятой машине (сборка образа, перезапуск
+    стека) один ответ приходит секунды. Прежде любая такая заминка выбрасывала
+    исключение наверх, и наружу уходило `opencrm_containers_exporter_up 0` — то
+    есть метрик не оставалось НИ ПО ОДНОМУ контейнеру. Снято с боевого: три
+    сорванных сбора подряд `TimeoutError('timed out')`, и в эти минуты панель
+    контейнеров была пуста целиком — ровно тогда, когда на неё и смотрят.
+
+    Проверяется прогоном настоящего сборщика с подставным docker, а не поиском
+    `try` в исходнике: важно, что уцелеет в ответе, а не что написано.
+    """
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("opencrm_exporter", EXPORTER)
+    modul = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(modul)
+
+    spisok = [
+        {"Id": "aaa", "Names": ["/opencrm-app-1"], "State": "running",
+         "Labels": {"com.docker.compose.service": "app"}},
+        {"Id": "bbb", "Names": ["/opencrm-db-1"], "State": "running",
+         "Labels": {"com.docker.compose.service": "db"}},
+    ]
+
+    def podstavnoy_docker(path: str):
+        if path.startswith("/containers/json?"):
+            return spisok
+        if path.startswith("/containers/aaa/stats"):
+            raise TimeoutError("timed out")     # один контейнер подвис
+        if path.endswith("/json"):
+            return {"State": {"StartedAt": "2026-08-27T10:00:00Z"}, "RestartCount": 1}
+        return {"cpu_stats": {"cpu_usage": {"total_usage": 5_000_000_000}}}
+
+    modul.docker = podstavnoy_docker
+    otvet = modul.collect()
+
+    assert "opencrm_containers_exporter_up{} 1" in otvet, (
+        "заминка по одному контейнеру погасила весь сбор:\n" + otvet
+    )
+    for imya in ("opencrm-app-1", "opencrm-db-1"):
+        assert imya in otvet, f"контейнер {imya} пропал из ответа целиком:\n{otvet}"
+    assert "opencrm_containers_exporter_failures_total" in otvet, (
+        "срыв не посчитан — по метрикам его будет не видно вовсе"
+    )
