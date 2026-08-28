@@ -63,7 +63,9 @@ mariadb-client с зависимостями, десятки мегабайт и
 """
 
 import argparse
+import os
 import sys
+from uuid import uuid4
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -197,12 +199,33 @@ def _literal(escape, znachenie) -> str:
 def snyat(engine, put: Path) -> tuple[int, int]:
     """Снять дамп в файл. Возвращает (таблиц, строк).
 
+    **Пишем рядом и переименовываем в конце.** Под итоговым именем файл
+    появляется только целым, с меткой конца, — то есть «файл есть» и «копия
+    годна» перестают быть разными вещами.
+
+    Что это ловит: дамп, оборванный на середине (убили контейнер, кончилось
+    место, упала связь с базой). Прежде такой огрызок оставался лежать под
+    именем годной копии, а отличить его можно только по отсутствующему
+    хвосту — и однажды его попробуют залить.
+
+    Чего это НЕ ловит, и врать не будем: два дампа внахлёст на одно имя (у
+    повторного захода на ту же версию имя то же) файл всё равно кончают
+    меткой, каждый своей. Наложение портит содержимое, а не хвост.
+
+    Приём в проекте не новый: так же пишут `env_set` в `opencrm.sh` и сборщик
+    сводки живого меню — во временный файл и переименованием.
+
     Снимок согласованный: `START TRANSACTION WITH CONSISTENT SNAPSHOT` даёт
     InnoDB одну точку во времени на весь дамп и НЕ блокирует пишущих. Ровно то
     же делает `mysqldump --single-transaction`, и по той же причине: копия,
     останавливающая сайт на время своего снятия, — это простой на каждом
     обновлении.
     """
+    # Имя черновика уникально НА ВЫЗОВ, а не на процесс. Одного pid мало:
+    # поймано проверкой на четырёх одновременных дампах — они разделили одно
+    # имя черновика и подрались за него, то есть беда, от которой пишем
+    # рядом, воспроизвелась внутри самого лечения.
+    chernovik = put.with_name(f"{put.name}.{os.getpid()}.{uuid4().hex[:8]}.chernovik")
     raw = engine.raw_connection()
     try:
         escape = raw.driver_connection.escape
@@ -211,14 +234,22 @@ def snyat(engine, put: Path) -> tuple[int, int]:
             c.execute(text("START TRANSACTION WITH CONSISTENT SNAPSHOT"))
             imena = _tablicy(c)
             vsego_strok = 0
-            with put.open("w", encoding="utf-8", newline="\n") as f:
+            with chernovik.open("w", encoding="utf-8", newline="\n") as f:
                 f.write(_shapka(engine))
                 for imya in imena:
                     vsego_strok += _odna_tablica(c, f, imya, escape)
                 f.write("\nSET UNIQUE_CHECKS=1;\nSET FOREIGN_KEY_CHECKS=1;\n")
                 f.write(f"{METKA}: таблиц {len(imena)}, строк {vsego_strok}\n")
+    except BaseException:
+        # Огрызок не оставляем даже рядом: он ничем не отличается от годной
+        # копии, кроме отсутствующего хвоста, и однажды его попробуют залить.
+        chernovik.unlink(missing_ok=True)
+        raise
     finally:
         raw.close()
+    # `os.replace` в пределах одного каталога атомарен: под итоговым именем
+    # файл возникает разом и уже целым.
+    os.replace(chernovik, put)
     return len(imena), vsego_strok
 
 
