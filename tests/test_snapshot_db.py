@@ -36,6 +36,7 @@ from scripts.snapshot_db import (  # noqa: E402
     _pochemu_ne_pustil,
     celaya,
     kod_oshibki,
+    pochemu_ne_celaya,
     snyat,
 )
 
@@ -368,3 +369,37 @@ def test_kod_otkaza_ne_sovpadaet_s_argparse():
     assert snapshot_db.NE_PUSTIL != 2
     assert snapshot_db.NE_OTVECHAET != snapshot_db.NE_PUSTIL
     assert 0 not in (snapshot_db.NE_OTVECHAET, snapshot_db.NE_PUSTIL)
+
+
+def test_otkaz_nazyvaet_kakaya_imenno_beda(dvizhok, tmp_path):
+    """Три разные беды не должны выходить наружу одним предложением.
+
+    «Файла нет», «файл пуст» и «дамп оборван» лечатся по-разному, а сообщение
+    было на все три одно: «снята не до конца — метки конца в ней нет». Боевое
+    обновление встало ровно на нём, и разобрать по сообщению оказалось нечего:
+    файл к тому времени уже убран, а какая из трёх бед случилась — неизвестно.
+
+    Отдельно проверяется, что в отказе видно ПОСЛЕДНЮЮ строку файла: именно на
+    ней дамп и оборвался, и без неё разбор начинается с догадок.
+    """
+    net = tmp_path / "нет.sql"
+    assert "нет вовсе" in pochemu_ne_celaya(net)
+
+    pusto = tmp_path / "пусто.sql"
+    pusto.write_bytes(b"")
+    assert "пуст" in pochemu_ne_celaya(pusto)
+
+    oborvan = tmp_path / "оборван.sql"
+    snyat(dvizhok, oborvan)
+    celoe = oborvan.read_text(encoding="utf-8")
+    oborvan.write_text(celoe[: len(celoe) // 2] + "INSERT INTO хвост VALUES (1", encoding="utf-8")
+    prichina = pochemu_ne_celaya(oborvan)
+    assert "нет метки конца" in prichina
+    assert "INSERT INTO хвост" in prichina, (
+        "в отказе не видно, на чём дамп оборвался: " + prichina
+    )
+
+    # И годная копия по-прежнему годна — иначе разбор стал бы отказывать всем.
+    godnaya = tmp_path / "годная.sql"
+    snyat(dvizhok, godnaya)
+    assert pochemu_ne_celaya(godnaya) == ""
