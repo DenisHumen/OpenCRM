@@ -26,7 +26,7 @@ from datetime import datetime
 import pytest
 from sqlalchemy import event, text
 
-from core.services import modules_service
+from core.services import auth_service, modules_service
 from database.session import SessionLocal, engine
 from tests.conftest import API
 
@@ -44,8 +44,35 @@ class Zaprosy:
     def __init__(self):
         self.spisok: list[str] = []
 
+    #: Отметка присутствия. Не записывается ВООБЩЕ — ни в `spisok`, ни в
+    #: `chteniya`.
+    #:
+    #: `auth_service` переписывает `users.last_seen_at`, только если с прошлого
+    #: раза прошло больше шестидесяти секунд (`PRESENCE_TOUCH_SECONDS`). То есть
+    #: попадёт ли эта запись в замер, зависит не от кода, а от того, в какую
+    #: секунду прогона замер пришёлся.
+    #:
+    #: Для потолков это лечили `chteniya` — считать только вопросы к базе. Но
+    #: проверки РОСТА («столько же при десяти, сколько при одной») сравнивают два
+    #: замера, и одной лишней записи во ВТОРОМ хватает, чтобы «стало > было».
+    #: Часть из них меряет запись по существу (перестройка воронки — это POST), и
+    #: перевести их на `chteniya` значило бы перестать мерять то, ради чего они
+    #: написаны.
+    #:
+    #: Поймано шлюзом боевого обновления 28.08.2026: сводка «подорожала» на один
+    #: запрос, локально тот же код давал 28 против 28 и все двадцать восемь —
+    #: чтения. Красный и зелёный на одном коде — это шум, и убирают его у
+    #: источника, а не потолком повыше.
+    OTMETKA = ("update", "users", "last_seen_at")
+
+    def _zapomnit(self, statement: str) -> None:
+        nizhniy = statement.lower()
+        if all(slovo in nizhniy for slovo in self.OTMETKA):
+            return
+        self.spisok.append(statement)
+
     def __enter__(self):
-        self._slushatel = lambda conn, cursor, statement, *rest: self.spisok.append(statement)
+        self._slushatel = lambda conn, cursor, statement, *rest: self._zapomnit(statement)
         event.listen(engine, "before_cursor_execute", self._slushatel)
         return self
 
@@ -828,3 +855,31 @@ def test_spisok_dolzhnostey_ne_dorozhaet_ot_ih_chisla(vse_bloki):
     finally:
         for rol_id in zavedennye:
             vse_bloki.delete(f"{API}/roles/{rol_id}")
+
+
+def test_otmetka_prisutstviya_ne_popadaet_v_zamer(root_client, monkeypatch):
+    """Отметка присутствия обязана быть невидимой для замеров.
+
+    Она ставится ПО ТАЙМЕРУ, раз в шестьдесят секунд, и попадёт ли она в
+    конкретный замер — дело не кода, а секунды. Проверки роста сравнивают два
+    замера, и одной лишней записи во втором хватает, чтобы «стало > было».
+
+    Поймано шлюзом боевого обновления: сводка «подорожала» на один запрос,
+    локально тот же код давал 28 против 28 и все двадцать восемь — чтения.
+
+    Здесь таймер выкручен в ноль, то есть отметка ставится на КАЖДОМ запросе:
+    так проверяется не везение, а само правило.
+    """
+    monkeypatch.setattr(auth_service, "PRESENCE_TOUCH_SECONDS", 0)
+    progret(root_client, f"{API}/clients")
+    with Zaprosy() as z:
+        otvet = root_client.get(f"{API}/clients")
+    assert otvet.status_code == 200, otvet.text
+
+    otmetki = [s for s in z.spisok if "last_seen_at" in s.lower() and "update" in s.lower()]
+    assert not otmetki, (
+        "отметка присутствия попала в замер — потолки и проверки роста будут "
+        "краснеть и зеленеть на одном и том же коде: " + str(otmetki[:2])
+    )
+    # И обратная сторона: замер не ослеп вовсе.
+    assert z.chteniya, "из замера пропали и чтения — фильтр отрезал лишнее"
