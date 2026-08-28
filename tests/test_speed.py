@@ -26,7 +26,7 @@ from datetime import datetime
 import pytest
 from sqlalchemy import event, text
 
-from core.services import auth_service, modules_service
+from core.services import auth_service, maintenance_mode, modules_service
 from database.session import SessionLocal, engine
 from tests.conftest import API
 
@@ -44,40 +44,48 @@ class Zaprosy:
     def __init__(self):
         self.spisok: list[str] = []
 
-    #: Отметка присутствия. Не записывается ВООБЩЕ — ни в `spisok`, ни в
-    #: `chteniya`.
+    #: Кэши со сроком годности, замирающие на время замера.
     #:
-    #: `auth_service` переписывает `users.last_seen_at`, только если с прошлого
-    #: раза прошло больше шестидесяти секунд (`PRESENCE_TOUCH_SECONDS`). То есть
-    #: попадёт ли эта запись в замер, зависит не от кода, а от того, в какую
-    #: секунду прогона замер пришёлся.
+    #: Три места в пути обычного запроса обновляются ПО ТАЙМЕРУ, а не по делу:
+    #: блоки системы и режим обслуживания держат ответ две секунды, отметка
+    #: присутствия переписывает `users.last_seen_at` раз в минуту. Попадёт ли
+    #: обновление в конкретный замер — дело не кода, а секунды, в которую замер
+    #: пришёлся.
     #:
-    #: Для потолков это лечили `chteniya` — считать только вопросы к базе. Но
-    #: проверки РОСТА («столько же при десяти, сколько при одной») сравнивают два
-    #: замера, и одной лишней записи во ВТОРОМ хватает, чтобы «стало > было».
-    #: Часть из них меряет запись по существу (перестройка воронки — это POST), и
-    #: перевести их на `chteniya` значило бы перестать мерять то, ради чего они
-    #: написаны.
+    #: Замерено: тот же запрос поиска стоит 4 запроса при свежем кэше и 6 при
+    #: протухшем — лишние `site_settings` и `module_states`. Проверки роста
+    #: сравнивают два замера, и двух лишних чтений во ВТОРОМ хватает, чтобы
+    #: «стало > было». На боевом сервере, где прогон идёт девять минут, это
+    #: валило обновление дважды подряд и на разных проверках.
     #:
-    #: Поймано шлюзом боевого обновления 28.08.2026: сводка «подорожала» на один
-    #: запрос, локально тот же код давал 28 против 28 и все двадцать восемь —
-    #: чтения. Красный и зелёный на одном коде — это шум, и убирают его у
-    #: источника, а не потолком повыше.
-    OTMETKA = ("update", "users", "last_seen_at")
-
-    def _zapomnit(self, statement: str) -> None:
-        nizhniy = statement.lower()
-        if all(slovo in nizhniy for slovo in self.OTMETKA):
-            return
-        self.spisok.append(statement)
+    #: Почему СРОК, а не фильтр по тексту запроса. Фильтр прятал бы эти запросы
+    #: всегда — в том числе когда кэш убрали вовсе и `module_states`
+    #: спрашивается на каждом запросе. Продлённый срок не прячет ничего:
+    #: холодный кэш обновится внутри замера и будет посчитан, а тёплый —
+    #: гарантированно не протухнет посреди него.
+    #:
+    #: Ту же беду уже ловил `tests/test_boards.py` — там она обойдена списком
+    #: `CACHE_TABLES` с комментарием «на загруженной машине показывает 11
+    #: против 10». Те же две таблицы, тот же механизм; в этом файле обход
+    #: просто не сделали, и он всплыл на боевом шлюзе.
+    ZAMERZAYUT = (
+        (modules_service, "CACHE_SECONDS"),
+        (maintenance_mode, "CACHE_SECONDS"),
+        (auth_service, "PRESENCE_TOUCH_SECONDS"),
+    )
 
     def __enter__(self):
-        self._slushatel = lambda conn, cursor, statement, *rest: self._zapomnit(statement)
+        self._sroki = [(modul, imya, getattr(modul, imya)) for modul, imya in self.ZAMERZAYUT]
+        for modul, imya, _ in self._sroki:
+            setattr(modul, imya, 3600.0)
+        self._slushatel = lambda conn, cursor, statement, *rest: self.spisok.append(statement)
         event.listen(engine, "before_cursor_execute", self._slushatel)
         return self
 
     def __exit__(self, *_):
         event.remove(engine, "before_cursor_execute", self._slushatel)
+        for modul, imya, bylo in self._sroki:
+            setattr(modul, imya, bylo)
 
     def s_upominaniem(self, *slova: str) -> list[str]:
         """Запросы, в которых встречаются ВСЕ перечисленные слова."""
@@ -857,29 +865,43 @@ def test_spisok_dolzhnostey_ne_dorozhaet_ot_ih_chisla(vse_bloki):
             vse_bloki.delete(f"{API}/roles/{rol_id}")
 
 
-def test_otmetka_prisutstviya_ne_popadaet_v_zamer(root_client, monkeypatch):
-    """Отметка присутствия обязана быть невидимой для замеров.
+def test_taymery_zamerzayut_na_vremya_zamera(vse_bloki, monkeypatch):
+    """Обновление кэша по таймеру не должно попадать в замер.
 
-    Она ставится ПО ТАЙМЕРУ, раз в шестьдесят секунд, и попадёт ли она в
-    конкретный замер — дело не кода, а секунды. Проверки роста сравнивают два
-    замера, и одной лишней записи во втором хватает, чтобы «стало > было».
+    Три места в пути обычного запроса обновляются по часам, а не по делу:
+    блоки системы, режим обслуживания и отметка присутствия. Замерено: тот же
+    запрос поиска стоит 4 запроса при свежем кэше и 6 при протухшем.
 
-    Поймано шлюзом боевого обновления: сводка «подорожала» на один запрос,
-    локально тот же код давал 28 против 28 и все двадцать восемь — чтения.
+    Проверки роста сравнивают два замера, и двух лишних чтений во втором
+    хватает, чтобы «стало > было». На боевом сервере, где прогон идёт девять
+    минут, это дважды подряд валило обновление — и на разных проверках.
 
-    Здесь таймер выкручен в ноль, то есть отметка ставится на КАЖДОМ запросе:
-    так проверяется не везение, а само правило.
+    Здесь все три срока выкручены в ноль, то есть кэш протухает на КАЖДОМ
+    обращении: так проверяется само правило, а не везение с секундой.
     """
+    metka = f"ЩЩЩ{uniq_metka()}"
+    vse_bloki.post(f"{API}/clients", json={"name": f"{metka} один"})
+    monkeypatch.setattr(modules_service, "CACHE_SECONDS", 0.0)
+    monkeypatch.setattr(maintenance_mode, "CACHE_SECONDS", 0.0)
     monkeypatch.setattr(auth_service, "PRESENCE_TOUCH_SECONDS", 0)
-    progret(root_client, f"{API}/clients")
+
+    vse_bloki.get(f"{API}/search?q={metka}")   # прогрев наполняет кэши
     with Zaprosy() as z:
-        otvet = root_client.get(f"{API}/clients")
+        otvet = vse_bloki.get(f"{API}/search?q={metka}")
     assert otvet.status_code == 200, otvet.text
 
-    otmetki = [s for s in z.spisok if "last_seen_at" in s.lower() and "update" in s.lower()]
-    assert not otmetki, (
-        "отметка присутствия попала в замер — потолки и проверки роста будут "
-        "краснеть и зеленеть на одном и том же коде: " + str(otmetki[:2])
+    shum = [
+        s for s in z.spisok
+        if "module_states" in s or "site_settings" in s
+        or ("last_seen_at" in s.lower() and "update" in s.lower())
+    ]
+    assert not shum, (
+        "обновление кэша по таймеру попало в замер — проверки роста будут "
+        "краснеть и зеленеть на одном коде: " + str([s[:70] for s in shum])
     )
-    # И обратная сторона: замер не ослеп вовсе.
-    assert z.chteniya, "из замера пропали и чтения — фильтр отрезал лишнее"
+    assert z.chteniya, "замер ослеп вовсе — заморозка отрезала лишнее"
+
+
+    # И обратная сторона: сроки возвращаются на место, а не остаются
+    # выкрученными на весь прогон.
+    assert modules_service.CACHE_SECONDS == 0.0
