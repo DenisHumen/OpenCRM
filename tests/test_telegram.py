@@ -2144,3 +2144,53 @@ def test_nomera_chatov_u_proverok_ne_peresekayutsya():
         "друга в полном наборе:\n  "
         + "\n  ".join(f"{n}: {', '.join(kto)}" for n, kto in sorted(delyat.items()))
     )
+
+
+def test_spisok_dialogov_listaetsya_do_kontsa(root_client, bot_nastroen):
+    """Пройдя список страницами, доходим ровно до всех диалогов — без дыр и повторов.
+
+    На это опирается экран. Он показывает первую страницу и просит следующую,
+    пока показано меньше, чем сказано в `total`; значит вранья в `total` или
+    сдвига страниц он не переживёт — и молча покажет не всех.
+
+    Именно с потолка всё и началось: экран просил сотню и на этом заканчивался,
+    а спросить продолжение было нечем. Сервер листать умел всегда, поэтому здесь
+    закрепляется его сторона уговора — `total`, `page` и непересекающиеся
+    страницы.
+
+    База у набора одна на весь прогон, поэтому «всего» здесь чужое пополам со
+    своим: проверяется полнота обхода, а свои диалоги ищутся в собранном по
+    номеру чата.
+    """
+    skolko = 12
+    for i in range(skolko):
+        otvet = _poslat(
+            root_client,
+            bot_nastroen,
+            _obnovlenie(520000 + i, 900 + i, text="здравствуйте"),
+        )
+        assert otvet.status_code == 200, otvet.text
+
+    # Свои узнаём по chat_id: имя `_obnovlenie` кладёт всем одно.
+    nashi = set(range(520000, 520000 + skolko))
+    sobrano: list[int] = []
+    vsego = None
+    stranitsa = 1
+    while True:
+        otvet = root_client.get(f"{TG}/chats?page={stranitsa}&per_page=5").json()
+        assert otvet["page"] == stranitsa, f"сервер отдал не ту страницу: {otvet['page']}"
+        assert otvet["per_page"] == 5
+        if vsego is None:
+            vsego = otvet["total"]
+        else:
+            assert otvet["total"] == vsego, "«всего» пляшет между страницами"
+        sobrano += [d["chat_id"] for d in otvet["items"]]
+        if not otvet["items"] or len(sobrano) >= vsego:
+            break
+        stranitsa += 1
+        assert stranitsa < 200, "листание не заканчивается"
+
+    assert len(sobrano) == len(set(sobrano)), "страницы пересекаются — диалог встретился дважды"
+    assert len(sobrano) == vsego, f"пройдено {len(sobrano)} из {vsego} — в листании дыра"
+    poteryany = nashi - set(sobrano)
+    assert not poteryany, f"листание не дошло до диалогов {sorted(poteryany)}"
