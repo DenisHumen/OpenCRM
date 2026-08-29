@@ -41,6 +41,10 @@ const en = {
   hintNavigate: "to navigate",
   hintOpen: "to open",
   viewAll: "View all",
+  // Строка палитры, дописывающая следующую страницу находок. Отдельно от
+  // `viewAll`: та уводит на экран раздела, эта остаётся на месте и продолжает
+  // выдачу. Пока их не было вовсе, поиск обрывался на шести находках молча.
+  showMore: "Show more",
   today: "today",
   error: "Something went wrong",
   loadFailed: "Could not load this screen",
@@ -1342,6 +1346,7 @@ const ru: typeof en = {
   hintNavigate: "— выбор",
   hintOpen: "— открыть",
   viewAll: "Смотреть все",
+  showMore: "Показать ещё",
   today: "сегодня",
   error: "Что-то пошло не так",
   loadFailed: "Не удалось загрузить экран",
