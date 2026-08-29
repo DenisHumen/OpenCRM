@@ -25,8 +25,15 @@ def uniq() -> str:
 
 @pytest.fixture(autouse=True)
 def blocks_on(root_client):
-    """Заказы стоят на бланках, а склад им нужен для проведения."""
-    for key in ("documents", "warehouse", "orders"):
+    """Заказы стоят на бланках, а склад им нужен для проведения.
+
+    Накладные включаются ЯВНО, а не достаются в наследство от соседнего
+    файла. Состояние блока живёт в базе и одно на весь прогон: пока его тут
+    не закрепили, исход проверок зависел от того, кто отработал раньше.
+    Поймано CI — он гоняет набор дважды, второй раз в обратном порядке
+    файлов, и в обратном проверка отмены падала, а в прямом проходила.
+    """
+    for key in ("documents", "warehouse", "orders", "waybills"):
         root_client.post(f"{API}/modules/{key}", json={"enabled": True})
     yield
 
@@ -299,8 +306,16 @@ def test_otmena_provedeniya_obratnymi_dvizheniyami(root_client, client_row):
 
     assert stock_of(root_client, item["id"]) == 10000
     moves = root_client.get(f"{STOCK}/products/{item['id']}/moves").json()["items"]
-    kinds = [m["kind"] for m in moves if m["document_id"] == order["id"]]
-    assert "out" in kinds and "return" in kinds, "прежние движения стёрты"
+    # По ТОВАРУ, а не по заказу: после переезда движения принадлежат
+    # накладной и её сторно, а не самому заказу. Суть проверки от этого не
+    # меняется — она про то, что прежнее движение не стёрто, а
+    # скомпенсировано обратным.
+    kinds = [m["kind"] for m in moves]
+    assert "out" in kinds, "движение отгрузки стёрто"
+    assert "return" in kinds, (
+        "возврат записан не возвратом — журнал склада перестаёт читаться "
+        f"словами: {kinds}"
+    )
 
 
 def test_neprovedennyy_zakaz_otmenit_provedenie_nelzya(root_client, client_row):

@@ -57,7 +57,7 @@ from database.models.document import (
     STATUS_ISSUED,
     WAYBILL_KINDS,
 )
-from database.models.warehouse import MOVE_IN, MOVE_OUT
+from database.models.warehouse import MOVE_IN, MOVE_OUT, MOVE_RETURN, MOVE_WRITEOFF
 from database.repositories import documents as documents_repo
 from database.repositories import warehouse as warehouse_repo
 
@@ -422,7 +422,7 @@ def provesti(
                 db,
                 {
                     "product_id": row.product_id,
-                    "kind": MOVE_OUT if ishodyashchaya else MOVE_IN,
+                    "kind": _vid_dvizheniya(db, waybill, ishodyashchaya),
                     "quantity": warehouse_service.format_quantity(row.quantity_milli),
                     "warehouse_id": warehouse.id,
                     "deal_id": waybill.deal_id,
@@ -604,6 +604,30 @@ def _stroka(db: Session, document_id: int, line_id: int) -> DocumentLine:
     if line is None:
         raise errors.NotFoundError("Line not found", code="line_not_found")
     return line
+
+
+def _vid_dvizheniya(db: Session, waybill: Document, ishodyashchaya: bool) -> str:
+    """Как назвать движение склада: обычным приходом-расходом или возвратом.
+
+    Обратное движение обязано называться тем, чем оно является, иначе журнал
+    склада перестаёт читаться словами: «приход» у сторнированной отгрузки
+    выглядит как новая поставка, а это возврат.
+
+    Правило записано у прежней отмены заказа (`order_service.revert`), и при
+    переезде закрытия на накладную оно чуть не потерялось: сторно писало бы
+    голые `in`/`out`, и различить в журнале поставку от возврата стало бы
+    нечем. Поймано CI — старая проверка отмены искала в движениях `return`.
+
+    Сторно узнаётся по основанию: у обычной накладной это заказ или пусто, у
+    сторнирующей — другая накладная.
+    """
+    if waybill.basis_id is None:
+        return MOVE_OUT if ishodyashchaya else MOVE_IN
+    osnovanie = documents_repo.get(db, waybill.basis_id)
+    if osnovanie is None or osnovanie.kind not in WAYBILL_KINDS:
+        return MOVE_OUT if ishodyashchaya else MOVE_IN
+    # Возврат на склад — `return`, снятие с него — `writeoff`.
+    return MOVE_WRITEOFF if ishodyashchaya else MOVE_RETURN
 
 
 def _proverit_dvoynuyu_otgruzku(db: Session, waybill: Document) -> None:

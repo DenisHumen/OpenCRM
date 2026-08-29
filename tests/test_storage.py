@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 
 from config.settings import get_settings
 from core.services import media_service, storage_service
-from tests.conftest import API, png_bytes
+from tests.conftest import API, Zaprosy, png_bytes
 from web.main import app
 
 
@@ -169,9 +169,6 @@ def test_cleanup_asks_the_database_a_fixed_number_of_questions(root_client, mana
     прогона, у которых разница лишь в количестве мусора: если запросов стало
     больше, значит какой-то снова ушёл в цикл.
     """
-    from sqlalchemy import event
-
-    from database.session import engine
 
     def purge_with_counting(clients_count: int) -> int:
         for i in range(clients_count):
@@ -184,14 +181,17 @@ def test_cleanup_asks_the_database_a_fixed_number_of_questions(root_client, mana
         # чтение настроек и состава блоков, а тест не про них.
         root_client.get(f"{API}/system/storage")
 
-        queries = []
-        listener = lambda conn, cursor, statement, *rest: queries.append(statement)
-        event.listen(engine, "before_cursor_execute", listener)
-        try:
+        # Общий счётчик из `conftest`, а не свой слушатель. Свой не замораживал
+        # кэши со сроком годности (блоки системы и режим обслуживания живут
+        # две секунды), и обновление одного из них попадало в замер по часам,
+        # а не по делу: в обратном порядке файлов проверка краснела «было 12,
+        # стало 13» на неизменном коде.
+        #
+        # Две копии одного инструмента расходятся ровно так: беду чинят в
+        # одной, а вторая продолжает мигать.
+        with Zaprosy() as z:
             assert root_client.post(f"{API}/system/storage/purge").status_code == 200
-        finally:
-            event.remove(engine, "before_cursor_execute", listener)
-        return len(queries)
+        return len(z.spisok)
 
     # Сначала сливаем чужое, и только потом меряем.
     #
