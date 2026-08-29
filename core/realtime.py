@@ -29,6 +29,9 @@ import json
 import logging
 import time
 
+from sqlalchemy import event
+from sqlalchemy.orm import Session
+
 from core import redis_client
 
 logger = logging.getLogger(__name__)
@@ -69,6 +72,47 @@ def obyavit(vid: str, **polya) -> bool:
     except Exception as beda:  # noqa: BLE001 — шина не обязана быть живой
         logger.warning("шина событий недоступна: %r", beda)
         return False
+
+
+#: Ключ очереди отложенных объявлений в `session.info`.
+_OCHERED = "realtime_ochered"
+
+
+def obyavit_posle_fiksatsii(db: Session, vid: str, **polya) -> None:
+    """Объявить, но ТОЛЬКО когда транзакция закроется. Иначе — гонка.
+
+    Разница не теоретическая. Услышавший идёт за подробностями в базу тем же
+    мгновением, а незафиксированной записи там ещё нет: экран получает «пришло
+    новое сообщение» и не находит его. Дальше он либо показывает пустоту, либо
+    молчит до перезагрузки страницы — и то и другое выглядит как потерянное
+    сообщение клиента.
+
+    Соседний вызов в `_dokachat` стоит после `db.commit()` и потому верен, а
+    два других — в `prinyat` и `otpravit` — объявляли раньше. У `otpravit`
+    своей фиксации нет вовсе: транзакцию закрывает запрос
+    (`web/api/deps._edinica_raboty`), уже после возврата из службы. То есть
+    «переставить строку ниже» там не помогло бы — нужен именно отложенный
+    вызов.
+
+    Откат очередь выбрасывает: объявлять о том, чего не случилось, хуже, чем
+    не объявлять вовсе.
+    """
+    db.info.setdefault(_OCHERED, []).append((vid, polya))
+
+
+@event.listens_for(Session, "after_commit")
+def _razoslat_nakoplennoe(session: Session) -> None:
+    """Транзакция закрылась — теперь запись в базе есть, можно объявлять."""
+    ochered = session.info.pop(_OCHERED, None)
+    for vid, polya in ochered or ():
+        obyavit(vid, **polya)
+
+
+@event.listens_for(Session, "after_rollback")
+@event.listens_for(Session, "after_soft_rollback")
+def _zabyt_nakoplennoe(session: Session, *_) -> None:
+    """Откат — значит ничего не было. Очередь выбрасывается."""
+    session.info.pop(_OCHERED, None)
 
 
 def podpisatsya():
