@@ -654,3 +654,53 @@ def test_vyklyuchennyy_blok_zakryvaet_adresa(root_client, client_row):
         assert otvet.json()["error"]["code"] == "module_disabled"
     finally:
         root_client.post(f"{API}/modules/waybills", json={"enabled": True})
+
+
+def test_iz_zakaza_postavshchiku_vykhodit_prikhodnaya(root_client, client_row):
+    """Вид накладной берётся у заказа, а не подставляется расходной.
+
+    Прежде `po_zakazu` создавал расходную безусловно: из заказа ПОСТАВЩИКУ
+    выходила бумага на отгрузку, и проведение снимало товар со склада вместо
+    того, чтобы принять его. Остаток при этом сходился бы сам с собой —
+    расхождение всплыло бы только на инвентаризации, когда концов уже не
+    найти.
+
+    Проверяется по ОСТАТКУ, а не по виду бумаги: вид можно поправить и
+    ошибиться заново, а склад врать не станет.
+    """
+    item = product(root_client, stock="10")
+    zakaz = root_client.post(
+        ORDERS, json={"kind": "purchase_order", "client_id": client_row["id"]}
+    ).json()
+    root_client.post(
+        f"{ORDERS}/{zakaz['id']}/lines", json={"product_id": item["id"], "quantity": "3"}
+    )
+
+    nakladnaya = root_client.post(f"{WAYBILLS}/from-order/{zakaz['id']}")
+    assert nakladnaya.status_code == 201, nakladnaya.text
+    assert nakladnaya.json()["kind"] == "waybill_in", (
+        "из заказа поставщику вышла расходная накладная"
+    )
+
+    assert root_client.post(f"{WAYBILLS}/{nakladnaya.json()['id']}/post", json={}).status_code == 200
+    assert ostatok(root_client, item) == 13_000, (
+        "приёмка от поставщика списала товар вместо того, чтобы принять"
+    )
+
+
+def test_osnovaniem_nakladnoy_byvaet_tolko_zakaz(root_client, client_row):
+    """Квитанция, акт и другая накладная основанием быть не могут.
+
+    Прежде брался любой бланк, и выходила накладная «по основанию», которое
+    основанием не является: двойная отгрузка по нему не сторожится, закрытие
+    заказа его не видит, а на бумаге написано, что она по нему выписана.
+    """
+    # Другая накладная — самый близкий к правде случай: тот же вид бланка, те
+    # же строки, а основанием быть не может.
+    chuzhaya = root_client.post(
+        WAYBILLS, json={"kind": "waybill_out", "client_id": client_row["id"]}
+    )
+    assert chuzhaya.status_code == 201, chuzhaya.text
+    otvet = root_client.post(f"{WAYBILLS}/from-order/{chuzhaya.json()['id']}")
+    assert otvet.status_code == 422, "накладная сошла за основание накладной"
+    assert otvet.json()["error"]["code"] == "basis_is_not_order"
