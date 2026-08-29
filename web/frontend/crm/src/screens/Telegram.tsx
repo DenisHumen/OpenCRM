@@ -138,9 +138,26 @@ function est_chto_perenesti(chat: TgChat, kartochka: any): boolean {
   );
 }
 
+/** Сколько диалогов в одной странице списка. */
+const NA_STRANITSE = 50;
+
 export function Telegram() {
   const { t, locale, toast, toastError, user, modules } = useApp();
   const [chats, setChats] = useState<TgChat[] | null>(null);
+  // Сколько диалогов всего у отбора и до какой страницы дочитано. Первое
+  // говорит, есть ли ещё, второе — что просить следующим.
+  const [vsego_chatov, setVsegoChatov] = useState(0);
+  const [stranitsa_chatov, setStranitsaChatov] = useState(1);
+  const [dochityvaem, setDochityvaem] = useState(false);
+  // Отбор, которому принадлежит показанный список. Сменился отбор —
+  // дочитанный хвост принадлежит прошлому запросу и подлежит замене,
+  // а не слиянию.
+  const otbor_spiska = useRef<string | null>(null);
+  // Отбор, который спрошен последним. Человек печатает, запросы уходят один
+  // за другим, и приходят они не в том порядке: ответ на «ив» может лечь
+  // ПОВЕРХ ответа на «иванов». Ставится ДО запроса, сверяется ПОСЛЕ ответа —
+  // и опоздавший отбрасывается.
+  const sproshen_otbor = useRef<string | null>(null);
   const [vybran, setVybran] = useState<number | null>(null);
   const [messages, setMessages] = useState<TgMessage[]>([]);
   const [watchers, setWatchers] = useState<Watcher[]>([]);
@@ -309,19 +326,59 @@ export function Telegram() {
     });
   }, []);
 
-  const zagruzit_chats = useCallback(async () => {
-    clear();
-    try {
-      const otvet = await api.get<{ items: TgChat[] }>(
-        `/telegram/chats?q=${encodeURIComponent(iskat)}&per_page=100`,
-      );
-      setChats(otvet.items);
-      return otvet.items;
-    } catch (beda) {
-      fail(beda);
-      return null;
-    }
-  }, [iskat, clear, fail]);
+  /** Дозагрузка списка диалогов.
+   *
+   * Прежде экран просил первую сотню и на этом заканчивался: сервер честно
+   * отдавал `page` и `total`, а спросить продолжение было нечем. У кого
+   * переписка идёт второй год, сто первый собеседник был недостижим — разве
+   * что вспомнить его имя и найти поиском.
+   *
+   * Живое обновление освежает ТОЛЬКО первую страницу и вливает её в уже
+   * показанное. Перезапрашивать всё дописанное значило бы делать это на каждое
+   * входящее сообщение; а просто дописывать поверх — задваивать: диалог,
+   * получивший сообщение, поднимается на первую страницу и остался бы вторым
+   * экземпляром там, где лежал раньше. Поэтому слияние по `id`, свежая запись
+   * побеждает и встаёт на своё новое место.
+   */
+  const zagruzit_chats = useCallback(
+    async (nomer = 1) => {
+      clear();
+      sproshen_otbor.current = iskat;
+      try {
+        const otvet = await api.get<{
+          items: TgChat[];
+          total: number;
+          page: number;
+          per_page: number;
+        }>(
+          `/telegram/chats?q=${encodeURIComponent(iskat)}` +
+            `&page=${nomer}&per_page=${NA_STRANITSE}`,
+        );
+        if (sproshen_otbor.current !== iskat) return null;
+        const smena = otbor_spiska.current !== iskat;
+        otbor_spiska.current = iskat;
+        setChats((bylo) => {
+          const hvost = nomer === 1 && smena ? [] : (bylo ?? []);
+          if (nomer === 1) {
+            const svezhie = new Set(otvet.items.map((c) => c.id));
+            return [...otvet.items, ...hvost.filter((c) => !svezhie.has(c.id))];
+          }
+          const uzhe = new Set(hvost.map((c) => c.id));
+          return [...hvost, ...otvet.items.filter((c) => !uzhe.has(c.id))];
+        });
+        // Номер держим наибольший из дочитанных: живое обновление освежает
+        // первую страницу, и опустить счётчик к единице значило бы заставить
+        // человека жать «ещё» заново по всему уже пройденному пути.
+        setStranitsaChatov((bylo) => (nomer === 1 && smena ? 1 : Math.max(bylo, nomer)));
+        setVsegoChatov(otvet.total);
+        return otvet.items;
+      } catch (beda) {
+        fail(beda);
+        return null;
+      }
+    },
+    [iskat, clear, fail],
+  );
 
   useEffect(() => {
     // Флажок «этот ответ ещё нужен». Человек печатает в поиске, запросы уходят
@@ -436,6 +493,23 @@ export function Telegram() {
       // моргнувший запрос раздражала бы сильнее, чем помогала.
     }
   }, [vybran]);
+
+  /** Дочитать список диалогов.
+   *
+   * Здесь листание именно по номеру страницы, а не «до такого-то», как у
+   * переписки: порядок списка задаёт время последнего сообщения, и опорной
+   * записи, которая не сдвинется, в нём нет. Сдвиг за время чтения не страшен
+   * — пропущенное всплывёт наверх само, потому что стало свежим.
+   */
+  const dochitat_spisok = async () => {
+    if (dochityvaem) return;
+    setDochityvaem(true);
+    try {
+      await zagruzit_chats(stranitsa_chatov + 1);
+    } finally {
+      setDochityvaem(false);
+    }
+  };
 
   /** Показать более старые сообщения.
    *
@@ -936,6 +1010,20 @@ export function Telegram() {
                 </button>
               </li>
             ))}
+            {chats.length < vsego_chatov && (
+              // Обычный пункт списка, а не хвостик под ним: так до него
+              // доходит Tab и его видно с клавиатуры, как и все диалоги выше.
+              <li>
+                <button
+                  type="button"
+                  className="tg-more"
+                  disabled={dochityvaem}
+                  onClick={() => void dochitat_spisok()}
+                >
+                  {t("tgMoreChats")} ({chats.length} / {vsego_chatov})
+                </button>
+              </li>
+            )}
           </ul>
         )}
       </aside>
