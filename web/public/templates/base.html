@@ -138,8 +138,25 @@
   /* системный курсор прячем только там, где свой реально включён (см. скрипт ниже) */
   body._cursor-on, body._cursor-on * { cursor: none; }
 
+  /* Обнуляется НЕ ТОЛЬКО длительность.
+
+     Каскад появления плиток задаётся задержкой (`showcase.html`: до 900 мс),
+     и с одной обнулённой длительностью человек, попросивший убрать анимацию,
+     всё равно ждал почти секунду перед пустым местом — а потом плитки
+     возникали разом. То есть он получал худший вариант из двух: и движения
+     нет, и ожидание есть.
+
+     Счётчик повторов — про бесконечные: пульсирующая точка страницы
+     обслуживания без него мигала бы вечно, просто быстро. В самой
+     `maintenance_mode.html` это учтено давно; сюда правило не дошло. */
   @media (prefers-reduced-motion: reduce) {
-    *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-delay: 0ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      transition-delay: 0ms !important;
+    }
   }
 </style>
 {% block style %}{% endblock %}
