@@ -174,3 +174,46 @@ def test_filtr_po_metke_ne_nakhodit_chuzhie_metki(manager_client):
     seredina = _create(manager_client, name="Метка в середине", tags=["опт", "ip", "срочно"])
     v_seredine = manager_client.get(f"{API}/clients", params={"tag": "ip"}).json()["items"]
     assert seredina["id"] in {c["id"] for c in v_seredine}
+
+
+def test_svg_klienta_chistitsya_pered_zapisyu(manager_client):
+    """`<script>` в файле клиента не должен доезжать до диска.
+
+    Работы досок и брендинг чистятся давно, файлы клиента — не чистились: это
+    было единственное место, куда SVG попадал нетронутым.
+
+    Сегодня цена невелика — файл отдаётся вложением с `nosniff`, браузер его не
+    рисует. Но тогда безопасность держится на одном заголовке в одном
+    маршруте: появится предпросмотр в списке файлов (а он напрашивается) — и
+    скрипт сработает на странице сотрудника, в его сессии. Чистый файл на диске
+    переживает любую такую правку, грязный — нет.
+
+    Проверяется по СКАЧАННОМУ содержимому, а не по ответу на загрузку: важно,
+    что лежит на диске.
+    """
+    client_id = _create(manager_client, name="Клиент со скриптом")["id"]
+    gryaznyy = (
+        b'<svg xmlns="http://www.w3.org/2000/svg">'
+        b'<script>alert(1)</script>'
+        b'<rect width="10" height="10" onload=alert(2)/>'
+        b'<a xlink:href="javas&#99;ript:alert(3)">click</a>'
+        b"</svg>"
+    )
+    zagruzka = manager_client.post(
+        f"{API}/clients/{client_id}/files",
+        files={"file": ("картинка.svg", gryaznyy, "image/svg+xml")},
+    )
+    assert zagruzka.status_code == 201, zagruzka.text
+
+    skachano = manager_client.get(zagruzka.json()["download_url"]).content
+    for opasnoe in (b"<script", b"onload", b"javas"):
+        assert opasnoe not in skachano.lower(), (
+            f"в файле клиента осталось {opasnoe!r}: {skachano!r}"
+        )
+    assert b"<rect" in skachano, "чистка выбросила и саму картинку"
+
+    # Размер в базе обязан совпасть с тем, что вправду лежит: список файлов
+    # показывал бы одно, а скачивалось бы другое.
+    assert zagruzka.json()["size_bytes"] == len(skachano), (
+        "в базе записан размер ДО очистки"
+    )

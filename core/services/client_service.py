@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from config.settings import get_settings
 from core import exceptions as errors
 from core.security import tokens
-from core.services import audit_service, settings_service, storage_service
+from core.services import audit_service, media_service, settings_service, storage_service
 from core.utils import normalize_phone, now_utc
 from database.models import Client, ClientFile, ClientNote, User
 from database.models.audit import SOURCE_MANUAL
@@ -289,6 +289,25 @@ def add_file(db: Session, client_id: int, uploader: User, original_name: str, co
         raise errors.ValidationError(
             "Not enough free disk space on the server", code="disk_full"
         )
+
+    # SVG чистится, как везде. Здесь этого не делалось, и файл клиента был
+    # единственным местом, куда `<script>` доезжал до диска нетронутым.
+    #
+    # Сегодня цена невелика: файл виден только вошедшему сотруднику и
+    # отдаётся ВЛОЖЕНИЕМ с `nosniff` — браузер его не рисует. Но безопасность
+    # держится тогда на одном заголовке в одном маршруте: появится
+    # предпросмотр в списке файлов (а он напрашивается) — и скрипт сработает
+    # на странице сотрудника, в его сессии. Чистый файл на диске переживает
+    # любую такую правку, грязный — нет.
+    #
+    # Размер считается ПОСЛЕ очистки: в базу должно попасть то, что вправду
+    # лежит на диске, иначе список файлов покажет одно, а скачается другое.
+    if ext == "svg":
+        content = media_service.sanitize_svg(content)
+        if not content.strip():
+            raise errors.ValidationError(
+                "The SVG contained nothing but scripts", code="file_empty"
+            )
 
     file = ClientFile(
         client_id=client_id,
