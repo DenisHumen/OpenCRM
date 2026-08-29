@@ -620,6 +620,7 @@ def test_chuzhoy_fayl_ne_sryvaet_proverku_kopii(tmp_path):
     )
 
 
+@nuzhen_sh
 def test_kopiya_ne_chitaetsya_postoronnimi(tmp_path):
     """Дамп базы — это вся система в одном файле.
 
@@ -630,6 +631,11 @@ def test_kopiya_ne_chitaetsya_postoronnimi(tmp_path):
     zapusk, backups = _snyat_kopiyu(tmp_path)
     assert zapusk.returncode == 0, zapusk.stdout + zapusk.stderr
 
+    # Метка `@nuzhen_sh` здесь не только про `sh`. Права файла — понятие
+    # POSIX: на Windows `stat` отдаёт 0666 у любого файла, и проверка была
+    # КРАСНОЙ ВСЕГДА на машине разработчика. К красному, который «так и
+    # должно быть», привыкают за день, и следом перестают смотреть на
+    # красное вообще.
     fayly = sorted((backups / "daily").iterdir())
     assert len(fayly) == 3, [p.name for p in fayly]
     for fayl in fayly:
