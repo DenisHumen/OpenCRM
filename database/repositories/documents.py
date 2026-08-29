@@ -109,6 +109,7 @@ def search(
     status: str | None = None,
     client_id: int | None = None,
     deal_id: int | None = None,
+    basis_id: int | None = None,
     kinds: tuple[str, ...] | None = None,
     page: int = 1,
     per_page: int = 50,
@@ -128,6 +129,13 @@ def search(
         stmt = stmt.where(Document.status == status)
     if client_id:
         stmt = stmt.where(Document.client_id == client_id)
+    if basis_id:
+        # «Какие бумаги выписаны по этому заказу» — вопрос, который задают с
+        # карточки заказа. Без отбора ответить на него было нечем: список
+        # накладных умел сузиться по клиенту и заявке, а по основанию нет,
+        # и найти накладную своего заказа человек мог только глазами по
+        # всему списку.
+        stmt = stmt.where(Document.basis_id == basis_id)
     if deal_id:
         # Нужен карточке сделки: выданный из неё бланк обязан быть в ней виден,
         # иначе он уходит в общий список и связь теряется.

@@ -513,3 +513,189 @@ def test_dve_stroki_odnogo_tovara_v_predelakh_ostatka_prokhodyat(root_client, cl
     zakryt = root_client.post(f"{ORDERS}/{order['id']}/close", json={})
     assert zakryt.status_code == 200, zakryt.text
     assert stock_of(root_client, item["id"]) == 2000
+
+
+# --- переезд закрытия на накладную --------------------------------------------
+#
+# К остатку теперь ведёт ОДИН путь: заказ не двигает склад сам, он выписывает
+# накладную и проводит её. Прежде путей было два, и держались они друг от друга
+# взаимным запретом в коде, а не устройством.
+
+
+def waybills_on(root_client, enabled: bool = True):
+    otvet = root_client.post(f"{API}/modules/waybills", json={"enabled": enabled})
+    assert otvet.status_code == 200, otvet.text
+
+
+def test_zakrytie_vypisyvaet_nakladnuyu_i_sklad_dvigaetsya_odin_raz(root_client, client_row):
+    """После закрытия существует бумага, а товар ушёл ровно один раз.
+
+    Главное здесь — второе. Переезд ошибиться может в обе стороны: не двинуть
+    склад вовсе (тогда бумага есть, а товара на полке лишнего) или двинуть
+    дважды (заказ сам плюс накладная). Первое видно сразу, второе — только по
+    числу, поэтому остаток проверяется точным значением, а не «уменьшился».
+    """
+    waybills_on(root_client)
+    item = product(root_client, stock="10")
+    order = order_with(root_client, client_row, item, quantity="3")
+
+    assert root_client.post(f"{ORDERS}/{order['id']}/close", json={}).status_code == 200
+    assert stock_of(root_client, item["id"]) == 7_000, "склад двинулся не один раз"
+
+    nakladnye = root_client.get(f"{API}/waybills?basis_id={order['id']}").json()["items"]
+    assert len(nakladnye) == 1, f"по закрытому заказу нет ровно одной накладной: {nakladnye}"
+    assert nakladnye[0]["status"] == "issued", "накладная осталась черновиком"
+    assert nakladnye[0]["kind"] == "waybill_out"
+
+
+def test_zakaz_postavshchiku_zakryvaetsya_prikhodnoy(root_client, client_row):
+    """Приёмка обязана прибавить, а не списать.
+
+    Вид накладной берётся у заказа. Ошибись здесь — и остаток сойдётся сам с
+    собой, а расхождение с полкой всплывёт на инвентаризации.
+    """
+    waybills_on(root_client)
+    item = product(root_client, stock="10")
+    order = order_with(root_client, client_row, item, quantity="4", kind="purchase_order")
+
+    assert root_client.post(f"{ORDERS}/{order['id']}/close", json={}).status_code == 200
+    assert stock_of(root_client, item["id"]) == 14_000, "приёмка списала товар"
+
+    nakladnaya = root_client.get(f"{API}/waybills?basis_id={order['id']}").json()["items"][0]
+    assert nakladnaya["kind"] == "waybill_in"
+
+
+def test_otmena_vozvrashchaet_tovar_i_ostavlyaet_storno(root_client, client_row):
+    """Отмена возвращает товар — и оставляет бумагу о возврате.
+
+    Это то место, из-за которого переезд откладывался: прежняя отмена перебирала
+    движения ПО ЗАКАЗУ, а после переезда они принадлежат накладной. Не тронь мы
+    отмену — она перестала бы возвращать товар молча, отчитавшись успехом.
+
+    Проверяется и то и другое: остаток вернулся, и обратная накладная
+    существует. Одного остатка мало — вернуть можно и голыми движениями, а тогда
+    на вопрос «по какой бумаге вернули» ответить нечем.
+    """
+    waybills_on(root_client)
+    item = product(root_client, stock="10")
+    order = order_with(root_client, client_row, item, quantity="3")
+    root_client.post(f"{ORDERS}/{order['id']}/close", json={})
+    assert stock_of(root_client, item["id"]) == 7_000
+
+    otvet = root_client.post(f"{ORDERS}/{order['id']}/revert", json={})
+    assert otvet.status_code == 200, otvet.text
+    assert stock_of(root_client, item["id"]) == 10_000, "отмена не вернула товар"
+
+    bumagi = root_client.get(f"{API}/waybills?basis_id={order['id']}").json()["items"]
+    assert len(bumagi) == 1, "по заказу должна остаться одна исходная накладная"
+    storno = root_client.get(
+        f"{API}/waybills?basis_id={bumagi[0]['id']}"
+    ).json()["items"]
+    assert len(storno) == 1, "возврат прошёл без бумаги — сторно не выписано"
+    assert storno[0]["status"] == "issued", "сторно осталось черновиком, товар вернулся мимо него"
+    assert storno[0]["kind"] == "waybill_in", "сторно расходной обязано быть приходным"
+
+
+def test_bez_bloka_nakladnykh_zakaz_rabotaet_po_prezhnemu(root_client, client_row):
+    """Выключенный блок исчезает целиком — и не мешает заказам работать.
+
+    Блок, которого нет, не может выписать бумагу. Заказ в этом случае двигает
+    склад сам, как делал всегда; двойной отгрузки здесь быть не может, потому
+    что накладной по этому заказу не существует и завести её нечем.
+    """
+    waybills_on(root_client, False)
+    try:
+        item = product(root_client, stock="10")
+        order = order_with(root_client, client_row, item, quantity="2")
+        assert root_client.post(f"{ORDERS}/{order['id']}/close", json={}).status_code == 200
+        assert stock_of(root_client, item["id"]) == 8_000, "без накладных склад не двинулся"
+
+        # И отмена по-прежнему возвращает: движения лежат на самом заказе.
+        assert root_client.post(f"{ORDERS}/{order['id']}/revert", json={}).status_code == 200
+        assert stock_of(root_client, item["id"]) == 10_000
+    finally:
+        waybills_on(root_client)
+
+
+def test_staryy_zakaz_bez_nakladnoy_otmenyaetsya_po_prezhnemu(root_client, client_row):
+    """Заказы, закрытые ДО переезда, накладных не имеют — и отменяться обязаны.
+
+    Задним числом бумага им не выписывается: накладная с сегодняшним номером и
+    вчерашней датой это подделка. Значит старый путь отмены обязан жить, и
+    проверяется он единственным способом, каким такой заказ можно завести
+    сегодня, — закрытием при выключенном блоке накладных.
+    """
+    waybills_on(root_client, False)
+    item = product(root_client, stock="10")
+    order = order_with(root_client, client_row, item, quantity="5")
+    root_client.post(f"{ORDERS}/{order['id']}/close", json={})
+    assert stock_of(root_client, item["id"]) == 5_000
+
+    # Блок включили обратно — заказ от этого накладной не обзавёлся.
+    waybills_on(root_client)
+    assert root_client.get(f"{API}/waybills?basis_id={order['id']}").json()["items"] == []
+
+    assert root_client.post(f"{ORDERS}/{order['id']}/revert", json={}).status_code == 200
+    assert stock_of(root_client, item["id"]) == 10_000, "старый заказ не вернул товар"
+
+
+def test_pri_vyklyuchennom_sklade_zakaz_ne_pishet_dvizheniy(root_client, client_row):
+    """Третья беда прямого вызова: он шёл мимо проверки блока склада.
+
+    Прежде `close` звал склад напрямую, без `is_enabled`, и при ВЫКЛЮЧЕННОМ
+    складе закрытие заказа всё равно писало движения — то есть выключенный блок
+    продолжал работать. Накладная делает то же самое событием и потому ведёт
+    себя правильно.
+    """
+    waybills_on(root_client)
+    item = product(root_client, stock="10")
+    order = order_with(root_client, client_row, item, quantity="3")
+    root_client.post(f"{API}/modules/warehouse", json={"enabled": False})
+    try:
+        otvet = root_client.post(f"{ORDERS}/{order['id']}/close", json={})
+        assert otvet.status_code == 200, otvet.text
+    finally:
+        root_client.post(f"{API}/modules/warehouse", json={"enabled": True})
+
+    assert stock_of(root_client, item["id"]) == 10_000, (
+        "закрытие заказа двинуло склад при выключенном блоке склада"
+    )
+
+
+def test_kartochka_zakaza_pokazyvaet_svoyu_nakladnuyu(root_client, client_row):
+    """Бумага, которую нельзя найти, всё равно что не выписана.
+
+    Закрытие теперь выписывает накладную. Не покажи мы КАКУЮ — человек знает,
+    что она где-то есть, и ищет её глазами по всему списку накладных.
+
+    У заказов, закрытых до переезда, список пуст, и это честнее выдуманного
+    номера: задним числом бумага им не выписывается.
+    """
+    waybills_on(root_client)
+    item = product(root_client, stock="10")
+    order = order_with(root_client, client_row, item, quantity="2")
+
+    do = root_client.get(f"{ORDERS}/{order['id']}").json()
+    assert do["waybills"] == [], "у неотгруженного заказа откуда-то бумага"
+
+    root_client.post(f"{ORDERS}/{order['id']}/close", json={})
+    posle = root_client.get(f"{ORDERS}/{order['id']}").json()
+    assert len(posle["waybills"]) == 1, "закрытый заказ не показывает свою накладную"
+    bumaga = posle["waybills"][0]
+    assert bumaga["number"], "накладная без номера — по чему её искать"
+    assert bumaga["status"] == "issued"
+
+
+def test_bez_bloka_nakladnykh_kartochka_o_nikh_ne_upominaet(root_client, client_row):
+    """Выключенный блок исчезает целиком, включая упоминания о себе.
+
+    Пустой список означал бы «накладных нет», а правда — «накладных не
+    бывает». Это разные ответы, и второй нельзя изображать первым.
+    """
+    waybills_on(root_client, False)
+    try:
+        item = product(root_client, stock="10")
+        order = order_with(root_client, client_row, item, quantity="1")
+        assert "waybills" not in root_client.get(f"{ORDERS}/{order['id']}").json()
+    finally:
+        waybills_on(root_client)

@@ -42,6 +42,7 @@ from core.services import (
     document_service,
     modules_service,
     warehouse_service,
+    waybill_service,
 )
 from core.utils import normalize_phone, now_utc
 from database.models import Document, DocumentEvent, DocumentLine, User
@@ -518,6 +519,33 @@ def pick(db: Session, document_id: int, code: str, quantity_milli: int = 1000) -
 # --- проведение ---------------------------------------------------------------
 
 
+def _dvinut_sklad_naprjamuyu(db, order, goods, warehouse, outgoing, author) -> None:
+    """Движения склада без накладной. Только когда блок накладных выключен.
+
+    Это прежний путь заказа целиком, вынесенный отдельно, — чтобы в `close`
+    было видно РАЗВИЛКУ, а не два перемешанных способа. Обе половины не могут
+    сработать разом: развилка одна, и она по состоянию блока.
+
+    Двойной отгрузки здесь быть не может: накладной по этому заказу не
+    существует и завести её нечем — выключенный блок закрыт целиком, вместе
+    с ручками.
+    """
+    for row in goods:
+        warehouse_service.add_move(
+            db,
+            {
+                "product_id": row.product_id,
+                "kind": MOVE_OUT if outgoing else MOVE_IN,
+                "quantity": _as_text(row.quantity_milli),
+                "warehouse_id": warehouse.id,
+                "deal_id": order.deal_id,
+                "comment": f"{'shipped' if outgoing else 'received'} for order {order.number}",
+                "document_id": order.id,
+            },
+            author,
+        )
+
+
 def close(
     db: Session,
     document_id: int,
@@ -604,22 +632,49 @@ def close(
             code="document_status_changed",
         )
 
+    # Себестоимость на строках ЗАКАЗА — снимок для его собственной карточки.
+    # Накладная снимет свой при проведении; это не дублирование производного,
+    # а два снимка одного числа в одно мгновение. Убери его — и карточка
+    # заказа перестанет отвечать, во сколько обошлась отгрузка.
     for row in goods:
         product = warehouse_service.get_product(db, row.product_id, include_deleted=True)
         row.cost_minor = product.cost_minor
-        warehouse_service.add_move(
+
+    if goods and modules_service.is_enabled(db, "waybills"):
+        # К остатку ведёт ОДИН путь, и он через накладную.
+        #
+        # Прежде заказ двигал склад сам, прямым вызовом, и это стоило трёх
+        # бед разом. Первая: два пути к одному остатку — по заказу можно было
+        # выписать ещё и накладную, и товар уезжал дважды; держался запрет
+        # взаимной проверкой в коде, а не устройством. Вторая: прямой вызов
+        # шёл мимо `is_enabled(db, "warehouse")`, то есть при ВЫКЛЮЧЕННОМ
+        # складе закрытие заказа всё равно писало движения. Третья: у
+        # отгрузки не оставалось бумаги — на вопрос «по чему отдали» ответить
+        # было нечем.
+        #
+        # Проведение накладной делает всё то же самое и в том же порядке:
+        # замки по товарам, проверка нехватки, движения, снимок
+        # себестоимости, — только через один вход и с бумагой на выходе.
+        #
+        # Статус заказа сменён ВЫШЕ, до этого: иначе двое, нажавшие «закрыть»
+        # разом, успели бы выписать каждый свою накладную. Проигравший
+        # спотыкается на `take_status`, и его транзакция откатывается целиком
+        # — вместе с движениями склада, потому что транзакция одна.
+        nakladnaya = waybill_service.po_zakazu(db, order.id, author, warehouse.id)
+        waybill_service.provesti(
             db,
-            {
-                "product_id": row.product_id,
-                "kind": MOVE_OUT if outgoing else MOVE_IN,
-                "quantity": _as_text(row.quantity_milli),
-                "warehouse_id": warehouse.id,
-                "deal_id": order.deal_id,
-                "comment": f"{'shipped' if outgoing else 'received'} for order {order.number}",
-                "document_id": order.id,
-            },
+            nakladnaya.id,
             author,
+            confirm_negative=confirm_negative,
+            po_zakrytiyu_zakaza=True,
         )
+    else:
+        # Накладные выключены (или отгружать нечего — один услуги). Блок,
+        # которого нет, не может выписать бумагу: правило «выключенный блок
+        # исчезает целиком» сильнее желания единообразия. Двойной отгрузки
+        # здесь быть не может по той же причине — накладной по этому заказу
+        # не существует и завести её нечем.
+        _dvinut_sklad_naprjamuyu(db, order, goods, warehouse, outgoing, author)
 
     # Деньги — здесь, событием, а не прямым вызовом финансов: заказы обязаны
     # работать при выключенном блоке денег, а `core/modules.py` связь
@@ -681,7 +736,41 @@ def revert(db: Session, document_id: int, author: User) -> Document:
             code="document_status_changed",
         )
 
-    for move in warehouse_repo.moves_of_document(db, order.id):
+    # Возврат оформляется БУМАГОЙ, если отгрузка была оформлена бумагой.
+    #
+    # После переезда закрытия на накладную движения склада принадлежат ей, а
+    # не заказу. Перебирай мы по-прежнему движения заказа — не нашлось бы ни
+    # одного, и отмена перестала бы возвращать товар МОЛЧА, отчитавшись
+    # успехом. Это и есть тот случай, ради которого шаг переезда откладывался.
+    #
+    # Сторно, а не голые обратные движения: товар физически вернулся, и у
+    # этого события обязана быть бумага — ровно по тому же доводу, по которому
+    # проведённая накладная не правится, а исправляется обратной. Механизм
+    # берётся готовый (`waybill_service.stornirovat`), а не пишется второй раз.
+    #
+    # Проводится сразу, а не оставляется черновиком: человек нажал «отменить
+    # проведение», и товар обязан вернуться этим же нажатием. Черновик
+    # превратил бы отмену в два действия, второе из которых легко забыть — и
+    # остаток остался бы неверным до тех пор, пока кто-нибудь не вспомнит.
+    #
+    # `confirm_negative=True` сохраняет прежнее поведение: обратные движения и
+    # раньше писались без проверки нехватки. Возврат приёмки, товар из которой
+    # уже продали, уводит остаток в минус — но отказать здесь значило бы
+    # запереть человека с заказом, который нельзя ни отменить, ни исправить.
+    otgruzheno = [
+        w
+        for w in documents_repo.po_osnovaniyu(db, order.id)
+        if w.status in (STATUS_ISSUED, STATUS_CLOSED)
+    ]
+    for nakladnaya in otgruzheno:
+        storno = waybill_service.stornirovat(db, nakladnaya.id, author)
+        waybill_service.provesti(db, storno.id, author, confirm_negative=True)
+
+    # Заказы, закрытые ДО переезда, накладных не имеют: их движения лежат на
+    # самом заказе. Задним числом бумага им не выписывается — накладная с
+    # сегодняшним номером и вчерашней датой это подделка, — поэтому старый путь
+    # остаётся ровно для них. Он же работает, когда блок накладных выключен.
+    for move in [] if otgruzheno else warehouse_repo.moves_of_document(db, order.id):
         if move.kind not in (MOVE_IN, MOVE_OUT):
             continue
         warehouse_service.add_move(
