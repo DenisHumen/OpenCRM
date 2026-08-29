@@ -47,6 +47,8 @@ from core.services import (
 from database.models import Document, DocumentEvent, DocumentLine, User
 from database.models.audit import SOURCE_MANUAL
 from database.models.document import (
+    KIND_SALES_ORDER,
+    ORDER_KINDS,
     KIND_WAYBILL_IN,
     KIND_WAYBILL_OUT,
     STATUS_CANCELLED,
@@ -257,6 +259,16 @@ def remove_line(db: Session, document_id: int, line_id: int) -> None:
     documents_repo.drop_line(db, _stroka(db, waybill.id, line_id))
 
 
+def vid_po_zakazu(kind_zakaza: str) -> str:
+    """Какой накладной оформляется этот заказ.
+
+    Заказ ПОКУПАТЕЛЯ отгружается — расходной. Заказ ПОСТАВЩИКУ принимается —
+    приходной. Перепутать эти два значит двинуть склад в обратную сторону, и
+    заметить это по остатку нельзя: он сойдётся сам с собой.
+    """
+    return KIND_WAYBILL_OUT if kind_zakaza == KIND_SALES_ORDER else KIND_WAYBILL_IN
+
+
 def po_zakazu(db: Session, basis_id: int, author: User) -> Document:
     """Черновик накладной, заполненный позициями заказа.
 
@@ -266,8 +278,23 @@ def po_zakazu(db: Session, basis_id: int, author: User) -> Document:
 
     Услуги при переносе отбрасываются: их нельзя отгрузить, и в накладной они
     были бы строками, которые ничего не двигают.
+
+    **Вид накладной берётся у заказа, а не подставляется расходной.** Прежде
+    здесь стояло `KIND_WAYBILL_OUT` безусловно, и из заказа ПОСТАВЩИКУ выходила
+    бумага на отгрузку: проведи её — и товар уехал бы со склада вместо того,
+    чтобы прийти. Остаток при этом сходился бы сам с собой, а расхождение с
+    действительностью всплыло бы на инвентаризации.
+
+    Основанием принимается только ЗАКАЗ. Прежде брался любой бланк —
+    квитанция, акт, другая накладная, — и получалась накладная «по основанию»,
+    которое основанием быть не может: ни двойная отгрузка по нему не
+    сторожится, ни закрытие заказа его не видит.
     """
     basis = document_service.get(db, basis_id)
+    if basis.kind not in ORDER_KINDS:
+        raise errors.ValidationError(
+            f"Document {basis.number} is not an order", code="basis_is_not_order"
+        )
     stroki = documents_repo.lines_of(db, basis.id)
     if not stroki:
         raise errors.ValidationError("This order has no lines", code="order_is_empty")
@@ -275,7 +302,7 @@ def po_zakazu(db: Session, basis_id: int, author: User) -> Document:
     waybill = create(
         db,
         {
-            "kind": KIND_WAYBILL_OUT,
+            "kind": vid_po_zakazu(basis.kind),
             "basis_id": basis.id,
             "client_id": basis.client_id,
             "deal_id": basis.deal_id,
