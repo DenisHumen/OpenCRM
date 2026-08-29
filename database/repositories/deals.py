@@ -112,17 +112,26 @@ def search_top(
     db: Session,
     q: str | None = None,
     *,
+    page: int = 1,
     per_page: int = 6,
     only_manager_id: int | None = None,
 ) -> tuple[list[Deal], bool]:
-    """Первые несколько заявок для командной палитры — без счёта найденного.
+    """Страница заявок для командной палитры — без счёта найденного.
 
     `only_manager_id` обязателен здесь ровно так же, как в `search`: без него
     палитра стала бы самым удобным способом обойти `deals.view_others` —
     список показывает три карточки, а Ctrl+K по тому же слову все тридцать.
+    Сужение прикладывается к КАЖДОЙ странице, а не только к первой: иначе вторая
+    страница стала бы дырой в том же праве, только менее заметной.
+
+    `page` заведён по беде: палитра показывала шесть заявок и продолжения не
+    имела вовсе — «есть ещё» она говорила, а достать это «ещё» было нечем.
     """
     return page_without_total(
-        db, _search_stmt(q, only_manager_id=only_manager_id), page=1, per_page=per_page
+        db,
+        _search_stmt(q, only_manager_id=only_manager_id),
+        page=page,
+        per_page=per_page,
     )
 
 

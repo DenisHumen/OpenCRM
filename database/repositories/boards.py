@@ -42,10 +42,16 @@ def search(
 
 
 def search_top(
-    db: Session, q: str | None = None, *, per_page: int = 6
+    db: Session, q: str | None = None, *, page: int = 1, per_page: int = 6
 ) -> tuple[list[Board], bool]:
-    """Первые несколько досок для командной палитры — без счёта найденного."""
-    return page_without_total(db, _search_stmt(q), page=1, per_page=per_page)
+    """Страница досок для командной палитры — без счёта найденного.
+
+    `page` появился по беде: палитра показывала шесть досок и на этом
+    заканчивалась, а «показать ещё» ей взять было неоткуда — запрос жёстко
+    просил первую страницу. Досок под «be» было больше шести, и седьмую нельзя
+    было увидеть никак.
+    """
+    return page_without_total(db, _search_stmt(q), page=page, per_page=per_page)
 
 
 def works_count_by_board(db: Session, board_ids: list[int]) -> dict[int, int]:

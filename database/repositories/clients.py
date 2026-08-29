@@ -109,15 +109,19 @@ def search(
 
 
 def search_top(
-    db: Session, q: str | None = None, *, per_page: int = 6
+    db: Session, q: str | None = None, *, page: int = 1, per_page: int = 6
 ) -> tuple[list[Client], bool]:
-    """Первые несколько строк для командной палитры — без счёта найденного.
+    """Страница строк для командной палитры — без счёта найденного.
 
     Второй проход по таблице ради числа, которого никто не показывает, стоит
     столько же, сколько сама выборка. Вместо него — «есть ли ещё», см.
     `database/query.page_without_total`.
+
+    `page` — не украшение: без него палитра упиралась в первые шесть строк, и
+    седьмого клиента нельзя было достать оттуда ничем. «Есть ещё» она при этом
+    честно сообщала, а показать это «ещё» было нечем.
     """
-    return page_without_total(db, _search_stmt(q), page=1, per_page=per_page)
+    return page_without_total(db, _search_stmt(q), page=page, per_page=per_page)
 
 
 def find_candidates(

@@ -8,8 +8,9 @@
 
 Отсюда и состав проверок. Что заявки вообще находятся (без них палитра отвечала
 на вопрос «где мой заказ» молчанием). Что строка поиска — это строка, а не
-шаблон LIKE. Что номер страницы снаружи не приходит. И что каждая группа
-пустеет по обеим причинам сразу: выключенный блок и отсутствующее право.
+шаблон LIKE. Что выдача ДОЛИСТЫВАЕТСЯ до последней находки. И что каждая группа
+пустеет по обеим причинам сразу: выключенный блок и отсутствующее право, —
+причём на каждой странице, а не только на первой.
 
 База у тестов общая и переживает файл, поэтому роли и сотрудники убираются за
 собой, а свои записи ищутся по приметной приставке, а не по количеству строк.
@@ -33,8 +34,18 @@ STAFF = f"{API}/staff"
 #: какие из них сегодня бывают.
 EMPTY = {"items": [], "total": 0, "has_more": False}
 
-#: Сколько строк палитра показывает в одной группе (`web/api/routes/search.py`).
+#: Сколько строк в ОДНОЙ странице группы (`web/api/routes/search.py`).
+#:
+#: Именно в странице, а не всего: пределом выдачи это число было ровно один раз
+#: и стоило беды — см. `test_palitra_dolistyvaetsya_do_kazhdoy_nakhodki`.
 GROUP_LIMIT = 6
+
+#: Сколько записей заводит проверка полноты выдачи.
+#:
+#: Две полные страницы и ещё одна запись сверх них. Меньше нельзя: на
+#: `GROUP_LIMIT + 1` записи зелёным оказался бы и потолок в две страницы, а
+#: беда — это именно потолок, где бы он ни стоял.
+SKOLKO = GROUP_LIMIT * 2 + 1
 
 
 # --- вспомогательное ---------------------------------------------------------
@@ -91,6 +102,198 @@ def _deal(client: TestClient, **fields) -> dict:
 
 def _titles(found: dict, group: str = "deals") -> list[str]:
     return [item.get("title") or item.get("name") for item in found[group]["items"]]
+
+
+def _dolistat(client: TestClient, group: str, q: str, predel: int = 20) -> list[dict]:
+    """Пройти группу выдачи ДО КОНЦА — так же, как это делает «показать ещё».
+
+    Ровно тот путь, которым ходит палитра: первая страница приходит в общем
+    ответе, продолжение — отдельными запросами по номеру страницы. Потолок
+    `predel` здесь не про размер выдачи, а про зацикливание: страница, которая
+    всегда говорит «есть ещё», иначе повесила бы прогон молча.
+    """
+    sobrano: list[dict] = []
+    stranitsa = 1
+    while True:
+        otvet = client.get(f"{SEARCH}/{group}", params={"q": q, "page": stranitsa})
+        assert otvet.status_code == 200, otvet.text
+        kusok = otvet.json()
+        assert set(kusok) == {"items", "total", "has_more"}, (
+            f"продолжение группы {group} отвечает не той формой, что общий поиск: {set(kusok)}"
+        )
+        sobrano += kusok["items"]
+        if not kusok["has_more"]:
+            return sobrano
+        assert kusok["items"], (
+            f"группа {group} обещает продолжение, а страница {stranitsa} пустая — "
+            "«показать ещё» будет дописывать пустоту без конца"
+        )
+        stranitsa += 1
+        assert stranitsa <= predel, f"группа {group} не кончается: страниц больше {predel}"
+
+
+# --- выдача обязана быть полной ----------------------------------------------
+
+
+def test_palitra_dolistyvaetsya_do_kazhdoy_nakhodki(root_client, manager_client):
+    """Ради чего всё: из палитры видно ВСЕ находки, а не первые шесть.
+
+    Беда снята с боевого сайта. Запрос «be», группа «доски», ровно шесть строк
+    и подпись «↑↓ — выбор, ⏎ — открыть». Досок под «be» было больше шести, а
+    седьмую нельзя было увидеть ничем: ни прокруткой в окне, ни «показать ещё»,
+    ни отдельным запросом — продолжения в API не существовало вовсе. Шестёрка
+    была последним словом системы, и человек не знал даже, что за ней что-то
+    есть.
+
+    Проверка листает до конца и сверяет НАБОР найденного с тем, что завели, —
+    а не считает строки на первой странице. Так она краснеет на любом возврате
+    предела, а не только на возврате шестёрки: уберут продолжение — покраснеет;
+    поставят потолок на второй странице — покраснеет; начнут строки двоиться
+    или проваливаться между страницами — покраснеет тоже, потому что множество
+    не сойдётся.
+
+    Все три группы разом: предел стоял в одном общем месте, и вернуться он
+    может в любую из них поодиночке.
+    """
+    assert root_client.post(f"{API}/modules/boards", json={"enabled": True}).status_code == 200
+
+    # Приставки у групп разные: имя клиента входит в склейку заявки и доски, и
+    # общая приставка сделала бы находки одной группы находками другой — тогда
+    # проверка сверяла бы выдачу с чужим списком.
+    zavedeno: dict[str, set[int]] = {"clients": set(), "deals": set(), "boards": set()}
+
+    for number in range(SKOLKO):
+        zavedeno["clients"].add(_client_id(manager_client, f"Длстнк Клиент {number}"))
+
+    opora = _client_id(manager_client, "Длстн Опора")
+    for number in range(SKOLKO):
+        zavedeno["deals"].add(
+            _deal(manager_client, title=f"Длстнз Работа {number}", client_id=opora)["id"]
+        )
+        doska = manager_client.post(
+            f"{API}/boards", json={"title": f"Длстнд Доска {number}", "client_id": opora}
+        )
+        assert doska.status_code == 201, doska.text
+        zavedeno["boards"].add(doska.json()["id"])
+
+    zaprosy = {"clients": "Длстнк Клиент", "deals": "Длстнз Работа", "boards": "Длстнд Доска"}
+    for group, zapros in zaprosy.items():
+        # Первая страница приходит в общем ответе — с неё палитра и начинает.
+        pervaya = manager_client.get(SEARCH, params={"q": zapros}).json()[group]
+        assert len(pervaya["items"]) == GROUP_LIMIT
+        assert pervaya["has_more"] is True, (
+            f"{group}: заведено {SKOLKO} записей, показано {GROUP_LIMIT}, "
+            "а продолжения не обещано — выдача обрывается молча"
+        )
+
+        vsyo = _dolistat(manager_client, group, zapros)
+        nomera = [item["id"] for item in vsyo]
+        assert len(nomera) == len(set(nomera)), (
+            f"{group}: одна запись приехала на двух страницах — смещение считается не по тому "
+            "размеру страницы"
+        )
+        assert set(nomera) == zavedeno[group], (
+            f"{group}: долистали до {len(set(nomera))} находок из {SKOLKO} — "
+            "выдача упирается в потолок вместо того, чтобы кончиться"
+        )
+
+
+def test_prodolzhenie_sobrano_tak_zhe_kak_pervaya_stranitsa(manager_client):
+    """Первая страница общего поиска и первая страница продолжения — одно и то же.
+
+    Два входа в одни данные разъезжаются молча и в мелочах: у заявки со второй
+    страницы пропало бы имя клиента, у доски — обложка. Увидеть это можно было
+    бы только глазами и только долистав, поэтому сверяем не глазами.
+    """
+    client_id = _client_id(manager_client, "Сврк Заказчик")
+    _deal(manager_client, title="Сврк Работа", client_id=client_id)
+
+    obshchiy = manager_client.get(SEARCH, params={"q": "Сврк"}).json()["deals"]
+    otdelnaya = manager_client.get(f"{SEARCH}/deals", params={"q": "Сврк", "page": 1}).json()
+    assert otdelnaya == obshchiy, (
+        "продолжение собирает карточку не так, как общий поиск: вторая страница выдачи "
+        "будет отличаться от первой"
+    )
+
+
+def test_u_kazhdoy_gruppy_vydachi_est_prodolzhenie(root_client, manager_client):
+    """Новая группа в палитре обязана листаться с первого дня.
+
+    Иначе беда возвращается по частям: группы добавляют по одной, и та, которой
+    продолжения не завели, снова упирается в шесть строк — а прочие листаются,
+    и со стороны всё выглядит работающим.
+    """
+    assert root_client.post(f"{API}/modules/boards", json={"enabled": True}).status_code == 200
+
+    obshchiy = manager_client.get(SEARCH).json()
+    gruppy = [klyuch for klyuch in obshchiy if klyuch != "query"]
+    assert len(gruppy) >= 3, f"групп в выдаче найдено {gruppy} — проверка смотрит не туда"
+
+    for group in gruppy:
+        otvet = manager_client.get(f"{SEARCH}/{group}", params={"page": 2})
+        assert otvet.status_code == 200, (
+            f"у группы «{group}» нет продолжения: {otvet.status_code} {otvet.text}"
+        )
+        assert set(otvet.json()) == {"items", "total", "has_more"}
+
+
+def test_prodolzhenie_nesushchestvuyushchey_gruppy_otkazyvaet(manager_client):
+    """Опечатка в имени группы — отказ, а не пустая выдача.
+
+    Пустота читалась бы как «такое есть, но ничего не нашлось», и «показать
+    ещё», пристроенное не к той группе, выглядело бы как честно кончившаяся
+    выдача.
+    """
+    otvet = manager_client.get(f"{SEARCH}/skladskie-ostatki", params={"q": "что угодно"})
+    assert otvet.status_code == 404, otvet.text
+
+
+def test_nulevaya_stranitsa_prodolzheniya_ne_prokhodit(manager_client):
+    """`page = 0` дал бы `OFFSET -6`, а это для MySQL синтаксическая ошибка.
+
+    Отказ на границе, а не молчаливая подмена первой страницей: страница,
+    показанная вместо запрошенной, выглядит как работающее продолжение и
+    заканчивается тем, что «показать ещё» дописывает одно и то же по кругу.
+    """
+    for stranitsa in (0, -1):
+        otvet = manager_client.get(f"{SEARCH}/deals", params={"page": stranitsa})
+        assert otvet.status_code == 422, f"страница {stranitsa}: {otvet.status_code} {otvet.text}"
+
+
+def test_palitra_umeet_poprosit_prodolzhenie(manager_client):
+    """Ручка есть — а нажимает ли её палитра.
+
+    Проверяется по исходникам, как и прочие правила экранов
+    (`tests/test_screens.py`): собранного фронтенда в наборе нет. Правило же
+    простое и читается глазами — и ровно оно было нарушено на боевом сайте:
+    сервер честно присылал `has_more`, а палитра этот ключ не читала вовсе, и
+    выдача обрывалась на шести строках при живом продолжении в API.
+
+    Поэтому сверяются обе половины: что признак «есть ещё» вообще читается и
+    что за следующей страницей палитра ходит по адресу продолжения.
+    """
+    import pathlib
+    import re
+
+    palitra = (
+        pathlib.Path(__file__).resolve().parent.parent
+        / "web" / "frontend" / "crm" / "src" / "components" / "CommandPalette.tsx"
+    ).read_text(encoding="utf-8")
+
+    # Комментарии снимаем, и это не придирка: докстрока рядом с починкой сама
+    # называет и `has_more`, и адрес продолжения. Ищи мы по всему файлу — проверка
+    # осталась бы зелёной над кодом, из которого вынули всё, кроме объяснения,
+    # почему так сделано.
+    kod = re.sub(r"/\*.*?\*/", "", palitra, flags=re.S)
+    kod = "\n".join(re.sub(r"//.*$", "", stroka) for stroka in kod.splitlines())
+
+    assert "has_more" in kod, (
+        "палитра не читает `has_more`: сервер говорит «есть ещё», а показать это нечем"
+    )
+    assert "/search/${" in kod and "page=${" in kod, (
+        "палитра не просит следующую страницу группы — «показать ещё» ведёт в никуда"
+    )
+    assert "showMore" in kod, "в палитре нет строки «показать ещё» — нажимать не на что"
 
 
 # --- заявки в выдаче ---------------------------------------------------------
@@ -366,22 +569,37 @@ def test_protsent_v_zaprose_ishchet_protsent_a_ne_vsyo(manager_client):
     assert [item["id"] for item in literal["deals"]["items"]] == [discount["id"]]
 
 
-def test_nomer_stranitsy_snaruzhi_ne_prikhodit(manager_client, db):
-    """Отрицательного смещения здесь неоткуда взяться — и это проверяется.
+def test_nomer_stranitsy_prikhodit_tolko_v_prodolzhenie(manager_client, db):
+    """Листает выдачу продолжение группы, а общий поиск — нет. И это не мелочь.
 
     `page = 0` даёт `OFFSET -50`, а это для MySQL синтаксическая ошибка, то
-    есть пятисотка. У палитры номера
-    страницы нет вовсе — она показывает первые несколько строк, а листают на
-    своих экранах. Несуществующий параметр сторожить не надо, но проверить, что
-    его действительно нет, надо: стоит однажды его завести «для удобства», и
-    сторожить придётся заново.
+    есть пятисотка. Сторожить номер страницы надо ровно там, где он приходит, —
+    и потому важно, чтобы мест было одно.
+
+    Общий поиск отдаёт по первой странице каждой группы разом и номера не
+    берёт: один `page` на три группы означал бы страницу вторую у досок, у
+    которых нашлось двадцать, и её же у клиентов, у которых нашлось два, — то
+    есть пустоту вместо уже показанного. Продолжение (`/search/{area}`) спрашивают
+    про ОДНУ группу, там номер и живёт, там он и сторожится (`ge=1`).
+
+    Размер страницы снаружи не приходит вовсе — ни туда, ни туда. Его задаёт
+    сервер, и клиент про него не знает: узнай — и первое же расхождение дало бы
+    пропущенные или задвоенные находки, причём молча.
     """
     from web.api.routes import search as search_route
 
-    assert "page" not in inspect.signature(search_route.global_search).parameters
-    assert "per_page" not in inspect.signature(search_route.global_search).parameters
+    obshchiy = inspect.signature(search_route.global_search).parameters
+    assert "page" not in obshchiy
+    assert "per_page" not in obshchiy
 
-    # Лишний параметр в адресе ничего не меняет: FastAPI его не читает.
+    prodolzhenie = inspect.signature(search_route.search_group).parameters
+    assert "page" in prodolzhenie, (
+        "у продолжения группы нет номера страницы — листать выдачу нечем, "
+        "и палитра снова упрётся в первые строки"
+    )
+    assert "per_page" not in prodolzhenie, "размер страницы задаёт сервер, а не запрос"
+
+    # Лишний параметр в адресе общего поиска ничего не меняет: FastAPI его не читает.
     with_page = manager_client.get(SEARCH, params={"q": "Прцнт", "page": 0})
     assert with_page.status_code == 200, with_page.text
 
@@ -436,6 +654,57 @@ def test_bez_prava_na_chuzhie_nakhodyatsya_tolko_svoi(role_maker, staff_maker, m
     # У того, чьё право шире, поиск работает как работал.
     seen = manager_client.get(SEARCH, params={"q": "Сржм"}).json()
     assert {foreign["id"], mine["id"]} <= {item["id"] for item in seen["deals"]["items"]}
+
+
+def test_prodolzhenie_zakryto_temi_zhe_pravami_chto_i_pervaya_stranitsa(
+    role_maker, staff_maker, manager_client
+):
+    """Второй вход в те же данные обязан быть закрыт так же, как первый.
+
+    Иначе продолжение и есть обход доступов, только менее заметный: закрытый
+    раздел не отдаёт первую страницу — и охотно отдаёт вторую. Проверка на
+    первой странице этого не увидит никогда.
+    """
+    client_id = _client_id(manager_client, "Прдлпрв Заказчик")
+    _deal(manager_client, title="Прдлпрв Секретная работа", client_id=client_id)
+
+    role = role_maker("Только задачи, продолжение", ["tasks.view"])
+    blind = staff_maker("nodealspaging@test.local", role["id"])
+
+    for group in ("clients", "deals"):
+        for stranitsa in (1, 2):
+            otvet = blind.get(f"{SEARCH}/{group}", params={"q": "Прдлпрв", "page": stranitsa})
+            assert otvet.status_code == 200, otvet.text
+            assert otvet.json() == EMPTY, f"{group}, страница {stranitsa}: выдача не пуста"
+
+
+def test_prodolzhenie_ne_pokazyvaet_chuzhie_zayavki(role_maker, staff_maker, manager_client):
+    """«Вижу только свои» держится на КАЖДОЙ странице, а не только на первой.
+
+    Сужение приходит из прав и прикладывается к запросу, а не к показанному.
+    Приложи его лишь к первой странице — и достаточно было бы нажать «показать
+    ещё», чтобы увидеть чужие заявки вместе с именами чужих клиентов. Поэтому
+    здесь заводится больше записей, чем влезает в страницу, и листается всё до
+    конца: беда, которую ищем, живёт со второй страницы.
+    """
+    client_id = _client_id(manager_client, "Прдлсвои Заказчик")
+    chuzhie = {
+        _deal(manager_client, title=f"Прдлсвои Работа Ч{n}", client_id=client_id)["id"]
+        for n in range(GROUP_LIMIT + 1)
+    }
+
+    role = role_maker("Только свои, продолжение", ["deals.view", "deals.create"])
+    narrow = staff_maker("ownonlypaging@test.local", role["id"])
+    svoi = {
+        _deal(narrow, title=f"Прдлсвои Работа С{n}", client_id=client_id)["id"]
+        for n in range(GROUP_LIMIT + 1)
+    }
+
+    vsyo = {item["id"] for item in _dolistat(narrow, "deals", "Прдлсвои Работа")}
+    assert vsyo == svoi, "сотрудник видит не ровно свои заявки"
+    assert not (vsyo & chuzhie), (
+        "продолжение выдачи показало чужие заявки — сужение приложено только к первой странице"
+    )
 
 
 def test_summa_ne_priezzhaet_bez_prava_na_summy(role_maker, staff_maker, manager_client):
@@ -511,5 +780,16 @@ def test_gruppa_zakryta_blokom_ranshe_chem_pravom(root_client, manager_client):
         # Соседние группы при этом не задеты: блок выключается без вреда для
         # остальных, и поиск — не исключение.
         assert found["clients"]["items"]
+
+        # Продолжение группы — тот же гейт и в том же порядке. Выключенный блок
+        # обязан забирать всю выдачу, а не только её первую страницу: иначе
+        # «показать ещё» осталось бы дверью в раздел, которого нет ни в меню, ни
+        # в маршрутах.
+        for stranitsa in (1, 2):
+            dalshe = manager_client.get(
+                f"{SEARCH}/boards", params={"q": "Прдк", "page": stranitsa}
+            )
+            assert dalshe.status_code == 200, dalshe.text
+            assert dalshe.json() == EMPTY, f"страница {stranitsa} выключенного блока не пуста"
     finally:
         root_client.post(f"{API}/modules/boards", json={"enabled": True})
