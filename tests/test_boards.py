@@ -580,3 +580,33 @@ def test_publikaciya_sama_po_sebe_nichego_ne_otkryvaet(manager_client, root_clie
         rabota_v_baze = db.get(Work, rabota.json()["id"])
         vidno = share_service.media_is_public(db, rabota_v_baze.work_uid, {})
     assert vidno is False, "опубликованная доска без ссылки отдала файл наружу"
+
+
+def test_imya_klienta_odinakovo_u_chteniya_i_pravki(manager_client):
+    """Доска подписана «для такого-то» — и после правки тоже.
+
+    Редактор кладёт ответ PATCH прямо в состояние. Отдай правка форму, отличную
+    от чтения, — подпись пропадёт до перезагрузки страницы, и человек решит,
+    что клиент отвязался. Ровно это уже было с историей этапов у заявок.
+
+    Имя приходит с доской, а не ищется в справочнике клиентов: справочник
+    грузился в поле выбора первыми двумя сотнями, и у клиента за этим пределом
+    подпись показывала многоточие.
+    """
+    klient = manager_client.post(f"{API}/clients", json={"name": "Заказчик доски"}).json()
+    doska = _board(manager_client, title="Доска с подписью")
+
+    pravka = manager_client.patch(
+        f"{API}/boards/{doska['id']}", json={"client_id": klient["id"]}
+    )
+    assert pravka.status_code == 200, pravka.text
+    chtenie = manager_client.get(f"{API}/boards/{doska['id']}").json()
+
+    assert chtenie["client_name"] == "Заказчик доски", "чтение не подписало доску"
+    assert pravka.json()["client_name"] == "Заказчик доски", (
+        "правка отдала форму без имени — подпись пропадёт до перезагрузки"
+    )
+
+    # И отвязка тоже отвечает одинаково: ключ на месте, значение пустое.
+    otvyazka = manager_client.patch(f"{API}/boards/{doska['id']}", json={"client_id": None})
+    assert otvyazka.json()["client_name"] is None

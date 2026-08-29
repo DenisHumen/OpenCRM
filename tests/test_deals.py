@@ -397,3 +397,28 @@ def test_po_klientu_ishchetsya_imya_a_ne_vsya_ego_kartochka(manager_client, db):
     # А сам клиент по этим словам находится: у него склейка полная.
     found, _ = clients_repo.search(db, q="Ммфрм")
     assert client["id"] in {c.id for c in found}
+
+
+def test_kartochka_neset_adres_i_telefon_klienta(manager_client):
+    """Связь с клиентом приезжает вместе с заявкой, а не выуживается из списка.
+
+    Карточка берёт адрес для письма и номер для звонка прямо отсюда. Прежде
+    адрес выбирался из справочника клиентов, загруженного в поле выбора первыми
+    двумя сотнями: у клиента за этим пределом форма отправки открывалась с
+    пустым «кому», и узнавали об этом в тот момент, когда письмо уже пишут.
+
+    Раз экран на эти поля опирается, они закрепляются здесь: молча пропасть им
+    нельзя.
+    """
+    klient = manager_client.post(
+        f"{API}/clients",
+        json={"name": "Связной", "email": "svyaznoy@example.com", "phone": "+7 900 111"},
+    ).json()
+    zayavka = manager_client.post(
+        DEALS, json={"title": "Письмо и звонок", "client_id": klient["id"]}
+    ).json()
+
+    kartochka = manager_client.get(f"{DEALS}/{zayavka['id']}").json()
+    assert kartochka["client_name"] == "Связной"
+    assert kartochka["client_email"] == "svyaznoy@example.com", "письму некуда уйти"
+    assert kartochka["client_phone"] == "+7 900 111", "звонить не по чему"

@@ -2,14 +2,14 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 
 import { Icon } from "../components/Icon";
-import { Chip, EmptyState, LoadFailed, Modal, ScreenLoading } from "../components/ui";
+import { VyborKlienta } from "../components/VyborKlienta";
+import { Chip, EmptyState, Modal, ScreenLoading } from "../components/ui";
 import { api, ApiError } from "../lib/api";
 import { useApp } from "../lib/app";
 import { useDebounced } from "../lib/debounce";
 import { useFailure } from "../lib/failure";
 import { useGuard } from "../lib/guard";
 import { formatDate } from "../lib/format";
-import { useReference } from "../lib/reference";
 import { DOC_STATUSES, statusLabel, statusVariant } from "../lib/documents";
 
 export function Documents() {
@@ -210,7 +210,10 @@ export function NewDocumentModal({
   const { t, user, toastError } = useApp();
   // Список клиентов формы: `null` — не приехал. Пустой выпадающий список молча
   // превращал бы бланк для клиента из справочника в бланк «для прохожего».
-  const clients = useReference<any>(clientId ? null : "/clients?per_page=200");
+  // Имя выбранного клиента держим отдельно от бланка: в самом бланке
+  // `client_name` — это имя человека БЕЗ карточки, и попади туда имя
+  // выбранного, оно уехало бы на сервер вместе с его же номером.
+  const [imya_klienta, setImyaKlienta] = useState("");
   // Засов, а не флаг: бланк получает номер, и второй бланк на ту же вещь —
   // это вторая бумага с другим номером. На руках у клиента останется одна, а в
   // системе будут висеть обе, и закроют потом не ту. Отпускаем только на
@@ -262,17 +265,15 @@ export function NewDocumentModal({
           {!clientId && (
             <div className="field">
               <label className="label">{t("client")}</label>
-              <select className="input" value={form.client_id} onChange={set("client_id")}>
-                <option value="">—</option>
-                {(clients.items ?? []).map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-              </select>
-              {clients.failure !== null && (
-                <LoadFailed error={clients.failure} onRetry={clients.reload} />
-              )}
+              <VyborKlienta
+                value={form.client_id ? Number(form.client_id) : null}
+                imya={imya_klienta || null}
+                pustoy
+                onPick={(kto, imya) => {
+                  setImyaKlienta(imya ?? "");
+                  setForm((f) => ({ ...f, client_id: kto ? String(kto) : "" }));
+                }}
+              />
             </div>
           )}
           {walkIn && (

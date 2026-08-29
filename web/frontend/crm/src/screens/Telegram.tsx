@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { Icon } from "../components/Icon";
+import { VyborKlienta } from "../components/VyborKlienta";
 import { Avatar, EmptyState, ScreenLoading } from "../components/ui";
 import { api } from "../lib/api";
 import { copyText } from "../lib/clipboard";
@@ -226,9 +227,6 @@ export function Telegram() {
   // Имя со словом `Guard` — сторож `test_screens.py` ищет засов по имени.
   const kartochkaGuard = useGuard();
   const stages = useReference<any>("/pipeline/stages");
-  // Справочник клиентов для ручной привязки. Через общий крючок, как в
-  // редакторе доски: отказ здесь не должен выглядеть как «клиентов нет».
-  const klienty = useReference<any>("/clients?per_page=200");
   // Шаблоны сообщений уже сделаны для других каналов — здесь их просто
   // подключаем. Заводить свои значило бы завести ВТОРОЕ место, где живут
   // типовые ответы, и разойтись с первым на первой же правке.
@@ -1272,25 +1270,16 @@ export function Telegram() {
               {privyazka && (
                 <label className="tg-link">
                   <span>{t("tgClient")}</span>
-                  <select
-                    value={otkrytyy.client_id ?? ""}
-                    onChange={(e) => {
-                      void privyazat(e.target.value ? Number(e.target.value) : null);
+                  <VyborKlienta
+                    value={otkrytyy.client_id ?? null}
+                    imya={delo?.name ?? null}
+                    pustoy
+                    pustoyPodpis={t("tgUnlinked")}
+                    onPick={(kto) => {
+                      void privyazat(kto);
                       setPrivyazka(false);
                     }}
-                  >
-                    <option value="">{t("tgUnlinked")}</option>
-                    {klienty.failure != null && (
-                      <option value="" disabled>
-                        {t("loadFailed")}
-                      </option>
-                    )}
-                    {(klienty.items ?? []).map((klient: any) => (
-                      <option key={klient.id} value={klient.id}>
-                        {klient.name}
-                      </option>
-                    ))}
-                  </select>
+                  />
                 </label>
               )}
             </header>

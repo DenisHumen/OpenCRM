@@ -5,6 +5,7 @@ import { DealStock } from "../components/DealStock";
 import { CallButton, CallsPanel } from "../components/CallsPanel";
 import { Feed } from "../components/Feed";
 import { Icon } from "../components/Icon";
+import { VyborKlienta } from "../components/VyborKlienta";
 import { Chip, ConfirmModal, LoadFailed, Modal, ScreenLoading } from "../components/ui";
 import { api, ApiError } from "../lib/api";
 import { useApp } from "../lib/app";
@@ -93,7 +94,6 @@ export function DealCard() {
   // или права нет, и это не отказ.
   const stages = useReference<Stage>("/pipeline/stages");
   const people = useReference<any>("/people");
-  const clients = useReference<any>("/clients?per_page=200");
   const companies = useReference<any>(hasCompanies ? "/companies" : null);
   const docs = useReference<any>(hasDocuments ? `/documents?deal_id=${id}` : null);
   const tasks = useReference<any>(hasTasks ? `/tasks?deal_id=${id}` : null);
@@ -108,10 +108,10 @@ export function DealCard() {
   if (!deal) return <ScreenLoading error={failure} onRetry={() => void load()} />;
 
   const currency: string = deal.currency || "USD";
-  // Адрес берём из уже загруженного списка клиентов: отдельный запрос ради
-  // одной строки в форме отправки — лишний круг к серверу на каждой карточке.
-  const dealClientEmail: string =
-    (clients.items ?? []).find((c) => c.id === deal.client_id)?.email || "";
+  // Адрес приходит вместе с заявкой. Прежде он выуживался из справочника,
+  // загруженного в поле выбора первыми двумя сотнями, — и у клиента за этим
+  // пределом «кому» оказывалось пустым.
+  const dealClientEmail: string = deal.client_email || "";
   const stage: Stage | undefined = (stages.items ?? []).find((s) => s.key === deal.stage);
   const overdue =
     deal.due_at && !deal.closed_at && new Date(deal.due_at) < new Date();
@@ -279,18 +279,11 @@ export function DealCard() {
           </div>
           <div className="field">
             <label className="label">{t("client")}</label>
-            <select
-              className="input"
+            <VyborKlienta
               value={deal.client_id}
-              onChange={(e) => void patch({ client_id: Number(e.target.value) })}
-            >
-              {(clients.items ?? []).map((c) => (
-                <option key={c.id} value={c.id}>{c.name}</option>
-              ))}
-            </select>
-            {clients.failure !== null && (
-              <LoadFailed error={clients.failure} onRetry={clients.reload} />
-            )}
+              imya={deal.client_name}
+              onPick={(kto) => kto !== null && void patch({ client_id: kto })}
+            />
           </div>
           {/* Спрашиваем, только когда есть из чего выбирать. У большинства
               фирма одна, и поле с единственным вариантом — вопрос ради ответа,
