@@ -54,10 +54,27 @@ export function Clients() {
           <h1 className="page-title">{t("clients")}</h1>
           <div className="page-sub">{t("clientsSub", { total: data.total })}</div>
         </div>
-        <button className="btn btn-primary" onClick={() => setShowNew(true)}>
-          <Icon name="plus" stroke={2} />
-          {t("newClient")}
-        </button>
+        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+          {/* Скачивание — работа браузера: он сам покажет ход, положит файл в
+              «Загрузки» и возьмёт имя из Content-Disposition. Тянуть файл в
+              память и собирать Blob значило бы делать всё это руками и хуже.
+              Тот же приём, что в отчётах.
+
+              Отбор уезжает В ССЫЛКЕ: файл обязан содержать то, что человек
+              сейчас видит. Выгрузка «всего списка» с открытым поиском — это
+              файл, которого он не просил, и понял бы он это, только открыв. */}
+          <a
+            className="btn"
+            href={`/api/v1/clients/export.csv?search=${encodeURIComponent(search)}`}
+          >
+            <Icon name="download" size={13} />
+            {t("exportCsv")}
+          </a>
+          <button className="btn btn-primary" onClick={() => setShowNew(true)}>
+            <Icon name="plus" stroke={2} />
+            {t("newClient")}
+          </button>
+        </div>
       </div>
 
       <div style={{ display: "flex", gap: 10, marginBottom: 16 }}>

@@ -6,13 +6,20 @@ from sqlalchemy.orm import Session
 from config.settings import get_settings
 from core import exceptions as errors
 from core.security import tokens
-from core.services import audit_service, media_service, settings_service, storage_service
+from core.services import (
+    audit_service,
+    media_service,
+    report_service,
+    settings_service,
+    storage_service,
+)
 from core.utils import normalize_phone, now_utc
 from database.models import Client, ClientFile, ClientNote, User
 from database.models.audit import SOURCE_MANUAL
 from database.models.client import MAX_SOURCE, NOTE_KINDS, SYSTEM_NOTE_KINDS
 from database.models.user import ROLE_ROOT
 from database.repositories import clients as clients_repo
+from database.repositories import users as users_repo
 
 # Внутренние документы клиентов: расширения, которые принимаем.
 ALLOWED_CLIENT_FILE_EXTS = {
@@ -20,6 +27,70 @@ ALLOWED_CLIENT_FILE_EXTS = {
     "zip", "rar", "7z", "jpg", "jpeg", "png", "webp", "gif", "svg", "psd",
     "ai", "fig", "sketch", "mp4", "webm", "mov",
 }
+
+
+#: Сколько строк отдаём одной выгрузкой.
+#:
+#: Не круглое число ради круглого: большой ответ занимает слот обработчика на
+#: всё время отдачи — та самая форма, которой 24 августа положили сервер
+#: (разбор — в `docs/08-deployment.md`). Десять тысяч строк это около двух
+#: мегабайт и доли секунды, то есть заведомо ниже порога, за которым выгрузка
+#: начинает мешать работать остальным.
+#:
+#: Больше — не молчаливое обрезание, а честный отказ: файл, в котором тихо
+#: недостаёт половины клиентов, хуже отсутствующего файла. Тем, кому нужно
+#: больше, есть чем сузить отбор — он тот же, что на экране.
+PREDEL_VYGRUZKI = 10_000
+
+
+def vygruzka_csv(
+    db: Session,
+    q: str | None = None,
+    tag: str | None = None,
+    manager_id: int | None = None,
+) -> bytes:
+    """Список клиентов файлом — тем же отбором, что показан на экране.
+
+    Ответственный подписывается ИМЕНЕМ, а не номером: `manager_id=7` в таблице
+    Excel не отвечает ни на один вопрос, ради которого выгрузку и открывают.
+    Имена берутся одной пачкой — запрос на строку превратил бы выгрузку в
+    десять тысяч обращений к базе.
+    """
+    klienty, est_eshchyo = clients_repo.dlya_vygruzki(
+        db, q=q, tag=tag, manager_id=manager_id, predel=PREDEL_VYGRUZKI
+    )
+    if est_eshchyo:
+        raise errors.ValidationError(
+            f"Too many clients to export at once (limit {PREDEL_VYGRUZKI}); "
+            "narrow the filter",
+            code="export_too_large",
+        )
+
+    imena = {
+        person.id: person.name
+        for person in users_repo.get_many(
+            db, [c.manager_id for c in klienty if c.manager_id]
+        )
+    }
+    stroki = [
+        [
+            c.name,
+            c.company or "",
+            c.phone or "",
+            c.email or "",
+            c.messenger or "",
+            ", ".join(x for x in c.tags.split(",") if x),
+            c.source or "",
+            imena.get(c.manager_id, ""),
+            c.created_at.strftime("%Y-%m-%d") if c.created_at else "",
+        ]
+        for c in klienty
+    ]
+    return report_service.to_csv(
+        stroki,
+        ["Имя", "Компания", "Телефон", "Почта", "Мессенджер", "Метки",
+         "Источник", "Ответственный", "Заведён"],
+    )
 
 
 def get_client(db: Session, client_id: int, include_deleted: bool = False) -> Client:

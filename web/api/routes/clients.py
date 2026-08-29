@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Depends, Query, UploadFile
+from datetime import date
+
+from fastapi import APIRouter, Depends, Query, Response, UploadFile
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
@@ -39,6 +41,44 @@ def list_clients(
         db, q=search, tag=tag, manager_id=manager_id, page=page, per_page=per_page
     )
     return schemas.paginated([schemas.client_out(c) for c in items], total, page, per_page)
+
+
+@router.get("/export.csv")
+def export_clients(
+    search: str | None = Query(default=None, max_length=MAX_SEARCH),
+    tag: str | None = None,
+    manager_id: int | None = None,
+    _: User = Depends(require_perm("clients", "view")),
+    db: Session = Depends(get_db),
+):
+    """Список клиентов файлом. Отбор — тот же, что у списка на экране.
+
+    Право то же, что на просмотр, и это не послабление: выгрузка отдаёт ровно
+    те карточки, которые человек и так видит. Заведи ей своё право — и
+    получилось бы, что видеть можно, а сохранить нельзя; обойти это удалось бы
+    выделением мышью.
+
+    Отдельным адресом с расширением, а не флагом `?format=csv` у списка: у
+    списка ответ страничный и в JSON, здесь — файл целиком. Один маршрут на
+    два разных ответа заставил бы обе половины объяснять, какие поля она
+    сегодня читает, а браузер — гадать, скачивать или показывать.
+    """
+    content = client_service.vygruzka_csv(
+        db, q=search, tag=tag, manager_id=manager_id
+    )
+    # Имя с датой: в папке «Загрузки» через месяц лежит пять выгрузок, и
+    # «clients.csv (3)» не отвечает, какая из них свежая.
+    imya = f"clients-{date.today().isoformat()}.csv"
+    return Response(
+        content=content,
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="{imya}"',
+            # Список клиентов меняется каждый день; кэш браузера отдал бы
+            # вчерашний файл по той же ссылке.
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 @router.post("", status_code=201)

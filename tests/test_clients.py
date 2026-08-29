@@ -1,4 +1,14 @@
+import itertools
+
 from tests.conftest import API
+
+_schyot = itertools.count(1)
+
+
+def uniq() -> str:
+    """Своя метка на каждую проверку: набор гоняется в обоих порядках, и
+    оставленные соседом клиенты не должны попадаться на глаза."""
+    return f"{next(_schyot):05d}"
 
 
 def _create(client, name="Иван Петров", **extra):
@@ -217,3 +227,72 @@ def test_svg_klienta_chistitsya_pered_zapisyu(manager_client):
     assert zagruzka.json()["size_bytes"] == len(skachano), (
         "в базе записан размер ДО очистки"
     )
+
+
+# --- выгрузка списка клиентов -------------------------------------------------
+
+
+def test_vygruzka_otdayot_to_zhe_chto_i_ekran(manager_client):
+    """Файл обязан содержать ровно то, что показывает список.
+
+    Выгрузка, собранная своим отбором, однажды отдала бы не то, что человек
+    видит на экране, — и заметить это можно было бы только сверкой двух
+    файлов. Поэтому проверяется ПАРА: что нашлось по метке на экране, то и
+    лежит в файле.
+    """
+    metka = f"vygruzka{uniq()}"
+    svoi = _create(manager_client, name=f"Клиент выгрузки {metka}", tags=[metka])["id"]
+    _create(manager_client, name=f"Посторонний {metka}-нет")
+
+    otvet = manager_client.get(f"{API}/clients/export.csv?tag={metka}")
+    assert otvet.status_code == 200, otvet.text
+    assert otvet.headers["content-type"].startswith("text/csv")
+    assert "attachment" in otvet.headers["content-disposition"]
+
+    # BOM — не придирка: без него Excel открывает файл в системной кодировке,
+    # и кириллица превращается в кракозябры при верном содержимом.
+    assert otvet.content.startswith(b"\xef\xbb\xbf"), "файл без метки UTF-8 — Excel покажет кракозябры"
+    tekst = otvet.content.decode("utf-8-sig")
+    assert f"Клиент выгрузки {metka}" in tekst
+    assert f"Посторонний {metka}-нет" not in tekst, "в файл попал клиент мимо отбора"
+
+    # Отбор экрана и отбор файла — одни и те же строки, а не «похожие».
+    na_ekrane = manager_client.get(f"{API}/clients?tag={metka}").json()
+    assert na_ekrane["total"] == len([s for s in tekst.splitlines()[1:] if s.strip()])
+    assert svoi
+
+
+def test_vygruzka_podpisyvaet_otvetstvennogo_imenem(manager_client, root_client):
+    """`manager_id=7` в таблице Excel не отвечает ни на один вопрос.
+
+    Номер в выгрузке означает, что человек пойдёт сверять его с другим
+    экраном, — то есть выгрузка не заменяет работу, а добавляет её.
+    """
+    metka = f"otvetstvennyy{uniq()}"
+    ya = root_client.get(f"{API}/auth/me").json()
+    _create(manager_client, name=f"С ответственным {metka}", tags=[metka],
+            manager_id=ya["id"])
+    tekst = manager_client.get(f"{API}/clients/export.csv?tag={metka}").content.decode("utf-8-sig")
+    assert ya["name"] in tekst, "ответственный подписан номером, а не именем: " + tekst
+
+
+def test_slishkom_bolshaya_vygruzka_otkazyvaet_a_ne_obrezaet(manager_client, monkeypatch):
+    """Молчаливое обрезание хуже отказа.
+
+    Файл, в котором тихо недостаёт половины клиентов, выглядит полным: ни
+    строки о том, что часть осталась за краем. Человек уносит его в работу и
+    обнаруживает пропажу тогда, когда обзвонил всех «оставшихся».
+
+    Предел выкручивается в единицу, а не заводятся десять тысяч клиентов:
+    проверяется правило, а не терпение базы.
+    """
+    from core.services import client_service
+
+    metka = f"predel{uniq()}"
+    for nomer in range(2):
+        _create(manager_client, name=f"Много {metka} {nomer}", tags=[metka])
+    monkeypatch.setattr(client_service, "PREDEL_VYGRUZKI", 1)
+
+    otvet = manager_client.get(f"{API}/clients/export.csv?tag={metka}")
+    assert otvet.status_code == 422, "выгрузка молча обрезалась"
+    assert otvet.json()["error"]["code"] == "export_too_large"
