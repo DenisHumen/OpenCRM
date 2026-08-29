@@ -1452,3 +1452,30 @@ def test_skorost_i_ostatok_ne_vydumyvayutsya():
     ekran = (SCREENS / "screens" / "BoardEditor.tsx").read_text(encoding="utf-8")
     assert "z.skorost > 0" in ekran, "скорость показывается, даже когда её нет"
     assert "z.ostalos !== null" in ekran, "остаток показывается, даже когда его нет"
+
+
+def test_kolco_fokusa_est_u_vsego_klavishnogo():
+    """Идущий по интерфейсу табом обязан видеть, где стоит.
+
+    Правило `:focus-visible` было ровно одно — у выпадающего списка. У полей
+    при фокусе менялся только цвет рамки (один пиксель, взглядом не поймать), у
+    кнопок и карточек-ссылок не менялось ничего. `docs/05-crm-design.md` называл
+    это известным пробелом.
+
+    Проверяется отбор по ЭЛЕМЕНТАМ, а не по классам: новая кнопка на новом
+    экране должна накрываться сама, без правки этого файла. И `outline`, а не
+    тень: тень сбрасывается любым компонентным правилом с собственной тенью, и
+    кольцо пропадало бы местами — то есть тем самым способом, каким такие вещи
+    ломаются молча.
+    """
+    styles = (SCREENS / "styles.css").read_text(encoding="utf-8")
+    for element in ("button", "input", "textarea", "a", "[tabindex]"):
+        assert f"{element}:focus-visible" in styles, (
+            f"у `{element}` нет кольца фокуса — с клавиатуры не видно, где стоишь"
+        )
+    pravilo = styles[styles.index("[tabindex]:focus-visible"):]
+    pravilo = pravilo[: pravilo.index("}")]
+    assert "outline:" in pravilo, (
+        "кольцо сделано тенью — её сбросит первое же компонентное правило со "
+        "своей тенью, и фокус пропадёт местами: " + pravilo
+    )
