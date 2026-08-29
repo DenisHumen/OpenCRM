@@ -108,6 +108,32 @@ def search(
     return page_of(db, stmt, page=page, per_page=per_page)
 
 
+def dlya_vygruzki(
+    db: Session,
+    q: str | None = None,
+    tag: str | None = None,
+    manager_id: int | None = None,
+    *,
+    predel: int,
+) -> tuple[list[Client], bool]:
+    """Все найденные клиенты для выгрузки — одним куском, но не безгранично.
+
+    Тот же отбор, что у списка (`_search_stmt`), и это главное: выгрузка,
+    собранная своим запросом, однажды отдала бы не то, что человек видит на
+    экране, — и заметить это можно было бы только сверкой двух файлов.
+
+    Читаем на одну строку БОЛЬШЕ предела и отвечаем, была ли она. Считать
+    отдельным `COUNT(*)` значит пройти таблицу дважды ради числа, которое
+    нужно только для ответа «да/нет».
+
+    Порядок — по имени: файл открывают глазами, и алфавит там полезнее, чем
+    порядок заведения.
+    """
+    stmt = _search_stmt(q, tag, manager_id).order_by(Client.name).limit(predel + 1)
+    najdeno = list(db.scalars(stmt))
+    return najdeno[:predel], len(najdeno) > predel
+
+
 def search_top(
     db: Session, q: str | None = None, *, page: int = 1, per_page: int = 6
 ) -> tuple[list[Client], bool]:
