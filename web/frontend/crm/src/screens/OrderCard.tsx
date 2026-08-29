@@ -138,6 +138,28 @@ export function OrderCard() {
         </div>
       </div>
 
+      {/* Бумаги, выписанные по этому заказу. Закрытие выписывает накладную, и
+          не показать КАКУЮ значит оставить человека искать её глазами по
+          всему списку накладных.
+
+          Ключа нет вовсе, когда блок накладных выключен, — тогда и строки
+          нет: выключенный блок исчезает целиком, включая упоминания о себе.
+          Пустой массив у заказа, закрытого до переезда, — тоже молчание:
+          обещать бумагу, которой нет, хуже, чем не обещать. */}
+      {order.waybills && order.waybills.length > 0 && (
+        <div className="card" style={{ padding: "10px 14px", marginBottom: 16 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <Icon name="receipt" size={14} />
+            <span className="page-sub" style={{ marginTop: 0 }}>{t("orderWaybills")}</span>
+            {order.waybills.map((w) => (
+              <Link key={w.id} className="chip" to={`/waybills/${w.id}`}>
+                {w.number}
+              </Link>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="card" style={{ overflow: "hidden", marginBottom: 16 }}>
         <div className="list-header">
           <span style={{ flex: 1 }}>{t("orderLineName")}</span>

@@ -73,6 +73,7 @@ def list_waybills(
     status: str | None = None,
     client_id: int | None = None,
     deal_id: int | None = None,
+    basis_id: int | None = None,
     page: int = Query(default=1, ge=1),
     per_page: int = Query(default=50, ge=1, le=200),
     user: User = Depends(require_perm("waybills", "view")),
@@ -81,7 +82,7 @@ def list_waybills(
     kinds = (kind,) if kind in WAYBILL_KINDS else WAYBILL_KINDS
     items, total = documents_repo.search(
         db, q=search, status=status, client_id=client_id, deal_id=deal_id,
-        kinds=kinds, page=page, per_page=per_page,
+        basis_id=basis_id, kinds=kinds, page=page, per_page=per_page,
     )
     # Строки — одним запросом на страницу, а не запросом на строку списка: сумма
     # накладной складывается из них, и без них список молчит о деньгах.

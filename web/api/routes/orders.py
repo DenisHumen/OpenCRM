@@ -13,10 +13,16 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from core.services import codes, document_service, order_service, permissions_service
+from core.services import (
+    codes,
+    document_service,
+    modules_service,
+    order_service,
+    permissions_service,
+)
 from core.services import settings_service
 from database.models import User
-from database.models.document import DOCUMENT_LOCALES, ORDER_KINDS
+from database.models.document import DOCUMENT_LOCALES, ORDER_KINDS, WAYBILL_KINDS
 from database.repositories import documents as documents_repo
 from web.api import schemas
 from web.api.deps import MAX_SEARCH, get_db, require_module, require_perm
@@ -133,11 +139,36 @@ def get_order(
     db: Session = Depends(get_db),
 ):
     order = order_service.get(db, order_id)
-    return schemas.order_out(
+    data = schemas.order_out(
         order,
         order_service.lines(db, order.id),
         amounts=permissions_service.sees_amounts(db, user, "orders"),
     )
+    # Бумаги, выписанные по этому заказу. Закрытие теперь выписывает
+    # накладную, и человек обязан видеть КАКУЮ — иначе бумага есть, а найти
+    # её можно только глазами по всему списку накладных.
+    #
+    # Пусто у заказов, закрытых до переезда: задним числом накладные им не
+    # выписываются, и показывать выдуманный номер вместо честной пустоты
+    # нельзя.
+    #
+    # При выключенном блоке накладных списка нет вовсе — не «пустой», а
+    # именно нет: выключенный блок исчезает целиком, включая упоминания о
+    # себе в чужих ответах.
+    if modules_service.is_enabled(db, "waybills"):
+        bumagi, _vsego = documents_repo.search(
+            db, basis_id=order.id, kinds=WAYBILL_KINDS, page=1, per_page=50
+        )
+        data["waybills"] = [
+            {
+                "id": w.id,
+                "number": w.number,
+                "kind": w.kind,
+                "status": w.status,
+            }
+            for w in bumagi
+        ]
+    return data
 
 
 @router.post("/{order_id}/lines", status_code=201)

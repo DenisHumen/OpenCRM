@@ -269,7 +269,9 @@ def vid_po_zakazu(kind_zakaza: str) -> str:
     return KIND_WAYBILL_OUT if kind_zakaza == KIND_SALES_ORDER else KIND_WAYBILL_IN
 
 
-def po_zakazu(db: Session, basis_id: int, author: User) -> Document:
+def po_zakazu(
+    db: Session, basis_id: int, author: User, warehouse_id: int | None = None
+) -> Document:
     """Черновик накладной, заполненный позициями заказа.
 
     Кладовщику незачем перебивать руками то, что уже набрано в заказе, — а
@@ -306,6 +308,10 @@ def po_zakazu(db: Session, basis_id: int, author: User) -> Document:
             "basis_id": basis.id,
             "client_id": basis.client_id,
             "deal_id": basis.deal_id,
+            # Склад приходит от вызывающего: закрытие заказа знает, с какого
+            # склада отгружают, а молча подставленный основной однажды снимет
+            # деталь не оттуда, где её взяли.
+            "warehouse_id": warehouse_id,
         },
         author,
     )
@@ -337,6 +343,8 @@ def provesti(
     document_id: int,
     author: User,
     confirm_negative: bool = False,
+    *,
+    po_zakrytiyu_zakaza: bool = False,
 ) -> Document:
     """Провести накладную: товар уехал, остаток обязан упасть.
 
@@ -362,7 +370,17 @@ def provesti(
         # обнаружить это, когда клиент приедет за товаром.
         raise errors.ValidationError("This waybill has no lines", code="waybill_is_empty")
 
-    _proverit_dvoynuyu_otgruzku(db, waybill)
+    if not po_zakrytiyu_zakaza:
+        # Обычный путь: накладную по закрытому заказу проводить нельзя —
+        # товар уехал бы дважды. Но когда накладную выписывает САМО закрытие
+        # заказа, запрет сработал бы на своей же бумаге: статус заказа к
+        # этому мгновению уже сменён (иначе двое, нажавшие разом, отгрузили
+        # бы каждый своей накладной).
+        #
+        # Флаг именованный и только по ключевому слову: позиционным его
+        # однажды передали бы вместо `confirm_negative`, и запрет на двойную
+        # отгрузку снялся бы молча.
+        _proverit_dvoynuyu_otgruzku(db, waybill)
 
     ishodyashchaya = waybill.kind == KIND_WAYBILL_OUT
     sklad_vklyuchen = modules_service.is_enabled(db, "warehouse")
