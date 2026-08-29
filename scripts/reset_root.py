@@ -41,6 +41,11 @@ def main() -> int:
     parser.add_argument("--email", help="новый email для входа")
     parser.add_argument("--password", help="новый пароль (без флага — спросит скрыто)")
     parser.add_argument(
+        "--password-stdin",
+        action="store_true",
+        help="взять пароль первой строкой стандартного ввода (не виден в ps)",
+    )
+    parser.add_argument(
         "--from-env",
         action="store_true",
         help="взять email и пароль из OPENCRM_ROOT_EMAIL / OPENCRM_ROOT_PASSWORD",
@@ -73,7 +78,23 @@ def main() -> int:
         else:
             email = args.email or (root.email if root else None)
             password = args.password
-            if not password:
+            if args.password_stdin:
+                # Со стандартного ввода, а НЕ аргументом. Аргументы видны в
+                # `ps` любому пользователю машины (/proc/<pid>/cmdline читается
+                # всеми) и оседают в `docker inspect`. Пароль владельца системы
+                # — последнее, что стоит там оставлять.
+                #
+                # Правило в проекте не новое, просто сюда не дошло: так уже
+                # заведено у пароля наблюдателя базы (`grant_db_exporter`) и у
+                # пароля панели (`monitoring password`), и в обоих местах
+                # рядом записано, почему.
+                password = sys.stdin.readline().rstrip(chr(10)).rstrip(chr(13))
+            elif not password:
+                # `elif`, а не второй `if`, и это не стиль. С обычным `if`
+                # пустой ввод проваливался сюда, и скрипт уходил спрашивать
+                # пароль С ТЕРМИНАЛА — которого при обновлении нет, и он висел
+                # бы вечно. Поймано собственной проверкой: она не покраснела, а
+                # ЗАВИСЛА на две минуты.
                 password = getpass.getpass("Новый пароль root: ")
                 if password != getpass.getpass("Повторите пароль: "):
                     print("Пароли не совпадают.", file=sys.stderr)

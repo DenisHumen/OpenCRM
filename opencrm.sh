@@ -2649,7 +2649,17 @@ cmd_password() {
         _password=$(gen_secret 20)
         printf '    Сгенерирован: %s%s%s\n' "$B" "$_password" "$R"
     fi
-    run_painted compose exec -T app python scripts/reset_root.py --email "$_email" --password "$_password"
+    # Пароль уходит СТАНДАРТНЫМ ВВОДОМ, а не аргументом. Аргументы видны в
+    # `ps` любому пользователю машины (/proc/<pid>/cmdline читается всеми) и
+    # оседают в `docker inspect`. Пароль владельца системы — последнее, что
+    # стоит там оставлять.
+    #
+    # Правило в этом файле записано уже дважды — у пароля наблюдателя базы
+    # (`grant_db_exporter`) и у пароля панели (`monitoring password`), — и оба
+    # раза с объяснением. Сюда оно просто не дошло.
+    #
+    # `run_painted` стандартный ввод не трогает, конвейер до него доходит.
+    printf '%s\n' "$_password" | run_painted compose exec -T app python scripts/reset_root.py --email "$_email" --password-stdin
     ok "$(tr_ "пароль изменён" "password changed")"
 }
 

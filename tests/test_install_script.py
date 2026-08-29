@@ -732,3 +732,78 @@ def test_autoupdate_ne_vypuskaet_okruzhenie_naruzhu(tmp_path):
         "autoupdate вытолкнул OPENCRM_HOME наружу: " + repr(gotovo.stdout)
         + ". Следующий в этом же запуске `compose up -d` поднимет стек на чужих томах."
     )
+
+
+def test_parol_administratora_ne_uezzhaet_v_argumenty():
+    """Пароль владельца системы не должен попадать в командную строку.
+
+    Аргументы видны в `ps` ЛЮБОМУ пользователю машины: `/proc/<pid>/cmdline`
+    читается всеми, — и оседают в `docker inspect`. Пароль root-аккаунта CRM
+    там утекал всякому, кто в эту минуту оказался на сервере, и всякому
+    процессу, снимающему `ps` в цикле.
+
+    Правило в этом файле записано дважды и оба раза с объяснением — у пароля
+    наблюдателя базы и у пароля панели. Сюда оно просто не дошло, и проверка
+    стоит затем, чтобы не «дошло обратно».
+    """
+    text = source()
+    telo = text[text.index("cmd_password() {"):]
+    telo = telo[: telo.index(chr(10) + "}")]
+    assert "--password-stdin" in telo, "пароль снова уходит не через стандартный ввод"
+    assert not re.search(r"--password[ =]\"?\$", telo), (
+        "пароль подставляется в аргументы команды: " + telo
+    )
+
+
+def _reset_root_so_vvodom(vvod: str) -> str:
+    """Гоняет `reset_root.py --password-stdin` с готовым вводом, отдаёт вывод."""
+    korenn = Path(__file__).resolve().parent.parent
+    gotovo = subprocess.run(
+        # `--email` обязателен: без него скрипт отказывает РАНЬШЕ, чем дойдёт до
+        # пароля, и проверка мерила бы не то.
+        [
+            sys.executable,
+            str(korenn / "scripts" / "reset_root.py"),
+            "--email",
+            "proba-stdin@opencrm.test",
+            "--password-stdin",
+        ],
+        input=vvod,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        cwd=str(korenn),
+        timeout=120,
+    )
+    return gotovo.stdout + gotovo.stderr
+
+
+def test_pustoy_vvod_ne_uvodit_v_terminal():
+    """Пустой ввод обязан отказать словами, а не спрашивать пароль с терминала.
+
+    Ровно этим кончилась первая редакция правки: `if` вместо `elif`, и пустой
+    ввод проваливался в `getpass`. При обновлении терминала нет, и скрипт висел
+    бы вечно — обновление встало бы намертво, не сказав ни слова. Поймано этой
+    проверкой: она не покраснела, а ЗАВИСЛА на две минуты.
+    """
+    vyvod = _reset_root_so_vvodom("")
+    assert "Пустой пароль" in vyvod, (
+        "пустой ввод не отбит словами — скрипт мог уйти спрашивать в терминал: "
+        + vyvod[:300]
+    )
+
+
+def test_parol_so_vvoda_vpravdu_chitaetsya():
+    """Ключ обязан ЧИТАТЬ ввод, а не просто существовать в разборе аргументов.
+
+    Проверяется коротким паролем: на него скрипт отвечает про длину, а на
+    непрочитанный ввод — про пустоту. Две разные жалобы отличают «прочёл и не
+    принял» от «не прочёл вовсе», и без этой пары ключ, который молча ничего не
+    делает, выглядел бы исправным.
+
+    База при этом не меняется: короткий пароль до записи не доходит.
+    """
+    vyvod = _reset_root_so_vvodom("ab" + chr(10))
+    assert "короче" in vyvod, (
+        "ключ --password-stdin ввод не прочитал: " + vyvod[:300]
+    )
