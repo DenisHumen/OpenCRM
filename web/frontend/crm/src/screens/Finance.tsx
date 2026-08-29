@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 
 import { Icon } from "../components/Icon";
+import { VyborKlienta } from "../components/VyborKlienta";
 import { Chip, EmptyState, LoadFailed, Modal, ScreenLoading } from "../components/ui";
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
@@ -350,7 +351,7 @@ function OperationModal({
 }) {
   const { t } = useApp();
   const categories = useReference<FinanceCategory>("/finance/categories");
-  const clients = useReference<{ id: number; name: string }>("/clients?per_page=200");
+  const [imya_klienta, setImyaKlienta] = useState("");
   // `null` — спрашивать нечего: блок фирм выключен. Это не отказ, и строки об
   // отказе быть не должно (см. `useReference`).
   const companies = useReference<{ id: number; name: string }>(companiesOn ? "/companies" : null);
@@ -448,19 +449,15 @@ function OperationModal({
         </div>
         <div className="field">
           <label className="label">{t("client")}</label>
-          <select className="input" value={form.client_id} onChange={set("client_id")}>
-            <option value="">—</option>
-            {(clients.items ?? []).map((row) => (
-              <option key={row.id} value={row.id}>
-                {row.name}
-              </option>
-            ))}
-          </select>
-          {/* Список не приехал — расход запишется ничейным, и в разбивке по
-              клиентам его никто не найдёт. Молчать об этом нельзя. */}
-          {clients.failure !== null && (
-            <LoadFailed error={clients.failure} onRetry={clients.reload} />
-          )}
+          <VyborKlienta
+            value={form.client_id ? Number(form.client_id) : null}
+            imya={imya_klienta || null}
+            pustoy
+            onPick={(kto, imya) => {
+              setImyaKlienta(imya ?? "");
+              setForm((f) => ({ ...f, client_id: kto ? String(kto) : "" }));
+            }}
+          />
         </div>
         {/* Заявок у клиента может не быть — тогда выбора нет по делу. Отказ —
             другое дело: он прячет выбор, который на самом деле есть, и расход

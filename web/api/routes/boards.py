@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from core import exceptions as errors
 from core.services import board_service, media_service, share_service
 from database.models import User
+from database.repositories import clients as clients_repo
 from database.repositories import boards as boards_repo
 from database.repositories import shares as shares_repo
 from web.api import cards, schemas
@@ -16,6 +17,19 @@ from web.public import layout
 router = APIRouter(
     prefix="/boards", tags=["boards"], dependencies=[Depends(require_module("boards"))]
 )
+
+
+def _imya(db: Session, board) -> str | None:
+    """Имя клиента доски. Одно и то же в ответе на чтение и на правку.
+
+    Прежде редактор брал его из справочника клиентов, загруженного в поле
+    выбора первыми двумя сотнями: у клиента за этим пределом подпись доски
+    показывала многоточие вместо имени.
+    """
+    if not board.client_id:
+        return None
+    klient = clients_repo.get(db, board.client_id)
+    return klient.name if klient else None
 
 
 @router.get("")
@@ -53,7 +67,7 @@ def get_board(
     board = board_service.get_board(db, board_id)
     works = boards_repo.list_works(db, board_id)
     links = shares_repo.list_for_board(db, board_id)
-    data = schemas.board_out(board, works_count=len(works))
+    data = schemas.board_out(board, works_count=len(works), client_name=_imya(db, board))
     data["works"] = [schemas.work_out(w) for w in works]
     # форма места каждой работы на витрине — редактору обрезки, чтобы рамка
     # фрагмента совпадала с тем, что увидит клиент. Композицию собирают только
@@ -83,7 +97,9 @@ def update_board(
     db: Session = Depends(get_db),
 ):
     board = board_service.update_board(db, board_id, payload.model_dump(exclude_unset=True))
-    return schemas.board_out(board, works_count=boards_repo.count_works(db, board.id))
+    return schemas.board_out(
+        board, works_count=boards_repo.count_works(db, board.id), client_name=_imya(db, board)
+    )
 
 
 @router.delete("/{board_id}")

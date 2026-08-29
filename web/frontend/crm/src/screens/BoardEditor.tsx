@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { Icon } from "../components/Icon";
+import { VyborKlienta } from "../components/VyborKlienta";
 import { Chip, ConfirmModal, LoadFailed, Modal, ScreenLoading, Toggle } from "../components/ui";
 import { api, ApiError } from "../lib/api";
 import { dropTarget } from "../lib/dnd";
@@ -90,7 +91,6 @@ export function BoardEditor() {
   // Справочники правой колонки — через общий крючок. Отказ здесь не должен
   // сводиться к пустому списку: выбор клиента без клиентов выглядит как
   // «клиентов нет», а подпись «для клиента» над доской просто исчезает.
-  const clients = useReference<any>("/clients?per_page=200");
   // Заявки выбранного клиента. Показывать чужие в этом окне незачем: доска
   // делается по конкретному заказу конкретного человека. Список
   // перезапрашивается при смене клиента — иначе доску привяжут к чужому заказу.
@@ -328,11 +328,11 @@ export function BoardEditor() {
             )}
           </div>
           <div className="page-sub">
-            {board.client_id && (clients.items?.length ?? 0) > 0 && (
+            {board.client_id && board.client_name && (
               <>
                 {t("forClient")}{" "}
                 <Link to={`/clients/${board.client_id}`} style={{ color: "var(--muted)", textDecoration: "underline", textUnderlineOffset: 2 }}>
-                  {(clients.items ?? []).find((c) => c.id === board.client_id)?.name ?? "…"}
+                  {board.client_name}
                 </Link>
                 {" · "}
               </>
@@ -551,22 +551,13 @@ export function BoardEditor() {
             <label className="label">{t("description")}</label>
             <BlurInput value={board.description} onSave={(v) => void patchBoard({ description: v })} textarea style={{ marginBottom: 12 }} />
             <label className="label">{t("client")}</label>
-            <select
-              className="select"
-              style={{ height: 32 }}
-              value={board.client_id ?? ""}
-              onChange={(e) => void patchBoard({ client_id: e.target.value ? Number(e.target.value) : null })}
-            >
-              <option value="">{t("noClient")}</option>
-              {(clients.items ?? []).map((client) => (
-                <option key={client.id} value={client.id}>
-                  {client.name}
-                </option>
-              ))}
-            </select>
-            {clients.failure !== null && (
-              <LoadFailed error={clients.failure} onRetry={clients.reload} />
-            )}
+            <VyborKlienta
+              value={board.client_id ?? null}
+              imya={board.client_name ?? null}
+              pustoy
+              pustoyPodpis={t("noClient")}
+              onPick={(kto) => void patchBoard({ client_id: kto })}
+            />
             {/* Заявка, ради которой доска сделана. Список — только заявки
                 выбранного клиента: чужие в этом окне лишь мешают. */}
             <label className="label" style={{ marginTop: 12 }}>{t("deal")}</label>

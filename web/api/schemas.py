@@ -579,12 +579,22 @@ def file_out(file: ClientFile) -> dict:
     }
 
 
-def board_out(board: Board, works_count: int | None = None) -> dict:
+def board_out(
+    board: Board, works_count: int | None = None, client_name: str | None = None
+) -> dict:
+    """`client_name` — подписью «доска для такого-то».
+
+    Ключ есть всегда, даже когда имени нет: форма ответа не должна зависеть от
+    того, кто и как спрашивает. Разная форма у GET и PATCH здесь уже ломала
+    экраны — редактор клал ответ PATCH в состояние, и подпись пропадала до
+    перезагрузки страницы.
+    """
     data = {
         "id": board.id,
         "title": board.title,
         "description": board.description,
         "client_id": board.client_id,
+        "client_name": client_name,
         "deal_id": board.deal_id,
         "cover_work_id": board.cover_work_id,
         "created_by": board.created_by,

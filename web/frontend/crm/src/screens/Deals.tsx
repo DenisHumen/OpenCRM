@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 
 import { Icon } from "../components/Icon";
+import { VyborKlienta } from "../components/VyborKlienta";
 import { Avatar, EmptyState, LoadFailed, Modal, ScreenLoading } from "../components/ui";
 import { api, ApiError } from "../lib/api";
 import { useApp } from "../lib/app";
@@ -128,7 +129,9 @@ export function Deals() {
   // пустой список клиентов означал бы «клиентов не завели» и подсовывал бы
   // подсказку «сначала заведите клиента» ровно там, где их двести, а не
   // ответил сервер.
-  const clients = useReference<any>("/clients?per_page=200");
+  // Имя выбранного держим рядом с черновиком: поле показывает его, а на
+  // сервер уходит только номер.
+  const [imya_klienta, setImyaKlienta] = useState("");
   const people = useReference<any>("/people");
 
   const { failure, fail, clear } = useFailure();
@@ -472,27 +475,16 @@ export function Deals() {
           <div className="deal-fields">
             <div className="field">
               <label className="label">{t("client")}</label>
-              <select
-                className="input"
-                value={draft.client_id}
-                onChange={(e) => setDraft({ ...draft, client_id: e.target.value })}
-              >
-                <option value="">—</option>
-                {(clients.items ?? []).map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-              </select>
-              {/* «Заведите клиента» — только когда клиентов действительно нет.
-                  Отказ сервера говорит о себе сам и предлагает повторить. */}
-              {clients.failure !== null ? (
-                <LoadFailed error={clients.failure} onRetry={clients.reload} />
-              ) : (
-                clients.items?.length === 0 && (
-                  <div className="field-desc">{t("noClientsForDeal")}</div>
-                )
-              )}
+              <VyborKlienta
+                value={draft.client_id ? Number(draft.client_id) : null}
+                imya={imya_klienta || null}
+                pustoy
+                netVovse={t("noClientsForDeal")}
+                onPick={(kto, imya) => {
+                  setImyaKlienta(imya ?? "");
+                  setDraft({ ...draft, client_id: kto ? String(kto) : "" });
+                }}
+              />
             </div>
             {/* Ответственный и срок — прямо при заведении. Проставлять их потом
                 по одной сделке никто не будет, и доска зарастает ничейными. */}

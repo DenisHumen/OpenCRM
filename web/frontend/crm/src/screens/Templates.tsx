@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 
 import { Icon } from "../components/Icon";
+import { VyborKlienta } from "../components/VyborKlienta";
 import {
   Chip,
   ConfirmModal,
@@ -372,9 +373,7 @@ function PreviewModal({
 
   // `null` — спрашивать нечего: права нет, и отказ сервера был бы не отказом, а
   // стуком в закрытую дверь на каждом открытии окна.
-  const clients = useReference<{ id: number; name: string }>(
-    can(user, "clients.view") ? "/clients" : null,
-  );
+  const [imya_klienta, setImyaKlienta] = useState("");
   const deals = useReference<{ id: number; title: string }>(
     clientId && can(user, "deals.view") ? `/deals?client_id=${clientId}` : null,
   );
@@ -413,27 +412,24 @@ function PreviewModal({
     <Modal title={t("templatePreview")} onClose={onClose}>
       <div className="field">
         <label className="label">{t("client")}</label>
-        {clients.failure ? (
-          <LoadFailed error={clients.failure} onRetry={clients.reload} />
-        ) : (
-          <select
-            className="input"
-            value={clientId}
-            onChange={(e) => {
-              setClientId(e.target.value);
-              // Заявка принадлежит клиенту: оставить её при смене клиента
-              // значит попросить сервер о паре, которой не существует, и
-              // получить `deal_other_client` на пустом месте.
-              setDealId("");
-            }}
-          >
-            <option value="">{t("templatePreviewNobody")}</option>
-            {(clients.items ?? []).map((client) => (
-              <option key={client.id} value={String(client.id)}>
-                {client.name}
-              </option>
-            ))}
-          </select>
+        {/* Право на клиентов было условием загрузки справочника — остаётся
+            условием поля: без него сервер откажет, а человеку показали бы
+            поле, которое ничего не находит. */}
+        {can(user, "clients.view") && (
+        <VyborKlienta
+          value={clientId ? Number(clientId) : null}
+          imya={imya_klienta || null}
+          pustoy
+          onPick={(kto, imya) => {
+            setImyaKlienta(imya ?? "");
+            setClientId(kto ? String(kto) : "");
+            // Заявка принадлежит клиенту: оставить её при смене клиента
+            // значит попросить сервер о паре, которой не существует, и
+            // получить `deal_other_client` на пустом месте.
+            setDealId("");
+          }}
+          pustoyPodpis={t("templatePreviewNobody")}
+        />
         )}
       </div>
 
