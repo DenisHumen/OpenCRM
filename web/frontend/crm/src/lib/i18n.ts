@@ -45,7 +45,7 @@ const en = {
   // `viewAll`: та уводит на экран раздела, эта остаётся на месте и продолжает
   // выдачу. Пока их не было вовсе, поиск обрывался на шести находках молча.
   showMore: "Show more",
-  starOnGithub: "Star on GitHub",
+  docsSub: "How the system works and how to use it",
   today: "today",
   error: "Something went wrong",
   loadFailed: "Could not load this screen",
@@ -1352,7 +1352,7 @@ const ru: typeof en = {
   hintOpen: "— открыть",
   viewAll: "Смотреть все",
   showMore: "Показать ещё",
-  starOnGithub: "Звезда на GitHub",
+  docsSub: "Как система устроена и как ею пользоваться",
   today: "сегодня",
   error: "Что-то пошло не так",
   loadFailed: "Не удалось загрузить экран",

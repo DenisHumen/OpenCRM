@@ -220,6 +220,20 @@ export function Sidebar({
   };
 
   const brandName = settings.brand_name || "OpenCRM";
+  // Звёзды спрашиваем у СВОЕГО сервера: он держит их в базе и обновляет раз в
+  // сутки. Из браузера на api.github.com не ходим — это был бы чужой сервер в
+  // странице CRM. `null` — «не знаем», и тогда числа просто нет.
+  const [zvyozdy, setZvyozdy] = useState<number | null>(null);
+  useEffect(() => {
+    let zhivo = true;
+    api
+      .get<{ stars: number | null }>("/system/github")
+      .then((o) => zhivo && setZvyozdy(o.stars))
+      .catch(() => undefined);
+    return () => {
+      zhivo = false;
+    };
+  }, []);
 
   // Меню собирается списком, а не разметкой: так «выключенный блок не
   // показываем», «нет права — не показываем» и «пустую категорию не показываем»
@@ -429,16 +443,16 @@ export function Sidebar({
             </span>
           </NavLink>
         )}
-        <a
+        {/* Внутрь продукта, а не на GitHub: у человека вопрос прямо сейчас, и
+            отправлять его читать в другое место — отправлять закрывать вкладку. */}
+        <NavLink
+          to="/docs"
           className="nav-item"
-          href="https://github.com/DenisHumen/OpenCRM"
-          target="_blank"
-          rel="noreferrer"
           style={{ color: "var(--muted)", fontSize: 13 }}
         >
           <Icon name="docs" size={15} />
           {t("documentation")}
-        </a>
+        </NavLink>
         <div style={{ position: "relative" }}>
           {menuOpen && (
             <div className="user-menu">
@@ -487,8 +501,16 @@ export function Sidebar({
             target="_blank"
             rel="noopener noreferrer"
           >
-            <Icon name="github" size={15} />
-            <span>{t("starOnGithub")}</span>
+            <span className="side-github-name">
+              <Icon name="github" size={15} />
+              github
+            </span>
+            {zvyozdy !== null && (
+              <span className="side-github-stars">
+                <Icon name="star" size={12} />
+                {zvyozdy}
+              </span>
+            )}
           </a>
           <div className="side-user" onClick={() => setMenuOpen((open) => !open)}>
             <Avatar text={initials(user?.name ?? "?")} src={user?.avatar_url} online />
