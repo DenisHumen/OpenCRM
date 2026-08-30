@@ -345,9 +345,13 @@ export function Sidebar({
                 стоит первая буква названия студии, и две буквы подряд читались
                 как опечатка. Файл тот же, что у иконки вкладки. */}
             <img className="side-logo" src="/static/favicon.svg" alt="" width={20} height={20} />
-            <span style={{ color: "var(--text)", fontSize: 14, fontWeight: 600 }}>OpenCRM</span>
+            <span className="side-brand-name">OpenCRM</span>
           </NavLink>
         </div>
+        {/* Только когда название конторы вправду задано. Без него сюда
+            подставлялось «OpenCRM», и знак продукта дублировался строкой ниже —
+            человек читал это как ошибку, а не как имя своей конторы. */}
+        {!!settings.brand_name && (
         <div className="side-workspace">
           <div
             style={{
@@ -369,6 +373,7 @@ export function Sidebar({
             {brandName}
           </div>
         </div>
+        )}
         <button type="button" className="side-search" onClick={onOpenSearch}>
           <Icon name="search" size={14} />
           <span style={{ flex: 1, color: "var(--faint)", fontSize: 13, textAlign: "left" }}>
