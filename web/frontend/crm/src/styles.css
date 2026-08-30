@@ -1598,6 +1598,17 @@ summary:focus-visible,
   outline: none;
 }
 
+/* Полоса меток источника под строкой поиска. Переносится, а не режется:
+   меток у владельца может быть шесть, и уехавшая за край читается как их
+   отсутствие. */
+.tg-sources {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+}
+
 .tg-list ul {
   margin: 0;
   padding: 0;

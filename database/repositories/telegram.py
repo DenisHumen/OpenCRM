@@ -123,6 +123,31 @@ def spisok_dialogov(
     )
 
 
+def istochniki(db: Session) -> list[tuple[str, int]]:
+    """Метки источников со счётом диалогов, самые частые сверху.
+
+    Метка кладётся в диалог при первом `/start метка` и до сих пор лежала
+    мёртвым грузом: отбор по ней ручка принимала, но спросить, КАКИЕ метки
+    вообще есть, было нечем — а угадывать их владельцу неоткуда, он их
+    придумывает сам и через полгода не помнит.
+
+    Счёт здесь же, одним запросом с самим списком: он и есть ответ на вопрос,
+    ради которого метки заводят, — сколько пришло с наклейки, а сколько с
+    сайта. Отдельным запросом на каждую метку это стоило бы прохода по
+    таблице столько раз, сколько меток.
+
+    Диалоги без метки не в счёт: «пришёл сам» — это не источник, и строка
+    «(пусто) — 340» в отборе означала бы источник с именем «пусто».
+    """
+    zapros = (
+        select(TelegramChat.source, func.count(TelegramChat.id))
+        .where(TelegramChat.source.is_not(None), TelegramChat.source != "")
+        .group_by(TelegramChat.source)
+        .order_by(func.count(TelegramChat.id).desc(), TelegramChat.source.asc())
+    )
+    return [(metka, skolko) for metka, skolko in db.execute(zapros).all()]
+
+
 def lenta(
     db: Session, chat_row_id: int, *, do_id: int | None = None, limit: int = 50
 ) -> list[TelegramMessage]:

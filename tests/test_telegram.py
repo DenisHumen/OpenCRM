@@ -2194,3 +2194,54 @@ def test_spisok_dialogov_listaetsya_do_kontsa(root_client, bot_nastroen):
     assert len(sobrano) == vsego, f"пройдено {len(sobrano)} из {vsego} — в листании дыра"
     poteryany = nashi - set(sobrano)
     assert not poteryany, f"листание не дошло до диалогов {sorted(poteryany)}"
+
+
+def test_istochniki_nazyvayut_sebya_i_schitayutsya(root_client, bot_nastroen):
+    """Экран узнаёт, какие метки есть и по сколько диалогов на каждой.
+
+    Отбор по метке ручка диалогов принимала и раньше, но список меток спросить
+    было нечем: их придумывает владелец, раздавая наклейки и ссылки, и через
+    полгода сам не помнит полного списка. Отбор без списка можно предложить
+    только полем ввода — то есть предложить угадывать.
+
+    Счёт проверяется вместе с составом: он и есть ответ на вопрос, ради
+    которого метки заводят. Метка без счёта — это просто слово.
+    """
+    for nomer, metka in ((521000, "vitrina"), (521001, "vitrina"), (521002, "kvitanciya")):
+        otvet = _poslat(root_client, bot_nastroen, _obnovlenie(nomer, 950 + nomer % 100,
+                                                              text=f"/start {metka}"))
+        assert otvet.status_code == 200, otvet.text
+    # Диалог без метки: «пришёл сам» — не источник, и в списке ему не место.
+    _poslat(root_client, bot_nastroen, _obnovlenie(521003, 953, text="здравствуйте"))
+
+    spisok = root_client.get(f"{TG}/sources").json()["items"]
+    schyot = {stroka["source"]: stroka["count"] for stroka in spisok}
+    assert schyot.get("vitrina") == 2, f"витрина посчитана неверно: {spisok}"
+    assert schyot.get("kvitanciya") == 1, f"квитанция посчитана неверно: {spisok}"
+    assert "" not in schyot, "диалог без метки попал в список источников"
+
+    # Частые сверху: владелец смотрит на этот список, чтобы понять, что
+    # работает, и первая строка обязана отвечать на это без вчитывания.
+    mesta = [stroka["source"] for stroka in spisok]
+    assert mesta.index("vitrina") < mesta.index("kvitanciya"), (
+        f"источники идут не по убыванию счёта: {spisok}"
+    )
+
+
+def test_otbor_po_istochniku_otseivaet_chuzhih(root_client, bot_nastroen):
+    """Отбор по метке отдаёт ровно свои диалоги — и «всего» считает по ним же.
+
+    Второе не менее важно первого: экран показывает первую страницу и просит
+    следующую, пока показанных меньше, чем сказано в `total`. Посчитай сервер
+    «всего» без отбора — и человек ушёл бы листать пустоту.
+    """
+    for nomer in (521100, 521101):
+        _poslat(root_client, bot_nastroen, _obnovlenie(nomer, 960 + nomer % 100,
+                                                      text="/start yarmarka"))
+
+    otvet = root_client.get(f"{TG}/chats?source=yarmarka&per_page=50").json()
+    metki = {dialog["source"] for dialog in otvet["items"]}
+    assert metki == {"yarmarka"}, f"в отбор попали чужие метки: {metki}"
+    assert otvet["total"] == len(otvet["items"]) == 2, (
+        f"«всего» посчитано не по отбору: {otvet['total']} при {len(otvet['items'])} строках"
+    )
