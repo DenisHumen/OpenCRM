@@ -347,7 +347,6 @@ export function Sidebar({
             <img className="side-logo" src="/static/favicon.svg" alt="" width={20} height={20} />
             <span style={{ color: "var(--text)", fontSize: 14, fontWeight: 600 }}>OpenCRM</span>
           </NavLink>
-          <Icon name="sidebar" size={16} className="" />
         </div>
         <div className="side-workspace">
           <div
@@ -369,7 +368,6 @@ export function Sidebar({
           <div style={{ flex: 1, minWidth: 0, color: "var(--text)", fontSize: 13, fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
             {brandName}
           </div>
-          <Icon name="chevronsUpDown" size={14} />
         </div>
         <button type="button" className="side-search" onClick={onOpenSearch}>
           <Icon name="search" size={14} />
@@ -474,6 +472,19 @@ export function Sidebar({
               </button>
             </div>
           )}
+          {/* Вне `.side-nav`: тот прокручивается, и кнопка внутри него уезжала бы
+              из виду. Счётчика звёзд нет намеренно — за ним пришлось бы ходить на
+              api.github.com, а панель на чужие серверы не ходит
+              (`tests/test_monitoring.py`, CSP). */}
+          <a
+            className="side-github"
+            href="https://github.com/DenisHumen/OpenCRM"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            <Icon name="github" size={15} />
+            <span>{t("starOnGithub")}</span>
+          </a>
           <div className="side-user" onClick={() => setMenuOpen((open) => !open)}>
             <Avatar text={initials(user?.name ?? "?")} src={user?.avatar_url} online />
             <div style={{ flex: 1, minWidth: 0 }}>

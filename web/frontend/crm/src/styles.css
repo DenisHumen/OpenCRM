@@ -1018,6 +1018,31 @@ summary:focus-visible,
 .side-bottom { padding: 12px; display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--surface); }
 .side-banner { display: block; background: var(--tint-warning); border-radius: 8px; padding: 10px 12px; font-size: 12px; line-height: 1.5; color: var(--warning); text-decoration: none; }
 .side-banner.critical { background: var(--tint-danger); color: var(--danger); }
+/* Ссылка на исходники — всегда на виду, поэтому вне прокручиваемого `.side-nav`.
+   Блик по наведению: у палитры видимы только текстовые цвета, и рамка сама по
+   себе не читается как нажимаемое. */
+.side-github {
+  position: relative; overflow: hidden;
+  display: flex; align-items: center; justify-content: center; gap: 7px;
+  height: 32px; margin-bottom: 6px; padding: 0 10px;
+  border: 1px solid var(--border); border-radius: 8px;
+  background: var(--surface-2); color: var(--muted);
+  font-size: 12.5px; font-weight: 500; text-decoration: none;
+  transition: color 150ms, border-color 150ms;
+}
+.side-github:hover { color: var(--text); border-color: var(--border-hover); }
+.side-github::after {
+  content: ""; position: absolute; top: -60%; right: 0;
+  width: 26px; height: 220%;
+  background: var(--text); opacity: 0.07;
+  transform: rotate(12deg) translateX(50px);
+  transition: transform 900ms ease-out;
+}
+.side-github:hover::after { transform: rotate(12deg) translateX(-230px); }
+@media (prefers-reduced-motion: reduce) {
+  .side-github::after, .side-github:hover::after { transition: none; display: none; }
+}
+
 .side-user { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 10px; cursor: pointer; position: relative; }
 .side-user:hover { background: var(--surface); }
 .user-menu { position: absolute; bottom: 52px; left: 12px; right: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 6px; display: flex; flex-direction: column; gap: 2px; z-index: 20; }
