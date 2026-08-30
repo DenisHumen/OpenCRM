@@ -103,11 +103,28 @@ def _card(db: Session, deal, user: User) -> dict:
 
 @router.get("/board")
 def kanban(
-    user: User = Depends(require_perm("deals", "view")), db: Session = Depends(get_db)
+    stage: str | None = Query(default=None, max_length=64),
+    page: int = Query(default=1, ge=1),
+    per_page: int = Query(default=deal_service.KOLONKA, ge=1, le=200),
+    user: User = Depends(require_perm("deals", "view")),
+    db: Session = Depends(get_db),
 ):
+    """Канбан целиком или следующая страница ОДНОЙ колонки.
+
+    `stage` вместе с `page` — дочитывание: человек развернул один этап, и
+    перезапрашивать ради него ещё шесть колонок, которых он не трогал, значило
+    бы платить семью запросами за одну кнопку.
+
+    Прежде колонка отдавалась с пределом в две сотни и без счётчика: заявка
+    номер двести один на доску не попадала вовсе. Заметить это было нечем —
+    итог над колонкой считается отдельным запросом по ВСЕМ заявкам этапа и
+    потому оставался верным.
+    """
     mine_only = permissions_service.deals_scope(db, user)
     amounts = permissions_service.sees_amounts(db, user)
-    columns = deal_service.board(db, only_manager_id=mine_only)
+    columns = deal_service.board(
+        db, only_manager_id=mine_only, stage_key=stage, page=page, per_page=per_page
+    )
     everything = [deal for column in columns for deal in column["deals"]]
     clients, managers = _lookup(db, everything)
     # Суммы — отдельным запросом по всем сделкам этапа: колонка отдаётся с
@@ -130,6 +147,10 @@ def kanban(
                 # Итог над колонкой прячется вместе с суммами карточек: одно
                 # без другого — это скрытая сумма, которую видно в шапке.
                 "amount_total": totals.get(column["stage"].key, 0) if amounts else None,
+                # Сколько в этапе всего. Без этого числа кнопка «показать ещё»
+                # не знает, показывать ли ей себя, — а колонка выглядит полной
+                # ровно тогда, когда она обрезана.
+                "count": column["count"],
                 "deals": [
                     schemas.deal_out(
                         d,

@@ -422,3 +422,66 @@ def test_kartochka_neset_adres_i_telefon_klienta(manager_client):
     assert kartochka["client_name"] == "Связной"
     assert kartochka["client_email"] == "svyaznoy@example.com", "письму некуда уйти"
     assert kartochka["client_phone"] == "+7 900 111", "звонить не по чему"
+
+
+def test_kolonka_kanbana_listaetsya_i_schitaet_ves_etap(manager_client):
+    """Колонка доски отдаётся страницей, а её счётчик считает ВЕСЬ этап.
+
+    Прежде колонка приходила одним куском с пределом в две сотни и без счёта:
+    заявка номер двести один на доску не попадала вовсе. Заметить это было
+    нечем — итог над колонкой считается отдельным запросом по всем заявкам
+    этапа и потому оставался верным, то есть даже деньги не расходились.
+
+    Проверяются два свойства по отдельности, и это не дробление ради дробления.
+    База у набора одна на весь прогон, и на первом этапе к этому моменту лежат
+    сотни чужих заявок: обойти этап целиком мелкой страницей значит потратить
+    сотню запросов и упереться в предохранитель. Поэтому «страницы разные»
+    доказывается на мелкой странице, а «никто не потерян» — на крупной.
+    """
+    klient = make_client(manager_client, "Клиент листания")
+    zavedeno = []
+    for nomer in range(7):
+        otvet = manager_client.post(
+            DEALS, json={"title": f"Заявка листания {nomer}", "client_id": klient["id"]}
+        )
+        assert otvet.status_code == 201, otvet.text
+        zavedeno.append(otvet.json()["id"])
+
+    doska = manager_client.get(f"{DEALS}/board").json()
+    etap = doska["columns"][0]["key"]
+    vsego = doska["columns"][0]["count"]
+    assert vsego >= len(zavedeno), f"счётчик колонки меньше заведённого: {vsego}"
+
+    def stranitsa(nomer: int, po: int) -> dict:
+        return manager_client.get(
+            f"{DEALS}/board", params={"stage": etap, "page": nomer, "per_page": po}
+        ).json()["columns"][0]
+
+    # Свойство первое: вторая страница — ДРУГИЕ заявки. Мелкой страницей, иначе
+    # семь заведённых уместились бы в один ответ и листание не сработало бы ни
+    # разу — проверка зеленела бы на доске, которая листаться не умеет.
+    pervaya = stranitsa(1, 3)
+    vtoraya = stranitsa(2, 3)
+    assert pervaya["key"] == etap and len(pervaya["deals"]) == 3
+    id_pervoy = {z["id"] for z in pervaya["deals"]}
+    id_vtoroy = {z["id"] for z in vtoraya["deals"]}
+    assert id_vtoroy, "вторая страница колонки пуста при полной первой"
+    assert not (id_pervoy & id_vtoroy), (
+        f"страницы колонки пересекаются: {sorted(id_pervoy & id_vtoroy)}"
+    )
+
+    # Свойство второе: обойдя колонку, доходим до всех своих. Крупной страницей —
+    # чужих заявок в этапе сотни, и обход по три стоил бы сотни запросов.
+    sobrano: list[int] = []
+    nomer = 1
+    while True:
+        kusok = stranitsa(nomer, 200)
+        sobrano += [z["id"] for z in kusok["deals"]]
+        if not kusok["deals"] or len(sobrano) >= kusok["count"]:
+            break
+        nomer += 1
+        assert nomer <= vsego // 200 + 3, "листание колонки не заканчивается"
+
+    assert len(sobrano) == len(set(sobrano)), "в обходе колонки заявка встретилась дважды"
+    poteryany = set(zavedeno) - set(sobrano)
+    assert not poteryany, f"листание не дошло до заявок {sorted(poteryany)}"
