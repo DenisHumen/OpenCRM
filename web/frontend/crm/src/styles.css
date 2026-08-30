@@ -2054,6 +2054,13 @@ summary:focus-visible,
   color: var(--muted);
   font-size: 13px;
   cursor: pointer;
+  /* Подчёркивание, а не рамка, несёт здесь «на это нажимают». Замерено на
+     живой странице: рамка `--line` даёт с фоном карточки контраст 1,14, то
+     есть не видна вовсе, и во всю ширину кнопка читалась просто строкой
+     текста. Ответ проекта на тихую нажимаемую вещь — `.text-link`, и он
+     именно такой. */
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 .dochitat:hover:not(:disabled) { background: var(--well-off); color: var(--text); }
 .dochitat:disabled { opacity: 0.6; cursor: default; }
