@@ -296,3 +296,61 @@ def test_slishkom_bolshaya_vygruzka_otkazyvaet_a_ne_obrezaet(manager_client, mon
     otvet = manager_client.get(f"{API}/clients/export.csv?tag={metka}")
     assert otvet.status_code == 422, "выгрузка молча обрезалась"
     assert otvet.json()["error"]["code"] == "export_too_large"
+
+
+#: Первые байты настоящего PNG. Через fromhex, а не escape-последовательностью:
+#: подпись здесь — двоичные данные, и вид у неё должен быть двоичный.
+PNG_ZAGOLOVOK = bytes.fromhex("89504e470d0a1a0a")
+
+
+def test_fayl_klienta_proveryaetsya_po_soderzhimomu(manager_client):
+    """Файл, назвавшийся не тем, не принимается — и тип берём не у загрузившего.
+
+    Расширение выбирает тот, кто загружает; содержимое — нет. Пока сходились они
+    только на слово, `otchet.pdf` мог оказаться чем угодно, а `logotip.png` —
+    страницей со скриптом.
+
+    Сегодня файл отдаётся вложением с `nosniff`, и браузер его не рисует. Но это
+    ровно тот довод, который уже подводил с SVG: безопасность держалась на одном
+    заголовке в одном маршруте, а появись предпросмотр в списке файлов — и
+    подделка сработала бы в сессии сотрудника.
+    """
+    client_id = _create(manager_client, name="Клиент подделок")["id"]
+
+    # Исполняемый под видом документа.
+    podlog = manager_client.post(
+        f"{API}/clients/{client_id}/files",
+        files={"file": ("otchet.pdf", bytes.fromhex("4d5a9000") + b" executable", "application/pdf")},
+    )
+    assert podlog.status_code == 422, podlog.text
+    assert podlog.json()["error"]["code"] == "file_content_mismatch", podlog.text
+
+    # Страница со скриптом под видом картинки — то, что оживёт при первом же
+    # предпросмотре.
+    kartinka = manager_client.post(
+        f"{API}/clients/{client_id}/files",
+        files={"file": ("logotip.png", b"<html><script>alert(1)</script>", "image/png")},
+    )
+    assert kartinka.status_code == 422, kartinka.text
+    assert kartinka.json()["error"]["code"] == "file_content_mismatch"
+
+    # Настоящий PNG проходит.
+    nastoyashchiy = manager_client.post(
+        f"{API}/clients/{client_id}/files",
+        files={"file": ("logotip.png", PNG_ZAGOLOVOK + b"telo", "image/png")},
+    )
+    assert nastoyashchiy.status_code == 201, nastoyashchiy.text
+
+    # Тип в ответе — наш, а не присланный. Иначе в заголовок ответа сотруднику
+    # уходило бы значение, выбранное тем, кто загрузил файл.
+    lozhnyy_tip = manager_client.post(
+        f"{API}/clients/{client_id}/files",
+        files={"file": ("smeta.pdf", b"%PDF-1.4 smeta", "text/html")},
+    )
+    assert lozhnyy_tip.status_code == 201, lozhnyy_tip.text
+    otdacha = manager_client.get(lozhnyy_tip.json()["download_url"])
+    assert otdacha.status_code == 200
+    assert otdacha.headers["content-type"].startswith("application/pdf"), (
+        f"наружу ушёл присланный тип: {otdacha.headers['content-type']}"
+    )
+    assert otdacha.headers.get("x-content-type-options") == "nosniff"
