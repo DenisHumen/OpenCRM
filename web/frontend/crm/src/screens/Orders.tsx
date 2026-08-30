@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
+import { ContextMenu, punktyDlyaZapisi, useContextMenu } from "../components/ContextMenu";
 import { Icon } from "../components/Icon";
 import { Chip, Dochitat, EmptyState, ScreenLoading } from "../components/ui";
 import { api } from "../lib/api";
@@ -62,6 +63,7 @@ const NA_STRANITSE = 100;
 export function Orders() {
   const { t, locale, workspace, toastError } = useApp();
   const navigate = useNavigate();
+  const kontekst = useContextMenu();
   const [query, setQuery] = useState("");
   const [kind, setKind] = useState<string>("");
   const [data, setData] = useState<{ items: Order[]; total: number } | null>(null);
@@ -168,6 +170,7 @@ export function Orders() {
 
   return (
     <div className="page">
+      <ContextMenu menu={kontekst.menu} zakryt={kontekst.zakryt} />
       <div className="page-head">
         <div>
           <h1 className="page-title">{t("orders")}</h1>
@@ -228,7 +231,12 @@ export function Orders() {
 
       <div className="list-card">
         {data.items.map((order) => (
-          <Link to={`/orders/${order.id}`} key={order.id} className="list-row hoverable">
+          <Link
+            to={`/orders/${order.id}`}
+            key={order.id}
+            className="list-row hoverable"
+            onContextMenu={(e) => kontekst.otkryt(e, punktyDlyaZapisi(`/orders/${order.id}`, t, navigate))}
+          >
             <span style={{ width: 110, color: "var(--faint)", fontSize: 12.5, fontFamily: "ui-monospace, monospace" }}>
               {order.number}
             </span>

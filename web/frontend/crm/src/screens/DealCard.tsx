@@ -163,6 +163,9 @@ export function DealCard() {
   };
 
   const nextOpen = (stages.items ?? []).filter((s) => s.kind === "open");
+  // У закрытой сделки текущего открытого этапа нет. Пройденные при этом не
+  // додумываем: закрыть могли и с первого этапа, а выдуманный путь врёт.
+  const tekushchiy = nextOpen.findIndex((s) => s.key === deal.stage);
   const closers = (stages.items ?? []).filter((s) => s.kind !== "open");
 
   return (
@@ -218,18 +221,33 @@ export function DealCard() {
           дальше», и ответ не должен требовать возврата на доску. */}
       <div className="card card-pad" style={{ marginBottom: 20 }}>
         <div className="metric-title" style={{ marginBottom: 12 }}>{t("whatNext")}</div>
+        <ol className="shagi">
+          {nextOpen.map((s, i) => {
+            const gde =
+              i === tekushchiy ? "seychas" : tekushchiy >= 0 && i < tekushchiy ? "proyden" : "vperedi";
+            return (
+              <li key={s.key} className={"shag " + gde}>
+                <span className="shag-liniya" />
+                <button
+                  className="shag-knopka"
+                  disabled={s.key === deal.stage}
+                  onClick={() => void moveTo(s.key)}
+                >
+                  <span className="shag-krug">
+                    {gde === "proyden" ? <Icon name="check" size={14} stroke={2} /> : i + 1}
+                  </span>
+                  <span className="shag-telo">
+                    <span className="shag-nazvanie">{s.name}</span>
+                    <span className="shag-metka">
+                      {t(gde === "proyden" ? "stagePassed" : gde === "seychas" ? "stageNow" : "stageAhead")}
+                    </span>
+                  </span>
+                </button>
+              </li>
+            );
+          })}
+        </ol>
         <div className="stage-actions">
-          {nextOpen.map((s) => (
-            <button
-              key={s.key}
-              className={"stage-btn" + (s.key === deal.stage ? " current" : "")}
-              disabled={s.key === deal.stage}
-              onClick={() => void moveTo(s.key)}
-            >
-              {s.name}
-            </button>
-          ))}
-          <span className="stage-sep" />
           {closers.map((s) => (
             <button
               key={s.key}

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 
+import { ContextMenu, punktyDlyaZapisi, useContextMenu } from "../components/ContextMenu";
 import { Icon } from "../components/Icon";
 import { VyborKlienta } from "../components/VyborKlienta";
 import { Avatar, Dochitat, EmptyState, LoadFailed, Modal, ScreenLoading } from "../components/ui";
@@ -104,6 +105,7 @@ type Column = {
 export function Deals() {
   const { t, locale, workspace, toastError } = useApp();
   const navigate = useNavigate();
+  const kontekst = useContextMenu();
   const [params, setParams] = useSearchParams();
   const [columns, setColumns] = useState<Column[] | null>(null);
   // До какой страницы дочитана каждая колонка. Своё число на этап: человек
@@ -377,6 +379,7 @@ export function Deals() {
           <h1 className="page-title">{term(workspace.deal_term, locale, "many")}</h1>
           <div className="page-sub">{t("dealsSub", { total: openTotal })}</div>
         </div>
+        <ContextMenu menu={kontekst.menu} zakryt={kontekst.zakryt} />
         <button className="btn btn-primary" onClick={() => setCreating(true)}>
           <Icon name="plus" stroke={2} />
           {term(workspace.deal_term, locale, "new")}
@@ -432,7 +435,13 @@ export function Deals() {
                     )}
                     {column.deals.map((deal) => (
                       <div key={deal.id} className="deal-row">
-                        <button className="deal-card" onClick={() => navigate(`/deals/${deal.id}`)}>
+                        <button
+                          className="deal-card"
+                          onClick={() => navigate(`/deals/${deal.id}`)}
+                          onContextMenu={(e) =>
+                            kontekst.otkryt(e, punktyDlyaZapisi(`/deals/${deal.id}`, t, navigate))
+                          }
+                        >
                           {cardBody(deal, column.kind)}
                         </button>
                         {/* Этап меняется выбором, а не перетаскиванием: на
@@ -521,6 +530,9 @@ export function Deals() {
                         onDragStart={() => setDragId(deal.id)}
                         onDragEnd={() => setDragId(null)}
                         onClick={() => navigate(`/deals/${deal.id}`)}
+                        onContextMenu={(e) =>
+                          kontekst.otkryt(e, punktyDlyaZapisi(`/deals/${deal.id}`, t, navigate))
+                        }
                       >
                         {cardBody(deal, column.kind)}
                       </button>
