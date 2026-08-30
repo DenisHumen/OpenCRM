@@ -2245,3 +2245,53 @@ def test_otbor_po_istochniku_otseivaet_chuzhih(root_client, bot_nastroen):
     assert otvet["total"] == len(otvet["items"]) == 2, (
         f"«всего» посчитано не по отбору: {otvet['total']} при {len(otvet['items'])} строках"
     )
+
+
+def test_fayl_uhodit_s_podpisyu_i_otvetom(root_client, bot_nastroen, monkeypatch):
+    """Подпись и «в ответ на» едут вместе с файлом, а не следом.
+
+    Отдельным сообщением подпись отправить нельзя — у клиента в телеграме это
+    будет ВТОРОЕ сообщение, и картинка придёт голой, неизвестно к чему. Ручка
+    принимала оба поля с самого начала; экран их не отправлял, и набранный
+    текст молча оставался в поле.
+
+    Проверяется то, что дошло до самого телеграма, а не то, что записано в
+    переписку: записать можно и не отправив.
+    """
+    from core.services import telegram_service
+
+    _poslat(root_client, bot_nastroen, _obnovlenie(521200, 970, text="а покажите"))
+    dialog = _dialog(root_client, 521200)
+    lenta = root_client.get(f"{TG}/chats/{dialog['id']}/messages").json()["items"]
+    vopros = lenta[-1]["id"]
+
+    # Доводы разбираем по подписи настоящей функции, а не по `kwargs`: подпись
+    # к файлу едет позиционным доводом, и проверка, смотревшая только в
+    # `kwargs`, увидела бы пустоту и на исправном коде.
+    import inspect
+
+    obraz = inspect.signature(telegram_service.poslat_fayl)
+    ushlo = {}
+
+    def zapomnit(*a, **kw):
+        ushlo.update(obraz.bind(*a, **kw).arguments)
+        return {"message_id": 7}
+
+    monkeypatch.setattr(telegram_service, "poslat_fayl", zapomnit)
+
+    otvet = root_client.post(
+        f"{TG}/chats/{dialog['id']}/files",
+        files={"file": ("shema.png", b"x" * 64, "image/png")},
+        data={"caption": "вот эта деталь", "reply_to_id": str(vopros)},
+    )
+    assert otvet.status_code == 201, otvet.text
+
+    assert ushlo.get("podpis") == "вот эта деталь", (
+        f"подпись не доехала до телеграма: {ushlo}"
+    )
+    assert ushlo.get("otvet_na") is not None, f"«в ответ на» потерялось: {ushlo}"
+
+    # И в переписке сообщение стоит ответом на тот же вопрос — иначе менеджер
+    # видит одно, а клиент получил другое.
+    stalo = root_client.get(f"{TG}/chats/{dialog['id']}/messages").json()["items"]
+    assert stalo[-1]["reply_to_id"] == vopros, f"в переписке ответ не привязан: {stalo[-1]}"

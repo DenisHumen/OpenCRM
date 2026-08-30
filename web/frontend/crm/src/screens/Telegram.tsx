@@ -905,11 +905,20 @@ export function Telegram() {
     setOtpravka(true);
     setZaliv({ imya: fayl.name, ushlo: 0, vsego: fayl.size, otmenit: () => {} });
     try {
+      // Подпись и «в ответ на» едут ВМЕСТЕ с файлом, а не следом. Сервер их
+      // принимал всегда, экран не отправлял — и набранный текст оставался в
+      // поле, а ответ на конкретное сообщение терялся: у клиента приходила
+      // голая картинка неизвестно к чему. Отправить подпись вторым запросом
+      // было бы не то же самое: у него в телеграме это ВТОРОЕ сообщение.
       const zalivka = api.zagruzka<TgMessage>(
         `/telegram/chats/${vybran}/files`,
         fayl,
         ({ ushlo, vsego }) =>
           setZaliv((bylo) => (bylo ? { ...bylo, ushlo, vsego } : bylo)),
+        {
+          caption: tekst.trim(),
+          reply_to_id: otvechaem ? String(otvechaem.id) : "",
+        },
       );
       setZaliv((bylo) => (bylo ? { ...bylo, otmenit: zalivka.otmenit } : bylo));
       const stroka = await zalivka.gotovo;
@@ -918,6 +927,11 @@ export function Telegram() {
         setMessages((bylo) => slit(bylo, [stroka]));
         posledneye.current = stroka.id;
       }
+      // Поле и «в ответ на» чистятся ровно как после обычного сообщения:
+      // подпись ушла вместе с файлом, и оставить её в поле значило бы
+      // предложить отправить её второй раз.
+      setTekst("");
+      setOtvechaem(null);
       void zagruzit_chats();
     } catch (beda) {
       // Отменил сам — значит не беда, и ругаться незачем.

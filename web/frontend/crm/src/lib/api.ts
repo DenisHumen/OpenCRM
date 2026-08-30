@@ -82,11 +82,19 @@ function zagruzka<T = any>(
   path: string,
   file: File,
   khod?: (k: KhodZagruzki) => void,
+  /** Спутники файла одной формой: подпись, «в ответ на» и что там ещё
+   *  понадобится. Отдельным запросом их не отправить — сообщение с файлом
+   *  создаётся один раз, и подпись, приехавшая следом, была бы ВТОРЫМ
+   *  сообщением у клиента в телеграме. */
+  polya?: Record<string, string>,
 ): Zalivka<T> {
   const xhr = new XMLHttpRequest();
   const gotovo = new Promise<T>((resolve, reject) => {
     const form = new FormData();
     form.append("file", file);
+    for (const [imya, znachenie] of Object.entries(polya ?? {})) {
+      form.append(imya, znachenie);
+    }
     xhr.open("POST", API + path, true);
     xhr.withCredentials = true;
     xhr.setRequestHeader("X-CSRF-Token", csrfToken());
