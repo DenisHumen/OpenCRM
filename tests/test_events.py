@@ -564,3 +564,45 @@ def test_every_subscription_passes_the_source_down():
     assert len(calls) >= 3, f"подписок найдено {len(calls)} — проверка смотрит не туда"
     for call in calls:
         assert "source=event.source" in call, "подписка пишет в ленту, не передав источник"
+
+
+def test_lenta_zayavki_listaetsya_do_kontsa(manager_client, deal):
+    """Лента заявки, которую ведут год, не обрывается на своей странице.
+
+    Прежде ручка брала двести событий, `total` выбрасывала и отвечала одним
+    куском. У долгой заявки ранние разговоры просто переставали существовать —
+    без счётчика, без строки «показано столько-то», без единого признака.
+
+    Проверяется обходом: пройдя страницами, доходим ровно до всех записей и ни
+    одной не встречаем дважды. На это опирается экран — он собирает ленту
+    страницами, пока показанных меньше, чем сказано в `total`.
+    """
+    skolko = 7
+    for nomer in range(skolko):
+        otvet = manager_client.post(
+            f"{DEALS}/{deal['id']}/feed",
+            json={"kind": "note", "body": f"событие {nomer}"},
+        )
+        assert otvet.status_code == 201, otvet.text
+
+    sobrano = []
+    vsego = None
+    stranitsa = 1
+    while True:
+        otvet = manager_client.get(
+            f"{DEALS}/{deal['id']}/feed?page={stranitsa}&per_page=3"
+        ).json()
+        assert otvet["page"] == stranitsa, f"отдана не та страница: {otvet['page']}"
+        if vsego is None:
+            vsego = otvet["total"]
+        else:
+            assert otvet["total"] == vsego, "«всего» пляшет между страницами"
+        sobrano += [z["id"] for z in otvet["items"]]
+        if not otvet["items"] or len(sobrano) >= vsego:
+            break
+        stranitsa += 1
+        assert stranitsa < 50, "листание не заканчивается"
+
+    assert vsego >= skolko, f"в ленте {vsego} записей, а заведено было {skolko}"
+    assert len(sobrano) == len(set(sobrano)), "страницы пересекаются — запись встретилась дважды"
+    assert len(sobrano) == vsego, f"пройдено {len(sobrano)} из {vsego} — в листании дыра"
