@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { ConfirmModal, ScreenLoading } from "../components/ui";
 import { api } from "../lib/api";
+import { useDebounced } from "../lib/debounce";
 import { useApp } from "../lib/app";
 import { useFailure } from "../lib/failure";
 import { formatBytes, formatDate } from "../lib/format";
@@ -57,6 +58,10 @@ interface TelegramConfig {
  * письмо клиентам от имени фирмы. Поэтому токен сюда не приходит вовсе —
  * сервер отдаёт только хвост из четырёх знаков, чтобы владелец узнал свой.
  */
+/** Что телеграм принимает в `?start=`. Правило не наше: ссылка с чем-то иным
+ *  открывается и молча теряет метку — то есть выглядит рабочей. */
+const METKA_VERNA = /^[A-Za-z0-9_-]*$/;
+
 export function SettingsTelegram() {
   const { t, locale, toast, toastError } = useApp();
   const [config, setConfig] = useState<TelegramConfig | null>(null);
@@ -79,6 +84,14 @@ export function SettingsTelegram() {
   // Приглашение подгружается отдельно и только когда есть чем: без имени бота
   // ссылка выглядела бы настоящей и не работала.
   const [invite, setInvite] = useState<{ url: string; qr_svg: string } | null>(null);
+  // Метка источника. Прежде она была зашита словом «site», и это делало
+  // мёртвой всю затею: метка едет в диалог, по ней отбирают и считают «сколько
+  // пришло с наклейки», — а приходили все с одного и того же «сайта», включая
+  // тех, кто отсканировал код на квитанции.
+  const [metka, setMetka] = useState("site");
+  // С паузой в наборе: сервер на каждую ссылку рисует QR-код, и запрос на
+  // каждую букву означал бы восемь нарисованных кодов за слово «наклейка».
+  const metka_gotova = useDebounced(metka);
 
   const { failure, fail, clear } = useFailure();
 
@@ -103,13 +116,30 @@ export function SettingsTelegram() {
       setInvite(null);
       return;
     }
+    // Кривую метку не отправляем вовсе: сервер откажет по тому же правилу,
+    // но отказ на каждую набранную букву — это шесть жалоб за слово.
+    if (!METKA_VERNA.test(metka_gotova)) return;
+    // Флажок «этот ответ ещё нужен»: метку набирают по букве, запросы уходят
+    // один за другим и приходят не в том порядке. Ответ на «nakl» мог лечь
+    // поверх ответа на «nakleyka» — и владелец распечатал бы QR с меткой,
+    // которой в поле уже нет.
+    let alive = true;
     api
-      .get<{ url: string; qr_svg: string }>("/telegram/invite?label=site")
-      .then(setInvite)
+      .get<{ url: string; qr_svg: string }>(
+        `/telegram/invite?label=${encodeURIComponent(metka_gotova)}`,
+      )
+      .then((prishlo) => {
+        if (alive) setInvite(prishlo);
+      })
       // Молча: приглашение — вспомогательное, и его отказ не должен закрывать
       // экран настроек, на котором чинят как раз причину отказа.
-      .catch(() => setInvite(null));
-  }, [config?.bot_username]);
+      .catch(() => {
+        if (alive) setInvite(null);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [config?.bot_username, metka_gotova]);
 
   if (!config) return <ScreenLoading error={failure} onRetry={load} />;
 
@@ -333,6 +363,18 @@ export function SettingsTelegram() {
       {invite && (
         <div className="card card-pad">
           <label className="label">{t("tgInviteHint")}</label>
+          <div className="field" style={{ marginBottom: 10 }}>
+            <label className="label">{t("tgInviteLabel")}</label>
+            <input
+              className="input"
+              value={metka}
+              maxLength={64}
+              onChange={(e) => setMetka(e.target.value)}
+            />
+            <div className="field-desc">
+              {METKA_VERNA.test(metka) ? t("tgInviteLabelHint") : t("tgInviteLabelBad")}
+            </div>
+          </div>
           <div className="field-desc" style={{ marginBottom: 10 }}>
             <code>{invite.url}</code>
           </div>

@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 
 import { Icon } from "../components/Icon";
 import { VyborKlienta } from "../components/VyborKlienta";
-import { Avatar, Dochitat, EmptyState, ScreenLoading } from "../components/ui";
+import { Avatar, Dochitat, EmptyState, LoadFailed, ScreenLoading } from "../components/ui";
 import { api } from "../lib/api";
 import { copyText } from "../lib/clipboard";
 import { useApp } from "../lib/app";
@@ -189,6 +189,14 @@ export function Telegram() {
     otmenit: () => void;
   } | null>(null);
   const [poisk, setPoisk] = useState("");
+  // Отбор по метке источника. Метку кладут в диалог при первом `/start метка`,
+  // и до сих пор она лежала мёртвым грузом: ручка отбор принимала, а нажать
+  // было негде — то есть на вопрос «сколько пришло с наклейки» ответить было
+  // нечем, хотя ответ лежал в базе.
+  const [istochnik, setIstochnik] = useState("");
+  const istochniki = useReference<{ source: string; count: number }>(
+    "/telegram/sources",
+  );
   // Отказ загрузки списка: экран обязан о нём сказать и дать повторить.
   // Вечная вертушка — это не «грузится», это «мы не знаем и молчим».
   const { failure, fail, clear } = useFailure();
@@ -341,7 +349,7 @@ export function Telegram() {
   const zagruzit_chats = useCallback(
     async (nomer = 1) => {
       clear();
-      sproshen_otbor.current = iskat;
+      sproshen_otbor.current = `${istochnik}:${iskat}`;
       try {
         const otvet = await api.get<{
           items: TgChat[];
@@ -350,11 +358,12 @@ export function Telegram() {
           per_page: number;
         }>(
           `/telegram/chats?q=${encodeURIComponent(iskat)}` +
+            `&source=${encodeURIComponent(istochnik)}` +
             `&page=${nomer}&per_page=${NA_STRANITSE}`,
         );
-        if (sproshen_otbor.current !== iskat) return null;
-        const smena = otbor_spiska.current !== iskat;
-        otbor_spiska.current = iskat;
+        if (sproshen_otbor.current !== `${istochnik}:${iskat}`) return null;
+        const smena = otbor_spiska.current !== `${istochnik}:${iskat}`;
+        otbor_spiska.current = `${istochnik}:${iskat}`;
         setChats((bylo) => {
           const hvost = nomer === 1 && smena ? [] : (bylo ?? []);
           if (nomer === 1) {
@@ -375,7 +384,7 @@ export function Telegram() {
         return null;
       }
     },
-    [iskat, clear, fail],
+    [iskat, istochnik, clear, fail],
   );
 
   useEffect(() => {
@@ -935,6 +944,38 @@ export function Telegram() {
             placeholder={t("search")}
           />
         </div>
+        {/* Полоса появляется, только когда меток больше одной: при
+            единственной она предлагала бы выбор из одного варианта и просто
+            съедала бы строку в списке. */}
+        {istochniki.failure !== null && (
+          // Молчать нельзя: полоса меток исчезает и при отказе, и когда меток
+          // просто нет. Менеджер, отбиравший вчера по наклейке, решил бы
+          // сегодня, что метки отменили.
+          <div className="tg-sources">
+            <LoadFailed error={istochniki.failure} onRetry={istochniki.reload} />
+          </div>
+        )}
+        {(istochniki.items ?? []).length > 1 && (
+          <div className="tg-sources">
+            <button
+              type="button"
+              className={"filter-chip" + (istochnik === "" ? " active" : "")}
+              onClick={() => setIstochnik("")}
+            >
+              {t("tgSourceAll")}
+            </button>
+            {(istochniki.items ?? []).map((metka) => (
+              <button
+                key={metka.source}
+                type="button"
+                className={"filter-chip" + (istochnik === metka.source ? " active" : "")}
+                onClick={() => setIstochnik(metka.source)}
+              >
+                {metka.source} {metka.count}
+              </button>
+            ))}
+          </div>
+        )}
         {chats.length === 0 ? (
           <EmptyState title={t("tgNoChats")} sub={t("tgNoChatsHint")} />
         ) : (
