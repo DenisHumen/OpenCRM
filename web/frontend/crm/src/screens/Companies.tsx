@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
+import { ContextMenu, punktyDlyaZapisi, useContextMenu } from "../components/ContextMenu";
 import { Icon } from "../components/Icon";
 import { Chip, EmptyState, Modal, ScreenLoading } from "../components/ui";
 import { api } from "../lib/api";
@@ -35,6 +36,7 @@ export interface Company {
 export function Companies() {
   const { t, user, toastError } = useApp();
   const navigate = useNavigate();
+  const kontekst = useContextMenu();
   const [items, setItems] = useState<Company[] | null>(null);
   const [showNew, setShowNew] = useState(false);
 
@@ -64,6 +66,7 @@ export function Companies() {
 
   return (
     <div className="page page-narrow">
+      <ContextMenu menu={kontekst.menu} zakryt={kontekst.zakryt} />
       <div className="page-head">
         <div>
           <h1 className="page-title">{t("companies")}</h1>
@@ -84,7 +87,12 @@ export function Companies() {
       ) : (
         <div className="list-card">
           {items.map((company) => (
-            <Link key={company.id} to={`/companies/${company.id}`} className="list-row hoverable">
+            <Link
+              key={company.id}
+              to={`/companies/${company.id}`}
+              className="list-row hoverable"
+              onContextMenu={(e) => kontekst.otkryt(e, punktyDlyaZapisi(`/companies/${company.id}`, t, navigate))}
+            >
               <span className="module-icon">
                 <Icon name="building" size={17} />
               </span>

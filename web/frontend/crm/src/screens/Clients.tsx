@@ -1,6 +1,12 @@
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 
+import {
+  ContextMenu,
+  type PunktMenyu,
+  punktyDlyaZapisi,
+  useContextMenu,
+} from "../components/ContextMenu";
 import { Icon } from "../components/Icon";
 import { SourcePicker } from "../components/SourcePicker";
 import { Avatar, Chip, Dochitat, EmptyState, Modal, ScreenLoading } from "../components/ui";
@@ -9,6 +15,7 @@ import { useApp } from "../lib/app";
 import { useDebounced } from "../lib/debounce";
 import { useFailure } from "../lib/failure";
 import { useGuard } from "../lib/guard";
+import { copyText } from "../lib/clipboard";
 import { initials, relativeDay } from "../lib/format";
 
 /** По скольку клиентов дочитывается список. */
@@ -17,6 +24,16 @@ const NA_STRANITSE = 100;
 export function Clients() {
   const { t, locale, toastError } = useApp();
   const navigate = useNavigate();
+  const kontekst = useContextMenu();
+
+  const punktyKlienta = (client: any): PunktMenyu[] => {
+    const punkty = punktyDlyaZapisi(`/clients/${client.id}`, t, navigate);
+    if (client.email)
+      punkty.push({ key: "email", label: t("copyEmail"), icon: "mail", run: () => void copyText(client.email) });
+    if (client.phone)
+      punkty.push({ key: "phone", label: t("copyPhone"), icon: "call", run: () => void copyText(client.phone) });
+    return punkty;
+  };
   const [params, setParams] = useSearchParams();
   const [query, setQuery] = useState("");
   const [data, setData] = useState<any>(null);
@@ -162,7 +179,12 @@ export function Clients() {
           <span style={{ width: 90, textAlign: "right" }}>{t("activity")}</span>
         </div>
         {data.items.map((client: any) => (
-          <Link to={`/clients/${client.id}`} key={client.id} className="list-row hoverable">
+          <Link
+            to={`/clients/${client.id}`}
+            key={client.id}
+            className="list-row hoverable"
+            onContextMenu={(e) => kontekst.otkryt(e, punktyKlienta(client))}
+          >
             <Avatar text={initials(client.name)} />
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ color: "var(--text)", fontSize: 13.5, fontWeight: 500 }}>{client.name}</div>
@@ -182,6 +204,7 @@ export function Clients() {
             </div>
           </Link>
         ))}
+        <ContextMenu menu={kontekst.menu} zakryt={kontekst.zakryt} />
         <Dochitat
           pokazano={data.items.length}
           vsego={data.total}

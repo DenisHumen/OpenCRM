@@ -133,6 +133,10 @@ export const RUKOVODSTVO: Razdel[] = [
                 ru: "Выгрузка в CSV отдаёт ровно тот отбор, который сейчас на экране.",
                 en: "CSV export returns exactly the selection currently on screen.",
               },
+              {
+                ru: "Правая кнопка на строке списка открывает меню: открыть, открыть в новой вкладке, скопировать ссылку, почту или телефон.",
+                en: "Right-clicking a list row opens a menu: open, open in a new tab, copy the link, email or phone.",
+              },
             ],
           },
         ],

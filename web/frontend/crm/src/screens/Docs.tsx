@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 
+import { CopyButton } from "../components/CopyButton";
 import { Icon } from "../components/Icon";
 import { useApp } from "../lib/app";
 import { RUKOVODSTVO, type Kusok, type Yazyk } from "../lib/rukovodstvo";
@@ -82,6 +83,19 @@ export function Docs() {
   );
 }
 
+/* Пример из руководства нужен в терминале, а выделять мышью многострочный
+   запрос — промахиваться по краям. */
+function Kod({ tekst }: { tekst: string }) {
+  return (
+    <div className="docs-code-wrap">
+      <pre className="docs-code">
+        <code>{tekst}</code>
+      </pre>
+      <CopyButton text={tekst} />
+    </div>
+  );
+}
+
 function Blok({ kusok, yaz }: { kusok: Kusok; yaz: Yazyk }) {
   if (kusok.vid === "abzats") return <p>{kusok.tekst[yaz]}</p>;
 
@@ -114,12 +128,7 @@ function Blok({ kusok, yaz }: { kusok: Kusok; yaz: Yazyk }) {
       </div>
     );
 
-  if (kusok.vid === "kod")
-    return (
-      <pre className="docs-code">
-        <code>{kusok.tekst}</code>
-      </pre>
-    );
+  if (kusok.vid === "kod") return <Kod tekst={kusok.tekst} />;
 
   // Ручка API. Поля таблицей, запрос и ответ примерами — как у взрослых
   // проектов: без примера описание поля читается, а повторить его нельзя.
@@ -156,17 +165,13 @@ function Blok({ kusok, yaz }: { kusok: Kusok; yaz: Yazyk }) {
       {kusok.zapros && (
         <>
           <div className="docs-code-label">{yaz === "ru" ? "Запрос" : "Request"}</div>
-          <pre className="docs-code">
-            <code>{kusok.zapros}</code>
-          </pre>
+          <Kod tekst={kusok.zapros} />
         </>
       )}
       {kusok.otvet && (
         <>
           <div className="docs-code-label">{yaz === "ru" ? "Ответ" : "Response"}</div>
-          <pre className="docs-code">
-            <code>{kusok.otvet}</code>
-          </pre>
+          <Kod tekst={kusok.otvet} />
         </>
       )}
     </div>

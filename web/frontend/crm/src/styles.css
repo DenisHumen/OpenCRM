@@ -294,6 +294,24 @@ button { font-family: var(--sans); }
   font-size: 12.5px; font-weight: 600; cursor: pointer; text-decoration: none;
   transition: background 150ms, border-color 150ms;
 }
+
+/* Плюс на кнопке доворачивается по наведению: движение отличает кнопку, которая
+   создаёт запись, от той, что просто открывает. Крестик четырёхкратно
+   симметричен, поэтому виден сам ход, а не новое положение. */
+[data-icon="plus"] { transition: transform 300ms ease; }
+button:hover [data-icon="plus"],
+a:hover [data-icon="plus"] { transform: rotate(90deg); }
+/* Нажатие отзывается сразу: задержка на нём читается как незамеченный щелчок. */
+button:active [data-icon="plus"] { transition-duration: 0s; }
+/* Значок отзывается раньше щелчка. Образец — uiverse kind-badger-70. */
+[data-icon="github"] { transition: transform 200ms ease, color 200ms ease; }
+.side-github:hover [data-icon="github"] { transform: scale(1.25); color: var(--accent); }
+@media (prefers-reduced-motion: reduce) {
+  [data-icon="plus"] { transition: none; }
+  button:hover [data-icon="plus"], a:hover [data-icon="plus"] { transform: none; }
+  [data-icon="github"] { transition: none; }
+  .side-github:hover [data-icon="github"] { transform: none; }
+}
 .btn-primary { background: var(--btn-bg); color: var(--btn-text); }
 .btn-primary:hover { background: var(--btn-bg-hover); }
 .btn-primary:disabled { opacity: 0.55; cursor: default; }
@@ -1053,7 +1071,14 @@ summary:focus-visible,
   display: flex; align-items: center; justify-content: center; gap: 10px;
   height: 34px; margin-bottom: 6px; padding: 0 12px;
   border: 1px solid var(--border); border-radius: 8px;
-  background: var(--well-off); color: var(--text);
+  background-color: var(--well-off); color: var(--text);
+  /* Блик — заливкой, а не накладным элементом. Накладной выезжал за скруглённый
+     край квадратом: `overflow: hidden` его обрезает не везде одинаково, а фон
+     выйти за свою же коробку не может вовсе. */
+  background-image: linear-gradient(100deg,
+    transparent 40%, var(--tint-neutral) 47%, var(--tint-neutral) 53%, transparent 60%);
+  background-size: 250% 100%; background-repeat: no-repeat;
+  background-position: 130% 0;
   font-size: 12.5px; font-weight: 500; text-decoration: none;
   transition: border-color 150ms;
 }
@@ -1067,16 +1092,13 @@ summary:focus-visible,
   transition: color 300ms;
 }
 .side-github:hover .side-github-stars { color: var(--star); }
-.side-github::after {
-  content: ""; position: absolute; top: -60%; right: 0;
-  width: 26px; height: 220%;
-  background: var(--text); opacity: 0.08;
-  transform: rotate(12deg) translateX(50px);
-  transition: transform 900ms ease-out;
+.side-github:hover { animation: side-github-blik 900ms ease-out; }
+@keyframes side-github-blik {
+  from { background-position: 130% 0; }
+  to   { background-position: -30% 0; }
 }
-.side-github:hover::after { transform: rotate(12deg) translateX(-230px); }
 @media (prefers-reduced-motion: reduce) {
-  .side-github::after, .side-github:hover::after { transition: none; display: none; }
+  .side-github:hover { animation: none; }
 }
 
 .side-user { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 10px; cursor: pointer; position: relative; }
@@ -2480,6 +2502,29 @@ a.tg-file:hover { text-decoration: underline; }
   border: 1px solid var(--line); border-radius: 8px; background: var(--well-off);
   font-size: 12px; line-height: 1.6; color: var(--text);
 }
+/* Кнопка «скопировать» показывается по наведению на блок: постоянная метка над
+   кодом спорит за внимание с самим примером. Образец — uiverse kind-cheetah-52. */
+.docs-code-wrap { position: relative; }
+.docs-code-wrap:hover .copy-btn, .copy-btn:focus-visible, .copy-btn.done { opacity: 1; }
+.copy-btn {
+  position: absolute; top: 8px; right: 8px;
+  width: 30px; height: 30px; display: grid; place-items: center;
+  border: 1px solid var(--border); border-radius: 8px;
+  background: var(--surface); color: var(--muted); cursor: pointer;
+  opacity: 0; transition: opacity 150ms, color 150ms, background-color 150ms;
+}
+.copy-btn:hover { background: var(--well-off); color: var(--accent); }
+.copy-btn.done { color: var(--success); }
+.copy-tip {
+  position: absolute; bottom: calc(100% + 8px); left: 50%;
+  transform: translateX(-50%) scale(0.85); transform-origin: bottom center;
+  padding: 4px 7px; border-radius: 5px; white-space: nowrap;
+  background: var(--surface-2); color: var(--text); border: 1px solid var(--border);
+  font-size: 11px; opacity: 0; pointer-events: none;
+  transition: opacity 200ms, transform 200ms cubic-bezier(0.68, -0.55, 0.265, 1.55);
+}
+.copy-btn:hover .copy-tip, .copy-btn.done .copy-tip { opacity: 1; transform: translateX(-50%) scale(1); }
+
 .docs-code-label { margin-bottom: 5px; font-size: 11px; color: var(--faint); text-transform: uppercase; letter-spacing: .04em; }
 .docs-endpoint { padding: 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--well); }
 .docs-endpoint-head { display: flex; align-items: center; gap: 9px; margin-bottom: 10px; }
@@ -2504,4 +2549,88 @@ a.tg-file:hover { text-decoration: underline; }
 @media (max-width: 900px) {
   .docs-body { grid-template-columns: 1fr; }
   .docs-rail { position: static; flex-direction: row; flex-wrap: wrap; }
+}
+
+/* Подпись стоит в самом поле и всплывает по буквам при вводе: на входе всего два
+   поля, и строка подписи над пустым полем занимает место, нужное самому полю.
+   Образец — uiverse warm-eel-62. */
+.pole-plav { position: relative; padding-top: 20px; }
+.pole-plav .label { position: absolute; top: 30px; left: 13px; margin: 0; pointer-events: none; }
+.pole-plav .label span {
+  display: inline-block; min-width: 4px;
+  transition: transform 300ms cubic-bezier(0.68, -0.55, 0.265, 1.55), color 300ms;
+}
+.pole-plav .input:focus ~ .label span,
+.pole-plav .input:not(:placeholder-shown) ~ .label span { transform: translateY(-26px); color: var(--accent); }
+/* Подсказка-образец показывается только на выбранном поле: иначе она стоит под
+   подписью и обе читаются как одна строка. */
+.pole-plav .input:not(:focus)::placeholder { color: transparent; }
+@media (prefers-reduced-motion: reduce) {
+  .pole-plav .label span { transition: none; }
+}
+
+/* Меню по правой кнопке. Образец — uiverse terrible-gecko-91. */
+.ctx-fon { position: fixed; inset: 0; z-index: 70; }
+.ctx-menu {
+  position: fixed; min-width: 200px; padding: 6px 0;
+  display: flex; flex-direction: column; gap: 2px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+  animation: ctx-poyavlenie 120ms ease-out;
+}
+@keyframes ctx-poyavlenie {
+  from { opacity: 0; transform: scale(0.96); }
+  to { opacity: 1; transform: none; }
+}
+.ctx-group.razdel { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--border); }
+.ctx-item {
+  display: flex; align-items: center; gap: 10px;
+  width: calc(100% - 12px); margin: 0 6px; padding: 6px 8px;
+  border: 0; border-radius: 6px; background: none; color: var(--sub);
+  font-size: 13px; font-family: var(--sans); text-align: left; cursor: pointer;
+  transition: background-color 150ms, color 150ms, transform 150ms;
+}
+.ctx-item.active { background: var(--accent); color: var(--on-brand); transform: translate(1px, -1px); }
+.ctx-item.opasno.active { background: var(--danger-solid); color: var(--on-danger); }
+.ctx-item:active { transform: scale(0.99); }
+@media (prefers-reduced-motion: reduce) {
+  .ctx-menu { animation: none; }
+  .ctx-item, .ctx-item.active, .ctx-item:active { transition: none; transform: none; }
+}
+
+/* Путь сделки по воронке. Ряд кнопок отвечал «куда можно», но не «где мы сейчас»
+   и «что уже пройдено». Образец — uiverse orange-newt-23. */
+.shagi { list-style: none; margin: 0 0 4px; padding: 0; }
+.shag { position: relative; }
+/* Черта идёт от кружка к кружку и прячется у последнего: линия в пустоту
+   читается как незагруженный этап. */
+.shag-liniya { position: absolute; left: 15px; top: 34px; bottom: -2px; width: 2px; background: var(--border); }
+.shag:last-child .shag-liniya { display: none; }
+.shag-knopka {
+  display: flex; align-items: flex-start; gap: 12px;
+  width: 100%; padding: 0 0 14px; border: 0; background: none;
+  font-family: var(--sans); text-align: left; cursor: pointer;
+}
+.shag-knopka:disabled { cursor: default; }
+.shag-krug {
+  position: relative; z-index: 1; flex: none;
+  width: 32px; height: 32px; border-radius: 50%;
+  display: grid; place-items: center; font-size: 12px;
+  background: var(--surface); border: 2px solid var(--border); color: var(--faint);
+  transition: background-color 150ms, border-color 150ms, color 150ms;
+}
+.shag.proyden .shag-krug { background: var(--brand); border-color: var(--brand); color: var(--on-brand); }
+.shag.seychas .shag-krug { border-color: var(--brand); color: var(--brand); }
+.shag-telo { display: flex; flex-direction: column; gap: 3px; padding-top: 4px; }
+.shag-nazvanie { font-size: 13.5px; font-weight: 500; color: var(--text); transition: color 150ms; }
+.shag.vperedi .shag-nazvanie { color: var(--sub); }
+.shag-knopka:not(:disabled):hover .shag-nazvanie { color: var(--brand); }
+.shag-knopka:not(:disabled):hover .shag-krug { border-color: var(--brand); }
+.shag-metka {
+  align-self: flex-start; padding: 1px 8px; border-radius: 10px; font-size: 11.5px;
+  background: var(--well-off); color: var(--faint);
+}
+.shag.proyden .shag-metka { background: var(--tint-success); color: var(--success); }
+.shag.seychas .shag-metka { background: var(--tint-accent); color: var(--accent); }
+@media (prefers-reduced-motion: reduce) {
+  .shag-krug, .shag-nazvanie { transition: none; }
 }

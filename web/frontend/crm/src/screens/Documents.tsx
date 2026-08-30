@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 
+import { ContextMenu, punktyDlyaZapisi, useContextMenu } from "../components/ContextMenu";
 import { Icon } from "../components/Icon";
 import { VyborKlienta } from "../components/VyborKlienta";
 import { Chip, Dochitat, EmptyState, Modal, ScreenLoading } from "../components/ui";
@@ -18,6 +19,7 @@ const NA_STRANITSE = 100;
 export function Documents() {
   const { t, locale, toast, toastError } = useApp();
   const navigate = useNavigate();
+  const kontekst = useContextMenu();
   const [params] = useSearchParams();
   const [data, setData] = useState<any>(null);
   const [status, setStatus] = useState("");
@@ -152,6 +154,7 @@ export function Documents() {
 
   return (
     <div className="page page-wide">
+      <ContextMenu menu={kontekst.menu} zakryt={kontekst.zakryt} />
       <div className="page-head">
         <div>
           <h1 className="page-title">{t("documents")}</h1>
@@ -201,7 +204,12 @@ export function Documents() {
 
       <div className="list-card">
         {data.items.map((doc: any) => (
-          <Link to={`/documents/${doc.id}`} key={doc.id} className="list-row hoverable">
+          <Link
+            to={`/documents/${doc.id}`}
+            key={doc.id}
+            className="list-row hoverable"
+            onContextMenu={(e) => kontekst.otkryt(e, punktyDlyaZapisi(`/documents/${doc.id}`, t, navigate))}
+          >
             <span className="doc-number">{doc.number}</span>
             <div className="list-row-text">
               <div className="truncate" style={{ color: "var(--text)", fontSize: 13.5, fontWeight: 500 }}>

@@ -6,6 +6,23 @@ import { useApp } from "../lib/app";
 
 type View = "login" | "register" | "pending";
 
+/** Подпись поля, всплывающая по буквам.
+ *
+ * Буквы едут с задержкой друг за другом: одним куском строка дёргается и
+ * читается как скачок вёрстки, а не как отклик поля.
+ */
+function Podpis({ text }: { text: string }) {
+  return (
+    <label className="label">
+      {[...text].map((bukva, i) => (
+        <span key={i} style={{ transitionDelay: `${i * 40}ms` }}>
+          {bukva === " " ? " " : bukva}
+        </span>
+      ))}
+    </label>
+  );
+}
+
 function BrandMark() {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 28 }}>
@@ -82,8 +99,7 @@ export function AuthScreen() {
         <form className="auth-card" onSubmit={submitLogin}>
           <h1 className="auth-title">{t("welcomeBack")}</h1>
           <div className="auth-sub">{t("signInSub")}</div>
-          <div className="field">
-            <label className="label">{t("email")}</label>
+          <div className="field pole-plav">
             {/* inputMode — клавиатура с @ и точкой сразу; autoCapitalize/autoCorrect —
                 иначе iOS пишет адрес с заглавной и «исправляет» домен. autoComplete —
                 чтобы менеджер паролей подставлял пару, а не только логин. */}
@@ -101,9 +117,9 @@ export function AuthScreen() {
               autoFocus
               required
             />
+            <Podpis text={t("email")} />
           </div>
-          <div className="field" style={{ marginBottom: 20 }}>
-            <label className="label">{t("password")}</label>
+          <div className="field pole-plav" style={{ marginBottom: 20 }}>
             <input
               className="input"
               type="password"
@@ -113,6 +129,7 @@ export function AuthScreen() {
               onChange={(e) => setPassword(e.target.value)}
               required
             />
+            <Podpis text={t("password")} />
           </div>
           <button className="btn btn-primary" style={{ width: "100%", marginBottom: 16 }} disabled={busy}>
             {t("signIn")}
