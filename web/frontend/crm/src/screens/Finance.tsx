@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 
 import { Icon } from "../components/Icon";
 import { VyborKlienta } from "../components/VyborKlienta";
-import { Chip, EmptyState, LoadFailed, Modal, ScreenLoading } from "../components/ui";
+import { Chip, Dochitat, EmptyState, LoadFailed, Modal, ScreenLoading } from "../components/ui";
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
 import { useFailure } from "../lib/failure";
@@ -86,6 +86,11 @@ export function Finance() {
   const [data, setData] = useState<{ profit: Profit; operations: Operation[]; total: number } | null>(
     null,
   );
+  // Журнал дочитывается страницами. Прежде он честно писал «показано 100 из
+  // 4300» — и на этом всё: сказать, что список обрезан, и не дать его
+  // раскрыть, немногим лучше, чем обрезать молча.
+  const [stranitsa, setStranitsa] = useState(1);
+  const [dochityvaem, setDochityvaem] = useState(false);
   const [adding, setAdding] = useState(false);
   const { failure, fail, clear } = useFailure();
   // Периоды переключают быстрее, чем отвечает сервер: без этого счётчика ответ
@@ -103,13 +108,43 @@ export function Finance() {
     return params.toString();
   }, [from, to]);
 
+  // Сменили период — журнал начинается заново: дописывать операции июня к
+  // операциям мая значило бы показать вперемешку два разных отбора.
+  useEffect(() => {
+    setStranitsa(1);
+  }, [query]);
+
+  /** Дочитать журнал. Спрашивается ТОЛЬКО журнал: итог прибыли наверху
+   * посчитан сервером по всему периоду и от дочитки не меняется, а лишний
+   * запрос за ним — лишний круг на каждое нажатие.
+   */
+  const dochitat_zhurnal = async () => {
+    if (dochityvaem) return;
+    setDochityvaem(true);
+    try {
+      const dalshe = await api.get<{ items: Operation[]; total: number }>(
+        `/finance/operations?${query}&page=${stranitsa + 1}&per_page=${PER_PAGE}`,
+      );
+      setData((bylo) =>
+        bylo
+          ? { ...bylo, operations: [...bylo.operations, ...dalshe.items], total: dalshe.total }
+          : bylo,
+      );
+      setStranitsa((bylo) => bylo + 1);
+    } catch (e) {
+      toastError(e);
+    } finally {
+      setDochityvaem(false);
+    }
+  };
+
   useEffect(() => {
     let current = true;
     clear();
     Promise.all([
       api.get<Profit>(`/finance/profit?${query}`),
       api.get<{ items: Operation[]; total: number }>(
-        `/finance/operations?${query}&per_page=${PER_PAGE}`,
+        `/finance/operations?${query}&page=1&per_page=${PER_PAGE}`,
       ),
     ])
       .then(([profit, journal]) => {
@@ -282,14 +317,16 @@ export function Finance() {
           </div>
         )}
 
-        {/* Журнал обрезан — говорим об этом прямо. Молчаливая обрезка означает,
-            что человек считает по экрану и получает не ту сумму, а свериться с
-            итогом наверху ему нечем: тот-то полон. */}
-        {total > operations.length && (
-          <div className="field-desc" style={{ marginTop: 10 }}>
-            {t("finShownOf", { n: operations.length, total })}
-          </div>
-        )}
+        {/* Прежде здесь стояла надпись «показано 100 из 4300». Сказать, что
+            список обрезан, — половина дела: человек считает по экрану и
+            получает не ту сумму, а свериться с итогом наверху ему нечем, тот
+            полон. Теперь обрезку не объявляют, а снимают. */}
+        <Dochitat
+          pokazano={operations.length}
+          vsego={total}
+          zanyat={dochityvaem}
+          onClick={() => void dochitat_zhurnal()}
+        />
       </div>
 
       {adding && (

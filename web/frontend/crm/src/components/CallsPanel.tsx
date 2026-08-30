@@ -6,7 +6,7 @@ import { useGuard } from "../lib/guard";
 import { formatCallDuration, formatDateTime } from "../lib/format";
 import { moduleOn } from "../lib/modules";
 import { Icon } from "./Icon";
-import { Chip, EmptyState } from "./ui";
+import { Chip, Dochitat, EmptyState } from "./ui";
 
 /** Иконка звонка: направление, а у пропущенного — то, что он пропущен. */
 export function callIcon(call: PhoneCall): string {
@@ -98,20 +98,61 @@ export function CallsPanel({
 }) {
   const { t, locale, modules, toastError } = useApp();
   const [items, setItems] = useState<PhoneCall[] | null>(null);
+  // Врезка брала двадцать звонков и молчала об остальных. У клиента, с
+  // которым разговаривают годами, двадцать первый звонок переставал
+  // существовать — а в карточку и заходят, чтобы вспомнить, о чём говорили.
+  const [vsego, setVsego] = useState(0);
+  const [stranitsa, setStranitsa] = useState(1);
+  const [dochityvaem, setDochityvaem] = useState(false);
   const enabled = moduleOn(modules, "telephony");
   const outcomeLabel = useOutcomeLabel();
 
+  /** Отбор врезки без номера страницы. Одна сборка на загрузку и на дочитку:
+   *  разойдись они — дочитка приписала бы звонки чужой карточки. */
+  const otbor = useCallback(
+    (nomer: number) => {
+      const params = new URLSearchParams({
+        page: String(nomer),
+        per_page: String(limit),
+      });
+      if (clientId) params.set("client_id", String(clientId));
+      if (dealId) params.set("deal_id", String(dealId));
+      return `/telephony/calls?${params}`;
+    },
+    [clientId, dealId, limit],
+  );
+
   const load = useCallback(async () => {
     if (!enabled) return;
-    const params = new URLSearchParams({ per_page: String(limit) });
-    if (clientId) params.set("client_id", String(clientId));
-    if (dealId) params.set("deal_id", String(dealId));
     try {
-      setItems((await api.get<{ items: PhoneCall[] }>(`/telephony/calls?${params}`)).items);
+      const otvet = await api.get<{ items: PhoneCall[]; total: number }>(otbor(1));
+      setItems(otvet.items);
+      setVsego(otvet.total);
+      setStranitsa(1);
     } catch (e) {
       toastError(e);
     }
-  }, [enabled, clientId, dealId, limit, toastError]);
+  }, [enabled, otbor, toastError]);
+
+  /** Дочитать звонки. Номер растёт ПОСЛЕ ответа: увеличь его до, и отказ на
+   *  второй странице оставил бы счётчик на двойке — следующее нажатие
+   *  просило бы третью, а вторая пропала бы из врезки навсегда. */
+  const dochitat = async () => {
+    if (dochityvaem) return;
+    setDochityvaem(true);
+    try {
+      const dalshe = await api.get<{ items: PhoneCall[]; total: number }>(
+        otbor(stranitsa + 1),
+      );
+      setItems((bylo) => [...(bylo ?? []), ...dalshe.items]);
+      setVsego(dalshe.total);
+      setStranitsa((bylo) => bylo + 1);
+    } catch (e) {
+      toastError(e);
+    } finally {
+      setDochityvaem(false);
+    }
+  };
 
   useEffect(() => {
     void load();
@@ -173,6 +214,12 @@ export function CallsPanel({
           )}
         </div>
       ))}
+      <Dochitat
+        pokazano={items.length}
+        vsego={vsego}
+        zanyat={dochityvaem}
+        onClick={() => void dochitat()}
+      />
       {items.length === 0 && <EmptyState title={t("noCallsYet")} />}
     </div>
   );

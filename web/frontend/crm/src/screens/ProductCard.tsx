@@ -11,7 +11,7 @@ import {
   WarehouseSpread,
   useWarehouses,
 } from "../components/Warehouses";
-import { ConfirmModal, EmptyState, ScreenLoading } from "../components/ui";
+import { ConfirmModal, Dochitat, EmptyState, ScreenLoading } from "../components/ui";
 import { api, ApiError } from "../lib/api";
 import { useApp } from "../lib/app";
 import { useFailure } from "../lib/failure";
@@ -49,6 +49,9 @@ export interface StockMove {
   author_name: string | null;
 }
 
+/** По скольку записей истории дочитывается карточка. */
+const DVIZHENIY_NA_STRANITSE = 100;
+
 export function ProductCard() {
   const { id } = useParams();
   const { t, locale, workspace, toast, toastError } = useApp();
@@ -56,6 +59,8 @@ export function ProductCard() {
   const [product, setProduct] = useState<Product | null>(null);
   const [moves, setMoves] = useState<StockMove[]>([]);
   const [total, setTotal] = useState(0);
+  const [stranitsaDvizheniy, setStranitsaDvizheniy] = useState(1);
+  const [dochityvaem, setDochityvaem] = useState(false);
   const [currency, setCurrency] = useState(workspace.currency);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const places = useWarehouses();
@@ -74,9 +79,15 @@ export function ProductCard() {
       setProduct(card);
       setCurrency(card.currency || workspace.currency);
       setSpread(card.by_warehouse);
-      const history = await api.get(`/warehouse/products/${id}/moves?per_page=200`);
+      // Первая страница истории. Прежде бралось двести записей и на этом всё:
+      // рядом с заголовком честно писалось «всего 640», а показывались первые
+      // двести, и добраться до остальных было нечем.
+      const history = await api.get<{ items: StockMove[]; total: number }>(
+        `/warehouse/products/${id}/moves?page=1&per_page=${DVIZHENIY_NA_STRANITSE}`,
+      );
       setMoves(history.items);
       setTotal(history.total);
+      setStranitsaDvizheniy(1);
     } catch (e) {
       // Записи нет или она не наша: показывать «попробуйте ещё раз» тут не о
       // чем — повтор вернёт тот же ответ. Возвращаемся в список, как и раньше.
@@ -90,6 +101,30 @@ export function ProductCard() {
       fail(e);
     }
   }, [id, workspace.currency, toastError, navigate, fail, clear]);
+
+  /** Дочитать историю движений.
+   *
+   * Дописывает страницу к показанному, а не перезагружает карточку целиком:
+   * перезагрузка стоила бы ещё и запроса самой карточки с раскладкой по
+   * складам, а меняется от дочитки только список внизу.
+   */
+  const dochitat_dvizheniya = async () => {
+    if (dochityvaem) return;
+    setDochityvaem(true);
+    try {
+      const dalshe = await api.get<{ items: StockMove[]; total: number }>(
+        `/warehouse/products/${id}/moves` +
+          `?page=${stranitsaDvizheniy + 1}&per_page=${DVIZHENIY_NA_STRANITSE}`,
+      );
+      setMoves((bylo) => [...bylo, ...dalshe.items]);
+      setTotal(dalshe.total);
+      setStranitsaDvizheniy((bylo) => bylo + 1);
+    } catch (e) {
+      toastError(e);
+    } finally {
+      setDochityvaem(false);
+    }
+  };
 
   useEffect(() => {
     void load();
@@ -232,6 +267,12 @@ export function ProductCard() {
           </div>
         ))}
         {moves.length === 0 && <EmptyState title={t("noMovesYet")} />}
+        <Dochitat
+          pokazano={moves.length}
+          vsego={total}
+          zanyat={dochityvaem}
+          onClick={() => void dochitat_dvizheniya()}
+        />
       </div>
 
       {showTransfer && places && (

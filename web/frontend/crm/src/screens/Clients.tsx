@@ -3,7 +3,7 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom";
 
 import { Icon } from "../components/Icon";
 import { SourcePicker } from "../components/SourcePicker";
-import { Avatar, Chip, EmptyState, Modal, ScreenLoading } from "../components/ui";
+import { Avatar, Chip, Dochitat, EmptyState, Modal, ScreenLoading } from "../components/ui";
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
 import { useDebounced } from "../lib/debounce";
@@ -11,12 +11,20 @@ import { useFailure } from "../lib/failure";
 import { useGuard } from "../lib/guard";
 import { initials, relativeDay } from "../lib/format";
 
+/** По скольку клиентов дочитывается список. */
+const NA_STRANITSE = 100;
+
 export function Clients() {
   const { t, locale, toastError } = useApp();
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const [query, setQuery] = useState("");
   const [data, setData] = useState<any>(null);
+  // До какой страницы дочитан список. Прежде экран просил сотню и на этом
+  // заканчивался — а в подзаголовке писал «всего 3400». Сам сообщал, что
+  // показывает тридцатую часть, и ничего с этим сделать не давал.
+  const [stranitsa, setStranitsa] = useState(1);
+  const [dochityvaem, setDochityvaem] = useState(false);
   const [showNew, setShowNew] = useState(params.get("new") === "1");
   const [attempt, setAttempt] = useState(0);
 
@@ -31,9 +39,11 @@ export function Clients() {
     let current = true;
     clear();
     api
-      .get(`/clients?search=${encodeURIComponent(search)}&per_page=100`)
+      .get(`/clients?search=${encodeURIComponent(search)}&page=1&per_page=${NA_STRANITSE}`)
       .then((found) => {
-        if (current) setData(found);
+        if (!current) return;
+        setData(found);
+        setStranitsa(1);
       })
       .catch((e) => {
         if (current) fail(e);
@@ -42,6 +52,37 @@ export function Clients() {
       current = false;
     };
   }, [search, attempt, fail, clear]);
+
+  /** Дочитать список.
+   *
+   * Отдельным действием, а не номером страницы в пути загрузки, и номер
+   * растёт ПОСЛЕ удачного ответа. Иначе отказ на второй странице оставлял бы
+   * счётчик на двойке, а следующее нажатие просило бы третью — вторая
+   * пропускалась бы навсегда, и список молча недосчитывался бы сотни записей.
+   *
+   * Отказ говорит о себе всплывающей жалобой, а не через `fail`: `fail`
+   * рисует экран «не удалось загрузить», а он виден только пока показывать
+   * нечего. После первой удачной загрузки отказ дочитки не показал бы ничего
+   * вовсе — кнопка просто переставала бы отвечать.
+   */
+  const dochitat = async () => {
+    if (dochityvaem) return;
+    setDochityvaem(true);
+    try {
+      const dalshe = await api.get<{ items: any[]; total: number }>(
+        `/clients?search=${encodeURIComponent(search)}` +
+          `&page=${stranitsa + 1}&per_page=${NA_STRANITSE}`,
+      );
+      setData((bylo: any) =>
+        bylo ? { ...dalshe, items: [...bylo.items, ...dalshe.items] } : dalshe,
+      );
+      setStranitsa((bylo) => bylo + 1);
+    } catch (e) {
+      toastError(e);
+    } finally {
+      setDochityvaem(false);
+    }
+  };
 
   if (!data) {
     return <ScreenLoading error={failure} onRetry={() => setAttempt((n) => n + 1)} />;
@@ -131,6 +172,12 @@ export function Clients() {
             </div>
           </Link>
         ))}
+        <Dochitat
+          pokazano={data.items.length}
+          vsego={data.total}
+          zanyat={dochityvaem}
+          onClick={() => void dochitat()}
+        />
         {data.items.length === 0 && (
           <EmptyState
             title={query ? t("nothingFound", { q: query }) : t("noClientsYet")}

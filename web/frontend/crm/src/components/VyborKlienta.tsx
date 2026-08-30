@@ -138,7 +138,7 @@ export function VyborKlienta({
         >
           {varianty.length === 0 ? (
             <div className="page-sub" style={{ padding: "8px 12px" }}>
-              {!zapros && netVovse ? netVovse : t("nothingFound").replace("{q}", zapros)}
+              {!zapros && netVovse ? netVovse : t("nothingFound", { q: zapros })}
             </div>
           ) : (
             varianty.map((kto, i) => (

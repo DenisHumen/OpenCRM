@@ -4,7 +4,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { Icon } from "../components/Icon";
 import { BarcodeScanner, useLabelsOn } from "../components/ProductBarcodes";
 import { WarehousePicker, useWarehouses } from "../components/Warehouses";
-import { Chip, EmptyState, Modal, ScreenLoading } from "../components/ui";
+import { Chip, Dochitat, EmptyState, Modal, ScreenLoading } from "../components/ui";
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
 import { useDebounced } from "../lib/debounce";
@@ -59,14 +59,24 @@ export function Warehouse() {
   // Остаток одного склада вместо суммы по всем — «а на точке-то оно есть?».
   const [place, setPlace] = useState<number | null>(null);
 
+  // До какой страницы дочитан список. Прежде экран просил двести товаров и
+  // на этом заканчивался — а в подзаголовке при этом честно писал «всего
+  // 1200». То есть сам сообщал, что показывает пятую часть, и не давал
+  // ничего с этим сделать.
+  const [stranitsa, setStranitsa] = useState(1);
+  const [dochityvaem, setDochityvaem] = useState(false);
+
   const [attempt, setAttempt] = useState(0);
 
   const { failure, fail, clear } = useFailure();
 
   const search = useDebounced(query);
 
-  const path =
-    `/warehouse/products?search=${encodeURIComponent(search)}&low_only=${lowOnly}&per_page=200` +
+  const NA_STRANITSE = 100;
+  // Отбор без номера страницы: смена отбора обязана начинать список заново,
+  // а не дописывать чужое к своему.
+  const otbor =
+    `/warehouse/products?search=${encodeURIComponent(search)}&low_only=${lowOnly}` +
     (place ? `&warehouse_id=${place}` : "");
 
   useEffect(() => {
@@ -77,9 +87,11 @@ export function Warehouse() {
     let current = true;
     clear();
     api
-      .get(path)
-      .then((found) => {
-        if (current) setData(found);
+      .get(`${otbor}&page=1&per_page=${NA_STRANITSE}`)
+      .then((found: { items: Product[]; total: number; currency: string }) => {
+        if (!current) return;
+        setData(found);
+        setStranitsa(1);
       })
       .catch((e) => {
         if (current) fail(e);
@@ -87,7 +99,38 @@ export function Warehouse() {
     return () => {
       current = false;
     };
-  }, [path, attempt, fail, clear]);
+  }, [otbor, attempt, fail, clear]);
+
+  /** Дочитать список.
+   *
+   * Отдельным действием, а не номером страницы в пути загрузки, и номер
+   * растёт ПОСЛЕ удачного ответа. Иначе отказ на второй странице оставлял бы
+   * счётчик на двойке, а следующее нажатие просило бы третью — вторая
+   * пропускалась бы навсегда, и в справочнике молча недоставало бы сотни
+   * товаров.
+   *
+   * Отказ говорит о себе всплывающей жалобой, а не через `fail`: `fail`
+   * рисует экран «не удалось загрузить», а он виден только пока показывать
+   * нечего. После первой удачной загрузки отказ дочитки не показал бы ничего
+   * вовсе — кнопка просто переставала бы отвечать.
+   */
+  const dochitat = async () => {
+    if (dochityvaem) return;
+    setDochityvaem(true);
+    try {
+      const dalshe = await api.get<{ items: Product[]; total: number; currency: string }>(
+        `${otbor}&page=${stranitsa + 1}&per_page=${NA_STRANITSE}`,
+      );
+      setData((bylo) =>
+        bylo ? { ...dalshe, items: [...bylo.items, ...dalshe.items] } : dalshe,
+      );
+      setStranitsa((bylo) => bylo + 1);
+    } catch (e) {
+      toastError(e);
+    } finally {
+      setDochityvaem(false);
+    }
+  };
 
   if (!data) {
     return <ScreenLoading error={failure} onRetry={() => setAttempt((n) => n + 1)} />;
@@ -187,6 +230,12 @@ export function Warehouse() {
             title={query || lowOnly ? t("nothingFound", { q: query }) : t("noProductsYet")}
           />
         )}
+        <Dochitat
+          pokazano={data.items.length}
+          vsego={data.total}
+          zanyat={dochityvaem}
+          onClick={() => void dochitat()}
+        />
       </div>
 
       {showNew && (

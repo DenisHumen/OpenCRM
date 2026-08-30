@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { Icon } from "../components/Icon";
-import { EmptyState, Modal, ScreenLoading } from "../components/ui";
+import { Dochitat, EmptyState, Modal, ScreenLoading } from "../components/ui";
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
 import { useDebounced } from "../lib/debounce";
@@ -43,6 +43,9 @@ export interface MailSender {
 
 type Filter = "all" | "in" | "out" | "unread";
 
+/** По скольку писем дочитывается список. */
+const NA_STRANITSE = 100;
+
 export function Mail() {
   const { t, locale, toastError, user } = useApp();
   const [messages, setMessages] = useState<MailMessage[] | null>(null);
@@ -54,21 +57,37 @@ export function Mail() {
   const [otvechaem, setOtvechaem] = useState<MailMessage | null>(null);
   const [composing, setComposing] = useState(false);
 
+  // До какой страницы дочитан список. Прежде экран просил сотню писем и на
+  // этом заканчивался — а в подзаголовке честно писал «всего N». Сам сообщал,
+  // что показывает часть почты, и ничего с этим сделать не давал.
+  const [stranitsa, setStranitsa] = useState(1);
+  const [dochityvaem, setDochityvaem] = useState(false);
+
   const [attempt, setAttempt] = useState(0);
 
   const { failure, fail, clear } = useFailure();
 
   const typed = useDebounced(search);
 
-  const path = useMemo(() => {
-    const params = new URLSearchParams({ per_page: "100" });
+  // Отбор без номера страницы: положи страницу сюда — и смена отбора станет
+  // неотличима от перехода на следующую. Загрузка зависит только от отбора и
+  // всегда просит первую страницу, дочитка приписывает номер сама.
+  const otbor = useMemo(() => {
+    const params = new URLSearchParams({ per_page: String(NA_STRANITSE) });
     if (filter === "in" || filter === "out") params.set("direction", filter);
     if (filter === "unread") params.set("unread", "true");
     if (typed.trim()) params.set("search", typed.trim());
     return `/mail/messages?${params}`;
   }, [filter, typed]);
 
-  const reload = useCallback(() => setAttempt((n) => n + 1), []);
+  // Перечитывание после отправки письма начинается с первой страницы — как и
+  // всякая загрузка здесь, отдельно счётчик сбрасывать больше не надо. Плата
+  // за это — дочитанный хвост схлопывается до первой сотни, и так правильно:
+  // перечитанная третья страница легла бы вторым слоем поверх уже показанной,
+  // и письма задвоились бы.
+  const reload = useCallback(() => {
+    setAttempt((n) => n + 1);
+  }, []);
 
   useEffect(() => {
     // Фильтры переключают быстрее, чем отвечает сервер: без счётчика ответ по
@@ -77,11 +96,12 @@ export function Mail() {
     let current = true;
     clear();
     api
-      .get(path)
+      .get<{ items: MailMessage[]; total: number }>(`${otbor}&page=1`)
       .then((data) => {
         if (!current) return;
         setMessages(data.items);
         setTotal(data.total);
+        setStranitsa(1);
       })
       // Раньше здесь стоял пустой список — и экран показывал «писем нет» там,
       // где на деле не ответил сервер. Пустая почта и недоступная почта для
@@ -92,7 +112,36 @@ export function Mail() {
     return () => {
       current = false;
     };
-  }, [path, attempt, fail, clear]);
+  }, [otbor, attempt, fail, clear]);
+
+  /** Дочитать список.
+   *
+   * Отдельным действием, а не номером страницы в пути загрузки, и номер растёт
+   * ПОСЛЕ удачного ответа. Иначе отказ на второй странице оставлял бы счётчик
+   * на двойке, а следующее нажатие просило бы третью — вторая сотня писем
+   * пропадала бы из списка навсегда и молча.
+   *
+   * Отказ говорит о себе всплывающей жалобой, а не через `fail`: `fail` рисует
+   * экран «не удалось загрузить», а он виден только пока показывать нечего.
+   * После первой удачной загрузки отказ дочитки не показал бы ничего вовсе —
+   * кнопка просто переставала бы отвечать.
+   */
+  const dochitat = async () => {
+    if (dochityvaem) return;
+    setDochityvaem(true);
+    try {
+      const dalshe = await api.get<{ items: MailMessage[]; total: number }>(
+        `${otbor}&page=${stranitsa + 1}`,
+      );
+      setMessages((bylo) => (bylo ? [...bylo, ...dalshe.items] : dalshe.items));
+      setTotal(dalshe.total);
+      setStranitsa((bylo) => bylo + 1);
+    } catch (e) {
+      toastError(e);
+    } finally {
+      setDochityvaem(false);
+    }
+  };
 
   // Список ящиков нужен форме отправки: с какого адреса уходит письмо.
   // Менеджеру он недоступен (это настройка root), поэтому отказ здесь не беда:
@@ -209,6 +258,12 @@ export function Mail() {
           </div>
         ))}
         {messages.length === 0 && <EmptyState title={t("mailEmpty")} />}
+        <Dochitat
+          pokazano={messages.length}
+          vsego={total}
+          zanyat={dochityvaem}
+          onClick={() => void dochitat()}
+        />
       </div>
 
       {open && (

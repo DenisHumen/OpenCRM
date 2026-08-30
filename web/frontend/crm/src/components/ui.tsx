@@ -180,6 +180,32 @@ export function LoadFailed({ error, onRetry }: { error: unknown; onRetry: () => 
   );
 }
 
+/** «Показать ещё» с числом показанного и всего.
+ *
+ * Число в подписи — не украшение. Без него человек не знает, дочитал он до
+ * конца или список просто закончился на круглом месте; а именно этим и была
+ * прежняя беда — сотня записей выглядела как весь список.
+ */
+export function Dochitat({
+  pokazano,
+  vsego,
+  zanyat,
+  onClick,
+}: {
+  pokazano: number;
+  vsego: number;
+  zanyat?: boolean;
+  onClick: () => void;
+}) {
+  const { t } = useApp();
+  if (pokazano >= vsego) return null;
+  return (
+    <button type="button" className="dochitat" disabled={zanyat} onClick={onClick}>
+      {t("showMore")} ({pokazano} / {vsego})
+    </button>
+  );
+}
+
 export function EmptyState({ title, sub }: { title: string; sub?: string }) {
   return (
     <div className="empty-state">

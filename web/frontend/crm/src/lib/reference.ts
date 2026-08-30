@@ -2,6 +2,19 @@ import { useCallback, useEffect, useState } from "react";
 
 import { api } from "./api";
 
+/** Сколько страниц справочника крючок готов собрать.
+ *
+ * Справочник — это набор, из которого ВЫБИРАЮТ, а значит он обязан быть
+ * показан целиком: половина набора выглядит как весь набор, и человек не
+ * находит запись, решив, что её нет. Ровно так поле выбора клиента знало
+ * первые двести карточек и за ними показывало чужое имя.
+ *
+ * Предел — не потолок показа, а страховка от указания сюда ручки, у которой
+ * записей тысячи. Такой справочник полем выбора быть не может вовсе, и
+ * упереться в предел означает ошибку в коде, а не большую базу у клиента.
+ */
+const PREDEL_STRANITS = 20;
+
 /** Справочник: список, которым заполняют выпадающий список или врезку. */
 export interface Reference<T> {
   /** `null` — ответа ещё нет либо он не пришёл. Пустой массив — «записей нет». */
@@ -53,14 +66,47 @@ export function useReference<T>(path: string | null): Reference<T> {
     }
     let current = true;
     setFailure(null);
-    api
-      .get<{ items: T[] }>(path)
-      .then((data) => {
-        if (current) setItems(data.items);
-      })
-      .catch((e) => {
+    void (async () => {
+      try {
+        const sobrano: T[] = [];
+        // Первая запись прошлой страницы. Ручка, которая отдаёт `total`, но
+        // `page` не понимает, вернула бы ту же страницу второй раз — и
+        // справочник набрался бы двойниками, молча и правдоподобно. Одна
+        // такая ручка в проекте уже есть (лента заявки).
+        let prezhnyaya: string | null = null;
+        for (let nomer = 1; nomer <= PREDEL_STRANITS; nomer += 1) {
+          const razdelitel = path.includes("?") ? "&" : "?";
+          const data = await api.get<{ items: T[]; total?: number }>(
+            `${path}${razdelitel}page=${nomer}`,
+          );
+          if (!current) return;
+          const pervaya = data.items.length ? JSON.stringify(data.items[0]) : null;
+          if (nomer > 1 && pervaya !== null && pervaya === prezhnyaya) {
+            setFailure(new Error(`ручка ${path} не листается: страница повторилась`));
+            return;
+          }
+          prezhnyaya = pervaya;
+          sobrano.push(...data.items);
+          // Ручка не страничная (`total` не отдаёт) либо всё уже собрано.
+          if (data.total === undefined || sobrano.length >= data.total) {
+            setItems(sobrano);
+            return;
+          }
+          // Пустая страница при недобранном `total` — это не «конец», а
+          // расхождение на сервере. Крутить дальше нечего, а молча показать
+          // часть нельзя.
+          if (data.items.length === 0) break;
+        }
+        if (!current) return;
+        // Дошли до предела — справочнику здесь не место, и это ошибка
+        // не человека, а того, кто указал сюда страничную ручку с тысячами
+        // записей. Говорим отказом: показать часть набора, из которого
+        // выбирают, хуже, чем не показать ничего.
+        setFailure(new Error(`справочник ${path} не помещается в поле выбора`));
+      } catch (e) {
         if (current) setFailure(e);
-      });
+      }
+    })();
     return () => {
       current = false;
     };
