@@ -7,7 +7,7 @@ import { CallButton, CallsPanel } from "../components/CallsPanel";
 import { Icon } from "../components/Icon";
 import { NewBoardButton } from "../components/NewBoardButton";
 import { SourcePicker } from "../components/SourcePicker";
-import { Avatar, Chip, ConfirmModal, EmptyState, LoadFailed, ScreenLoading } from "../components/ui";
+import { Avatar, Chip, ConfirmModal, Dochitat, EmptyState, LoadFailed, ScreenLoading } from "../components/ui";
 import { api, ApiError } from "../lib/api";
 import { dropTarget } from "../lib/dnd";
 import { useApp } from "../lib/app";
@@ -86,12 +86,21 @@ function noteIcon(note: { kind: string; direction?: string | null }): string {
   return note.direction === "out" ? "callOut" : "callIn";
 }
 
+/** По скольку заметок дочитывается карточка. */
+const ZAMETOK_NA_STRANITSE = 100;
+
 export function ClientCard() {
   const { id } = useParams();
   const { t, locale, user, workspace, modules, toast, toastError } = useApp();
   const navigate = useNavigate();
   const [client, setClient] = useState<any>(null);
   const [notes, setNotes] = useState<any[]>([]);
+  // Заметок у давнего клиента бывает больше сотни: карточка брала первую
+  // сотню и молчала об остальных — самые ранние записи о нём просто
+  // переставали существовать.
+  const [vsegoZametok, setVsegoZametok] = useState(0);
+  const [stranitsaZametok, setStranitsaZametok] = useState(1);
+  const [dochityvaem, setDochityvaem] = useState(false);
   const [files, setFiles] = useState<any[]>([]);
   const [deals, setDeals] = useState<any[]>([]);
   const [tab, setTab] = useState<TabKey>("history");
@@ -125,8 +134,12 @@ export function ClientCard() {
       const data = await api.get(`/clients/${id}`);
       setClient(data);
       setFiles(data.files);
-      const notesData = await api.get(`/clients/${id}/notes?per_page=100`);
+      const notesData = await api.get<{ items: any[]; total: number }>(
+        `/clients/${id}/notes?page=1&per_page=${ZAMETOK_NA_STRANITSE}`,
+      );
       setNotes(notesData.items);
+      setVsegoZametok(notesData.total);
+      setStranitsaZametok(1);
       // Заявки приходят вместе с карточкой — отдельный запрос не нужен.
       setDeals(data.deals ?? []);
     } catch (e) {
@@ -142,6 +155,26 @@ export function ClientCard() {
       fail(e);
     }
   }, [id, toastError, navigate, fail, clear]);
+
+  /** Дочитать заметки. Дописывает страницу, а не перезагружает карточку:
+   * от дочитки меняется только лента внизу.
+   */
+  const dochitat_zametki = async () => {
+    if (dochityvaem) return;
+    setDochityvaem(true);
+    try {
+      const dalshe = await api.get<{ items: any[]; total: number }>(
+        `/clients/${id}/notes?page=${stranitsaZametok + 1}&per_page=${ZAMETOK_NA_STRANITSE}`,
+      );
+      setNotes((bylo) => [...bylo, ...dalshe.items]);
+      setVsegoZametok(dalshe.total);
+      setStranitsaZametok((bylo) => bylo + 1);
+    } catch (e) {
+      toastError(e);
+    } finally {
+      setDochityvaem(false);
+    }
+  };
 
   useEffect(() => {
     void load();
@@ -387,6 +420,12 @@ export function ClientCard() {
                 </div>
               </div>
             ))}
+            <Dochitat
+              pokazano={notes.length}
+              vsego={vsegoZametok}
+              zanyat={dochityvaem}
+              onClick={() => void dochitat_zametki()}
+            />
             {notes.length === 0 && <EmptyState title={t("addNotePlaceholder")} />}
           </div>
         </>

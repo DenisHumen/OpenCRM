@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 
-import { EmptyState, ScreenLoading } from "../components/ui";
+import { Dochitat, EmptyState, ScreenLoading } from "../components/ui";
 import { api, type AuditEvent } from "../lib/api";
 import { useApp } from "../lib/app";
 import { useDebounced } from "../lib/debounce";
@@ -66,12 +66,21 @@ const SOURCE: Record<string, TranslationKey> = {
  * заставляет делить в уме — а делят как раз тогда, когда торопятся. */
 const MONEY_ACTIONS = new Set(["deal.amount_changed", "deal.prepaid_changed"]);
 
+/** По скольку записей журнала дочитывается список. */
+const NA_STRANITSE = 100;
+
 export function Audit() {
-  const { t, locale, workspace } = useApp();
+  const { t, locale, workspace, toastError } = useApp();
   const [items, setItems] = useState<AuditEvent[] | null>(null);
   const [total, setTotal] = useState(0);
   const [search, setSearch] = useState("");
   const [source, setSource] = useState("");
+
+  // До какой страницы дочитан журнал. Прежде экран просил сотню записей и на
+  // этом заканчивался — а рядом честно писал «всего 4000». Сам сообщал, что
+  // показывает сороковую часть, и ничего с этим сделать не давал.
+  const [stranitsa, setStranitsa] = useState(1);
+  const [dochityvaem, setDochityvaem] = useState(false);
 
   const [attempt, setAttempt] = useState(0);
 
@@ -79,8 +88,9 @@ export function Audit() {
 
   const typed = useDebounced(search);
 
-  const path = useMemo(() => {
-    const params = new URLSearchParams({ per_page: "100" });
+  // Отбор без номера страницы: по нему видно, что спрашивают уже про другое.
+  const otbor = useMemo(() => {
+    const params = new URLSearchParams({ per_page: String(NA_STRANITSE) });
     if (typed.trim()) params.set("search", typed.trim());
     if (source) params.set("source", source);
     return `/audit?${params}`;
@@ -93,11 +103,12 @@ export function Audit() {
     let current = true;
     clear();
     api
-      .get<{ items: AuditEvent[]; total: number }>(path)
+      .get<{ items: AuditEvent[]; total: number }>(`${otbor}&page=1`)
       .then((data) => {
         if (!current) return;
         setItems(data.items);
         setTotal(data.total);
+        setStranitsa(1);
       })
       .catch((e) => {
         if (current) fail(e);
@@ -105,7 +116,36 @@ export function Audit() {
     return () => {
       current = false;
     };
-  }, [path, attempt, fail, clear]);
+  }, [otbor, attempt, fail, clear]);
+
+  /** Дочитать журнал.
+   *
+   * Отдельным действием, а не номером страницы в пути загрузки, и номер растёт
+   * ПОСЛЕ удачного ответа. Иначе отказ на второй странице оставлял бы счётчик
+   * на двойке, а следующее нажатие просило бы третью — вторая пропускалась бы
+   * навсегда, и журнал молча недосчитывался бы сотни записей.
+   *
+   * Отказ говорит о себе всплывающей жалобой, а не через `fail`: `fail` рисует
+   * экран «не удалось загрузить», а он виден только пока показывать нечего.
+   * После первой удачной загрузки отказ дочитки не показал бы ничего вовсе —
+   * кнопка просто переставала бы отвечать.
+   */
+  const dochitat = async () => {
+    if (dochityvaem) return;
+    setDochityvaem(true);
+    try {
+      const dalshe = await api.get<{ items: AuditEvent[]; total: number }>(
+        `${otbor}&page=${stranitsa + 1}`,
+      );
+      setItems((bylo) => (bylo ? [...bylo, ...dalshe.items] : dalshe.items));
+      setTotal(dalshe.total);
+      setStranitsa((bylo) => bylo + 1);
+    } catch (e) {
+      toastError(e);
+    } finally {
+      setDochityvaem(false);
+    }
+  };
 
   if (!items) {
     return <ScreenLoading error={failure} onRetry={() => setAttempt((n) => n + 1)} />;
@@ -232,6 +272,12 @@ export function Audit() {
               </span>
             </div>
           ))}
+          <Dochitat
+            pokazano={items.length}
+            vsego={total}
+            zanyat={dochityvaem}
+            onClick={() => void dochitat()}
+          />
         </div>
       )}
     </div>

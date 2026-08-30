@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 
 import { Icon } from "../components/Icon";
 import { VyborKlienta } from "../components/VyborKlienta";
-import { Avatar, EmptyState, ScreenLoading } from "../components/ui";
+import { Avatar, Dochitat, EmptyState, ScreenLoading } from "../components/ui";
 import { api } from "../lib/api";
 import { copyText } from "../lib/clipboard";
 import { useApp } from "../lib/app";
@@ -1008,20 +1008,16 @@ export function Telegram() {
                 </button>
               </li>
             ))}
-            {chats.length < vsego_chatov && (
-              // Обычный пункт списка, а не хвостик под ним: так до него
-              // доходит Tab и его видно с клавиатуры, как и все диалоги выше.
-              <li>
-                <button
-                  type="button"
-                  className="tg-more"
-                  disabled={dochityvaem}
-                  onClick={() => void dochitat_spisok()}
-                >
-                  {t("tgMoreChats")} ({chats.length} / {vsego_chatov})
-                </button>
-              </li>
-            )}
+            {/* Обычным пунктом списка, а не хвостиком под ним: так до него
+                доходит Tab и его видно с клавиатуры, как и все диалоги выше. */}
+            <li>
+              <Dochitat
+                pokazano={chats.length}
+                vsego={vsego_chatov}
+                zanyat={dochityvaem}
+                onClick={() => void dochitat_spisok()}
+              />
+            </li>
           </ul>
         )}
       </aside>

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
 import { Icon } from "../components/Icon";
-import { Chip, EmptyState, ScreenLoading } from "../components/ui";
+import { Chip, Dochitat, EmptyState, ScreenLoading } from "../components/ui";
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
 import { useDebounced } from "../lib/debounce";
@@ -59,20 +59,31 @@ export const WAYBILL_STATUS_LABEL = {
   cancelled: "wbCancelled",
 } as const;
 
+/** По скольку накладных дочитывается список. */
+const NA_STRANITSE = 100;
+
 export function Waybills() {
   const { t, locale, workspace, toastError } = useApp();
   const navigate = useNavigate();
   const [query, setQuery] = useState("");
   const [kind, setKind] = useState<string>("");
   const [data, setData] = useState<{ items: Waybill[]; total: number } | null>(null);
+  // До какой страницы дочитан список. Прежде экран просил сотню накладных и на
+  // этом заканчивался — а в подзаголовке честно писал «всего N». Сам сообщал,
+  // что показывает часть, и ничего с этим сделать не давал.
+  const [stranitsa, setStranitsa] = useState(1);
+  const [dochityvaem, setDochityvaem] = useState(false);
   const [attempt, setAttempt] = useState(0);
   const guard = useGuard();
   const { failure, fail, clear } = useFailure();
 
   const search = useDebounced(query);
 
-  const path = useMemo(() => {
-    const params = new URLSearchParams({ per_page: "100" });
+  // Отбор без номера страницы: положи страницу сюда — и смена отбора станет
+  // неотличима от перехода на следующую. Загрузка зависит только от отбора и
+  // всегда просит первую страницу, дочитка приписывает номер сама.
+  const otbor = useMemo(() => {
+    const params = new URLSearchParams({ per_page: String(NA_STRANITSE) });
     if (search) params.set("search", search);
     if (kind) params.set("kind", kind);
     return `/waybills?${params}`;
@@ -84,9 +95,11 @@ export function Waybills() {
     let current = true;
     clear();
     api
-      .get(path)
+      .get<{ items: Waybill[]; total: number }>(`${otbor}&page=1`)
       .then((found) => {
-        if (current) setData(found);
+        if (!current) return;
+        setData(found);
+        setStranitsa(1);
       })
       .catch((e) => {
         if (current) fail(e);
@@ -94,7 +107,39 @@ export function Waybills() {
     return () => {
       current = false;
     };
-  }, [path, attempt, fail, clear]);
+  }, [otbor, attempt, fail, clear]);
+
+  /** Дочитать список.
+   *
+   * Отдельным действием, а не номером страницы в пути загрузки, и номер растёт
+   * ПОСЛЕ удачного ответа. Иначе отказ на второй странице оставлял бы счётчик
+   * на двойке, а следующее нажатие просило бы третью — вторая сотня накладных
+   * пропадала бы из списка навсегда и молча.
+   *
+   * Отказ говорит о себе всплывающей жалобой, а не через `fail`: `fail` рисует
+   * экран «не удалось загрузить», а он виден только пока показывать нечего.
+   * После первой удачной загрузки отказ дочитки не показал бы ничего вовсе —
+   * кнопка просто переставала бы отвечать.
+   */
+  const dochitat = async () => {
+    if (dochityvaem) return;
+    setDochityvaem(true);
+    try {
+      // `dalshe.total` — сколько накладных всего; не путать с `waybill.total`,
+      // который сумма денег по одной накладной.
+      const dalshe = await api.get<{ items: Waybill[]; total: number }>(
+        `${otbor}&page=${stranitsa + 1}`,
+      );
+      setData((bylo) =>
+        bylo ? { ...dalshe, items: [...bylo.items, ...dalshe.items] } : dalshe,
+      );
+      setStranitsa((bylo) => bylo + 1);
+    } catch (e) {
+      toastError(e);
+    } finally {
+      setDochityvaem(false);
+    }
+  };
 
   const create = async (which: string) => {
     // Заводится пустой черновик и сразу открывается: пока сервер отдаёт номер,
@@ -204,6 +249,12 @@ export function Waybills() {
           </Link>
         ))}
         {data.items.length === 0 && <EmptyState title={t("waybillsEmpty")} />}
+        <Dochitat
+          pokazano={data.items.length}
+          vsego={data.total}
+          zanyat={dochityvaem}
+          onClick={() => void dochitat()}
+        />
       </div>
     </div>
   );

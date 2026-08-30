@@ -2026,6 +2026,27 @@ summary:focus-visible,
   .tg-feed { padding: 12px; }
 }
 
+/* «Показать ещё» — последняя строка любого дочитываемого списка.
+ *
+ * Во всю ширину и пунктиром: это не действие над записями, а продолжение
+ * самого списка. `grid-column` — ради сетки досок, где кнопка иначе встала бы
+ * плиткой на место доски и читалась как ещё одна доска. */
+.dochitat {
+  display: block;
+  width: 100%;
+  grid-column: 1 / -1;
+  margin-top: 8px;
+  padding: 10px 12px;
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  cursor: pointer;
+}
+.dochitat:hover:not(:disabled) { background: var(--well-off); color: var(--text); }
+.dochitat:disabled { opacity: 0.6; cursor: default; }
+
 /* Кнопка «показать более ранние»: над лентой, неброская — её нажимают редко. */
 .tg-more {
   align-self: center;

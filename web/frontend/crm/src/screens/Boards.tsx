@@ -4,12 +4,15 @@ import { useNavigate } from "react-router-dom";
 import { BoardCard } from "../components/BoardCard";
 import { Icon } from "../components/Icon";
 import { NewBoardButton } from "../components/NewBoardButton";
-import { EmptyState, ScreenLoading } from "../components/ui";
+import { Dochitat, EmptyState, ScreenLoading } from "../components/ui";
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
 import { useFailure } from "../lib/failure";
 
 type Filter = "all" | "published" | "drafts" | "revoked";
+
+/** По скольку досок дочитывается список. */
+const NA_STRANITSE = 100;
 
 export function Boards() {
   const { t, toastError } = useApp();
@@ -19,12 +22,57 @@ export function Boards() {
 
   const { failure, fail, clear } = useFailure();
 
+  // До какой страницы дочитан список. Прежде бралась сотня досок и на этом
+  // всё; отбор «опубликованные» при этом искал ТОЛЬКО среди них, то есть
+  // сто первая опубликованная доска не находилась ни фильтром, ни глазами.
+  const [stranitsa, setStranitsa] = useState(1);
+  const [dochityvaem, setDochityvaem] = useState(false);
+
   const load = useCallback(() => {
     clear();
-    api.get("/boards?per_page=100").then(setData).catch(fail);
+    api
+      .get<{ items: unknown[]; total: number }>(`/boards?page=1&per_page=${NA_STRANITSE}`)
+      .then((otvet) => {
+        setData(otvet);
+        setStranitsa(1);
+      })
+      .catch((beda) => {
+        fail(beda);
+      });
   }, [fail, clear]);
 
   useEffect(load, [load]);
+
+  /** Дочитать список.
+   *
+   * Отдельным действием, а не номером страницы в пути загрузки, и номер
+   * растёт ПОСЛЕ удачного ответа. Иначе отказ на второй странице оставлял бы
+   * счётчик на двойке, а следующее нажатие просило бы третью — вторая сотня
+   * досок пропадала бы из списка навсегда и молча, а отбор ищет только по
+   * загруженному.
+   *
+   * Отказ говорит о себе всплывающей жалобой, а не через `fail`: `fail`
+   * рисует экран «не удалось загрузить», а он виден только пока показывать
+   * нечего. После первой удачной загрузки отказ дочитки не показал бы ничего
+   * вовсе — кнопка просто переставала бы отвечать.
+   */
+  const dochitat = async () => {
+    if (dochityvaem) return;
+    setDochityvaem(true);
+    try {
+      const dalshe = await api.get<{ items: unknown[]; total: number }>(
+        `/boards?page=${stranitsa + 1}&per_page=${NA_STRANITSE}`,
+      );
+      setData((bylo: any) =>
+        bylo ? { ...dalshe, items: [...bylo.items, ...dalshe.items] } : dalshe,
+      );
+      setStranitsa((bylo) => bylo + 1);
+    } catch (beda) {
+      toastError(beda);
+    } finally {
+      setDochityvaem(false);
+    }
+  };
 
   if (!data) return <ScreenLoading error={failure} onRetry={load} />;
 
@@ -76,6 +124,16 @@ export function Boards() {
           ))}
         </div>
       )}
+
+      {/* Счётчик показывает дочитанное ко всему, а не отобранное: отбор
+          работает по загруженному, и «3 из 240» рядом с тремя досками
+          сбивало бы с толку. */}
+      <Dochitat
+        pokazano={data.items.length}
+        vsego={data.total}
+        zanyat={dochityvaem}
+        onClick={() => void dochitat()}
+      />
     </div>
   );
 }

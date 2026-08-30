@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
+import { Dochitat } from "./ui";
 import { formatMoney, formatQuantity } from "../lib/format";
 import { moduleOn } from "../lib/modules";
 import { can } from "../lib/permissions";
@@ -21,13 +22,19 @@ import { unitKey } from "../screens/Warehouse";
  * строк может быть больше, чем помещается на страницу, и итог тихо занизился бы
  * ровно там, где на него и смотрят.
  */
+/** По скольку списаний дочитывается врезка. */
+const NA_STRANITSE = 100;
+
 export function DealStock({ dealId }: { dealId: number }) {
   const { t, locale, user, modules, workspace, toastError } = useApp();
   const [data, setData] = useState<{
     items: StockMove[];
+    total: number;
     cost: number;
     currency: string;
   } | null>(null);
+  const [stranitsa, setStranitsa] = useState(1);
+  const [dochityvaem, setDochityvaem] = useState(false);
 
   // Право на склад — вместе с блоком: без него врезка всё равно
   // получит отказ, а пустая рамка «Списано со склада» выглядит
@@ -38,15 +45,56 @@ export function DealStock({ dealId }: { dealId: number }) {
     if (!enabled) return;
     let alive = true;
     api
-      .get(`/warehouse/moves?deal_id=${dealId}&per_page=200`)
+      .get<{ items: StockMove[]; total: number; cost: number; currency: string }>(
+        `/warehouse/moves?deal_id=${dealId}&page=1&per_page=${NA_STRANITSE}`,
+      )
       .then((moves) => {
-        if (alive) setData(moves);
+        if (!alive) return;
+        setData(moves);
+        setStranitsa(1);
       })
-      .catch(toastError);
+      .catch((beda) => {
+        if (!alive) return;
+        toastError(beda);
+      });
     return () => {
       alive = false;
     };
   }, [dealId, enabled, toastError]);
+
+  /** Дочитать врезку.
+   *
+   * Страницы дописываются: заявку с сотнями списаний рвать на страницы
+   * незачем, а обрезать молча — тем более. Итог себестоимости считает сервер
+   * по ВСЕМ строкам, поэтому от дочитки он не меняется.
+   *
+   * Отдельным действием, а не номером страницы в пути загрузки, и номер
+   * растёт ПОСЛЕ удачного ответа: иначе отказ на второй странице оставил бы
+   * счётчик на двойке, следующее нажатие попросило бы третью, и сотня
+   * списаний пропала бы из перечня навсегда — при верном итоге сверху, а
+   * значит незаметно. Отказ дочитки виден всплывающей жалобой, потому что
+   * список уже на экране и молчание выглядело бы как сломанная кнопка.
+   */
+  const dochitat = async () => {
+    if (dochityvaem) return;
+    setDochityvaem(true);
+    try {
+      const dalshe = await api.get<{
+        items: StockMove[];
+        total: number;
+        cost: number;
+        currency: string;
+      }>(`/warehouse/moves?deal_id=${dealId}&page=${stranitsa + 1}&per_page=${NA_STRANITSE}`);
+      setData((bylo) =>
+        bylo ? { ...dalshe, items: [...bylo.items, ...dalshe.items] } : dalshe,
+      );
+      setStranitsa((bylo) => bylo + 1);
+    } catch (beda) {
+      toastError(beda);
+    } finally {
+      setDochityvaem(false);
+    }
+  };
 
   if (!enabled || !data || data.items.length === 0) return null;
 
@@ -80,6 +128,12 @@ export function DealStock({ dealId }: { dealId: number }) {
             </span>
           </Link>
         ))}
+        <Dochitat
+          pokazano={data.items.length}
+          vsego={data.total}
+          zanyat={dochityvaem}
+          onClick={() => void dochitat()}
+        />
       </div>
     </div>
   );
