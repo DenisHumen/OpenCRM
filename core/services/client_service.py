@@ -22,6 +22,79 @@ from database.repositories import clients as clients_repo
 from database.repositories import users as users_repo
 
 # Внутренние документы клиентов: расширения, которые принимаем.
+#: Подпись в первых байтах — по расширениям, у которых она однозначна.
+#:
+#: Расширение выбирает загружающий, содержимое — нет. Пока сходились они
+#: только на слово, `otchet.pdf` мог оказаться чем угодно, а `logotip.png` —
+#: страницей со скриптом. Сегодня файл отдаётся вложением с `nosniff`, и
+#: браузер его не рисует; но это ровно тот довод, который уже подводил с SVG:
+#: безопасность держалась на одном заголовке в одном маршруте, а появись
+#: предпросмотр в списке файлов — и подделка сработала бы в сессии сотрудника.
+#:
+#: Проверяем только те, где подпись однозначна. Остальные (`txt`, `csv`, `rtf`,
+#: `ai`, `fig`, `sketch`) подписи не имеют вовсе либо имеют её общей с чужими
+#: форматами: выдумать её значило бы отказывать в настоящих файлах. Для них
+#: проверка остаётся по расширению, как была.
+PODPISI_PO_RASSHIRENIYU: dict[str, tuple[bytes, ...]] = {
+    "pdf": (b"%PDF-",),
+    # Современные офисные — это zip. Он же у самого zip.
+    "docx": (bytes.fromhex("504b0304"),),
+    "xlsx": (bytes.fromhex("504b0304"),),
+    "pptx": (bytes.fromhex("504b0304"),),
+    "zip": (
+        bytes.fromhex("504b0304"),
+        bytes.fromhex("504b0506"),   # пустой архив
+        bytes.fromhex("504b0708"),   # разрезанный на тома
+    ),
+    # Старые офисные — контейнер OLE, один на doc/xls/ppt.
+    "doc": (bytes.fromhex("d0cf11e0"),),
+    "xls": (bytes.fromhex("d0cf11e0"),),
+    "ppt": (bytes.fromhex("d0cf11e0"),),
+    "rar": (bytes.fromhex("526172211a07"),),
+    "7z": (bytes.fromhex("377abcaf271c"),),
+    "psd": (b"8BPS",),
+    "jpg": (bytes.fromhex("ffd8ff"),),
+    "jpeg": (bytes.fromhex("ffd8ff"),),
+    "png": (bytes.fromhex("89504e470d0a1a0a"),),
+    "gif": (b"GIF87a", b"GIF89a"),
+    "webp": (),   # разбирается отдельно: подпись не в начале файла
+    "webm": (bytes.fromhex("1a45dfa3"),),
+    "mp4": (),    # контейнер ISO BMFF: подпись на четвёртом байте
+    "mov": (),    # он же
+}
+
+#: Чем отдавать файл наружу. Присланный `Content-Type` сюда не попадает вовсе:
+#: его выбирает тот, кто загружает, а уходит он в заголовок ответа — то есть
+#: значение, выбранное посторонним, возвращалось бы браузеру сотрудника.
+MIME_PO_RASSHIRENIYU: dict[str, str] = {
+    "pdf": "application/pdf",
+    "txt": "text/plain; charset=utf-8",
+    "csv": "text/csv; charset=utf-8",
+    "rtf": "application/rtf",
+    "doc": "application/msword",
+    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "xls": "application/vnd.ms-excel",
+    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "ppt": "application/vnd.ms-powerpoint",
+    "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "zip": "application/zip",
+    "rar": "application/vnd.rar",
+    "7z": "application/x-7z-compressed",
+    "jpg": "image/jpeg",
+    "jpeg": "image/jpeg",
+    "png": "image/png",
+    "webp": "image/webp",
+    "gif": "image/gif",
+    "svg": "image/svg+xml",
+    "psd": "image/vnd.adobe.photoshop",
+    "ai": "application/postscript",
+    "fig": "application/octet-stream",
+    "sketch": "application/octet-stream",
+    "mp4": "video/mp4",
+    "webm": "video/webm",
+    "mov": "video/quicktime",
+}
+
 ALLOWED_CLIENT_FILE_EXTS = {
     "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "txt", "rtf", "csv",
     "zip", "rar", "7z", "jpg", "jpeg", "png", "webp", "gif", "svg", "psd",
@@ -347,11 +420,65 @@ def file_path_on_disk(file: ClientFile) -> Path:
     return _client_files_dir(file.client_id) / f"{file.file_uid}{ext}"
 
 
-def add_file(db: Session, client_id: int, uploader: User, original_name: str, content: bytes, mime: str) -> ClientFile:
+def _soderzhimoe_sootvetstvuet(ext: str, content: bytes) -> bool:
+    """Похоже ли содержимое на то, чем файл назвался.
+
+    Расширений, у которых подписи нет, здесь нет вовсе — для них ответ «да»:
+    выдуманная подпись отказывала бы в настоящих файлах, а это хуже, чем
+    пропустить неизвестное.
+
+    Контейнеры ISO BMFF (`mp4`, `mov`) и `webp` разбираются отдельно: подпись
+    у них не в начале файла, и общее правило «первые байты» на них не ложится.
+    """
+    if ext in ("mp4", "mov"):
+        return len(content) > 12 and content[4:8] == b"ftyp"
+    if ext == "webp":
+        return len(content) > 12 and content[:4] == b"RIFF" and content[8:12] == b"WEBP"
+    podpisi = PODPISI_PO_RASSHIRENIYU.get(ext)
+    if not podpisi:
+        return True
+    return content.startswith(podpisi)
+
+
+def mime_dlya_otdachi(file: ClientFile) -> str:
+    """Чем отдавать файл. Считается из имени, а не берётся из записи.
+
+    В записи у файлов, залитых до этой правки, лежит присланный при загрузке
+    `Content-Type` — то есть значение, выбранное посторонним и уходившее в
+    заголовок ответа. Считая из имени, мы закрываем и старые записи тоже:
+    переписывать их миграцией нечем, потому что имя — единственное, что о них
+    достоверно известно.
+    """
+    ext = Path(file.original_name).suffix.lstrip(".").lower()
+    return MIME_PO_RASSHIRENIYU.get(ext, "application/octet-stream")
+
+
+def add_file(
+    db: Session,
+    client_id: int,
+    uploader: User,
+    original_name: str,
+    content: bytes,
+    mime: str = "",
+) -> ClientFile:
+    """Принять файл клиента.
+
+    `mime` принимается и НЕ используется. Довод не в вежливости к вызывающему:
+    заголовок присылает тот, кто загружает, и уйти он должен ровно никуда.
+    Оставлен в подписи, чтобы правка не выглядела как «поле потеряли» и чтобы
+    следующий, кому он понадобится, прочитал здесь, почему его не берут.
+    """
     get_client(db, client_id)
     ext = Path(original_name).suffix.lstrip(".").lower()
     if ext not in ALLOWED_CLIENT_FILE_EXTS:
         raise errors.ValidationError(f"File type .{ext} is not allowed", code="file_type_not_allowed")
+    if content and not _soderzhimoe_sootvetstvuet(ext, content):
+        # Отказ по содержимому, а не по расширению: файл назвался одним, а
+        # внутри другое. Пустой не проверяем — на него есть свой отказ ниже,
+        # и он говорит понятнее.
+        raise errors.ValidationError(
+            f"The file does not look like a .{ext}", code="file_content_mismatch"
+        )
     if len(content) > get_settings().max_upload_bytes:
         raise errors.ValidationError("File is too large", code="file_too_large")
     if not content:
@@ -385,7 +512,10 @@ def add_file(db: Session, client_id: int, uploader: User, original_name: str, co
         uploaded_by=uploader.id,
         file_uid=tokens.new_file_uid(),
         original_name=Path(original_name).name[:255],
-        mime=mime or "application/octet-stream",
+        # Присланный `Content-Type` не сохраняем вовсе: он выбирается тем, кто
+        # загружает, а уходит в заголовок ответа сотруднику. Тип считаем сами
+        # из расширения, которое к этому месту уже сверено с содержимым.
+        mime=MIME_PO_RASSHIRENIYU.get(ext, "application/octet-stream"),
         size_bytes=len(content),
     )
     db.add(file)

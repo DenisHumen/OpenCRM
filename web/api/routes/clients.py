@@ -243,7 +243,9 @@ def download_file(
         raise errors.NotFoundError("File is missing on disk", code="file_missing")
     return FileResponse(
         path,
-        media_type=record.mime or "application/octet-stream",
+        # Тип считает служба из имени, а не берёт из записи: у файлов,
+        # залитых до этой правки, там лежит присланный при загрузке заголовок.
+        media_type=client_service.mime_dlya_otdachi(record),
         filename=record.original_name,
         headers={"X-Content-Type-Options": "nosniff"},
     )
