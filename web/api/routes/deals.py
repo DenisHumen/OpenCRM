@@ -283,6 +283,8 @@ def delete_deal(
 def deal_feed(
     deal_id: int,
     kind: str | None = None,
+    page: int = Query(default=1, ge=1),
+    per_page: int = Query(default=100, ge=1, le=200),
     user: User = Depends(require_perm("deals", "view")),
     db: Session = Depends(get_db),
 ):
@@ -293,11 +295,25 @@ def deal_feed(
     клиент. К тому же у клиента событий больше, чем у одной заявки.
     """
     deal = _visible(db, deal_id, user)
-    notes, _total = clients_repo.list_notes(
-        db, client_id=deal.client_id, deal_id=deal_id, kind=kind, per_page=200
+    notes, vsego = clients_repo.list_notes(
+        db,
+        client_id=deal.client_id,
+        deal_id=deal_id,
+        kind=kind,
+        page=page,
+        per_page=per_page,
     )
     authors = _note_authors(db, notes)
-    return {"items": [schemas.note_out(n, authors.get(n.author_id)) for n in notes]}
+    # `total` в ответе, а не выброшенный в `_total`: прежде лента брала две
+    # сотни событий и обрывалась молча. У заявки, которую ведут год, ранние
+    # разговоры просто переставали существовать, и признака этому не было
+    # никакого — ни счётчика, ни строки «показано столько-то».
+    return schemas.paginated(
+        [schemas.note_out(n, authors.get(n.author_id)) for n in notes],
+        vsego,
+        page,
+        per_page,
+    )
 
 
 @router.post("/{deal_id}/feed", status_code=201)
