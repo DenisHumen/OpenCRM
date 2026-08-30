@@ -16,10 +16,12 @@
 её и ведут.
 """
 
-from sqlalchemy import func, select, update
-from sqlalchemy.orm import Session
+from sqlalchemy import case, func, or_, select, update
+from sqlalchemy.orm import Session, aliased
 
 from database.models import Document, DocumentEvent, DocumentLine
+from database.models.document import KIND_SALES_ORDER
+from database.models.warehouse import StockMove
 from database.query import as_int, contains, page_of
 
 
@@ -219,26 +221,113 @@ def promised(db: Session, kind: str, statuses, product_ids=None) -> dict[int, in
     же берётся и правило «резерв не переживает заказ»: отменили — обещание
     исчезло само, без единой строки кода на уборку.
 
-    Один запрос на весь список товаров, как `stock_by_product`: запрос на строку
-    превратил бы экран склада из 500 позиций в 500 обращений к базе.
+    **Обещано — это заказано МИНУС уже отгруженное по этому же заказу.** Пока
+    отгрузка случалась только вместе с закрытием, вычитать было нечего: заказ
+    закрывался и выходил из отбора целиком. Но накладную можно выписать по
+    заказу и провести, не закрывая его, и тогда товар уходил дважды —
+    физически движением и на бумаге резервом, который оставался прежним.
+    Ошибка тихая и в опасную сторону: «доступно» занижалось, и товар, лежащий
+    на полке, считался обещанным. Продавец отказывал покупателю, глядя на
+    число, которого нет.
+
+    Отгруженное берётся из движений, а не из бумаг: бумага может быть
+    сторнирована, и сторно — это тоже движение, обратное по знаку. Считая по
+    движениям, возврат учитывается сам собой; считая по накладным, пришлось бы
+    отдельно вычитать сторно и помнить об этом вечно.
+
+    Два запроса на весь список товаров, а не два на строку: запрос на строку
+    превратил бы экран склада из 500 позиций в тысячу обращений к базе.
+
+    Номера заказов уезжают во второй запрос списком, и это не расточительство:
+    обрезка по нулю делается на каждом заказе отдельно, значит разложить
+    заказанное по заказам всё равно придётся в питоне. Список уже собран —
+    подзапрос вместо него сэкономил бы ничего.
     """
-    stmt = (
-        select(DocumentLine.product_id, func.coalesce(func.sum(DocumentLine.quantity_milli), 0))
+    zakazano = (
+        select(
+            Document.id,
+            DocumentLine.product_id,
+            func.coalesce(func.sum(DocumentLine.quantity_milli), 0),
+        )
         .join(Document, Document.id == DocumentLine.document_id)
         .where(
             Document.kind == kind,
             Document.status.in_(tuple(statuses)),
             DocumentLine.product_id.is_not(None),
         )
-        .group_by(DocumentLine.product_id)
+        .group_by(Document.id, DocumentLine.product_id)
     )
     if product_ids is not None:
         if not product_ids:
             return {}
-        stmt = stmt.where(DocumentLine.product_id.in_(product_ids))
-    # `as_int` — `SUM()` в MySQL возвращает `Decimal`, а количество в проекте
-    # целое в тысячных; разбор — в докстроке `query.as_int`.
-    return {product_id: as_int(total) for product_id, total in db.execute(stmt).all()}
+        zakazano = zakazano.where(DocumentLine.product_id.in_(product_ids))
+
+    po_zakazam: dict[tuple[int, int], int] = {
+        (zakaz, tovar): as_int(skolko) for zakaz, tovar, skolko in db.execute(zakazano).all()
+    }
+    if not po_zakazam:
+        return {}
+
+    otgruzheno = _otgruzheno_po_zakazam(
+        db, kind, {zakaz for zakaz, _ in po_zakazam}, product_ids
+    )
+
+    itog: dict[int, int] = {}
+    for (zakaz, tovar), skolko in po_zakazam.items():
+        # Обрезаем по нулю на КАЖДОМ заказе отдельно, а не на итоге: отгрузив
+        # сверх заказанного по одному заказу, иначе съели бы резерв соседнего —
+        # а тот покупатель своего товара ждёт по-прежнему.
+        ostalos = skolko - otgruzheno.get((zakaz, tovar), 0)
+        if ostalos > 0:
+            itog[tovar] = itog.get(tovar, 0) + ostalos
+    return itog
+
+
+def _otgruzheno_po_zakazam(
+    db: Session, kind: str, zakazy: set[int], product_ids
+) -> dict[tuple[int, int], int]:
+    """Сколько уже прошло по складу под каждый заказ: {(заказ, товар): тысячные}.
+
+    Движение указывает на бумагу, которая его сделала, а не на заказ. Путей до
+    заказа три, и все три настоящие:
+
+      - движение сделано САМИМ заказом. Так работали закрытия до переезда на
+        накладные, и такие движения в базе останутся навсегда;
+      - движение сделано накладной, выписанной ПО заказу;
+      - движение сделано сторно такой накладной. Основание сторно — сама
+        накладная, поэтому до заказа отсюда два шага.
+
+    Знак приводим к «сколько ушло под заказ»: у продажи движения расходные и
+    потому отрицательные, у закупки приходные и положительные. Отрицательный
+    итог (вернули больше, чем отгрузили) обрезаем нулём — иначе возврат
+    РАЗДУЛ бы резерв выше заказанного.
+    """
+    bumaga = aliased(Document)
+    osnovanie = aliased(Document)
+    zakaz_id = case(
+        (bumaga.kind == kind, bumaga.id),
+        (osnovanie.kind == kind, bumaga.basis_id),
+        else_=osnovanie.basis_id,
+    )
+    zapros = (
+        select(
+            zakaz_id.label("zakaz"),
+            StockMove.product_id,
+            func.coalesce(func.sum(StockMove.quantity_milli), 0),
+        )
+        .join(bumaga, bumaga.id == StockMove.document_id)
+        .join(osnovanie, osnovanie.id == bumaga.basis_id, isouter=True)
+        .where(zakaz_id.in_(tuple(zakazy)))
+        .group_by(zakaz_id, StockMove.product_id)
+    )
+    if product_ids:
+        zapros = zapros.where(StockMove.product_id.in_(product_ids))
+
+    znak = -1 if kind == KIND_SALES_ORDER else 1
+    return {
+        (zakaz, tovar): max(0, znak * as_int(skolko))
+        for zakaz, tovar, skolko in db.execute(zapros).all()
+    }
 
 
 def add_line(db: Session, line: DocumentLine) -> DocumentLine:
