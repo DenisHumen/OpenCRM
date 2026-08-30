@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
 import { Icon } from "../components/Icon";
@@ -65,6 +65,12 @@ export function Warehouse() {
   // ничего с этим сделать.
   const [stranitsa, setStranitsa] = useState(1);
   const [dochityvaem, setDochityvaem] = useState(false);
+  // Отбор, которому принадлежит показанный список. Ставится загрузкой,
+  // сверяется дочиткой: пока вторая страница по «иван» едет, человек успевает
+  // сменить склад, первая страница нового отбора заменяет список — и
+  // опоздавшая страница дописывается к чужим находкам. На экране два отбора
+  // вперемешку, а «всего» от прошлого.
+  const otbor_spiska = useRef("");
 
   const [attempt, setAttempt] = useState(0);
 
@@ -85,6 +91,7 @@ export function Warehouse() {
     // худший из возможных обманов, потому что число правдоподобное. Приём тот
     // же, что в отчётах и палитре команд.
     let current = true;
+    otbor_spiska.current = otbor;
     clear();
     api
       .get(`${otbor}&page=1&per_page=${NA_STRANITSE}`)
@@ -117,10 +124,13 @@ export function Warehouse() {
   const dochitat = async () => {
     if (dochityvaem) return;
     setDochityvaem(true);
+    const sprosheno = otbor;
     try {
       const dalshe = await api.get<{ items: Product[]; total: number; currency: string }>(
         `${otbor}&page=${stranitsa + 1}&per_page=${NA_STRANITSE}`,
       );
+      // Отбор сменился, пока страница ехала, — ответ чужой.
+      if (otbor_spiska.current !== sprosheno) return;
       setData((bylo) =>
         bylo ? { ...dalshe, items: [...bylo.items, ...dalshe.items] } : dalshe,
       );

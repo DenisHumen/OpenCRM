@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { Icon } from "../components/Icon";
@@ -61,6 +61,10 @@ export function ProductCard() {
   const [total, setTotal] = useState(0);
   const [stranitsaDvizheniy, setStranitsaDvizheniy] = useState(1);
   const [dochityvaem, setDochityvaem] = useState(false);
+  // Чему принадлежит показанное. Ставит загрузка, сверяет дочитка: пока
+  // страница едет, можно уйти на другую карточку — и опоздавший ответ
+  // дописал бы чужие строки к чужому же списку, молча.
+  const otbor_spiska = useRef("");
   const [currency, setCurrency] = useState(workspace.currency);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const places = useWarehouses();
@@ -74,6 +78,7 @@ export function ProductCard() {
 
   const load = useCallback(async () => {
     clear();
+    otbor_spiska.current = String(id);
     try {
       const card = await api.get<Product & { currency: string }>(`/warehouse/products/${id}`);
       setProduct(card);
@@ -110,12 +115,15 @@ export function ProductCard() {
    */
   const dochitat_dvizheniya = async () => {
     if (dochityvaem) return;
+    const sprosheno = String(id);
     setDochityvaem(true);
     try {
       const dalshe = await api.get<{ items: StockMove[]; total: number }>(
         `/warehouse/products/${id}/moves` +
           `?page=${stranitsaDvizheniy + 1}&per_page=${DVIZHENIY_NA_STRANITSE}`,
       );
+      // Отбор сменился, пока страница ехала, — ответ чужой.
+      if (otbor_spiska.current !== sprosheno) return;
       setMoves((bylo) => [...bylo, ...dalshe.items]);
       setTotal(dalshe.total);
       setStranitsaDvizheniy((bylo) => bylo + 1);

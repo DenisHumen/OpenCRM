@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { api, type PhoneCall } from "../lib/api";
 import { useApp } from "../lib/app";
@@ -104,6 +104,12 @@ export function CallsPanel({
   const [vsego, setVsego] = useState(0);
   const [stranitsa, setStranitsa] = useState(1);
   const [dochityvaem, setDochityvaem] = useState(false);
+  // Карточка, которой принадлежит показанный список. Ставится загрузкой,
+  // сверяется дочиткой: пока вторая страница звонков одной карточки едет,
+  // человек уходит в другую, первая страница новой заменяет список — и
+  // опоздавшая страница дописывает к нему чужие звонки. Во врезке две
+  // карточки вперемешку, а «всего» от прошлой.
+  const otbor_spiska = useRef("");
   const enabled = moduleOn(modules, "telephony");
   const outcomeLabel = useOutcomeLabel();
 
@@ -124,6 +130,7 @@ export function CallsPanel({
 
   const load = useCallback(async () => {
     if (!enabled) return;
+    otbor_spiska.current = otbor(1);
     try {
       const otvet = await api.get<{ items: PhoneCall[]; total: number }>(otbor(1));
       setItems(otvet.items);
@@ -140,10 +147,13 @@ export function CallsPanel({
   const dochitat = async () => {
     if (dochityvaem) return;
     setDochityvaem(true);
+    const sprosheno = otbor(1);
     try {
       const dalshe = await api.get<{ items: PhoneCall[]; total: number }>(
         otbor(stranitsa + 1),
       );
+      // Отбор сменился, пока страница ехала, — ответ чужой.
+      if (otbor_spiska.current !== sprosheno) return;
       setItems((bylo) => [...(bylo ?? []), ...dalshe.items]);
       setVsego(dalshe.total);
       setStranitsa((bylo) => bylo + 1);

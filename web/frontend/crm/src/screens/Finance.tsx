@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 
 import { Icon } from "../components/Icon";
@@ -91,6 +91,12 @@ export function Finance() {
   // раскрыть, немногим лучше, чем обрезать молча.
   const [stranitsa, setStranitsa] = useState(1);
   const [dochityvaem, setDochityvaem] = useState(false);
+  // Период, которому принадлежит показанный журнал. Ставится загрузкой,
+  // сверяется дочиткой: пока вторая страница за август едет, человек успевает
+  // выбрать сентябрь, первая страница сентября заменяет журнал — и опоздавшая
+  // страница дописывает августовские операции к сентябрьским. На экране два
+  // периода вперемешку, а «всего» от прошлого.
+  const otbor_spiska = useRef("");
   const [adding, setAdding] = useState(false);
   const { failure, fail, clear } = useFailure();
   // Периоды переключают быстрее, чем отвечает сервер: без этого счётчика ответ
@@ -121,10 +127,13 @@ export function Finance() {
   const dochitat_zhurnal = async () => {
     if (dochityvaem) return;
     setDochityvaem(true);
+    const sprosheno = query;
     try {
       const dalshe = await api.get<{ items: Operation[]; total: number }>(
         `/finance/operations?${query}&page=${stranitsa + 1}&per_page=${PER_PAGE}`,
       );
+      // Отбор сменился, пока страница ехала, — ответ чужой.
+      if (otbor_spiska.current !== sprosheno) return;
       setData((bylo) =>
         bylo
           ? { ...bylo, operations: [...bylo.operations, ...dalshe.items], total: dalshe.total }
@@ -140,6 +149,7 @@ export function Finance() {
 
   useEffect(() => {
     let current = true;
+    otbor_spiska.current = query;
     clear();
     Promise.all([
       api.get<Profit>(`/finance/profit?${query}`),
