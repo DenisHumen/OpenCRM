@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
@@ -6,9 +6,9 @@ import { useGuard } from "../lib/guard";
 import { formatDateTime } from "../lib/format";
 import { moduleOn } from "../lib/modules";
 import { can } from "../lib/permissions";
-import { useReference } from "../lib/reference";
+import { useFailure } from "../lib/failure";
 import { Icon } from "./Icon";
-import { LoadFailed } from "./ui";
+import { Dochitat, LoadFailed } from "./ui";
 
 /**
  * Лента общения: письма, звонки, встречи и заметки одним потоком.
@@ -50,6 +50,9 @@ const KIND_LABEL = {
   stock: "feedStock",
 } as const;
 
+/** По скольку событий дочитывается лента. */
+const NA_STRANITSE = 100;
+
 export function Feed({ dealId, clientId }: { dealId: number; clientId: number }) {
   const { t, locale, user, modules, toast, toastError, refreshTasks } = useApp();
   const [filter, setFilter] = useState<string>("");
@@ -64,12 +67,74 @@ export function Feed({ dealId, clientId }: { dealId: number; clientId: number })
   // напоминания, и выяснялось это только когда оба напоминали.
   const taskGuard = useGuard();
 
-  // Лента через общий крючок справочников: отказ здесь не должен превращаться в
-  // «Пока ничего не записано». Пустая лента — это ответ («по заявке ещё не
-  // разговаривали»), а отказ — его отсутствие, и решения человек принимает
-  // разные: первое он закроет, второе повторит.
-  const feed = useReference<any>(`/deals/${dealId}/feed${filter ? `?kind=${filter}` : ""}`);
-  const { items, reload } = feed;
+  // Лента — поток, а не справочник, и потому дочитывается, а не собирается
+  // целиком. Общий крючок справочников её тянул постранично до конца: у
+  // заявки, которую ведут год, это два десятка запросов подряд и две тысячи
+  // строк в разметке — ради событий, которых никто не листает дальше первого
+  // экрана.
+  //
+  // Отказ при этом по-прежнему не превращается в «Пока ничего не записано»:
+  // пустая лента — это ответ («по заявке ещё не разговаривали»), а отказ — его
+  // отсутствие, и решения человек принимает разные: первое закроет, второе
+  // повторит.
+  const otbor = `/deals/${dealId}/feed?per_page=${NA_STRANITSE}` +
+    (filter ? `&kind=${filter}` : "");
+  const [items, setItems] = useState<any[] | null>(null);
+  const [vsego, setVsego] = useState(0);
+  const [stranitsa, setStranitsa] = useState(1);
+  const [dochityvaem, setDochityvaem] = useState(false);
+  const [popytka, setPopytka] = useState(0);
+  const { failure, fail, clear } = useFailure();
+  // Чему принадлежит показанное. Ставит загрузка, сверяет дочитка: отбор по
+  // виду записи переключают мышью, и опоздавшая страница дописала бы звонки
+  // к письмам.
+  const otbor_spiska = useRef("");
+
+  const reload = useCallback(() => setPopytka((bylo) => bylo + 1), []);
+
+  useEffect(() => {
+    let current = true;
+    otbor_spiska.current = otbor;
+    clear();
+    api
+      .get<{ items: any[]; total: number }>(`${otbor}&page=1`)
+      .then((otvet) => {
+        if (!current) return;
+        setItems(otvet.items);
+        setVsego(otvet.total);
+        setStranitsa(1);
+      })
+      .catch((beda) => {
+        if (current) fail(beda);
+      });
+    return () => {
+      current = false;
+    };
+  }, [otbor, popytka, fail, clear]);
+
+  /** Дочитать ленту. Номер растёт ПОСЛЕ ответа: увеличь его до — и отказ на
+   *  второй странице пропустил бы её навсегда. Отказ говорит всплывающей
+   *  жалобой, а не через `fail`: тот рисует «не удалось загрузить» вместо
+   *  всей ленты, а лента уже показана. */
+  const dochitat = async () => {
+    if (dochityvaem) return;
+    const sprosheno = otbor;
+    setDochityvaem(true);
+    try {
+      const dalshe = await api.get<{ items: any[]; total: number }>(
+        `${otbor}&page=${stranitsa + 1}`,
+      );
+      // Отбор сменился, пока страница ехала, — ответ чужой.
+      if (otbor_spiska.current !== sprosheno) return;
+      setItems((bylo) => [...(bylo ?? []), ...dalshe.items]);
+      setVsego(dalshe.total);
+      setStranitsa((bylo) => bylo + 1);
+    } catch (beda) {
+      toastError(beda);
+    } finally {
+      setDochityvaem(false);
+    }
+  };
 
   // Направление есть у звонка и письма; у заметки и встречи его нет, и
   // подставлять «входящее» по умолчанию нельзя — это разные вещи.
@@ -157,8 +222,8 @@ export function Feed({ dealId, clientId }: { dealId: number; clientId: number })
         </button>
       </div>
 
-      {feed.failure !== null ? (
-        <LoadFailed error={feed.failure} onRetry={reload} />
+      {failure !== null ? (
+        <LoadFailed error={failure} onRetry={reload} />
       ) : items === null ? null : items.length === 0 ? (
         <div className="field-desc" style={{ marginTop: 12 }}>{t("feedEmpty")}</div>
       ) : (
@@ -197,6 +262,12 @@ export function Feed({ dealId, clientId }: { dealId: number; clientId: number })
               )}
             </div>
           ))}
+          <Dochitat
+            pokazano={items.length}
+            vsego={vsego}
+            zanyat={dochityvaem}
+            onClick={() => void dochitat()}
+          />
         </div>
       )}
     </div>
