@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { Icon } from "../components/Icon";
@@ -62,6 +62,12 @@ export function Mail() {
   // что показывает часть почты, и ничего с этим сделать не давал.
   const [stranitsa, setStranitsa] = useState(1);
   const [dochityvaem, setDochityvaem] = useState(false);
+  // Отбор, которому принадлежит показанный список. Ставится загрузкой,
+  // сверяется дочиткой: пока вторая страница по «иван» едет, человек успевает
+  // набрать «п», первая страница «п» заменяет список — и опоздавшая страница
+  // дописывается к чужим находкам. На экране два отбора вперемешку, а «всего»
+  // от прошлого.
+  const otbor_spiska = useRef("");
 
   const [attempt, setAttempt] = useState(0);
 
@@ -94,6 +100,7 @@ export function Mail() {
     // прошлому отбору ложился поверх текущего, и во «входящих» оказывались
     // исходящие. Приём тот же, что в отчётах и палитре команд.
     let current = true;
+    otbor_spiska.current = otbor;
     clear();
     api
       .get<{ items: MailMessage[]; total: number }>(`${otbor}&page=1`)
@@ -129,10 +136,13 @@ export function Mail() {
   const dochitat = async () => {
     if (dochityvaem) return;
     setDochityvaem(true);
+    const sprosheno = otbor;
     try {
       const dalshe = await api.get<{ items: MailMessage[]; total: number }>(
         `${otbor}&page=${stranitsa + 1}`,
       );
+      // Отбор сменился, пока страница ехала, — ответ чужой.
+      if (otbor_spiska.current !== sprosheno) return;
       setMessages((bylo) => (bylo ? [...bylo, ...dalshe.items] : dalshe.items));
       setTotal(dalshe.total);
       setStranitsa((bylo) => bylo + 1);

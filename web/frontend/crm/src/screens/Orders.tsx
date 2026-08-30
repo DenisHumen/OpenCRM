@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
 import { Icon } from "../components/Icon";
@@ -70,6 +70,12 @@ export function Orders() {
   // что показывает часть, и ничего с этим сделать не давал.
   const [stranitsa, setStranitsa] = useState(1);
   const [dochityvaem, setDochityvaem] = useState(false);
+  // Отбор, которому принадлежит показанный список. Ставится загрузкой,
+  // сверяется дочиткой: пока вторая страница по «иван» едет, человек успевает
+  // набрать «п», первая страница «п» заменяет список — и опоздавшая страница
+  // дописывается к чужим находкам. На экране два отбора вперемешку, а «всего»
+  // от прошлого.
+  const otbor_spiska = useRef("");
   const [attempt, setAttempt] = useState(0);
   const guard = useGuard();
   const { failure, fail, clear } = useFailure();
@@ -91,6 +97,7 @@ export function Orders() {
     // по прошлому виду ложился поверх текущего, и на экране оказывался список
     // позапрошлого отбора. Приём тот же, что в отчётах и палитре команд.
     let current = true;
+    otbor_spiska.current = otbor;
     clear();
     api
       .get<{ items: Order[]; total: number }>(`${otbor}&page=1`)
@@ -122,10 +129,13 @@ export function Orders() {
   const dochitat = async () => {
     if (dochityvaem) return;
     setDochityvaem(true);
+    const sprosheno = otbor;
     try {
       const dalshe = await api.get<{ items: Order[]; total: number }>(
         `${otbor}&page=${stranitsa + 1}`,
       );
+      // Отбор сменился, пока страница ехала, — ответ чужой.
+      if (otbor_spiska.current !== sprosheno) return;
       setData((bylo) =>
         bylo ? { ...dalshe, items: [...bylo.items, ...dalshe.items] } : dalshe,
       );

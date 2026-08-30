@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { Chip, Dochitat } from "./ui";
@@ -46,12 +46,17 @@ export function OrdersOfCard({ clientId, dealId }: { clientId?: number; dealId?:
   const [vsego, setVsego] = useState(0);
   const [stranitsa, setStranitsa] = useState(1);
   const [dochityvaem, setDochityvaem] = useState(false);
+  // Чему принадлежит показанное. Ставит загрузка, сверяет дочитка: врезка
+  // висит в карточке, карточку меняют переходом — и опоздавший ответ
+  // дописал бы строки чужой заявки к нынешней, молча.
+  const otbor_spiska = useRef("");
 
   const visible = moduleOn(modules, "orders") && can(user, "orders.view");
 
   useEffect(() => {
     if (!visible || (!clientId && !dealId)) return;
     let alive = true;
+    otbor_spiska.current = putStranitsy(1, clientId, dealId);
     api
       .get<{ items: Order[]; total: number }>(putStranitsy(1, clientId, dealId))
       .then((data) => {
@@ -84,11 +89,14 @@ export function OrdersOfCard({ clientId, dealId }: { clientId?: number; dealId?:
    */
   const dochitat = async () => {
     if (dochityvaem) return;
+    const sprosheno = putStranitsy(1, clientId, dealId);
     setDochityvaem(true);
     try {
       const dalshe = await api.get<{ items: Order[]; total: number }>(
         putStranitsy(stranitsa + 1, clientId, dealId),
       );
+      // Отбор сменился, пока страница ехала, — ответ чужой.
+      if (otbor_spiska.current !== sprosheno) return;
       setItems((bylo) => (bylo ? [...bylo, ...dalshe.items] : dalshe.items));
       setVsego(dalshe.total);
       setStranitsa((bylo) => bylo + 1);

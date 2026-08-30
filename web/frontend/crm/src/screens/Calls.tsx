@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { CallButton, callIcon, useOutcomeLabel } from "../components/CallsPanel";
@@ -41,6 +41,12 @@ export function Calls() {
   // показывает двадцатую часть, и ничего с этим сделать не давал.
   const [stranitsa, setStranitsa] = useState(1);
   const [dochityvaem, setDochityvaem] = useState(false);
+  // Отбор, которому принадлежит показанный журнал. Ставится загрузкой,
+  // сверяется дочиткой: пока вторая страница по «380» едет, человек успевает
+  // набрать «44», первая страница «44» заменяет журнал — и опоздавшая страница
+  // дописывается к чужим находкам. На экране два отбора вперемешку, а «всего»
+  // от прошлого.
+  const otbor_spiska = useRef("");
 
   const [attempt, setAttempt] = useState(0);
 
@@ -71,6 +77,7 @@ export function Calls() {
     // счётчика ответ по прошлому отбору ложился поверх текущего. Приём тот же,
     // что в отчётах и палитре команд.
     let current = true;
+    otbor_spiska.current = otbor;
     clear();
     api
       .get<{ items: PhoneCall[]; total: number }>(`${otbor}&page=1`)
@@ -103,10 +110,13 @@ export function Calls() {
   const dochitat = async () => {
     if (dochityvaem) return;
     setDochityvaem(true);
+    const sprosheno = otbor;
     try {
       const dalshe = await api.get<{ items: PhoneCall[]; total: number }>(
         `${otbor}&page=${stranitsa + 1}`,
       );
+      // Отбор сменился, пока страница ехала, — ответ чужой.
+      if (otbor_spiska.current !== sprosheno) return;
       setItems((bylo) => (bylo ? [...bylo, ...dalshe.items] : dalshe.items));
       setTotal(dalshe.total);
       setStranitsa((bylo) => bylo + 1);

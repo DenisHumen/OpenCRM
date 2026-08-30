@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Dochitat, EmptyState, ScreenLoading } from "../components/ui";
 import { api, type AuditEvent } from "../lib/api";
@@ -81,6 +81,12 @@ export function Audit() {
   // показывает сороковую часть, и ничего с этим сделать не давал.
   const [stranitsa, setStranitsa] = useState(1);
   const [dochityvaem, setDochityvaem] = useState(false);
+  // Отбор, которому принадлежит показанный журнал. Ставится загрузкой,
+  // сверяется дочиткой: пока вторая страница по «иван» едет, человек успевает
+  // набрать «п», первая страница «п» заменяет журнал — и опоздавшая страница
+  // дописывается к чужим находкам. На экране два отбора вперемешку, а «всего»
+  // от прошлого.
+  const otbor_spiska = useRef("");
 
   const [attempt, setAttempt] = useState(0);
 
@@ -101,6 +107,7 @@ export function Audit() {
     // по прошлому отбору ложились поверх текущего, и журнал показывал не то,
     // что в фильтре. Приём тот же, что в отчётах и палитре команд.
     let current = true;
+    otbor_spiska.current = otbor;
     clear();
     api
       .get<{ items: AuditEvent[]; total: number }>(`${otbor}&page=1`)
@@ -133,10 +140,13 @@ export function Audit() {
   const dochitat = async () => {
     if (dochityvaem) return;
     setDochityvaem(true);
+    const sprosheno = otbor;
     try {
       const dalshe = await api.get<{ items: AuditEvent[]; total: number }>(
         `${otbor}&page=${stranitsa + 1}`,
       );
+      // Отбор сменился, пока страница ехала, — ответ чужой.
+      if (otbor_spiska.current !== sprosheno) return;
       setItems((bylo) => (bylo ? [...bylo, ...dalshe.items] : dalshe.items));
       setTotal(dalshe.total);
       setStranitsa((bylo) => bylo + 1);

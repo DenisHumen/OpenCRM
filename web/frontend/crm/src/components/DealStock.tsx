@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { api } from "../lib/api";
@@ -35,6 +35,10 @@ export function DealStock({ dealId }: { dealId: number }) {
   } | null>(null);
   const [stranitsa, setStranitsa] = useState(1);
   const [dochityvaem, setDochityvaem] = useState(false);
+  // Чему принадлежит показанное. Ставит загрузка, сверяет дочитка: врезка
+  // висит в карточке, карточку меняют переходом — и опоздавший ответ
+  // дописал бы строки чужой заявки к нынешней, молча.
+  const otbor_spiska = useRef("");
 
   // Право на склад — вместе с блоком: без него врезка всё равно
   // получит отказ, а пустая рамка «Списано со склада» выглядит
@@ -44,6 +48,7 @@ export function DealStock({ dealId }: { dealId: number }) {
   useEffect(() => {
     if (!enabled) return;
     let alive = true;
+    otbor_spiska.current = String(dealId);
     api
       .get<{ items: StockMove[]; total: number; cost: number; currency: string }>(
         `/warehouse/moves?deal_id=${dealId}&page=1&per_page=${NA_STRANITSE}`,
@@ -77,6 +82,7 @@ export function DealStock({ dealId }: { dealId: number }) {
    */
   const dochitat = async () => {
     if (dochityvaem) return;
+    const sprosheno = String(dealId);
     setDochityvaem(true);
     try {
       const dalshe = await api.get<{
@@ -85,6 +91,8 @@ export function DealStock({ dealId }: { dealId: number }) {
         cost: number;
         currency: string;
       }>(`/warehouse/moves?deal_id=${dealId}&page=${stranitsa + 1}&per_page=${NA_STRANITSE}`);
+      // Отбор сменился, пока страница ехала, — ответ чужой.
+      if (otbor_spiska.current !== sprosheno) return;
       setData((bylo) =>
         bylo ? { ...dalshe, items: [...bylo.items, ...dalshe.items] } : dalshe,
       );

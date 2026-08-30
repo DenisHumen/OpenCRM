@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { BoardCard } from "../components/BoardCard";
@@ -27,9 +27,15 @@ export function Boards() {
   // сто первая опубликованная доска не находилась ни фильтром, ни глазами.
   const [stranitsa, setStranitsa] = useState(1);
   const [dochityvaem, setDochityvaem] = useState(false);
+  // Поколение показанного списка. Отбора у этого экрана нет, зато список
+  // перечитывается целиком — повтором после отказа, а на доске заявок ещё
+  // и после переноса карточки. Дочитка, ушедшая до перечитывания, вернулась
+  // бы со страницей прошлого списка и дописала бы её к новому.
+  const pokolenie = useRef(0);
 
   const load = useCallback(() => {
     clear();
+    pokolenie.current += 1;
     api
       .get<{ items: unknown[]; total: number }>(`/boards?page=1&per_page=${NA_STRANITSE}`)
       .then((otvet) => {
@@ -59,10 +65,13 @@ export function Boards() {
   const dochitat = async () => {
     if (dochityvaem) return;
     setDochityvaem(true);
+    const bylo_pokolenie = pokolenie.current;
     try {
       const dalshe = await api.get<{ items: unknown[]; total: number }>(
         `/boards?page=${stranitsa + 1}&per_page=${NA_STRANITSE}`,
       );
+      // Список перечитали, пока страница ехала, — ответ от прошлого.
+      if (pokolenie.current !== bylo_pokolenie) return;
       setData((bylo: any) =>
         bylo ? { ...dalshe, items: [...bylo.items, ...dalshe.items] } : dalshe,
       );

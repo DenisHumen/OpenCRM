@@ -101,6 +101,10 @@ export function ClientCard() {
   const [vsegoZametok, setVsegoZametok] = useState(0);
   const [stranitsaZametok, setStranitsaZametok] = useState(1);
   const [dochityvaem, setDochityvaem] = useState(false);
+  // Чему принадлежит показанное. Ставит загрузка, сверяет дочитка: пока
+  // страница едет, можно уйти на другую карточку — и опоздавший ответ
+  // дописал бы чужие строки к чужому же списку, молча.
+  const otbor_spiska = useRef("");
   const [files, setFiles] = useState<any[]>([]);
   const [deals, setDeals] = useState<any[]>([]);
   const [tab, setTab] = useState<TabKey>("history");
@@ -130,6 +134,7 @@ export function ClientCard() {
 
   const load = useCallback(async () => {
     clear();
+    otbor_spiska.current = String(id);
     try {
       const data = await api.get(`/clients/${id}`);
       setClient(data);
@@ -161,11 +166,14 @@ export function ClientCard() {
    */
   const dochitat_zametki = async () => {
     if (dochityvaem) return;
+    const sprosheno = String(id);
     setDochityvaem(true);
     try {
       const dalshe = await api.get<{ items: any[]; total: number }>(
         `/clients/${id}/notes?page=${stranitsaZametok + 1}&per_page=${ZAMETOK_NA_STRANITSE}`,
       );
+      // Отбор сменился, пока страница ехала, — ответ чужой.
+      if (otbor_spiska.current !== sprosheno) return;
       setNotes((bylo) => [...bylo, ...dalshe.items]);
       setVsegoZametok(dalshe.total);
       setStranitsaZametok((bylo) => bylo + 1);

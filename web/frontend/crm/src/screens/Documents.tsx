@@ -28,6 +28,12 @@ export function Documents() {
   // что показывает часть, и ничего с этим сделать не давал.
   const [stranitsa, setStranitsa] = useState(1);
   const [dochityvaem, setDochityvaem] = useState(false);
+  // Отбор, которому принадлежит показанный список. Ставится загрузкой,
+  // сверяется дочиткой: пока вторая страница по «иван» едет, человек успевает
+  // набрать «п», первая страница «п» заменяет список — и опоздавшая страница
+  // дописывается к чужим находкам. На экране два отбора вперемешку, а «всего»
+  // от прошлого.
+  const otbor_spiska = useRef("");
   const [showNew, setShowNew] = useState(params.get("new") === "1");
   const [attempt, setAttempt] = useState(0);
   const scanInput = useRef<HTMLInputElement | null>(null);
@@ -52,6 +58,7 @@ export function Documents() {
     // на прошлый набор мог бы лечь поверх текущего, и на экране оказался бы
     // список позапрошлого фильтра. Приём тот же, что в отчётах и палитре.
     let current = true;
+    otbor_spiska.current = otbor;
     clear();
     api
       .get(`${otbor}&page=1`)
@@ -83,10 +90,13 @@ export function Documents() {
   const dochitat = async () => {
     if (dochityvaem) return;
     setDochityvaem(true);
+    const sprosheno = otbor;
     try {
       const dalshe = await api.get<{ items: any[]; total: number }>(
         `${otbor}&page=${stranitsa + 1}`,
       );
+      // Отбор сменился, пока страница ехала, — ответ чужой.
+      if (otbor_spiska.current !== sprosheno) return;
       setData((bylo: any) =>
         bylo ? { ...dalshe, items: [...bylo.items, ...dalshe.items] } : dalshe,
       );

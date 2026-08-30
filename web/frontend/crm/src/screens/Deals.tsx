@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 
 import { Icon } from "../components/Icon";
@@ -111,6 +111,11 @@ export function Deals() {
   // счётчик заставил бы дочитывать всё разом.
   const [stranitsy, setStranitsy] = useState<Record<string, number>>({});
   const [dochityvaem, setDochityvaem] = useState("");
+  // Поколение показанного списка. Отбора у этого экрана нет, зато список
+  // перечитывается целиком — повтором после отказа, а на доске заявок ещё
+  // и после переноса карточки. Дочитка, ушедшая до перечитывания, вернулась
+  // бы со страницей прошлого списка и дописала бы её к новому.
+  const pokolenie = useRef(0);
   // Незакрытые заявки — числом с сервера, а не сложением карточек. Подробности
   // у запроса ниже.
   const [openTotal, setOpenTotal] = useState(0);
@@ -145,6 +150,7 @@ export function Deals() {
   const { failure, fail, clear } = useFailure();
 
   const load = useCallback(async () => {
+    pokolenie.current += 1;
     clear();
     try {
       const [board, open] = await Promise.all([
@@ -179,6 +185,7 @@ export function Deals() {
   const dochitat_kolonku = async (klyuch: string) => {
     if (dochityvaem) return;
     setDochityvaem(klyuch);
+    const bylo_pokolenie = pokolenie.current;
     const nomer = (stranitsy[klyuch] ?? 1) + 1;
     try {
       const otvet = await api.get<{ columns: Column[] }>(
@@ -186,6 +193,8 @@ export function Deals() {
       );
       const prishla = otvet.columns[0];
       if (!prishla) return;
+      // Список перечитали, пока страница ехала, — ответ от прошлого.
+      if (pokolenie.current !== bylo_pokolenie) return;
       setColumns((bylo) =>
         (bylo ?? []).map((c) =>
           c.key === klyuch
