@@ -1018,6 +1018,31 @@ summary:focus-visible,
 .side-bottom { padding: 12px; display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--surface); }
 .side-banner { display: block; background: var(--tint-warning); border-radius: 8px; padding: 10px 12px; font-size: 12px; line-height: 1.5; color: var(--warning); text-decoration: none; }
 .side-banner.critical { background: var(--tint-danger); color: var(--danger); }
+/* Знак продукта с переливом. Приём тот же, что у кнопки исходников ниже:
+   палитра тихая, и внимание берёт движение, а не цвет. Медленно и один раз в
+   шесть секунд — в панели, открытой весь день, быстрее раздражает. */
+.side-brand-name {
+  font-size: 14px; font-weight: 600; color: var(--text);
+  background-image: linear-gradient(100deg,
+    var(--text) 0%, var(--text) 42%, var(--brand) 50%, var(--text) 58%, var(--text) 100%);
+  background-size: 260% 100%;
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: side-brand-pereliv 6s linear infinite;
+}
+@keyframes side-brand-pereliv {
+  from { background-position: 130% 0; }
+  to   { background-position: -30% 0; }
+}
+/* Без движения знак обязан остаться ЧИТАЕМЫМ: при выключенной анимации
+   прозрачная заливка текста оставила бы пустое место. */
+@media (prefers-reduced-motion: reduce) {
+  .side-brand-name {
+    animation: none; background-image: none;
+    -webkit-text-fill-color: var(--text);
+  }
+}
+
 /* Ссылка на исходники — всегда на виду, поэтому вне прокручиваемого `.side-nav`.
    Блик по наведению: у палитры видимы только текстовые цвета, и рамка сама по
    себе не читается как нажимаемое. */
