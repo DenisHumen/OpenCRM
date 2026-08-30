@@ -43,6 +43,17 @@ scrape_configs:
     docker_sd_configs:
       - host: unix:///var/run/docker.sock
         refresh_interval: 30s
+        # Отбор делает демон, а не `keep` ниже: `keep` отбрасывает уже
+        # заведённую цель, и promtail успевает открыть поток и завести курсор
+        # каждому контейнеру машины. Замеры — в docs/08-deployment.md.
+        filters:
+          - name: label
+            values:
+              - "com.docker.compose.project=opencrm"
+              # Одноразовые (`compose run --rm`) несут ТУ ЖЕ метку службы, что
+              # живое приложение, и их вывод ложился в его поток — панель
+              # «Ошибки приложения» показывала вывод разовой проверки настроек.
+              - "com.docker.compose.oneoff=False"
 
     relabel_configs:
       # Только свои контейнеры. На сервере рядом может крутиться что угодно

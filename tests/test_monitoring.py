@@ -2295,3 +2295,123 @@ def test_zaminka_odnogo_konteynera_ne_ronyaet_ves_sbor():
     assert "opencrm_containers_exporter_failures_total" in otvet, (
         "срыв не посчитан — по метрикам его будет не видно вовсе"
     )
+
+
+def test_promtail_vedyot_uchyot_tolko_po_svoim_konteyneram():
+    """Отбор целей стоит на стороне докера, а не только в relabel.
+
+    Разница не косметическая и замерена на стенде. `keep` в `relabel_configs`
+    отбрасывает цель ПОСЛЕ того, как promtail её завёл, — а заводя, он пишет ей
+    курсор в `positions.yaml`. С одним только relabel на машине с 26
+    контейнерами курсоров набралось 24 при НУЛЕ подходящих под `keep`.
+
+    Чем это плохо: контейнер убирают (а обновление убирает их каждый раз),
+    курсор остаётся, и promtail ходит к исчезнувшему снова и снова —
+    «could not inspect container info: No such container». На стенде это давало
+    от восьми до двадцати двух строк за полторы минуты и не прекращалось.
+    Перезапуск не помогал: цели воскресали из того же `positions.yaml`, а он
+    нарочно лежит на томе (`test_promtail_pomnit_dokuda_prochital`).
+
+    С отбором на стороне докера — 1 курсор при 34 контейнерах.
+
+    `keep` при этом обязан остаться: фильтр решает, за кем promtail ходит, а
+    `keep` — что попадает в Loki, и молчаливо отказавший фильтр не должен
+    открыть Loki чужие логи.
+    """
+    razobrano = yaml.safe_load(_read(PROMTAIL))
+    rabota = razobrano["scrape_configs"][0]
+    obnaruzhenie = rabota["docker_sd_configs"][0]
+
+    filtry = obnaruzhenie.get("filters")
+    assert filtry, (
+        "у docker_sd_configs нет `filters` — promtail заведёт курсор на КАЖДЫЙ "
+        "контейнер машины, и каждый убранный будет вечно давать "
+        "«could not inspect container info»"
+    )
+    znacheniya = [z for f in filtry for z in f.get("values", [])]
+    assert any("com.docker.compose.project=opencrm" in z for z in znacheniya), (
+        f"фильтр есть, но не по своему проекту: {filtry}"
+    )
+    # Одноразовые — отдельным условием, и довод у него свой, не про шум.
+    # У контейнера от `compose run --rm` ТА ЖЕ метка службы, что у живого
+    # приложения (проверено на обоих), поэтому его вывод ложился в поток
+    # приложения — и панель «Ошибки приложения» показывала вывод разовой
+    # проверки настроек как ошибку сайта.
+    assert any("com.docker.compose.oneoff=False" in z for z in znacheniya), (
+        f"одноразовые контейнеры снова попадают в сбор: {filtry}. Их вывод "
+        "уедет в поток приложения под его же меткой службы, а каждая их "
+        "смерть — а умирают они на каждом обновлении — даст строку об "
+        "исчезнувшем контейнере"
+    )
+
+    keep = [
+        pravilo
+        for pravilo in rabota["relabel_configs"]
+        if pravilo.get("action") == "keep"
+    ]
+    assert keep, (
+        "`keep` по проекту убран вместе с добавлением фильтра — отказавший "
+        "фильтр открыл бы Loki чужие логи, а заметить это было бы нечем"
+    )
+
+
+def test_grafana_ne_zhaluetsya_na_pustye_katalogi_provizii():
+    """Необязательные каталоги провизии существуют и не мешают.
+
+    Замерено на Grafana 12.4.8 тремя состояниями:
+
+      - каталога нет вовсе — ДВЕ ошибки уровня error, «no such file or
+        directory» для `provisioning/plugins` и `provisioning/alerting`;
+      - в каталоге `.gitkeep` — предупреждение «file has invalid suffix
+        '.gitkeep' (.yaml,.yml,.json accepted), skipping»;
+      - пустой `.yaml` с `apiVersion: 1` — ни одной строки.
+
+    Grafana ищет эти каталоги безусловно, даже когда сама возможность выключена
+    (`GF_UNIFIED_ALERTING_ENABLED: false`). Поэтому убрать их нельзя, а держать
+    в них файл с непринимаемым расширением — значит оставить предупреждение
+    навсегда.
+    """
+    for katalog in ("alerting", "plugins"):
+        put = MONITORING / "grafana" / "provisioning" / katalog
+        assert put.is_dir(), (
+            f"каталог {katalog} исчез — Grafana ответит на это двумя ошибками "
+            "«no such file or directory» при каждом старте"
+        )
+        fayly = [f for f in sorted(put.iterdir()) if f.is_file()]
+        assert fayly, f"в {katalog} нет ни одного файла — каталог не переживёт git"
+        for f in fayly:
+            assert f.suffix in (".yaml", ".yml", ".json"), (
+                f"{f.name} в {katalog}: Grafana принимает только .yaml/.yml/.json "
+                "и на всё прочее пишет предупреждение при каждом старте"
+            )
+
+
+def test_node_exporter_ne_sobiraet_to_chego_nikto_ne_sprashivaet():
+    """Собиратель, чьих рядов никто не спрашивает, не включается.
+
+    Правило записано рядом с самим списком в docker-compose.yml: «здесь ровно
+    то, по чему написаны правила». `diskstats` его нарушал и вдобавок был
+    ЕДИНСТВЕННЫМ, кто требовал `/run/udev/data`, которого в контейнере нет, —
+    отсюда ошибка на каждом старте: «Failed to open directory, disabling udev
+    device properties».
+
+    Проверка узкая нарочно: она стережёт не весь список, а именно тот
+    собиратель, который уже принёс ошибку в боевой журнал. Общее правило
+    («каждый включённый собиратель кем-то спрашивается») сегодня не выполняется
+    ещё для `netdev`, `uname`, `os` и `loadavg`; они молчат, ошибок не дают, и
+    снимать их — отдельная работа с отдельным доводом.
+    """
+    compose = yaml.safe_load(_read(COMPOSE))
+    komanda = compose["services"]["node-exporter"]["command"]
+    assert not any("diskstats" in str(c) for c in komanda), (
+        "`--collector.diskstats` вернулся: он требует /run/udev/data, которого "
+        "в контейнере нет, и пишет ошибку при каждом старте — а ряды node_disk_* "
+        "не спрашивают ни правила, ни панель"
+    )
+
+    pravila = _read(MONITORING / "prometheus" / "rules" / "opencrm.yml")
+    panel = _read(MONITORING / "grafana" / "dashboards" / "opencrm-host.json")
+    assert "node_disk" not in pravila + panel, (
+        "кто-то начал спрашивать node_disk_* — тогда собиратель нужен, и вместе "
+        "с ним нужно монтирование /run/udev, иначе ряды придут без меток"
+    )

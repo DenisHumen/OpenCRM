@@ -479,7 +479,8 @@ services:
       - --collector.vmstat
       - --collector.loadavg
       - --collector.filesystem
-      - --collector.diskstats
+      # `diskstats` снят: он один требовал /run/udev/data и писал ошибку на
+      # каждом старте, а ряды node_disk_* не спрашивают ни правила, ни панель.
       - --collector.netdev
       - --collector.uname
       - --collector.os
@@ -760,6 +761,9 @@ services:
       # `"wal":"true"`), провижининг проходит без ошибок, панели встают.
       GF_DATABASE_WAL: "true"
       GF_LOG_LEVEL: warn
+    # Своим UID: каталог данных на томе хоста должен читаться владельцем сайта.
+    # Ценой — строка «could not get current OS user» на старте, она остаётся
+    # намеренно (разбор в docs/08-deployment.md).
     user: "${OPENCRM_UID:-1000}:${OPENCRM_GID:-1000}"
     volumes:
       - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
