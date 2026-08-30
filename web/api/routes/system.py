@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from core.services import (
     audit_service,
     files_service,
+    github_service,
     maintenance_service,
     monitoring_service,
     storage_service,
@@ -20,6 +21,17 @@ router = APIRouter(prefix="/system", tags=["system"])
 def storage_status(_: User = Depends(require_staff), db: Session = Depends(get_db)):
     """Место на диске. Видят все сотрудники: именно они загружают файлы."""
     return storage_service.status(db)
+
+
+@router.get("/github")
+def github_zvyozdy(_: User = Depends(require_staff), db: Session = Depends(get_db)):
+    """Звёзды проекта на GitHub — из кэша в базе, обновляется раз в сутки.
+
+    `null` значит «ещё не спрашивали или не дозвонились»: экран в этом случае
+    показывает кнопку без числа, а не ноль. Ноль — это утверждение, которого мы
+    не делали.
+    """
+    return {"stars": github_service.zvyozdy(db)}
 
 
 @router.post("/storage/purge")

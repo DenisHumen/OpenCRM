@@ -38,6 +38,7 @@ import { Templates } from "./screens/Templates";
 import { Mailboxes } from "./screens/Mailboxes";
 import { ProductCard } from "./screens/ProductCard";
 import { Profile } from "./screens/Profile";
+import { Docs } from "./screens/Docs";
 import { Finance } from "./screens/Finance";
 import { FinanceSettings } from "./screens/FinanceSettings";
 import { Reports } from "./screens/Reports";
@@ -325,6 +326,7 @@ export default function App() {
             </Route>
           </Route>
           <Route path="/profile" element={<Profile />} />
+          <Route path="/docs" element={<Docs />} />
           <Route element={<PermRoute perm="staff.view" />}>
             <Route path="/staff" element={<Staff />} />
           </Route>

@@ -104,6 +104,7 @@
   --sub: #a09c92;           /* 6.2:1 под числом метрики; было #78746b */
   --accent: #7394f0;        /* 4.7:1 на своём тинте; было #6c8eef */
   --brand: #dc8063;         /* 4.7:1 на своём тинте; было #d97757 */
+  --star: #e8c14a;          /* звезда GitHub: золото читаемо на тёмном */
   --success: #58b47c;       /* было #4caf6e */
   --warning: #d99a4e;       /* было #e8a23d — спокойнее */
   --danger: #e7746a;        /* 4.7:1 на своём тинте; было #e5695e */
@@ -194,6 +195,7 @@
   --sub: #655f53;           /* 6.0:1 */
   --faint: #6d6759;         /* 5.3:1 на фоне, 4.7:1 на surface-2 — нижняя граница */
   --accent: #3a5ccc;        /* 5.6:1 — ссылки и рамка фокуса */
+  --star: #a9791a;          /* то же золото, но 4.6:1 на светлом */
   --brand: #a94a26;         /* 5.4:1 */
   --success: #1b6e3e;       /* 6.0:1 */
   --warning: #845413;       /* 6.1:1 */
@@ -1044,22 +1046,31 @@ summary:focus-visible,
 }
 
 /* Ссылка на исходники — всегда на виду, поэтому вне прокручиваемого `.side-nav`.
-   Блик по наведению: у палитры видимы только текстовые цвета, и рамка сама по
-   себе не читается как нажимаемое. */
+   Плашка тёмная, а не в цвет панели: по образцу с uiverse, который прислал
+   владелец. Блик по наведению оттуда же. */
 .side-github {
   position: relative; overflow: hidden;
-  display: flex; align-items: center; justify-content: center; gap: 7px;
-  height: 32px; margin-bottom: 6px; padding: 0 10px;
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  height: 34px; margin-bottom: 6px; padding: 0 12px;
   border: 1px solid var(--border); border-radius: 8px;
-  background: var(--surface-2); color: var(--muted);
+  background: var(--well-off); color: var(--text);
   font-size: 12.5px; font-weight: 500; text-decoration: none;
-  transition: color 150ms, border-color 150ms;
+  transition: border-color 150ms;
 }
-.side-github:hover { color: var(--text); border-color: var(--border-hover); }
+.side-github:hover { border-color: var(--border-hover); }
+.side-github-name { display: flex; align-items: center; gap: 6px; }
+/* Звезда желтеет по наведению — единственное яркое пятно, и оно уместно:
+   в образце ровно этим кнопка и берёт внимание. */
+.side-github-stars {
+  display: flex; align-items: center; gap: 4px;
+  color: var(--faint); font-variant-numeric: tabular-nums;
+  transition: color 300ms;
+}
+.side-github:hover .side-github-stars { color: var(--star); }
 .side-github::after {
   content: ""; position: absolute; top: -60%; right: 0;
   width: 26px; height: 220%;
-  background: var(--text); opacity: 0.07;
+  background: var(--text); opacity: 0.08;
   transform: rotate(12deg) translateX(50px);
   transition: transform 900ms ease-out;
 }
@@ -2415,4 +2426,82 @@ a.tg-file:hover { text-decoration: underline; }
 .photo-viewer img {
   max-width: 100%; max-height: 100%; border-radius: 12px;
   border: 1px solid var(--border);
+}
+
+/* --- руководство ------------------------------------------------------------
+   Два столбца: слева разделы, справа статьи. Появление статей с задержкой по
+   очереди — читатель видит, что содержимое сменилось, а не гадает. */
+.docs-search {
+  display: flex; align-items: center; gap: 8px;
+  height: 34px; padding: 0 12px; min-width: 260px;
+  border: 1px solid var(--border); border-radius: 8px; background: var(--well);
+}
+.docs-search input { flex: 1; border: 0; background: transparent; color: inherit; outline: none; font-size: 13px; }
+.docs-body { display: grid; grid-template-columns: 220px 1fr; gap: 28px; align-items: start; }
+.docs-rail { position: sticky; top: 24px; display: flex; flex-direction: column; gap: 2px; }
+.docs-rail-item {
+  display: flex; align-items: center; gap: 9px;
+  padding: 8px 10px; border: 0; border-radius: 8px;
+  background: none; color: var(--muted); font-size: 13px; text-align: left; cursor: pointer;
+  transition: background 150ms, color 150ms;
+}
+.docs-rail-item:hover { background: var(--surface); color: var(--text); }
+.docs-rail-item.active { background: var(--tint-brand); color: var(--brand); font-weight: 500; }
+.docs-content { display: flex; flex-direction: column; gap: 22px; min-width: 0; }
+.docs-article {
+  padding: 20px 22px; border: 1px solid var(--border); border-radius: 12px;
+  background: var(--surface);
+  animation: docs-poyavlenie 420ms ease-out both;
+}
+.docs-article h2 { margin: 0 0 6px; font-size: 16px; font-weight: 600; color: var(--text); }
+.docs-article p { margin: 0 0 12px; font-size: 13.5px; line-height: 1.65; color: var(--muted); }
+.docs-lead { color: var(--faint) !important; font-size: 13px !important; }
+@keyframes docs-poyavlenie { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .docs-article { animation: none; } }
+.docs-list { margin: 0 0 12px; padding-left: 18px; }
+.docs-list li { margin-bottom: 6px; font-size: 13.5px; line-height: 1.6; color: var(--muted); }
+.docs-steps { margin: 0 0 12px; padding: 0; list-style: none; }
+.docs-steps li { display: flex; gap: 10px; margin-bottom: 9px; font-size: 13.5px; line-height: 1.6; color: var(--muted); }
+.docs-step-no {
+  flex-shrink: 0; width: 20px; height: 20px; border-radius: 999px;
+  background: var(--tint-brand); color: var(--brand);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 11px; font-weight: 700;
+}
+.docs-note {
+  display: flex; gap: 9px; align-items: flex-start;
+  margin: 0 0 12px; padding: 10px 12px;
+  border-left: 2px solid var(--brand); border-radius: 0 8px 8px 0;
+  background: var(--tint-brand); color: var(--text);
+  font-size: 13px; line-height: 1.6;
+}
+.docs-code {
+  margin: 0 0 12px; padding: 12px 14px; overflow-x: auto;
+  border: 1px solid var(--line); border-radius: 8px; background: var(--well-off);
+  font-size: 12px; line-height: 1.6; color: var(--text);
+}
+.docs-code-label { margin-bottom: 5px; font-size: 11px; color: var(--faint); text-transform: uppercase; letter-spacing: .04em; }
+.docs-endpoint { padding: 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--well); }
+.docs-endpoint-head { display: flex; align-items: center; gap: 9px; margin-bottom: 10px; }
+.docs-endpoint-head code { font-size: 13px; color: var(--text); }
+.docs-method {
+  padding: 2px 8px; border-radius: 5px;
+  background: var(--tint-accent); color: var(--accent);
+  font-size: 11px; font-weight: 700; letter-spacing: .03em;
+}
+.docs-method.m-post, .docs-method.m-patch { background: var(--tint-success); color: var(--success); }
+.docs-method.m-delete { background: var(--tint-danger); color: var(--danger); }
+.docs-fields { width: 100%; margin: 0 0 12px; border-collapse: collapse; font-size: 12.5px; }
+.docs-fields th {
+  padding: 6px 8px; text-align: left; color: var(--faint);
+  font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: .04em;
+  border-bottom: 1px solid var(--line);
+}
+.docs-fields td { padding: 7px 8px; border-bottom: 1px solid var(--line); color: var(--muted); vertical-align: top; }
+.docs-fields code { color: var(--text); }
+.docs-type { color: var(--faint); white-space: nowrap; }
+.docs-req { color: var(--danger); margin-left: 3px; }
+@media (max-width: 900px) {
+  .docs-body { grid-template-columns: 1fr; }
+  .docs-rail { position: static; flex-direction: row; flex-wrap: wrap; }
 }
