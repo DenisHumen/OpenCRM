@@ -714,3 +714,63 @@ def test_bez_bloka_nakladnykh_kartochka_o_nikh_ne_upominaet(root_client, client_
         assert "waybills" not in root_client.get(f"{ORDERS}/{order['id']}").json()
     finally:
         waybills_on(root_client)
+
+
+def test_chastichnaya_otgruzka_snimaet_rezerv_na_otgruzhennoe(root_client, client_row):
+    """Отгруженное перестаёт быть обещанным — даже если заказ ещё открыт.
+
+    Резерв считается запросом по строкам НЕЗАКРЫТЫХ заказов. Пока отгрузка
+    случалась только вместе с закрытием, этого хватало: закрылся — вышел из
+    отбора. Но накладную можно выписать по заказу и провести, не закрывая его
+    (`POST /waybills/from-order/{id}`), и тогда товар уходит со склада ДВАЖДЫ:
+    физически — движением, и на бумаге — резервом, который остался прежним.
+
+    Ошибка тихая и в опасную сторону: «доступно» занижается, и товар, лежащий
+    на полке, система считает обещанным. Продавец отказывает покупателю,
+    глядя на число, которого нет.
+    """
+    waybills_on(root_client)
+    item = product(root_client, stock="10")
+    order = order_with(root_client, client_row, item, quantity="4")
+
+    do = promises(root_client, item["id"])
+    assert do["reserved_milli"] == 4000 and do["available_milli"] == 6000
+
+    # Отгружаем половину заказа накладной, заказ при этом НЕ закрываем.
+    nakladnaya = root_client.post(f"{API}/waybills/from-order/{order['id']}")
+    assert nakladnaya.status_code == 201, nakladnaya.text
+    bumaga = nakladnaya.json()
+    stroki = root_client.get(f"{API}/waybills/{bumaga['id']}").json()["lines"]
+    assert stroki, "накладная по заказу вышла пустой"
+    pravka = root_client.patch(
+        f"{API}/waybills/{bumaga['id']}/lines/{stroki[0]['id']}", json={"quantity": "1"}
+    )
+    assert pravka.status_code == 200, pravka.text
+    proveli = root_client.post(f"{API}/waybills/{bumaga['id']}/post", json={})
+    assert proveli.status_code == 200, proveli.text
+
+    assert stock_of(root_client, item["id"]) == 9000, "накладная не списала товар"
+    posle = promises(root_client, item["id"])
+    assert posle["reserved_milli"] == 3000, (
+        f"резерв не уменьшился на отгруженное: {posle['reserved_milli']} вместо 3000"
+    )
+    assert posle["available_milli"] == 6000, (
+        f"доступное посчитано дважды: {posle['available_milli']} вместо 6000"
+    )
+
+    # Сторно возвращает товар — и обещание вместе с ним. Отгруженное считается
+    # по ДВИЖЕНИЯМ, а не по бумагам, и возврат учитывается сам собой: иначе
+    # пришлось бы отдельно вычитать сторно и помнить об этом вечно.
+    storno = root_client.post(f"{API}/waybills/{bumaga['id']}/reverse")
+    assert storno.status_code == 201, storno.text
+    obratno = root_client.post(
+        f"{API}/waybills/{storno.json()['id']}/post", json={"confirm_negative": True}
+    )
+    assert obratno.status_code == 200, obratno.text
+
+    assert stock_of(root_client, item["id"]) == 10000, "сторно не вернуло товар"
+    vernuli = promises(root_client, item["id"])
+    assert vernuli["reserved_milli"] == 4000, (
+        f"обещание не вернулось вместе с товаром: {vernuli['reserved_milli']}"
+    )
+    assert vernuli["available_milli"] == 6000
