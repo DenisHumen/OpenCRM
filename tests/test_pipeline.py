@@ -58,6 +58,32 @@ def test_preset_replaces_the_pipeline(root_client):
 
 
 
+def _na_doske(client, deal_id: int, stage: str | None = None) -> bool:
+    """Есть ли заявка на доске — с обходом страниц колонки.
+
+    «На доске» значит «до неё можно добраться», а не «она на первой странице».
+    Колонка приходит страницей, и проверка, смотревшая только первый ответ,
+    зеленела ровно до тех пор, пока в общей базе набора не набралось заявок
+    больше страницы, — а потом падала, ничего при этом не поймав.
+    """
+    doska = client.get(f"{DEALS}/board").json()
+    kolonki = [c for c in doska["columns"] if stage is None or c["key"] == stage]
+    for kolonka in kolonki:
+        sobrano, stranitsa = [], 1
+        while True:
+            otvet = client.get(
+                f"{DEALS}/board", params={"stage": kolonka["key"], "page": stranitsa}
+            ).json()["columns"][0]
+            if deal_id in [d["id"] for d in otvet["deals"]]:
+                return True
+            sobrano += otvet["deals"]
+            if not otvet["deals"] or len(sobrano) >= otvet["count"]:
+                break
+            stranitsa += 1
+            assert stranitsa < 100, "листание колонки не заканчивается"
+    return False
+
+
 def test_switching_preset_keeps_existing_deals_on_the_board(root_client, manager_client):
     """Сменили набор — старые карточки обязаны остаться видимыми.
 
@@ -74,10 +100,11 @@ def test_switching_preset_keeps_existing_deals_on_the_board(root_client, manager
 
     moved = manager_client.get(f"{DEALS}/{deal['id']}").json()
     board = manager_client.get(f"{DEALS}/board").json()
-    on_board = [d["id"] for column in board["columns"] for d in column["deals"]]
 
     assert moved["stage"] in {c["key"] for c in board["columns"]}
-    assert deal["id"] in on_board, "сделка пропала с доски после смены воронки"
+    assert _na_doske(manager_client, deal["id"]), (
+        "сделка пропала с доски после смены воронки"
+    )
 
 
 def test_renaming_a_stage_keeps_its_deals(root_client, manager_client):
@@ -91,9 +118,9 @@ def test_renaming_a_stage_keeps_its_deals(root_client, manager_client):
     assert renamed.json()["name"] == "Свежие обращения"
     assert renamed.json()["key"] == stage, "ключ обязан пережить переименование"
 
-    board = manager_client.get(f"{DEALS}/board").json()
-    column = next(c for c in board["columns"] if c["key"] == stage)
-    assert deal["id"] in [d["id"] for d in column["deals"]]
+    assert _na_doske(manager_client, deal["id"], stage), (
+        "заявка осиротела после переименования этапа"
+    )
 
 
 def test_the_pipeline_cannot_lose_its_closing_stages(root_client):

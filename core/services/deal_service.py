@@ -348,7 +348,19 @@ def delete_deal(
     )
 
 
-def board(db: Session, only_manager_id: int | None = None) -> list[dict]:
+#: По скольку заявок в колонке канбана за раз. Сотня, а не прежние двести:
+#: колонку теперь дочитывают, и первый показ доски — это семь запросов подряд.
+KOLONKA = 100
+
+
+def board(
+    db: Session,
+    only_manager_id: int | None = None,
+    *,
+    stage_key: str | None = None,
+    page: int = 1,
+    per_page: int = KOLONKA,
+) -> list[dict]:
     """Канбан: колонки по этапам со сделками внутри.
 
     Состав и порядок колонок берём из воронки, а не из констант: у ремонта
@@ -358,13 +370,21 @@ def board(db: Session, only_manager_id: int | None = None) -> list[dict]:
     колонка — это ответ («в согласовании у меня ничего»), а исчезнувшая — повод
     решить, что этап убрали из воронки.
     """
-    return [
-        {
-            "stage": stage,
-            "deals": deals_repo.by_stage(db, stage.key, only_manager_id=only_manager_id),
-        }
-        for stage in pipeline_service.list_stages(db)
-    ]
+    kolonki = []
+    for stage in pipeline_service.list_stages(db):
+        # Дочитывают ОДНУ колонку: человек развернул «в работе», и незачем
+        # перезапрашивать вместе с ней ещё шесть этапов, которые он не трогал.
+        if stage_key is not None and stage.key != stage_key:
+            continue
+        zayavki, vsego = deals_repo.by_stage(
+            db,
+            stage.key,
+            page=page,
+            per_page=per_page,
+            only_manager_id=only_manager_id,
+        )
+        kolonki.append({"stage": stage, "deals": zayavki, "count": vsego})
+    return kolonki
 
 
 def ensure_visible(db: Session, deal: Deal, only_manager_id: int | None) -> Deal:

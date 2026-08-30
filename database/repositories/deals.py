@@ -136,14 +136,31 @@ def search_top(
 
 
 def by_stage(
-    db: Session, stage: str, limit: int = 200, only_manager_id: int | None = None
-) -> list[Deal]:
-    """Колонка канбана. Порядок — заданный руками, при равенстве свежие выше."""
+    db: Session,
+    stage: str,
+    *,
+    page: int = 1,
+    per_page: int = 100,
+    only_manager_id: int | None = None,
+) -> tuple[list[Deal], int]:
+    """Страница колонки канбана и сколько в ней всего.
+
+    Порядок — заданный руками, при равенстве свежие выше.
+
+    Прежде колонка отдавалась одним куском с пределом в две сотни, и `total`
+    не считался вовсе: заявка номер двести один на этап просто не попадала на
+    доску. Признака этому не было — колонка выглядела полной, а итог над ней
+    считается отдельным запросом по всем заявкам этапа и потому оставался
+    верным, то есть даже расхождение сумм пропажу не выдавало.
+    """
     stmt = select(Deal).where(Deal.deleted_at.is_(None), Deal.stage == stage)
     if only_manager_id is not None:
         stmt = stmt.where(Deal.manager_id == only_manager_id)
-    return list(
-        db.scalars(stmt.order_by(Deal.sort_order.asc(), Deal.id.desc()).limit(limit))
+    return page_of(
+        db,
+        stmt.order_by(Deal.sort_order.asc(), Deal.id.desc()),
+        page=page,
+        per_page=per_page,
     )
 
 

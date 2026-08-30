@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 
 import { Icon } from "../components/Icon";
 import { VyborKlienta } from "../components/VyborKlienta";
-import { Avatar, EmptyState, LoadFailed, Modal, ScreenLoading } from "../components/ui";
+import { Avatar, Dochitat, EmptyState, LoadFailed, Modal, ScreenLoading } from "../components/ui";
 import { api, ApiError } from "../lib/api";
 import { useApp } from "../lib/app";
 import { useFailure } from "../lib/failure";
@@ -95,6 +95,9 @@ type Column = {
    *  пределом, и сложение показанных карточек занижало бы итог. */
   /** null — у смотрящего нет права `deals.view_amounts`. */
   amount_total: number | null;
+  /** Сколько заявок в этапе ВСЕГО. Не то же, что `deals.length`: колонка
+   *  приходит страницей, и до дочитывания показано меньше. */
+  count: number;
   deals: Deal[];
 };
 
@@ -103,6 +106,11 @@ export function Deals() {
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const [columns, setColumns] = useState<Column[] | null>(null);
+  // До какой страницы дочитана каждая колонка. Своё число на этап: человек
+  // разворачивает «в работе», а «согласование» не трогает вовсе, и общий
+  // счётчик заставил бы дочитывать всё разом.
+  const [stranitsy, setStranitsy] = useState<Record<string, number>>({});
+  const [dochityvaem, setDochityvaem] = useState("");
   // Незакрытые заявки — числом с сервера, а не сложением карточек. Подробности
   // у запроса ниже.
   const [openTotal, setOpenTotal] = useState(0);
@@ -152,10 +160,46 @@ export function Deals() {
       setColumns(board.columns);
       setCurrency(board.currency);
       setOpenTotal(open.total);
+      setStranitsy({});
     } catch (e) {
       fail(e);
     }
   }, [fail, clear]);
+
+  /** Дочитать одну колонку.
+   *
+   * Спрашивается ровно этот этап: перезапрашивать доску целиком ради одной
+   * кнопки значило бы платить семью запросами за нажатие, а шесть остальных
+   * колонок человек не трогал.
+   *
+   * Номер страницы растёт ПОСЛЕ ответа. Увеличь его до — и отказ на второй
+   * странице оставил бы счётчик на двойке: следующее нажатие попросило бы
+   * третью, а сотня заявок пропала бы из колонки навсегда.
+   */
+  const dochitat_kolonku = async (klyuch: string) => {
+    if (dochityvaem) return;
+    setDochityvaem(klyuch);
+    const nomer = (stranitsy[klyuch] ?? 1) + 1;
+    try {
+      const otvet = await api.get<{ columns: Column[] }>(
+        `/deals/board?stage=${encodeURIComponent(klyuch)}&page=${nomer}`,
+      );
+      const prishla = otvet.columns[0];
+      if (!prishla) return;
+      setColumns((bylo) =>
+        (bylo ?? []).map((c) =>
+          c.key === klyuch
+            ? { ...c, count: prishla.count, deals: [...c.deals, ...prishla.deals] }
+            : c,
+        ),
+      );
+      setStranitsy((bylo) => ({ ...bylo, [klyuch]: nomer }));
+    } catch (e) {
+      toastError(e);
+    } finally {
+      setDochityvaem("");
+    }
+  };
 
   useEffect(() => {
     void load();
@@ -192,16 +236,30 @@ export function Deals() {
     const before = columns;
     setColumns((prev) =>
       (prev ?? []).map((c) => {
-        if (c.key === from.key) return { ...c, deals: c.deals.filter((d) => d.id !== id) };
+        // Счётчик в шапке правим вместе с карточкой: он называет «всего в
+        // этапе», а не «показано», и оставшись прежним, разошёлся бы с тем,
+        // что человек только что сделал своими руками.
+        if (c.key === from.key)
+          return {
+            ...c,
+            count: Math.max(0, c.count - 1),
+            deals: c.deals.filter((d) => d.id !== id),
+          };
         if (c.key === stage) {
           const moved = from.deals.find((d) => d.id === id);
-          return moved ? { ...c, deals: [...c.deals, { ...moved, stage }] } : c;
+          return moved
+            ? { ...c, count: c.count + 1, deals: [...c.deals, { ...moved, stage }] }
+            : c;
         }
         return c;
       }),
     );
     try {
       await api.post(`/deals/${id}/move`, { stage });
+      // Доска перечитывается целиком, и дочитанные хвосты при этом
+      // схлопываются до первой страницы. Это по устройству: перенос меняет
+      // порядок в обеих колонках, и склеивать уже показанные страницы с
+      // новыми значило бы показать одну заявку дважды, а другую потерять.
       void load();
     } catch (e) {
       toastError(e);
@@ -338,7 +396,7 @@ export function Deals() {
                   <option value="all">{t("allStages")}</option>
                   {columns.map((c) => (
                     <option key={c.key} value={c.key}>
-                      {c.name} · {c.deals.length}
+                      {c.name} · {c.count}
                     </option>
                   ))}
                 </select>
@@ -351,7 +409,7 @@ export function Deals() {
                       <span style={column.color ? { color: column.color } : undefined}>
                         {column.name}
                       </span>
-                      <span className="kanban-count">{column.deals.length}</span>
+                      <span className="kanban-count">{column.count}</span>
                       {/* Сумма по этапу остаётся на виду и в списке: на
                           телефоне смотрят те же деньги, что и на мониторе. */}
                       {!!column.amount_total && column.amount_total > 0 && (
@@ -385,6 +443,12 @@ export function Deals() {
                         </select>
                       </div>
                     ))}
+                    <Dochitat
+                      pokazano={column.deals.length}
+                      vsego={column.count}
+                      zanyat={dochityvaem === column.key}
+                      onClick={() => void dochitat_kolonku(column.key)}
+                    />
                   </div>
                 ))}
               </div>
@@ -426,7 +490,7 @@ export function Deals() {
                     <span style={column.color ? { color: column.color } : undefined}>
                       {column.name}
                     </span>
-                    <span className="kanban-count">{column.deals.length}</span>
+                    <span className="kanban-count">{column.count}</span>
                   </div>
                   {/* Сумма по колонке: малый бизнес смотрит на деньги, а не на
                       количество карточек. Ноль не показываем — пустая строка
@@ -452,6 +516,12 @@ export function Deals() {
                         {cardBody(deal, column.kind)}
                       </button>
                     ))}
+                    <Dochitat
+                      pokazano={column.deals.length}
+                      vsego={column.count}
+                      zanyat={dochityvaem === column.key}
+                      onClick={() => void dochitat_kolonku(column.key)}
+                    />
                   </div>
                 </div>
               ))}
