@@ -21,11 +21,11 @@ export function CopyButton({ text }: { text: string }) {
   return (
     <button
       type="button"
-      className={"copy-btn" + (gotovo ? " done" : "")}
+      className={"docs-copy" + (gotovo ? " done" : "")}
       onClick={() => void nazhali()}
       aria-label={podpis}
     >
-      <span className="copy-tip">{podpis}</span>
+      <span className="docs-copy-tip">{podpis}</span>
       <Icon name={gotovo ? "check" : "clipboard"} size={15} stroke={1.8} />
     </button>
   );
