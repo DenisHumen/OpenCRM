@@ -10,6 +10,7 @@
    бы, что остаток на прошлую пятницу зависит от того, когда его спросили.
 """
 
+import itertools
 from decimal import Decimal, InvalidOperation
 
 from sqlalchemy.orm import Session
@@ -146,35 +147,78 @@ def get_product(db: Session, product_id: int, include_deleted: bool = False) -> 
     return product
 
 
+#: Приставка артикула, который выдаём сами, и длина его номера.
+#:
+#: Не настраивается: сменить приставку на населённой базе бесшумно нельзя —
+#: выданные артикулы уже наклеены на коробки и останутся со старой, а склад
+#: получит два вида артикула вместо одного. Разбор — в docs/19-sborka-zakaza.md §Р1.
+SKU_PRISTAVKA = "A-"
+SKU_ZNAKOV = 6
+
+
+def _sku_zanyat(db: Session):
+    """Занято ли место артикулом. Зовётся ТОЛЬКО после отказа базы: так
+    отличается своя гонка от чужой поломки (см. `core/uniqueness.py`)."""
+    return lambda row: warehouse_repo.get_by_sku(db, row.sku) is not None
+
+
+def _vydat_sku(db: Session, smeshchenie: int) -> str:
+    """Следующий свободный артикул вида `A-000123`.
+
+    `smeshchenie` двигает счётчик при повторной попытке: без него повтор
+    посчитал бы тот же максимум и упёрся в то же занятое место — и три попытки
+    подряд потратились бы впустую.
+    """
+    nomer = warehouse_repo.max_vydannogo_sku(db, SKU_PRISTAVKA, SKU_ZNAKOV) + 1 + smeshchenie
+    if nomer >= 10**SKU_ZNAKOV:
+        raise errors.ValidationError("SKU numbers are exhausted", code="sku_exhausted")
+    return f"{SKU_PRISTAVKA}{nomer:0{SKU_ZNAKOV}d}"
+
+
 def create_product(db: Session, data: dict) -> Product:
     name = (data.get("name") or "").strip()
     if not name:
         raise errors.ValidationError("Name is required", code="name_required")
-    product = Product(
-        name=name,
-        sku=_clean_sku(db, data.get("sku"), product_id=None),
-        unit=_clean_unit(data.get("unit")),
-        price_minor=parse_money(data.get("price"), "price"),
-        cost_minor=parse_money(data.get("cost"), "cost"),
-        is_service=bool(data.get("is_service")),
-        min_stock_milli=parse_quantity(data.get("min_stock")),
-        note=(data.get("note") or "").strip(),
-    )
-    if product.is_service and product.min_stock_milli is not None:
+    svoy_sku = _clean_sku(db, data.get("sku"), product_id=None)
+    is_service = bool(data.get("is_service"))
+    min_stock_milli = parse_quantity(data.get("min_stock"))
+    if is_service and min_stock_milli is not None:
         # У услуги нет остатка, а значит и порога предупреждения быть не может:
         # иначе экран склада вечно ругался бы на «нехватку» консультации.
         raise errors.ValidationError(
             "A service has no stock threshold", code="service_has_no_stock"
         )
-    # Артикул уникален, и проверка в `_clean_sku` не спасает от соседа, который
-    # заводит ту же позицию в ту же секунду: приёмка товара — как раз то место,
-    # где двое работают с одной накладной.
-    return uniqueness.insert_unique(
+    polya = dict(
+        name=name,
+        unit=_clean_unit(data.get("unit")),
+        price_minor=parse_money(data.get("price"), "price"),
+        cost_minor=parse_money(data.get("cost"), "cost"),
+        is_service=is_service,
+        min_stock_milli=min_stock_milli,
+        note=(data.get("note") or "").strip(),
+    )
+
+    # Свой артикул назвали — второго такого быть не должно, и проигравший узнаёт
+    # об этом. Проверка в `_clean_sku` не спасает от соседа, который заводит ту
+    # же позицию в ту же секунду: приёмка — как раз то место, где двое работают
+    # с одной накладной.
+    if svoy_sku is not None:
+        return uniqueness.insert_unique(
+            db,
+            Product(sku=svoy_sku, **polya),
+            taken=_sku_zanyat(db),
+            message=f"SKU {svoy_sku} is already used",
+            code="sku_taken",
+        )
+
+    # Артикул выдаём мы — и тогда спор идёт о номере, а не о товаре: проигравший
+    # берёт следующий свободный, как с номером бланка.
+    popytka = itertools.count()
+    return uniqueness.insert_retrying(
         db,
-        product,
-        taken=lambda row: row.sku is not None
-        and warehouse_repo.get_by_sku(db, row.sku) is not None,
-        message=f"SKU {product.sku} is already used",
+        lambda: Product(sku=_vydat_sku(db, next(popytka)), **polya),
+        taken=_sku_zanyat(db),
+        message="Could not take a free SKU, try again",
         code="sku_taken",
     )
 
@@ -187,7 +231,11 @@ def update_product(db: Session, product_id: int, data: dict) -> Product:
             raise errors.ValidationError("Name is required", code="name_required")
         product.name = name
     if "sku" in data:
-        product.sku = _clean_sku(db, data["sku"], product_id=product.id)
+        novyy = _clean_sku(db, data["sku"], product_id=product.id)
+        if novyy is None:
+            # Артикул выдаётся всем и стирать его нельзя: он уже на коробке.
+            raise errors.ValidationError("SKU is required", code="sku_required")
+        product.sku = novyy
     if "unit" in data and data["unit"] is not None:
         product.unit = _clean_unit(data["unit"])
     for field, column in (("price", "price_minor"), ("cost", "cost_minor")):

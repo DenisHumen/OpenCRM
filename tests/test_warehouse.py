@@ -6,6 +6,8 @@
 выключенный блок закрыт целиком.
 """
 
+import re
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -330,16 +332,53 @@ def test_deleting_a_deal_keeps_the_stock_history(root_client):
     assert root_client.get(f"{WH}/products/{product['id']}/moves").json()["total"] == 2
 
 
-def test_sku_is_unique_but_optional(root_client):
+def test_svoy_artikul_unikalen(root_client):
     new_product(root_client, name="Товар с артикулом", sku="A-100")
     clash = root_client.post(f"{WH}/products", json={"name": "Другой", "sku": "A-100"})
     assert clash.status_code == 409
     assert clash.json()["error"]["code"] == "sku_taken"
 
-    # два товара без артикула — норма: пустой артикул это NULL, а не ""
-    first = new_product(root_client, name="Без артикула 1", sku=None)
-    second = new_product(root_client, name="Без артикула 2", sku="   ")
-    assert first["sku"] is None and second["sku"] is None
+
+def test_artikul_vydayotsya_sam(root_client):
+    """Не назвали артикул — выдаём. Разбор: docs/19-sborka-zakaza.md §Р1."""
+    pervyy = new_product(root_client, name="Без артикула 1", sku=None)
+    vtoroy = new_product(root_client, name="Без артикула 2", sku="   ")
+
+    for tovar in (pervyy, vtoroy):
+        assert re.fullmatch(r"A-\d{6}", tovar["sku"]), tovar["sku"]
+    assert int(vtoroy["sku"][2:]) == int(pervyy["sku"][2:]) + 1, "номер не сдвинулся"
+
+
+def test_chuzhoy_artikul_ne_dvigaet_schyotchik(root_client):
+    """`A-100` похож на наш, но короче: считать его выданным нельзя.
+
+    Иначе счётчик прыгнул бы на сто, а следом за ним — все будущие артикулы.
+    """
+    do = new_product(root_client, name="До чужого", sku=None)
+    new_product(root_client, name="Чужой вид", sku="ZX-9")
+    new_product(root_client, name="Похожий вид", sku="A-777")
+    posle = new_product(root_client, name="После чужого", sku=None)
+
+    assert int(posle["sku"][2:]) == int(do["sku"][2:]) + 1
+
+
+def test_artikul_udalyonnogo_ne_vydayotsya_zanovo(root_client):
+    """Удалили товар — артикул остаётся занятым: этикетка уже на коробке."""
+    ushedshiy = new_product(root_client, name="Товар на удаление", sku=None)
+    assert root_client.delete(f"{WH}/products/{ushedshiy['id']}").status_code == 200
+
+    novyy = new_product(root_client, name="Товар после удаления", sku=None)
+    assert novyy["sku"] != ushedshiy["sku"]
+    assert int(novyy["sku"][2:]) > int(ushedshiy["sku"][2:])
+
+
+def test_artikul_nelzya_stereet(root_client):
+    """Пустой артикул при правке — отказ, а не NULL: он уже на коробке."""
+    tovar = new_product(root_client, name="Товар с выданным", sku=None)
+    otvet = root_client.patch(f"{WH}/products/{tovar['id']}", json={"sku": "  "})
+    assert otvet.status_code == 422, otvet.text
+    assert otvet.json()["error"]["code"] == "sku_required"
+    assert root_client.get(f"{WH}/products/{tovar['id']}").json()["sku"] == tovar["sku"]
 
 
 def test_zero_quantity_move_is_refused(root_client):
