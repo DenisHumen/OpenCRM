@@ -87,6 +87,33 @@ def get_by_sku(db: Session, sku: str) -> Product | None:
     return db.scalar(select(Product).where(Product.sku == sku))
 
 
+def max_vydannogo_sku(db: Session, prefix: str, digits: int) -> int:
+    """Наибольший номер среди артикулов, выданных нами. 0 — таких ещё нет.
+
+    Чужой артикул счётчик не двигает: `ZX-9` выданным не считается, и следующий
+    наш номер не обязан быть больше него. Удалённые товары считаются: артикул
+    остаётся занятым уникальным индексом, а этикетка — наклеенной на коробке.
+
+    Отбор диапазоном, а не по образцу: сравнение здесь побайтное
+    (`ExactString`), поэтому всё, что стоит между `A-000000` и `A-999999`, —
+    это либо наш номер, либо редкая ручная подделка под него. Пятидесяти строк
+    сверху хватает, чтобы пройти такие подделки насквозь и не тянуть в память
+    весь склад.
+    """
+    nizhniy, verhniy = prefix + "0" * digits, prefix + "9" * digits
+    verhnie = db.scalars(
+        select(Product.sku)
+        .where(Product.sku >= nizhniy, Product.sku <= verhniy)
+        .order_by(Product.sku.desc())
+        .limit(50)
+    )
+    for sku in verhnie:
+        hvost = sku[len(prefix):]
+        if len(hvost) == digits and hvost.isdigit():
+            return int(hvost)
+    return 0
+
+
 def search_products(
     db: Session,
     q: str | None = None,

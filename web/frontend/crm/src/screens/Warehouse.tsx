@@ -28,7 +28,7 @@ export function unitKey(unit: string): UnitKey {
 
 export interface Product {
   id: number;
-  sku: string | null;
+  sku: string;
   name: string;
   unit: string;
   /** Минимальные единицы, как везде в проекте. null — «цену не назвали». */
@@ -214,7 +214,7 @@ export function Warehouse() {
         {data.items.map((product) => (
           <Link to={`/warehouse/${product.id}`} key={product.id} className="list-row hoverable">
             <span style={{ width: 90, color: "var(--faint)", fontSize: 12 }} className="truncate">
-              {product.sku ?? "—"}
+              {product.sku}
             </span>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ color: "var(--text)", fontSize: 13.5, fontWeight: 500 }}>

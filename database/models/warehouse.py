@@ -141,15 +141,14 @@ class Product(Base):
     __tablename__ = "products"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    # Артикул уникален, но не обязателен. Именно поэтому NULL, а не пустая
-    # строка: два товара без артикула — норма, а две пустые строки нарушили бы
-    # уникальность. NULL в уникальном индексе не конфликтует с другим NULL —
-    # это ровно то поведение, которое здесь нужно.
+    # Артикул есть у каждого товара: не назвали — выдаём сами (`A-000123`).
+    # Раньше колонка была NULL-евой с доводом «два товара без артикула — норма»;
+    # довод отменён владельцем, разбор — в docs/19-sborka-zakaza.md §Р1.
     # Побайтно: артикул — опознавательный знак товара, и «ABC» с «abc» обязаны
     # остаться разными. Сравнение MySQL по умолчанию регистронезависимо и слило
     # бы их в один — уникальность отвергала бы дубль там, где дубля нет.
-    sku: Mapped[str | None] = mapped_column(
-        ExactString(64), nullable=True, unique=True, index=True
+    sku: Mapped[str] = mapped_column(
+        ExactString(64), nullable=False, unique=True, index=True
     )
     name: Mapped[str] = mapped_column(String(200), index=True)
     unit: Mapped[str] = mapped_column(String(16), default="pcs", server_default="pcs")
