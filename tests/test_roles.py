@@ -16,6 +16,8 @@ from fastapi.testclient import TestClient
 from core import modules, permissions
 from core.services import modules_service, permissions_service
 from tests.conftest import API, login, make_manager, register
+
+WH = f"{API}/warehouse"
 from web.main import app
 
 ROLES = f"{API}/roles"
@@ -1388,4 +1390,133 @@ def test_zakaz_ne_pritsepliaetsya_k_chuzhoy_zayavke(root_client, role_maker, sta
         assert otkaz.status_code == 403, f"заказ прицепился к невидимой заявке: {otkaz.text}"
     finally:
         assert root_client.post(f"{API}/modules/orders", json={"enabled": False}).status_code == 200
+        modules_service.invalidate()
+
+
+def test_ni_odin_podrazdel_zayavki_ne_otkryt_na_chuzhoy(root_client, role_maker, staff_maker):
+    """Область видимости заявки обязана держаться на ВСЕХ её подразделах.
+
+    Проверка перебором, а не по одной ручке. Подразделов у заявки пять, ставили
+    охранника руками на каждый, и пропуск заметить чтением нельзя: глазами
+    смотрят тот маршрут, который открыли. Соседний файл уже поймал один такой
+    пропуск — заказ цеплялся к невидимой заявке и уводил из-под неё бронь.
+
+    Состав заявки — это цены, себестоимость и что именно куплено. Отдать его по
+    прямой ссылке значит отдать чужую сделку целиком, ни разу не открыв карточку.
+    """
+    from core.services import modules_service
+
+    for blok in ("warehouse", "documents", "orders"):
+        assert root_client.post(f"{API}/modules/{blok}", json={"enabled": True}).status_code == 200
+    modules_service.invalidate()
+    try:
+        klient = root_client.post(f"{API}/clients", json={"name": "Чужой по строкам"}).json()
+        chuzhaya = root_client.post(
+            f"{API}/deals", json={"title": "Чужая заявка со строками", "client_id": klient["id"]}
+        ).json()["id"]
+        stroka = root_client.post(
+            f"{API}/deals/{chuzhaya}/lines", json={"name": "Упаковка", "quantity": "1", "price": 5000}
+        )
+        assert stroka.status_code == 201, stroka.text
+        stroka_id = stroka.json()["id"]
+
+        rol = role_maker(
+            "Только свои заявки, но со складом",
+            [
+                "clients.view", "deals.view", "deals.edit",
+                "warehouse.view", "orders.view", "orders.create",
+            ],
+        )
+        svoi = staff_maker("tolko-svoi-stroki@test.local", rol["id"])
+
+        # Опора проверки: сама карточка чужой заявки уже закрыта.
+        assert svoi.get(f"{API}/deals/{chuzhaya}").status_code == 403
+
+        zaprosy = {
+            "GET lines": svoi.get(f"{API}/deals/{chuzhaya}/lines"),
+            "POST lines": svoi.post(
+                f"{API}/deals/{chuzhaya}/lines", json={"name": "Своя трата", "quantity": "1"}
+            ),
+            "PATCH line": svoi.patch(
+                f"{API}/deals/{chuzhaya}/lines/{stroka_id}", json={"quantity": "9"}
+            ),
+            "DELETE line": svoi.delete(f"{API}/deals/{chuzhaya}/lines/{stroka_id}"),
+            "POST order": svoi.post(f"{API}/deals/{chuzhaya}/order", json={}),
+        }
+        for chto, otvet in zaprosy.items():
+            assert otvet.status_code == 403, f"{chto} отдал чужую заявку: {otvet.status_code} {otvet.text}"
+
+        # Строка цела: отказ обязан быть отказом, а не половиной действия.
+        ostalos = root_client.get(f"{API}/deals/{chuzhaya}/lines").json()["items"]
+        assert [s["id"] for s in ostalos] == [stroka_id]
+    finally:
+        for blok in ("orders", "warehouse"):
+            assert root_client.post(
+                f"{API}/modules/{blok}", json={"enabled": False}
+            ).status_code == 200
+        modules_service.invalidate()
+
+
+def test_kto_derzhit_ne_nazyvaet_chuzhie_zayavki(root_client, role_maker, staff_maker):
+    """Карточка товара отдавала заголовки чужих заявок мимо области видимости.
+
+    Заголовок заявки несёт клиента и суть работы («Ремонт витрины для Ромашки»),
+    и менеджеру «только со своими» его видеть не положено. А видел он его не
+    открывая ни одной чужой карточки: врезка «кто держит» на карточке товара
+    показывала все заявки подряд, с именами и ссылками.
+
+    Чужие при этом не исчезают, а схлопываются в одну безымянную строку: убрать
+    их совсем значило бы показать «в брони 5» и ни одного держателя, то есть
+    заставить искать недостачу, которой нет. Количество — складская величина, и
+    его менеджер видеть вправе.
+    """
+    from core.services import modules_service
+
+    assert root_client.post(f"{API}/modules/warehouse", json={"enabled": True}).status_code == 200
+    modules_service.invalidate()
+    try:
+        tovar = root_client.post(
+            f"{WH}/products", json={"name": "Товар под чужой бронью", "unit": "pcs"}
+        ).json()
+        root_client.post(
+            f"{WH}/moves",
+            json={"product_id": tovar["id"], "kind": "in", "quantity": "10"},
+        )
+        klient = root_client.post(f"{API}/clients", json={"name": "Ромашка"}).json()
+        chuzhaya = root_client.post(
+            f"{API}/deals",
+            json={"title": "СЕКРЕТНАЯ РАБОТА ДЛЯ РОМАШКИ", "client_id": klient["id"]},
+        ).json()["id"]
+        assert root_client.post(
+            f"{API}/deals/{chuzhaya}/lines",
+            json={"product_id": tovar["id"], "quantity": "3"},
+        ).status_code == 201
+
+        rol = role_maker("Склад и только свои заявки", ["warehouse.view", "deals.view"])
+        svoi = staff_maker("sklad-tolko-svoi@test.local", rol["id"])
+
+        otvet = svoi.get(f"{WH}/products/{tovar['id']}/availability")
+        assert otvet.status_code == 200, otvet.text
+        telo = otvet.json()
+
+        # Числа на месте: бронь — складская величина, её видно.
+        assert telo["reserved_milli"] == 3000
+        assert telo["available_milli"] == 7000
+
+        derzhateli = telo["holders"]
+        assert derzhateli, "чужие держатели пропали вовсе — «в брони 3» и никого"
+        assert sum(d["quantity_milli"] for d in derzhateli) == 3000
+        for d in derzhateli:
+            assert d["title"] is None, f"отдано название чужой заявки: {d['title']!r}"
+            assert d["id"] is None, f"отдана ссылка на чужую заявку: {d['id']!r}"
+
+        # Владелец видит то же самое с именами — сужение только для сужённых.
+        u_root = root_client.get(f"{WH}/products/{tovar['id']}/availability").json()
+        assert any(
+            d["title"] == "СЕКРЕТНАЯ РАБОТА ДЛЯ РОМАШКИ" for d in u_root["holders"]
+        ), "владельцу тоже перестали показывать держателей"
+    finally:
+        assert root_client.post(
+            f"{API}/modules/warehouse", json={"enabled": False}
+        ).status_code == 200
         modules_service.invalidate()
