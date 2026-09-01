@@ -327,6 +327,65 @@ def chistaya_baza(request):
         sluzhebnyy.dispose()
 
 
+@pytest.fixture
+def nakatit():
+    """Накатить миграции до названной ревизии на названную базу."""
+
+    def shag(url: str, kuda: str) -> None:
+        from alembic import command
+        from alembic.config import Config
+
+        config = Config(str(Path(__file__).resolve().parent.parent / "alembic.ini"))
+        config.set_main_option("sqlalchemy.url", url)
+        command.upgrade(config, kuda)
+
+    return shag
+
+
+#: Чем заполнять обязательную колонку, о которой засев не знает.
+_ZAPOLNITEL = {"int": 0, "bigint": 0, "tinyint": 0, "smallint": 0, "decimal": 0}
+
+
+@pytest.fixture
+def naselit():
+    """Вставить строки в таблицу ПРОШЛОЙ ревизии, назвав только нужные колонки.
+
+    Сеять на старой ревизии моделями нельзя: они ушли вперёд и знают колонки,
+    которых там ещё нет. Выписать список руками — значит покраснеть отказом
+    ВСТАВКИ на первой же миграции с новой колонкой, ничего не сказав о том,
+    ради чего проверка написана. Поэтому обязательные колонки спрашиваются у
+    самой базы, и засев переживает любую будущую правку схемы.
+    """
+    from sqlalchemy import text
+
+    def zasev(soedinenie, tablitsa: str, stroki: list[dict]) -> None:
+        if not stroki:
+            return
+        nazvano = list(stroki[0])
+        kolonki = soedinenie.execute(
+            text(
+                "SELECT COLUMN_NAME, DATA_TYPE FROM information_schema.COLUMNS"
+                " WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :tablitsa"
+                " AND IS_NULLABLE = 'NO' AND COLUMN_DEFAULT IS NULL"
+                " AND EXTRA NOT LIKE '%auto_increment%'"
+            ),
+            {"tablitsa": tablitsa},
+        ).all()
+        zapolniteli = {
+            imya: _ZAPOLNITEL.get(tip, "") for imya, tip in kolonki if imya not in nazvano
+        }
+        stolbtsy = [*nazvano, *zapolniteli]
+        soedinenie.execute(
+            text(
+                f"INSERT INTO {tablitsa} ({', '.join(f'`{s}`' for s in stolbtsy)})"
+                f" VALUES ({', '.join(f':{s}' for s in stolbtsy)})"
+            ),
+            [{**zapolniteli, **stroka} for stroka in stroki],
+        )
+
+    return zasev
+
+
 # --- ничьи записи в ленте ловятся при рождении, а не по таблице ----------------
 #
 # `client_notes.author_id` — внешний ключ с `ON DELETE SET NULL`
