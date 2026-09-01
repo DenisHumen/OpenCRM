@@ -101,7 +101,7 @@ def availability(db: Session, product_ids: list[int]) -> dict[int, dict[str, int
     }
 
 
-def derzhat(db: Session, product_id: int) -> list[dict]:
+def derzhat(db: Session, product_id: int, tolko_manager: int | None = None) -> list[dict]:
     """Кто держит товар в брони: заявки и заказы, каждый со своим количеством.
 
     Ради этого списка бронь и заводилась видимой: «доступно 2 из 5» без ответа
@@ -110,6 +110,16 @@ def derzhat(db: Session, product_id: int) -> list[dict]:
     Заявка показывается той же величиной, что и в общем расчёте, — остатком
     после переданного заказам и списанного. Иначе на карточке товара стояло бы
     одно число, а в «доступно» участвовало другое.
+
+    `tolko_manager` — область видимости заявок (`permissions_service.deals_scope`).
+    Чужие заявки не пропадают, а **схлопываются в одну безымянную строку**:
+    убрать их совсем значило бы показать «в брони 5» и ни одного держателя, то
+    есть заставить искать недостачу, которой нет. Имя и ссылка при этом не
+    отдаются — заголовок заявки несёт клиента и суть работы.
+
+    Заказы не сужаются: у них своей области видимости нет вовсе, `orders.view`
+    показывает все. Сузить их здесь значило бы завести второе правило доступа,
+    которого нет в самом разделе заказов.
     """
     nuzhno = lines_repo.po_otkrytym_zayavkam(db, [product_id])
     zakazy_est = modules_service.is_enabled(db, "orders")
@@ -132,15 +142,24 @@ def derzhat(db: Session, product_id: int) -> list[dict]:
         if ostalos > 0:
             ostatki[zayavka] = ostalos
 
-    derzhateli = [
-        {
-            "kind": "deal",
-            "id": zayavka.id,
-            "title": zayavka.title,
-            "quantity_milli": ostatki[zayavka.id],
-        }
-        for zayavka in deals_repo.by_ids(db, list(ostatki))
-    ]
+    derzhateli = []
+    chuzhogo = 0
+    for zayavka in deals_repo.by_ids(db, list(ostatki)):
+        if tolko_manager is not None and zayavka.manager_id != tolko_manager:
+            chuzhogo += ostatki[zayavka.id]
+            continue
+        derzhateli.append(
+            {
+                "kind": "deal",
+                "id": zayavka.id,
+                "title": zayavka.title,
+                "quantity_milli": ostatki[zayavka.id],
+            }
+        )
+    if chuzhogo:
+        derzhateli.append(
+            {"kind": "deal", "id": None, "title": None, "quantity_milli": chuzhogo}
+        )
 
     if zakazy_est:
         # То же число, что участвует в «доступно»: сырое количество строк

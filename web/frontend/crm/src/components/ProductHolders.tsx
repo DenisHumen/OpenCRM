@@ -8,8 +8,9 @@ import { moduleOn } from "../lib/modules";
 
 type Derzhatel = {
   kind: "deal" | "order";
-  id: number;
-  title: string;
+  /** Пусто — заявка чужая: имени и ссылки у неё нет, только количество. */
+  id: number | null;
+  title: string | null;
   quantity_milli: number;
 };
 
@@ -64,23 +65,37 @@ export function ProductHolders({ productId }: { productId: number }) {
         </div>
       </div>
       <div className="doc-mini-list">
-        {data.holders.map((d) => (
-          <Link
-            key={`${d.kind}-${d.id}`}
-            to={d.kind === "deal" ? `/deals/${d.id}` : `/orders/${d.id}`}
-            className="doc-mini"
-          >
-            <span className="truncate" style={{ flex: 1, minWidth: 0 }}>
-              {d.title}
-            </span>
-            <span style={{ color: "var(--faint)", fontSize: 12 }}>
-              {t(d.kind === "deal" ? "deal" : "order")}
-            </span>
-            <span style={{ color: "var(--muted)", width: 80, textAlign: "right" }}>
-              {formatQuantity(d.quantity_milli)}
-            </span>
-          </Link>
-        ))}
+        {data.holders.map((d) => {
+          const soderzhimoe = (
+            <>
+              <span className="truncate" style={{ flex: 1, minWidth: 0 }}>
+                {d.title ?? t("heldByOthers")}
+              </span>
+              <span style={{ color: "var(--faint)", fontSize: 12 }}>
+                {t(d.kind === "deal" ? "deal" : "order")}
+              </span>
+              <span style={{ color: "var(--muted)", width: 80, textAlign: "right" }}>
+                {formatQuantity(d.quantity_milli)}
+              </span>
+            </>
+          );
+          // Чужая заявка приходит без имени и без номера: ссылке вести некуда,
+          // и строка остаётся строкой. Количество при этом на месте — иначе
+          // «в брони 5» стояло бы рядом с пустым списком держателей.
+          return d.id === null ? (
+            <div key={`${d.kind}-chuzhie`} className="doc-mini">
+              {soderzhimoe}
+            </div>
+          ) : (
+            <Link
+              key={`${d.kind}-${d.id}`}
+              to={d.kind === "deal" ? `/deals/${d.id}` : `/orders/${d.id}`}
+              className="doc-mini"
+            >
+              {soderzhimoe}
+            </Link>
+          );
+        })}
       </div>
     </div>
   );

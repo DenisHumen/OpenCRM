@@ -223,7 +223,14 @@ def product_availability(
     """
     product = warehouse_service.get_product(db, product_id)
     data = reserve_service.availability(db, [product.id]).get(product.id, {})
-    return {**data, "holders": reserve_service.derzhat(db, product.id)}
+    # Область видимости заявок держится и здесь: заголовок заявки несёт клиента
+    # и суть работы, и карточка товара отдавала бы их мимо «только свои заявки».
+    return {
+        **data,
+        "holders": reserve_service.derzhat(
+            db, product.id, permissions_service.deals_scope(db, user)
+        ),
+    }
 
 
 @router.get("/products/{product_id}/moves")
