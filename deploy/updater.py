@@ -919,10 +919,22 @@ class Updater:
             "exec", "-T", "app", "python", "-m", "scripts.snapshot_db", "dump", inside,
             timeout=self.config.snapshot_timeout,
         )
-        if not result.ok or not landed.exists():
+        if not result.ok:
             landed.unlink(missing_ok=True)
-            steps.append(Step("backup", False, result.tail(6) or "дамп не появился"))
+            steps.append(Step("backup", False, result.tail(6) or "дамп ничего не сказал"))
             raise _Stop(f"не удалось снять копию базы MySQL: {result.tail(4)}")
+
+        # Дамп отчитался успехом, а файла нет — это РАЗНЫЕ каталоги, а не сбой
+        # дампа. Раньше оба случая печатали `result.tail`, и владелец читал
+        # «снято: таблиц 40, строк 555» в качестве ПРИЧИНЫ отказа: искать он шёл
+        # беду в базе, которой там нет, а обновления стояли.
+        if not landed.exists():
+            steps.append(Step("backup", False, f"дамп снят, но не появился в {landed.parent}"))
+            raise _Stop(
+                f"копия базы не найдена в {landed.parent}. Дамп пишет её в /app/data внутри "
+                f"контейнера, и это должен быть тот же каталог: сверьте OPENCRM_HOME в "
+                f"autoupdate.env и в docker/.env — их два, и правят обычно один"
+            )
 
         try:
             shutil.move(str(landed), str(destination))
