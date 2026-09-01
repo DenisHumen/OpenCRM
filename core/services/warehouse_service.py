@@ -344,6 +344,8 @@ def add_move(
     db: Session,
     data: dict,
     author: User,
+    *,
+    allow_deleted: bool = False,
     source: str = SOURCE_MANUAL,
     source_ref: str = "",
     announce: bool = True,
@@ -368,7 +370,10 @@ def add_move(
     Поэтому склад не сторож, а зеркало: он показывает минус, а не отказывается
     его показать.
     """
-    product = get_product(db, data["product_id"])
+    # Удалённый товар пускаем только по явной просьбе. Иначе закрытие заявки со
+    # строкой на убранный из справочника товар отвечало бы 404, и закрыть её
+    # было бы нельзя ничем: подписчик выигрыша валит смену этапа целиком.
+    product = get_product(db, data["product_id"], include_deleted=allow_deleted)
     if product.is_service:
         # Услугу нельзя оприходовать и нельзя списать: остатка у неё нет.
         raise errors.ValidationError(

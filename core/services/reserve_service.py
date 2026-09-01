@@ -101,20 +101,6 @@ def availability(db: Session, product_ids: list[int]) -> dict[int, dict[str, int
     }
 
 
-def nehvatka(db: Session, product_id: int, nuzhno_milli: int) -> int:
-    """Сколько товара не хватает под ещё `nuzhno_milli`. 0 — хватает.
-
-    Отвечает на вопрос «а хватит ли», но НЕ запрещает: продавать то, что ещё
-    едет, — обычное дело, и отказ здесь сломал бы работу вместо того, чтобы
-    помочь. Число уходит в ответ предупреждением.
-    """
-    est = availability(db, [product_id]).get(product_id)
-    if est is None:
-        return 0
-    ne_hvataet = nuzhno_milli - est["available_milli"]
-    return ne_hvataet if ne_hvataet > 0 else 0
-
-
 def derzhat(db: Session, product_id: int) -> list[dict]:
     """Кто держит товар в брони: заявки и заказы, каждый со своим количеством.
 
@@ -151,13 +137,14 @@ def derzhat(db: Session, product_id: int) -> list[dict]:
             "kind": "deal",
             "id": zayavka.id,
             "title": zayavka.title,
-            "stage": zayavka.stage,
             "quantity_milli": ostatki[zayavka.id],
         }
         for zayavka in deals_repo.by_ids(db, list(ostatki))
     ]
 
     if zakazy_est:
+        # То же число, что участвует в «доступно»: сырое количество строк
+        # заказа показывало бы «заказ держит 10» рядом с «в брони 6».
         for zakaz, skolko in documents_repo.otkrytye_s_tovarom(
             db, KIND_SALES_ORDER, OPEN_ORDER_STATUSES, product_id
         ):
@@ -167,7 +154,6 @@ def derzhat(db: Session, product_id: int) -> list[dict]:
                         "kind": "order",
                         "id": zakaz.id,
                         "title": zakaz.number,
-                        "stage": zakaz.status,
                         "quantity_milli": skolko,
                     }
                 )

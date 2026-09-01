@@ -111,8 +111,14 @@
 
 ```
 бронь(заявка, товар) = max(0, количество_в_строках_заявки
-                             − количество_в_строках_открытых_заказов_этой_заявки)
+                             − непогашенное открытыми заказами этой заявки
+                             − уже ушедшее со склада под неё)
 ```
+
+Третье слагаемое — не осторожность: накладная по заказу наследует `deal_id`
+заявки, и без него закрытый отгруженный заказ забронировал бы товар второй раз.
+А второе вычитает отгруженное по этому заказу — иначе одно и то же вычлось бы
+дважды, и бронь заявки исчезла бы при частичной отгрузке.
 
 Ничего не помечается и не хранится: «передано заказу» — это результат запроса
 по `documents.deal_id`. Отменили заказ — обещание вернулось к заявке само,
@@ -124,10 +130,9 @@
 есть заявки обязаны бронировать и без заказов. Оставить расчёт внутри блока
 заказов значит выключить бронь вместе с ним.
 
-Учёт склада: строка заявки знает свой склад (`warehouse_id`), и бронь считается
-по складам, а не общей кучей. Довод — в `docs/16-api-sayta.md` §4 «Резерв
-обязан знать про склад»: магазин, торгующий с одного склада, не должен видеть
-чужой резерв.
+Учёт склада: строка заявки знает свой склад (`warehouse_id`) — по нему идёт
+СПИСАНИЕ. Сама бронь пока общая, как и остаток: раскладку по складам делать
+вместе с витриной (`docs/16-api-sayta.md` §4 «Резерв обязан знать про склад»).
 
 ### Р4. Списание случается ровно один раз, и делает его бумага
 
@@ -332,12 +337,12 @@ class DealLine(Base):
 
 | Файл | Что появляется |
 |---|---|
-| `database/repositories/deal_lines.py` | новый: `list_for_deal`, `bulk_replace`, `sum_by_deal`, `by_product` |
-| `database/repositories/warehouse.py` | `reserved_by_deals(product_ids, warehouse_id=None)` |
+| `database/repositories/deal_lines.py` | **сделано**: `list_for_deal`, `get`, `add`, `drop`, `sum_for_deal`, `count_for_deals`, `po_otkrytym_zayavkam` |
+| `database/repositories/warehouse.py` | **сделано**: `spisano_po_zayavkam` (по складам пока не разложено — см. пункт 4) |
 | `core/services/reserve_service.py` | новый: `reserved`, `availability` — переезд из `order_service` плюс заявки |
 | `core/services/deal_lines_service.py` | **сделано**: `dobavit`, `pravit`, `ubrat`, `pereschitat_summu`, `itog`. Отдельным модулем, а не внутри `deal_service`: `warehouse_service` уже зовёт `deal_service.parse_money`, и общий модуль замкнул бы ввоз в кольцо |
 | `core/services/deal_service.py` | `spisat_pri_zakrytii` (пункт 5) |
-| `core/services/warehouse_service.py` | `sku_dlya_novogo_tovara` (Р1) |
+| `core/services/warehouse_service.py` | **сделано**: `_vydat_sku` (Р1) |
 | `core/services/order_service.py` | `sozdat_iz_zayavki(deal)` — копирует строки в `document_lines` |
 
 `order_service.reserved`/`availability` остаются как обёртки над
@@ -404,7 +409,7 @@ class DealLine(Base):
 | `product_id` | `int \| null` | нет | товар из номенклатуры; `null` — своя трата |
 | `sku` | `string` | нет | вместо `product_id`; удобнее магазину, который знает артикул, а не наш `id` |
 | `code` | `string` | нет | отсканированный штрихкод; ищется первым — коробка уже в руках |
-| `warehouse_id` | `int \| null` | нет | склад; не указан — склад по умолчанию |
+| `warehouse_id` | `int \| null` | нет | склад товарной строки; не указан — решится при списании (§Р4). У своей траты и услуги — отказ `line_has_no_warehouse` |
 | `name` | `string` | да, если нет `product_id` | название своей траты |
 | `quantity_milli` | `int` | да | тысячные; `3000` — три штуки |
 | `price_minor` | `int \| null` | нет | цена за единицу; не указана — берём `products.price_minor` |
@@ -419,6 +424,7 @@ class DealLine(Base):
 | `quantity_not_positive` | `quantity_milli <= 0` |
 | `name_required` | своя трата без названия |
 | `deal_closed` | заявка закрыта; строки закрытой заявки не меняются |
+| `line_has_no_warehouse` | склад назван у своей траты или услуги: брать с полки нечего |
 | `warehouse_required` | склад не назван, и склада по умолчанию нет |
 
 **Нехватка товара — не отказ, а предупреждение.** Ответ несёт

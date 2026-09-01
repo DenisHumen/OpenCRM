@@ -22,11 +22,16 @@ def bloki(root_client: TestClient):
     from core.services import modules_service
 
     for blok in ("warehouse", "documents", "orders"):
-        root_client.post(f"{API}/modules/{blok}", json={"enabled": True})
+        otvet = root_client.post(f"{API}/modules/{blok}", json={"enabled": True})
+        # Код ответа проверяется: молчаливое переключение однажды откажет —
+        # режим обслуживания, зависимость блока, — и файл упадёт не здесь, а на
+        # 403 в первом же тесте, где про блоки не сказано ни слова.
+        assert otvet.status_code == 200, f"{blok}: {otvet.text}"
     modules_service.invalidate()
     yield
     for blok in ("orders", "warehouse"):
-        root_client.post(f"{API}/modules/{blok}", json={"enabled": False})
+        otvet = root_client.post(f"{API}/modules/{blok}", json={"enabled": False})
+        assert otvet.status_code == 200, f"{blok}: {otvet.text}"
     modules_service.invalidate()
 
 
@@ -163,3 +168,109 @@ def test_svoya_trata_ne_bronruet(root_client, tovar, zayavka):
     prihod(root_client, tovar["id"], "5")
     root_client.post(f"{API}/deals/{zayavka['id']}/lines", json={"name": "Упаковка", "quantity": "1", "price": 1000})
     assert nalichie(root_client, tovar["id"])["reserved_milli"] == 0
+
+
+def test_chastichnaya_otgruzka_ne_syedaet_bron_zayavki(root_client, tovar, zayavka):
+    """Отгруженное по заказу не имеет права вычесться дважды.
+
+    Накладная по заказу наследует `deal_id` заявки и пишет его в движения, то
+    есть отгруженное попадает и в «списано под заявку». Не вычти его из
+    «передано заказам» — одно и то же вычтется два раза, и заявка на пятнадцать
+    штук с заказом на десять после отгрузки этих десяти покажет бронь НОЛЬ
+    вместо пяти: товар, который клиент ещё ждёт, свободно уйдёт другому.
+    """
+    prihod(root_client, tovar["id"], "20")
+    root_client.post(
+        f"{API}/deals/{zayavka['id']}/lines",
+        json={"product_id": tovar["id"], "quantity": "15"},
+    )
+    zakaz_id = root_client.post(
+        f"{API}/orders",
+        json={"kind": "sales_order", "deal_id": zayavka["id"], "client_id": zayavka["client_id"]},
+    ).json()["id"]
+    root_client.post(
+        f"{API}/orders/{zakaz_id}/lines", json={"product_id": tovar["id"], "quantity": "10"}
+    )
+    assert nalichie(root_client, tovar["id"])["reserved_milli"] == 15000
+
+    # Отгружаем НАСТОЯЩЕЙ накладной по этому заказу, сам заказ не закрывая:
+    # обычная частичная отгрузка. Голым движением беду не воспроизвести —
+    # отгруженное считается через бумагу, а у движения мимо бумаги её нет.
+    assert root_client.post(f"{API}/modules/waybills", json={"enabled": True}).status_code == 200
+    nakladnaya = root_client.post(f"{API}/waybills/from-order/{zakaz_id}")
+    assert nakladnaya.status_code == 201, nakladnaya.text
+    provedena = root_client.post(f"{API}/waybills/{nakladnaya.json()['id']}/post", json={})
+    assert provedena.status_code == 200, provedena.text
+
+    est = nalichie(root_client, tovar["id"])
+    assert est["reserved_milli"] == 5000, "бронь заявки съедена двойным вычитанием"
+    assert est["stock_milli"] == 10000
+    assert est["available_milli"] == 5000
+
+
+def test_usluga_ne_derzhit_bron(root_client, zayavka):
+    """У услуги остатка нет и быть не может — держать ей нечего.
+
+    Строка «выезд мастера» иначе показывала бы вечную нехватку на экране
+    заявки, а карточка услуги — бронь на товар, которого не существует.
+    """
+    usluga = root_client.post(
+        f"{WH}/products", json={"name": "Выезд под бронь", "is_service": True, "price": 50_000}
+    ).json()
+    root_client.post(
+        f"{API}/deals/{zayavka['id']}/lines",
+        json={"product_id": usluga["id"], "quantity": "1"},
+    )
+
+    est = nalichie(root_client, usluga["id"])
+    assert est["reserved_milli"] == 0
+    assert est["holders"] == []
+    stroki = root_client.get(f"{API}/deals/{zayavka['id']}/lines").json()["items"]
+    assert all(s["shortage_milli"] == 0 for s in stroki), "услуга показала нехватку"
+
+
+def test_zayavka_derzhit_tovar_i_bez_bloka_zakazov(root_client, tovar, zayavka):
+    """Ради этого расчёт и вынесен из блока заказов — и ни разу не пройден.
+
+    Весь файл гоняется при включённых заказах, а без них из слагаемых исчезают
+    два. Студия со складом и без заказов иначе увидела бы «доступно 5 из 5» на
+    товар, обещанный покупателю.
+    """
+    from core.services import modules_service
+
+    prihod(root_client, tovar["id"], "5")
+    root_client.post(
+        f"{API}/deals/{zayavka['id']}/lines",
+        json={"product_id": tovar["id"], "quantity": "3"},
+    )
+    assert root_client.post(f"{API}/modules/orders", json={"enabled": False}).status_code == 200
+    modules_service.invalidate()
+    try:
+        est = nalichie(root_client, tovar["id"])
+        assert est["reserved_milli"] == 3000, "без заказов заявка перестала держать товар"
+        assert est["expected_milli"] == 0
+        assert est["available_milli"] == 2000
+        assert [d["kind"] for d in est["holders"]] == ["deal"]
+    finally:
+        assert root_client.post(f"{API}/modules/orders", json={"enabled": True}).status_code == 200
+        modules_service.invalidate()
+
+
+def test_vtoroy_zakaz_iz_zayavki_ne_zavoditsya(root_client, tovar, zayavka):
+    """Кнопку нажимают дважды, и товар не может стать нужен вдвое.
+
+    Второй заказ повторил бы те же строки, а `promised` посчитал бы их обоими:
+    три штуки в заявке стали бы шестью в брони, и продавец отказал бы
+    покупателю, глядя на товар, лежащий на полке.
+    """
+    prihod(root_client, tovar["id"], "10")
+    root_client.post(
+        f"{API}/deals/{zayavka['id']}/lines",
+        json={"product_id": tovar["id"], "quantity": "3"},
+    )
+    assert root_client.post(f"{API}/deals/{zayavka['id']}/order").status_code == 201
+
+    vtoroy = root_client.post(f"{API}/deals/{zayavka['id']}/order")
+    assert vtoroy.status_code == 409, vtoroy.text
+    assert vtoroy.json()["error"]["code"] == "deal_order_exists"
+    assert nalichie(root_client, tovar["id"])["reserved_milli"] == 3000

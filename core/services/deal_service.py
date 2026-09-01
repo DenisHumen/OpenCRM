@@ -10,6 +10,7 @@ from core.utils import now_utc, to_utc_naive
 from database.models import Deal, User
 from database.models.audit import SOURCE_MANUAL
 from database.models.pipeline import CLOSED_KINDS, KIND_LOST
+from database.repositories import deal_lines as lines_repo
 from database.repositories import deals as deals_repo
 
 MAX_TITLE = 200
@@ -188,6 +189,14 @@ def update_deal(
         deal.company_id = _company_id(db, data)
     if "lost_reason" in data and data["lost_reason"] is not None:
         deal.lost_reason = data["lost_reason"].strip()[:MAX_LOST_REASON]
+    # Сумма заявки СО СТРОКАМИ — не поле для ввода, а итог: у неё единственный
+    # писатель `deal_lines_service.pereschitat_summu`. Прими её здесь — и кэш
+    # разойдётся с истиной: следующая правка строки затрёт введённое, а в
+    # журнале правки суммы через строки не будет вовсе (§Р5).
+    if "amount" in data and lines_repo.count_for_deals(db, [deal.id]).get(deal.id):
+        raise errors.ValidationError(
+            "The deal total comes from its lines", code="amount_from_lines"
+        )
     # Сумму можно и снять: прислали null — вернулись к «ещё не назвали».
     # Старое значение забираем ДО присваивания: после него спросить уже не у
     # кого, а «сумма изменена» без «было 5 000, стало 500» не отвечает ни на
