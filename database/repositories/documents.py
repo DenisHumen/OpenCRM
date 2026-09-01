@@ -16,7 +16,7 @@
 её и ведут.
 """
 
-from sqlalchemy import case, func, or_, select, update
+from sqlalchemy import case, func, select, update
 from sqlalchemy.orm import Session, aliased
 
 from database.models import Document, DocumentEvent, DocumentLine
@@ -145,6 +145,29 @@ def search(
 
     stmt = stmt.order_by(Document.created_at.desc())
     return page_of(db, stmt, page=page, per_page=per_page)
+
+
+def est_nezakrytaya(db: Session, deal_id: int, kind: str, statuses) -> bool:
+    """Есть ли у заявки бумага этого вида в незакрытом состоянии.
+
+    Отдельным запросом, а не отбором среди первой страницы `search`: страница
+    обрезана (пятьдесят), и на заявке с длинной историей открытая бумага
+    оказалась бы за её краем. Тогда «второй заказ по заявке» прошёл бы, и бронь
+    удвоилась — ровно то, от чего проверка и стоит. Та же беда, что была у
+    счётчика артикулов, где окно тоже принимали за «все».
+    """
+    return (
+        db.scalar(
+            select(Document.id)
+            .where(
+                Document.deal_id == deal_id,
+                Document.kind == kind,
+                Document.status.in_(tuple(statuses)),
+            )
+            .limit(1)
+        )
+        is not None
+    )
 
 
 # --- строки перечня ---

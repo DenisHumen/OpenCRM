@@ -163,3 +163,63 @@ def test_zakrytaya_zayavka_zakaz_ne_prinimaet(root_client, tovar, zayavka):
     otkaz = root_client.post(f"{API}/deals/{zayavka}/order")
     assert otkaz.status_code == 422
     assert otkaz.json()["error"]["code"] == "deal_closed"
+
+
+def test_bez_bloka_zakazov_zavesti_zakaz_nelzya(root_client, tovar, zayavka):
+    """Выключённый блок заказов закрывает и ручку «завести заказ по заявке».
+
+    Ручка живёт в роутере ЗАЯВОК, а заявки — блок несущий: общего охранника у
+    роутера нет, и блок навешен на этот один маршрут. Пропусти его — и
+    выключённые заказы продолжали бы заводиться из карточки заявки, то есть
+    выключатель врал бы. Сторож у этой ручки только здесь.
+    """
+    from core.services import modules_service
+
+    stroka(root_client, zayavka, product_id=tovar["id"], quantity="1")
+    assert root_client.post(f"{API}/modules/orders", json={"enabled": False}).status_code == 200
+    modules_service.invalidate()
+    try:
+        otkaz = root_client.post(f"{API}/deals/{zayavka}/order", json={})
+        assert otkaz.status_code == 403, otkaz.text
+        assert otkaz.json()["error"]["code"] == "module_disabled"
+        # Заявка при этом жива: закрылись заказы, а не заявки.
+        assert root_client.get(f"{API}/deals/{zayavka}").status_code == 200
+    finally:
+        assert root_client.post(
+            f"{API}/modules/orders", json={"enabled": True}
+        ).status_code == 200
+        modules_service.invalidate()
+
+
+def test_otkrytyy_zakaz_nakhoditsya_za_krayem_stranitsy(root_client, tovar, zayavka):
+    """Второй открытый заказ по заявке не должен пройти — сколько бы ни было бумаг.
+
+    Проверка отбора не «на глаз, но по всем», а именно на длинной истории.
+    Раньше открытый заказ искали среди ПЕРВОЙ СТРАНИЦЫ бумаг заявки (пятьдесят,
+    свежие сверху). Наберись их больше — открытый уезжал за край, кнопка
+    заводила второй заказ, и бронь удваивалась: три штуки в заявке становились
+    шестью, и продавец отказывал покупателю, глядя на товар на полке.
+
+    Порядок здесь важен: открытый заказ заводится ПЕРВЫМ и уходит вниз списка
+    под свежими отменёнными. Заведи его последним — он остался бы на первой
+    странице, и проверка зеленела бы на сломанном отборе.
+    """
+    stroka(root_client, zayavka, product_id=tovar["id"], quantity="1")
+    pervyy = root_client.post(f"{API}/deals/{zayavka}/order", json={})
+    assert pervyy.status_code == 201, pervyy.text
+
+    # Пятьдесят отменённых бумаг поверх него — ровно на ширину прежнего окна.
+    for _ in range(50):
+        lishniy = root_client.post(
+            f"{API}/orders",
+            json={"kind": "sales_order", "deal_id": zayavka},
+        )
+        assert lishniy.status_code == 201, lishniy.text
+        otmena = root_client.post(f"{API}/orders/{lishniy.json()['id']}/cancel", json={})
+        assert otmena.status_code == 200, otmena.text
+
+    vtoroy = root_client.post(f"{API}/deals/{zayavka}/order", json={})
+    assert vtoroy.status_code == 409, (
+        f"второй заказ прошёл мимо открытого первого: {vtoroy.status_code} {vtoroy.text}"
+    )
+    assert vtoroy.json()["error"]["code"] == "deal_order_exists"

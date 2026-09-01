@@ -60,6 +60,7 @@ from core.services.warehouse_service import STOCK_WRITTEN_OFF, format_quantity
 from core.utils import now_utc
 from database.models.client import KIND_DOCUMENT, KIND_STAGE, KIND_STOCK
 from database.models.document import STATUS_CANCELLED
+from database.models.pipeline import KIND_WON
 
 
 @events.participant(DEAL_STAGE_CHANGED, module="warehouse")
@@ -80,7 +81,7 @@ def spisat_tovar_pri_vyigryshe(event: events.Event) -> None:
     при этом исчезает сама — заявка закрыта (`reserve_service`).
     """
     stage = pipeline_service.get_stage(event.db, event["to_stage"])
-    if stage.kind != "won":
+    if stage.kind != KIND_WON:
         return
     deal_lines_service.spisat_pri_zakrytii(event.db, event["deal"], event.actor)
 
