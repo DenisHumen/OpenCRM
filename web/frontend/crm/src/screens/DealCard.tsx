@@ -48,6 +48,10 @@ export function DealCard() {
   const seesMoney = can(user, "deals.view_amounts");
   const navigate = useNavigate();
   const [deal, setDeal] = useState<any>(null);
+  // Сколько строк набрано. Со строками сумма — итог, а не поле ввода (§Р5), и
+  // сервер правку отказывает: поле, которое всегда отвечает отказом, выглядит
+  // сломанной карточкой. Счёт приходит из раздела строк, он его уже загрузил.
+  const [strok, setStrok] = useState(0);
   const [issuing, setIssuing] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [askReason, setAskReason] = useState<string | null>(null);
@@ -360,12 +364,21 @@ export function DealCard() {
               type="number"
               min={0}
               step="0.01"
+              readOnly={strok > 0}
+              // `readOnly`, а не `disabled`: серое нечитаемое поле прячет саму
+              // сумму, а её как раз и смотрят. Значение остаётся выделяемым и
+              // копируемым, править нельзя.
+              // `key` держит поле в согласии с суммой: у неуправляемого поля
+              // `defaultValue` после первой отрисовки не читается вовсе, и без
+              // пересоздания карточка показывала бы прежнее число.
+              key={`amount-${deal.amount}`}
               defaultValue={asMoneyInput(deal.amount)}
               onBlur={(e) => {
                 const next = toMinor(e.target.value);
                 if (next !== deal.amount) void patch({ amount: next });
               }}
             />
+            {strok > 0 && <div className="field-desc">{t("amountFromLines")}</div>}
           </div>
           <div className="field">
             <label className="label">{t("dealPrepaid")}</label>
@@ -453,6 +466,15 @@ export function DealCard() {
         dealId={deal.id}
         closed={deal.closed_at !== null}
         onOrder={() => void load()}
+        onSostav={(skolko, itog) => {
+          setStrok(skolko);
+          // Правка строк меняет сумму НА СЕРВЕРЕ, а карточка держит свою копию:
+          // без перечитывания она показывала $408 у заявки, у которой суммы уже
+          // нет вовсе. Перечитываем целиком, а не подменяем одно поле: остаток к
+          // оплате и «оплачено» считаются вместе с суммой, и порознь однажды
+          // разойдутся.
+          if (deal && deal.amount !== itog) void load();
+        }}
       />
       <DealStock dealId={deal.id} />
 
