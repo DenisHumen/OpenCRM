@@ -14,8 +14,9 @@ from core import exceptions as errors
 from core.services import reserve_service, warehouse_service
 from core.services.deal_service import get_deal, parse_money
 from core.utils import now_utc
-from database.models import Deal, DealLine
+from database.models import Deal, DealLine, User
 from database.repositories import deal_lines as lines_repo
+from database.models.warehouse import MOVE_OUT
 from database.repositories import warehouse as warehouse_repo
 
 #: Ширина `deal_lines.name_snapshot`. Длиннее — отказ, а не обрезка: обрезанное
@@ -156,6 +157,70 @@ def s_nehvatkoy(db: Session, stroki: list[DealLine]) -> list[dict]:
         )
         otvet.append(kusok)
     return otvet
+
+
+def spisat_pri_zakrytii(db: Session, deal: Deal, author: User | None) -> int:
+    """Списать со склада то, что заявка обещала и что ещё не ушло. Вернуть число
+    списанных позиций.
+
+    Сколько списывать (`docs/19-sborka-zakaza.md` §Р4):
+
+        к списанию = в строках заявки − уже списанное движениями с этим deal_id
+
+    Формула САМА делает действие повторяемым: закрыли, откатили этап, закрыли
+    снова — второй раз списывать нечего. Это не защита «на всякий случай»:
+    откат этапа делают руками каждый день, а движение склада не отменяется
+    удалением — только обратным движением.
+
+    Уже отгруженное заказом вычитается тем же слагаемым: движения накладной
+    несут `deal_id` заявки, и повторно списывать по ним нечего.
+
+    Услуги пропускаются: остатка у них нет и быть не может.
+    """
+    stroki = [s for s in lines_repo.list_for_deal(db, deal.id) if s.product_id is not None]
+    if not stroki:
+        return 0
+
+    nuzhno: dict[int, int] = {}
+    sklady: dict[int, int | None] = {}
+    for stroka in stroki:
+        nuzhno[stroka.product_id] = nuzhno.get(stroka.product_id, 0) + stroka.quantity_milli
+        sklady.setdefault(stroka.product_id, stroka.warehouse_id)
+
+    spisano = warehouse_repo.spisano_po_zayavkam(db, list(nuzhno))
+    po_umolchaniyu = None
+    spisano_pozitsiy = 0
+
+    for product_id, kolichestvo in nuzhno.items():
+        ostalos = kolichestvo - spisano.get((deal.id, product_id), 0)
+        if ostalos <= 0:
+            continue
+        tovar = warehouse_repo.get_product(db, product_id, include_deleted=True)
+        if tovar is None or tovar.is_service:
+            continue
+        sklad = sklady.get(product_id)
+        if sklad is None:
+            # Склад у строки не назван — берём основной (решение владельца
+            # 30.08.2026). У большинства склад один, и вопрос «с какого» для них
+            # не существует; в самом движении склад записан, так что молчаливым
+            # решение остаётся только на входе.
+            if po_umolchaniyu is None:
+                po_umolchaniyu = warehouse_service.default_warehouse(db)
+            sklad = po_umolchaniyu.id
+        warehouse_service.add_move(
+            db,
+            {
+                "product_id": product_id,
+                "kind": MOVE_OUT,
+                "quantity": warehouse_service.format_quantity(ostalos),
+                "warehouse_id": sklad,
+                "deal_id": deal.id,
+                "comment": f"written off on closing deal {deal.id}",
+            },
+            author,
+        )
+        spisano_pozitsiy += 1
+    return spisano_pozitsiy
 
 
 def _otkrytaya(db: Session, deal_id: int) -> Deal:

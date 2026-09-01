@@ -39,6 +39,7 @@ from datetime import timedelta
 
 from core import events
 from core.services import (
+    deal_lines_service,
     client_service,
     deal_service,
     finance_service,
@@ -59,6 +60,29 @@ from core.services.warehouse_service import STOCK_WRITTEN_OFF, format_quantity
 from core.utils import now_utc
 from database.models.client import KIND_DOCUMENT, KIND_STAGE, KIND_STOCK
 from database.models.document import STATUS_CANCELLED
+
+
+@events.participant(DEAL_STAGE_CHANGED, module="warehouse")
+def spisat_tovar_pri_vyigryshe(event: events.Event) -> None:
+    """Выигранная заявка списывает со склада то, что обещала и что ещё не ушло.
+
+    Подписчиком, а не вызовом из `move_stage`, по двум причинам сразу. Первая —
+    путей закрытия несколько: кнопка на карточке, перетаскивание на доске,
+    проведение акта с `next_stage`. Вызов пришлось бы вписать в каждый, и
+    следующий путь его не получил бы. Вторая — модульность: у студии без склада
+    подписчика просто нет, и `is_enabled` не нужен ни здесь, ни в сервисе.
+
+    `participant`, а не `observer`: не списалось — заявка не закрылась. Иначе
+    этап уехал бы в «выиграно», товар остался бы на остатке, и расхождение
+    заметили бы при инвентаризации, через месяц.
+
+    ПРОИГРАННАЯ заявка не списывает ничего: товар по ней никуда не уехал. Бронь
+    при этом исчезает сама — заявка закрыта (`reserve_service`).
+    """
+    stage = pipeline_service.get_stage(event.db, event["to_stage"])
+    if stage.kind != "won":
+        return
+    deal_lines_service.spisat_pri_zakrytii(event.db, event["deal"], event.actor)
 
 
 @events.observer(DEAL_STAGE_CHANGED, module="clients")
