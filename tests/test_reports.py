@@ -513,10 +513,15 @@ def test_unnamed_price_does_not_inflate_the_total_across_sources(manager_client)
 
 # --- границы периода против помесячной разбивки ---
 
-# Сентябрь 2026 — своё пустое окно: в марте у соседних тестов свои сделки, а
+# Сентябрь 2019 — своё пустое окно: в марте у соседних тестов свои сделки, а
 # здесь важны абсолютные числа, а не приросты.
+#
+# Год ПРОШЛЫЙ, и это не мелочь. Окно стояло в 2026-м, и 01.09.2026 оно
+# перестало быть пустым: сделки, которые соседние тесты заводят «сейчас»,
+# попали внутрь, и `won_count` стал двойкой вместо нуля. Пустое окно в будущем
+# пусто только до своей даты — а она приходит молча и валит чужие тесты.
 def sep(day: int, hour: int = 12, minute: int = 0) -> datetime:
-    return datetime(2026, 9, day, hour, minute)
+    return datetime(2019, 9, day, hour, minute)
 
 
 def test_revenue_stays_inside_the_requested_days(manager_client):
@@ -529,7 +534,7 @@ def test_revenue_stays_inside_the_requested_days(manager_client):
     ко всему отчёту, и заметить подмену можно только пересчитав руками.
     """
     person = new_client(manager_client, "Вне запрошенных дней", moment=sep(1))
-    narrow = {"from": "2026-09-01", "to": "2026-09-10", "tz_offset": 0}
+    narrow = {"from": "2019-09-01", "to": "2019-09-10", "tz_offset": 0}
     make_deal(manager_client, person["id"], "won", sep(28), amount=500_000)
 
     inside = report(manager_client, "revenue", **narrow)
@@ -538,7 +543,7 @@ def test_revenue_stays_inside_the_requested_days(manager_client):
     assert inside["months"][0]["won_count"] == 0, "месяц посчитан целиком, а не по периоду"
 
     # и та же сделка обязана найтись, когда её день в период входит
-    wide = report(manager_client, "revenue", **{**narrow, "to": "2026-09-30"})
+    wide = report(manager_client, "revenue", **{**narrow, "to": "2019-09-30"})
     assert wide["won_count"] == 1
     assert wide["won_amount"] == 500_000
 
@@ -550,7 +555,7 @@ def test_revenue_agrees_with_sources_on_a_partial_month(manager_client):
     )
     make_deal(manager_client, person["id"], "won", sep(25), amount=310_000)
 
-    window = {"from": "2026-09-01", "to": "2026-09-05", "tz_offset": 0}
+    window = {"from": "2019-09-01", "to": "2019-09-05", "tz_offset": 0}
     revenue = report(manager_client, "revenue", **window)
     sources = report(manager_client, "sources", **window)
     row = next(r for r in sources["items"] if r["source"] == "сверка-периода")
@@ -715,13 +720,15 @@ def test_the_sources_total_says_nothing_instead_of_zero(root_client):
 
 # --- одно слово — одна величина ---
 
-# Декабрь 2026 — своё пустое окно: здесь сверяются абсолютные числа трёх
+# Декабрь 2019 — своё пустое окно: здесь сверяются абсолютные числа трёх
 # отчётов между собой, и чужие сделки в периоде сделали бы сверку бессмысленной.
+# Год прошлый по той же причине, что и у `sep`, — окно в будущем однажды
+# наступает. Это стояло в 2026-м и выстрелило бы 01.12.2026.
 def dec(day: int, hour: int = 12) -> datetime:
-    return datetime(2026, 12, day, hour)
+    return datetime(2019, 12, day, hour)
 
 
-DECEMBER = {"from": "2026-12-01", "to": "2026-12-31", "tz_offset": 0}
+DECEMBER = {"from": "2019-12-01", "to": "2019-12-31", "tz_offset": 0}
 
 
 def test_won_is_one_number_across_the_whole_screen(manager_client):
@@ -1100,3 +1107,19 @@ def test_nachislennoe_pravilom_ne_schitaetsya_postupleniem(root_client, kassa):
         # Поймано прогоном в обратном порядке файлов — тем самым, что
         # CI гоняет вторым заходом ровно ради таких сцепок.
         root_client.delete(f"{API}/finance/rules/{pravilo.json()['id']}")
+
+
+def test_okna_otchyotov_lezhat_v_proshlom():
+    """Ни одно окно этого файла не смеет лежать в будущем.
+
+    Окна стояли в 2026-м, и 01.09.2026 сентябрьское перестало быть пустым:
+    сделки, которые соседние тесты заводят «сейчас», попали внутрь, и
+    `won_count` стал двойкой вместо нуля. Набор зеленел месяцами и упал в день,
+    когда наступила дата, — ни правка кода, ни ревью такое не ловят.
+
+    Проверка стоит на самих помощниках, а не на строках периодов: строку и
+    помощник правят по отдельности, и разъехаться они обязаны заметно.
+    """
+    segodnya = datetime.now()
+    for imya, moment in (("at", at(1)), ("sep", sep(1)), ("dec", dec(1))):
+        assert moment < segodnya, f"окно {imya}() лежит в будущем — оно однажды наступит"
