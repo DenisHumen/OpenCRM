@@ -243,7 +243,11 @@
 тогда обязателен `name`. Количество в тысячных разбирает сервер (`quantity`:
 `"1.5"`), цена — целая в минорных единицах. Ответ несёт `kind`
 (`product`/`extra`) и `total_minor` — они считаются на отдаче, в базе их нет.
-Итог заявки складывается сам и ложится в `amount`. Раздел закрыт блоком
+Итог заявки складывается сам и ложится в `amount`. Рядом приходят `cost_minor`
+и `profit_minor` — ожидаемая себестоимость по снимкам строк и прибыль; оба
+`null`, если себестоимость известна не у всех строк: неполная завысила бы
+прибыль там, где по ней решают о скидке. Суммы, себестоимость и прибыль
+закрыты правом `deals.view_amounts`. Раздел закрыт блоком
 `warehouse` целиком. Отказы: `deal_closed`, `quantity_not_positive`,
 `name_required`, `name_is_snapshot`, `product_not_found`, `product_deleted`,
 `line_not_found`.
@@ -266,7 +270,7 @@
 | DELETE | `/deals/{id}` | 🔑 `deals.delete` | Удалить |
 | GET | `/deals/{id}/feed` | 🔑 `deals.view` | Лента заявки: звонки, письма, встречи и заметки одним потоком, фильтр `kind` |
 | POST | `/deals/{id}/feed` | 🔑 `deals.edit` | Дописать в ленту (то же тело, что у заметки клиента) |
-| GET | `/deals/{id}/lines` | 🔑 `deals.view` | Состав заявки: товары и свои траты, итог. Блок `warehouse` |
+| GET | `/deals/{id}/lines` | 🔑 `deals.view` | Состав заявки: товары и свои траты, итог, себестоимость и ожидаемая прибыль. Блок `warehouse` |
 | POST | `/deals/{id}/lines` | 🔑 `deals.edit` | Добавить строку: `product_id`, `sku` или `code` (скан); ничего из них — своя трата |
 | PATCH | `/deals/{id}/lines/{line_id}` | 🔑 `deals.edit` | Количество, цена, склад; название — только у своей траты |
 | DELETE | `/deals/{id}/lines/{line_id}` | 🔑 `deals.edit` | Убрать строку |

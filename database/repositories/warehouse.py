@@ -9,6 +9,8 @@
 зависит ни от пагинации, ни от того, что успело попасть в сессию.
 """
 
+import re
+
 from sqlalchemy import Select, func, or_, select, update
 from sqlalchemy.orm import Session
 
@@ -99,24 +101,21 @@ def max_vydannogo_sku(db: Session, prefix: str, digits: int) -> int:
     наш номер не обязан быть больше него. Удалённые товары считаются: артикул
     остаётся занятым уникальным индексом, а этикетка — наклеенной на коробке.
 
-    Отбор диапазоном, а не по образцу: сравнение здесь побайтное
-    (`ExactString`), поэтому всё, что стоит между `A-000000` и `A-999999`, —
-    это либо наш номер, либо редкая ручная подделка под него. Пятидесяти строк
-    сверху хватает, чтобы пройти такие подделки насквозь и не тянуть в память
-    весь склад.
+    Отбор образцом, а не «верхние полсотни строк диапазона». Полсотни хватало,
+    пока подделок мало, но `A-0000420` — семь цифр вместо шести — при побайтном
+    сравнении стоит ВЫШЕ любого нашего и остаётся в диапазоне. Полсотни таких, и
+    окно не доходит до настоящего максимума: счёт начинается с единицы, упирается
+    в занятое, и заведение товара отказывает при полностью свободном диапазоне.
+
+    `REGEXP` — единственная точная приметa нашего вида, и она законна: база у
+    продукта одна, MySQL (CLAUDE.md §1). Взамен один `MAX` без выборки и без
+    разбора в питоне.
     """
-    nizhniy, verhniy = prefix + "0" * digits, prefix + "9" * digits
-    verhnie = db.scalars(
-        select(Product.sku)
-        .where(Product.sku >= nizhniy, Product.sku <= verhniy)
-        .order_by(Product.sku.desc())
-        .limit(50)
+    obrazets = f"^{re.escape(prefix)}[0-9]{{{digits}}}$"
+    nash = db.scalar(
+        select(func.max(Product.sku)).where(Product.sku.op("REGEXP")(obrazets))
     )
-    for sku in verhnie:
-        hvost = sku[len(prefix):]
-        if len(hvost) == digits and hvost.isdigit():
-            return int(hvost)
-    return 0
+    return int(nash[len(prefix):]) if nash else 0
 
 
 def search_products(

@@ -362,6 +362,32 @@ def test_chuzhoy_artikul_ne_dvigaet_schyotchik(root_client):
     assert int(posle["sku"][2:]) == int(do["sku"][2:]) + 1
 
 
+def test_poddelki_ne_syedayut_poisk_maksimuma(root_client):
+    """Похожий на наш, но не наш артикул не имеет права сбить счётчик.
+
+    `A-0000420` — семь цифр вместо шести — при побайтном сравнении стоит ВЫШЕ
+    любого нашего и остаётся в том же диапазоне. Пока максимум искали по верхним
+    полусотне строк, полсотни таких заслонили бы настоящий: счёт пошёл бы с
+    единицы, упёрся в занятое, и заведение товара отказало бы при полностью
+    свободном диапазоне — а виноват был бы артикул, набранный руками год назад.
+    """
+    # Сперва уводим настоящий максимум подальше от единицы. Иначе проверка
+    # проходит и на сломанном отборе: счётчик вернул бы ноль, а `insert_retrying`
+    # своими тремя попытками дотянулся бы до нужного номера — и беда осталась бы
+    # незамеченной ровно там, где её искали.
+    nash = new_product(root_client, name="До подделок", sku=None)
+    while int(nash["sku"][2:]) < 5:
+        nash = new_product(root_client, name="До подделок", sku=None)
+    for n in range(50):
+        new_product(root_client, name=f"Подделка {n}", sku=f"{nash['sku']}{n:02d}")
+
+    posle = root_client.post(f"{WH}/products", json={"name": "После подделок"})
+    assert posle.status_code == 201, f"артикул не выдался вовсе: {posle.text}"
+    assert int(posle.json()["sku"][2:]) == int(nash["sku"][2:]) + 1, (
+        f"счётчик сбился подделками: {posle.json()['sku']} после {nash['sku']}"
+    )
+
+
 def test_artikul_udalyonnogo_ne_vydayotsya_zanovo(root_client):
     """Удалили товар — артикул остаётся занятым: этикетка уже на коробке."""
     ushedshiy = new_product(root_client, name="Товар на удаление", sku=None)

@@ -375,9 +375,16 @@ def deal_lines(
     _visible(db, deal_id, user)
     amounts = permissions_service.sees_amounts(db, user)
     stroki = deal_lines_service.spisok(db, deal_id)
+    sebes, ozhidaemaya = (
+        deal_lines_service.pribyl(db, deal_id) if amounts else (None, None)
+    )
     return {
         "items": deal_lines_service.s_nehvatkoy(db, stroki, amounts),
         "total_minor": deal_lines_service.itog(db, deal_id) if amounts else None,
+        # Прибыль приходит, только когда себестоимость известна у ВСЕХ строк:
+        # неполная завысила бы её там, где решают о скидке.
+        "cost_minor": sebes,
+        "profit_minor": ozhidaemaya,
     }
 
 
