@@ -1197,6 +1197,37 @@ def test_bez_kopii_mysql_deploy_ne_nachinaetsya(tmp_path):
     assert not backup.ok
 
 
+def test_damp_snyat_no_ne_doehal_govorit_pro_katalogi(tmp_path):
+    """Дамп удался, а файла нет — это разные каталоги, и сказать надо про них.
+
+    Случай не выдуманный: `OPENCRM_HOME` лежит в ДВУХ файлах (`autoupdate.env`
+    у демона и `docker/.env` у compose), и правят обычно один. Тогда дамп
+    честно пишет `/app/data` внутри контейнера, а демон ищет его в другом
+    каталоге хоста. Раньше причиной отказа печаталось сообщение УСПЕХА дампа
+    («снято: таблиц 40, строк 555»), и владелец шёл искать беду в базе.
+    """
+    config = make_config(tmp_path)
+    shell = FakeShell()
+    # Дамп отчитывается успехом и НИЧЕГО не кладёт — ровно как при расхождении
+    # каталогов: изнутри контейнера файл записан, снаружи его нет. Пустое
+    # действие обязательно: без него `make_updater` подставит настоящий дампер.
+    shell.effect("scripts.snapshot_db dump", lambda: None)
+    shell.otvet(
+        "scripts.snapshot_db dump",
+        "снято: таблиц 40, строк 555, файл /app/data/pre-update-abc.sql (95836 байт)",
+    )
+    updater = make_updater(tmp_path, config=config, shell=shell)
+
+    outcome = updater.run_once()
+
+    assert outcome.status == STATUS_ABORTED
+    assert not shell.ran("up -d --build"), "живой сайт тронули без копии базы"
+    backup = next(step for step in outcome.steps if step.name == "backup")
+    assert not backup.ok
+    assert "снято: таблиц" not in backup.detail, "успех дампа назван причиной отказа"
+    assert "OPENCRM_HOME" in outcome.reason, "не сказано, где искать расхождение"
+
+
 def test_oborvannyy_damp_ne_schitaetsya_snyatoy_kopiey(tmp_path):
     """Дамп без метки конца — обычный текстовый файл, годным он не бывает."""
     config = make_config(tmp_path)
