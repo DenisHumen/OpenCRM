@@ -195,16 +195,24 @@ def find_candidates(
         conditions.append(contains_norm(Client.search_text, name.strip()))
     if not conditions:
         return []
-    exact_first = (
-        case((or_(*exact_conditions), 0), else_=1) if exact_conditions else literal(0)
-    )
+    # Точных примет может не быть вовсе — ищут по одному имени. Тогда делить
+    # выдачу не на что, и ступени сортировки просто НЕТ.
+    #
+    # Раньше здесь стояла `literal(0)`, и она уезжала в запрос привязанным
+    # значением: `ORDER BY %(param)s`. MySQL такое отвергает целиком — «Unknown
+    # column '0' in 'order clause'», — и заведение заказа по одному имени
+    # клиента отвечало пятисоткой. Константа в сортировке всё равно ничего не
+    # упорядочивает, поэтому её не чинят, а убирают.
+    stupeni = []
+    if exact_conditions:
+        stupeni.append(case((or_(*exact_conditions), 0), else_=1).asc())
     stmt = (
         select(Client)
         .where(Client.deleted_at.is_(None), or_(*conditions))
         # Внутри своей половины — свежая карточка первой: тот же порядок, что у
         # поиска по номеру в телефонии. Но выбирать из списка всё равно будет
         # человек.
-        .order_by(exact_first.asc(), Client.updated_at.desc(), Client.id.desc())
+        .order_by(*stupeni, Client.updated_at.desc(), Client.id.desc())
         .limit(limit)
     )
     return list(db.scalars(stmt))

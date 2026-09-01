@@ -174,18 +174,35 @@ def test_sredniy_chek_ne_okruglyaet_polovinu_k_chyotnomu(manager_client):
     assert svodka["avg_check"] == divide_money(svodka["won_since"], svodka["won_count_priced"])
 
 
-def test_empty_stage_stays_visible_in_the_funnel(manager_client):
+def test_empty_stage_stays_visible_in_the_funnel(root_client, manager_client):
     """«В согласовании ноль» — тоже ответ, и чаще всего именно он и нужен.
 
     Показывай только непустые этапы — и провал в середине воронки станет
     невидимым ровно тогда, когда на него надо смотреть.
-    """
-    all_stages = manager_client.get(f"{API}/pipeline/stages").json()["items"]
-    funnel = manager_client.get(DASH).json()["deals_by_stage"]
 
-    assert [s["key"] for s in funnel] == [s["key"] for s in all_stages]
-    assert all("count" in s and "name" in s and "kind" in s for s in funnel)
-    assert any(s["count"] == 0 for s in funnel), "пустых этапов не осталось — тест бесполезен"
+    Пустой этап тест заводит СЕБЕ САМ, а не ищет среди чужих. Раньше он брал
+    любой незаселённый и сам себя проверял «пустых не осталось — тест
+    бесполезен»: проверка честная, но срабатывала она у того, кто всего лишь
+    закрыл заявку в своём тесте, и выглядела как поломка воронки. Свой этап
+    отменяет и эту случайность, и разбирательство при ней.
+    """
+    svoy = root_client.post(
+        f"{API}/pipeline/stages", json={"name": "Пустой ради воронки", "kind": "open"}
+    )
+    assert svoy.status_code == 201, svoy.text
+    kluch = svoy.json()["key"]
+    try:
+        all_stages = manager_client.get(f"{API}/pipeline/stages").json()["items"]
+        funnel = manager_client.get(DASH).json()["deals_by_stage"]
+
+        assert [s["key"] for s in funnel] == [s["key"] for s in all_stages]
+        assert all("count" in s and "name" in s and "kind" in s for s in funnel)
+        pustoy = next(s for s in funnel if s["key"] == kluch)
+        assert pustoy["count"] == 0, "этап без заявок пропал из воронки"
+    finally:
+        # Убираем за собой: лишний этап на доске сбил бы соседние проверки,
+        # которые берут «первый открытый».
+        root_client.delete(f"{API}/pipeline/stages/{kluch}")
 
 
 def test_funnel_counts_follow_the_deals(manager_client):
