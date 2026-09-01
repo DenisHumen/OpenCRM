@@ -37,7 +37,7 @@ from sqlalchemy.orm import Session
 
 from core import events
 from core import exceptions as errors
-from core.services import client_service, deal_service, settings_service, task_service
+from core.services import client_service, deal_service, settings_service
 from core.utils import is_valid_email, normalize_phone, now_utc
 from database.models import Client, Deal, User
 from database.models import client as client_sources

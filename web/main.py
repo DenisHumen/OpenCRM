@@ -8,8 +8,7 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import inspect, text
-from sqlalchemy.exc import OperationalError, ProgrammingError
+from sqlalchemy import text
 
 from config.settings import generate_secret_hint, get_settings
 from core import ratelimit, redis_client
@@ -29,7 +28,6 @@ from core.services import (
 from core.utils import normalize_email
 from database import models  # noqa: F401 — регистрирует модели в metadata
 from database import schema_check
-from database.models import User
 from database.repositories import users as users_repo
 from database.session import Base, SessionLocal, engine, predel_odnovremennyh
 from web.api.routes import (
