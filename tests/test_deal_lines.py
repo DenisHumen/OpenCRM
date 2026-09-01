@@ -6,6 +6,8 @@
 не хранится» (`docs/19-sborka-zakaza.md` §Р5).
 """
 
+import pathlib
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
@@ -14,6 +16,7 @@ from database.models import Deal, DealLine
 from tests.conftest import API
 
 WH = f"{API}/warehouse"
+KOREN = pathlib.Path(__file__).resolve().parent.parent
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -250,6 +253,32 @@ def test_summu_zayavki_so_strokami_rukami_ne_perepisat(root_client, zayavka):
     assert otkaz.status_code == 422, otkaz.text
     assert otkaz.json()["error"]["code"] == "amount_from_lines"
     assert root_client.get(f"{API}/deals/{zayavka}").json()["amount"] == 100_000
+
+
+def test_ekran_zapiraet_summu_i_perechityvaet_eyo(root_client, zayavka):
+    """Отказ сервера должен быть виден на карточке ДО нажатия, а сумма — свежей.
+
+    Найдено живой пробой (CLAUDE.md §2), обе половины. Поле суммы оставалось
+    обычным полем ввода: человек правил его, жал сохранить и получал отказ,
+    которого ничто не предвещало. А карточка держала СВОЮ копию суммы и после
+    правки строк показывала $408 у заявки, у которой суммы уже не было вовсе.
+
+    Браузера в наборе нет, поэтому правило держится чтением исходника — тот же
+    приём, что в `tests/test_screens.py`. Проверять на настоящем экране дороже
+    самого правила, а разойтись эти два места могут только правкой вот здесь.
+    """
+    karta = (KOREN / "web/frontend/crm/src/screens/DealCard.tsx").read_text(encoding="utf-8")
+    stroki_tsx = (KOREN / "web/frontend/crm/src/components/DealLines.tsx").read_text(encoding="utf-8")
+
+    assert "readOnly={strok > 0}" in karta, "поле суммы правится руками при наборе строк"
+    assert 't("amountFromLines")' in karta, "поле заперто молча — непонятно почему"
+    assert "onSostav" in stroki_tsx and "onSostav" in karta, "карточка не знает про строки"
+    assert "if (deal && deal.amount !== itog) void load();" in karta, (
+        "карточка не перечитывает себя — покажет устаревшую сумму"
+    )
+    assert "key={`amount-${deal.amount}`}" in karta, (
+        "поле не пересоздаётся: у неуправляемого `defaultValue` не перечитывается"
+    )
 
 
 def test_itog_vyshe_vmestimosti_kolonki_otvergaetsya_ponyatno(root_client, zayavka):

@@ -38,11 +38,17 @@ export function DealLines({
   dealId,
   closed,
   onOrder,
+  onSostav,
 }: {
   dealId: number;
   closed: boolean;
   /** Заказ заведён — карточке надо перечитать свои врезки. */
   onOrder?: () => void;
+  /** Сколько строк набрано и на какую сумму. Карточке нужно и то, и другое:
+   *  строки запирают поле суммы (со строками у неё единственный писатель, §Р5),
+   *  а итог говорит, что показанная сумма устарела. Счёт идёт отсюда, а не
+   *  отдельным запросом: список уже загружен. */
+  onSostav?: (skolko: number, itog: number | null) => void;
 }) {
   const { t, locale, modules, user, workspace, toastError } = useApp();
   const guard = useGuard();
@@ -74,6 +80,7 @@ export function DealLines({
       setStroki(otvet.items);
       setItog(otvet.total_minor);
       setPribyl(otvet.profit_minor);
+      onSostav?.(otvet.items.length, otvet.total_minor);
     } catch (beda) {
       toastError(beda);
     }
