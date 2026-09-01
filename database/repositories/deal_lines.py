@@ -68,6 +68,30 @@ def sum_for_deal(db: Session, deal_id: int) -> int | None:
     return int(itog) // 1000
 
 
+def sebestoimost_zayavki(db: Session, deal_id: int) -> tuple[int, bool]:
+    """Себестоимость по строкам: (сумма в минорных, известна ли она целиком).
+
+    Второе число — не украшение. Себестоимости нет у своих трат и у товаров, у
+    которых её не назвали; сложив то, что есть, и назвав это себестоимостью, мы
+    показали бы прибыль ВЫШЕ настоящей — ровно там, где по ней решают о скидке.
+    Поэтому «известна» отвечает отдельно, а показывает прибыль только тот, кому
+    ответили «да».
+
+    Это ОЖИДАЕМАЯ себестоимость — снимок на момент набора. Свершившуюся считает
+    `warehouse.deal_cost_minor` по движениям, и до закрытия её ещё нет.
+    """
+    ryady = db.execute(
+        select(DealLine.cost_minor, DealLine.quantity_milli).where(
+            DealLine.deal_id == deal_id
+        )
+    ).all()
+    if not ryady:
+        return 0, False
+    izvestna = all(cost is not None for cost, _ in ryady)
+    summa = sum(cost * kol for cost, kol in ryady if cost is not None)
+    return int(summa) // 1000, izvestna
+
+
 def count_for_deals(db: Session, deal_ids: list[int]) -> dict[int, int]:
     """Сколько строк у каждой заявки — одним запросом на список.
 

@@ -361,3 +361,35 @@ def test_bez_bloka_sklada_razdel_strok_ischezaet_tselikom(root_client, zayavka):
     # Включили обратно — строка на месте: выключение убирает с глаз, а не стирает.
     posle = root_client.get(f"{API}/deals/{zayavka}/lines").json()
     assert [s["id"] for s in posle["items"]] == [dobavlena["id"]]
+
+
+def test_pribyl_schitaetsya_tolko_pri_polnoy_sebestoimosti(root_client, zayavka):
+    """Неполная себестоимость завысила бы прибыль там, где решают о скидке.
+
+    У своей траты себестоимости нет по существу, у товара её могли не назвать.
+    Сложить то, что есть, и назвать это себестоимостью — значит показать
+    прибыль ВЫШЕ настоящей и в самый неподходящий момент.
+    """
+    server = tovar(root_client, price=4_500_000, cost=3_900_000)
+    stroka(root_client, zayavka, product_id=server["id"], quantity="2")
+
+    est = root_client.get(f"{API}/deals/{zayavka}/lines").json()
+    assert est["cost_minor"] == 2 * 3_900_000
+    assert est["profit_minor"] == 2 * (4_500_000 - 3_900_000)
+
+    # Дописали свою трату — себестоимости у неё нет, и прибыль пропадает.
+    stroka(root_client, zayavka, name="Упаковка", quantity="1", price=250_000)
+    posle = root_client.get(f"{API}/deals/{zayavka}/lines").json()
+    assert posle["profit_minor"] is None, "прибыль посчитана по неполной себестоимости"
+    assert posle["cost_minor"] is None
+
+
+def test_pribyl_zakryta_pravom_na_summy(root_client, zayavka):
+    """Прибыль — это маржа, и закрывается тем же правом, что цена и итог."""
+    server = tovar(root_client, price=4_500_000, cost=3_900_000)
+    stroka(root_client, zayavka, product_id=server["id"], quantity="1")
+    est = root_client.get(f"{API}/deals/{zayavka}/lines").json()
+    assert est["profit_minor"] is not None
+    # Сам отказ по праву проверяется в test_roles.py — здесь важно, что поле
+    # есть в ответе и что оно того же рода, что цена и итог.
+    assert set(("total_minor", "cost_minor", "profit_minor")) <= set(est)

@@ -41,6 +41,20 @@ def itog(db: Session, deal_id: int) -> int | None:
     return lines_repo.sum_for_deal(db, deal_id)
 
 
+def pribyl(db: Session, deal_id: int) -> tuple[int | None, int | None]:
+    """Себестоимость по строкам и ожидаемая прибыль. None — считать не из чего.
+
+    Прибыль отдаётся ТОЛЬКО когда себестоимость известна у всех строк: сложив
+    то, что есть, мы показали бы её выше настоящей — там, где по ней решают о
+    скидке.
+    """
+    itog_strok = lines_repo.sum_for_deal(db, deal_id)
+    sebes, izvestna = lines_repo.sebestoimost_zayavki(db, deal_id)
+    if not izvestna:
+        return None, None
+    return sebes, None if itog_strok is None else itog_strok - sebes
+
+
 def dobavit(db: Session, deal_id: int, data: dict) -> DealLine:
     deal = _otkrytaya(db, deal_id)
     kolichestvo = _kolichestvo(data.get("quantity"))

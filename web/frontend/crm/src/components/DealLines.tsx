@@ -48,6 +48,7 @@ export function DealLines({
   const guard = useGuard();
   const [stroki, setStroki] = useState<Stroka[] | null>(null);
   const [itog, setItog] = useState<number | null>(null);
+  const [pribyl, setPribyl] = useState<number | null>(null);
 
   const [poisk, setPoisk] = useState("");
   const [vybran, setVybran] = useState<Tovar | null>(null);
@@ -65,11 +66,14 @@ export function DealLines({
 
   const zagruzit = async () => {
     try {
-      const otvet = await api.get<{ items: Stroka[]; total_minor: number | null }>(
-        `/deals/${dealId}/lines`,
-      );
+      const otvet = await api.get<{
+        items: Stroka[];
+        total_minor: number | null;
+        profit_minor: number | null;
+      }>(`/deals/${dealId}/lines`);
       setStroki(otvet.items);
       setItog(otvet.total_minor);
+      setPribyl(otvet.profit_minor);
     } catch (beda) {
       toastError(beda);
     }
@@ -202,6 +206,13 @@ export function DealLines({
           {itog !== null && (
             <div style={{ color: "var(--muted)", fontSize: 12.5 }}>
               {formatMoney(itog, currency, locale)}
+            </div>
+          )}
+          {/* Прибыль приходит только когда себестоимость известна у ВСЕХ строк:
+              неполная завысила бы её там, где решают о скидке. */}
+          {pribyl !== null && (
+            <div style={{ color: "var(--faint)", fontSize: 12 }}>
+              {t("expectedProfit", { sum: formatMoney(pribyl, currency, locale) })}
             </div>
           )}
           {mozhnoZakaz && (
