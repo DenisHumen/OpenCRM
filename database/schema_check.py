@@ -36,7 +36,7 @@ from dataclasses import dataclass, field
 from sqlalchemy import func, inspect, select
 from sqlalchemy.engine import Engine
 
-from database.session import Base
+from database.session import Base, prefiks_zamka
 
 
 @dataclass(frozen=True)
@@ -143,6 +143,10 @@ def current_revision(engine: Engine) -> str | None:
 #: `alembic upgrade head` ДО старта uvicorn, и к появлению рабочих процессов
 #: схема уже на голове — замок берётся и отпускается мгновенно. Долгий путь
 #: остаётся снаружи докера, где приложение запускают напрямую.
+#:
+#: Имя достраивается приставкой БАЗЫ (`session.prefiks_zamka`): замок MySQL —
+#: серверный, и с постоянным именем две установки на одном сервере ждут друг
+#: друга. Соседская миграция в пять минут кончалась бы здесь отказом старта.
 IMYA_ZAMKA_SHEMY = "opencrm_shema"
 ZHDAT_ZAMOK_SEKUND = 300
 
@@ -182,9 +186,10 @@ def zamok_shemy(engine: Engine):
         yield
         return
 
+    imya = f"{IMYA_ZAMKA_SHEMY}_{prefiks_zamka(engine)}"
     with engine.connect() as soedinenie:
         vzyat = soedinenie.execute(
-            select(func.get_lock(IMYA_ZAMKA_SHEMY, ZHDAT_ZAMOK_SEKUND))
+            select(func.get_lock(imya, ZHDAT_ZAMOK_SEKUND))
         ).scalar()
         if not vzyat:
             raise RuntimeError(
@@ -197,7 +202,7 @@ def zamok_shemy(engine: Engine):
         finally:
             # Снимаем ЯВНО, не полагаясь на закрытие соединения: пул может
             # придержать его, и следующий процесс ждал бы впустую.
-            soedinenie.execute(select(func.release_lock(IMYA_ZAMKA_SHEMY)))
+            soedinenie.execute(select(func.release_lock(imya)))
 
 
 def is_empty(engine: Engine) -> bool:

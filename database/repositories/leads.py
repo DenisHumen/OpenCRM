@@ -22,7 +22,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from database.models import Client, Deal
-from database.session import zapomnit_zamok
+from database.session import prefiks_zamka, zapomnit_zamok
 from database.repositories import mail as mail_repo
 from database.repositories import telephony as telephony_repo
 
@@ -89,7 +89,7 @@ def count_clients_since(db: Session, source: str, since: datetime) -> int:
 LOCK_SECONDS = 5
 
 
-def _imya_zamka(klyuch: str) -> str:
+def _imya_zamka(db: Session, klyuch: str) -> str:
     """Имя замка по контакту. Хэш, а не сам адрес.
 
     Три довода, и все три обязательные. Имя замка в MySQL ограничено 64
@@ -97,8 +97,12 @@ def _imya_zamka(klyuch: str) -> str:
     в `SHOW PROCESSLIST` и в журнал медленных запросов, то есть чужая почта
     оказалась бы в местах, где её никто не ждёт. И одинаковая длина имени
     избавляет от вопроса, что делать с пробелами и юникодом внутри.
+
+    В хэш идёт и БАЗА: замок MySQL серверный, и без неё две установки на одном
+    сервере запирали бы друг другу приём заявок от одного и того же контакта.
     """
-    return "opencrm_lead_" + hashlib.sha1(klyuch.encode("utf-8")).hexdigest()[:32]
+    svoyo = prefiks_zamka(db.get_bind()) + klyuch
+    return "opencrm_lead_" + hashlib.sha1(svoyo.encode("utf-8")).hexdigest()[:32]
 
 
 def zapert_priyom(db: Session, klyuch: str) -> bool:
@@ -124,7 +128,7 @@ def zapert_priyom(db: Session, klyuch: str) -> bool:
     соперник получил бы очередь до того, как чужая запись станет видимой, и
     сделал бы ровно то, от чего замок заводился. Проверено дуэлью.
     """
-    imya = _imya_zamka(klyuch)
+    imya = _imya_zamka(db, klyuch)
     vzyat = bool(db.scalar(select(func.get_lock(imya, LOCK_SECONDS))))
     if vzyat:
         zapomnit_zamok(db, imya)

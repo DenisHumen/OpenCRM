@@ -654,3 +654,42 @@ def test_nastroyki_priyoma_zakryty_ot_menedzhera(root_client, manager_client, in
     assert otvet.status_code == 403, otvet.text
     # Ключ на месте: ни одна из отбитых попыток не успела ничего сделать.
     assert send(intake_key, name="Проверка Ключа", email="klyuch-tsel@example.com").status_code == 202
+
+
+def test_zamok_priyoma_ne_zapiraet_sosednyuyu_bazu(chistaya_baza):
+    """Соседняя установка на том же сервере обязана принимать заявки своим ходом.
+
+    `GET_LOCK` в MySQL — замок уровня СЕРВЕРА, а очередь здесь стережёт приём в
+    ОДНУ базу. Пока имя считалось от одного контакта, форма на сайте соседней
+    установки запирала нашу: тот же телефон — то же имя замка.
+
+    Пять секунд ожидания — это `LOCK_SECONDS`, и ждала бы наша заявка их зря.
+    Дубль вместо потери здесь предпочтён сознательно, но ждать чужого приёма
+    незачем вовсе.
+    """
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from database.repositories import leads as leads_repo
+    from database.session import engine, snyat_zamki
+
+    if engine.dialect.name != "mysql":
+        pytest.skip("именованные замки есть только у MySQL")
+
+    kontakt = "+380671112233"
+    sosed = create_engine(chistaya_baza)
+    svoya = SessionLocal()
+    chuzhaya = sessionmaker(bind=sosed)()
+    try:
+        assert leads_repo.zapert_priyom(svoya, kontakt), "свою очередь не заняли вовсе"
+        # Тот же контакт, другая база — очередь обязана быть свободной.
+        assert leads_repo.zapert_priyom(chuzhaya, kontakt), (
+            "соседняя база не смогла занять очередь на тот же контакт — "
+            "имя замка общее на сервер, и установки запирают друг друга"
+        )
+    finally:
+        snyat_zamki(chuzhaya)
+        chuzhaya.close()
+        snyat_zamki(svoya)
+        svoya.close()
+        sosed.dispose()
