@@ -34,6 +34,7 @@ export interface Order {
   number: string;
   kind: "sales_order" | "purchase_order";
   status: string;
+  assembled: boolean;
   client_id: number | null;
   deal_id: number | null;
   lines: OrderLine[];

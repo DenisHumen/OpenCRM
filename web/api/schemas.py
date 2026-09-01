@@ -1039,6 +1039,8 @@ def order_out(order, lines: list | None = None, amounts: bool = True) -> dict:
     return {
         "id": order.id,
         "number": order.number,
+        # «Собран» считается по уже пришедшим строкам: лишнего запроса нет вовсе.
+        "assembled": order_service.sobran_po_strokam(rows),
         "kind": order.kind,
         "status": order.status,
         "client_id": order.client_id,

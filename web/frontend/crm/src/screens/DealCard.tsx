@@ -449,7 +449,11 @@ export function DealCard() {
       {/* Что ушло со склада под эту заявку и во сколько это обошлось. Стоит
           рядом с суммой не случайно: выручка без себестоимости не отвечает на
           вопрос, заработали мы на этой работе или нет. */}
-      <DealLines dealId={deal.id} closed={deal.closed_at !== null} />
+      <DealLines
+        dealId={deal.id}
+        closed={deal.closed_at !== null}
+        onOrder={() => void load()}
+      />
       <DealStock dealId={deal.id} />
 
       {/* Доски, сделанные по этой заявке. Раньше доска знала только клиента,

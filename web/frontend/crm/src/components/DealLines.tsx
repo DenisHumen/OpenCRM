@@ -6,6 +6,7 @@ import { useDebounced } from "../lib/debounce";
 import { formatMoney, formatQuantity } from "../lib/format";
 import { useGuard } from "../lib/guard";
 import { moduleOn } from "../lib/modules";
+import { can } from "../lib/permissions";
 import { Icon } from "./Icon";
 
 type Stroka = {
@@ -32,8 +33,17 @@ type Tovar = { id: number; name: string; sku: string; price: number | null };
  * Итог считает сервер и отдаёт вместе со списком: складывать видимые строки на
  * фронте нельзя — их может быть больше, чем показано.
  */
-export function DealLines({ dealId, closed }: { dealId: number; closed: boolean }) {
-  const { t, locale, modules, workspace, toastError } = useApp();
+export function DealLines({
+  dealId,
+  closed,
+  onOrder,
+}: {
+  dealId: number;
+  closed: boolean;
+  /** Заказ заведён — карточке надо перечитать свои врезки. */
+  onOrder?: () => void;
+}) {
+  const { t, locale, modules, user, workspace, toastError } = useApp();
   const guard = useGuard();
   const [stroki, setStroki] = useState<Stroka[] | null>(null);
   const [itog, setItog] = useState<number | null>(null);
@@ -133,17 +143,44 @@ export function DealLines({ dealId, closed }: { dealId: number; closed: boolean 
     }
   };
 
+  const sobrat = async () => {
+    if (!guard.take()) return;
+    try {
+      await api.post(`/deals/${dealId}/order`, {});
+      onOrder?.();
+    } catch (beda) {
+      toastError(beda);
+    } finally {
+      guard.free();
+    }
+  };
+
+  // Кнопка появляется только когда есть что заказывать и есть чем: блок заказов
+  // выключается, а право на заведение заказа спрашивается ЗАКАЗОВ, а не заявок.
+  const mozhnoZakaz =
+    !closed &&
+    moduleOn(modules, "orders") &&
+    can(user, "orders.create") &&
+    stroki.some((s) => s.kind === "product");
+
   const currency = workspace.currency;
 
   return (
     <div className="card card-pad" style={{ marginBottom: 20 }}>
       <div className="page-head" style={{ marginBottom: 12 }}>
         <div className="metric-title">{t("dealLines")}</div>
-        {itog !== null && (
-          <div style={{ color: "var(--muted)", fontSize: 12.5 }}>
-            {formatMoney(itog, currency, locale)}
-          </div>
-        )}
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          {itog !== null && (
+            <div style={{ color: "var(--muted)", fontSize: 12.5 }}>
+              {formatMoney(itog, currency, locale)}
+            </div>
+          )}
+          {mozhnoZakaz && (
+            <button className="btn btn-secondary btn-sm" disabled={guard.busy} onClick={() => void sobrat()}>
+              {t("makeOrder")}
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="doc-mini-list">
