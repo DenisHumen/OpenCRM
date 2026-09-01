@@ -7,7 +7,7 @@ PIN. Всё, что растёт от чужих запросов и не убы
 
 import time
 
-from core import redis_client
+from core import ratelimit, redis_client
 from core.ratelimit import SWEEP_AFTER, SlidingWindowLimiter
 
 
@@ -24,19 +24,43 @@ def test_blocks_after_the_last_allowed_attempt():
     assert not limiter.is_blocked("petr@example.com")
 
 
-def test_the_window_lets_go():
+class SdvinutyeChasy:
+    """Часы, ушедшие вперёд. Нужны обе стрелки: путь через Redis смотрит
+    `time()`, запасной путь в памяти — `monotonic()`."""
+
+    def __init__(self, sdvig: float) -> None:
+        self.sdvig = sdvig
+
+    def time(self) -> float:
+        return time.time() + self.sdvig
+
+    def monotonic(self) -> float:
+        return time.monotonic() + self.sdvig
+
+
+def test_the_window_lets_go(monkeypatch):
     """Окно кончилось — блокировка снята.
 
-    Запас между окном и ожиданием намеренно большой. Windows будит спящий поток
-    с шагом около 16 мс, и разница в 10 мс, которая стояла здесь сначала, иногда
-    не набиралась: тест падал не на поведении ограничителя, а на точности сна.
-    Проверка про «окно кончается», а не про то, за сколько именно.
+    Двигаем ЧАСЫ, а не ждём. Настоящая пауза здесь дважды подводила: сперва
+    Windows будил спящий поток с шагом 16 мс, потом ворота уронил обратный
+    проход при паузе в полсекунды на окне 0,1 с — пятикратном запасе.
+    Воспроизвести не удалось, но одна сторона разобрана: запись и проверка
+    меряют системными часами, а те в контейнере прыгают назад при поправке
+    времени, и запись оказывается «моложе» окна, сколько ни спи.
+
+    Ждать дольше — не выход, и это выяснилось подрывом. Ключ живёт TTL в две
+    секунды (`_ttl`), и цикл ожидания на десять секунд зеленел БЕЗ подрезки
+    окна вовсе: блокировка снималась истечением ключа. То есть проверка
+    доказывала бы не то, ради чего написана.
+
+    Сдвинутые часы разводят эти два случая: настоящего времени проходит
+    столько, что ключ ещё жив, а окно для ограничителя уже кончилось.
     """
     limiter = SlidingWindowLimiter(max_attempts=1, window_seconds=0.1)
     limiter.record_failure("ivan@example.com")
     assert limiter.is_blocked("ivan@example.com")
 
-    time.sleep(0.5)
+    monkeypatch.setattr(ratelimit, "time", SdvinutyeChasy(1.0))
     assert not limiter.is_blocked("ivan@example.com"), "окно не отпустило"
 
 
