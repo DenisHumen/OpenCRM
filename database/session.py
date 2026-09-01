@@ -1,3 +1,4 @@
+import hashlib
 from contextlib import contextmanager
 
 from sqlalchemy import create_engine, event, func, select
@@ -101,6 +102,21 @@ def tochka_otkata(db: Session):
 
 #: Ключ, под которым сессия помнит взятые ею именованные замки.
 ZAMKI = "imenovannye_zamki"
+
+
+def prefiks_zamka(bind) -> str:
+    """Приставка именованного замка — своя у каждой базы.
+
+    `GET_LOCK` в MySQL — замок уровня СЕРВЕРА, а стережёт он всегда что-то
+    внутри ОДНОЙ базы. Постоянное имя связывает установки, делящие сервер:
+    соседская миграция заставляет нашу ждать пять минут, после чего приложение
+    отказывается стартовать — и падает не то, что чинили.
+
+    Хэш, а не само имя: у замка MySQL 64 знака потолка, а имя базы своё у
+    каждого.
+    """
+    imya = bind.engine.url.database or ""
+    return hashlib.sha1(imya.encode("utf-8")).hexdigest()[:12]
 
 
 def zapomnit_zamok(db: Session, imya: str) -> None:

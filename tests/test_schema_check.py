@@ -5,6 +5,7 @@
 приложение не поднялось и обновление откатилось — третьего быть не должно.
 """
 
+import pytest
 import sqlalchemy as sa
 from sqlalchemy import create_engine, text
 
@@ -230,7 +231,6 @@ def test_baza_mimo_migratsiy_i_ne_shoditsya_ostanavlivaet(chistaya_baza, monkeyp
     Молчаливая догадка здесь опаснее честной остановки — она отметила бы как
     «последнюю» базу, в которой чего-то нет, и расхождение стало бы вечным.
     """
-    import pytest
 
     import web.main as main
 
@@ -344,7 +344,7 @@ def test_zamok_shemy_pravda_ne_puskaet_vtorogo():
     from sqlalchemy import func, select
 
     from database.schema_check import IMYA_ZAMKA_SHEMY, zamok_shemy
-    from database.session import engine
+    from database.session import engine, prefiks_zamka
 
     if engine.dialect.name != "mysql":
         pytest.skip("именованные замки есть только у MySQL")
@@ -365,7 +365,9 @@ def test_zamok_shemy_pravda_ne_puskaet_vtorogo():
         # Ноль секунд ожидания: нам нужен ответ «занято», а не очередь.
         with engine.connect() as vtoroye:
             vtoroy_vzyal.append(
-                vtoroye.execute(select(func.get_lock(IMYA_ZAMKA_SHEMY, 0))).scalar()
+                vtoroye.execute(
+                    select(func.get_lock(f"{IMYA_ZAMKA_SHEMY}_{prefiks_zamka(engine)}", 0))
+                ).scalar()
             )
     finally:
         otpuskaem.set()
@@ -374,4 +376,61 @@ def test_zamok_shemy_pravda_ne_puskaet_vtorogo():
     assert vtoroy_vzyal == [0], (
         f"второй получил замок, пока его держит первый: {vtoroy_vzyal} — "
         "замок не разводит, и гонка на старте остаётся"
+    )
+
+
+def test_zamok_shemy_ne_zapiraet_sosednyuyu_bazu(chistaya_baza, monkeypatch):
+    """Соседняя установка на том же сервере обязана работать своим ходом.
+
+    `GET_LOCK` в MySQL — замок уровня СЕРВЕРА, а стережёт он схему ОДНОЙ базы.
+    Пока имя было постоянным, две установки на общем сервере ждали друг друга:
+    соседская миграция держит замок до пяти минут, наш процесс не дожидается и
+    отказывается стартовать — `/healthz` молчит, обновление откатывается, а
+    чинить идут не то, что сломалось.
+
+    Проверка зовёт НАСТОЯЩИЙ `zamok_shemy` для обеих баз, а не берёт замок по
+    имени руками: имя руками совпало бы с новым и на откаченном коде, то есть
+    проверка была бы зелёной ровно там, где нужна.
+
+    Ожидание сбито в ноль: с общим именем второй ждал бы пять минут и только
+    потом отказал — проверка выглядела бы зависшей, а не красной.
+    """
+    import threading
+
+    from sqlalchemy import create_engine
+
+    from database import schema_check as sc
+    from database.session import engine
+
+    if engine.dialect.name != "mysql":
+        pytest.skip("именованные замки есть только у MySQL")
+
+    monkeypatch.setattr(sc, "ZHDAT_ZAMOK_SEKUND", 0)
+    sosed = create_engine(chistaya_baza)
+    itog = []
+    derzhim = threading.Event()
+    otpuskaem = threading.Event()
+
+    def svoy():
+        with sc.zamok_shemy(engine):
+            derzhim.set()
+            otpuskaem.wait(timeout=15)
+
+    potok = threading.Thread(target=svoy)
+    potok.start()
+    try:
+        assert derzhim.wait(timeout=15), "свой замок не взялся вовсе"
+        try:
+            with sc.zamok_shemy(sosed):
+                itog.append("взял")
+        except RuntimeError as otkaz:
+            itog.append(f"отказ: {otkaz}")
+    finally:
+        otpuskaem.set()
+        potok.join(timeout=15)
+        sosed.dispose()
+
+    assert itog == ["взял"], (
+        f"соседняя база не смогла взять свой замок: {itog} — "
+        "имя замка общее на сервер, и установки запирают друг друга"
     )
