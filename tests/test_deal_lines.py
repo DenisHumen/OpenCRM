@@ -223,7 +223,9 @@ def test_summa_zayavki_ravna_summe_strok_po_vsey_baze(db):
         db.execute(
             select(
                 DealLine.deal_id,
-                func.sum(DealLine.price_minor * DealLine.quantity_milli),
+                func.sum(
+                    (DealLine.price_minor * DealLine.quantity_milli).op("DIV")(1000)
+                ),
             )
             .where(DealLine.price_minor.is_not(None), DealLine.deal_id.in_(NASHI_ZAYAVKI))
             .group_by(DealLine.deal_id)
@@ -236,7 +238,7 @@ def test_summa_zayavki_ravna_summe_strok_po_vsey_baze(db):
     )
 
     for deal in db.scalars(select(Deal).where(Deal.id.in_(so_strokami))):
-        dolzhno = int(po_strokam.get(deal.id, 0)) // 1000
+        dolzhno = int(po_strokam.get(deal.id, 0))
         assert deal.amount == dolzhno, f"заявка {deal.id}: {deal.amount} вместо {dolzhno}"
 
 
@@ -422,3 +424,90 @@ def test_pribyl_zakryta_pravom_na_summy(root_client, zayavka):
     # Сам отказ по праву проверяется в test_roles.py — здесь важно, что поле
     # есть в ответе и что оно того же рода, что цена и итог.
     assert set(("total_minor", "cost_minor", "profit_minor")) <= set(est)
+
+
+#: Маршруты роутера заявок и блок, которым каждый закрыт. Пусто — своё, заявочное.
+#:
+#: Список выписан НАРОЧНО. Заявки — блок несущий, поэтому общего охранника у
+#: роутера нет, и он единственный в проекте вешает блоки ПО МАРШРУТУ. Все
+#: соседи закрыты целиком роутером и прямо объясняют почему: «пропущенный
+#: маршрут остался бы открытым». Здесь пропустить его можно, и заметить это
+#: чтением нельзя — поэтому перебор.
+#:
+#: Ключ — МЕТОД и путь, а не путь. Пока ключом был путь, четыре метода одного
+#: адреса складывались в одну запись, последний затирал первого, и снятый
+#: охранник с `GET /deals/{id}/lines` перебор не замечал вовсе. Поймано
+#: подрывом: проверка была зелёной ровно там, где нужна.
+BLOKI_MARSHRUTOV_ZAYAVOK = {
+    ("GET", "/deals"): None,
+    ("POST", "/deals"): None,
+    ("GET", "/deals/board"): None,
+    ("GET", "/deals/{deal_id}"): None,
+    ("PATCH", "/deals/{deal_id}"): None,
+    ("DELETE", "/deals/{deal_id}"): None,
+    ("POST", "/deals/{deal_id}/move"): None,
+    ("GET", "/deals/{deal_id}/feed"): None,
+    ("POST", "/deals/{deal_id}/feed"): None,
+    ("GET", "/deals/{deal_id}/lines"): "warehouse",
+    ("POST", "/deals/{deal_id}/lines"): "warehouse",
+    ("PATCH", "/deals/{deal_id}/lines/{line_id}"): "warehouse",
+    ("DELETE", "/deals/{deal_id}/lines/{line_id}"): "warehouse",
+    ("POST", "/deals/{deal_id}/order"): "orders",
+}
+
+
+def test_v_routere_zayavok_net_neobyavlennykh_marshrutov():
+    """Новый подраздел заявки обязан объявить свой блок — или сказать, что свой.
+
+    Проверка не судит, ВЕРНЫЙ ли блок: она требует, чтобы решение было принято.
+    Незаявленный маршрут — это либо забытый охранник, либо забытая строка тут,
+    и оба случая разбираются одинаково: открыть роутер и посмотреть.
+    """
+    import re
+
+    tekst = (KOREN / "web/api/routes/deals.py").read_text(encoding="utf-8")
+    obrazets = r'@router\.(get|post|patch|put|delete)\(\s*"([^"]*)"(.*?)\)\s*\ndef '
+    najdeno = {}
+    for metod, put, hvost in re.findall(obrazets, tekst, re.S):
+        blok = re.search(r'require_module\("([^"]+)"\)', hvost)
+        najdeno[(metod.upper(), "/deals" + put)] = blok.group(1) if blok else None
+
+    assert najdeno == BLOKI_MARSHRUTOV_ZAYAVOK, (
+        "роутер заявок разошёлся со списком блоков.\n"
+        f"  в коде:   {sorted(najdeno.items())}\n"
+        f"  в списке: {sorted(BLOKI_MARSHRUTOV_ZAYAVOK.items())}"
+    )
+
+
+def test_itog_zayavki_ravem_summe_pokazannykh_strok(root_client, zayavka):
+    """Итог обязан сойтись с тем, что человек складывает глазами.
+
+    Дробное количество делает произведение дробным в тысячных: цена 3,33 на
+    1,5 метра — это 4,995, а копейки дробной не бывает. Строка показывает 4,99;
+    две такие строки на экране дают 9,98. Итог же считался ОДНИМ делением по
+    сумме произведений и давал 9,99.
+
+    Одна копейка — но она разводит счёт клиента с нашим, и разводит молча:
+    столбец в накладной складывается в одно число, а внизу стоит другое. На
+    двадцати строках расхождение становится двадцатью копейками, и объяснить
+    его нельзя ничем, кроме «у нас так считается».
+
+    Поэтому итог складывает ПОКАЗАННЫЕ строки, а не точные произведения.
+    Точность при этом ниже на доли копейки в нашу сторону — это осознанный
+    размен: сойтись с видимым важнее, чем не потерять полкопейки.
+    """
+    for _ in range(2):
+        otvet = root_client.post(
+            f"{API}/deals/{zayavka}/lines",
+            json={"name": "Кабель", "quantity": "1.5", "price": 333},
+        )
+        assert otvet.status_code == 201, otvet.text
+
+    spisok = root_client.get(f"{API}/deals/{zayavka}/lines").json()
+    stroki = [s["total_minor"] for s in spisok["items"]]
+    assert stroki == [499, 499], f"строка округлена не вниз: {stroki}"
+    assert spisok["total_minor"] == sum(stroki), (
+        f"итог {spisok['total_minor']} не сходится со столбцом {sum(stroki)} = {stroki}"
+    )
+    # И то же число лежит в кэше заявки: у суммы один писатель (§Р5).
+    assert root_client.get(f"{API}/deals/{zayavka}").json()["amount"] == sum(stroki)

@@ -163,10 +163,7 @@ def sozdat_iz_zayavki(db: Session, deal, author: User) -> Document:
     # Кнопку нажимают дважды. Второй заказ повторил бы те же строки, и `promised`
     # посчитал бы их обоими: три штуки в заявке стали бы шестью в брони, и
     # продавец отказал бы покупателю, глядя на товар, лежащий на полке.
-    uzhe, _ = documents_repo.search(
-        db, deal_id=deal.id, kinds=(KIND_SALES_ORDER,), status=None, per_page=50
-    )
-    if any(z.status in OPEN_ORDER_STATUSES for z in uzhe):
+    if documents_repo.est_nezakrytaya(db, deal.id, KIND_SALES_ORDER, OPEN_ORDER_STATUSES):
         raise errors.ConflictError(
             "This deal already has an open order", code="deal_order_exists"
         )

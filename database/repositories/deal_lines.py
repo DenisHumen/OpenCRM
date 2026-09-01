@@ -56,16 +56,22 @@ def sum_for_deal(db: Session, deal_id: int) -> int | None:
     """
     if not db.scalar(select(func.count(DealLine.id)).where(DealLine.deal_id == deal_id)):
         return None
+    # Делим КАЖДУЮ строку, а не сумму произведений: итог обязан сойтись с тем,
+    # что человек складывает глазами. Цена 3,33 за 1,5 метра — это 4,995, строка
+    # показывает 4,99, и две таких строки дают 9,98; одно деление по сумме дало
+    # бы 9,99 — столбец в накладной не сходился бы с числом под ним.
+    #
+    # `DIV`, а не `/`: целочисленное деление без промежуточного DECIMAL. Деньги
+    # и количества здесь неотрицательны, поэтому «вниз» и «к нулю» совпадают.
     itog = db.scalar(
         select(
             func.coalesce(
-                func.sum(DealLine.price_minor * DealLine.quantity_milli), 0
+                func.sum((DealLine.price_minor * DealLine.quantity_milli).op("DIV")(1000)),
+                0,
             )
         ).where(DealLine.deal_id == deal_id, DealLine.price_minor.is_not(None))
     )
-    # Цена за единицу умножена на тысячные — делим обратно. Целочисленно: копейка
-    # дробной не бывает, а `float` здесь запрещён (CLAUDE.md §3).
-    return int(itog) // 1000
+    return int(itog)
 
 
 def sebestoimost_zayavki(db: Session, deal_id: int) -> tuple[int, bool]:
@@ -88,8 +94,10 @@ def sebestoimost_zayavki(db: Session, deal_id: int) -> tuple[int, bool]:
     if not ryady:
         return 0, False
     izvestna = all(cost is not None for cost, _ in ryady)
-    summa = sum(cost * kol for cost, kol in ryady if cost is not None)
-    return int(summa) // 1000, izvestna
+    # По строке, как и итог: иначе прибыль (итог минус себестоимость) считалась
+    # бы из чисел, округлённых по разным правилам, и разъезжалась на копейки.
+    summa = sum((cost * kol) // 1000 for cost, kol in ryady if cost is not None)
+    return int(summa), izvestna
 
 
 def count_for_deals(db: Session, deal_ids: list[int]) -> dict[int, int]:
