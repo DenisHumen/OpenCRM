@@ -149,10 +149,21 @@ export function formatBytes(bytes: number): string {
   return `${value.toFixed(digits)} ${units[unit]}`;
 }
 
+/**
+ * Размер ФАЙЛА. Отдельно от `formatBytes` — та про место на диске.
+ *
+ * Разница в одном знаке после запятой начиная с мегабайтов, и она не
+ * косметическая: у файлов почти всё лежит в диапазоне единиц мегабайт, и «1 MB»
+ * вместо «1.4 MB» прячет разницу втрое. У свободного места, наоборот, единицы —
+ * гигабайты, и дробь там шум.
+ */
 export function fileSize(bytes: number): string {
   if (bytes < 1024) return bytes + " B";
   if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(0) + " KB";
-  return (bytes / 1024 / 1024).toFixed(1) + " MB";
+  if (bytes < 1024 * 1024 * 1024) return (bytes / 1024 / 1024).toFixed(1) + " MB";
+  // Архив доски из тридцати работ переваливает за гигабайт, и «2048.0 MB»
+  // читается хуже, чем «2.0 GB», хотя это одно и то же.
+  return (bytes / 1024 / 1024 / 1024).toFixed(1) + " GB";
 }
 
 export function fileExt(name: string): string {
