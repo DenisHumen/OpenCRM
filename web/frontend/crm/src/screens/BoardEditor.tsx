@@ -11,7 +11,7 @@ import { useApp } from "../lib/app";
 import { useFailure } from "../lib/failure";
 import { useGuard } from "../lib/guard";
 import { copyText } from "../lib/clipboard";
-import { formatBytes, formatDateTime, formatDuration } from "../lib/format";
+import { fileSize, formatDateTime, formatDuration } from "../lib/format";
 import { useReference } from "../lib/reference";
 
 /**
@@ -376,7 +376,7 @@ export function BoardEditor() {
                       <span>{z.idyot ? t("uploading") : t("uploadQueued")}</span>
                       {z.idyot && (
                         <span>
-                          {formatBytes(z.ushlo)} / {formatBytes(z.vsego)}
+                          {fileSize(z.ushlo)} / {fileSize(z.vsego)}
                         </span>
                       )}
                       {/* Скорость и остаток показываем ТОЛЬКО когда они
@@ -384,7 +384,7 @@ export function BoardEditor() {
                           «осталось 0 с» на пятисотмегабайтном файле — прямая
                           ложь. Молчание честнее. */}
                       {z.idyot && z.skorost > 0 && (
-                        <span>{formatBytes(z.skorost)}/s</span>
+                        <span>{fileSize(z.skorost)}/s</span>
                       )}
                       {z.idyot && z.ostalos !== null && z.ostalos > 1 && (
                         <span>{t("uploadLeft", { time: srok(z.ostalos) })}</span>
@@ -742,7 +742,7 @@ export function BoardEditor() {
                   целиком, без страниц. Будь он подрезан — итог пришлось бы
                   просить у сервера, как у себестоимости заявки. */}
               <span style={{ color: "var(--faint)" }}>
-                {formatBytes(
+                {fileSize(
                   board.works.reduce((s: number, w: any) => s + (w.size_bytes ?? 0), 0),
                 )}
               </span>

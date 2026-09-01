@@ -1,4 +1,4 @@
-import { formatBytes } from "../lib/format";
+import { fileSize } from "../lib/format";
 import { Icon } from "./Icon";
 
 /**
@@ -26,7 +26,7 @@ export function SkachatFayl({
   return (
     <a className="skachat" href={href} aria-label={label} title={label}>
       <Icon name="download" size={13} />
-      {bytes > 0 && <span className="skachat-razmer">{formatBytes(bytes)}</span>}
+      {bytes > 0 && <span className="skachat-razmer">{fileSize(bytes)}</span>}
     </a>
   );
 }
