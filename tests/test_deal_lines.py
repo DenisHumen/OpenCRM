@@ -142,6 +142,33 @@ def test_tovar_po_artikulu(root_client, zayavka):
     assert dobavlena["product_id"] == server["id"]
 
 
+def test_stroka_nabiraetsya_skanom(root_client, zayavka):
+    """У стойки коробка в руках, и набирать название никто не станет."""
+    root_client.post(f"{API}/modules/labels", json={"enabled": True})
+    server = tovar(root_client, name="Товар со штрихкодом")
+    kod = "4600000000208"
+    assert (
+        root_client.post(
+            f"{API}/labels/products/{server['id']}/barcodes", json={"code": kod}
+        ).status_code
+        == 201
+    )
+
+    dobavlena = stroka(root_client, zayavka, code=kod, quantity="1")
+    assert dobavlena["product_id"] == server["id"]
+    assert dobavlena["kind"] == "product"
+
+
+def test_neizvestnyy_kod_govorit_chto_iskali(root_client, zayavka):
+    """Пустой ответ после писка сканера читается как «сканер сломался»."""
+    otkaz = root_client.post(
+        f"{API}/deals/{zayavka}/lines", json={"code": "4600000000901", "quantity": "1"}
+    )
+    assert otkaz.status_code == 404, otkaz.text
+    assert otkaz.json()["error"]["code"] == "barcode_unknown"
+    assert "4600000000901" in otkaz.json()["error"]["message"]
+
+
 def test_zakrytaya_zayavka_stroki_ne_menyaet(root_client, zayavka):
     """По закрытой уже посчитана прибыль: правка задним числом развела бы отчёты."""
     server = tovar(root_client)
