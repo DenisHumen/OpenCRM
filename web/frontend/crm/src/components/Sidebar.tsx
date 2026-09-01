@@ -345,8 +345,17 @@ export function Sidebar({
     { module: "labels", perm: "settings.manage", to: "/settings/labels", label: t("labelSettings") },
     { perm: "settings.manage", to: "/settings/brand", label: t("brand") },
     { perm: "settings.manage", to: "/settings/contacts", label: t("contacts") },
-    { perm: "settings.manage", to: "/settings/showcase", label: t("showcase") },
-    { perm: "settings.manage", to: "/settings/return-button", label: t("returnButtonShort") },
+    // Витрина и её кнопка возврата — под блоком `boards`, по тому же доводу,
+    // что у наклейки строкой выше: витрина показывает ДОСКИ, и с выключённым
+    // блоком показывать ей нечего. Пункты при этом оставались, и настроить
+    // можно было оформление того, чего в системе нет.
+    { module: "boards", perm: "settings.manage", to: "/settings/showcase", label: t("showcase") },
+    {
+      module: "boards",
+      perm: "settings.manage",
+      to: "/settings/return-button",
+      label: t("returnButtonShort"),
+    },
     { perm: "settings.manage", to: "/settings/maintenance", label: t("maintenance") },
   ]);
 
