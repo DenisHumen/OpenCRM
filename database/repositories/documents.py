@@ -344,18 +344,21 @@ def drop_line(db: Session, line: DocumentLine) -> None:
 def zakazano_po_zayavkam(db: Session, kind: str, statuses, product_ids=None):
     """Сколько товара заявки уже стоит в её открытых заказах: {(заявка, товар): тысячные}.
 
-    Это НЕ резерв, а «уже передано заказу». Резерв заказа считает `promised` —
-    он же вычитает отгруженное. Здесь вычитать нечего: вопрос другой — какую
-    часть нужды заявки заказ уже взял на себя, чтобы заявка не забронировала то
-    же самое второй раз (`docs/19-sborka-zakaza.md` §Р3).
+    Это НЕ резерв, а «сколько нужды заявки заказ ещё держит на себе» — чтобы
+    заявка не забронировала и не списала то же самое второй раз
+    (`docs/19-sborka-zakaza.md` §Р3).
 
-    Отгруженное не вычитается СОЗНАТЕЛЬНО. Отгрузили по заказу — товара нет ни у
-    заявки, ни у заказа, и бронировать его снова нельзя: `promised` его уже
-    отпустил, а заявка отпускает через списанное (`stock_moves.deal_id`).
+    Отгруженное вычитается ОБЯЗАТЕЛЬНО, и вот почему. Накладная по заказу
+    наследует `deal_id` заявки и пишет его в движения, то есть отгруженное уже
+    сидит в `spisano_po_zayavkam`. Не вычти его здесь — одно и то же вычтется
+    дважды, и заявка на пятнадцать штук с заказом на десять после отгрузки
+    десяти покажет бронь ноль вместо пяти: товар, который клиент ещё ждёт,
+    свободно уйдёт другому.
     """
     zapros = (
         select(
             Document.deal_id,
+            Document.id,
             DocumentLine.product_id,
             func.coalesce(func.sum(DocumentLine.quantity_milli), 0),
         )
@@ -366,16 +369,30 @@ def zakazano_po_zayavkam(db: Session, kind: str, statuses, product_ids=None):
             Document.deal_id.is_not(None),
             DocumentLine.product_id.is_not(None),
         )
-        .group_by(Document.deal_id, DocumentLine.product_id)
+        .group_by(Document.deal_id, Document.id, DocumentLine.product_id)
     )
     if product_ids is not None:
         if not product_ids:
             return {}
         zapros = zapros.where(DocumentLine.product_id.in_(product_ids))
-    return {
-        (zayavka, tovar): as_int(skolko)
-        for zayavka, tovar, skolko in db.execute(zapros).all()
+    po_zakazam = {
+        (zayavka, zakaz, tovar): as_int(skolko)
+        for zayavka, zakaz, tovar, skolko in db.execute(zapros).all()
     }
+    if not po_zakazam:
+        return {}
+
+    otgruzheno = _otgruzheno_po_zakazam(
+        db, kind, {zakaz for _, zakaz, _ in po_zakazam}, product_ids
+    )
+    itog: dict[tuple[int, int], int] = {}
+    for (zayavka, zakaz, tovar), skolko in po_zakazam.items():
+        # Обрезаем на КАЖДОМ заказе отдельно — тот же довод, что у `promised`:
+        # отгрузив сверх заказанного по одному, иначе съели бы обещание соседнего.
+        ostalos = skolko - otgruzheno.get((zakaz, tovar), 0)
+        if ostalos > 0:
+            itog[(zayavka, tovar)] = itog.get((zayavka, tovar), 0) + ostalos
+    return itog
 
 
 def otkrytye_s_tovarom(db: Session, kind: str, statuses, product_id: int):
@@ -395,4 +412,13 @@ def otkrytye_s_tovarom(db: Session, kind: str, statuses, product_id: int):
         .group_by(Document.id)
         .order_by(Document.id)
     ).all()
-    return [(bumaga, as_int(skolko)) for bumaga, skolko in ryady]
+    # Отгруженное вычитается: иначе карточка товара показала бы «заказ держит
+    # десять» рядом с «в брони шесть» — два числа об одном и том же на одном
+    # экране отменяют доверие к обоим.
+    otgruzheno = _otgruzheno_po_zakazam(
+        db, kind, {bumaga.id for bumaga, _ in ryady}, [product_id]
+    )
+    return [
+        (bumaga, max(0, as_int(skolko) - otgruzheno.get((bumaga.id, product_id), 0)))
+        for bumaga, skolko in ryady
+    ]

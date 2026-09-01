@@ -16,6 +16,14 @@ name: opencrm-tests
 #     против ~700 у настроек по умолчанию. Контейнер живёт минуты, ровно на
 #     время проверки, и на VPS это терпимо.
 #
+# Серверов базы ДВА, по одному на проход, и проходы идут одновременно. Цена —
+# вторые 330 МиБ и второе ядро на время проверки; выигрыш замерен: 780 с против
+# 336 с, то есть ворота с тринадцати минут до пяти с половиной. Довод, почему
+# не вторая база на одном сервере, — у службы `db-reverse`.
+#
+# На машине с одним ядром выигрыша не будет: набор упирается в питон, а не в
+# базу. Там прогон останется прежним по времени, но не сломается.
+#
 # Гейт зовёт это так:
 #     docker compose -f docker/docker-compose.tests.yml up \
 #         --abort-on-container-exit --exit-code-from tests
@@ -23,6 +31,40 @@ name: opencrm-tests
 
 services:
   db-test:
+    image: mysql:8.0
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+      # Память вместо диска: набор пишет много и коротко, а сохранности здесь
+      # не нужно вовсе — база живёт один прогон.
+      - --innodb-buffer-pool-size=128M
+      - --innodb-flush-method=O_DIRECT_NO_FSYNC
+      - --performance-schema=0
+      # Пароль тут не секрет и не может им быть: контейнер живёт минуты в своей
+      # сети, наружу не смотрит и данных не хранит. Прятать его в файл значило
+      # бы завести ещё одно место, где что-то может разъехаться.
+      - --skip-log-bin
+    environment:
+      MYSQL_ROOT_PASSWORD: testy
+      MYSQL_DATABASE: opencrm_test
+    tmpfs:
+      - /var/lib/mysql:rw,size=1g
+    healthcheck:
+      # По TCP, а не через сокет: сокет отвечает РАНЬШЕ, чем сервер начинает
+      # слушать порт (первый запуск поднимает временный сервер, чтобы создать
+      # базу). Тот же урок, что у боевой службы `db`.
+      test: ["CMD-SHELL", "MYSQL_PWD=testy mysqladmin ping -h 127.0.0.1 -P 3306 --protocol=TCP --silent"]
+      start_period: 60s
+      interval: 3s
+      timeout: 5s
+      retries: 20
+
+  # Второй сервер базы — под обратный проход. Именно СЕРВЕР, а не вторая база
+  # на первом: `GET_LOCK` в MySQL — замок уровня сервера, и на нём стоят
+  # дуэльные проверки (схема, заявки с сайта, телефония). Два прохода на одном
+  # сервере отравили бы друг другу ровно их, а выглядело бы это как мигающий
+  # тест, а не как общий замок.
+  db-reverse:
     image: mysql:8.0
     command:
       - --character-set-server=utf8mb4
@@ -97,6 +139,8 @@ services:
     depends_on:
       db-test:
         condition: service_healthy
+      db-reverse:
+        condition: service_healthy
       redis-test:
         condition: service_healthy
     # Точка входа подменяется, а не только команда, и это не придирка.
@@ -130,7 +174,25 @@ services:
     # Четыре минуты, а не полминуты: самый долгий честный тест здесь гоняет всю
     # цепочку миграций на свежей схеме, и это законные минуты.
     command:
-      - >
+      - |
+        # Проходы идут ОДНОВРЕМЕННО, а не один за другим. Набор упирается в одно
+        # ядро питона (замерено: 90-93% одного при одиннадцати простаивающих), и
+        # второй проход почти ничего не добавляет ко времени — 212 с против 109 с
+        # на четырёх файлах. Ворота с тринадцати минут до шести.
+        #
+        # Ни одна проверка не теряется: оба прохода гоняются целиком, в тех же
+        # двух порядках, каждый на СВОЁМ сервере базы и своём номере Redis.
+        # Свойство «база одна на весь проход», ради которого второй проход и
+        # существует, внутри каждого сохраняется полностью.
+        OPENCRM_TEST_DB_URL="mysql+pymysql://root:testy@db-reverse:3306/opencrm_test?charset=utf8mb4"         OPENCRM_REDIS_URL="redis://redis-test:6379/1"         python -m pytest -q -p no:cacheprovider -o faulthandler_timeout=240           $(ls tests/test_*.py | sort -r) > /tmp/obratnyy.log 2>&1 &
+        obratnyy=$$!
         python -m pytest -q -p no:cacheprovider -o faulthandler_timeout=240
-        && python -m pytest -q -p no:cacheprovider -o faulthandler_timeout=240
-        $(ls tests/test_*.py | sort -r)
+        pryamoy=$$?
+        wait $$obratnyy
+        obratnyy_kod=$$?
+        echo "===================== обратный порядок ====================="
+        cat /tmp/obratnyy.log
+        # Красный обратный проход обязан валить ворота. `--exit-code-from` берёт
+        # код ОДНОЙ службы — значит складывать их надо здесь, иначе ускорение
+        # куплено потерей проверки.
+        [ $$pryamoy -eq 0 ] && [ $$obratnyy_kod -eq 0 ]

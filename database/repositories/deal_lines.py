@@ -8,7 +8,7 @@ Python по загруженным строкам: список строк на 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from database.models import Deal, DealLine
+from database.models import Deal, DealLine, Product
 
 
 def list_for_deal(db: Session, deal_id: int) -> list[DealLine]:
@@ -85,21 +85,6 @@ def count_for_deals(db: Session, deal_ids: list[int]) -> dict[int, int]:
     return {deal_id: skolko for deal_id, skolko in ryady}
 
 
-def by_product(db: Session, product_id: int) -> list[DealLine]:
-    """Строки, где стоит этот товар, — «кто держит его в брони».
-
-    Отбор идёт по паре `(product_id, deal_id)`: без индекса карточка товара
-    перебирала бы строки всех заявок.
-    """
-    return list(
-        db.scalars(
-            select(DealLine)
-            .where(DealLine.product_id == product_id)
-            .order_by(DealLine.deal_id)
-        )
-    )
-
-
 def po_otkrytym_zayavkam(db: Session, product_ids=None) -> dict[tuple[int, int], int]:
     """Сколько товара обещано строками ОТКРЫТЫХ заявок: {(заявка, товар): тысячные}.
 
@@ -117,10 +102,13 @@ def po_otkrytym_zayavkam(db: Session, product_ids=None) -> dict[tuple[int, int],
             func.coalesce(func.sum(DealLine.quantity_milli), 0),
         )
         .join(Deal, Deal.id == DealLine.deal_id)
+        .join(Product, Product.id == DealLine.product_id)
         .where(
-            DealLine.product_id.is_not(None),
             Deal.closed_at.is_(None),
             Deal.deleted_at.is_(None),
+            # Услуга остатка не имеет и держать не может: строка «выезд мастера»
+            # иначе показывала бы вечную нехватку и бронь на карточке услуги.
+            Product.is_service.is_(False),
         )
         .group_by(DealLine.deal_id, DealLine.product_id)
     )

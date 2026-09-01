@@ -40,6 +40,7 @@ from core.services import (
     audit_service,
     client_service,
     document_service,
+    deal_service,
     modules_service,
     reserve_service,
     warehouse_service,
@@ -104,26 +105,6 @@ MAX_CLIENT_CANDIDATES = 6
 # --- обещания складу ----------------------------------------------------------
 
 
-def reserved(db: Session, product_ids: list[int] | None = None) -> dict[int, int]:
-    """Сколько обещано покупателям — заказами И открытыми заявками.
-
-    Расчёт переехал в `reserve_service`: блок заказов выключается, а заявки
-    обязаны бронировать и без него. Обёртка оставлена, чтобы зовущие не
-    переписывались в том же коммите.
-    """
-    return reserve_service.reserved(db, product_ids)
-
-
-def expected(db: Session, product_ids: list[int] | None = None) -> dict[int, int]:
-    """Сколько приедет по заказам поставщику. Нужно, чтобы не заказать дважды."""
-    return reserve_service.expected(db, product_ids)
-
-
-def availability(db: Session, product_ids: list[int]) -> dict[int, dict[str, int]]:
-    """Остаток, бронь, ожидается и доступно. Считает `reserve_service`."""
-    return reserve_service.availability(db, product_ids)
-
-
 # --- заказ --------------------------------------------------------------------
 
 
@@ -179,6 +160,16 @@ def sozdat_iz_zayavki(db: Session, deal, author: User) -> Document:
     """
     if deal.closed_at is not None:
         raise errors.ValidationError("The deal is closed", code="deal_closed")
+    # Кнопку нажимают дважды. Второй заказ повторил бы те же строки, и `promised`
+    # посчитал бы их обоими: три штуки в заявке стали бы шестью в брони, и
+    # продавец отказал бы покупателю, глядя на товар, лежащий на полке.
+    uzhe, _ = documents_repo.search(
+        db, deal_id=deal.id, kinds=(KIND_SALES_ORDER,), status=None, per_page=50
+    )
+    if any(z.status in OPEN_ORDER_STATUSES for z in uzhe):
+        raise errors.ConflictError(
+            "This deal already has an open order", code="deal_order_exists"
+        )
     stroki = [s for s in lines_repo.list_for_deal(db, deal.id) if s.product_id is not None]
     tovarnye = []
     for stroka in stroki:
@@ -209,7 +200,9 @@ def sozdat_iz_zayavki(db: Session, deal, author: User) -> Document:
     return zakaz
 
 
-def prikrepit_k_zayavke(db: Session, document_id: int, deal_id: int | None) -> Document:
+def prikrepit_k_zayavke(
+    db: Session, document_id: int, deal_id: int | None, only_manager_id: int | None = None
+) -> Document:
     """Прицепить заказ к заявке или отцепить (`deal_id=None`).
 
     Отцеплять надо: заказ цепляют не к той заявке так же часто, как и к той, а
@@ -225,6 +218,10 @@ def prikrepit_k_zayavke(db: Session, document_id: int, deal_id: int | None) -> D
             raise errors.NotFoundError("Deal not found", code="deal_not_found")
         if deal.closed_at is not None:
             raise errors.ValidationError("The deal is closed", code="deal_closed")
+        # Область видимости спрашивается и здесь: прицепленный заказ ПЕРЕНИМАЕТ
+        # бронь заявки, то есть менеджер «только со своими» иначе уводил бы
+        # товар из-под чужого покупателя, ни разу не открыв его заявку.
+        deal_service.ensure_visible(db, deal, only_manager_id)
         zakaz.deal_id = deal.id
     db.flush()
     return zakaz

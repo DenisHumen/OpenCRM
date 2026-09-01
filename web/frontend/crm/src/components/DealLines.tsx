@@ -8,6 +8,7 @@ import { useGuard } from "../lib/guard";
 import { moduleOn } from "../lib/modules";
 import { can } from "../lib/permissions";
 import { Icon } from "./Icon";
+import { WarehousePicker, useWarehouses } from "./Warehouses";
 
 type Stroka = {
   id: number;
@@ -54,6 +55,10 @@ export function DealLines({
   const [tsena, setTsena] = useState("");
   const [podskazki, setPodskazki] = useState<Tovar[]>([]);
   const [skan, setSkan] = useState("");
+  // Выбор склада появляется САМ, когда складов больше одного:
+  // `WarehousePicker` отдаёт null при одном, и правило живёт в одном месте.
+  const places = useWarehouses();
+  const [sklad, setSklad] = useState<number | null>(null);
   const zapros = useDebounced(poisk);
 
   const vklyuchen = moduleOn(modules, "warehouse");
@@ -122,6 +127,8 @@ export function DealLines({
         ...(vybran ? { product_id: vybran.id } : { name: poisk.trim() }),
         quantity: kolichestvo,
         ...(kopeyki === null || Number.isNaN(kopeyki) ? {} : { price: kopeyki }),
+        // Склад — только у товарной строки: упаковку не берут с полки.
+        ...(vybran && sklad !== null ? { warehouse_id: sklad } : {}),
       });
       sbrosit();
       await zagruzit();
@@ -151,7 +158,11 @@ export function DealLines({
     const kod = skan.trim();
     if (!kod || !guard.take()) return;
     try {
-      await api.post(`/deals/${dealId}/lines`, { code: kod, quantity: "1" });
+      await api.post(`/deals/${dealId}/lines`, {
+        code: kod,
+        quantity: "1",
+        ...(sklad !== null ? { warehouse_id: sklad } : {}),
+      });
       setSkan("");
       await zagruzit();
     } catch (beda) {
@@ -292,6 +303,11 @@ export function DealLines({
             value={tsena}
             placeholder={t("price")}
             onChange={(e) => setTsena(e.target.value)}
+          />
+          <WarehousePicker
+            places={places}
+            value={sklad ?? places?.items[0]?.id ?? null}
+            onChange={setSklad}
           />
           <button
             className="btn btn-primary"

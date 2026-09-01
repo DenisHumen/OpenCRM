@@ -1292,3 +1292,100 @@ def test_svodka_pokazyvaet_kartochki_tomu_komu_polozheno(root_client, role_maker
     svodka = s_klientami.get(f"{API}/dashboard")
     assert svodka.status_code == 200, svodka.text
     assert svodka.json()["recent_clients"], "с правом карточки пропали"
+
+
+def test_stroki_zayavki_ne_otdayut_summ_bez_prava(root_client, role_maker, staff_maker):
+    """ТРЕТЬЕ повторение одной беды: новая ручка забыла спросить право на суммы.
+
+    Карточка заявки прячет сумму, заказ прячет цены строк, а раздел строк
+    отдавал и цену, и СЕБЕСТОИМОСТЬ каждому, у кого есть `deals.view`. Просьба,
+    ради которой право заведено — «менеджер ведёт заявку, но не видит её
+    маржу», — обходилась открытием этого раздела.
+
+    Пишущие ручки проверяются вместе с читающей: ответ на запись — такой же
+    обход, и в проекте на этом уже спотыкались дважды.
+    """
+    from core.services import modules_service
+
+    assert root_client.post(f"{API}/modules/warehouse", json={"enabled": True}).status_code == 200
+    modules_service.invalidate()
+    try:
+        klient = root_client.post(f"{API}/clients", json={"name": "Заказчик без маржи"}).json()
+        tovar = root_client.post(
+            f"{API}/warehouse/products",
+            json={"name": "Товар с маржой", "price": 50_000, "cost": 10_000},
+        ).json()
+        zayavka = root_client.post(
+            f"{API}/deals", json={"title": "Заявка без маржи", "client_id": klient["id"]}
+        ).json()["id"]
+        root_client.post(
+            f"{API}/deals/{zayavka}/lines",
+            json={"product_id": tovar["id"], "quantity": "2"},
+        )
+
+        rol = role_maker(
+            "Строки заявки без сумм",
+            ["clients.view", "deals.view", "deals.view_others", "deals.edit", "warehouse.view"],
+        )
+        bez_summ = staff_maker("stroki-bez-summ@test.local", rol["id"])
+
+        # Карточка право уже спрашивает — с неё и сверяемся.
+        assert bez_summ.get(f"{API}/deals/{zayavka}").json()["amount"] is None
+
+        otvet = bez_summ.get(f"{API}/deals/{zayavka}/lines")
+        assert otvet.status_code == 200, otvet.text
+        assert otvet.json()["total_minor"] is None, "итог виден без права на суммы"
+        for s in otvet.json()["items"]:
+            assert s["price_minor"] is None, "цена видна без права на суммы"
+            assert s["cost_minor"] is None, "СЕБЕСТОИМОСТЬ видна без права на суммы"
+
+        dobavlena = bez_summ.post(
+            f"{API}/deals/{zayavka}/lines",
+            json={"name": "Упаковка", "quantity": "1", "price": 1000},
+        )
+        assert dobavlena.status_code == 201, dobavlena.text
+        assert dobavlena.json()["price_minor"] is None, "ответ на добавление отдал цену"
+    finally:
+        assert root_client.post(
+            f"{API}/modules/warehouse", json={"enabled": False}
+        ).status_code == 200
+        modules_service.invalidate()
+
+
+def test_zakaz_ne_pritsepliaetsya_k_chuzhoy_zayavke(root_client, role_maker, staff_maker):
+    """У соседних маршрутов с заявкой стоит область видимости, у этого не стояла.
+
+    Прицепленный заказ ПЕРЕНИМАЕТ бронь заявки — значит менеджер «только со
+    своими» уводил товар из-под чужого покупателя, ни разу не открыв его
+    заявку. И отцепить чужой заказ от чужой заявки мог тем же запросом.
+    """
+    from core.services import modules_service
+
+    for blok in ("documents", "orders"):
+        assert root_client.post(f"{API}/modules/{blok}", json={"enabled": True}).status_code == 200
+    modules_service.invalidate()
+    try:
+        klient = root_client.post(f"{API}/clients", json={"name": "Чужой заказчик"}).json()
+        chuzhaya = root_client.post(
+            f"{API}/deals", json={"title": "Чужая заявка", "client_id": klient["id"]}
+        ).json()["id"]
+
+        rol = role_maker(
+            "Заказы только со своими заявками",
+            ["clients.view", "deals.view", "orders.view", "orders.create", "orders.edit"],
+        )
+        svoi = staff_maker("tolko-svoi-zakazy@test.local", rol["id"])
+
+        # Чтение чужой заявки уже закрыто — с него и сверяемся.
+        assert svoi.get(f"{API}/deals/{chuzhaya}").status_code == 403
+
+        zakaz = svoi.post(
+            f"{API}/orders", json={"kind": "sales_order", "client_id": klient["id"]}
+        )
+        assert zakaz.status_code == 201, zakaz.text
+
+        otkaz = svoi.post(f"{API}/orders/{zakaz.json()['id']}/deal", json={"deal_id": chuzhaya})
+        assert otkaz.status_code == 403, f"заказ прицепился к невидимой заявке: {otkaz.text}"
+    finally:
+        assert root_client.post(f"{API}/modules/orders", json={"enabled": False}).status_code == 200
+        modules_service.invalidate()

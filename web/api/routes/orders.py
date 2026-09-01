@@ -223,7 +223,9 @@ def link_deal(
     Отдельной ручкой, а не общим PATCH: у заказа правится только эта связь —
     позиции меняются своими ручками, а номер и вид не меняются вовсе.
     """
-    order = order_service.prikrepit_k_zayavke(db, order_id, payload.deal_id)
+    order = order_service.prikrepit_k_zayavke(
+        db, order_id, payload.deal_id, permissions_service.deals_scope(db, user)
+    )
     return schemas.order_out(
         order,
         order_service.lines(db, order.id),

@@ -20,11 +20,16 @@ def bloki(root_client: TestClient):
     from core.services import modules_service
 
     for blok in ("warehouse", "documents", "orders"):
-        root_client.post(f"{API}/modules/{blok}", json={"enabled": True})
+        otvet = root_client.post(f"{API}/modules/{blok}", json={"enabled": True})
+        # Код ответа проверяется: молчаливое переключение однажды откажет —
+        # режим обслуживания, зависимость блока, — и файл упадёт не здесь, а на
+        # 403 в первом же тесте, где про блоки не сказано ни слова.
+        assert otvet.status_code == 200, f"{blok}: {otvet.text}"
     modules_service.invalidate()
     yield
     for blok in ("orders", "warehouse"):
-        root_client.post(f"{API}/modules/{blok}", json={"enabled": False})
+        otvet = root_client.post(f"{API}/modules/{blok}", json={"enabled": False})
+        assert otvet.status_code == 200, f"{blok}: {otvet.text}"
     modules_service.invalidate()
 
 
@@ -43,6 +48,18 @@ def zayavka(root_client: TestClient) -> int:
     )
     assert otvet.status_code == 201, otvet.text
     return otvet.json()["id"]
+
+
+def zakazy_zayavki(client: TestClient, deal_id: int) -> list[dict]:
+    """Заказы заявки — тем же путём, которым их берёт экран.
+
+    Карточка заявки своего списка заказов не отдаёт: врезка `OrdersOfCard`
+    спрашивает их отбором, и второй список в ответе карточки разошёлся бы с
+    первым при первой же правке.
+    """
+    otvet = client.get(f"{API}/orders", params={"deal_id": deal_id})
+    assert otvet.status_code == 200, otvet.text
+    return otvet.json()["items"]
 
 
 def stroka(client: TestClient, deal_id: int, **polya) -> dict:
@@ -89,9 +106,9 @@ def test_zayavka_vidit_svoy_zakaz_i_ego_sborku(root_client, tovar, zayavka):
     stroka(root_client, zayavka, product_id=tovar["id"], quantity="2")
     zakaz = root_client.post(f"{API}/deals/{zayavka}/order").json()
 
-    kartochka = root_client.get(f"{API}/deals/{zayavka}").json()
-    assert [z["id"] for z in kartochka["orders"]] == [zakaz["id"]]
-    assert kartochka["orders"][0]["assembled"] is False
+    do_sborki = zakazy_zayavki(root_client, zayavka)
+    assert [z["id"] for z in do_sborki] == [zakaz["id"]]
+    assert do_sborki[0]["assembled"] is False
 
     # Собираем сканом — так это и делают на складе: две штуки, два скана.
     root_client.post(f"{API}/modules/labels", json={"enabled": True})
@@ -106,8 +123,7 @@ def test_zayavka_vidit_svoy_zakaz_i_ego_sborku(root_client, tovar, zayavka):
         sborka = root_client.post(f"{API}/orders/{zakaz['id']}/pick", json={"code": kod})
         assert sborka.status_code == 200, sborka.text
 
-    posle = root_client.get(f"{API}/deals/{zayavka}").json()
-    assert posle["orders"][0]["assembled"] is True
+    assert zakazy_zayavki(root_client, zayavka)[0]["assembled"] is True
 
 
 def test_zakaz_iz_zayavki_ne_udvaivaet_bron(root_client, tovar, zayavka):
@@ -131,11 +147,11 @@ def test_zakaz_pritsepliaetsya_i_otsepliaetsya(root_client, tovar, zayavka):
     privyazan = root_client.post(f"{API}/orders/{zakaz['id']}/deal", json={"deal_id": zayavka})
     assert privyazan.status_code == 200, privyazan.text
     assert privyazan.json()["deal_id"] == zayavka
-    assert root_client.get(f"{API}/deals/{zayavka}").json()["orders"][0]["id"] == zakaz["id"]
+    assert [z["id"] for z in zakazy_zayavki(root_client, zayavka)] == [zakaz["id"]]
 
     otvyazan = root_client.post(f"{API}/orders/{zakaz['id']}/deal", json={"deal_id": None})
     assert otvyazan.json()["deal_id"] is None
-    assert root_client.get(f"{API}/deals/{zayavka}").json()["orders"] == []
+    assert zakazy_zayavki(root_client, zayavka) == []
 
 
 def test_zakrytaya_zayavka_zakaz_ne_prinimaet(root_client, tovar, zayavka):

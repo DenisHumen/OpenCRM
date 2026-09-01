@@ -146,6 +146,8 @@ class DealLineIn(BaseModel):
     sku: str | None = None
     #: Отсканированный штрихкод. Ищется первым: коробка уже в руках.
     code: str | None = None
+    #: С какого склада берём. Пусто — решится при списании (§Р4).
+    warehouse_id: int | None = None
     name: str | None = None
     # Количество разбирает сервер: у него три знака после запятой, и
     # `Math.round(0.3335 * 1000)` в браузере даст 334 — см. `parse_quantity`.
@@ -156,6 +158,7 @@ class DealLineIn(BaseModel):
 class DealLinePatchIn(BaseModel):
     quantity: str | int | float | None = None
     price: int | None = None
+    warehouse_id: int | None = None
     name: str | None = None
 
 

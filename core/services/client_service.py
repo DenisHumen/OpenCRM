@@ -214,6 +214,20 @@ def _chistaya_strana(value) -> str:
     return kod
 
 
+def _mezhdunarodnyy(db: Session, phone: str) -> bool:
+    """Можно ли по этому номеру судить о стране.
+
+    Местный номер без кода страны судить не даёт: московский `4951234567` при
+    подборе по длине читается как `49` — Германия, и чужой флаг ляжет в карточку
+    молча. Судим, только если человек написал номер международно (`+`, `00`)
+    либо владелец назвал код своей страны в настройках — тогда `normalize_phone`
+    его допишет, и это будет ЕГО страна, а не догадка.
+    """
+    if (phone or "").strip().startswith(("+", "00")):
+        return True
+    return bool(settings_service.get_all(db).get("default_country_code", ""))
+
+
 def _adres_iz(data: dict, *, phone_norm: str = "") -> dict:
     adres = {
         imya: _chistoe_pole(data.get(imya), limit, label=label, code=code)
@@ -231,17 +245,21 @@ def create_client(db: Session, data: dict, author: User) -> Client:
     if not (data.get("name") or "").strip():
         raise errors.ValidationError("Name is required", code="name_required")
     phone = (data.get("phone") or "").strip()
+    norm = _normalize_phone_for(db, phone)
     client = Client(
         name=data["name"].strip(),
         company=(data.get("company") or "").strip(),
         phone=phone,
-        phone_norm=_normalize_phone_for(db, phone),
+        phone_norm=norm,
         email=(data.get("email") or "").strip(),
         messenger=(data.get("messenger") or "").strip(),
         tags=_normalize_tags(data.get("tags")),
         source=_normalize_source(data.get("source")),
         manager_id=data.get("manager_id") or author.id,
-        **_adres_iz(data, phone_norm=_normalize_phone_for(db, phone)),
+        **_adres_iz(
+            data,
+            phone_norm=norm if _mezhdunarodnyy(db, phone) else "",
+        ),
     )
     db.add(client)
     db.flush()
@@ -273,7 +291,7 @@ def update_client(db: Session, client_id: int, data: dict) -> Client:
     for imya, limit, label, code in POLYA_ADRESA:
         if imya in data:
             setattr(client, imya, _chistoe_pole(data[imya], limit, label=label, code=code))
-    if client.phone_norm != bylo_norm:
+    if client.phone_norm != bylo_norm and _mezhdunarodnyy(db, client.phone):
         # Страна едет за номером, но только если в карточке стоит ровно то, что
         # говорил ПРЕЖНИЙ номер: значит её никто не правил руками. Иначе правка
         # телефона молча затирала бы страну, названную человеком.

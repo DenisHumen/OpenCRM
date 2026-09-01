@@ -6,7 +6,6 @@ from core.services import (
     client_service,
     deal_lines_service,
     deal_service,
-    document_service,
     modules_service,
     order_service,
     permissions_service,
@@ -14,11 +13,9 @@ from core.services import (
     settings_service,
 )
 from database.models import User
-from database.models.document import ORDER_KINDS
 from database.repositories import boards as boards_repo
 from database.repositories import clients as clients_repo
 from database.repositories import deals as deals_repo
-from database.repositories import documents as documents_repo
 from database.repositories import users as users_repo
 from web.api import schemas
 from web.api.deps import MAX_SEARCH, get_db, require_module, require_perm
@@ -93,26 +90,6 @@ def _card(db: Session, deal, user: User) -> dict:
         ]
     else:
         data["boards"] = []
-    # Заказы этой заявки и то, собраны ли они. Блок заказов выключается — тогда
-    # списка нет вовсе, как и у досок.
-    #
-    # «Собран» считается по строкам, а не по статусу: статус «готов» ставит
-    # человек, а вопрос заявки физический — коробки собраны или нет.
-    if modules_service.is_enabled(db, "orders"):
-        bumagi, _ = document_service.search(db, deal_id=deal.id, per_page=50)
-        zakazy = [b for b in bumagi if b.kind in ORDER_KINDS]
-        stroki = documents_repo.lines_by_documents(db, [z.id for z in zakazy])
-        data["orders"] = [
-            {
-                "id": z.id,
-                "number": z.number,
-                "status": z.status,
-                "assembled": order_service.sobran_po_strokam(stroki.get(z.id, [])),
-            }
-            for z in zakazy
-        ]
-    else:
-        data["orders"] = []
     # Названия этапов в истории берём из воронки: голые ключи вроде
     # `in_progress` человеку ничего не говорят, а у каждого бизнеса они свои.
     data["stage_history"] = [
@@ -398,10 +375,11 @@ def deal_lines(
     db: Session = Depends(get_db),
 ):
     _visible(db, deal_id, user)
+    amounts = permissions_service.sees_amounts(db, user)
     stroki = deal_lines_service.spisok(db, deal_id)
     return {
-        "items": deal_lines_service.s_nehvatkoy(db, stroki),
-        "total_minor": deal_lines_service.itog(db, deal_id),
+        "items": deal_lines_service.s_nehvatkoy(db, stroki, amounts),
+        "total_minor": deal_lines_service.itog(db, deal_id) if amounts else None,
     }
 
 
@@ -418,7 +396,12 @@ def add_deal_line(
     stroka = deal_lines_service.dobavit(db, deal_id, payload.model_dump(exclude_unset=True))
     # Нехватка отдаётся ответом на добавление: «добавили, но столько на складе
     # не лежит» — это предупреждение, и сказать его нужно сразу.
-    return deal_lines_service.s_nehvatkoy(db, [stroka])[0]
+    #
+    # Право на суммы спрашивается и у ПИШУЩЕЙ ручки: ответ на запись — такой же
+    # обход, как чтение, и в проекте на этом уже спотыкались дважды.
+    return deal_lines_service.s_nehvatkoy(
+        db, [stroka], permissions_service.sees_amounts(db, user)
+    )[0]
 
 
 @router.patch(
@@ -435,7 +418,9 @@ def edit_deal_line(
     stroka = deal_lines_service.pravit(
         db, deal_id, line_id, payload.model_dump(exclude_unset=True)
     )
-    return deal_lines_service.s_nehvatkoy(db, [stroka])[0]
+    return deal_lines_service.s_nehvatkoy(
+        db, [stroka], permissions_service.sees_amounts(db, user)
+    )[0]
 
 
 @router.delete(

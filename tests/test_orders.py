@@ -78,12 +78,12 @@ def stock_of(root_client, product_id) -> int:
 def promises(root_client, product_id) -> dict:
     """Резерв и ожидание — через сервис: отдельной ручки у них пока нет, а
     проверять надо само число, а не то, как оно доехало до экрана."""
-    from core.services import order_service
+    from core.services import order_service, reserve_service
     from database.session import SessionLocal
 
     db = SessionLocal()
     try:
-        return order_service.availability(db, [product_id])[product_id]
+        return reserve_service.availability(db, [product_id])[product_id]
     finally:
         db.close()
 

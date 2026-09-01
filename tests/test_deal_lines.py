@@ -28,6 +28,12 @@ def sklad_vklyuchen(root_client: TestClient):
     modules_service.invalidate()
 
 
+#: Заявки, которым этот файл заводил строки. Записываем при рождении, а не
+#: ищем потом по таблице: база у набора одна на весь прогон, и сводная проверка
+#: по всей таблице краснела бы от чужой правки — то есть указывала бы не туда.
+NASHI_ZAYAVKI: set[int] = set()
+
+
 @pytest.fixture
 def zayavka(root_client: TestClient) -> int:
     klient = root_client.post(f"{API}/clients", json={"name": "Заказчик строк"}).json()
@@ -35,6 +41,7 @@ def zayavka(root_client: TestClient) -> int:
         f"{API}/deals", json={"title": "Поставка серверов", "client_id": klient["id"]}
     )
     assert otvet.status_code == 201, otvet.text
+    NASHI_ZAYAVKI.add(otvet.json()["id"])
     return otvet.json()["id"]
 
 
@@ -203,21 +210,154 @@ def test_summa_zayavki_ravna_summe_strok_po_vsey_baze(db):
     Защита здесь слабее, чем у остатка склада: не «расхождение невозможно», а
     «расхождение поймает эта проверка». Она и есть цена отступления от правила,
     и повод вернуться к честному `JOIN` — её первое срабатывание на боевой базе.
+
+    Сверяются только заявки ЭТОГО файла. Проверка по всей таблице зависела бы
+    от порядка файлов — прямой и обратный проходы видели бы разное множество, —
+    и краснела бы от чужой правки, уводя разбор в чужой файл.
     """
+    assert NASHI_ZAYAVKI, "ни одной заявки не заведено — сверять нечего"
     po_strokam = dict(
         db.execute(
             select(
                 DealLine.deal_id,
                 func.sum(DealLine.price_minor * DealLine.quantity_milli),
             )
-            .where(DealLine.price_minor.is_not(None))
+            .where(DealLine.price_minor.is_not(None), DealLine.deal_id.in_(NASHI_ZAYAVKI))
             .group_by(DealLine.deal_id)
         ).all()
     )
-    so_strokami = set(db.scalars(select(DealLine.deal_id).distinct()))
-    if not so_strokami:
-        pytest.skip("заявок со строками нет — сверять нечего")
+    so_strokami = set(
+        db.scalars(
+            select(DealLine.deal_id).where(DealLine.deal_id.in_(NASHI_ZAYAVKI)).distinct()
+        )
+    )
 
     for deal in db.scalars(select(Deal).where(Deal.id.in_(so_strokami))):
         dolzhno = int(po_strokam.get(deal.id, 0)) // 1000
         assert deal.amount == dolzhno, f"заявка {deal.id}: {deal.amount} вместо {dolzhno}"
+
+
+def test_summu_zayavki_so_strokami_rukami_ne_perepisat(root_client, zayavka):
+    """Сумма заявки со строками — итог, а не поле для ввода.
+
+    Прими её здесь — и кэш разойдётся с истиной: следующая правка строки затрёт
+    введённое, а в журнале правки суммы через строки не будет вовсе. На боевой
+    базе узнать, какое из двух чисел верное, будет неоткуда.
+    """
+    stroka(root_client, zayavka, name="Работа", quantity="1", price=100_000)
+
+    otkaz = root_client.patch(f"{API}/deals/{zayavka}", json={"amount": 999_000})
+    assert otkaz.status_code == 422, otkaz.text
+    assert otkaz.json()["error"]["code"] == "amount_from_lines"
+    assert root_client.get(f"{API}/deals/{zayavka}").json()["amount"] == 100_000
+
+
+def test_itog_vyshe_vmestimosti_kolonki_otvergaetsya_ponyatno(root_client, zayavka):
+    """Оба сомножителя в своём потолке, а произведение — уже нет.
+
+    `deals.amount` — INT, а считается он как цена × количество ÷ 1000. Два
+    миллиарда за штуку и две штуки проходят каждый свою проверку и дают четыре
+    миллиарда: MySQL отвечает 1264, обработчика на этот класс нет, и человек
+    получает пятисотку без подсказки.
+    """
+    otvet = root_client.post(
+        f"{API}/deals/{zayavka}/lines",
+        json={"name": "Слишком дорого", "quantity": "2", "price": 2_000_000_000},
+    )
+    assert otvet.status_code != 500, f"пятисотка вместо отказа: {otvet.text}"
+    assert otvet.status_code == 422, otvet.text
+    assert otvet.json()["error"]["code"], "отказ без кода — человеку нечего прочесть"
+
+
+def test_udalyonnyy_tovar_v_stroku_ne_stavitsya(root_client, zayavka):
+    """Удалённый товар не продают: он ушёл из списков не случайно."""
+    server = tovar(root_client, name="Товар на удаление в строку")
+    assert root_client.delete(f"{WH}/products/{server['id']}").status_code == 200
+
+    otkaz = root_client.post(
+        f"{API}/deals/{zayavka}/lines", json={"product_id": server["id"], "quantity": "1"}
+    )
+    assert otkaz.status_code == 422, otkaz.text
+    assert otkaz.json()["error"]["code"] == "product_deleted"
+
+
+def test_nesushchestvuyushchiy_artikul_nazvan_svoim_kodom(root_client, zayavka):
+    """По коду отказа магазин решает, повторять ли запрос, а экран — что
+    подсветить. Общий 422 без кода не отвечает ни на один из вопросов."""
+    otkaz = root_client.post(
+        f"{API}/deals/{zayavka}/lines", json={"sku": "НЕТ-ТАКОГО", "quantity": "1"}
+    )
+    assert otkaz.status_code == 404, otkaz.text
+    assert otkaz.json()["error"]["code"] == "product_not_found"
+
+
+def test_slishkom_dlinnoe_nazvanie_otkaz_a_ne_obrezka(root_client, zayavka):
+    """Обрезка увезла бы урезанное название в счёт клиенту."""
+    otkaz = root_client.post(
+        f"{API}/deals/{zayavka}/lines",
+        json={"name": "я" * 201, "quantity": "1", "price": 100},
+    )
+    assert otkaz.status_code == 422, otkaz.text
+    assert otkaz.json()["error"]["code"] == "name_too_long"
+
+
+def test_skan_perebivaet_ostavsheesya_v_forme(root_client, zayavka):
+    """Код ищется ПЕРВЫМ, и это не мелочь.
+
+    У стойки коробка в руках, а в форме мог остаться товар от прошлой строки.
+    Победи `product_id` — в заявку легло бы то, чего сканер не видел, и
+    заметили бы это при отгрузке.
+    """
+    root_client.post(f"{API}/modules/labels", json={"enabled": True})
+    chuzhoy = tovar(root_client, name="Остался в форме")
+    nuzhnyy = tovar(root_client, name="Тот, что в руках")
+    kod = "4600000000505"
+    assert (
+        root_client.post(
+            f"{API}/labels/products/{nuzhnyy['id']}/barcodes", json={"code": kod}
+        ).status_code
+        == 201
+    )
+
+    dobavlena = stroka(root_client, zayavka, code=kod, product_id=chuzhoy["id"], quantity="1")
+    assert dobavlena["product_id"] == nuzhnyy["id"], "в строку лёг товар из формы, а не из скана"
+
+
+def test_bez_bloka_sklada_razdel_strok_ischezaet_tselikom(root_client, zayavka):
+    """Пустой список вместо отказа — это «выключено» на словах.
+
+    Общий обход адресов сюда не доходит: он отбрасывает пути с параметром, а
+    сторож маршрутов про блоки не знает вовсе. Значит единственный сторож этих
+    четырёх ручек — вот этот тест. Адрес остаётся в закладках, и раздел,
+    отдающий пустой список, выглядит работающим и пустым, то есть врёт дважды.
+    """
+    from core.services import modules_service
+
+    dobavlena = stroka(root_client, zayavka, name="Работа", quantity="1", price=1000)
+    assert root_client.post(f"{API}/modules/warehouse", json={"enabled": False}).status_code == 200
+    modules_service.invalidate()
+    try:
+        otvety = {
+            "GET": root_client.get(f"{API}/deals/{zayavka}/lines"),
+            "POST": root_client.post(
+                f"{API}/deals/{zayavka}/lines", json={"name": "Ещё", "quantity": "1"}
+            ),
+            "PATCH": root_client.patch(
+                f"{API}/deals/{zayavka}/lines/{dobavlena['id']}", json={"quantity": "2"}
+            ),
+            "DELETE": root_client.delete(f"{API}/deals/{zayavka}/lines/{dobavlena['id']}"),
+        }
+        for metod, otvet in otvety.items():
+            assert otvet.status_code == 403, f"{metod} ответил {otvet.status_code}: {otvet.text}"
+            assert otvet.json()["error"]["code"] == "module_disabled", metod
+        # Сама заявка при этом жива: закрылся склад, а не заявки.
+        assert root_client.get(f"{API}/deals/{zayavka}").status_code == 200
+    finally:
+        assert root_client.post(
+            f"{API}/modules/warehouse", json={"enabled": True}
+        ).status_code == 200
+        modules_service.invalidate()
+
+    # Включили обратно — строка на месте: выключение убирает с глаз, а не стирает.
+    posle = root_client.get(f"{API}/deals/{zayavka}/lines").json()
+    assert [s["id"] for s in posle["items"]] == [dobavlena["id"]]

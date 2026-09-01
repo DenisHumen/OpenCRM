@@ -11,8 +11,15 @@
 from sqlalchemy.orm import Session
 
 from core import exceptions as errors
-from core.services import barcode_service, reserve_service, warehouse_service
-from core.services.deal_service import get_deal, parse_money
+from core.services import (
+    barcode_service,
+    modules_service,
+    reserve_service,
+    warehouse_service,
+)
+from database.models.document import KIND_SALES_ORDER, OPEN_ORDER_STATUSES
+from database.repositories import documents as documents_repo
+from core.services.deal_service import MAX_MONEY, get_deal, parse_money
 from core.utils import now_utc
 from database.models import Deal, DealLine, User
 from database.repositories import deal_lines as lines_repo
@@ -58,6 +65,7 @@ def dobavit(db: Session, deal_id: int, data: dict) -> DealLine:
         DealLine(
             deal_id=deal.id,
             product_id=None if tovar is None else tovar.id,
+            warehouse_id=_sklad(db, data, tovar),
             name_snapshot=nazvanie,
             quantity_milli=kolichestvo,
             price_minor=cena,
@@ -76,6 +84,8 @@ def pravit(db: Session, deal_id: int, line_id: int, data: dict) -> DealLine:
         stroka.quantity_milli = _kolichestvo(data["quantity"])
     if "price" in data:
         stroka.price_minor = parse_money(data["price"], "price")
+    if "warehouse_id" in data:
+        stroka.warehouse_id = _sklad(db, data, _tovar_stroki(db, stroka))
     # Название правится только у своей траты: у товарной строки это снимок
     # названия товара, и переписать его значит соврать о том, что продали.
     if "name" in data:
@@ -107,16 +117,31 @@ def pereschitat_summu(db: Session, deal: Deal) -> None:
     Убрали последнюю строку — сумма снова становится «не назвали» (NULL), а не
     нулём: ноль означал бы «отдаём бесплатно».
     """
-    deal.amount = lines_repo.sum_for_deal(db, deal.id)
+    itog_strok = lines_repo.sum_for_deal(db, deal.id)
+    # Потолок тот же, что у введённой руками суммы, и по той же причине:
+    # `deals.amount` — INT, а MySQL на переполнении отвечает 1264, обработчика
+    # на этот класс нет, и человек получает пятисотку без подсказки. Каждый
+    # сомножитель в своём пределе, а произведение — уже нет.
+    if itog_strok is not None and abs(itog_strok) > MAX_MONEY:
+        raise errors.ValidationError(
+            "The lines total is too large", code="deal_amount_too_big"
+        )
+    deal.amount = itog_strok
     deal.updated_at = now_utc()
     db.flush()
 
 
-def stroka_out(stroka: DealLine) -> dict:
+def stroka_out(stroka: DealLine, amounts: bool = True) -> dict:
     """Строка для ответа API.
 
     `kind` и `total_minor` считаются здесь и в базе не лежат: иначе каждый
     клиент API выводил бы их сам, и половина ошиблась бы с тысячными.
+
+    `amounts=False` — у смотрящего нет права `deals.view_amounts`. Ключи
+    остаются на месте пустыми, а не исчезают: форма ответа не должна зависеть
+    от того, кто спрашивает. Себестоимость закрывается тем же правом, что цена,
+    — просьба «менеджер ведёт заявку, но не видит её маржу» обходится этим
+    разделом, если о праве здесь забыть.
     """
     summa = (
         None
@@ -129,28 +154,29 @@ def stroka_out(stroka: DealLine) -> dict:
         "warehouse_id": stroka.warehouse_id,
         "name": stroka.name_snapshot,
         "quantity_milli": stroka.quantity_milli,
-        "price_minor": stroka.price_minor,
-        "cost_minor": stroka.cost_minor,
-        "total_minor": summa,
+        "price_minor": stroka.price_minor if amounts else None,
+        "cost_minor": stroka.cost_minor if amounts else None,
+        "total_minor": summa if amounts else None,
         "kind": "extra" if stroka.product_id is None else "product",
         "sort_order": stroka.sort_order,
     }
 
 
-def s_nehvatkoy(db: Session, stroki: list[DealLine]) -> list[dict]:
+def s_nehvatkoy(db: Session, stroki: list[DealLine], amounts: bool = True) -> list[dict]:
     """Строки для ответа вместе с нехваткой по каждой.
 
     Наличие спрашивается ОДНИМ запросом на все товары списка, а не по запросу на
     строку: заявка на два десятка позиций иначе била бы в базу два десятка раз
     ради одной таблички на экране.
 
-    Нехватка — предупреждение, а не отказ (см. `reserve_service.nehvatka`).
+    Нехватка — предупреждение, а не отказ: продавать то, что ещё едет, —
+    обычное дело, и запрет сломал бы работу вместо помощи.
     """
     tovary = [s.product_id for s in stroki if s.product_id is not None]
     est = reserve_service.availability(db, tovary) if tovary else {}
     otvet = []
     for stroka in stroki:
-        kusok = stroka_out(stroka)
+        kusok = stroka_out(stroka, amounts)
         dostupno = est.get(stroka.product_id or 0, {}).get("available_milli")
         kusok["shortage_milli"] = (
             -dostupno if dostupno is not None and dostupno < 0 else 0
@@ -165,15 +191,15 @@ def spisat_pri_zakrytii(db: Session, deal: Deal, author: User | None) -> int:
 
     Сколько списывать (`docs/19-sborka-zakaza.md` §Р4):
 
-        к списанию = в строках заявки − уже списанное движениями с этим deal_id
+        к списанию = в строках − уже ушедшее под заявку − непогашенное её заказами
 
-    Формула САМА делает действие повторяемым: закрыли, откатили этап, закрыли
-    снова — второй раз списывать нечего. Это не защита «на всякий случай»:
-    откат этапа делают руками каждый день, а движение склада не отменяется
-    удалением — только обратным движением.
+    Первое вычитаемое делает действие повторяемым: закрыли, откатили этап,
+    закрыли снова — второй раз списывать нечего. Откат этапа делают руками
+    каждый день, а движение склада не отменяется удалением, только обратным.
 
-    Уже отгруженное заказом вычитается тем же слагаемым: движения накладной
-    несут `deal_id` заявки, и повторно списывать по ним нечего.
+    Второе не даёт списать то, что ещё отгрузит открытый заказ: иначе закрытие
+    заявки и последующая накладная по её заказу вынесли бы со склада вдвое
+    больше, чем в строках, и заметили бы это на инвентаризации.
 
     Услуги пропускаются: остатка у них нет и быть не может.
     """
@@ -181,29 +207,46 @@ def spisat_pri_zakrytii(db: Session, deal: Deal, author: User | None) -> int:
     if not stroki:
         return 0
 
-    nuzhno: dict[int, int] = {}
-    sklady: dict[int, int | None] = {}
+    # Группируем по ПАРЕ (товар, склад): один товар может стоять в двух строках
+    # с разных складов, и общая куча списала бы всё с первого попавшегося.
+    nuzhno: dict[tuple[int, int | None], int] = {}
     for stroka in stroki:
-        nuzhno[stroka.product_id] = nuzhno.get(stroka.product_id, 0) + stroka.quantity_milli
-        sklady.setdefault(stroka.product_id, stroka.warehouse_id)
+        klyuch = (stroka.product_id, stroka.warehouse_id)
+        nuzhno[klyuch] = nuzhno.get(klyuch, 0) + stroka.quantity_milli
 
-    spisano = warehouse_repo.spisano_po_zayavkam(db, list(nuzhno))
+    tovary = {product_id for product_id, _ in nuzhno}
+    spisano = warehouse_repo.spisano_po_zayavkam(db, list(tovary))
+    peredano = (
+        documents_repo.zakazano_po_zayavkam(
+            db, KIND_SALES_ORDER, OPEN_ORDER_STATUSES, list(tovary)
+        )
+        if modules_service.is_enabled(db, "orders")
+        else {}
+    )
+
     po_umolchaniyu = None
     spisano_pozitsiy = 0
+    # Вычитаемые считаны на товар целиком, а списываем по складам — держим
+    # остаток вычитаемого и тратим его по мере обхода, иначе каждая пара
+    # вычитала бы одно и то же ещё раз.
+    ostatok_vychetov = {
+        product_id: spisano.get((deal.id, product_id), 0)
+        + peredano.get((deal.id, product_id), 0)
+        for product_id in tovary
+    }
 
-    for product_id, kolichestvo in nuzhno.items():
-        ostalos = kolichestvo - spisano.get((deal.id, product_id), 0)
+    for (product_id, sklad), kolichestvo in nuzhno.items():
+        vychet = min(ostatok_vychetov.get(product_id, 0), kolichestvo)
+        ostatok_vychetov[product_id] = ostatok_vychetov.get(product_id, 0) - vychet
+        ostalos = kolichestvo - vychet
         if ostalos <= 0:
             continue
         tovar = warehouse_repo.get_product(db, product_id, include_deleted=True)
         if tovar is None or tovar.is_service:
             continue
-        sklad = sklady.get(product_id)
         if sklad is None:
             # Склад у строки не назван — берём основной (решение владельца
-            # 30.08.2026). У большинства склад один, и вопрос «с какого» для них
-            # не существует; в самом движении склад записан, так что молчаливым
-            # решение остаётся только на входе.
+            # 30.08.2026): у большинства он один. В самом движении склад записан.
             if po_umolchaniyu is None:
                 po_umolchaniyu = warehouse_service.default_warehouse(db)
             sklad = po_umolchaniyu.id
@@ -218,6 +261,10 @@ def spisat_pri_zakrytii(db: Session, deal: Deal, author: User | None) -> int:
                 "comment": f"written off on closing deal {deal.id}",
             },
             author,
+            # Товар мог быть удалён из справочника уже после набора строки.
+            # Без этого закрытие заявки отвечало бы 404, и закрыть её было бы
+            # нельзя ничем: подписчик — `participant`, он валит смену этапа.
+            allow_deleted=True,
         )
         spisano_pozitsiy += 1
     return spisano_pozitsiy
@@ -233,6 +280,34 @@ def _otkrytaya(db: Session, deal_id: int) -> Deal:
     if deal.closed_at is not None:
         raise errors.ValidationError("The deal is closed", code="deal_closed")
     return deal
+
+
+def _sklad(db: Session, data: dict, tovar) -> int | None:
+    """С какого склада берём товар строки. None — брать неоткуда и не надо.
+
+    У своей траты и у услуги склада нет по существу: упаковку не берут с полки,
+    а выезд мастера не лежит нигде. Присланный для них склад — это ошибка
+    звонящего, и молчаливо принять его значит однажды объяснять, почему списание
+    ушло не с того места.
+
+    Не назвали — оставляем пусто, а не подставляем основной ЗДЕСЬ: склад по
+    умолчанию берётся в момент списания (§Р4). Записать его в строку заранее
+    значит соврать о выборе, которого человек не делал, — и оставить старый
+    склад в строке, если основной потом сменят.
+    """
+    if "warehouse_id" not in data or data["warehouse_id"] is None:
+        return None
+    if tovar is None or tovar.is_service:
+        raise errors.ValidationError(
+            "This line takes nothing from a warehouse", code="line_has_no_warehouse"
+        )
+    return warehouse_service.get_warehouse(db, data["warehouse_id"]).id
+
+
+def _tovar_stroki(db: Session, stroka: DealLine):
+    if stroka.product_id is None:
+        return None
+    return warehouse_repo.get_product(db, stroka.product_id, include_deleted=True)
 
 
 def _stroka(db: Session, deal_id: int, line_id: int) -> DealLine:
@@ -281,7 +356,9 @@ def _tovar(db: Session, data: dict):
     if not sku and not product_id:
         return None
     tovar = (
-        warehouse_repo.get_product(db, product_id)
+        # Вместе с удалёнными: «товар удалён» и «нет такого товара» — разные
+        # беды, и человеку нужно знать, какая из них.
+        warehouse_repo.get_product(db, product_id, include_deleted=True)
         if product_id
         else warehouse_repo.get_by_sku(db, sku)
     )

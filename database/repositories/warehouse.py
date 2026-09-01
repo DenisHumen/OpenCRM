@@ -13,7 +13,12 @@ from sqlalchemy import Select, func, or_, select, update
 from sqlalchemy.orm import Session
 
 from database.models import Product, ProductBarcode, ProductPhoto, StockMove
-from database.models.warehouse import QUANTITY_SCALE
+from database.models.warehouse import (
+    MOVE_OUT,
+    MOVE_RETURN,
+    MOVE_WRITEOFF,
+    QUANTITY_SCALE,
+)
 from database.query import as_int, contains, page_of
 
 
@@ -486,6 +491,15 @@ def moves_of_document(db: Session, document_id: int) -> list[StockMove]:
     )
 
 
+#: Виды движений, которые означают «ушло со склада под заявку», и возврат к ним.
+#:
+#: Приход сюда не входит НАМЕРЕННО. Закупка под клиента цепляется к заявке, и
+#: приходная накладная наследует её `deal_id` — сложи их со знаком, и величина
+#: уйдёт в минус, а закрытие спишет вдвое больше, чем в строках. Корректировка
+#: по инвентаризации к заявке отношения не имеет тем более.
+VIDY_UHODA = (MOVE_OUT, MOVE_WRITEOFF, MOVE_RETURN)
+
+
 def spisano_po_zayavkam(db: Session, product_ids=None) -> dict[tuple[int, int], int]:
     """Сколько товара уже ушло со склада под каждую заявку: {(заявка, товар): тысячные}.
 
@@ -494,10 +508,9 @@ def spisano_po_zayavkam(db: Session, product_ids=None) -> dict[tuple[int, int], 
     учитывается сам собой; считая по накладным, пришлось бы отдельно вычитать
     сторно и помнить об этом вечно. Тот же довод, что у `documents.promised`.
 
-    Знак приводим к «сколько ушло»: расход отрицателен, поэтому берём минус
-    суммы. Вернули больше, чем взяли, — величина уходит в минус, и обрезать её
-    здесь нельзя: вызывающий вычитает её из нужды заявки, и обрезка молча
-    завысила бы бронь.
+    Обрезаем нулём на КАЖДОЙ паре: вернули больше, чем отгрузили, — величина
+    ушла бы в минус, а вызывающий вычитает её, то есть минус РАЗДУЛ бы и бронь,
+    и списание. Тот же приём, что у `documents._otgruzheno_po_zakazam`.
     """
     zapros = (
         select(
@@ -505,7 +518,7 @@ def spisano_po_zayavkam(db: Session, product_ids=None) -> dict[tuple[int, int], 
             StockMove.product_id,
             -func.coalesce(func.sum(StockMove.quantity_milli), 0),
         )
-        .where(StockMove.deal_id.is_not(None))
+        .where(StockMove.deal_id.is_not(None), StockMove.kind.in_(VIDY_UHODA))
         .group_by(StockMove.deal_id, StockMove.product_id)
     )
     if product_ids is not None:
@@ -513,6 +526,6 @@ def spisano_po_zayavkam(db: Session, product_ids=None) -> dict[tuple[int, int], 
             return {}
         zapros = zapros.where(StockMove.product_id.in_(product_ids))
     return {
-        (zayavka, tovar): as_int(skolko)
+        (zayavka, tovar): max(0, as_int(skolko))
         for zayavka, tovar, skolko in db.execute(zapros).all()
     }
