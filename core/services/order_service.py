@@ -41,6 +41,7 @@ from core.services import (
     client_service,
     document_service,
     modules_service,
+    reserve_service,
     warehouse_service,
     waybill_service,
 )
@@ -102,43 +103,23 @@ MAX_CLIENT_CANDIDATES = 6
 
 
 def reserved(db: Session, product_ids: list[int] | None = None) -> dict[int, int]:
-    """Сколько обещано покупателям по неотгруженным заказам: {product_id: тысячные}."""
-    return documents_repo.promised(db, KIND_SALES_ORDER, OPEN_ORDER_STATUSES, product_ids)
+    """Сколько обещано покупателям — заказами И открытыми заявками.
+
+    Расчёт переехал в `reserve_service`: блок заказов выключается, а заявки
+    обязаны бронировать и без него. Обёртка оставлена, чтобы зовущие не
+    переписывались в том же коммите.
+    """
+    return reserve_service.reserved(db, product_ids)
 
 
 def expected(db: Session, product_ids: list[int] | None = None) -> dict[int, int]:
     """Сколько приедет по заказам поставщику. Нужно, чтобы не заказать дважды."""
-    return documents_repo.promised(db, KIND_PURCHASE_ORDER, OPEN_ORDER_STATUSES, product_ids)
+    return reserve_service.expected(db, product_ids)
 
 
 def availability(db: Session, product_ids: list[int]) -> dict[int, dict[str, int]]:
-    """Остаток, резерв, ожидается и доступно — по каждому товару.
-
-    Три запроса на весь список, а не три на строку.
-
-    Блок заказов выключен — резерва и ожидания не существует, и «доступно»
-    снова равно остатку. Это правильно: раздела нет, обещаний тоже. Проверка
-    здесь, а не в реестре зависимостей: склад работает и без заказов, и
-    объявлять эту связь жёсткой значило бы запретить склад тому, кому заказы не
-    нужны (см. `core/modules.py`).
-    """
-    if not product_ids:
-        return {}
-    stock = warehouse_repo.stock_by_product(db, product_ids)
-    if modules_service.is_enabled(db, "orders"):
-        hold = reserved(db, product_ids)
-        coming = expected(db, product_ids)
-    else:
-        hold, coming = {}, {}
-    return {
-        product_id: {
-            "stock_milli": stock.get(product_id, 0),
-            "reserved_milli": hold.get(product_id, 0),
-            "expected_milli": coming.get(product_id, 0),
-            "available_milli": stock.get(product_id, 0) - hold.get(product_id, 0),
-        }
-        for product_id in product_ids
-    }
+    """Остаток, бронь, ожидается и доступно. Считает `reserve_service`."""
+    return reserve_service.availability(db, product_ids)
 
 
 # --- заказ --------------------------------------------------------------------

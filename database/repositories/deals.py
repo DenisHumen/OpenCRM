@@ -407,3 +407,10 @@ def pereselit_iz_etapov(
         execution_options={"synchronize_session": False},
     )
     return itog.rowcount or 0
+
+
+def by_ids(db: Session, deal_ids) -> list[Deal]:
+    """Заявки по списку номеров. Пустой список — пустой ответ, без запроса."""
+    if not deal_ids:
+        return []
+    return list(db.scalars(select(Deal).where(Deal.id.in_(deal_ids))))

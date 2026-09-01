@@ -13,6 +13,7 @@ import {
 } from "../components/Warehouses";
 import { ConfirmModal, Dochitat, EmptyState, ScreenLoading } from "../components/ui";
 import { api, ApiError } from "../lib/api";
+import { ProductHolders } from "../components/ProductHolders";
 import { useApp } from "../lib/app";
 import { useFailure } from "../lib/failure";
 import { useGuard } from "../lib/guard";
@@ -197,6 +198,8 @@ export function ProductCard() {
           </div>
         )}
       </div>
+      <ProductHolders productId={product.id} />
+
 
       {!product.is_service && (
         <MoveForm product={product} places={places} onSaved={() => void load()} />

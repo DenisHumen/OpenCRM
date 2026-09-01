@@ -15,6 +15,7 @@ type Stroka = {
   quantity_milli: number;
   price_minor: number | null;
   total_minor: number | null;
+  shortage_milli: number;
   kind: "product" | "extra";
 };
 
@@ -157,6 +158,13 @@ export function DealLines({ dealId, closed }: { dealId: number; closed: boolean 
               <span style={{ color: "var(--faint)", fontSize: 12 }}>{t("extraCost")}</span>
             )}
             <span style={{ color: "var(--muted)" }}>{formatQuantity(s.quantity_milli)}</span>
+            {/* Нехватка КРАСИТСЯ, а не запрещается: продавать то, что ещё едет,
+                обычное дело, и отказ сломал бы работу вместо помощи. */}
+            {s.shortage_milli > 0 && (
+              <span style={{ color: "var(--warning)", fontSize: 12 }}>
+                {t("shortBy", { n: formatQuantity(s.shortage_milli) })}
+              </span>
+            )}
             <span style={{ color: "var(--faint)", width: 100, textAlign: "right" }}>
               {s.total_minor === null ? "—" : formatMoney(s.total_minor, currency, locale)}
             </span>

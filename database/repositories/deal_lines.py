@@ -8,7 +8,7 @@ Python по загруженным строкам: список строк на 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from database.models import DealLine
+from database.models import Deal, DealLine
 
 
 def list_for_deal(db: Session, deal_id: int) -> list[DealLine]:
@@ -98,3 +98,37 @@ def by_product(db: Session, product_id: int) -> list[DealLine]:
             .order_by(DealLine.deal_id)
         )
     )
+
+
+def po_otkrytym_zayavkam(db: Session, product_ids=None) -> dict[tuple[int, int], int]:
+    """Сколько товара обещано строками ОТКРЫТЫХ заявок: {(заявка, товар): тысячные}.
+
+    Закрытая заявка не держит ничего: товар по ней либо ушёл, либо не уйдёт
+    никогда. Удалённая — тем более. Оба условия здесь, а не у вызывающего:
+    забыть одно из них значит держать в брони товар, который никто не ждёт.
+
+    Один запрос на весь список товаров, а не на каждый: экран склада из 500
+    позиций иначе превратился бы в 500 обращений к базе.
+    """
+    zapros = (
+        select(
+            DealLine.deal_id,
+            DealLine.product_id,
+            func.coalesce(func.sum(DealLine.quantity_milli), 0),
+        )
+        .join(Deal, Deal.id == DealLine.deal_id)
+        .where(
+            DealLine.product_id.is_not(None),
+            Deal.closed_at.is_(None),
+            Deal.deleted_at.is_(None),
+        )
+        .group_by(DealLine.deal_id, DealLine.product_id)
+    )
+    if product_ids is not None:
+        if not product_ids:
+            return {}
+        zapros = zapros.where(DealLine.product_id.in_(product_ids))
+    return {
+        (zayavka, tovar): int(skolko)
+        for zayavka, tovar, skolko in db.execute(zapros).all()
+    }

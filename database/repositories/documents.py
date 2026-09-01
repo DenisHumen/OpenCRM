@@ -339,3 +339,60 @@ def add_line(db: Session, line: DocumentLine) -> DocumentLine:
 def drop_line(db: Session, line: DocumentLine) -> None:
     db.delete(line)
     db.flush()
+
+
+def zakazano_po_zayavkam(db: Session, kind: str, statuses, product_ids=None):
+    """Сколько товара заявки уже стоит в её открытых заказах: {(заявка, товар): тысячные}.
+
+    Это НЕ резерв, а «уже передано заказу». Резерв заказа считает `promised` —
+    он же вычитает отгруженное. Здесь вычитать нечего: вопрос другой — какую
+    часть нужды заявки заказ уже взял на себя, чтобы заявка не забронировала то
+    же самое второй раз (`docs/19-sborka-zakaza.md` §Р3).
+
+    Отгруженное не вычитается СОЗНАТЕЛЬНО. Отгрузили по заказу — товара нет ни у
+    заявки, ни у заказа, и бронировать его снова нельзя: `promised` его уже
+    отпустил, а заявка отпускает через списанное (`stock_moves.deal_id`).
+    """
+    zapros = (
+        select(
+            Document.deal_id,
+            DocumentLine.product_id,
+            func.coalesce(func.sum(DocumentLine.quantity_milli), 0),
+        )
+        .join(Document, Document.id == DocumentLine.document_id)
+        .where(
+            Document.kind == kind,
+            Document.status.in_(tuple(statuses)),
+            Document.deal_id.is_not(None),
+            DocumentLine.product_id.is_not(None),
+        )
+        .group_by(Document.deal_id, DocumentLine.product_id)
+    )
+    if product_ids is not None:
+        if not product_ids:
+            return {}
+        zapros = zapros.where(DocumentLine.product_id.in_(product_ids))
+    return {
+        (zayavka, tovar): as_int(skolko)
+        for zayavka, tovar, skolko in db.execute(zapros).all()
+    }
+
+
+def otkrytye_s_tovarom(db: Session, kind: str, statuses, product_id: int):
+    """Открытые бланки этого вида, где стоит товар: [(бланк, тысячные)].
+
+    Для ответа «кто держит товар»: заказ показывается номером, а не номером
+    записи, — по рации называют именно его.
+    """
+    ryady = db.execute(
+        select(Document, func.coalesce(func.sum(DocumentLine.quantity_milli), 0))
+        .join(DocumentLine, DocumentLine.document_id == Document.id)
+        .where(
+            Document.kind == kind,
+            Document.status.in_(tuple(statuses)),
+            DocumentLine.product_id == product_id,
+        )
+        .group_by(Document.id)
+        .order_by(Document.id)
+    ).all()
+    return [(bumaga, as_int(skolko)) for bumaga, skolko in ryady]

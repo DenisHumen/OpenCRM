@@ -484,3 +484,35 @@ def moves_of_document(db: Session, document_id: int) -> list[StockMove]:
             .order_by(StockMove.id.asc())
         )
     )
+
+
+def spisano_po_zayavkam(db: Session, product_ids=None) -> dict[tuple[int, int], int]:
+    """Сколько товара уже ушло со склада под каждую заявку: {(заявка, товар): тысячные}.
+
+    Считается по движениям, а не по бумагам: бумагу можно сторнировать, и сторно
+    — это тоже движение, обратное по знаку. Считая по движениям, возврат
+    учитывается сам собой; считая по накладным, пришлось бы отдельно вычитать
+    сторно и помнить об этом вечно. Тот же довод, что у `documents.promised`.
+
+    Знак приводим к «сколько ушло»: расход отрицателен, поэтому берём минус
+    суммы. Вернули больше, чем взяли, — величина уходит в минус, и обрезать её
+    здесь нельзя: вызывающий вычитает её из нужды заявки, и обрезка молча
+    завысила бы бронь.
+    """
+    zapros = (
+        select(
+            StockMove.deal_id,
+            StockMove.product_id,
+            -func.coalesce(func.sum(StockMove.quantity_milli), 0),
+        )
+        .where(StockMove.deal_id.is_not(None))
+        .group_by(StockMove.deal_id, StockMove.product_id)
+    )
+    if product_ids is not None:
+        if not product_ids:
+            return {}
+        zapros = zapros.where(StockMove.product_id.in_(product_ids))
+    return {
+        (zayavka, tovar): as_int(skolko)
+        for zayavka, tovar, skolko in db.execute(zapros).all()
+    }

@@ -11,7 +11,7 @@
 from sqlalchemy.orm import Session
 
 from core import exceptions as errors
-from core.services import warehouse_service
+from core.services import reserve_service, warehouse_service
 from core.services.deal_service import get_deal, parse_money
 from core.utils import now_utc
 from database.models import Deal, DealLine
@@ -134,6 +134,28 @@ def stroka_out(stroka: DealLine) -> dict:
         "kind": "extra" if stroka.product_id is None else "product",
         "sort_order": stroka.sort_order,
     }
+
+
+def s_nehvatkoy(db: Session, stroki: list[DealLine]) -> list[dict]:
+    """Строки для ответа вместе с нехваткой по каждой.
+
+    Наличие спрашивается ОДНИМ запросом на все товары списка, а не по запросу на
+    строку: заявка на два десятка позиций иначе била бы в базу два десятка раз
+    ради одной таблички на экране.
+
+    Нехватка — предупреждение, а не отказ (см. `reserve_service.nehvatka`).
+    """
+    tovary = [s.product_id for s in stroki if s.product_id is not None]
+    est = reserve_service.availability(db, tovary) if tovary else {}
+    otvet = []
+    for stroka in stroki:
+        kusok = stroka_out(stroka)
+        dostupno = est.get(stroka.product_id or 0, {}).get("available_milli")
+        kusok["shortage_milli"] = (
+            -dostupno if dostupno is not None and dostupno < 0 else 0
+        )
+        otvet.append(kusok)
+    return otvet
 
 
 def _otkrytaya(db: Session, deal_id: int) -> Deal:
