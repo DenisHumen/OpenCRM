@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from config.settings import get_settings
 from core import exceptions as errors
+from core import strany
 from core.security import tokens
 from core.services import (
     audit_service,
@@ -173,6 +174,59 @@ def get_client(db: Session, client_id: int, include_deleted: bool = False) -> Cl
     return client
 
 
+#: Поля адреса: колонка, ширина, подпись в отказе, код отказа.
+#:
+#: Длина проверяется здесь, а не оставляется базе: строка длиннее колонки роняет
+#: вставку отказом `Data too long for column`, и магазин, приславший длинный
+#: адрес, получил бы пятисотку вместо внятного «слишком длинно». Та же беда уже
+#: случалась с почтой заявки — см. `lead_service`.
+POLYA_ADRESA = (
+    ("city", 120, "City", "city_too_long"),
+    ("zip_code", 20, "Postal code", "zip_too_long"),
+    ("address", 300, "Address", "address_too_long"),
+)
+
+
+def _chistoe_pole(value, limit: int, *, label: str, code: str) -> str:
+    tekst = (value or "").strip()
+    if len(tekst) > limit:
+        raise errors.ValidationError(
+            f"{label} is too long (max {limit} characters)", code=code
+        )
+    return tekst
+
+
+def _chistaya_strana(value) -> str:
+    """Код страны ISO 3166-1 alpha-2 либо пусто.
+
+    Двумя буквами, а не названием: название пишут по-разному («США», «USA»,
+    «Соединённые Штаты»), и ни отбора, ни расчёта доставки по нему не собрать.
+    Регистр приводим сами — пришедшее с сайта `ua` обязано лечь как `UA`, иначе
+    один и тот же адрес даст две разные страны.
+    """
+    kod = (value or "").strip().upper()
+    if not kod:
+        return ""
+    if len(kod) != 2 or not kod.isascii() or not kod.isalpha():
+        raise errors.ValidationError(
+            "Country must be a two-letter ISO code", code="country_invalid"
+        )
+    return kod
+
+
+def _adres_iz(data: dict, *, phone_norm: str = "") -> dict:
+    adres = {
+        imya: _chistoe_pole(data.get(imya), limit, label=label, code=code)
+        for imya, limit, label, code in POLYA_ADRESA
+    }
+    # Страну подсказывает код номера, если её не назвали: она уже названа —
+    # первыми цифрами телефона, — и спрашивать её второй раз незачем.
+    adres["country"] = _chistaya_strana(data.get("country")) or strany.strana_po_nomeru(
+        phone_norm
+    )
+    return adres
+
+
 def create_client(db: Session, data: dict, author: User) -> Client:
     if not (data.get("name") or "").strip():
         raise errors.ValidationError("Name is required", code="name_required")
@@ -187,6 +241,7 @@ def create_client(db: Session, data: dict, author: User) -> Client:
         tags=_normalize_tags(data.get("tags")),
         source=_normalize_source(data.get("source")),
         manager_id=data.get("manager_id") or author.id,
+        **_adres_iz(data, phone_norm=_normalize_phone_for(db, phone)),
     )
     db.add(client)
     db.flush()
@@ -195,6 +250,7 @@ def create_client(db: Session, data: dict, author: User) -> Client:
 
 def update_client(db: Session, client_id: int, data: dict) -> Client:
     client = get_client(db, client_id)
+    bylo_norm = client.phone_norm
     for field in ("name", "company", "phone", "email", "messenger"):
         if field in data and data[field] is not None:
             value = data[field].strip()
@@ -213,6 +269,19 @@ def update_client(db: Session, client_id: int, data: dict) -> Client:
         client.source = _normalize_source(data["source"])
     if "manager_id" in data:
         client.manager_id = data["manager_id"]
+    # Адрес правится по частям: прислали один город — меняется только он.
+    for imya, limit, label, code in POLYA_ADRESA:
+        if imya in data:
+            setattr(client, imya, _chistoe_pole(data[imya], limit, label=label, code=code))
+    if client.phone_norm != bylo_norm:
+        # Страна едет за номером, но только если в карточке стоит ровно то, что
+        # говорил ПРЕЖНИЙ номер: значит её никто не правил руками. Иначе правка
+        # телефона молча затирала бы страну, названную человеком.
+        if client.country == strany.strana_po_nomeru(bylo_norm):
+            client.country = strany.strana_po_nomeru(client.phone_norm) or client.country
+    # Названная явно страна сильнее подсказки по номеру — поэтому ниже, а не выше.
+    if "country" in data:
+        client.country = _chistaya_strana(data["country"])
     client.updated_at = now_utc()
     return client
 

@@ -60,6 +60,12 @@ class ClientIn(BaseModel):
     email: str | None = None
     messenger: str | None = None
     tags: str | list[str] | None = None
+    # Адрес для отправки. `country` — код ISO 3166-1 alpha-2 (`UA`, `PL`),
+    # регистр приводится сервисом. Разбор — docs/19-sborka-zakaza.md §Р7.
+    country: str | None = None
+    city: str | None = None
+    zip_code: str | None = None
+    address: str | None = None
     # Откуда пришёл: ключ из справочника или своё слово. Пусто и null означают
     # одно — «не спросили»; это НЕ то же самое, что источник «другое».
     source: str | None = None
@@ -139,6 +145,12 @@ class ClientPatchIn(BaseModel):
     email: str | None = None
     messenger: str | None = None
     tags: str | list[str] | None = None
+    # Адрес для отправки. `country` — код ISO 3166-1 alpha-2 (`UA`, `PL`),
+    # регистр приводится сервисом. Разбор — docs/19-sborka-zakaza.md §Р7.
+    country: str | None = None
+    city: str | None = None
+    zip_code: str | None = None
+    address: str | None = None
     source: str | None = None
     manager_id: int | None = None
 
@@ -330,6 +342,10 @@ def client_out(client: Client) -> dict:
         "phone": client.phone,
         "email": client.email,
         "messenger": client.messenger,
+        "country": client.country,
+        "city": client.city,
+        "zip_code": client.zip_code,
+        "address": client.address,
         "tags": [t for t in client.tags.split(",") if t],
         # null, а не пустая строка: интерфейс обязан отличать «не спросили» от
         # выбранного источника, а пустая строка выглядит как выбор.

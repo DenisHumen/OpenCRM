@@ -354,3 +354,138 @@ def test_fayl_klienta_proveryaetsya_po_soderzhimomu(manager_client):
         f"наружу ушёл присланный тип: {otdacha.headers['content-type']}"
     )
     assert otdacha.headers.get("x-content-type-options") == "nosniff"
+
+
+def test_adres_zapisyvaetsya_i_otdayotsya(manager_client):
+    """Адрес отправки: четыре поля, а не одна строка. Разбор — docs/19 §Р7."""
+    klient = _create(
+        manager_client,
+        name=f"Получатель {uniq()}",
+        country="ua",
+        city="Киев",
+        zip_code="01001",
+        address="ул. Крещатик, 1, кв. 5",
+    )
+    # Код страны приводится к верхнему регистру: пришедшее с сайта `ua` и
+    # набранное руками `UA` — одна и та же страна, а не две.
+    assert klient["country"] == "UA"
+    assert klient["city"] == "Киев"
+    assert klient["zip_code"] == "01001"
+
+    kartochka = manager_client.get(f"{API}/clients/{klient['id']}").json()
+    assert kartochka["address"] == "ул. Крещатик, 1, кв. 5"
+
+
+def test_adres_pravitsya_po_chastyam(manager_client):
+    klient = _create(manager_client, name=f"Переезд {uniq()}", city="Львов", zip_code="79000")
+    otvet = manager_client.patch(f"{API}/clients/{klient['id']}", json={"city": "Одесса"})
+    assert otvet.status_code == 200, otvet.text
+    assert otvet.json()["city"] == "Одесса"
+    assert otvet.json()["zip_code"] == "79000", "прислали город, а сбросился индекс"
+
+
+def test_pustoy_adres_norma(manager_client):
+    """Половина клиентов забирает сама — пустой адрес это не дыра в данных."""
+    klient = _create(manager_client, name=f"Самовывоз {uniq()}")
+    assert klient["country"] == "" and klient["city"] == ""
+    assert klient["zip_code"] == "" and klient["address"] == ""
+
+
+def test_strana_tolko_dvumya_bukvami(manager_client):
+    """Название страны пишут по-разному, и отбор по нему не собрать."""
+    otkaz = manager_client.post(
+        f"{API}/clients", json={"name": f"Страна {uniq()}", "country": "Украина"}
+    )
+    assert otkaz.status_code == 422, otkaz.text
+    assert otkaz.json()["error"]["code"] == "country_invalid"
+
+
+def test_dlinnyy_adres_otkaz_a_ne_pyatisotka(manager_client):
+    """Строка длиннее колонки роняла бы вставку отказом базы.
+
+    Магазин, приславший длинный адрес, получал бы 500 вместо «слишком длинно».
+    """
+    otkaz = manager_client.post(
+        f"{API}/clients", json={"name": f"Длинный {uniq()}", "address": "у" * 301}
+    )
+    assert otkaz.status_code == 422, otkaz.text
+    assert otkaz.json()["error"]["code"] == "address_too_long"
+
+
+def test_strana_po_kodu_nomera():
+    """Код набора называет страну — спрашивать её второй раз незачем."""
+    from core.strany import strana_po_nomeru
+
+    assert strana_po_nomeru("380671234567") == "UA"
+    assert strana_po_nomeru("48123456789") == "PL"
+    assert strana_po_nomeru("79161234567") == "RU"
+    # Казахстан делит «+7» с Россией, но расходится во второй цифре.
+    assert strana_po_nomeru("77011234567") == "KZ"
+    assert strana_po_nomeru("38512345678") == "HR"
+
+
+def test_ni_odin_kod_ne_pristavka_drugogo():
+    """Приставочных пар в таблице нет — и подбор от длинного к короткому это
+    страхует, а не чинит.
+
+    Проверка стоит здесь ради ПОПОЛНЕНИЯ таблицы: добавят `1` рядом с `12` — и
+    все номера второй страны молча станут первой. Поймать это глазами нельзя,
+    потому что ломается не добавленная строка, а соседняя.
+    """
+    from core.strany import KODY_STRAN
+
+    kody = sorted(KODY_STRAN)
+    pary = [
+        (korotkiy, dlinnyy)
+        for korotkiy in kody
+        for dlinnyy in kody
+        if dlinnyy != korotkiy and dlinnyy.startswith(korotkiy)
+    ]
+    assert not pary, f"код — приставка другого: {pary[:5]}"
+
+
+def test_obshchiy_kod_ne_dayot_strany():
+    """`+1` — это и США, и Канада. Флаг наугад хуже отсутствующего: по нему
+    однажды посчитают доставку по чужому тарифу, и заметят это на почте."""
+    from core.strany import strana_po_nomeru
+
+    assert strana_po_nomeru("12125551234") == ""
+    # Местный номер без кода страны тоже молчит — дописать чужую страну хуже,
+    # чем не дописать никакой (тот же довод, что у normalize_phone).
+    assert strana_po_nomeru("0671234567") == ""
+    assert strana_po_nomeru("") == ""
+
+
+def test_strana_podstavlyaetsya_iz_nomera(manager_client):
+    klient = _create(manager_client, name=f"По номеру {uniq()}", phone="+380 67 123 45 67")
+    assert klient["country"] == "UA"
+
+
+def test_nazvannaya_strana_silnee_nomera(manager_client):
+    """Человек сказал страну явно — подсказка по номеру её не перебивает."""
+    klient = _create(
+        manager_client, name=f"Явно {uniq()}", phone="+380 67 123 45 67", country="PL"
+    )
+    assert klient["country"] == "PL"
+
+
+def test_strana_edet_za_nomerom_poka_s_ney_ne_sporili(manager_client):
+    klient = _create(manager_client, name=f"Переезд {uniq()}", phone="+380 67 123 45 67")
+    assert klient["country"] == "UA"
+
+    stalo = manager_client.patch(
+        f"{API}/clients/{klient['id']}", json={"phone": "+48 12 345 67 89"}
+    )
+    assert stalo.status_code == 200, stalo.text
+    assert stalo.json()["country"] == "PL", "страна осталась от прежнего номера"
+
+
+def test_ruchnaya_strana_perezhivaet_pravku_nomera(manager_client):
+    """Правка телефона не имеет права молча затирать страну, названную человеком."""
+    klient = _create(
+        manager_client, name=f"Своя страна {uniq()}", phone="+380 67 123 45 67", country="DE"
+    )
+    stalo = manager_client.patch(
+        f"{API}/clients/{klient['id']}", json={"phone": "+48 12 345 67 89"}
+    )
+    assert stalo.json()["country"] == "DE"

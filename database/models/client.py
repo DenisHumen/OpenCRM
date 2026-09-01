@@ -44,6 +44,17 @@ class Client(Base):
     phone_norm: Mapped[str] = mapped_column(String(32), default="", index=True)
     email: Mapped[str] = mapped_column(String(255), default="")
     messenger: Mapped[str] = mapped_column(String(255), default="")
+    # Адрес для отправки. Четыре колонки, а не одна строка: индекс нужен
+    # отдельно (расчёт доставки), город отдельно (выбор склада отгрузки),
+    # страна отдельно (совсем другая доставка). Разбор — docs/19 §Р7.
+    #
+    # Пустая строка, а не NULL: пустой адрес — норма, а два вида пустоты в
+    # одном поле дают вечное `IS NULL OR = ""` во всех запросах.
+    country: Mapped[str] = mapped_column(String(2), default="", server_default="")
+    city: Mapped[str] = mapped_column(String(120), default="", server_default="")
+    # Индекс почтовый, а не число: в Канаде и Британии в нём буквы.
+    zip_code: Mapped[str] = mapped_column(String(20), default="", server_default="")
+    address: Mapped[str] = mapped_column(String(300), default="", server_default="")
     tags: Mapped[str] = mapped_column(String(500), default="")  # comma-separated (MVP)
     # Источник — ключом, а не ссылкой на справочник (цена таблицы и почему не
     # наоборот — docs/03-database.md, «clients»). NULL и "other" не сливать:

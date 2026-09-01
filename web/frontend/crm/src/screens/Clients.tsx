@@ -16,6 +16,7 @@ import { useDebounced } from "../lib/debounce";
 import { useFailure } from "../lib/failure";
 import { useGuard } from "../lib/guard";
 import { copyText } from "../lib/clipboard";
+import { flagStrany } from "../lib/strany";
 import { initials, relativeDay } from "../lib/format";
 
 /** По скольку клиентов дочитывается список. */
@@ -191,7 +192,16 @@ export function Clients() {
               <div style={{ color: "var(--faint)", fontSize: 12 }}>{client.company}</div>
             </div>
             <div style={{ width: 190, flexShrink: 0 }}>
-              <div style={{ color: "var(--muted)", fontSize: 12.5 }}>{client.phone}</div>
+              <div style={{ color: "var(--muted)", fontSize: 12.5 }}>
+                {/* В списке — флагом и кодом: строка узкая, а название страны
+                    съело бы место у телефона, ради которого столбец и заведён. */}
+                {client.country && (
+                  <span style={{ color: "var(--faint)" }}>
+                    {flagStrany(client.country)} {client.country}{" "}
+                  </span>
+                )}
+                {client.phone}
+              </div>
               <div style={{ color: "var(--faint)", fontSize: 12 }}>{client.email}</div>
             </div>
             <div style={{ width: 170, display: "flex", gap: 6, flexShrink: 0, flexWrap: "wrap" }}>
