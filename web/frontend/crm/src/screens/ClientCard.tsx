@@ -11,6 +11,7 @@ import { Avatar, Chip, ConfirmModal, Dochitat, EmptyState, LoadFailed, ScreenLoa
 import { api, ApiError } from "../lib/api";
 import { dropTarget } from "../lib/dnd";
 import { useApp } from "../lib/app";
+import { flagStrany, nazvanieStrany } from "../lib/strany";
 import { useFailure } from "../lib/failure";
 import { useGuard } from "../lib/guard";
 import type { TranslationKey } from "../lib/i18n";
@@ -245,6 +246,24 @@ export function ClientCard() {
     { field: "company", label: t("company"), value: client.company },
   ];
 
+  // Адрес отдельно от контактов: контакты отвечают «как дозвониться», адрес —
+  // «куда везти», и спрашивают их в разные моменты разговора.
+  const adres = [
+    {
+      field: "country",
+      label: t("country"),
+      value: client.country,
+      // В карточке — названием целиком: здесь на страну смотрят, когда решают,
+      // как везти, и `PL` в этот момент требует лишнего усилия.
+      display: client.country
+        ? `${flagStrany(client.country)} ${nazvanieStrany(client.country, locale)}`
+        : "",
+    },
+    { field: "city", label: t("city"), value: client.city },
+    { field: "zip_code", label: t("zipCode"), value: client.zip_code },
+    { field: "address", label: t("streetAddress"), value: client.address },
+  ];
+
   // Вкладки — списком, тем же правилом, что и меню: вкладка выключенного блока
   // исчезает целиком, а не остаётся заголовком над пустотой.
   const tabs = shown<Gated & { key: TabKey; label: string; count?: number }>(modules, [
@@ -346,6 +365,17 @@ export function ClientCard() {
             value={client.source ?? ""}
             onCommit={(next) => saveContact("source", next)}
           />
+        </div>
+      </div>
+
+      <div className="card" style={{ marginBottom: 28 }}>
+        <div className="metric-title" style={{ padding: "16px 18px 0" }}>
+          {t("shippingAddress")}
+        </div>
+        <div className="contact-grid">
+          {adres.map((pole) => (
+            <EditableContact key={pole.field} {...pole} onSave={saveContact} />
+          ))}
         </div>
       </div>
 
@@ -574,11 +604,15 @@ function EditableContact({
   field,
   label,
   value,
+  display,
   onSave,
 }: {
   field: string;
   label: string;
   value: string;
+  /** Что показать вместо значения, пока не правят: флаг и название страны.
+   *  Правится всё равно `value` — код, а не название. */
+  display?: string;
   onSave: (field: string, value: string) => void;
 }) {
   const [editing, setEditing] = useState(false);
@@ -608,7 +642,7 @@ function EditableContact({
           }}
         />
       ) : (
-        <div className="contact-value">{value || "—"}</div>
+        <div className="contact-value">{display || value || "—"}</div>
       )}
     </div>
   );
