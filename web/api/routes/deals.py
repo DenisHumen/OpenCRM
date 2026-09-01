@@ -376,7 +376,7 @@ def deal_lines(
     _visible(db, deal_id, user)
     stroki = deal_lines_service.spisok(db, deal_id)
     return {
-        "items": [deal_lines_service.stroka_out(s) for s in stroki],
+        "items": deal_lines_service.s_nehvatkoy(db, stroki),
         "total_minor": deal_lines_service.itog(db, deal_id),
     }
 
@@ -392,7 +392,9 @@ def add_deal_line(
 ):
     _visible(db, deal_id, user)
     stroka = deal_lines_service.dobavit(db, deal_id, payload.model_dump(exclude_unset=True))
-    return deal_lines_service.stroka_out(stroka)
+    # Нехватка отдаётся ответом на добавление: «добавили, но столько на складе
+    # не лежит» — это предупреждение, и сказать его нужно сразу.
+    return deal_lines_service.s_nehvatkoy(db, [stroka])[0]
 
 
 @router.patch(
@@ -409,7 +411,7 @@ def edit_deal_line(
     stroka = deal_lines_service.pravit(
         db, deal_id, line_id, payload.model_dump(exclude_unset=True)
     )
-    return deal_lines_service.stroka_out(stroka)
+    return deal_lines_service.s_nehvatkoy(db, [stroka])[0]
 
 
 @router.delete(

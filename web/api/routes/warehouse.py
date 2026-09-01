@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from core import exceptions as errors
 from core.services import (
     permissions_service,
+    reserve_service,
     product_photo_service,
     settings_service,
     warehouse_service,
@@ -206,6 +207,23 @@ def restore_product(
         warehouse_service.stock_of(db, product),
         amounts=permissions_service.sees_amounts(db, user, "warehouse"),
     )
+
+
+@router.get("/products/{product_id}/availability")
+def product_availability(
+    product_id: int,
+    user: User = Depends(require_perm("warehouse", "view")),
+    db: Session = Depends(get_db),
+):
+    """Остаток, бронь, ожидается, доступно — и КТО держит.
+
+    «Доступно 2 из 5» без ответа «а где остальные три» отправляет человека
+    искать их по всем заявкам руками. Держатели поэтому идут тем же ответом, а
+    не отдельной ручкой: спрашивают их всегда вместе с числом.
+    """
+    product = warehouse_service.get_product(db, product_id)
+    data = reserve_service.availability(db, [product.id]).get(product.id, {})
+    return {**data, "holders": reserve_service.derzhat(db, product.id)}
 
 
 @router.get("/products/{product_id}/moves")

@@ -1,0 +1,174 @@
+"""Бронь: сколько товара обещано и кто его держит.
+
+**Считается запросом и не хранится нигде.** Хранимое число разойдётся с
+обещаниями в первый же откат транзакции, и узнать потом, какое из двух верно,
+будет неоткуда. Отсюда же берётся правило «бронь не переживает того, кто её
+держит»: отменили заказ, закрыли заявку — обещание исчезло само, без единой
+строки кода на уборку.
+
+**Живёт здесь, а не в `order_service`.** Блок заказов выключается, а склад
+требует только заявки (`core/modules.py`): заявки обязаны бронировать и без
+заказов. Оставить расчёт внутри блока заказов значило бы выключить бронь вместе
+с ним.
+
+Два источника обещаний, и складывать их напрямую нельзя — заказ, заведённый из
+заявки, повторяет те же товары. Правило (`docs/19-sborka-zakaza.md` §Р3):
+
+    бронь(заявка, товар) = max(0, в строках заявки
+                                  − уже переданное её открытым заказам
+                                  − уже списанное со склада под неё)
+
+Ничего не помечается: «передано заказу» и «списано» — результаты запросов.
+"""
+
+from sqlalchemy.orm import Session
+
+from core.services import modules_service
+from database.models.document import KIND_SALES_ORDER, OPEN_ORDER_STATUSES
+from database.repositories import deal_lines as lines_repo
+from database.repositories import deals as deals_repo
+from database.repositories import documents as documents_repo
+from database.repositories import warehouse as warehouse_repo
+
+
+def po_zayavkam(db: Session, product_ids=None) -> dict[int, int]:
+    """Сколько держат открытые заявки: {товар: тысячные}."""
+    nuzhno = lines_repo.po_otkrytym_zayavkam(db, product_ids)
+    if not nuzhno:
+        return {}
+    # Заказов может не быть вовсе — блок выключен. Тогда заявка держит всё сама.
+    peredano = (
+        documents_repo.zakazano_po_zayavkam(
+            db, KIND_SALES_ORDER, OPEN_ORDER_STATUSES, product_ids
+        )
+        if modules_service.is_enabled(db, "orders")
+        else {}
+    )
+    spisano = warehouse_repo.spisano_po_zayavkam(db, product_ids)
+
+    itog: dict[int, int] = {}
+    for (zayavka, tovar), skolko in nuzhno.items():
+        # Обрезаем по нулю на КАЖДОЙ заявке отдельно, а не на итоге: отгрузив
+        # по одной заявке сверх набранного, иначе съели бы бронь соседней — а
+        # тот покупатель своего товара ждёт по-прежнему. Тот же довод, что у
+        # `documents.promised`.
+        ostalos = skolko - peredano.get((zayavka, tovar), 0) - spisano.get((zayavka, tovar), 0)
+        if ostalos > 0:
+            itog[tovar] = itog.get(tovar, 0) + ostalos
+    return itog
+
+
+def reserved(db: Session, product_ids=None) -> dict[int, int]:
+    """Вся бронь: заказы покупателей плюс открытые заявки."""
+    itog = dict(po_zayavkam(db, product_ids))
+    if modules_service.is_enabled(db, "orders"):
+        for tovar, skolko in documents_repo.promised(
+            db, KIND_SALES_ORDER, OPEN_ORDER_STATUSES, product_ids
+        ).items():
+            itog[tovar] = itog.get(tovar, 0) + skolko
+    return itog
+
+
+def expected(db: Session, product_ids=None) -> dict[int, int]:
+    """Сколько приедет по заказам поставщику. Нужно, чтобы не заказать дважды."""
+    if not modules_service.is_enabled(db, "orders"):
+        return {}
+    from database.models.document import KIND_PURCHASE_ORDER
+
+    return documents_repo.promised(
+        db, KIND_PURCHASE_ORDER, OPEN_ORDER_STATUSES, product_ids
+    )
+
+
+def availability(db: Session, product_ids: list[int]) -> dict[int, dict[str, int]]:
+    """Остаток, бронь, ожидается и доступно — по каждому товару.
+
+    Три запроса на весь список, а не три на строку.
+    """
+    if not product_ids:
+        return {}
+    stock = warehouse_repo.stock_by_product(db, product_ids)
+    hold = reserved(db, product_ids)
+    coming = expected(db, product_ids)
+    return {
+        product_id: {
+            "stock_milli": stock.get(product_id, 0),
+            "reserved_milli": hold.get(product_id, 0),
+            "expected_milli": coming.get(product_id, 0),
+            "available_milli": stock.get(product_id, 0) - hold.get(product_id, 0),
+        }
+        for product_id in product_ids
+    }
+
+
+def nehvatka(db: Session, product_id: int, nuzhno_milli: int) -> int:
+    """Сколько товара не хватает под ещё `nuzhno_milli`. 0 — хватает.
+
+    Отвечает на вопрос «а хватит ли», но НЕ запрещает: продавать то, что ещё
+    едет, — обычное дело, и отказ здесь сломал бы работу вместо того, чтобы
+    помочь. Число уходит в ответ предупреждением.
+    """
+    est = availability(db, [product_id]).get(product_id)
+    if est is None:
+        return 0
+    ne_hvataet = nuzhno_milli - est["available_milli"]
+    return ne_hvataet if ne_hvataet > 0 else 0
+
+
+def derzhat(db: Session, product_id: int) -> list[dict]:
+    """Кто держит товар в брони: заявки и заказы, каждый со своим количеством.
+
+    Ради этого списка бронь и заводилась видимой: «доступно 2 из 5» без ответа
+    «а где остальные три» отправляет человека искать их по всем заявкам руками.
+
+    Заявка показывается той же величиной, что и в общем расчёте, — остатком
+    после переданного заказам и списанного. Иначе на карточке товара стояло бы
+    одно число, а в «доступно» участвовало другое.
+    """
+    nuzhno = lines_repo.po_otkrytym_zayavkam(db, [product_id])
+    zakazy_est = modules_service.is_enabled(db, "orders")
+    peredano = (
+        documents_repo.zakazano_po_zayavkam(
+            db, KIND_SALES_ORDER, OPEN_ORDER_STATUSES, [product_id]
+        )
+        if zakazy_est
+        else {}
+    )
+    spisano = warehouse_repo.spisano_po_zayavkam(db, [product_id])
+
+    ostatki = {}
+    for (zayavka, _), skolko in nuzhno.items():
+        ostalos = (
+            skolko
+            - peredano.get((zayavka, product_id), 0)
+            - spisano.get((zayavka, product_id), 0)
+        )
+        if ostalos > 0:
+            ostatki[zayavka] = ostalos
+
+    derzhateli = [
+        {
+            "kind": "deal",
+            "id": zayavka.id,
+            "title": zayavka.title,
+            "stage": zayavka.stage,
+            "quantity_milli": ostatki[zayavka.id],
+        }
+        for zayavka in deals_repo.by_ids(db, list(ostatki))
+    ]
+
+    if zakazy_est:
+        for zakaz, skolko in documents_repo.otkrytye_s_tovarom(
+            db, KIND_SALES_ORDER, OPEN_ORDER_STATUSES, product_id
+        ):
+            if skolko > 0:
+                derzhateli.append(
+                    {
+                        "kind": "order",
+                        "id": zakaz.id,
+                        "title": zakaz.number,
+                        "stage": zakaz.status,
+                        "quantity_milli": skolko,
+                    }
+                )
+    return derzhateli
