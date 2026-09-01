@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
+import { DealLines } from "../components/DealLines";
 import { DealStock } from "../components/DealStock";
 import { CallButton, CallsPanel } from "../components/CallsPanel";
 import { Feed } from "../components/Feed";
@@ -448,6 +449,7 @@ export function DealCard() {
       {/* Что ушло со склада под эту заявку и во сколько это обошлось. Стоит
           рядом с суммой не случайно: выручка без себестоимости не отвечает на
           вопрос, заработали мы на этой работе или нет. */}
+      <DealLines dealId={deal.id} closed={deal.closed_at !== null} />
       <DealStock dealId={deal.id} />
 
       {/* Доски, сделанные по этой заявке. Раньше доска знала только клиента,

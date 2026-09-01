@@ -6,7 +6,7 @@ from database.models.share import ShareLink, ShareView
 from database.models.settings import SiteSetting
 from database.models.arcade import SnakeScore
 from database.models.company import Company
-from database.models.deal import Deal, DealStageChange
+from database.models.deal import Deal, DealLine, DealStageChange
 from database.models.pipeline import PipelineStage
 from database.models.document import Document, DocumentEvent, DocumentLine
 from database.models.module import ModuleState
@@ -47,6 +47,7 @@ __all__ = [
     "SnakeScore",
     "Company",
     "Deal",
+    "DealLine",
     "DealStageChange",
     "PipelineStage",
     "Document",

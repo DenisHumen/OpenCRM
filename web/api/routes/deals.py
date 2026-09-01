@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 
 from core import exceptions as errors
 from core.services import (
+    deal_lines_service,
     client_service,
     deal_service,
     modules_service,
@@ -16,7 +17,7 @@ from database.repositories import clients as clients_repo
 from database.repositories import deals as deals_repo
 from database.repositories import users as users_repo
 from web.api import schemas
-from web.api.deps import MAX_SEARCH, get_db, require_perm
+from web.api.deps import MAX_SEARCH, get_db, require_module, require_perm
 
 
 def _note_authors(db, notes) -> dict[int, str]:
@@ -356,3 +357,70 @@ def add_to_deal_feed(
         deal_id=deal_id,
     )
     return schemas.note_out(note, note.author_id and _note_authors(db, [note]).get(note.author_id))
+
+
+# --- строки заявки -----------------------------------------------------------
+#
+# Весь раздел закрыт блоком `warehouse`: без склада заявка снова описывается
+# одной суммой, и «свои траты» без позиций смысла не имеют. Так же исчезает и
+# раздел на экране — блок выключается целиком, а не наполовину
+# (`docs/11-modules.md`).
+
+
+@router.get("/{deal_id}/lines", dependencies=[Depends(require_module("warehouse"))])
+def deal_lines(
+    deal_id: int,
+    user: User = Depends(require_perm("deals", "view")),
+    db: Session = Depends(get_db),
+):
+    _visible(db, deal_id, user)
+    stroki = deal_lines_service.spisok(db, deal_id)
+    return {
+        "items": [deal_lines_service.stroka_out(s) for s in stroki],
+        "total_minor": deal_lines_service.itog(db, deal_id),
+    }
+
+
+@router.post(
+    "/{deal_id}/lines", status_code=201, dependencies=[Depends(require_module("warehouse"))]
+)
+def add_deal_line(
+    deal_id: int,
+    payload: schemas.DealLineIn,
+    user: User = Depends(require_perm("deals", "edit")),
+    db: Session = Depends(get_db),
+):
+    _visible(db, deal_id, user)
+    stroka = deal_lines_service.dobavit(db, deal_id, payload.model_dump(exclude_unset=True))
+    return deal_lines_service.stroka_out(stroka)
+
+
+@router.patch(
+    "/{deal_id}/lines/{line_id}", dependencies=[Depends(require_module("warehouse"))]
+)
+def edit_deal_line(
+    deal_id: int,
+    line_id: int,
+    payload: schemas.DealLinePatchIn,
+    user: User = Depends(require_perm("deals", "edit")),
+    db: Session = Depends(get_db),
+):
+    _visible(db, deal_id, user)
+    stroka = deal_lines_service.pravit(
+        db, deal_id, line_id, payload.model_dump(exclude_unset=True)
+    )
+    return deal_lines_service.stroka_out(stroka)
+
+
+@router.delete(
+    "/{deal_id}/lines/{line_id}", dependencies=[Depends(require_module("warehouse"))]
+)
+def drop_deal_line(
+    deal_id: int,
+    line_id: int,
+    user: User = Depends(require_perm("deals", "edit")),
+    db: Session = Depends(get_db),
+):
+    _visible(db, deal_id, user)
+    deal_lines_service.ubrat(db, deal_id, line_id)
+    return {"message": "Line removed"}

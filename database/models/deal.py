@@ -143,3 +143,51 @@ class DealStageChange(Base):
     changed_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), index=True
     )
+
+
+class DealLine(Base):
+    """Строка заявки: товар со склада или своя трата.
+
+    Одна таблица на то и другое, а не две. Две означали бы, что сумма заявки
+    складывается из двух источников, и первый же отчёт забудет один из них.
+    Вид строки не хранится, а выводится: `product_id` пуст — своя трата
+    (упаковка, доставка, работа без номенклатуры); заполнен, а у товара
+    `is_service` — услуга из прайса, денег добавляет, склада не трогает;
+    заполнен у обычного товара — бронирует и списывается.
+
+    Разбор целиком — `docs/19-sborka-zakaza.md` §Р2.
+    """
+
+    __tablename__ = "deal_lines"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    # CASCADE: строка — часть заявки, а не история. Штатное удаление заявки
+    # мягкое (`deals.deleted_at`), так что ключ срабатывает только на прямом
+    # DELETE в базе.
+    deal_id: Mapped[int] = mapped_column(
+        ForeignKey("deals.id", ondelete="CASCADE"), index=True
+    )
+    # RESTRICT, как у движения склада: удалить товар вместе со строками
+    # проданных заявок значит переписать историю продаж. NULL — своя трата.
+    product_id: Mapped[int | None] = mapped_column(
+        ForeignKey("products.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
+    # С какого склада берём. NULL у своих трат и услуг.
+    warehouse_id: Mapped[int | None] = mapped_column(
+        ForeignKey("warehouses.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
+    # Снимок названия: товар переименуют, а проданная заявка обязана остаться
+    # такой, какой её подписал клиент.
+    name_snapshot: Mapped[str] = mapped_column(String(200))
+    quantity_milli: Mapped[int] = mapped_column(Integer)
+    # Цена за единицу в минорных единицах. NULL — «не назвали», это не ноль:
+    # ноль означал бы «отдаём бесплатно».
+    price_minor: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Снимок себестоимости на момент добавления — для прибыли по заявке.
+    cost_minor: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    # «Кто держит этот товар» — запрос от товара к заявкам. Без пары карточка
+    # товара перебирала бы все строки всех заявок.
+    __table_args__ = (Index("ix_deal_lines_product_deal", "product_id", "deal_id"),)
