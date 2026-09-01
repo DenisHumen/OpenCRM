@@ -205,6 +205,32 @@ def remove_line(
     return {"message": "Line removed"}
 
 
+class DealLinkIn(BaseModel):
+    """К какой заявке цепляем заказ. `null` — отцепить."""
+
+    deal_id: int | None = None
+
+
+@router.post("/{order_id}/deal")
+def link_deal(
+    order_id: int,
+    payload: DealLinkIn,
+    user: User = Depends(require_perm("orders", "edit")),
+    db: Session = Depends(get_db),
+):
+    """Прицепить заказ к заявке или отцепить.
+
+    Отдельной ручкой, а не общим PATCH: у заказа правится только эта связь —
+    позиции меняются своими ручками, а номер и вид не меняются вовсе.
+    """
+    order = order_service.prikrepit_k_zayavke(db, order_id, payload.deal_id)
+    return schemas.order_out(
+        order,
+        order_service.lines(db, order.id),
+        amounts=permissions_service.sees_amounts(db, user, "orders"),
+    )
+
+
 @router.post("/{order_id}/pick")
 def pick(
     order_id: int,

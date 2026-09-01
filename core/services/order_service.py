@@ -60,6 +60,8 @@ from database.models.document import (
 )
 from database.models.warehouse import MOVE_IN, MOVE_OUT, MOVE_RETURN, MOVE_WRITEOFF
 from database.repositories import clients as clients_repo
+from database.repositories import deal_lines as lines_repo
+from database.repositories import deals as deals_repo
 from database.repositories import documents as documents_repo
 from database.repositories import warehouse as warehouse_repo
 
@@ -160,6 +162,86 @@ def create(db: Session, data: dict, author: User) -> tuple[Document, bool]:
     if not fields.get("client_id"):
         fields["client_name"] = (data.get("client_name") or "").strip() or _title(kind)
     return document_service.create(db, fields, author), created_client
+
+
+def sozdat_iz_zayavki(db: Session, deal, author: User) -> Document:
+    """Завести заказ покупателя по заявке, перенеся в него её товары.
+
+    **Свои траты не переносятся** (решение владельца 30.08.2026): по заказу
+    кладовщик собирает коробки, и строка «упаковка» ему мешает — сборка
+    показывала бы «собрано 0 из 1», пока её не отметят руками. Сумма упаковки
+    остаётся в заявке и попадает в итог сделки.
+
+    Услуги не переносятся по той же причине: собирать нечего.
+
+    Бронь при этом НЕ удваивается: заказ перенимает её у заявки, потому что
+    считается она вычитанием (`reserve_service`), а не сложением двух списков.
+    """
+    if deal.closed_at is not None:
+        raise errors.ValidationError("The deal is closed", code="deal_closed")
+    stroki = [s for s in lines_repo.list_for_deal(db, deal.id) if s.product_id is not None]
+    tovarnye = []
+    for stroka in stroki:
+        tovar = warehouse_repo.get_product(db, stroka.product_id)
+        if tovar is not None and not tovar.is_service:
+            tovarnye.append((stroka, tovar))
+    if not tovarnye:
+        raise errors.ValidationError(
+            "The deal has no product lines to order", code="no_product_lines"
+        )
+
+    zakaz, _ = create(
+        db,
+        {"kind": KIND_SALES_ORDER, "client_id": deal.client_id, "deal_id": deal.id},
+        author,
+    )
+    for stroka, _tovar in tovarnye:
+        add_line(
+            db,
+            zakaz.id,
+            {
+                "product_id": stroka.product_id,
+                "quantity": warehouse_service.format_quantity(stroka.quantity_milli),
+                "price": stroka.price_minor,
+            },
+            author,
+        )
+    return zakaz
+
+
+def prikrepit_k_zayavke(db: Session, document_id: int, deal_id: int | None) -> Document:
+    """Прицепить заказ к заявке или отцепить (`deal_id=None`).
+
+    Отцеплять надо: заказ цепляют не к той заявке так же часто, как и к той, а
+    прицепленный заказ ПЕРЕНИМАЕТ её бронь — оставить чужую связь значит держать
+    товар под чужим покупателем.
+    """
+    zakaz = get(db, document_id)
+    if deal_id is None:
+        zakaz.deal_id = None
+    else:
+        deal = deals_repo.get(db, deal_id)
+        if deal is None:
+            raise errors.NotFoundError("Deal not found", code="deal_not_found")
+        if deal.closed_at is not None:
+            raise errors.ValidationError("The deal is closed", code="deal_closed")
+        zakaz.deal_id = deal.id
+    db.flush()
+    return zakaz
+
+
+def sobran_po_strokam(stroki) -> bool:
+    """Собран ли заказ целиком: по каждой строке отмечено не меньше заказанного.
+
+    Принимает СТРОКИ, а не номер заказа: и список, и карточка уже грузят их
+    пачкой одним запросом, и второе определение «собранности» рядом с первым
+    разошлось бы с ним при первой же правке.
+
+    Считается по строкам, а не по статусу: статус «готов» ставит человек, а
+    вопрос заявки физический — коробки собраны или нет. Пустой заказ собранным
+    не считается: собирать нечего.
+    """
+    return bool(stroki) and all(s.picked_milli >= s.quantity_milli for s in stroki)
 
 
 def _title(kind: str) -> str:

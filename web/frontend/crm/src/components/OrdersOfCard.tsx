@@ -126,6 +126,9 @@ export function OrdersOfCard({ clientId, dealId }: { clientId?: number; dealId?:
             <span style={{ color: "var(--muted)", fontSize: 12.5 }}>
               {formatMoney(order.total, workspace.currency, locale)}
             </span>
+            {/* «Собран» рядом со статусом, а не вместо него: статус ставит
+                человек, а собранность — это про коробки на полу склада. */}
+            {order.assembled && <Chip variant="success">{t("assembled")}</Chip>}
             <Chip variant={order.status === "closed" ? "success" : undefined}>
               {t(ORDER_STATUS_LABEL[order.status as keyof typeof ORDER_STATUS_LABEL] ?? "docIssued")}
             </Chip>

@@ -3,18 +3,22 @@ from sqlalchemy.orm import Session
 
 from core import exceptions as errors
 from core.services import (
-    deal_lines_service,
     client_service,
+    deal_lines_service,
     deal_service,
+    document_service,
     modules_service,
+    order_service,
     permissions_service,
     pipeline_service,
     settings_service,
 )
 from database.models import User
+from database.models.document import ORDER_KINDS
 from database.repositories import boards as boards_repo
 from database.repositories import clients as clients_repo
 from database.repositories import deals as deals_repo
+from database.repositories import documents as documents_repo
 from database.repositories import users as users_repo
 from web.api import schemas
 from web.api.deps import MAX_SEARCH, get_db, require_module, require_perm
@@ -89,6 +93,26 @@ def _card(db: Session, deal, user: User) -> dict:
         ]
     else:
         data["boards"] = []
+    # Заказы этой заявки и то, собраны ли они. Блок заказов выключается — тогда
+    # списка нет вовсе, как и у досок.
+    #
+    # «Собран» считается по строкам, а не по статусу: статус «готов» ставит
+    # человек, а вопрос заявки физический — коробки собраны или нет.
+    if modules_service.is_enabled(db, "orders"):
+        bumagi, _ = document_service.search(db, deal_id=deal.id, per_page=50)
+        zakazy = [b for b in bumagi if b.kind in ORDER_KINDS]
+        stroki = documents_repo.lines_by_documents(db, [z.id for z in zakazy])
+        data["orders"] = [
+            {
+                "id": z.id,
+                "number": z.number,
+                "status": z.status,
+                "assembled": order_service.sobran_po_strokam(stroki.get(z.id, [])),
+            }
+            for z in zakazy
+        ]
+    else:
+        data["orders"] = []
     # Названия этапов в истории берём из воронки: голые ключи вроде
     # `in_progress` человеку ничего не говорят, а у каждого бизнеса они свои.
     data["stage_history"] = [
@@ -426,3 +450,27 @@ def drop_deal_line(
     _visible(db, deal_id, user)
     deal_lines_service.ubrat(db, deal_id, line_id)
     return {"message": "Line removed"}
+
+
+@router.post(
+    "/{deal_id}/order",
+    status_code=201,
+    dependencies=[Depends(require_module("orders"))],
+)
+def order_from_deal(
+    deal_id: int,
+    user: User = Depends(require_perm("orders", "create")),
+    db: Session = Depends(get_db),
+):
+    """Завести заказ покупателя по заявке, перенеся в него её товары.
+
+    Право спрашивается ЗАКАЗОВ, а не заявок: заводится заказ, и тот, кому
+    заводить их не положено, не должен обходить это через карточку заявки.
+    """
+    deal = _visible(db, deal_id, user)
+    zakaz = order_service.sozdat_iz_zayavki(db, deal, user)
+    return schemas.order_out(
+        zakaz,
+        order_service.lines(db, zakaz.id),
+        amounts=permissions_service.sees_amounts(db, user, "orders"),
+    )
