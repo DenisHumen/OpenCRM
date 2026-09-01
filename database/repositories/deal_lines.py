@@ -1,0 +1,100 @@
+"""Запросы по строкам заявки.
+
+Здесь же живёт итог заявки. Он **считается запросом**, а не складывается в
+Python по загруженным строкам: список строк на экране может быть подрезан, а
+итог обязан быть полным. Тот же довод, что у остатка склада.
+"""
+
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session
+
+from database.models import DealLine
+
+
+def list_for_deal(db: Session, deal_id: int) -> list[DealLine]:
+    return list(
+        db.scalars(
+            select(DealLine)
+            .where(DealLine.deal_id == deal_id)
+            .order_by(DealLine.sort_order, DealLine.id)
+        )
+    )
+
+
+def get(db: Session, deal_id: int, line_id: int) -> DealLine | None:
+    """Строка вместе с заявкой: без сверки чужую строку можно было бы править
+    по её номеру, зная только свою заявку."""
+    return db.scalar(
+        select(DealLine).where(DealLine.id == line_id, DealLine.deal_id == deal_id)
+    )
+
+
+def add(db: Session, line: DealLine) -> DealLine:
+    db.add(line)
+    db.flush()
+    return line
+
+
+def drop(db: Session, line: DealLine) -> None:
+    db.delete(line)
+    db.flush()
+
+
+def next_sort_order(db: Session, deal_id: int) -> int:
+    """Следующая строка встаёт в конец. Порядок — свой у каждой заявки."""
+    last = db.scalar(
+        select(func.max(DealLine.sort_order)).where(DealLine.deal_id == deal_id)
+    )
+    return (last or 0) + 10
+
+
+def sum_for_deal(db: Session, deal_id: int) -> int | None:
+    """Итог заявки в минорных единицах. None — строк нет вовсе.
+
+    None и 0 разные: «строк нет» — это «сумму никто не называл», а ноль означал
+    бы «отдаём бесплатно». Строка без цены (`price_minor IS NULL`) в итог не
+    входит, но и не обнуляет его: цену ещё не назвали, а остальное уже посчитано.
+    """
+    if not db.scalar(select(func.count(DealLine.id)).where(DealLine.deal_id == deal_id)):
+        return None
+    itog = db.scalar(
+        select(
+            func.coalesce(
+                func.sum(DealLine.price_minor * DealLine.quantity_milli), 0
+            )
+        ).where(DealLine.deal_id == deal_id, DealLine.price_minor.is_not(None))
+    )
+    # Цена за единицу умножена на тысячные — делим обратно. Целочисленно: копейка
+    # дробной не бывает, а `float` здесь запрещён (CLAUDE.md §3).
+    return int(itog) // 1000
+
+
+def count_for_deals(db: Session, deal_ids: list[int]) -> dict[int, int]:
+    """Сколько строк у каждой заявки — одним запросом на список.
+
+    Нужно списку и доске: строка «3 позиции» рядом с суммой отвечает на вопрос
+    «сумма откуда», не открывая карточку.
+    """
+    if not deal_ids:
+        return {}
+    ryady = db.execute(
+        select(DealLine.deal_id, func.count(DealLine.id))
+        .where(DealLine.deal_id.in_(deal_ids))
+        .group_by(DealLine.deal_id)
+    ).all()
+    return {deal_id: skolko for deal_id, skolko in ryady}
+
+
+def by_product(db: Session, product_id: int) -> list[DealLine]:
+    """Строки, где стоит этот товар, — «кто держит его в брони».
+
+    Отбор идёт по паре `(product_id, deal_id)`: без индекса карточка товара
+    перебирала бы строки всех заявок.
+    """
+    return list(
+        db.scalars(
+            select(DealLine)
+            .where(DealLine.product_id == product_id)
+            .order_by(DealLine.deal_id)
+        )
+    )

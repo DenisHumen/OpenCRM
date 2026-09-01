@@ -138,6 +138,25 @@ class CompanyPatchIn(CompanyIn):
     name: str | None = None
 
 
+class DealLineIn(BaseModel):
+    """Строка заявки. Товар — по номеру записи или по артикулу; ни того, ни
+    другого — своя трата, и тогда обязательно `name`."""
+
+    product_id: int | None = None
+    sku: str | None = None
+    name: str | None = None
+    # Количество разбирает сервер: у него три знака после запятой, и
+    # `Math.round(0.3335 * 1000)` в браузере даст 334 — см. `parse_quantity`.
+    quantity: str | int | float | None = None
+    price: int | None = None
+
+
+class DealLinePatchIn(BaseModel):
+    quantity: str | int | float | None = None
+    price: int | None = None
+    name: str | None = None
+
+
 class ClientPatchIn(BaseModel):
     name: str | None = None
     company: str | None = None
