@@ -266,6 +266,11 @@
 | DELETE | `/deals/{id}` | 🔑 `deals.delete` | Удалить |
 | GET | `/deals/{id}/feed` | 🔑 `deals.view` | Лента заявки: звонки, письма, встречи и заметки одним потоком, фильтр `kind` |
 | POST | `/deals/{id}/feed` | 🔑 `deals.edit` | Дописать в ленту (то же тело, что у заметки клиента) |
+| GET | `/deals/{id}/lines` | 🔑 `deals.view` | Состав заявки: товары и свои траты, итог. Блок `warehouse` |
+| POST | `/deals/{id}/lines` | 🔑 `deals.edit` | Добавить строку: `product_id`, `sku` или `code` (скан); ничего из них — своя трата |
+| PATCH | `/deals/{id}/lines/{line_id}` | 🔑 `deals.edit` | Количество, цена, склад; название — только у своей траты |
+| DELETE | `/deals/{id}/lines/{line_id}` | 🔑 `deals.edit` | Убрать строку |
+| POST | `/deals/{id}/order` | 🔑 `orders.create` | Завести заказ по заявке, перенеся её товары. Блок `orders` |
 
 **Двигать заявку — отдельное право.** Вести заявку и решать, что она
 «выполнена», — разные полномочия: на этапе `won` считается выручка.
@@ -685,6 +690,7 @@ CRM нет, — человек нажмёт «отправить» снова, �
 | POST | `/orders/{id}/close` | 🔑 `orders.issue` | Провести: отгрузить покупателю или принять от поставщика |
 | POST | `/orders/{id}/revert` | 🔑 `orders.issue` | Отменить проведение обратными движениями. Прежние остаются на месте |
 | POST | `/orders/{id}/cancel` | 🔑 `orders.edit` | Отменить непроведённый. Резерв снимется сам — он не хранится |
+| POST | `/orders/{id}/deal` | 🔑 `orders.edit` | Прицепить заказ к заявке или отцепить (`deal_id: null`) |
 | GET | `/orders/{id}/print` | 🔑 `orders.view` | **HTML на печать**: таблица позиций и итог |
 
 **`edit` против `issue`.** Набирать позиции и двигать склад — разные полномочия:
@@ -743,6 +749,7 @@ CRM нет, — человек нажмёт «отправить» снова, �
 | GET | `/warehouse/products` | 🔑 `warehouse.view` | Список с остатками. `search`, `low_only`, `include_services`, `warehouse_id`, пагинация |
 | POST | `/warehouse/products` | 🔑 `warehouse.create` | Создать позицию. `sku` уникален, но необязателен (пусто → `NULL`); `409 sku_taken` |
 | GET | `/warehouse/products/{id}` | 🔑 `warehouse.view` | Карточка с остатком |
+| GET | `/warehouse/products/{id}/availability` | 🔑 `warehouse.view` | Остаток, бронь, ожидается, доступно и `holders` — кто держит |
 | PATCH | `/warehouse/products/{id}` | 🔑 `warehouse.edit` | Изменить. Товар с остатком нельзя сделать услугой (`422 product_has_stock`) |
 | DELETE | `/warehouse/products/{id}` | 🔑 `warehouse.delete` | Мягкое удаление. Движения остаются |
 | POST | `/warehouse/products/{id}/restore` | 🔑 `warehouse.restore` | Вернуть из корзины |

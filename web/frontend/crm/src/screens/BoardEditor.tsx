@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { Icon } from "../components/Icon";
+import { SkachatFayl } from "../components/SkachatFayl";
 import { VyborKlienta } from "../components/VyborKlienta";
 import { Chip, ConfirmModal, LoadFailed, Modal, ScreenLoading, Toggle } from "../components/ui";
 import { api, ApiError } from "../lib/api";
@@ -492,15 +493,11 @@ export function BoardEditor() {
                       и лучше (тот же довод, что у выгрузки отчётов). Ссылка
                       ведёт в API CRM, то есть работает под сессией сотрудника;
                       клиент витрины по ней не проходит. */}
-                  <a
-                    className="text-link"
-                    style={{ display: "flex", color: "var(--faint)" }}
+                  <SkachatFayl
                     href={work.download_url}
-                    aria-label={t("download")}
-                    title={t("download")}
-                  >
-                    <Icon name="download" size={13} />
-                  </a>
+                    bytes={work.size_bytes ?? 0}
+                    label={t("download")}
+                  />
                   <button
                     className="text-link"
                     style={{ display: "flex", color: work.project_url ? "var(--accent)" : "var(--faint)" }}
@@ -735,9 +732,20 @@ export function BoardEditor() {
               тридцать строк в «Загрузках»; ровно ради набора доска и заведена.
               Кнопки нет у пустой доски: она отвечала бы отказом. */}
           {board.works.length > 0 && (
-            <a className="btn btn-secondary" href={`/api/v1/boards/${board.id}/download`}>
+            <a
+              className="btn btn-secondary skachat-vsyo"
+              href={`/api/v1/boards/${board.id}/download`}
+            >
               <Icon name="download" size={15} />
               {t("downloadAll")}
+              {/* Сумму складываем здесь, и это законно: работы приходят СПИСКОМ
+                  целиком, без страниц. Будь он подрезан — итог пришлось бы
+                  просить у сервера, как у себестоимости заявки. */}
+              <span style={{ color: "var(--faint)" }}>
+                {formatBytes(
+                  board.works.reduce((s: number, w: any) => s + (w.size_bytes ?? 0), 0),
+                )}
+              </span>
             </a>
           )}
 
