@@ -44,12 +44,9 @@ class Client(Base):
     phone_norm: Mapped[str] = mapped_column(String(32), default="", index=True)
     email: Mapped[str] = mapped_column(String(255), default="")
     messenger: Mapped[str] = mapped_column(String(255), default="")
-    # Адрес для отправки. Четыре колонки, а не одна строка: индекс нужен
-    # отдельно (расчёт доставки), город отдельно (выбор склада отгрузки),
-    # страна отдельно (совсем другая доставка). Разбор — docs/19 §Р7.
-    #
-    # Пустая строка, а не NULL: пустой адрес — норма, а два вида пустоты в
-    # одном поле дают вечное `IS NULL OR = ""` во всех запросах.
+    # Четыре колонки, а не строка: индекс, город и страна нужны по отдельности.
+    # Пустая строка, а не NULL, — иначе вечное `IS NULL OR = ""` в запросах.
+    # Разбор — docs/19-sborka-zakaza.md §Р7.
     country: Mapped[str] = mapped_column(String(2), default="", server_default="")
     city: Mapped[str] = mapped_column(String(120), default="", server_default="")
     # Индекс почтовый, а не число: в Канаде и Британии в нём буквы.

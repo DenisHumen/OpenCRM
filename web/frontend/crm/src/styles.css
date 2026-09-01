@@ -2636,3 +2636,33 @@ a.tg-file:hover { text-decoration: underline; }
 @media (prefers-reduced-motion: reduce) {
   .shag-krug, .shag-nazvanie { transition: none; }
 }
+
+/* Кнопка «скачать» с размером файла. Образец — uiverse chatty-lizard-18.
+   Имена с приставкой: общее имя класса в этом файле уже гасило чужую
+   кнопку на досках, и правило вступало в силу молча. */
+.skachat {
+  position: relative; display: flex; align-items: center; justify-content: center;
+  color: var(--faint); text-decoration: none;
+  transition: transform 300ms ease, color 300ms ease;
+}
+/* Кнопка «идёт вниз» по наведению — туда же, куда поедет файл. Движение
+   отвечает раньше щелчка, что кнопка живая. */
+.skachat:hover { transform: translateY(4px); color: var(--accent); }
+.skachat-razmer {
+  position: absolute; top: calc(100% + 8px); left: 50%;
+  transform: translateX(-50%) scale(0); transform-origin: top center;
+  padding: 4px 7px; border-radius: 5px; white-space: nowrap;
+  background: var(--surface-2); color: var(--text); border: 1px solid var(--border);
+  font-size: 11px; pointer-events: none; z-index: 3;
+  transition: transform 300ms ease-in-out;
+}
+.skachat:hover .skachat-razmer { transform: translateX(-50%) scale(1); }
+/* Большая кнопка «скачать все»: то же движение, но размер стоит строкой —
+   на ней он решает, качать ли сейчас, и прятать его в подсказку значит
+   заставить наводить мышь ради решения. */
+.skachat-vsyo { transition: transform 300ms ease; }
+.skachat-vsyo:hover { transform: translateY(4px); }
+@media (prefers-reduced-motion: reduce) {
+  .skachat, .skachat:hover, .skachat-vsyo, .skachat-vsyo:hover { transition: none; transform: none; }
+  .skachat-razmer, .skachat:hover .skachat-razmer { transition: none; }
+}

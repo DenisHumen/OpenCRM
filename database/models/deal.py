@@ -169,8 +169,12 @@ class DealLine(Base):
     )
     # RESTRICT, как у движения склада: удалить товар вместе со строками
     # проданных заявок значит переписать историю продаж. NULL — своя трата.
+    #
+    # Своего индекса нет: составной (product_id, deal_id) ниже начинается с того
+    # же столбца и служит и отбору, и внешнему ключу. Второй — двойная плата на
+    # каждой вставке строки.
     product_id: Mapped[int | None] = mapped_column(
-        ForeignKey("products.id", ondelete="RESTRICT"), nullable=True, index=True
+        ForeignKey("products.id", ondelete="RESTRICT"), nullable=True
     )
     # С какого склада берём. NULL у своих трат и услуг.
     warehouse_id: Mapped[int | None] = mapped_column(

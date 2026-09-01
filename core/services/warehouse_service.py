@@ -315,7 +315,8 @@ def _clean_unit(unit: str | None) -> str:
 
 
 def _clean_sku(db: Session, sku: str | None, product_id: int | None) -> str | None:
-    """Пустой артикул — это NULL, а не пустая строка: см. комментарий у модели."""
+    """Не назвали артикул — None, и это значит «выдадим сами» (Р1), а не
+    «артикула не будет»: колонка теперь NOT NULL."""
     value = (sku or "").strip()
     if not value:
         return None

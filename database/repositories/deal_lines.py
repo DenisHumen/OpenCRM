@@ -41,7 +41,6 @@ def drop(db: Session, line: DealLine) -> None:
 
 
 def next_sort_order(db: Session, deal_id: int) -> int:
-    """Следующая строка встаёт в конец. Порядок — свой у каждой заявки."""
     last = db.scalar(
         select(func.max(DealLine.sort_order)).where(DealLine.deal_id == deal_id)
     )

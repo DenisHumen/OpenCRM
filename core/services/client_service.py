@@ -180,10 +180,15 @@ def get_client(db: Session, client_id: int, include_deleted: bool = False) -> Cl
 #: вставку отказом `Data too long for column`, и магазин, приславший длинный
 #: адрес, получил бы пятисотку вместо внятного «слишком длинно». Та же беда уже
 #: случалась с почтой заявки — см. `lead_service`.
-POLYA_ADRESA = (
-    ("city", 120, "City", "city_too_long"),
-    ("zip_code", 20, "Postal code", "zip_too_long"),
-    ("address", 300, "Address", "address_too_long"),
+#: Длина берётся У КОЛОНКИ, а не переписывается сюда числом: расширят колонку
+#: миграцией — отказ остался бы на прежней ширине и разошёлся бы с базой молча.
+POLYA_ADRESA = tuple(
+    (imya, Client.__table__.c[imya].type.length, podpis, kod)
+    for imya, podpis, kod in (
+        ("city", "City", "city_too_long"),
+        ("zip_code", "Postal code", "zip_too_long"),
+        ("address", "Address", "address_too_long"),
+    )
 )
 
 

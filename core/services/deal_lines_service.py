@@ -26,9 +26,9 @@ from database.repositories import deal_lines as lines_repo
 from database.models.warehouse import MOVE_OUT
 from database.repositories import warehouse as warehouse_repo
 
-#: Ширина `deal_lines.name_snapshot`. Длиннее — отказ, а не обрезка: обрезанное
-#: название уходит в счёт клиенту, и заметят это не здесь.
-MAX_NAME = 200
+#: Ширина `deal_lines.name_snapshot`, взятая у самой колонки. Длиннее — отказ, а
+#: не обрезка: обрезанное название уходит в счёт клиенту, и заметят это не здесь.
+MAX_NAME = DealLine.__table__.c.name_snapshot.type.length
 
 
 def spisok(db: Session, deal_id: int) -> list[DealLine]:
