@@ -11,7 +11,7 @@
 from sqlalchemy.orm import Session
 
 from core import exceptions as errors
-from core.services import reserve_service, warehouse_service
+from core.services import barcode_service, reserve_service, warehouse_service
 from core.services.deal_service import get_deal, parse_money
 from core.utils import now_utc
 from database.models import Deal, DealLine, User
@@ -263,11 +263,19 @@ def _nazvanie(value) -> str:
 
 
 def _tovar(db: Session, data: dict):
-    """Товар строки: по номеру записи или по артикулу. None — своя трата.
+    """Товар строки: по номеру записи, артикулу или штрихкоду. None — своя трата.
 
-    Артикул принимается наравне с `product_id` ради магазина: он знает артикул,
-    которым торгует, а наших внутренних номеров не знает вовсе.
+    Три способа, и каждый из-за своего звонящего. `product_id` — экран, где
+    товар уже выбран из подсказки. `sku` — магазин: он знает артикул, которым
+    торгует, а наших внутренних номеров не знает вовсе. `code` — сканер у
+    стойки: набирать название, когда коробка в руках, никто не станет.
+
+    Скан отвечает отказом `barcode_unknown` с самим кодом внутри: пустой ответ
+    после писка сканера читается как «сканер сломался» (`barcode_service.scan`).
     """
+    code = (data.get("code") or "").strip()
+    if code:
+        return barcode_service.scan(db, code)
     sku = (data.get("sku") or "").strip()
     product_id = data.get("product_id")
     if not sku and not product_id:

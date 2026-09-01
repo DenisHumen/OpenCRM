@@ -144,6 +144,8 @@ class DealLineIn(BaseModel):
 
     product_id: int | None = None
     sku: str | None = None
+    #: Отсканированный штрихкод. Ищется первым: коробка уже в руках.
+    code: str | None = None
     name: str | None = None
     # Количество разбирает сервер: у него три знака после запятой, и
     # `Math.round(0.3335 * 1000)` в браузере даст 334 — см. `parse_quantity`.

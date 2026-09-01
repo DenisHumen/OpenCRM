@@ -53,6 +53,7 @@ export function DealLines({
   const [kolichestvo, setKolichestvo] = useState("1");
   const [tsena, setTsena] = useState("");
   const [podskazki, setPodskazki] = useState<Tovar[]>([]);
+  const [skan, setSkan] = useState("");
   const zapros = useDebounced(poisk);
 
   const vklyuchen = moduleOn(modules, "warehouse");
@@ -143,6 +144,23 @@ export function DealLines({
     }
   };
 
+  // Скан отдельной строкой, а не тем же полем, что и поиск: у стойки коробка
+  // уже в руках, и разбирать «это код или название» по виду набранного значит
+  // однажды завести своей тратой строку «4600000000109».
+  const skanirovat = async () => {
+    const kod = skan.trim();
+    if (!kod || !guard.take()) return;
+    try {
+      await api.post(`/deals/${dealId}/lines`, { code: kod, quantity: "1" });
+      setSkan("");
+      await zagruzit();
+    } catch (beda) {
+      toastError(beda);
+    } finally {
+      guard.free();
+    }
+  };
+
   const sobrat = async () => {
     if (!guard.take()) return;
     try {
@@ -218,6 +236,23 @@ export function DealLines({
           </div>
         ))}
       </div>
+
+      {!closed && (
+        <div className="scan-box" style={{ marginTop: 12 }}>
+          <Icon name="scan" size={18} className="scan-icon" />
+          <input
+            className="scan-input"
+            placeholder={t("scanPlaceholder")}
+            value={skan}
+            disabled={guard.busy}
+            onChange={(e) => setSkan(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") void skanirovat();
+            }}
+          />
+          <span className="scan-hint">{t("scanHint")}</span>
+        </div>
+      )}
 
       {!closed && (
         <div style={{ display: "flex", gap: 8, marginTop: 12, position: "relative" }}>
