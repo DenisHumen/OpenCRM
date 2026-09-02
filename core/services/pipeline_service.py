@@ -242,7 +242,9 @@ def update_stage(db: Session, key: str, data: dict) -> PipelineStage:
     if "kind" in data and data["kind"]:
         if data["kind"] not in STAGE_KINDS:
             raise errors.ValidationError(f"Unknown kind: {data['kind']}", code="unknown_kind")
+        pipeline_repo.zapert_etapy(db)
         _check_last_of_kind(db, stage, data["kind"])
+        _check_last_open(db, stage, data["kind"])
         stage.kind = data["kind"]
     db.flush()
     return stage
@@ -251,6 +253,7 @@ def update_stage(db: Session, key: str, data: dict) -> PipelineStage:
 def archive_stage(db: Session, key: str) -> None:
     """Убрать этап с доски. Сделки в нём переезжают на первый открытый."""
     stage = get_stage(db, key)
+    pipeline_repo.zapert_etapy(db)
     _check_last_of_kind(db, stage, None)
 
     target = None
@@ -267,6 +270,22 @@ def archive_stage(db: Session, key: str) -> None:
         deal.stage = target
     stage.is_archived = True
     db.flush()
+
+
+def _check_last_open(db: Session, stage: PipelineStage, new_kind: str) -> None:
+    """Нельзя остаться без открытого этапа.
+
+    Убрать последний открытый с доски система отказывалась всегда, а перевести
+    его в «выиграна» — позволяла молча. Итог тот же и хуже: новая заявка идёт на
+    первый открытый (`first_open_key`), а без него — просто на первый попавшийся,
+    то есть рождается закрытой.
+    """
+    if stage.kind != KIND_OPEN or new_kind == KIND_OPEN:
+        return
+    if not [s for s in list_stages(db) if s.kind == KIND_OPEN and s.key != stage.key]:
+        raise errors.ValidationError(
+            "Cannot retype the last open stage", code="last_open_stage"
+        )
 
 
 def _check_last_of_kind(db: Session, stage: PipelineStage, new_kind: str | None) -> None:

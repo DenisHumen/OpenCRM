@@ -25,6 +25,21 @@ def list_stages(db: Session, include_archived: bool = False) -> list[PipelineSta
     return list(db.scalars(stmt.order_by(PipelineStage.sort_order.asc(), PipelineStage.id.asc())))
 
 
+def zapert_etapy(db: Session) -> None:
+    """Занять справочник этапов до конца транзакции: остальные ждут очереди.
+
+    «Открытый этап хотя бы один» и «выигранный хотя бы один» держатся счётом —
+    частичных индексов в MySQL нет. Значит проверка в два шага, и между ними
+    окно: двое переводят РАЗНЫЕ последние открытые этапы в «выиграна», каждый
+    видит соседа открытым и проходит. Тот же довод и та же цена, что у
+    `warehouses.zapert_zhivye`, замеренной дуэлью.
+
+    Запираются все строки: спор идёт не о конкретной, а о том, сколько их
+    останется.
+    """
+    db.execute(select(PipelineStage.id).with_for_update()).all()
+
+
 def any_exists(db: Session) -> bool:
     return db.scalar(select(PipelineStage.id).limit(1)) is not None
 
