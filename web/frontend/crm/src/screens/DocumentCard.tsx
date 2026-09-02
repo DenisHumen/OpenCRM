@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { Icon } from "../components/Icon";
+import { History } from "../components/History";
 import { PrintLangs } from "../components/PrintLangs";
 import { Chip, ConfirmModal, LoadFailed, ScreenLoading } from "../components/ui";
 import { WarehousePicker, useWarehouses } from "../components/Warehouses";
@@ -192,7 +193,7 @@ export function DocumentCard() {
         <div className="field-desc">{t("docClientLinkHint")}</div>
       </div>
 
-      <History events={doc.events} />
+      <History events={doc.events} label={(x) => statusLabel(t, x)} />
 
       {confirmCancel && (
         <ConfirmModal
@@ -203,31 +204,6 @@ export function DocumentCard() {
           onClose={() => setConfirmCancel(false)}
         />
       )}
-    </div>
-  );
-}
-
-/** История переходов бумаги. Общая: спор о сроках разрешается записью с
- *  временем, а не текущим состоянием, — и у квитанции, и у акта. */
-function History({ events }: { events: any[] | undefined }) {
-  const { t, locale } = useApp();
-  return (
-    <div className="card card-pad">
-      <div className="metric-title" style={{ marginBottom: 12 }}>{t("history")}</div>
-      <ol className="stage-log">
-        {(events ?? []).map((event: any) => (
-          <li key={event.id}>
-            <span className="stage-log-when">{formatDateTime(event.created_at, locale)}</span>
-            <span className="stage-log-what">
-              {event.from_status
-                ? `${statusLabel(t, event.from_status)} → ${statusLabel(t, event.to_status)}`
-                : statusLabel(t, event.to_status)}
-              {event.note && <span style={{ color: "var(--faint)" }}> · {event.note}</span>}
-            </span>
-            <span className="stage-log-who">{event.author_name || "—"}</span>
-          </li>
-        ))}
-      </ol>
     </div>
   );
 }
@@ -422,7 +398,7 @@ function ActCard({ act, reload }: { act: any; reload: () => Promise<void> }) {
       )}
 
       <div style={{ marginTop: 16 }}>
-        <History events={act.events} />
+        <History events={act.events} label={(x) => statusLabel(t, x)} />
       </div>
 
       {confirm && (

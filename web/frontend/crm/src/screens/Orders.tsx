@@ -5,6 +5,7 @@ import { ContextMenu, punktyDlyaZapisi, useContextMenu } from "../components/Con
 import { Icon } from "../components/Icon";
 import { Chip, Dochitat, EmptyState, ScreenLoading } from "../components/ui";
 import { api } from "../lib/api";
+import type { HistoryEvent } from "../components/History";
 import { useApp } from "../lib/app";
 import { useDebounced } from "../lib/debounce";
 import { useFailure } from "../lib/failure";
@@ -49,6 +50,8 @@ export interface Order {
    * себе в чужих ответах. Пустой массив значит другое — «бумаг не
    * выписывалось», и так выглядят заказы, закрытые до переезда. */
   waybills?: { id: number; number: string; kind: string; status: string }[];
+  /** История переходов. Приходит только у карточки, в списке её нет. */
+  events?: HistoryEvent[];
 }
 
 /** Подписи состояний — те же, что у бланка: состояния общие, и заводить им

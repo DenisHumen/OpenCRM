@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
+import { History } from "../components/History";
 import { Icon } from "../components/Icon";
 import { useLabelsOn } from "../components/ProductBarcodes";
 import { Chip, ConfirmModal, LoadFailed, Modal, ScreenLoading } from "../components/ui";
@@ -262,6 +263,18 @@ export function OrderCard() {
           {t("orderRevert")}
         </button>
       )}
+
+      {/* История заказа. Заведена по беде: закрытие при выключенном складе
+          пишет в примечание «движений нет», и показать это было негде —
+          человек не отличал «списали» от «не списали». */}
+      <div style={{ marginTop: 20 }}>
+        <History
+          events={order.events}
+          label={(status) =>
+            t(ORDER_STATUS_LABEL[status as keyof typeof ORDER_STATUS_LABEL] ?? "docIssued")
+          }
+        />
+      </div>
 
       {confirm && (
         <ConfirmModal
