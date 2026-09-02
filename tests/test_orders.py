@@ -677,6 +677,141 @@ def test_pri_vyklyuchennom_sklade_zakaz_ne_pishet_dvizheniy(root_client, client_
     )
 
 
+def test_bez_nakladnykh_pri_vyklyuchennom_sklade_zakaz_ne_pishet_dvizheniy(
+    root_client, client_row
+):
+    """Та же беда на второй половине развилки — там, где накладных нет.
+
+    Развилка в `close` сделана по блоку НАКЛАДНЫХ, и проверку блока склада
+    унаследовала только одна её половина. «Заказы включены, накладные
+    выключены, склад выключен» — состояние законное: и заказам, и накладным
+    нужны только бланки.
+    """
+    item = product(root_client, stock="10")
+    order = order_with(root_client, client_row, item, quantity="3")
+    waybills_on(root_client, False)
+    root_client.post(f"{API}/modules/warehouse", json={"enabled": False})
+    try:
+        otvet = root_client.post(f"{ORDERS}/{order['id']}/close", json={})
+        assert otvet.status_code == 200, otvet.text
+    finally:
+        root_client.post(f"{API}/modules/warehouse", json={"enabled": True})
+        waybills_on(root_client)
+
+    assert stock_of(root_client, item["id"]) == 10_000, (
+        "закрытие без накладной двинуло склад при выключенном блоке склада"
+    )
+    # Закрытие, не тронувшее склад, обязано сказать об этом словами: иначе в
+    # истории оно неотличимо от обычной отгрузки.
+    istoriya = root_client.get(f"{API}/documents/{order['id']}").json()["events"]
+    assert any("warehouse module off" in (e["note"] or "") for e in istoriya), (
+        "закрытие без движений в истории названо обычной отгрузкой"
+    )
+
+
+def test_pri_vyklyuchennom_sklade_nekhvatka_ne_meshaet_zakryt(root_client, client_row):
+    """Выключенный блок не отказывает от имени остатка, которого никто не видит.
+
+    Складское в закрытии — это не одни движения. Проверка нехватки стояла до
+    всякой оглядки на блок: заказ на пять при остатке одна вставал с
+    `not_enough_stock`, хотя раздела склада в системе нет и человеку нечем ни
+    посмотреть остаток, ни поправить его.
+    """
+    item = product(root_client, stock="1")
+    order = order_with(root_client, client_row, item, quantity="5")
+    root_client.post(f"{API}/modules/warehouse", json={"enabled": False})
+    try:
+        otvet = root_client.post(f"{ORDERS}/{order['id']}/close", json={})
+        assert otvet.status_code == 200, otvet.text
+    finally:
+        root_client.post(f"{API}/modules/warehouse", json={"enabled": True})
+
+    assert stock_of(root_client, item["id"]) == 1_000, "остаток тронут при выключенном складе"
+
+
+def test_pri_vyklyuchennom_sklade_sebestoimost_ne_snimaetsya(root_client, client_row):
+    """Снимок себестоимости — тоже складское, и при выключенном складе его нет.
+
+    Проверяются обе стороны разом: выбросить снимок совсем так же неверно, как
+    делать его мимо выключенного блока, — карточка заказа перестала бы
+    отвечать, во сколько обошлась отгрузка.
+    """
+    item = product(root_client, stock="10", cost="100")
+    so_skladom = order_with(root_client, client_row, item, quantity="1")
+    assert root_client.post(f"{ORDERS}/{so_skladom['id']}/close", json={}).status_code == 200
+    stroka = root_client.get(f"{ORDERS}/{so_skladom['id']}").json()["lines"][0]
+    assert stroka["cost"] == 100, "заказ не помнит, во сколько обошлась отгрузка"
+
+    bez_sklada = order_with(root_client, client_row, item, quantity="1")
+    root_client.post(f"{API}/modules/warehouse", json={"enabled": False})
+    try:
+        assert root_client.post(f"{ORDERS}/{bez_sklada['id']}/close", json={}).status_code == 200
+    finally:
+        root_client.post(f"{API}/modules/warehouse", json={"enabled": True})
+    stroka = root_client.get(f"{ORDERS}/{bez_sklada['id']}").json()["lines"][0]
+    assert stroka["cost"] is None, "себестоимость снята при выключенном складе"
+
+
+def test_bez_nakladnykh_pri_vyklyuchennom_sklade_otmena_ne_pishet_dvizheniy(
+    root_client, client_row
+):
+    """Остаток сошёлся — это ещё не значит, что склад не трогали.
+
+    Списание и возврат гасят друг друга, и по одному остатку выключенный блок
+    неотличим от включённого. Поэтому спрашиваем число движений: их обязано
+    остаться столько же, сколько было до закрытия.
+    """
+    item = product(root_client, stock="10")
+    order = order_with(root_client, client_row, item, quantity="3")
+    waybills_on(root_client, False)
+    root_client.post(f"{API}/modules/warehouse", json={"enabled": False})
+    try:
+        assert root_client.post(f"{ORDERS}/{order['id']}/close", json={}).status_code == 200
+        otvet = root_client.post(f"{ORDERS}/{order['id']}/revert", json={})
+        assert otvet.status_code == 200, otvet.text
+    finally:
+        root_client.post(f"{API}/modules/warehouse", json={"enabled": True})
+        waybills_on(root_client)
+
+    assert stock_of(root_client, item["id"]) == 10_000
+    dvizheniya = root_client.get(f"{STOCK}/products/{item['id']}/moves").json()
+    assert dvizheniya["total"] == 1, (
+        "склад был выключен, а движений прибавилось: остаток сошёлся лишь потому, "
+        "что отмена вернула то, что закрытие не имело права списывать"
+    )
+
+
+def test_otmena_pri_vyklyuchennom_sklade_ne_dvigaet_ego_obratno(root_client, client_row):
+    """Склад выключили между закрытием и отменой — обратных движений нет тоже.
+
+    Это единственный путь, на котором отмена без накладной находит, что
+    возвращать: движения по заказу уже лежат. Накладная в том же положении не
+    пишет ничего (`waybill_service.provesti`), и голый путь обязан вести себя
+    так же.
+    """
+    waybills_on(root_client, False)
+    item = product(root_client, stock="10")
+    order = order_with(root_client, client_row, item, quantity="3")
+    assert root_client.post(f"{ORDERS}/{order['id']}/close", json={}).status_code == 200
+    assert stock_of(root_client, item["id"]) == 7_000, "с включённым складом заказ обязан списать"
+
+    root_client.post(f"{API}/modules/warehouse", json={"enabled": False})
+    try:
+        otvet = root_client.post(f"{ORDERS}/{order['id']}/revert", json={})
+        assert otvet.status_code == 200, otvet.text
+    finally:
+        root_client.post(f"{API}/modules/warehouse", json={"enabled": True})
+        waybills_on(root_client)
+
+    assert stock_of(root_client, item["id"]) == 7_000, (
+        "отмена вернула товар при выключенном блоке склада"
+    )
+    istoriya = root_client.get(f"{API}/documents/{order['id']}").json()["events"]
+    assert any("warehouse module off" in (e["note"] or "") for e in istoriya), (
+        "отмена без движений в истории названа обычной"
+    )
+
+
 def test_kartochka_zakaza_pokazyvaet_svoyu_nakladnuyu(root_client, client_row):
     """Бумага, которую нельзя найти, всё равно что не выписана.
 

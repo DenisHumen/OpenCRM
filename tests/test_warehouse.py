@@ -217,6 +217,45 @@ def test_hard_delete_of_a_product_with_history_is_refused_by_the_database(root_c
     assert root_client.get(f"{WH}/products/{product['id']}/moves").json()["total"] == 1
 
 
+def test_uslugu_v_vydannoy_bumage_baza_udalit_ne_dast(root_client):
+    """Довод «прямого удаления не бывает» держался на движениях склада.
+
+    У УСЛУГИ движений не бывает вовсе, и `RESTRICT` на `stock_moves` её не
+    держит. Пока строка бумаги стояла `SET NULL`, прямой `DELETE` проходил и
+    молча превращал товарную строку ВЫДАННОЙ бумаги в разовую позицию — мимо
+    сторожа неизменяемости, потому что тот стоит событиями ORM, а `ON DELETE`
+    исполняет сама база.
+    """
+    from sqlalchemy.exc import IntegrityError
+
+    from database.models import Product
+    from database.session import SessionLocal
+
+    for klyuch in ("documents", "orders"):
+        root_client.post(f"{API}/modules/{klyuch}", json={"enabled": True})
+    usluga = new_product(
+        root_client, name="Выезд мастера в бумаге", unit="hour", is_service=True, cost=None
+    )
+    klient = root_client.post(f"{API}/clients", json={"name": "Держатель услуги"}).json()
+    zakaz = root_client.post(
+        f"{API}/orders", json={"kind": "sales_order", "client_id": klient["id"]}
+    )
+    assert zakaz.status_code == 201, zakaz.text
+    stroka = root_client.post(
+        f"{API}/orders/{zakaz.json()['id']}/lines",
+        json={"product_id": usluga["id"], "quantity": "1", "price": 10000},
+    )
+    assert stroka.status_code == 201, stroka.text
+
+    db = SessionLocal()
+    try:
+        db.delete(db.get(Product, usluga["id"]))
+        with pytest.raises(IntegrityError):
+            db.commit()
+        db.rollback()
+    finally:
+        db.close()
+
 def test_a_service_has_no_stock_at_all(root_client):
     """У услуги остаток не ноль, а его нет — и оприходовать её нельзя."""
     service = new_product(

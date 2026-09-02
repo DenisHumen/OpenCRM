@@ -580,7 +580,7 @@ def pick(db: Session, document_id: int, code: str, quantity_milli: int = 1000) -
 
 
 def _dvinut_sklad_naprjamuyu(db, order, goods, warehouse, outgoing, author) -> None:
-    """Движения склада без накладной. Только когда блок накладных выключен.
+    """Движения склада без накладной. Когда накладные выключены, а склад — нет.
 
     Это прежний путь заказа целиком, вынесенный отдельно, — чтобы в `close`
     было видно РАЗВИЛКУ, а не два перемешанных способа. Обе половины не могут
@@ -662,28 +662,38 @@ def close(
     # всегда выглядели бы недостачей — «доставки на складе ноль». Отгрузка
     # заказа, где есть хоть одна услуга, вставала бы намертво.
     goods = [row for row in rows if row.product_id is not None and not _is_service(db, row)]
-    # Склад выбирается явно, а не подставляется молча: списание с основного
-    # однажды снимет деталь не оттуда, где её взяли. Не назвали — основной.
-    warehouse = warehouse_service.resolve_warehouse(db, warehouse_id)
     outgoing = order.kind == KIND_SALES_ORDER
 
-    # Занимаем товары ДО проверки нехватки. Устройство то же, что у переезда:
-    # `_shortages` спрашивает остаток, движения пишутся ниже, и между шагами
-    # окно. Замерено дуэлью — два заказа на последние две единицы проходили оба,
-    # со склада уходило четыре, и подтверждения не давал никто.
+    # Выключенный склад не распоряжается закрытием ВООБЩЕ.
     #
-    # Порядок по id обязателен: двое, берущие одни и те же товары в разном
-    # порядке, встают друг против друга насмерть. Разбор замка — в докстроке
-    # `warehouse_repo.zapert_tovar`.
-    for row in sorted({row.product_id for row in goods}):
-        warehouse_repo.zapert_tovar(db, row)
+    # Развилка ниже — по блоку НАКЛАДНЫХ, и проверка склада досталась только её
+    # половине. Мимо шли не одни движения: `resolve_warehouse` отказывал
+    # `no_warehouse`, а нехватка — остатком, которого никто не видит.
+    sklad_vklyuchen = modules_service.is_enabled(db, "warehouse")
+    warehouse = None
+    if sklad_vklyuchen:
+        # Склад выбирается явно, а не подставляется молча: списание с основного
+        # однажды снимет деталь не оттуда, где её взяли. Не назвали — основной.
+        warehouse = warehouse_service.resolve_warehouse(db, warehouse_id)
 
-    if outgoing and goods and not confirm_negative:
-        short = _shortages(db, goods, warehouse.id)
-        if short:
-            raise errors.ValidationError(
-                "Not enough stock: " + ", ".join(short), code="not_enough_stock"
-            )
+        # Занимаем товары ДО проверки нехватки. Устройство то же, что у
+        # переезда: `_shortages` спрашивает остаток, движения пишутся ниже, и
+        # между шагами окно. Замерено дуэлью — два заказа на последние две
+        # единицы проходили оба, со склада уходило четыре, и подтверждения не
+        # давал никто.
+        #
+        # Порядок по id обязателен: двое, берущие одни и те же товары в разном
+        # порядке, встают друг против друга насмерть. Разбор замка — в докстроке
+        # `warehouse_repo.zapert_tovar`.
+        for row in sorted({row.product_id for row in goods}):
+            warehouse_repo.zapert_tovar(db, row)
+
+        if outgoing and goods and not confirm_negative:
+            short = _shortages(db, goods, warehouse.id)
+            if short:
+                raise errors.ValidationError(
+                    "Not enough stock: " + ", ".join(short), code="not_enough_stock"
+                )
 
     previous = order.status
     if not documents_repo.take_status(db, order, expected=previous, status=STATUS_CLOSED):
@@ -696,9 +706,13 @@ def close(
     # Накладная снимет свой при проведении; это не дублирование производного,
     # а два снимка одного числа в одно мгновение. Убери его — и карточка
     # заказа перестанет отвечать, во сколько обошлась отгрузка.
-    for row in goods:
-        product = warehouse_service.get_product(db, row.product_id, include_deleted=True)
-        row.cost_minor = product.cost_minor
+    #
+    # При выключенном складе снимка НЕ ДЕЛАЕМ, а не выбрасываем его совсем:
+    # включат склад обратно — и он снова снимается на каждом закрытии.
+    if sklad_vklyuchen:
+        for row in goods:
+            product = warehouse_service.get_product(db, row.product_id, include_deleted=True)
+            row.cost_minor = product.cost_minor
 
     if goods and modules_service.is_enabled(db, "waybills"):
         # К остатку ведёт ОДИН путь, и он через накладную.
@@ -707,8 +721,8 @@ def close(
         # бед разом. Первая: два пути к одному остатку — по заказу можно было
         # выписать ещё и накладную, и товар уезжал дважды; держался запрет
         # взаимной проверкой в коде, а не устройством. Вторая: прямой вызов
-        # шёл мимо `is_enabled(db, "warehouse")`, то есть при ВЫКЛЮЧЕННОМ
-        # складе закрытие заказа всё равно писало движения. Третья: у
+        # шёл мимо `is_enabled(db, "warehouse")` — он никуда не делся, живёт
+        # ниже и с 02.09.2026 стоит под `sklad_vklyuchen`. Третья: у
         # отгрузки не оставалось бумаги — на вопрос «по чему отдали» ответить
         # было нечем.
         #
@@ -720,7 +734,12 @@ def close(
         # разом, успели бы выписать каждый свою накладную. Проигравший
         # спотыкается на `take_status`, и его транзакция откатывается целиком
         # — вместе с движениями склада, потому что транзакция одна.
-        nakladnaya = waybill_service.po_zakazu(db, order.id, author, warehouse.id)
+        #
+        # Склад может быть выключен — тогда его нет и у накладной: бумага
+        # выписывается без него, а `provesti` не пишет ни одного движения.
+        nakladnaya = waybill_service.po_zakazu(
+            db, order.id, author, warehouse.id if warehouse else None
+        )
         waybill_service.provesti(
             db,
             nakladnaya.id,
@@ -728,7 +747,7 @@ def close(
             confirm_negative=confirm_negative,
             po_zakrytiyu_zakaza=True,
         )
-    else:
+    elif sklad_vklyuchen:
         # Накладные выключены (или отгружать нечего — один услуги). Блок,
         # которого нет, не может выписать бумагу: правило «выключенный блок
         # исчезает целиком» сильнее желания единообразия. Двойной отгрузки
@@ -758,7 +777,13 @@ def close(
         from_status=previous,
     )
 
-    _record(db, order, previous, STATUS_CLOSED, author, "")
+    # Молчание о невыполненном читается как «выполнено»: без этой строки
+    # закрытие при выключенном складе выглядит в истории обычной отгрузкой.
+    # Слова те же, что у накладной, — две истории обязаны читаться одинаково.
+    _record(
+        db, order, previous, STATUS_CLOSED, author,
+        "" if sklad_vklyuchen else "warehouse module off, no stock moves",
+    )
     audit_service.record(
         db,
         action=audit_service.ACTION_ORDER_CLOSED,
@@ -796,6 +821,8 @@ def revert(db: Session, document_id: int, author: User) -> Document:
             code="document_status_changed",
         )
 
+    sklad_vklyuchen = modules_service.is_enabled(db, "warehouse")
+
     # Возврат оформляется БУМАГОЙ, если отгрузка была оформлена бумагой.
     #
     # После переезда закрытия на накладную движения склада принадлежат ей, а
@@ -830,7 +857,15 @@ def revert(db: Session, document_id: int, author: User) -> Document:
     # самом заказе. Задним числом бумага им не выписывается — накладная с
     # сегодняшним номером и вчерашней датой это подделка, — поэтому старый путь
     # остаётся ровно для них. Он же работает, когда блок накладных выключен.
-    for move in [] if otgruzheno else warehouse_repo.moves_of_document(db, order.id):
+    #
+    # Выключенный склад закрывает и его: писать обратные движения в блок,
+    # которого нет, значит нарушать то же правило, что и при закрытии.
+    # Сторно выше от этого не отказывается — бумага принадлежит накладным, а
+    # движений `provesti` при выключенном складе не пишет тоже.
+    starye = []
+    if sklad_vklyuchen and not otgruzheno:
+        starye = warehouse_repo.moves_of_document(db, order.id)
+    for move in starye:
         if move.kind not in (MOVE_IN, MOVE_OUT):
             continue
         warehouse_service.add_move(
@@ -864,7 +899,11 @@ def revert(db: Session, document_id: int, author: User) -> Document:
         from_status=STATUS_CLOSED,
     )
 
-    _record(db, order, STATUS_CLOSED, STATUS_CANCELLED, author, "processing reversed")
+    primechanie = "processing reversed"
+    if not sklad_vklyuchen:
+        # Иначе отмена, ничего не вернувшая, выглядит в истории обычной.
+        primechanie = "warehouse module off, no stock moves"
+    _record(db, order, STATUS_CLOSED, STATUS_CANCELLED, author, primechanie)
     audit_service.record(
         db,
         action=audit_service.ACTION_ORDER_REVERTED,

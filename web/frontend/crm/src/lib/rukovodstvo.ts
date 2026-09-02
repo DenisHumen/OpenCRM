@@ -379,6 +379,13 @@ export const RUKOVODSTVO: Razdel[] = [
             },
           },
           {
+            vid: "abzats",
+            tekst: {
+              ru: "Акту можно дать своё название — «Наряд-заказ», «Акт сдачи-приёмки», — и оно печатается в шапке листа так, как вписано. Не вписали своего — в шапке стоит общее название на языке бумаги.",
+              en: "An act can be given a title of your own — «Work order», «Handover certificate» — and it is printed in the sheet heading exactly as typed. Leave it empty and the heading carries the general title in the language of the paper.",
+            },
+          },
+          {
             vid: "tablitsa",
             shapka: [
               { ru: "Состояние", en: "Status" },

@@ -164,10 +164,23 @@ def create(db: Session, data: dict, author: User) -> Document:
 
     warehouse = None
     if modules_service.is_enabled(db, "warehouse"):
-        # Не назвали — основной. Молча подставлять его при НЕСКОЛЬКИХ складах
-        # нельзя (списание однажды снимет деталь не оттуда, где её взяли), и
-        # `resolve_warehouse` этим и занимается.
-        warehouse = warehouse_service.resolve_warehouse(db, data.get("warehouse_id"))
+        if basis is not None and basis.kind in WAYBILL_KINDS:
+            # Сторно наследует склад исходной ЦЕЛИКОМ, включая его отсутствие.
+            # Иначе так: заказ закрыт при выключенном складе (бумага без склада,
+            # движений нет), склад включают, жмут «отменить» — и сторно получало
+            # основной склад и писало приход на товар, который никуда не уезжал.
+            warehouse = (
+                warehouse_service.get_warehouse(
+                    db, basis.warehouse_id, include_deleted=True
+                )
+                if basis.warehouse_id
+                else None
+            )
+        else:
+            # Не назвали — основной. Молча подставлять его при НЕСКОЛЬКИХ складах
+            # нельзя (списание однажды снимет деталь не оттуда, где её взяли), и
+            # `resolve_warehouse` этим и занимается.
+            warehouse = warehouse_service.resolve_warehouse(db, data.get("warehouse_id"))
 
     payload = json.dumps(
         {
@@ -408,9 +421,17 @@ def provesti(
     sklad_vklyuchen = modules_service.is_enabled(db, "warehouse")
     goods = [row for row in rows if row.product_id is not None]
 
+    # Склад бумаги решается при заведении и потом не меняется. НЕТ склада —
+    # бумага остатка не касается: при выключенном блоке она такой и родилась.
+    # `resolve_warehouse` подставил бы основной, и сторно такой накладной писало
+    # бы приход на товар, который никуда не уезжал: остаток рос из ничего.
+    dvigaet_sklad = sklad_vklyuchen and waybill.warehouse_id is not None
+
     warehouse = None
-    if sklad_vklyuchen:
-        warehouse = warehouse_service.resolve_warehouse(db, waybill.warehouse_id)
+    if dvigaet_sklad:
+        warehouse = warehouse_service.get_warehouse(
+            db, waybill.warehouse_id, include_deleted=True
+        )
         # Занимаем товары ДО проверки нехватки. Между вопросом «сколько на
         # складе» и записью движения есть окно, и в него попадают двое: две
         # накладные на последние две единицы проходят обе, со склада уходит
@@ -436,7 +457,7 @@ def provesti(
             code="document_status_changed",
         )
 
-    if sklad_vklyuchen:
+    if dvigaet_sklad:
         for row in goods:
             product = warehouse_service.get_product(db, row.product_id, include_deleted=True)
             row.cost_minor = product.cost_minor
@@ -473,7 +494,12 @@ def provesti(
         from_status=previous,
     )
 
-    primechanie = "склад выключен, движений нет" if not sklad_vklyuchen else ""
+    if not sklad_vklyuchen:
+        primechanie = "warehouse module off, no stock moves"
+    elif waybill.warehouse_id is None:
+        primechanie = "no warehouse on this paper, no stock moves"
+    else:
+        primechanie = ""
     if confirm_negative:
         # Подтверждение нехватки записывается в историю бумаги, а не проходит
         # молча: «отгрузили в минус» — это решение человека, и через месяц

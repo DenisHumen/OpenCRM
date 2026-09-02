@@ -57,6 +57,9 @@ export function ProductHolders({ productId }: { productId: number }) {
     <div className="card card-pad" style={{ marginBottom: 20 }}>
       <div className="page-head" style={{ marginBottom: 12 }}>
         <div className="metric-title">{t("reservedBy")}</div>
+        {/* «по всем складам» в подписи — не уточнение, а починка. Рядом на
+            карточке стоит раскладка ПО СКЛАДАМ, а резерв не разрезан, и два
+            несходящихся числа об одном отменяли доверие к обоим. */}
         <div style={{ color: "var(--muted)", fontSize: 12.5 }}>
           {t("availableOf", {
             available: formatQuantity(data.available_milli),
