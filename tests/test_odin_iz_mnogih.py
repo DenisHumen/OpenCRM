@@ -26,6 +26,8 @@ import threading
 
 from tests.conftest import API
 
+WH = f"{API}/warehouse"
+
 
 def duel(strike, first_arg, second_arg):
     """Два удара разом. Возвращает {имя: исход}.
@@ -358,3 +360,36 @@ def test_dva_akta_spisyvayut_posledneye_razom(root_client):
         f"списали сверх остатка без подтверждения: осталось {ostalos} тысячных "
         f"при двух единицах, удачных актов {udachnyh}, ответы {codes}"
     )
+
+
+# --- артикул товара -----------------------------------------------------------
+
+
+def test_dva_tovara_zavodyatsya_razom_i_artikuly_raznye(root_client):
+    """Двое заводят товар одновременно — артикулы обязаны разойтись.
+
+    Артикул считается как «максимум среди выданных плюс один», то есть между
+    счётом и вставкой есть окно. Проигравший обязан пересчитать номер и
+    вставить снова (`core/uniqueness.insert_retrying`), а не получить 500 в лицо
+    и не занять чужой номер.
+
+    Утверждение здесь не «прошёл ровно один»: пройти обязаны ОБА. Гонку никто не
+    выигрывает — оба товара законны, и разойтись должны только номера. Уникальный
+    индекс на `products.sku` вторую беду сделал бы отказом вставки, но человек
+    увидел бы пятисотку на пустом месте.
+    """
+    root_client.post(f"{API}/modules/warehouse", json={"enabled": True})
+
+    def zavesti(imya: str):
+        otvet = root_client.post(f"{WH}/products", json={"name": imya, "unit": "pcs"})
+        return (otvet.status_code, otvet.json().get("sku") if otvet.status_code == 201 else otvet.text)
+
+    codes = duel(zavesti, "Дуэль артикула А", "Дуэль артикула Б")
+    assert set(codes) == {"first", "second"}, f"об ударе не отчитались: {codes}"
+
+    ishody = [codes["first"], codes["second"]]
+    assert all(isinstance(i, tuple) and i[0] == 201 for i in ishody), (
+        f"заведение товара не выдержало гонки: {ishody}"
+    )
+    artikuly = [i[1] for i in ishody]
+    assert len(set(artikuly)) == 2, f"двоим достался один артикул: {artikuly}"
