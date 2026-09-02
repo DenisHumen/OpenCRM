@@ -13,6 +13,26 @@ import { formatDateTime, formatMoney, initials, parseDate, relativeDay } from ".
 import { moduleOn } from "../lib/modules";
 import { can } from "../lib/permissions";
 
+/** Через сколько сводка перечитывается сама, пока вкладка на переднем плане.
+ *
+ * **Это времянка, и снять её надо, как только появится общий живой слой**
+ * (`docs/12-realtime-plan.md`, задача 8.7). Записано здесь, а не в плане:
+ * через полгода механизмов обновления станет два, и убирать будут не глядя.
+ *
+ * Две минуты, а не десять секунд, и не «по каждому изменению». **Замерено:
+ * сводка стоит 23 запроса к базе** против четырёх у списка бумаг — один заход
+ * собирает деньги, воронку целиком, задачи, клиентов и просмотры за неделю. Она
+ * нарочно не стоит под потолком запросов (`tests/test_speed.py`, комментарий у
+ * таблицы): её цена растёт с данными, и абсолютный потолок был бы мигающим
+ * сторожем. Значит частоту здесь выбирают руками и с запасом: минута дала бы
+ * 1380 запросов в час с одной вкладки.
+ *
+ * Столько же, сколько у проверки свободного места (`lib/app.tsx`), и это не
+ * совпадение: обе — фоновые перезапросы, и разные интервалы у них означали бы
+ * два числа, которые кто-то однажды начнёт сближать.
+ */
+const SVODKA_POLL_MS = 120_000;
+
 export function Dashboard() {
   const { user, t, locale, storage, modules, refreshStorage, toastError } = useApp();
   const seesMoney = can(user, "deals.view_amounts");
@@ -25,12 +45,59 @@ export function Dashboard() {
 
   const { failure, fail, clear } = useFailure();
 
-  const load = useCallback(() => {
-    clear();
-    api.get("/dashboard").then(setData).catch(fail);
-  }, [fail, clear]);
+  const [obnovleno, setObnovleno] = useState<Date | null>(null);
 
-  useEffect(load, [load]);
+  /** Одна дорога за данными, два способа обойтись с отказом.
+   *
+   * `tikho` — фоновый перезапрос: отказ проглатывается, и на экране остаются
+   * прежние числа. Иначе мигнувшая сеть стирала бы работающую сводку и
+   * подставляла экран отказа человеку, который в неё даже не смотрел.
+   *
+   * Второй ручки за теми же данными здесь нет намеренно: два способа получать
+   * одно и то же расходятся на первой же правке.
+   */
+  const load = useCallback(
+    (tikho = false) => {
+      if (!tikho) clear();
+      api
+        .get("/dashboard")
+        .then((svezhee) => {
+          setData(svezhee);
+          setObnovleno(new Date());
+        })
+        .catch((beda) => {
+          if (!tikho) fail(beda);
+        });
+    },
+    [fail, clear],
+  );
+
+  useEffect(() => load(), [load]);
+
+  // Перезапрос по расписанию — ТОЛЬКО пока вкладка на переднем плане.
+  //
+  // Без этого десять забытых вкладок на фирму дают десять потоков перезапросов
+  // самой дорогой ручки круглосуточно. Опыт в проекте уже есть: команда,
+  // безобидная в руках человека, из цикла отрисовки дала 240 запросов в час и
+  // уронила боевое обновление.
+  //
+  // Возвращение на вкладку перечитывает сразу, не дожидаясь двух минут: человек
+  // вернулся именно затем, чтобы посмотреть, — и утренние числа под свежим
+  // заголовком были бы ровно той бедой, ради которой это писалось.
+  useEffect(() => {
+    const vidno = () => document.visibilityState === "visible";
+    const timer = window.setInterval(() => {
+      if (vidno()) load(true);
+    }, SVODKA_POLL_MS);
+    const vernulis = () => {
+      if (vidno()) load(true);
+    };
+    document.addEventListener("visibilitychange", vernulis);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", vernulis);
+    };
+  }, [load]);
 
   if (!data) return <ScreenLoading error={failure} onRetry={load} />;
 
@@ -54,9 +121,24 @@ export function Dashboard() {
   return (
     <div className="page">
       <div className="page-head" style={{ marginBottom: 26 }}>
-        <h1 className="page-title">
-          {greeting}, {user?.name}
-        </h1>
+        <div>
+          <h1 className="page-title">
+            {greeting}, {user?.name}
+          </h1>
+          {/* Отметка свежести. Обещать «в реальном времени» и молчать о том,
+              когда числа взяты, значит обещать больше, чем есть: обновление
+              идёт раз в две минуты, и человек вправе это видеть. */}
+          {obnovleno && (
+            <div className="page-sub">
+              {t("updatedAt", {
+                time: obnovleno.toLocaleTimeString(locale === "ru" ? "ru-RU" : "en-US", {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                }),
+              })}
+            </div>
+          )}
+        </div>
         <div style={{ display: "flex", gap: 10 }}>
           <Link to="/clients?new=1" className="btn btn-secondary">
             <Icon name="userPlus" />
