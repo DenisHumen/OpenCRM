@@ -874,3 +874,262 @@ def test_ask_secret_vozvrashchaet_ekho_dazhe_pri_obryve():
     assert "stty -g" in telo, (
         "состояние терминала не снимается перед правкой — возвращать будет нечего"
     )
+
+
+# --- пульт: чужая ошибка не закрывает меню, а кадр не разъезжается -------------
+#
+# Три беды из сплошного разбора скрипта, и ни одной не видно чтением.
+#
+# `die` внутри команды — это `exit`: он закрывает ТУ ЖЕ оболочку, а `||` рядом с
+# вызовом ловит код возврата, а не выход. Человек оставался без пульта ровно в ту
+# минуту, когда что-то пошло не так, — то есть когда пульт нужнее всего.
+#
+# Кадр рисуется от `ESC[H` поверх прежнего, без очистки экрана. Строка длиннее
+# окна не «вылезает вправо», а переносится терминалом: остаток кадра съезжает на
+# строку вниз, и рамка остаётся разъехавшейся до самого выхода из меню.
+#
+# Ширину считал `wc -m`, а он считает знаки ПО ЛОКАЛИ: под `LANG=C` это байты,
+# кириллица двухбайтная, и всякая русская подпись объявлялась вдвое шире, чем
+# занимает на экране. Поэтому проверки ниже гоняются в обеих локалях.
+
+
+def _telo_funktsii(imya: str, text: str) -> str:
+    """Функция целиком, как она написана в скрипте, вместе с заголовком."""
+    nachalo = text.index(chr(10) + imya + "() {") + 1
+    return text[nachalo : text.index(chr(10) + "}" + chr(10), nachalo) + 3]
+
+
+def _odnostrochnaya(imya: str, text: str) -> str:
+    """`die` и `warn` написаны в одну строку — берём её целиком."""
+    for stroka in text.splitlines():
+        if stroka.startswith(imya + "()"):
+            return stroka
+    raise AssertionError(f"функции {imya} в скрипте больше нет")
+
+
+#: Настоящий ESC внутри собираемого куска: `printf '\033'`.
+#:
+#: Именно настоящий, а не два знака «косая и ноль-три-три»: подставь их — и
+#: раскраска в проверке станет обычным текстом, а сторож будет мерить не то.
+_ESC_SH = "$(printf '" + chr(92) + "033')"
+
+
+def _pod_sh(skript: str, lokal: str = "C.UTF-8") -> subprocess.CompletedProcess:
+    """Гоняет собранный кусок скрипта настоящим `sh` в НАЗВАННОЙ локали.
+
+    Локаль — не мелочь окружения, а половина проверяемого: от неё зависит,
+    считает `wc -m` знаки или байты.
+
+    Скрипт уходит СТАНДАРТНЫМ ВВОДОМ, а не `-c`: длинный аргумент под Windows
+    обрезается на полуслове, и оболочка спотыкается о незакрытую кавычку вместо
+    того, чтобы что-то проверить. `errors="replace"` — затем, чтобы разрезанная
+    посередине буква красила проверку, а не ломала разбор вывода.
+    """
+    return subprocess.run(
+        [SH],
+        input=skript,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env={**os.environ, "LANG": lokal, "LC_ALL": lokal},
+    )
+
+
+def _pult_pod_sh(deystvie: str) -> subprocess.CompletedProcess:
+    """Гоняет НАСТОЯЩУЮ `tui_vypolnit` с подложенным пунктом меню.
+
+    Поиском по исходнику здесь не проверить ничего: написано всё правильно, а
+    беда в том, КАК оболочка исполняет `exit` внутри вызванной функции.
+
+    Терминала в наборе тестов нет, поэтому вывод в `/dev/tty` из тела убран: на
+    разбор чужого `exit` это не влияет.
+    """
+    text = source()
+    skript = chr(10).join([
+        "UI_LANG=ru",
+        'B=""; D=""; R=""; YELLOW=""; RED=""',
+        _telo_funktsii("tr_", text),
+        _odnostrochnaya("warn", text),
+        _odnostrochnaya("die", text),
+        "tui_vyklyuchit() { :; }",
+        "tui_vklyuchit() { :; }",
+        "tui_ubrat() { :; }",
+        "tui_svodka_obnovit() { :; }",
+        "ask() { :; }",
+        "clear() { :; }",
+        _telo_funktsii("tui_vypolnit", text).replace("> /dev/tty", ""),
+        deystvie,
+        "tui_vypolnit punkt",
+        "printf 'PULT-ZHIV" + chr(92) + "n'",
+    ])
+    return _pod_sh(skript)
+
+
+@pytest.mark.skipif(SH is None, reason="нет sh")
+def test_die_v_komande_ne_zakryvaet_pult():
+    """Отказ внутри пункта обязан оставить человека в меню.
+
+    Комментарий у вызова обещал это с самого появления живого меню, а `||`
+    обещания не держал: `die` делает `exit 1`, и он закрывает ту же оболочку, в
+    которой крутится меню. `die` в командах меню не редкость — им кончается и
+    «приложение не отвечает» в режиме обслуживания, и половина проверок доктора.
+    """
+    gotovo = _pult_pod_sh(
+        "punkt() { printf 'VYVOD-KOMANDY" + chr(92) + "n'; die 'сайт не отвечает'; "
+        "printf 'POSLE-DIE" + chr(92) + "n'; }"
+    )
+    vyvod = gotovo.stdout
+    assert "POSLE-DIE" not in vyvod, (
+        "`die` перестал обрывать команду — проверка ниже мерила бы не ту беду"
+    )
+    assert "PULT-ZHIV" in vyvod, (
+        "`die` внутри пункта закрыл пульт целиком: "
+        + repr(vyvod) + " " + repr(gotovo.stderr)
+    )
+    assert "VYVOD-KOMANDY" in vyvod, "вывод команды пропал: " + repr(vyvod)
+    assert "команда закончилась ошибкой" in vyvod, "об отказе не сказано ни слова"
+    assert vyvod.index("VYVOD-KOMANDY") < vyvod.index("команда закончилась ошибкой"), (
+        "вывод команды пришёл ПОСЛЕ приговора о ней — значит он где-то копился, "
+        "а не шёл человеку на экран по ходу дела: " + repr(vyvod)
+    )
+
+
+@pytest.mark.skipif(SH is None, reason="нет sh")
+@pytest.mark.parametrize(
+    ("punkt", "zhdyom_zhalobu"),
+    [
+        ("punkt() { printf 'GOTOVO" + chr(92) + "n'; }", False),
+        ("punkt() { printf 'GOTOVO" + chr(92) + "n'; return 3; }", True),
+    ],
+)
+def test_pult_otlichaet_udachu_ot_bedy(punkt, zhdyom_zhalobu):
+    """Оборотная сторона: удача не должна начать выглядеть отказом.
+
+    Починить одно, сломав другое, — не починка: жалоба под каждым удачным
+    пунктом отучает её читать ровно так же, как её отсутствие.
+    """
+    vyvod = _pult_pod_sh(punkt).stdout
+    assert "PULT-ZHIV" in vyvod, "пульт закрылся на ровном месте: " + repr(vyvod)
+    assert ("команда закончилась ошибкой" in vyvod) is zhdyom_zhalobu, repr(vyvod)
+
+
+@pytest.mark.skipif(SH is None, reason="нет sh")
+@pytest.mark.parametrize("lokal", ["C.UTF-8", "C"])
+def test_shirina_stroki_schitaetsya_v_znakah_a_ne_v_baytah(lokal):
+    """Ширина строки — знаки на экране, а не байты в памяти.
+
+    `wc -m` считает знаки не сам по себе, а по локали: под `LANG=C` он считает
+    байты, кириллица в UTF-8 двухбайтная — и русская подпись объявляется вдвое
+    шире, чем занимает. Рамка после этого разъезжается, а бегущая строка бежит
+    там, где влезала целиком.
+    """
+    v_cvete = "x" + chr(92) + "033[32mабвгдежзий" + chr(92) + "033[0mx"
+    skript = chr(10).join([
+        "TUI_ESC=" + _ESC_SH,
+        _telo_funktsii("tui_shirina", source()),
+        "printf 'lat=%s" + chr(92) + "n' \"$(tui_shirina 'abcdefghij')\"",
+        "printf 'kir=%s" + chr(92) + "n' \"$(tui_shirina 'абвгдежзий')\"",
+        "printf 'cvet=%s" + chr(92) + "n' \"$(tui_shirina \"$(printf '"
+        + v_cvete + "')\")\"",
+    ])
+    gotovo = _pod_sh(skript, lokal)
+    assert gotovo.returncode == 0, gotovo.stderr
+    zamer = dict(s.split("=", 1) for s in gotovo.stdout.split())
+    assert zamer["lat"] == "10", zamer
+    assert zamer["kir"] == "10", (
+        f"русская строка в локали {lokal} померена в байтах: {zamer}"
+    )
+    assert zamer["cvet"] == "12", (
+        f"раскраска посчитана за ширину в локали {lokal}: {zamer}"
+    )
+
+
+#: Шапка живого меню собирается из сводки — подкладываем её целиком.
+_POLE_ZAGLUSHKA = chr(10).join([
+    "tui_pole() {",
+    '    case "$1" in',
+    "        url) printf 'https://ochen-dlinnyy-domen-dlya-proverki-ramki.example.com' ;;",
+    "        zdorov) printf '1' ;;",
+    "        obsluzhivanie) printf '0' ;;",
+    "        konteynerov) printf '5' ;;",
+    "        zhivyh) printf '4' ;;",
+    "        legli) printf 'redis' ;;",
+    "        versiya) printf '1.0.7-abcdef0' ;;",
+    "        obnova) printf 'есть' ;;",
+    "        avto) printf 'включено' ;;",
+    "        poslednee) printf 'вчера в 03:14 — обновление откатилось, схема не сошлась' ;;",
+    "        disk) printf '27G' ;;",
+    "    esac",
+    "}",
+])
+
+#: Всё, из чего собирается кадр. Берётся из скрипта как есть: подменённая
+#: половина проверяла бы саму себя.
+_KADR_FUNKTSII = (
+    "tr_", "tui_shirina", "tui_srez", "tui_ramki", "tui_obrezat", "tui_liniya",
+    "tui_stroka_ramki", "tui_vertushka", "tui_begushchaya", "tui_shapka",
+    "tui_punkty", "tui_pole_stroki", "tui_narisovat",
+)
+
+
+def _kadr_pod_sh(stolbcov: int, lokal: str) -> list:
+    """Рисует НАСТОЯЩИЙ кадр меню в окне заданной ширины.
+
+    Отдаёт пары «ширина в знаках, строка без раскраски» — то есть то, что
+    увидит терминал, а не то, что записано в исходнике.
+    """
+    text = source()
+    skript = [
+        "TUI_ESC=" + _ESC_SH,
+        "TUI_KE=$(printf '" + chr(92) + "033[K')",
+        "B=$(printf '\\033[1m'); D=$(printf '\\033[2m'); R=$(printf '\\033[0m')",
+        "GREEN=$(printf '\\033[32m'); YELLOW=$(printf '\\033[33m')",
+        "RED=$(printf '\\033[31m'); CYAN=$(printf '\\033[36m')",
+        "UI_LANG=ru",
+        "TUI_SVODKA=/takogo-fayla-net",
+        # Свой же PID: сборщик считается живым, и в шапку попадает вертушка —
+        # её ширину тоже надо мерить.
+        "TUI_SBOR_PID=$$",
+        "TUI_VERTUSHKA_KADR=3",
+        f"TUI_STOLBCOV={stolbcov}",
+        _POLE_ZAGLUSHKA,
+    ]
+    for imya in _KADR_FUNKTSII:
+        # Терминала в наборе тестов нет: кадр уходит в обычный вывод.
+        skript.append(_telo_funktsii(imya, text).replace("> /dev/tty", ""))
+    skript.append("tui_narisovat glavnoe 3")
+    gotovo = _pod_sh(chr(10).join(skript), lokal)
+    assert gotovo.returncode == 0, gotovo.stderr
+    bez_cveta = re.compile(chr(27) + r"\[[0-9;?]*[A-Za-z]")
+    golye = [bez_cveta.sub("", s) for s in gotovo.stdout.split(chr(10))]
+    return [(len(s), s) for s in golye]
+
+
+@pytest.mark.skipif(SH is None, reason="нет sh")
+@pytest.mark.parametrize("lokal", ["C.UTF-8", "C"])
+@pytest.mark.parametrize("stolbcov", [60, 71, 100])
+def test_kadr_pulta_ostayotsya_pryamougolnym(stolbcov, lokal):
+    """Ни одна строка кадра не шире окна, и рамка остаётся прямоугольной.
+
+    Шестьдесят колонок — самое узкое окно, в котором живое меню вообще
+    соглашается работать, и именно там кадр разъезжался: третья строка шапки и
+    подсказка внизу длиннее рамки просто по своему тексту.
+
+    Прямоугольность стережёт вторую половину беды. Ширина, посчитанная в
+    байтах, делает строки с кириллицей то короче, то длиннее — рамка перестаёт
+    быть рамкой, хотя ни одна строка за окно и не вылезает.
+    """
+    stroki = _kadr_pod_sh(stolbcov, lokal)
+    shirokie = [t for n, t in stroki if n > stolbcov]
+    assert not shirokie, (
+        f"строка шире окна в {stolbcov} колонок — терминал перенесёт её, и весь "
+        "кадр съедет на строку вниз:" + chr(10) + chr(10).join(shirokie)
+    )
+    ramka = [n for n, t in stroki if t[:1] in ("│", "╭", "╰", "|", "+")]
+    assert len(ramka) >= 5, (
+        f"рамка не нарисовалась ({len(ramka)} строк) — проверка мерила бы пустоту"
+    )
+    assert len(set(ramka)) == 1, (
+        f"рамка разъехалась, ширина строк разная: {sorted(set(ramka))}"
+    )

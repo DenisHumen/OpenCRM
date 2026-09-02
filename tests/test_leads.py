@@ -106,6 +106,22 @@ def send(key: str | None, **fields):
     return TestClient(app).post(LEADS, json=fields, headers=headers)
 
 
+def vernut_klyuch(key: str) -> None:
+    """Вернуть на место ключ, общий на весь файл.
+
+    Пишется ОТПЕЧАТОК, а не ключ: самого ключа в базе больше нет, и записанный
+    туда напрямую он проверял бы не то, что уезжает на сервер.
+    """
+    db = SessionLocal()
+    try:
+        settings_repo.write(
+            db, lead_service.SETTING_INTAKE_KEY_HASH, lead_service.otpechatok(key)
+        )
+        db.commit()
+    finally:
+        db.close()
+
+
 def clients_named(root_client, needle: str) -> list[dict]:
     """Карточки, у которых имя или адрес — ровно `needle`.
 
@@ -341,8 +357,10 @@ def test_klyuch_s_ne_ascii_ne_ronyaet_server(intake_key, root_client):
 
     Байт 0xFF — то, что можно послать в заголовке по-настоящему (кириллица в
     заголовок не влезает вовсе, её не пропустит уже отправитель). Сравнение
-    `compare_digest` на таком бросает TypeError, и без проверки на ASCII любой
-    из интернета одной строкой получал бы ошибку сервера.
+    `compare_digest` на таком бросает TypeError, и любой из интернета получал бы
+    ошибку сервера одной строкой. Держится это теперь не отдельной проверкой на
+    ASCII, а тем, что сравниваются отпечатки: они шестнадцатеричные с любого
+    ввода. Утверждение то же — сервер обязан ответить отказом, а не пятисоткой.
     """
     response = TestClient(app).post(
         LEADS,
@@ -356,7 +374,14 @@ def test_klyuch_s_ne_ascii_ne_ronyaet_server(intake_key, root_client):
 
 
 def test_bez_nastroennogo_klyucha_ruchki_net(root_client, intake_key):
-    """Свежая установка не держит открытой ручку, о которой владелец не знает."""
+    """Свежая установка не держит открытой ручку, о которой владелец не знает.
+
+    И отвечает она ровно тем же, чем на неверный ключ. Разные ответы были бы
+    ответом на вопрос «настроен ли у вас приём» — вопрос, который любой из
+    интернета задал бы одним запросом, а спрашивать его незачем никому.
+    """
+    ne_tot = send("hot-by-kakoj-nibud", name="Не Тот Ключ", email="ne-tot@example.com")
+
     db = SessionLocal()
     try:
         lead_service.clear_intake_key(db)
@@ -366,17 +391,16 @@ def test_bez_nastroennogo_klyucha_ruchki_net(root_client, intake_key):
     try:
         response = send("hot-by-kakoj-nibud", name="Ранний Гость", email="rannij@example.com")
         assert response.status_code == 401, response.text
-        assert response.json()["error"]["code"] == "intake_not_configured"
+        assert response.json()["error"]["code"] == "bad_intake_key"
         assert clients_named(root_client, "rannij@example.com") == []
+        assert (response.status_code, response.json()) == (ne_tot.status_code, ne_tot.json()), (
+            "«ключа нет» и «ключ не подошёл» различимы снаружи — наличие ключа "
+            "становится известно любому"
+        )
     finally:
-        # Ключ общий на весь файл: не вернёшь — соседние проверки уедут на
-        # «приём не настроен» и будут искать причину не там.
-        db = SessionLocal()
-        try:
-            settings_repo.write(db, lead_service.SETTING_INTAKE_KEY, intake_key)
-            db.commit()
-        finally:
-            db.close()
+        # Ключ общий на весь файл: не вернёшь — соседние проверки уедут на отказ
+        # и будут искать причину не там.
+        vernut_klyuch(intake_key)
 
 
 def test_potolok_novyh_kartochek(intake_key, monkeypatch, root_client):
@@ -541,6 +565,74 @@ def test_nastroyki_ne_otdayut_klyuch(root_client, intake_key):
     assert data["honeypot_field"] == lead_service.HONEYPOT_FIELD
 
 
+def test_v_baze_lezhit_otpechatok_a_ne_klyuch(root_client, intake_key):
+    """Круг: выдали ключ, он работает, а в базе его нет.
+
+    Беда, ради которой проверка написана: ключ лежал в `site_settings` открытым
+    текстом, и унесённая копия базы открывала форму любому, кто её достал, — а
+    копии отсюда уезжают наружу намеренно (`scripts/backup.sh`).
+
+    Ищем по ВСЕМ строкам настроек, а не по одной своей: беда была именно в том,
+    что ключ где-то лежит целиком, и «а мы его ещё вот сюда положили» такая
+    проверка обязана ловить. Дальше настроек ключ не уходит вовсе — ни в ленту,
+    ни в журнал он не пишется ниоткуда.
+    """
+    created = root_client.post(f"{API}/leads/settings/key")
+    assert created.status_code == 201, created.text
+    svezhiy = created.json()["key"]
+    try:
+        assert send(svezhiy, name="Свежий Ключ", email="otpechatok@example.com").status_code == 202
+
+        db = SessionLocal()
+        try:
+            stroki = {row.key: row.value for row in settings_repo.all_rows(db)}
+        finally:
+            db.close()
+
+        sledy = sorted(k for k, v in stroki.items() if svezhiy in k or svezhiy in v)
+        assert sledy == [], f"сам ключ лежит в базе, строки: {sledy}"
+
+        hranimoe = stroki.get(lead_service.SETTING_INTAKE_KEY_HASH, "")
+        assert hranimoe, "отпечаток не записан — проверять нечего, а форма работает"
+        assert hranimoe != svezhiy
+        # Имя, под которым ключ лежал открытым. Строкой, а не константой: в коде
+        # его больше нет вовсе, и оно должно остаться незанятым.
+        assert "leads_intake_key" not in stroki, "открытый ключ снова пишется под старым именем"
+    finally:
+        vernut_klyuch(intake_key)
+
+
+def test_klyuch_stertyy_obnovleniem_nazvan_vsluh(root_client, intake_key):
+    """«Ключа нет» у свежей установки и «ключ стёрло обновление» — не одно и то же.
+
+    Отметку ставит миграция `d4c17e6b0a92`: перевод на отпечаток отзывает ключ,
+    и форма на сайте владельца замолкает в момент обновления. Не скажи ему об
+    этом экран — он увидел бы то же, что видит только что установленная
+    система, и причину искал бы у себя на сайте.
+    """
+    db = SessionLocal()
+    try:
+        lead_service.clear_intake_key(db)
+        settings_repo.write(db, lead_service.SETTING_INTAKE_REISSUE, "1")
+        db.commit()
+    finally:
+        db.close()
+    try:
+        data = root_client.get(f"{API}/leads/settings").json()
+        assert data["has_intake_key"] is False
+        assert data["intake_key_reissue"] is True, (
+            "ключ стёрт обновлением, а экрану сказать об этом нечем"
+        )
+
+        # Выдали новый — говорить больше не о чем, и отметка обязана уйти сама.
+        assert root_client.post(f"{API}/leads/settings/key").status_code == 201
+        posle = root_client.get(f"{API}/leads/settings").json()
+        assert posle["has_intake_key"] is True
+        assert posle["intake_key_reissue"] is False, "просьба выдать ключ висит после выдачи"
+    finally:
+        vernut_klyuch(intake_key)
+
+
 def test_klyuch_sozdayotsya_ruchkoy_i_zakryvaet_prezhniy(root_client, intake_key):
     """Новый ключ показывается один раз и отменяет прежний в ту же секунду.
 
@@ -562,12 +654,7 @@ def test_klyuch_sozdayotsya_ruchkoy_i_zakryvaet_prezhniy(root_client, intake_key
         # Второй раз ключ не покажется: ручка настроек знает только «задан».
         assert svezhiy not in root_client.get(f"{API}/leads/settings").text
     finally:
-        db = SessionLocal()
-        try:
-            settings_repo.write(db, lead_service.SETTING_INTAKE_KEY, intake_key)
-            db.commit()
-        finally:
-            db.close()
+        vernut_klyuch(intake_key)
 
 
 def test_priyom_zakryvaetsya_ruchkoy(root_client, intake_key):
@@ -579,15 +666,10 @@ def test_priyom_zakryvaetsya_ruchkoy(root_client, intake_key):
     try:
         response = send(intake_key, name="После Закрытия", email="posle@example.com")
         assert response.status_code == 401, response.text
-        assert response.json()["error"]["code"] == "intake_not_configured"
+        assert response.json()["error"]["code"] == "bad_intake_key"
         assert clients_named(root_client, "posle@example.com") == []
     finally:
-        db = SessionLocal()
-        try:
-            settings_repo.write(db, lead_service.SETTING_INTAKE_KEY, intake_key)
-            db.commit()
-        finally:
-            db.close()
+        vernut_klyuch(intake_key)
 
 
 def test_otvetstvennyy_vybiraetsya_ruchkoy(root_client, intake_key):
@@ -693,3 +775,76 @@ def test_zamok_priyoma_ne_zapiraet_sosednyuyu_bazu(chistaya_baza):
         snyat_zamki(svoya)
         svoya.close()
         sosed.dispose()
+
+
+# --- перевод живой базы на отпечаток -----------------------------------------
+
+
+def _alembic(url: str):
+    import pathlib
+
+    from alembic.config import Config
+
+    config = Config(str(pathlib.Path(__file__).resolve().parent.parent / "alembic.ini"))
+    config.set_main_option("sqlalchemy.url", url)
+    return config
+
+
+def test_migratsiya_uvozit_otkrytyy_klyuch_iz_zhivoy_bazy(chistaya_baza, nakatit):
+    """Ключ, лежавший в базе открытым, после обновления оттуда исчезает.
+
+    Проверять это на пустой базе бессмысленно: стирать там нечего, и миграция
+    зелена, ничего не сделав. Поэтому ключ сеется так, как его писала прежняя
+    версия, и гоняется настоящая миграция на настоящей MySQL.
+
+    Круг «вверх — вниз — вверх» здесь не для схемы (её миграция не трогает), а
+    ради двух утверждений про данные: откат ключа не возвращает — вернуть его
+    нечем, отпечаток необратим, — и отметка «выдайте новый» ставится только
+    тому, у кого ключ был. Установке, начавшей жизнь без ключа, выдавать заново
+    нечего, и просьба к ней была бы выдумкой.
+    """
+    from alembic import command
+    from sqlalchemy import create_engine, text
+
+    do = "b7e24a09c351"
+    posle = "d4c17e6b0a92"
+    klyuch = "staryy-otkrytyy-klyuch-iz-kopii-bazy"
+
+    nakatit(chistaya_baza, do)
+    dvigatel = create_engine(chistaya_baza)
+    try:
+        with dvigatel.begin() as soedinenie:
+            soedinenie.execute(
+                text("INSERT INTO site_settings (`key`, `value`) VALUES (:k, :v)"),
+                {"k": "leads_intake_key", "v": klyuch},
+            )
+
+        def nastroyki() -> dict[str, str]:
+            with dvigatel.connect() as soedinenie:
+                return dict(
+                    soedinenie.execute(
+                        text("SELECT `key`, `value` FROM site_settings")
+                    ).all()
+                )
+
+        nakatit(chistaya_baza, posle)
+        stroki = nastroyki()
+        assert "leads_intake_key" not in stroki, (
+            f"открытый ключ остался в базе: {stroki.get('leads_intake_key')!r}"
+        )
+        assert klyuch not in stroki.values(), "ключ переехал в другую строку целиком"
+        assert stroki.get("leads_intake_key_reissue") == "1", (
+            "форма на сайте владельца замолчала, а сказать об этом нечем"
+        )
+
+        command.downgrade(_alembic(chistaya_baza), do)
+        nazad = nastroyki()
+        assert "leads_intake_key" not in nazad, "откат сделал вид, что вернул ключ"
+        assert "leads_intake_key_reissue" not in nazad, "отметка новой версии осталась в старой"
+
+        nakatit(chistaya_baza, posle)
+        assert "leads_intake_key_reissue" not in nastroyki(), (
+            "установке без ключа велено выдать его заново"
+        )
+    finally:
+        dvigatel.dispose()

@@ -15,10 +15,19 @@ import itertools
 import re
 
 import pytest
+from sqlalchemy import select
 
 from core import events
 from core import exceptions as errors
 from core.services.deal_service import DEAL_STAGE_CHANGED
+from database.models.document import (
+    KIND_WAYBILL_OUT,
+    STATUS_DRAFT,
+    STATUS_ISSUED,
+    Document,
+    DocumentLine,
+)
+from database.repositories import documents as documents_repo
 from tests.conftest import API
 from web.api.routes.documents import ACT_PRINT_STRINGS
 
@@ -382,6 +391,97 @@ def test_tsena_i_nazvanie_fiksiruyutsya_snimkom(root_client, deal):
     line = root_client.get(f"{ACTS}/{act['id']}").json()["lines"][0]
     assert line["name"] == item["name"]
     assert line["price"] == 50000
+
+
+# --- щель, которую акт продавил в стороже неизменяемости -----------------------
+#
+# Сторож «строки проведённой бумаги не правят» стоит на строках НАКЛАДНЫХ, а щель
+# в нём открыта из-за акта: себестоимость ему пишет подписчик склада уже после
+# захвата статуса, и переставлять там нечего. Разбор — docs/17-nakladnye.md §4.3.
+
+
+def _stroka_provedennoy_nakladnoy(db) -> DocumentLine:
+    """Строка накладной, вышедшей из черновика: сторож стоит только на такой.
+
+    Собирается прямо в сессии, а не ручками накладных: проверяется сторож на
+    событиях ORM, и путь бумаги вместе с блоком «Накладные» тут ни при чём.
+    """
+    bumaga = Document(
+        number=f"ACT-SHCHEL-{uniq()}", kind=KIND_WAYBILL_OUT, status=STATUS_DRAFT
+    )
+    db.add(bumaga)
+    db.flush()
+    db.add(
+        DocumentLine(
+            document_id=bumaga.id,
+            name_snapshot="Деталь",
+            quantity_milli=1_000,
+            cost_minor=None,
+        )
+    )
+    db.flush()
+    # Статус — условным UPDATE, как в бою: правка через объект уехала бы в
+    # соседнего сторожа, «шапку проведённой не правят», и мы проверяли бы его.
+    assert documents_repo.take_status(
+        db, bumaga, expected=STATUS_DRAFT, status=STATUS_ISSUED
+    )
+    return db.scalars(
+        select(DocumentLine).where(DocumentLine.document_id == bumaga.id)
+    ).one()
+
+
+def test_akt_pishet_sebestoimost_v_pustuyu_stroku(root_client, deal, db):
+    """Акт пишет себестоимость в ПУСТУЮ строку: `NULL → число`, и ничего сверх.
+
+    Строки акта сторож не сторожит — он про накладные, — но щель прорублена
+    ради этого вызова, и мерка у него та же. Начни акт снимать себестоимость
+    раньше, при заведении строки например, и проведению понадобилось бы «число →
+    другое число», то есть право переписывать выданную бумагу.
+    """
+    item = product(root_client, stock="10", cost="10000")
+    act = act_with(root_client, deal, item, quantity="3")
+
+    stroka = db.scalars(
+        select(DocumentLine).where(DocumentLine.document_id == act["id"])
+    ).one()
+    assert stroka.cost_minor is None, "себестоимость снята раньше проведения"
+
+    assert root_client.post(f"{ACTS}/{act['id']}/complete", json={}).status_code == 200
+    # Снимок транзакции взят чтением выше и проведения не увидит: сессия проверки
+    # живёт в REPEATABLE READ, как и всё в MySQL по умолчанию.
+    db.rollback()
+
+    stroka = db.scalars(
+        select(DocumentLine).where(DocumentLine.document_id == act["id"])
+    ).one()
+    # Сверяем с карточкой товара, а не с числом в тексте: единицы поменяются —
+    # записанная сюда «сотня» разойдётся с ней молча.
+    assert stroka.cost_minor == item["cost"], "проведение не записало себестоимость"
+
+
+def test_shchel_otkryta_na_pole_a_ne_na_pravku_s_nim(db):
+    """Щель — это поле `cost_minor`, а не «любая правка, где оно есть».
+
+    Проверяется случай, которого нет у соседей: законная запись себестоимости
+    везёт с собой чужое поле. Пропусти сторож такую пару — и выданная бумага
+    правится в одно движение, прикрывшись законным полем; а расширяется он до
+    этого одной строкой, и ни одна другая проверка на ней не краснеет.
+
+    Вторая половина — сама щель открыта: иначе проверка зеленела бы и на
+    стороже, запретившем себестоимость вовсе, то есть на сломанном проведении.
+    """
+    stroka = _stroka_provedennoy_nakladnoy(db)
+    stroka.cost_minor = 500
+    stroka.name_snapshot = "переписано заодно"
+    with pytest.raises(errors.ForbiddenError) as otkaz:
+        db.flush()
+    assert otkaz.value.code == "waybill_immutable"
+    db.rollback()
+
+    stroka = _stroka_provedennoy_nakladnoy(db)
+    stroka.cost_minor = 500
+    db.flush()
+    assert stroka.cost_minor == 500
 
 
 # --- блоки --------------------------------------------------------------------

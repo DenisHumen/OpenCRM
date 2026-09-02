@@ -216,10 +216,38 @@ python -m scripts.verify_backup \
     "$BACKUP_DIR/daily/storage-$STAMP.tar.gz" \
     "$SECRET_FILE"
 
-# 7) (опционально) выгрузка наружу — раскомментировать и настроить.
-#    Копия на том же диске, что и база, спасает от ошибки человека, но не от
-#    смерти диска. Ключ шифруется отдельно и уезжает вместе с базой.
-# age -r "$OPENCRM_BACKUP_PUBKEY" -o "/tmp/$(basename "$DB_COPY").age" "$DB_COPY"
-# rclone copy "/tmp/$(basename "$DB_COPY").age" remote:opencrm-backups/
+# 7) «копию давно не забирали».
+#
+# Все копии, снятые выше, лежат на ТОМ ЖЕ ДИСКЕ, что и база. От ошибки человека
+# они спасают, от смерти диска, пожара и шифровальщика — нет: то и другое унесёт
+# их вместе с базой. Пока увоз ручной (ни S3, ни чужого облака мы не заводим —
+# разбор в docs/15-backup-encryption.md), единственная защита — сказать вслух, и
+# сказать заранее, а не в день аварии.
+#
+# Отметка увоза — mtime файла `last-export`: сам увоз следа не оставляет, а
+# скачавший копию человек (или строка выгрузки ниже) обязан отметиться. Молчание
+# здесь означало бы «всё хорошо», чего мы как раз не знаем.
+UVOZ_DNEY="${OPENCRM_BACKUP_EXPORT_DAYS:-7}"
+OTMETKA_UVOZA="$BACKUP_DIR/last-export"
+if [ ! -e "$OTMETKA_UVOZA" ]; then
+    echo "backup: копии с этой машины не забирали НИ РАЗУ — все они лежат на том" >&2
+    echo "backup: же диске, что и база, и умрут вместе с ним." >&2
+    echo "backup: заберите копию себе и отметьте увоз: touch $OTMETKA_UVOZA" >&2
+elif [ -n "$(find "$OTMETKA_UVOZA" -maxdepth 0 -mtime "+$UVOZ_DNEY" 2>/dev/null || true)" ]; then
+    echo "backup: копию не забирали больше $UVOZ_DNEY дней — на диске рядом с базой" >&2
+    echo "backup: она защищает только от ошибки человека, но не от гибели машины." >&2
+    echo "backup: заберите копию себе и отметьте увоз: touch $OTMETKA_UVOZA" >&2
+fi
+
+# 8) (опционально) выгрузка наружу — раскомментировать и настроить.
+#    Наружу уезжает только ЗАШИФРОВАННОЕ: дамп — вся система в одном файле, и
+#    едущий рядом secret-*.env расшифровывает остальное. Файл ключа копии
+#    заводится один раз (`--sozdat-klyuch`) и хранится НЕ ЗДЕСЬ: потерянный
+#    вместе с диском ключ означает потерянную копию.
+# python -m scripts.verify_backup --zashifrovat \
+#     "$DB_COPY" "/tmp/$(basename "$DB_COPY").enc" \
+#     --klyuch-fayl "$OPENCRM_BACKUP_KEY_FILE"
+# rclone copy "/tmp/$(basename "$DB_COPY").enc" remote:opencrm-backups/
+# touch "$OTMETKA_UVOZA"   # без этой строки предупреждение выше не замолчит
 
 echo "backup done: $STAMP"
