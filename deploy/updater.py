@@ -83,6 +83,11 @@ STATUS_BROKEN = "broken"  # откат тоже не поднялся
 #: в логе не отличить «GitHub молчит» от «мы сами решили подождать».
 STATUS_RATE_LIMITED = "rate-limited"
 
+#: Имя проекта compose для набора тестов. Флагом `-p`, а не строкой `name:` в
+#: файле: `COMPOSE_PROJECT_NAME` перебивает вторую, и уборка после набора
+#: (`down -v --remove-orphans`) сносит боевой стек установки вместе с томами.
+PROEKT_NABORA = "opencrm-tests"
+
 #: Исходы, о которых демон молчит: они означают «ничего не случилось», а
 #: строка о том, что ничего не случилось, повторённая раз в пять минут,
 #: прячет ту единственную, ради которой лог и читают.
@@ -706,8 +711,16 @@ class Updater:
         существует вовсе, сервера базы образу не видно.
 
         Отсюда отдельный compose-файл. Он поднимает СВОЮ базу — не боевую: своё
-        имя проекта, своя сеть, данные в памяти. Перепутать с боевым стеком
-        нельзя даже опечаткой, а после прогона не остаётся ничего.
+        имя проекта, своя сеть, данные в памяти, и после прогона не остаётся
+        ничего.
+
+        **Имя проекта задаётся флагом `-p`, а не строкой `name:` в файле.**
+        Первое сильнее: `COMPOSE_PROJECT_NAME` из окружения или из `docker/.env`
+        перебивает `name:` и складывает набор с БОЕВЫМ стеком в один проект. А
+        уборка ниже — `down -v --remove-orphans`: под общим именем она сносит
+        живые контейнеры установки и её тома. Поймано на стенде, где имя проекта
+        задано ради трёх стеков на одной машине: обновление снесло собственное
+        приложение и на копии базы встало.
 
         `--exit-code-from tests` — чтобы код возврата был кодом pytest, а не
         компоуза: иначе красный набор проехал бы дальше зелёным. `--build` тут
@@ -720,8 +733,8 @@ class Updater:
         compose_tests = self.config.project_dir / "docker" / "docker-compose.tests.yml"
         result = self.shell.run(
             [
-                "docker", "compose", "-f", str(compose_tests), "up", "--build",
-                "--abort-on-container-exit", "--exit-code-from", "tests",
+                "docker", "compose", "-p", PROEKT_NABORA, "-f", str(compose_tests),
+                "up", "--build", "--abort-on-container-exit", "--exit-code-from", "tests",
             ],
             cwd=self.config.project_dir,
             timeout=self.config.checks_timeout,
@@ -730,7 +743,10 @@ class Updater:
         # контейнеры и том tmpfs, и следующий прогон начался бы на чужих
         # остатках. Код возврата уборки не важен — важен код набора.
         self.shell.run(
-            ["docker", "compose", "-f", str(compose_tests), "down", "-v", "--remove-orphans"],
+            [
+                "docker", "compose", "-p", PROEKT_NABORA, "-f", str(compose_tests),
+                "down", "-v", "--remove-orphans",
+            ],
             cwd=self.config.project_dir,
             timeout=300,
         )

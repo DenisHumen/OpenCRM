@@ -1173,7 +1173,7 @@ anyio-шной сорока, — и обе стороны сверяет `tests/
 стартовать без него. Поднять базу вместе с набором:
 
 ```sh
-docker compose -f docker/docker-compose.tests.yml up --build     --abort-on-container-exit --exit-code-from tests
+docker compose -p opencrm-tests -f docker/docker-compose.tests.yml up --build     --abort-on-container-exit --exit-code-from tests
 ```
 
 База эфемерная: своё имя проекта, своя сеть, данные в tmpfs. Тем же файлом
