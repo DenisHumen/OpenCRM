@@ -704,3 +704,39 @@ def test_osnovaniem_nakladnoy_byvaet_tolko_zakaz(root_client, client_row):
     otvet = root_client.post(f"{WAYBILLS}/from-order/{chuzhaya.json()['id']}")
     assert otvet.status_code == 422, "накладная сошла за основание накладной"
     assert otvet.json()["error"]["code"] == "basis_is_not_order"
+
+
+def test_bumaga_bez_sklada_ne_dvigaet_ostatok_ni_pri_kakom_bloke(root_client, client_row):
+    """НАЙДЕНО ПРИЁМКОЙ: остаток надувался из ничего.
+
+    Заказ закрыт при ВЫКЛЮЧЕННОМ складе — накладная выписана, склада у неё нет,
+    движений не было. Склад включают обратно и жмут «отменить проведение».
+    Сторно копировало пустой склад в `create`, а тот при включённом блоке
+    подставлял ОСНОВНОЙ, и `provesti` писал приход: товар, который никуда не
+    уезжал, возвращался на полку. Остаток рос на ровном месте.
+
+    Правило теперь одно и самоописательное: склад у бумаги решается при
+    заведении, и бумага без склада остатка не касается — ни при проведении, ни
+    при сторнировании.
+    """
+    item = product(root_client, stock="10")
+    assert root_client.post(f"{API}/modules/warehouse", json={"enabled": False}).status_code == 200
+    try:
+        waybill = chernovik(root_client, client_row, item, quantity="3")
+        provedena = root_client.post(f"{WAYBILLS}/{waybill['id']}/post", json={})
+        assert provedena.status_code == 200, provedena.text
+        assert provedena.json()["warehouse_id"] is None, "склад выключен, а у бумаги он есть"
+    finally:
+        assert root_client.post(f"{API}/modules/warehouse", json={"enabled": True}).status_code == 200
+
+    assert ostatok(root_client, item) == 10_000, "выключенный склад всё-таки тронули"
+
+    storno = root_client.post(f"{WAYBILLS}/{waybill['id']}/reverse")
+    assert storno.status_code == 201, storno.text
+    provedeno = root_client.post(f"{WAYBILLS}/{storno.json()['id']}/post", json={})
+    assert provedeno.status_code == 200, provedeno.text
+
+    assert ostatok(root_client, item) == 10_000, (
+        "сторно бумаги, которая склада не касалась, вернуло товар на полку — "
+        "остаток вырос из ничего"
+    )

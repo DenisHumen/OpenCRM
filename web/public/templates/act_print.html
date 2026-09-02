@@ -12,6 +12,10 @@
    Себестоимости здесь нет и не будет: клиенту показывают, во сколько работа
    обошлась ЕМУ. Закупочная цена — внутреннее дело, ей место на экране.
 
+   Заголовок приходит отдельным аргументом, а не из словаря `t`: название акта —
+   это данные, и вписанное человеком «Наряд-заказ» обязано стоять на листе
+   (разбор выбора — в `web/api/routes/documents._act_title`).
+
    Печатает браузер, как и всё остальное в системе. Лист A4: акт подшивают.
    Ни тёмной темы, ни шрифтов со стороны — только чёрное по белому. #}
 <!doctype html>
@@ -19,7 +23,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="robots" content="noindex">
-<title>{{ t.title }} {{ t.number }} {{ doc.number }}</title>
+<title>{{ title }} {{ t.number }} {{ doc.number }}</title>
 <style>
   @page { size: A4 portrait; margin: 12mm; }
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -65,7 +69,7 @@
 <body>
 <div class="head">
   <div>
-    <h1>{{ t.title }} {{ t.number }} {{ doc.number }}</h1>
+    <h1>{{ title }} {{ t.number }} {{ doc.number }}</h1>
     <div class="when">{{ t.date }}: {{ created }}</div>
   </div>
   {% if company %}

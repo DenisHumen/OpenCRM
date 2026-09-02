@@ -417,6 +417,19 @@ ACT_PRINT_STRINGS = {
 }
 
 
+def _act_title(payload: dict, lang: str) -> str:
+    """Заголовок на лист: вписанное руками важнее словаря.
+
+    Умолчание на бумагу не идёт: в снимках ВСЕХ выданных актов оно лежит
+    по-английски, а лист печатался по языку бумаги — напечатай его как есть, и
+    повторная печать разойдётся с тем, что у клиента на руках.
+    """
+    svoyo = ((payload.get("fields") or {}).get("item") or "").strip()
+    if not svoyo or svoyo == act_service.DEFAULT_TITLE:
+        return ACT_PRINT_STRINGS[lang]["title"]
+    return svoyo
+
+
 @router.get("/acts/{act_id}/print", response_class=HTMLResponse)
 def print_act(
     act_id: int,
@@ -446,6 +459,7 @@ def print_act(
         doc=act,
         locale=lang,
         t=ACT_PRINT_STRINGS[lang],
+        title=_act_title(payload, lang),
         company=payload.get("company"),
         client=(payload.get("client") or {}).get("name"),
         deal=(payload.get("deal") or {}).get("title"),

@@ -253,8 +253,12 @@ class DocumentLine(Base):
     # Пусто — разовая позиция без карточки товара («доставка», «упаковка»).
     # Заводить ради них справочник значит замусорить его одноразовыми строками.
     # Снимок имени ссылку не отменяет: по ней считаются резерв и списание.
+    #
+    # RESTRICT, а не SET NULL: обнулённая ссылка молча превращает товарную
+    # строку ПРОВЕДЁННОЙ бумаги в разовую позицию, и мимо сторожа неизменяемости
+    # — он стоит событиями ORM, а `ON DELETE` исполняет сама база.
     product_id: Mapped[int | None] = mapped_column(
-        ForeignKey("products.id", ondelete="SET NULL"), nullable=True, index=True
+        ForeignKey("products.id", ondelete="RESTRICT"), nullable=True, index=True
     )
     name_snapshot: Mapped[str] = mapped_column(String(200))
     #: Количество в тысячных, как везде на складе.

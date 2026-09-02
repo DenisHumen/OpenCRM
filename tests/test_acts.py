@@ -20,6 +20,7 @@ from core import events
 from core import exceptions as errors
 from core.services.deal_service import DEAL_STAGE_CHANGED
 from tests.conftest import API
+from web.api.routes.documents import ACT_PRINT_STRINGS
 
 ACTS = f"{API}/documents/acts"
 DOCS = f"{API}/documents"
@@ -617,4 +618,60 @@ def test_kolonka_summ_skladyvaetsya_v_itogo(root_client, deal):
     assert sum(summy) == itogo, (
         f"колонка сумм даёт {sum(summy)}, а под ней напечатано «Итого» {itogo} — "
         "заказчик подписывает лист, который не сходится"
+    )
+
+
+def _zagolovok_lista(html: str) -> str:
+    """Что напечатано в h1 — и только в нём.
+
+    То же слово стоит в заголовке вкладки, поэтому проверка «есть где-нибудь на
+    листе» зеленеет и на пустой шапке. Ровно так прошла печать накладной.
+    """
+    nayden = re.search(r"<h1>(.*?)</h1>", html, re.S)
+    assert nayden is not None, "на листе нет заголовка"
+    return " ".join(nayden.group(1).split())
+
+
+def test_svoyo_nazvanie_akta_stoit_na_liste(root_client, deal):
+    """Вписали «Наряд-заказ» — оно и напечатано.
+
+    Заголовок брался из словаря по языку бумаги, и вписанное руками не попадало
+    на лист НИКОГДА: список CRM показывал одно название, а клиент подписывал
+    бумагу с другим.
+    """
+    item = product(root_client, stock="5")
+    act = act_with(root_client, deal, item, title="Наряд-заказ")
+    assert act["payload"]["fields"]["item"] == "Наряд-заказ"
+
+    page = root_client.get(f"{ACTS}/{act['id']}/print")
+    assert page.status_code == 200, page.text
+    zagolovok = _zagolovok_lista(page.text)
+    assert zagolovok.startswith("Наряд-заказ"), (
+        f"в шапке листа «{zagolovok}», а акт назван «Наряд-заказ»"
+    )
+    assert ACT_PRINT_STRINGS["ru"]["title"] not in zagolovok
+
+
+def test_bez_svoego_nazvaniya_spisok_i_list_govoryat_odno(root_client, deal):
+    """Названия не вписали — на листе стоит перевод ровно того, что в списке.
+
+    Умолчание лежит в снимке ПО-АНГЛИЙСКИ (`act_service.DEFAULT_TITLE`), а лист
+    печатается по языку бумаги. Напечатай снимок как есть — повторная печать
+    выданного акта дала бы лист, не совпадающий с тем, что у клиента на руках.
+    """
+    item = product(root_client, stock="5")
+    act = act_with(root_client, deal, item, locale="ru")
+
+    # То же поле, что показывают список бланков и карточка акта.
+    v_spiske = act["payload"]["fields"]["item"]
+    assert v_spiske == ACT_PRINT_STRINGS["en"]["title"], (
+        f"в записи «{v_spiske}», а словарь печати называет тот же акт "
+        f"«{ACT_PRINT_STRINGS['en']['title']}» — список и бумага разошлись"
+    )
+
+    page = root_client.get(f"{ACTS}/{act['id']}/print")
+    assert page.status_code == 200, page.text
+    zagolovok = _zagolovok_lista(page.text)
+    assert zagolovok.startswith(ACT_PRINT_STRINGS["ru"]["title"]), (
+        f"в шапке русского листа «{zagolovok}» — не то, что показывает список"
     )

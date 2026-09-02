@@ -23,7 +23,7 @@
 | Остаток склада | `warehouse_repo.stock_by_product` | `SUM(quantity_milli)`, никогда не хранится |
 | Движение товара | `StockMove` | у него **уже есть** `deal_id` и `document_id` |
 | Бронь | `order_service.reserved` → `documents_repo.promised` | «заказано минус отгруженное», считается запросом |
-| Наличие | `order_service.availability` | остаток, резерв, ожидается, доступно — три запроса на список |
+| Наличие | `reserve_service.availability` | остаток, резерв, ожидается, доступно — шесть запросов на список, не на строку |
 | Заказ | `Document` вида `sales_order` + `DocumentLine` | номер, статусы, печать, поиск сканом |
 | Заказ ↔ заявка | `documents.deal_id` | ссылка **уже есть**, ей просто никто не пользуется из интерфейса |
 | Смена этапа бумагой | `documents.next_stage` | акт при проведении переводит заявку на этап |
