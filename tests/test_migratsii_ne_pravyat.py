@@ -39,6 +39,7 @@ git, иначе была бы выключателем в одну строку.
 отказывается, а не зеленеет.
 """
 
+import os
 import pathlib
 import subprocess
 
@@ -149,6 +150,84 @@ bez_vorot = pytest.mark.skipif(
 PRAVLENY_ZAKONNO: dict[str, str] = {}
 
 
+#: Переменная, которой CI называет состояние ДО этой выгрузки.
+#:
+#: На событии `push` GitHub знает прежнюю голову ветки (`github.event.before`) —
+#: это и есть «что уже уехало». Локально её нет и не нужно: там границу видно по
+#: `origin/main`.
+IMYA_GRANITSY = "OPENCRM_VYGRUZHENO_DO"
+
+
+def _est_kommit(ssylka: str) -> bool:
+    if not ssylka:
+        return False
+    return _kod_git("cat-file", "-e", f"{ssylka}^{{commit}}") == 0
+
+
+def _kod_git(*argv: str) -> int:
+    """Код возврата git. Нужен там, где ответ — да/нет, а не текст."""
+    return subprocess.run(
+        ["git", *argv], cwd=ROOT, capture_output=True, text=True, check=False
+    ).returncode
+
+
+def _strogiy_predok(ssylka: str) -> bool:
+    """Предок HEAD и НЕ сам HEAD.
+
+    Равенство отбрасывается нарочно: граница, совпавшая с головой, объявила бы
+    выгруженным всё подряд и погасила бы сторожа целиком. Ровно так выглядит
+    `origin/main` в CI сразу после выкладки — поэтому там граница берётся из
+    события, а не из ссылки.
+    """
+    if not _est_kommit(ssylka):
+        return False
+    golova = _git("rev-parse", "HEAD").strip()
+    ee = _git("rev-parse", ssylka).strip()
+    if not golova or not ee or golova == ee:
+        return False
+    return _kod_git("merge-base", "--is-ancestor", ee, golova) == 0
+
+
+def _granitsa_vygruzki() -> str:
+    """Коммит, по который всё уже уехало. Пусто — неизвестно, судим строго.
+
+    **Зачем это понадобилось.** Правило зовётся «выгруженную миграцию не
+    правят», а считалось оно по КОММИТУ: файл завели — дальше не трогай. Для
+    работы, которая ещё никуда не уезжала, это неправда, и неправда дорогая:
+    пачка из трёх миграций, дописанных по ходу разбора ДО первой выгрузки,
+    краснела в CI, хотя ни одна установка их не видела.
+
+    Порядок источников — от менее подделываемого к более:
+
+    1. `origin/main`, если он строго позади головы. Это факт о ЧУЖОМ состоянии:
+       чтобы подделать, надо выгрузить, а выгруженное сторож и стережёт.
+    2. переменная из CI (`github.event.before`) — там `origin/main` уже равен
+       голове, и первым способом границу не увидеть.
+
+    Не нашли ни того, ни другого — пусто, и вызывающий судит по старому
+    признаку. Пусто здесь означает «не знаю», а не «всё выгружено».
+    """
+    if _strogiy_predok("origin/main"):
+        return _git("rev-parse", "origin/main").strip()
+    iz_ci = os.environ.get(IMYA_GRANITSY, "").strip()
+    if _strogiy_predok(iz_ci):
+        return _git("rev-parse", iz_ci).strip()
+    return ""
+
+
+def _byl_na(ssylka: str, imya: str) -> bool:
+    """Существовал ли файл миграции на этом коммите."""
+    return _kod_git("cat-file", "-e", f"{ssylka}:database/migrations/versions/{imya}") == 0
+
+
+def _trogali_posle(ssylka: str, imya: str) -> int:
+    vyvod = _git(
+        "log", "--oneline", f"{ssylka}..HEAD",
+        "--", f"database/migrations/versions/{imya}",
+    )
+    return len([s for s in vyvod.splitlines() if s.strip()])
+
+
 def _skolko_raz_trogali(imya: str) -> int:
     """Сколько коммитов касалось файла миграции ОТ точки отсчёта до сюда.
 
@@ -178,18 +257,20 @@ def _byl_na_tochke(imya: str) -> bool:
 def _pravili_posle_vygruzki(imya: str) -> int:
     """Сколько раз файл правили ПОСЛЕ того, как он уехал. Ноль — чисто.
 
-    Одним числом коммитов это не решается, и попытка решить им уже дала дыру:
-    миграция, написанная ДО точки отсчёта и правленая ПОСЛЕ неё, имела ровно
-    один коммит в окне и выглядела свежей. Поймано подлогом в полном клоне —
-    правка выгруженной ревизии прошла мимо сторожа.
+    **Граница известна** (`_granitsa_vygruzki`) — судим точно, как и говорит
+    правило: файл был на границе, значит уехал, и любая правка после неё
+    незаконна; не было — не уезжал, и правок «после выгрузки» у него нет вовсе.
+    Незакоммиченная работа так и остаётся тем, что она есть: черновиком.
 
-    Считаем поэтому раздельно:
-
-    - файл был на точке отсчёта — значит он уже выгружен, и **любая** правка
-      после неё незаконна;
-    - файла не было — первый коммит в окне это его написание, и незаконно всё,
-      что после первого.
+    **Границы нет** — судим по точке отсчёта, как раньше, и раздельно, потому
+    что одним числом коммитов это не решается: миграция, написанная ДО точки и
+    правленая ПОСЛЕ, имела в окне ровно один коммит и выглядела свежей. Поймано
+    подлогом в полном клоне.
     """
+    granitsa = _granitsa_vygruzki()
+    if granitsa:
+        return _trogali_posle(granitsa, imya) if _byl_na(granitsa, imya) else 0
+
     v_okne = _skolko_raz_trogali(imya)
     if _byl_na_tochke(imya):
         return v_okne
@@ -378,4 +459,77 @@ def test_okno_otscheta_ne_pustoe():
     assert [s for s in vyvod.splitlines() if s.strip()], (
         f"`git log {TOCHKA_OTSCHYOTA[:12]}..HEAD` не вернул ни одного коммита — "
         "правки миграций считать нечем, а проверка при этом зелёная"
+    )
+
+
+@bez_istorii
+def test_granitsa_ne_gasit_storozha_na_vygruzhennoy(monkeypatch):
+    """С известной границей выгруженная и правленая миграция по-прежнему красная.
+
+    Послабление, ради которого граница заведена, касается ТОЛЬКО того, что ещё
+    не уезжало. Проверка берёт настоящую миграцию с несколькими коммитами и
+    ставит границей её ПЕРВЫЙ: на такой границе файл уже существует, значит по
+    правилу он выгружен, и всё, что после, — незаконно.
+
+    Без этой проверки граница была бы выключателем сторожа в одну функцию: она
+    возвращает пусто на неизвестности и коммит на известности, и «всегда пусто»
+    от «всегда известно» отличить было бы нечем.
+    """
+    assert not _repozitoriy_melkiy(), "история обрезана — проверять не от чего"
+
+    # Ищем в НАСТОЯЩЕЙ истории миграцию, которую правили после написания.
+    podhodit = None
+    for put in sorted(VERSII.glob("*.py")):
+        if put.name == "__init__.py":
+            continue
+        kommity = [s.strip() for s in _git(
+            "log", "--format=%H", "--", f"database/migrations/versions/{put.name}"
+        ).splitlines() if s.strip()]
+        if len(kommity) >= 2:
+            podhodit = (put.name, kommity[-1])  # последний в выводе — самый ранний
+            break
+    assert podhodit, "в истории нет ни одной миграции с двумя коммитами — проверить нечем"
+
+    imya, pervyy = podhodit
+    monkeypatch.setattr("tests.test_migratsii_ne_pravyat._granitsa_vygruzki", lambda: pervyy)
+    assert _byl_na(pervyy, imya), "файл не найден на собственном первом коммите"
+    assert _pravili_posle_vygruzki(imya) > 0, (
+        f"{imya} правили после {pervyy[:12]}, а сторож этого не увидел — "
+        "граница выключила проверку вместо того, чтобы её уточнить"
+    )
+
+
+@bez_istorii
+def test_granitsu_nelzya_postavit_na_golovu():
+    """Граница, равная голове, объявила бы выгруженным всё и погасила бы сторожа.
+
+    Самый короткий способ выключить эту проверку — подсунуть ей `HEAD`: тогда
+    ни один файл не «правился после», потому что после головы коммитов нет.
+    Поэтому граница обязана быть СТРОГИМ предком, и это проверяется здесь, а не
+    подразумевается.
+    """
+    golova = _git("rev-parse", "HEAD").strip()
+    assert golova, "git не отвечает — проверять нечего"
+    assert not _strogiy_predok(golova), "границей приняли саму голову"
+    assert not _strogiy_predok("HEAD"), "границей приняли HEAD по имени"
+    assert not _strogiy_predok(""), "границей приняли пустоту"
+    assert not _strogiy_predok("ne-takogo-kommita-net"), "границей приняли несуществующее"
+
+
+@bez_vorot
+def test_vorota_ci_nazyvayut_granitsu_vygruzki():
+    """CI обязан сказать проверке, что уже уехало.
+
+    В CI `origin/main` после выкладки равен голове, и границу оттуда не увидеть.
+    Единственный источник — событие push (`github.event.before`). Не передай его
+    — и пачка миграций, дописанных до первой выгрузки, покраснеет на ровном
+    месте; передай куда-нибудь не туда — покраснеет молча позже.
+    """
+    tekst = (ROOT / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
+    assert IMYA_GRANITSY in tekst, (
+        f"{IMYA_GRANITSY} не передаётся в CI — сторож будет судить по коммиту, "
+        "а не по выгрузке"
+    )
+    assert "github.event.before" in tekst, (
+        "граница взята не из события push — значит не из того, что уехало"
     )

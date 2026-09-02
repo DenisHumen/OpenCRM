@@ -91,7 +91,7 @@ def set_role(
 
     Это не «роль» в смысле конструктора доступов, а признак владельца системы:
     у root права все и всегда, и набором их не описать. Должность с набором
-    прав назначается отдельно — `POST /roles/{id}/assign`.
+    прав назначается отдельно — `POST /roles/assign/{user_id}`.
     """
     return schemas.user_out(auth_service.set_role(db, actor, user_id, payload.role))
 

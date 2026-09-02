@@ -274,3 +274,50 @@ def test_vtoroy_zakaz_iz_zayavki_ne_zavoditsya(root_client, tovar, zayavka):
     assert vtoroy.status_code == 409, vtoroy.text
     assert vtoroy.json()["error"]["code"] == "deal_order_exists"
     assert nalichie(root_client, tovar["id"])["reserved_milli"] == 3000
+
+
+def test_otmenyonnyy_zakaz_vozvrashchaet_obeshchanie_zayavke(root_client, tovar, zayavka):
+    """Отменили заказ — обещание вернулось к заявке само, без единой уборки.
+
+    Ради этого бронь и считается запросом, а не хранится: «передано заказу» —
+    результат отбора по незакрытым бумагам заявки, и отменённая из него просто
+    выпадает. Храни мы признак «в заказе» на строке, отмена обязана была бы его
+    снять — и не сняла бы ровно в тот раз, когда отмену сделали не тем путём.
+
+    Проверяются три состояния подряд, и среднее — не украшение: без него
+    «вернулось» неотличимо от «никогда и не уходило».
+    """
+    prihod(root_client, tovar["id"], "10")
+    root_client.post(
+        f"{API}/deals/{zayavka['id']}/lines",
+        json={"product_id": tovar["id"], "quantity": "3"},
+    )
+    do_zakaza = nalichie(root_client, tovar["id"])
+    assert do_zakaza["reserved_milli"] == 3000
+    assert [d["kind"] for d in do_zakaza["holders"]] == ["deal"]
+
+    zakaz_id = root_client.post(
+        f"{API}/orders",
+        json={"kind": "sales_order", "deal_id": zayavka["id"], "client_id": zayavka["client_id"]},
+    ).json()["id"]
+    assert root_client.post(
+        f"{API}/orders/{zakaz_id}/lines", json={"product_id": tovar["id"], "quantity": "3"}
+    ).status_code == 201
+
+    s_zakazom = nalichie(root_client, tovar["id"])
+    assert s_zakazom["reserved_milli"] == 3000, "бронь удвоилась"
+    assert [d["kind"] for d in s_zakazom["holders"]] == ["order"], (
+        "обещание не перешло к заказу — значит и возвращать будет нечего"
+    )
+
+    otmena = root_client.post(f"{API}/orders/{zakaz_id}/cancel", json={})
+    assert otmena.status_code == 200, otmena.text
+
+    posle = nalichie(root_client, tovar["id"])
+    assert posle["reserved_milli"] == 3000, (
+        f"после отмены заказа бронь стала {posle['reserved_milli']} — товар перестал быть обещанным"
+    )
+    assert [d["kind"] for d in posle["holders"]] == ["deal"], (
+        f"держатель после отмены: {posle['holders']} — обещание не вернулось к заявке"
+    )
+    assert posle["available_milli"] == 7000

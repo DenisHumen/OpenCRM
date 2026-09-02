@@ -511,3 +511,43 @@ def test_itog_zayavki_ravem_summe_pokazannykh_strok(root_client, zayavka):
     )
     # И то же число лежит в кэше заявки: у суммы один писатель (§Р5).
     assert root_client.get(f"{API}/deals/{zayavka}").json()["amount"] == sum(stroki)
+
+
+def test_skan_uslugi_ne_upiraetsya_v_sklad(root_client, zayavka):
+    """Отсканированная услуга встаёт строкой, даже когда на экране выбран склад.
+
+    Экран шлёт склад не для ЭТОЙ строки, а как выбранный в углу: пока код не
+    прочитан, что за ним — товар или услуга — не знает никто. Отказ
+    `line_has_no_warehouse` в ответ на писк сканера объяснить нечем: человек
+    ничего для этой строки не выбирал.
+
+    Названный руками — другое дело, и там отказ остаётся: склад выбрали строке,
+    которой он не положен. Обе половины проверяются здесь, иначе починка первой
+    тихо сняла бы вторую.
+    """
+    root_client.post(f"{API}/modules/labels", json={"enabled": True})
+    usluga = tovar(root_client, name="Выезд мастера", is_service=True, price=150_000)
+    kod = "4600000000307"
+    assert root_client.post(
+        f"{API}/labels/products/{usluga['id']}/barcodes", json={"code": kod}
+    ).status_code == 201
+
+    sklady = root_client.get(f"{API}/warehouses").json()["items"]
+    sklad_id = sklady[0]["id"]
+
+    skanom = root_client.post(
+        f"{API}/deals/{zayavka}/lines",
+        json={"code": kod, "quantity": "1", "warehouse_id": sklad_id},
+    )
+    assert skanom.status_code == 201, skanom.text
+    assert skanom.json()["product_id"] == usluga["id"]
+    # Склад у услуги не записан: он не нужен, а записанный соврал бы о выборе.
+    assert skanom.json()["warehouse_id"] is None
+
+    # Та же услуга, названная руками со складом, — по-прежнему отказ.
+    rukami = root_client.post(
+        f"{API}/deals/{zayavka}/lines",
+        json={"product_id": usluga["id"], "quantity": "1", "warehouse_id": sklad_id},
+    )
+    assert rukami.status_code == 422, rukami.text
+    assert rukami.json()["error"]["code"] == "line_has_no_warehouse"

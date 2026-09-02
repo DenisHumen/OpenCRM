@@ -312,6 +312,12 @@ def _sklad(db: Session, data: dict, tovar) -> int | None:
     if "warehouse_id" not in data or data["warehouse_id"] is None:
         return None
     if tovar is None or tovar.is_service:
+        # Скан — исключение, и одно. Что за кодом, звонящий знать не может, а
+        # склад он шлёт не для ЭТОЙ строки, а как выбранный на экране. Услуге
+        # склад просто не нужен — отказывать сканеру не за что. Названный руками
+        # товар другое дело: там склад выбрали строке, которой он не положен.
+        if tovar is not None and data.get("code"):
+            return None
         raise errors.ValidationError(
             "This line takes nothing from a warehouse", code="line_has_no_warehouse"
         )
