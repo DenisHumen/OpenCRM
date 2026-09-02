@@ -90,10 +90,15 @@ case "$TEMPLATE" in
         ;;
 esac
 
+# Секрет приёма тревог. Пусто — заголовок уезжает пустым, и приложение его не
+# спрашивает: обновление не должно выключать тревоги тем, кто их настроил.
+ALERTS_SECRET="${OPENCRM_ALERTS_SECRET:-}"
+
 render() {
     sed -e "s|__TELEGRAM_TOKEN__|$TOKEN|g" \
         -e "s|__TELEGRAM_CHAT__|$CHAT|g" \
         -e "s|__TELEGRAM_API__|$API|g" \
+        -e "s|__ALERTS_SECRET__|$ALERTS_SECRET|g" \
         "$TEMPLATE" > "$1"
 }
 render "$TARGET"

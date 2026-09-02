@@ -82,6 +82,9 @@ services:
       # процесс всё это время был один. Ровно тот же довод, что строкой выше у
       # числа прокси.
       OPENCRM_WORKERS: "${OPENCRM_WORKERS:-1}"
+      # Секрет приёма тревог. Пусто — приём закрыт только границей сети, как
+      # было до 02.09.2026; разбор — docs/13-telegram-messenger.md, 12.6.
+      OPENCRM_ALERTS_SECRET: ${OPENCRM_ALERTS_SECRET:-}
       # Где лежит журнал обновлений — его читает /api/v1/metrics, чтобы сказать
       # мониторингу, чем кончился последний деплой. Значение совпадает с точкой
       # монтирования ниже; переменная здесь ради того, чтобы связь между двумя
@@ -445,6 +448,10 @@ services:
       # Свой прокси там, где Telegram заблокирован; на стенде — заглушка,
       # которой проверяют, что сообщение действительно уходит.
       OPENCRM_MONITORING_TELEGRAM_API: ${OPENCRM_MONITORING_TELEGRAM_API:-https://api.telegram.org}
+      # Одна переменная на ДВА контейнера — приложение проверяет ровно то, что
+      # шлёт Alertmanager. Разойтись они не могут: разошедшись, они молча
+      # перестали бы доставлять тревоги, включая тревогу про эту же поломку.
+      OPENCRM_ALERTS_SECRET: ${OPENCRM_ALERTS_SECRET:-}
     user: "${OPENCRM_UID:-1000}:${OPENCRM_GID:-1000}"
     volumes:
       - ./monitoring/alertmanager/entrypoint.sh:/opencrm/entrypoint.sh:ro
