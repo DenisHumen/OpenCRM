@@ -723,6 +723,27 @@ button:active [data-icon="plus"] { transition-duration: 0s; }
 @media (prefers-reduced-motion: reduce) {
   .site-btn-preview, .site-btn-preview::before { transition: none; }
 }
+/* Кусок шапки доски вокруг превью: слева название студии, справа кнопка, ниже
+   заголовок доски. Нужен затем, что вопрос владельца был не «как выглядит», а
+   «где она вообще стоит» — одна кнопка на пустой подложке на него не отвечает.
+   Подложка растягивается на всю ширину, иначе шапка из двух слов не читается
+   как шапка. */
+.preview-plate.wide { display: flex; flex-direction: column; align-items: stretch; }
+.showcase-head-preview {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+}
+.showcase-head-brand {
+  color: var(--on-media); font-size: 13px; font-weight: 600; letter-spacing: 0.2px;
+}
+.showcase-head-title {
+  margin-top: 14px; color: var(--on-media); opacity: 0.62;
+  font-size: 15px; font-weight: 500;
+}
+/* Адреса нет — кнопки на витрине не будет вовсе. Показываем её приглушённой, а
+   не прячем: спрятанная не отвечает на вопрос, что тут появится. */
+.site-btn-preview.off { opacity: 0.38; }
+.site-btn-preview.off:hover { color: var(--showcase-plate); }
+.site-btn-preview.off:hover::before { transform: scaleX(1); }
 .btn-sm { height: 28px; padding: 0 12px; font-size: 12px; }
 .btn-icon {
   display: inline-flex; align-items: center; justify-content: center;
@@ -1035,6 +1056,23 @@ summary:focus-visible,
 .nav-sub { position: relative; display: flex; flex-direction: column; gap: 1px; margin: 1px 0 4px; padding-left: 26px; }
 .nav-sub::before { content: ""; position: absolute; left: 17px; top: 3px; bottom: 3px; width: 1px; background: var(--border); }
 .nav-sub .nav-item { padding: 6px 10px; font-size: 12.5px; }
+/* Второй уровень: категория внутри группы настроек.
+   Направляющая у вложенного списка своя и на своём месте: `.nav-sub::before`
+   стоит по `left: 17px` при `padding-left: 26px`, то есть на девять пикселей
+   левее содержимого. Повторить это правило вложенно нельзя — линия осталась бы
+   на месте линии родителя, и два уровня слились бы в один столбик. */
+.nav-sub-cat { display: flex; flex-direction: column; gap: 2px; }
+.nav-sub-cat-head {
+  width: 100%; background: none; border: none; cursor: pointer;
+  font-family: var(--sans); font-size: 12.5px; padding: 6px 10px;
+}
+.nav-sub-chevron { transition: transform 180ms ease; flex-shrink: 0; opacity: 0.75; }
+.nav-sub-cat.open .nav-sub-chevron { transform: rotate(180deg); }
+.nav-sub-deep { padding-left: 16px; margin: 1px 0 2px; }
+.nav-sub-deep::before { left: 7px; }
+@media (prefers-reduced-motion: reduce) {
+  .nav-sub-chevron { transition: none; }
+}
 .side-bottom { padding: 12px; display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--surface); }
 .side-banner { display: block; background: var(--tint-warning); border-radius: 8px; padding: 10px 12px; font-size: 12px; line-height: 1.5; color: var(--warning); text-decoration: none; }
 .side-banner.critical { background: var(--tint-danger); color: var(--danger); }
