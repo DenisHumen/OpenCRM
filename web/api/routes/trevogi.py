@@ -36,12 +36,14 @@
 владельца. Разбор — в `docs/13-telegram-messenger.md`.
 """
 
+import hmac
 import logging
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
+from config.settings import get_settings
 from core import exceptions as errors
 from core.ratelimit import SlidingWindowLimiter
 from core.services import trevogi_service
@@ -71,6 +73,20 @@ async def vebkhuk(request: Request, db: Session = Depends(get_db)):
     if request.headers.get("x-forwarded-for"):
         # Пришло через nginx, то есть снаружи. Alertmanager так не ходит.
         raise errors.ForbiddenError("Alerts webhook is internal only", code="alerts_external")
+
+    # Секрет закрывает СОСЕДА ПО СЕТИ compose — единственного, кого не
+    # закрывает граница. Он необязателен намеренно: обновление, потребовавшее
+    # секрета, оставило бы работающие установки без тревог до вмешательства
+    # человека, то есть молча выключило бы уведомления тем, кто их настроил.
+    _secret = get_settings().alerts_secret.strip()
+    if _secret:
+        # `compare_digest`, а не `!=`: обычное сравнение обрывается на первом
+        # несовпавшем знаке, и по времени ответа секрет подбирается по букве.
+        prishlo = request.headers.get("x-opencrm-alerts-key", "")
+        if not hmac.compare_digest(prishlo, _secret):
+            raise errors.ForbiddenError(
+                "Alerts webhook key is missing or wrong", code="alerts_bad_key"
+            )
 
     adres = client_ip(request)
     try:
