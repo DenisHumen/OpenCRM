@@ -1260,3 +1260,75 @@ def test_u_pravil_est_chto_delat():
     assert sum(1 for r in vse if (r.get("annotations") or {}).get("lechenie")) >= 5, (
         "записок «что делать» почти нет — переносить команды было незачем"
     )
+
+
+# --- общий секрет у приёма тревог ---------------------------------------------
+#
+# Решение владельца 02.09.2026 (docs/13-telegram-messenger.md, 12.6). Приём был
+# закрыт ТОЛЬКО границей сети: порт наружу не публикуется, запрос через nginx
+# отвергается. Это не закрывает соседа по сети compose — любой контейнер рядом
+# мог слать тревоги от имени системы или топить настоящие шумом.
+
+
+def _s_klyuchom(root_client, telo, klyuch):
+    return root_client.post(
+        f"{TREVOGI}/webhook", json=telo, headers={"X-OpenCRM-Alerts-Key": klyuch}
+    )
+
+
+def test_bez_sekreta_priyom_rabotaet_kak_ranshe(root_client, bot, kanal):
+    """Секрет НЕОБЯЗАТЕЛЕН, и это не послабление ради удобства.
+
+    Обновление, потребовавшее секрета, оставило бы уже работающие установки без
+    тревог до вмешательства человека — то есть молча выключило бы уведомления
+    ровно тем, кто их настроил. Хуже: молчала бы и тревога про саму эту поломку.
+    """
+    otvet = _poslat(root_client, _dostavka("bez-sekreta"))
+    assert otvet.status_code == 200, otvet.text
+
+
+def test_s_nastroennym_sekretom_chuzhoy_ne_proydyot(root_client, bot, kanal, monkeypatch):
+    """Сосед по сети compose — единственный, кого не закрывает граница."""
+    from config import settings as nastroyki
+
+    nastroyki.get_settings.cache_clear()
+    monkeypatch.setenv("OPENCRM_ALERTS_SECRET", "kluch-nablyudatelya-1")
+    nastroyki.get_settings.cache_clear()
+    try:
+        bez = _poslat(root_client, _dostavka("bez-klyucha"))
+        assert bez.status_code == 403, "без ключа приём пустил"
+        assert bez.json()["error"]["code"] == "alerts_bad_key"
+
+        chuzhoy = _s_klyuchom(root_client, _dostavka("chuzhoy-klyuch"), "ne-tot-kluch")
+        assert chuzhoy.status_code == 403, "чужой ключ приняли"
+
+        svoy = _s_klyuchom(root_client, _dostavka("svoy-klyuch"), "kluch-nablyudatelya-1")
+        assert svoy.status_code == 200, svoy.text
+    finally:
+        monkeypatch.delenv("OPENCRM_ALERTS_SECRET", raising=False)
+        nastroyki.get_settings.cache_clear()
+
+
+def test_klyuch_sravnivaetsya_za_postoyannoe_vremya():
+    """Обычное `!=` обрывается на первом несовпавшем знаке.
+
+    По времени ответа секрет подбирается по букве — медленно, но неограниченно:
+    ограничитель на этой ручке стоит против ПОТОКА и подбор в его пределах не
+    заметит. Проверка читает исходник, потому что замерить разницу в наносекундах
+    в наборе тестов нельзя честно.
+    """
+    import pathlib
+
+    kod = (
+        pathlib.Path(__file__).resolve().parent.parent
+        / "web" / "api" / "routes" / "trevogi.py"
+    ).read_text(encoding="utf-8")
+    # Комментарии выбрасываем: слово `compare_digest` стоит и в доводе рядом с
+    # вызовом, и первая версия этой проверки зеленела на подрыве, засчитав его.
+    kod = "\n".join(
+        stroka for stroka in kod.splitlines() if not stroka.lstrip().startswith("#")
+    )
+    assert "compare_digest" in kod, (
+        "ключ тревог сравнивается обычным сравнением — оно обрывается на первом "
+        "несовпавшем знаке, и секрет подбирается по времени ответа"
+    )
