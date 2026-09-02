@@ -24,7 +24,10 @@
 
 import threading
 
-from tests.conftest import API
+from tests.conftest import API, make_manager
+
+ROLES = f"{API}/roles"
+STAFF = f"{API}/staff"
 
 WH = f"{API}/warehouse"
 
@@ -460,3 +463,166 @@ def test_dvazhdy_zavodyat_zakaz_po_zayavke_razom(root_client):
             f"{API}/modules/orders", json={"enabled": False}
         ).status_code == 200
         modules_service.invalidate()
+
+
+def test_dvoe_zakryvayut_posledniye_sklady_razom(chistaya_baza, nakatit, naselit, monkeypatch):
+    """После гонки склад обязан остаться хотя бы один.
+
+    Отказ «последний склад закрыть нельзя» держится счётом живых — запросом,
+    потому что «ровно один» частичным индексом в MySQL не выразить. Между счётом
+    и записью окно: оба видят «складов два», оба проходят, оба закрывают — и
+    складов не остаётся вовсе. Тогда приход принять некуда
+    (`default_warehouse` отвечает `no_warehouse`), а заявка со строками
+    перестаёт закрываться: списанию некуда идти.
+
+    **На СВОЕЙ базе, а не на общей.** Опасен ровно край — когда живых складов
+    два; в базе набора их десяток, и довести её до края значило бы закрывать
+    чужие склады, ломая соседей ради своей проверки. Здесь край получается сам:
+    миграция засевает «Основной», второй заводим сами.
+
+    Дуэль идёт по СЛУЖБЕ, а не по ручке: клиент API привязан к общей базе, а
+    спор здесь чисто складской, и веб-слой к нему ничего не добавляет.
+    """
+    import threading
+    import time
+
+    from sqlalchemy import create_engine, func, select
+    from sqlalchemy.orm import sessionmaker
+
+    from core.services import warehouse_service
+    from database.models import User, Warehouse
+    from database.repositories import warehouses as places_repo
+
+    nakatit(chistaya_baza, "head")
+    # Уровень изоляции задаётся ЯВНО, как у приложения (`database/session.py`).
+    # У MySQL по умолчанию REPEATABLE READ, и там запирающее чтение видит
+    # свежую строку, а следующее обычное — снимок на начало транзакции: замок
+    # срабатывает, а пересчёт после него возвращает прежнее число. Проверка на
+    # чужом уровне изоляции проверяет чужое поведение.
+    dvigatel = create_engine(chistaya_baza, isolation_level="READ COMMITTED")
+    Sessiya = sessionmaker(bind=dvigatel)
+    try:
+        with dvigatel.begin() as soedinenie:
+            naselit(
+                soedinenie,
+                "users",
+                [{"name": "Дуэлянт", "email": "duel@sklad.local",
+                  "password_hash": "x", "role": "root", "status": "active"}],
+            )
+        with Sessiya() as db:
+            db.add(Warehouse(name="Второй склад"))
+            db.commit()
+            zhivye = list(
+                db.scalars(select(Warehouse.id).where(Warehouse.deleted_at.is_(None)))
+            )
+        assert len(zhivye) == 2, f"на своей базе складов {len(zhivye)}, а нужен край"
+
+        # Окно между счётом и записью расширено НАРОЧНО, и это не поддавка.
+        # Без паузы гонка выигрывается через раз: подрыв (снятый замок) ловился
+        # два раза из трёх, то есть сторож пропустил бы возврат беды в каждом
+        # третьем прогоне. С паузой исход определён в обе стороны: с замком
+        # второй ждёт первого и честно получает отказ, без замка оба проходят.
+        nastoyashchiy_schyot = places_repo.count_alive
+
+        def schyot_s_pauzoy(db):
+            itog = nastoyashchiy_schyot(db)
+            time.sleep(0.3)
+            return itog
+
+        monkeypatch.setattr(places_repo, "count_alive", schyot_s_pauzoy)
+
+        ishody: dict[str, object] = {}
+        razom = threading.Barrier(2)
+
+        def udar(imya: str, sklad_id: int) -> None:
+            razom.wait()
+            with Sessiya() as db:
+                aktyor = db.scalars(select(User)).first()
+                try:
+                    warehouse_service.close_warehouse(db, sklad_id, aktyor)
+                    db.commit()
+                    ishody[imya] = "закрыл"
+                except Exception as beda:  # noqa: BLE001 — исход удара, а не наша ошибка
+                    db.rollback()
+                    ishody[imya] = f"отказ: {type(beda).__name__}"
+
+        potoki = [
+            threading.Thread(target=udar, args=("first", zhivye[0])),
+            threading.Thread(target=udar, args=("second", zhivye[1])),
+        ]
+        for p in potoki:
+            p.start()
+        for p in potoki:
+            p.join(timeout=30)
+
+        assert set(ishody) == {"first", "second"}, f"об ударе не отчитались: {ishody}"
+        with Sessiya() as db:
+            ostalos = db.scalar(
+                select(func.count()).select_from(Warehouse).where(Warehouse.deleted_at.is_(None))
+            )
+        assert ostalos >= 1, (
+            f"после гонки складов не осталось вовсе (исходы: {ishody}) — "
+            "приход принять некуда, и починить это можно только руками"
+        )
+    finally:
+        dvigatel.dispose()
+
+
+def test_dvoe_snimayut_posledneye_pravo_na_roli_razom(root_client):
+    """После гонки раздавать права обязан остаться хоть кто-то, кроме владельца.
+
+    Отказ «это последняя должность, которая может раздавать права» держится
+    счётом живых управляющих — запросом, и считается он на «как будет». Между
+    счётом и записью окно: двое снимают право у РАЗНЫХ должностей, каждый видит
+    соседа и проходит, а управляющих не остаётся ни одного.
+
+    Root в счёт не идёт нарочно (`_managers_of_roles`): право у него есть
+    всегда, но заводился этот отказ ровно на случай, когда пароль root потерян.
+    Значит после гонки система оказывается в том самом состоянии, ради
+    недопущения которого проверка и написана.
+
+    Утверждение — «инвариант цел»: гонку никто не обязан выигрывать.
+    """
+    pervaya = root_client.post(
+        f"{ROLES}", json={"name": "Дуэль прав А", "permissions": ["roles.manage", "clients.view"]}
+    ).json()
+    vtoraya = root_client.post(
+        f"{ROLES}", json={"name": "Дуэль прав Б", "permissions": ["roles.manage", "clients.view"]}
+    ).json()
+    lyudi = []
+    try:
+        for nomer, rol in ((1, pervaya), (2, vtoraya)):
+            pochta = f"duel-prav-{nomer}@test.local"
+            make_manager(root_client, pochta)
+            from tests.test_roles import _user_id as _uid
+
+            user_id = _uid(root_client, pochta)
+            lyudi.append(user_id)
+            assert root_client.post(
+                f"{ROLES}/assign/{user_id}", json={"role_id": rol["id"]}
+            ).status_code == 200
+
+        codes = duel(
+            lambda rol_id: root_client.patch(
+                f"{ROLES}/{rol_id}", json={"permissions": ["clients.view"]}
+            ).status_code,
+            pervaya["id"],
+            vtoraya["id"],
+        )
+        assert set(codes) == {"first", "second"}, f"об ударе не отчитались: {codes}"
+
+        ostalis = [
+            rol
+            for rol in root_client.get(ROLES).json()["items"]
+            if "roles.manage" in rol["permissions"]
+        ]
+        assert ostalis, (
+            f"после гонки раздавать права стало некому (ответы: {codes}) — "
+            "ровно то состояние, ради недопущения которого стоит отказ"
+        )
+    finally:
+        for user_id in lyudi:
+            root_client.post(f"{ROLES}/assign/{user_id}", json={"role_id": None})
+            root_client.delete(f"{STAFF}/{user_id}")
+        for rol in (pervaya, vtoraya):
+            root_client.delete(f"{ROLES}/{rol['id']}")

@@ -780,6 +780,9 @@ def close_warehouse(db: Session, warehouse_id: int, actor: User) -> None:
     """
     warehouse = get_warehouse(db, warehouse_id)
 
+    # Очередь на живые склады: между счётом и записью есть окно, и в него
+    # попадают двое. Разбор — `places_repo.zapert_zhivye`.
+    places_repo.zapert_zhivye(db)
     if places_repo.count_alive(db) <= 1:
         raise errors.ValidationError(
             "The last warehouse cannot be closed", code="last_warehouse"
