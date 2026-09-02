@@ -459,9 +459,15 @@ HTTP HSTS не отдаётся.
 чужой рамке. **Закрыто:** в политику `/branding/` и `/avatars/` добавлен
 `frame-ancestors 'none'`. Сторож — `test_kartinki_nelzya_vstavit_v_chuzhuyu_stranitsu`.
 
-Тот же пробел остался у `/media/` и `/static/`: их политику ставит приложение
-(`CSP_MEDIA` в `web/middleware.py`), и `frame-ancestors` там нет. Правка за границей этой
-работы; строка та же.
+Тот же пробел у `/media/` и `/static/` **с тех пор закрыт**: `CSP_MEDIA` в
+`web/middleware.py:88` несёт `frame-ancestors 'none'`, и рядом стоит довод, почему он тут
+не выводится из соседей.
+
+**Но сторож на эту половину не распространён, и это остаётся открытым.**
+`test_kartinki_nelzya_vstavit_v_chuzhuyu_stranitsu` (`tests/test_public_surface.py:363`)
+читает `docker/nginx/templates/locations.inc` и проверяет только блоки `/branding/` и
+`/avatars/`. Политику `/media/` и `/static/` ставит приложение, а не nginx, — значит снять
+оттуда `frame-ancestors` можно, и ни одна проверка не покраснеет.
 
 ## SEC-16 — `/monitoring/api/health` называет анониму версию Grafana
 
