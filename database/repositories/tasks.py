@@ -47,7 +47,7 @@ def search(
     query = select(Task)
 
     if scope == SCOPE_DONE:
-        query = query.where(Task.done_at.is_not(None)).order_by(Task.done_at.desc())
+        query = query.where(Task.done_at.is_not(None)).order_by(Task.done_at.desc(), Task.id.desc())
     else:
         query = _open_only(query)
         if scope == SCOPE_OVERDUE:

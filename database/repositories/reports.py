@@ -298,7 +298,10 @@ def lost_reasons(
             Deal.closed_at < end,
         )
         .group_by(Deal.lost_reason)
-        .order_by(func.count().desc())
+        # Ничья по счёту решается самой причиной: `LIMIT` без полного
+        # порядка отбирает наугад, КТО попадёт в список, и «частые
+        # причины отказа» на двух открытиях подряд показывают разное.
+        .order_by(func.count().desc(), Deal.lost_reason.asc())
         .limit(limit)
     ).all()
     return [{"reason": reason, "count": int(count or 0)} for reason, count in rows]

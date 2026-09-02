@@ -20,7 +20,7 @@ def top(db: Session, limit: int = 10) -> list[SnakeScore]:
     return list(
         db.scalars(
             select(SnakeScore)
-            .order_by(SnakeScore.score.desc(), SnakeScore.created_at.asc())
+            .order_by(SnakeScore.score.desc(), SnakeScore.created_at.asc(), SnakeScore.id.asc())
             .limit(limit)
         )
     )

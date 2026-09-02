@@ -301,7 +301,7 @@ def for_client(
     stmt = select(Deal).where(Deal.client_id == client_id, Deal.deleted_at.is_(None))
     if only_manager_id is not None:
         stmt = stmt.where(Deal.manager_id == only_manager_id)
-    return list(db.scalars(stmt.order_by(Deal.created_at.desc())))
+    return list(db.scalars(stmt.order_by(Deal.created_at.desc(), Deal.id.desc())))
 
 
 def in_stages(db: Session, keys) -> list[Deal]:

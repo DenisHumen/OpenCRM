@@ -129,7 +129,7 @@ def dlya_vygruzki(
     Порядок — по имени: файл открывают глазами, и алфавит там полезнее, чем
     порядок заведения.
     """
-    stmt = _search_stmt(q, tag, manager_id).order_by(Client.name).limit(predel + 1)
+    stmt = _search_stmt(q, tag, manager_id).order_by(Client.name, Client.id).limit(predel + 1)
     najdeno = list(db.scalars(stmt))
     return najdeno[:predel], len(najdeno) > predel
 
@@ -259,7 +259,7 @@ def list_files(db: Session, client_id: int) -> list[ClientFile]:
         db.scalars(
             select(ClientFile)
             .where(ClientFile.client_id == client_id)
-            .order_by(ClientFile.created_at.desc())
+            .order_by(ClientFile.created_at.desc(), ClientFile.id.desc())
         )
     )
 

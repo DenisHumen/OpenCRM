@@ -849,7 +849,11 @@ def test_deleting_a_role_is_recorded_too(root_client):
     ).json()
     assert root_client.delete(f"{ROLES}/{role['id']}").status_code == 200
 
-    gone = entries(root_client, entity_type="role")[0]
+    # Спрашиваем про ЭТУ роль, а не «самое свежее событие про роли вообще».
+    # Второе привязывало проверку к соседям и к часам: любое чужое событие о
+    # ролях, оказавшееся новее, вставало первым, и проверка краснела на
+    # исправном коде. Поймано обратным проходом ворот.
+    gone = about(root_client, "role", role["id"])[0]
     assert gone["action"] == "role.deleted"
     assert gone["entity_label"] == "Временная должность"
 

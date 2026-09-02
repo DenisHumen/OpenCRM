@@ -76,7 +76,7 @@ def find_client_by_phone(db: Session, phone_norm: str) -> Client | None:
     return db.scalars(
         select(Client)
         .where(Client.phone_norm == phone_norm, Client.deleted_at.is_(None))
-        .order_by(Client.updated_at.desc())
+        .order_by(Client.updated_at.desc(), Client.id.desc())
         .limit(1)
     ).first()
 
@@ -401,7 +401,7 @@ def starye(db: Session, do: datetime, predel: int) -> list[tuple[int, str]]:
         for id_, put in db.execute(
             select(TelegramMessage.id, TelegramMessage.file_path)
             .where(TelegramMessage.happened_at < do)
-            .order_by(TelegramMessage.happened_at.asc())
+            .order_by(TelegramMessage.happened_at.asc(), TelegramMessage.id.asc())
             .limit(predel)
         ).all()
     ]
