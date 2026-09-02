@@ -10,6 +10,8 @@ import { useDebounced } from "../lib/debounce";
 import { useFailure } from "../lib/failure";
 import { useGuard } from "../lib/guard";
 import { formatMoney } from "../lib/format";
+import { SpisokPoKategoriyam } from "../components/SpisokPoKategoriyam";
+import { DOC_SORTS, sortLabel } from "../lib/documents";
 
 /** Список заказов: покупателей и поставщикам.
  *
@@ -83,6 +85,8 @@ export function Orders() {
   const guard = useGuard();
   const { failure, fail, clear } = useFailure();
 
+  const [poryadok, setPoryadok] = useState("new");
+
   const search = useDebounced(query);
 
   // Отбор без номера страницы: положи страницу сюда — и смена отбора станет
@@ -92,8 +96,9 @@ export function Orders() {
     const params = new URLSearchParams({ per_page: String(NA_STRANITSE) });
     if (search) params.set("search", search);
     if (kind) params.set("kind", kind);
+    if (poryadok !== "new") params.set("sort", poryadok);
     return `/orders?${params}`;
-  }, [search, kind]);
+  }, [search, kind, poryadok]);
 
   useEffect(() => {
     // Вид заказа переключают быстрее, чем отвечает сервер: без счётчика ответ
@@ -228,13 +233,37 @@ export function Orders() {
             {label}
           </button>
         ))}
+        {/* Порядок — тот же закрытый перечень, что у бланков: список один и
+            тот же (`documents`), и два разных набора ключей на одну таблицу
+            разошлись бы при первой же правке. */}
+        <select
+          className="input sort-select"
+          value={poryadok}
+          onChange={(e) => setPoryadok(e.target.value)}
+          aria-label={t("sortLabel")}
+        >
+          {DOC_SORTS.map((s) => (
+            <option key={s} value={s}>
+              {sortLabel(t, s)}
+            </option>
+          ))}
+        </select>
       </div>
 
       <div className="list-card">
-        {data.items.map((order) => (
+        <SpisokPoKategoriyam
+          pamyat="orders:status"
+          kategorii={Object.entries(ORDER_STATUS_LABEL).map(([key, klyuch]) => ({
+            key,
+            label: t(klyuch),
+          }))}
+          stroki={data.items}
+          kategoriyaStroki={(order) => order.status}
+          vsego={(data as any).counts}
+          klyuchStroki={(order) => order.id}
+          render={(order) => (
           <Link
             to={`/orders/${order.id}`}
-            key={order.id}
             className="list-row hoverable"
             onContextMenu={(e) => kontekst.otkryt(e, punktyDlyaZapisi(`/orders/${order.id}`, t, navigate))}
           >
@@ -258,7 +287,8 @@ export function Orders() {
               </Chip>
             </span>
           </Link>
-        ))}
+          )}
+        />
         {/* `data.total` — сколько заказов всего; денежный итог заказа лежит в
             `order.total`, и это разные числа с одинаковым именем. */}
         <Dochitat

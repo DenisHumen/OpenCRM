@@ -105,6 +105,78 @@ def events(db: Session, document_id: int) -> list[DocumentEvent]:
     )
 
 
+#: Порядок списка бумаг: КЛЮЧ → чем сортировать.
+#:
+#: Закрытый перечень, а не имя колонки из запроса. Имя колонки снаружи — это
+#: `ORDER BY` по чему угодно, включая то, чего нет в индексах, и повод для
+#: запроса, читающего таблицу целиком по чужой воле.
+#:
+#: **Разрешитель ничьей выписан здесь, а не оставлен `page_of`.** Тот дописывает
+#: первичный ключ ВСЕГДА по убыванию (`database/query._with_tiebreak`), и для
+#: «свежие сверху» это правильно, а для «старые сверху» — нет: `created_at`
+#: хранится с точностью до секунды, пять бумаг, заведённых подряд, получают одну
+#: отметку, и порядок между ними решает дописанный ключ. Убывающий давал
+#: «старые сверху», в точности совпадающие со «свежими сверху». Поймано
+#: собственной проверкой `test_starye_sverkhu_eto_obratnyy_poryadok`.
+#:
+#: Чего здесь НЕТ и почему: «по клиенту» и «по сумме». Имя клиента лежит в
+#: снимке (`payload`, JSON), а суммы у бумаги нет колонкой вовсе — она
+#: складывается из строк перечня. И то, и другое означало бы соединение или
+#: разбор JSON в `ORDER BY`, то есть новую цену у списка; заводить её надо с
+#: замером, а не заодно.
+PORYADKI: dict[str, tuple] = {
+    "new": (Document.created_at.desc(), Document.id.desc()),
+    "old": (Document.created_at.asc(), Document.id.asc()),
+    "number": (Document.number.desc(), Document.id.desc()),
+    "status": (Document.status.asc(), Document.created_at.desc(), Document.id.desc()),
+}
+PORYADOK_PO_UMOLCHANIYU = "new"
+
+
+def _usloviya(
+    q: str | None = None,
+    status: str | None = None,
+    client_id: int | None = None,
+    deal_id: int | None = None,
+    basis_id: int | None = None,
+    kinds: tuple[str, ...] | None = None,
+) -> list:
+    """Условия отбора бумаг — одним списком на два запроса.
+
+    Список и счёт по видам обязаны отбирать ОДИНАКОВО, иначе счётчик над
+    свёрнутой категорией назовёт не то число, что в ней лежит. Два набора
+    условий в двух местах расходятся на первой же новой строке отбора — здесь он
+    один.
+    """
+    usloviya = []
+    if kinds is not None:
+        # Заказы и квитанции живут в одной таблице, но на разных экранах: список
+        # бланков, куда затесались заказы, отвечает не на тот вопрос, с которым
+        # туда пришли.
+        usloviya.append(Document.kind.in_(kinds))
+    if q:
+        needle = q.strip()
+        # Ищем и по номеру, и по снимку: в мастерской спрашивают «где ноутбук
+        # Петрова», а не номер бланка.
+        usloviya.append(contains(Document.number, needle) | contains(Document.payload, needle))
+    if status:
+        usloviya.append(Document.status == status)
+    if client_id:
+        usloviya.append(Document.client_id == client_id)
+    if basis_id:
+        # «Какие бумаги выписаны по этому заказу» — вопрос, который задают с
+        # карточки заказа. Без отбора ответить на него было нечем: список
+        # накладных умел сузиться по клиенту и заявке, а по основанию нет,
+        # и найти накладную своего заказа человек мог только глазами по
+        # всему списку.
+        usloviya.append(Document.basis_id == basis_id)
+    if deal_id:
+        # Нужен карточке сделки: выданный из неё бланк обязан быть в ней виден,
+        # иначе он уходит в общий список и связь теряется.
+        usloviya.append(Document.deal_id == deal_id)
+    return usloviya
+
+
 def search(
     db: Session,
     q: str | None = None,
@@ -113,38 +185,66 @@ def search(
     deal_id: int | None = None,
     basis_id: int | None = None,
     kinds: tuple[str, ...] | None = None,
+    sort: str | None = None,
     page: int = 1,
     per_page: int = 50,
 ) -> tuple[list[Document], int]:
-    stmt = select(Document)
-    if kinds is not None:
-        # Заказы и квитанции живут в одной таблице, но на разных экранах: список
-        # бланков, куда затесались заказы, отвечает не на тот вопрос, с которым
-        # туда пришли.
-        stmt = stmt.where(Document.kind.in_(kinds))
-    if q:
-        needle = q.strip()
-        # Ищем и по номеру, и по снимку: в мастерской спрашивают «где ноутбук
-        # Петрова», а не номер бланка.
-        stmt = stmt.where(contains(Document.number, needle) | contains(Document.payload, needle))
-    if status:
-        stmt = stmt.where(Document.status == status)
-    if client_id:
-        stmt = stmt.where(Document.client_id == client_id)
-    if basis_id:
-        # «Какие бумаги выписаны по этому заказу» — вопрос, который задают с
-        # карточки заказа. Без отбора ответить на него было нечем: список
-        # накладных умел сузиться по клиенту и заявке, а по основанию нет,
-        # и найти накладную своего заказа человек мог только глазами по
-        # всему списку.
-        stmt = stmt.where(Document.basis_id == basis_id)
-    if deal_id:
-        # Нужен карточке сделки: выданный из неё бланк обязан быть в ней виден,
-        # иначе он уходит в общий список и связь теряется.
-        stmt = stmt.where(Document.deal_id == deal_id)
-
-    stmt = stmt.order_by(Document.created_at.desc())
+    stmt = select(Document).where(*_usloviya(q, status, client_id, deal_id, basis_id, kinds))
+    stmt = stmt.order_by(*PORYADKI.get(sort or "", PORYADKI[PORYADOK_PO_UMOLCHANIYU]))
     return page_of(db, stmt, page=page, per_page=per_page)
+
+
+def schyot_po_vidam(
+    db: Session,
+    q: str | None = None,
+    status: str | None = None,
+    client_id: int | None = None,
+    deal_id: int | None = None,
+    basis_id: int | None = None,
+    sredi: tuple[str, ...] | None = None,
+) -> dict[str, int]:
+    """Сколько бумаг каждого вида при ЭТОМ отборе: {вид: сколько}.
+
+    **Отбор по виду сюда не передаётся нарочно.** Счёт нужен, чтобы над
+    свёрнутой категорией стояло её число, и чтобы можно было развернуть
+    соседнюю; посчитай мы с уже применённым видом — в ответе осталась бы одна
+    строка, и остальные категории исчезли бы с экрана вместе со своими числами.
+    `sredi` сужает не отбор пользователя, а область экрана: у списка заказов
+    видов всего два, и квитанции ему считать незачем.
+
+    Одним запросом на весь список, а не запросом на вид: видов шесть, и шесть
+    отдельных `COUNT` — это шесть проходов там, где хватает одного.
+    """
+    usloviya = _usloviya(q, status, client_id, deal_id, basis_id, sredi)
+    ryady = db.execute(
+        select(Document.kind, func.count())
+        .where(*usloviya)
+        .group_by(Document.kind)
+    ).all()
+    return {vid: int(skolko) for vid, skolko in ryady}
+
+
+def schyot_po_statusam(
+    db: Session,
+    q: str | None = None,
+    client_id: int | None = None,
+    deal_id: int | None = None,
+    basis_id: int | None = None,
+    kinds: tuple[str, ...] | None = None,
+) -> dict[str, int]:
+    """Сколько бумаг в каждом состоянии при этом отборе: {статус: сколько}.
+
+    Тот же приём, что у счёта по видам, и по тому же доводу: отбор по СТАТУСУ
+    сюда не передаётся — иначе свёрнутые соседние состояния исчезли бы с
+    экрана. Нужен списку заказов, где категория — это состояние: вид там уже
+    выбран чипами.
+    """
+    ryady = db.execute(
+        select(Document.status, func.count())
+        .where(*_usloviya(q, None, client_id, deal_id, basis_id, kinds))
+        .group_by(Document.status)
+    ).all()
+    return {status: int(skolko) for status, skolko in ryady}
 
 
 def est_nezakrytaya(db: Session, deal_id: int, kind: str, statuses) -> bool:

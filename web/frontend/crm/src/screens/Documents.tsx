@@ -11,7 +11,16 @@ import { useDebounced } from "../lib/debounce";
 import { useFailure } from "../lib/failure";
 import { useGuard } from "../lib/guard";
 import { formatDate } from "../lib/format";
-import { DOC_STATUSES, statusLabel, statusVariant } from "../lib/documents";
+import { SpisokPoKategoriyam } from "../components/SpisokPoKategoriyam";
+import {
+  DOC_KINDS,
+  DOC_SORTS,
+  DOC_STATUSES,
+  kindLabel,
+  sortLabel,
+  statusLabel,
+  statusVariant,
+} from "../lib/documents";
 
 /** По скольку бланков дочитывается список. */
 const NA_STRANITSE = 100;
@@ -23,6 +32,11 @@ export function Documents() {
   const [params] = useSearchParams();
   const [data, setData] = useState<any>(null);
   const [status, setStatus] = useState("");
+  // Виды, СНЯТЫЕ с показа. Храним снятые, а не выбранные: пустое множество тогда
+  // означает «показываем всё», и новый вид бумаги появляется в списке сам, а не
+  // пропадает до тех пор, пока кто-нибудь не допишет его в перечень.
+  const [snyaty, setSnyaty] = useState<string[]>([]);
+  const [poryadok, setPoryadok] = useState("new");
   const [query, setQuery] = useState("");
   const [scan, setScan] = useState("");
   // До какой страницы дочитан список. Прежде экран просил сотню бланков и на
@@ -52,8 +66,18 @@ export function Documents() {
     const args = new URLSearchParams({ per_page: String(NA_STRANITSE) });
     if (search.trim()) args.set("search", search.trim());
     if (status) args.set("status", status);
+    if (poryadok !== "new") args.set("sort", poryadok);
+    // Снятые виды убираются НА СЕРВЕРЕ, а не прячутся на экране: спрятанная
+    // строка продолжала бы занимать место в дочитанной сотне и считаться в
+    // «всего N» — то есть «снял заказы» давало бы семь строк под подписью
+    // «всего 100».
+    if (snyaty.length) {
+      for (const vid of DOC_KINDS) {
+        if (!snyaty.includes(vid)) args.append("kind", vid);
+      }
+    }
     return `/documents?${args}`;
-  }, [search, status]);
+  }, [search, status, poryadok, snyaty]);
 
   useEffect(() => {
     // Отбор переключают быстрее, чем отвечает сервер: без этого счётчика ответ
@@ -200,33 +224,81 @@ export function Documents() {
             </option>
           ))}
         </select>
+        {/* Порядок — закрытым перечнем, как и на сервере: имя колонки из
+            запроса означало бы `ORDER BY` по чему угодно. */}
+        <select
+          className="input sort-select"
+          value={poryadok}
+          onChange={(e) => setPoryadok(e.target.value)}
+          aria-label={t("sortLabel")}
+        >
+          {DOC_SORTS.map((s) => (
+            <option key={s} value={s}>
+              {sortLabel(t, s)}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {/* Чипы видов: нажатие снимает вид с показа, повторное возвращает. Число
+          рядом — серверное и НЕ меняется от снятия: считается оно без отбора по
+          виду, иначе, сняв квитанции, человек потерял бы и число рядом с ними,
+          то есть способ их вернуть. */}
+      <div className="kind-chips">
+        <button
+          className={"filter-chip" + (snyaty.length === 0 ? " active" : "")}
+          onClick={() => setSnyaty([])}
+        >
+          {t("allKinds")}
+        </button>
+        {DOC_KINDS.map((vid) => (
+          <button
+            key={vid}
+            className={"filter-chip" + (snyaty.includes(vid) ? "" : " active")}
+            onClick={() =>
+              setSnyaty((bylo) =>
+                bylo.includes(vid) ? bylo.filter((v) => v !== vid) : [...bylo, vid],
+              )
+            }
+          >
+            {kindLabel(t, vid)}
+            <span className="chip-schyot">{data.counts?.[vid] ?? 0}</span>
+          </button>
+        ))}
       </div>
 
       <div className="list-card">
-        {data.items.map((doc: any) => (
-          <Link
-            to={`/documents/${doc.id}`}
-            key={doc.id}
-            className="list-row hoverable"
-            onContextMenu={(e) => kontekst.otkryt(e, punktyDlyaZapisi(`/documents/${doc.id}`, t, navigate))}
-          >
-            <span className="doc-number">{doc.number}</span>
-            <div className="list-row-text">
-              <div className="truncate" style={{ color: "var(--text)", fontSize: 13.5, fontWeight: 500 }}>
-                {doc.payload?.fields?.item || "—"}
+        <SpisokPoKategoriyam
+          pamyat="documents:kind"
+          kategorii={DOC_KINDS.map((vid) => ({ key: vid, label: kindLabel(t, vid) }))}
+          stroki={data.items as any[]}
+          kategoriyaStroki={(doc: any) => doc.kind}
+          vsego={data.counts}
+          klyuchStroki={(doc: any) => doc.id}
+          render={(doc: any) => (
+            <Link
+              to={`/documents/${doc.id}`}
+              className="list-row hoverable"
+              onContextMenu={(e) => kontekst.otkryt(e, punktyDlyaZapisi(`/documents/${doc.id}`, t, navigate))}
+            >
+              <span className="doc-number">{doc.number}</span>
+              <div className="list-row-text">
+                <div className="truncate" style={{ color: "var(--text)", fontSize: 13.5, fontWeight: 500 }}>
+                  {doc.payload?.fields?.item || "—"}
+                </div>
+                <div className="truncate" style={{ color: "var(--faint)", fontSize: 12 }}>
+                  {doc.payload?.client?.name || "—"}
+                </div>
               </div>
-              <div className="truncate" style={{ color: "var(--faint)", fontSize: 12 }}>
-                {doc.payload?.client?.name || "—"}
-              </div>
-            </div>
-            <span className="doc-row-date" style={{ width: 90, textAlign: "right", color: "var(--faint)", fontSize: 12, flexShrink: 0 }}>
-              {formatDate(doc.created_at, locale)}
-            </span>
-            <span className="doc-row-status" style={{ width: 130, flexShrink: 0, display: "flex", justifyContent: "flex-end" }}>
-              <Chip variant={statusVariant(doc.status)}>{statusLabel(t, doc.status)}</Chip>
-            </span>
-          </Link>
-        ))}
+              <span className="doc-row-date" style={{ width: 90, textAlign: "right", color: "var(--faint)", fontSize: 12, flexShrink: 0 }}>
+                {formatDate(doc.created_at, locale)}
+              </span>
+              <span className="doc-row-status" style={{ width: 130, flexShrink: 0, display: "flex", justifyContent: "flex-end" }}>
+                <Chip variant={statusVariant(doc.status)}>{statusLabel(t, doc.status)}</Chip>
+              </span>
+            </Link>
+          )}
+        />
         <Dochitat
           pokazano={data.items.length}
           vsego={data.total}

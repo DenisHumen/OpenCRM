@@ -5,9 +5,11 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from core import exceptions as errors
 from core.services import act_service, codes, document_service, settings_service
 from database.models import User
-from database.models.document import DOCUMENT_LOCALES
+from database.models.document import DOCUMENT_KINDS, DOCUMENT_LOCALES
+from database.repositories import documents as documents_repo
 from database.repositories import users as users_repo
 from web.api import schemas
 from web.api.deps import MAX_SEARCH, get_db, require_module, require_perm
@@ -90,10 +92,37 @@ class ActCancelIn(BaseModel):
     note: str = ""
 
 
+def _proverennye_vidy(kind: list[str] | None) -> tuple[str, ...] | None:
+    """Виды из запроса → кортеж для отбора. Пусто — все виды."""
+    if not kind:
+        return None
+    lishnie = [v for v in kind if v not in DOCUMENT_KINDS]
+    if lishnie:
+        raise errors.ValidationError(
+            f"Unknown document kind: {', '.join(sorted(set(lishnie)))}", code="unknown_kind"
+        )
+    return tuple(dict.fromkeys(kind))
+
+
+def _proverit_poryadok(sort: str | None) -> None:
+    """Порядок — только из перечня `documents_repo.PORYADKI`."""
+    if sort and sort not in documents_repo.PORYADKI:
+        raise errors.ValidationError(
+            f"Unknown sort: {sort}. Known: {', '.join(sorted(documents_repo.PORYADKI))}",
+            code="unknown_sort",
+        )
+
+
 @router.get("")
 def list_documents(
     search: str | None = Query(default=None, max_length=MAX_SEARCH),
     status: str | None = None,
+    # Вид бумаги — списком: экран прячет категории по одной, и «покажи
+    # квитанции и акты» это один запрос, а не два. Без этого отбора «свернуть
+    # категорию» означало бы прятать уже приехавшие строки, то есть врать в
+    # счётчике «всего N».
+    kind: list[str] | None = Query(default=None),
+    sort: str | None = None,
     client_id: int | None = None,
     deal_id: int | None = None,
     page: int = Query(default=1, ge=1),
@@ -101,16 +130,32 @@ def list_documents(
     _: User = Depends(require_perm("documents", "view")),
     db: Session = Depends(get_db),
 ):
+    """Список бумаг: отбор по виду и состоянию, порядок из закрытого перечня.
+
+    Незнакомый вид или порядок — отказ, а не молчаливый пропуск. Пропуск
+    выглядит как успех: человек просит «по номеру», получает список по дате и
+    уверен, что так и должно быть.
+    """
+    kinds = _proverennye_vidy(kind)
+    _proverit_poryadok(sort)
     items, total = document_service.search(
         db,
         q=search,
         status=status,
         client_id=client_id,
         deal_id=deal_id,
+        kinds=kinds,
+        sort=sort,
         page=page,
         per_page=per_page,
     )
-    return schemas.paginated([schemas.document_out(d) for d in items], total, page, per_page)
+    otvet = schemas.paginated([schemas.document_out(d) for d in items], total, page, per_page)
+    # Счёт по видам считается БЕЗ отбора по виду: иначе, спрятав квитанции,
+    # человек потерял бы и число рядом с ними — то есть способ вернуть их.
+    otvet["counts"] = document_service.schyot_po_vidam(
+        db, q=search, status=status, client_id=client_id, deal_id=deal_id
+    )
+    return otvet
 
 
 @router.post("", status_code=201)
