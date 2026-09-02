@@ -393,3 +393,70 @@ def test_dva_tovara_zavodyatsya_razom_i_artikuly_raznye(root_client):
     )
     artikuly = [i[1] for i in ishody]
     assert len(set(artikuly)) == 2, f"двоим достался один артикул: {artikuly}"
+
+
+# --- заказ по заявке -----------------------------------------------------------
+
+
+def test_dvazhdy_zavodyat_zakaz_po_zayavke_razom(root_client):
+    """Два нажатия «Собрать заказ» разом не должны дать два заказа.
+
+    Инвариант тот же, что у основной фирмы: «ровно один открытый заказ на
+    заявку». Держится он запросом (`documents_repo.est_nezakrytaya`), потому что
+    частичных индексов в MySQL нет: закрытых заказов у заявки может быть сколько
+    угодно, а незакрытый — один.
+
+    **Цена нарушения не в лишней бумаге.** Заказ ПЕРЕНИМАЕТ бронь заявки, а два
+    заказа перенимают её дважды: три штуки в строках становятся шестью в брони,
+    и продавец отказывает покупателю, глядя на товар, лежащий на полке.
+
+    Утверждение — «после гонки инвариант цел», а не «прошёл ровно один»: гонку
+    никто не обязан выигрывать, и требовать этого значило бы завести мигающий
+    тест. Проверяется поэтому число ОТКРЫТЫХ заказов, а не коды ответов.
+    """
+    from core.services import modules_service
+
+    for blok in ("warehouse", "documents", "orders"):
+        assert root_client.post(f"{API}/modules/{blok}", json={"enabled": True}).status_code == 200
+    modules_service.invalidate()
+    try:
+        tovar = root_client.post(
+            f"{WH}/products", json={"name": "Товар для дуэли заказов", "unit": "pcs"}
+        ).json()
+        root_client.post(
+            f"{WH}/moves", json={"product_id": tovar["id"], "kind": "in", "quantity": "10"}
+        )
+        klient = root_client.post(f"{API}/clients", json={"name": "Дуэль заказов"}).json()
+        zayavka = root_client.post(
+            f"{API}/deals", json={"title": "Дуэль заказов", "client_id": klient["id"]}
+        ).json()["id"]
+        assert root_client.post(
+            f"{API}/deals/{zayavka}/lines",
+            json={"product_id": tovar["id"], "quantity": "3"},
+        ).status_code == 201
+
+        codes = duel(
+            lambda _: root_client.post(f"{API}/deals/{zayavka}/order", json={}).status_code,
+            None,
+            None,
+        )
+        assert set(codes) == {"first", "second"}, f"об ударе не отчитались: {codes}"
+
+        otkrytye = [
+            z
+            for z in root_client.get(f"{API}/orders?deal_id={zayavka}").json()["items"]
+            if z["status"] not in ("closed", "cancelled")
+        ]
+        assert len(otkrytye) == 1, (
+            f"после гонки открытых заказов {len(otkrytye)}, ответы: {codes} — "
+            "бронь заявки перенята дважды"
+        )
+
+        # И бронь осталась той же: три в строках — три в брони, а не шесть.
+        est = root_client.get(f"{WH}/products/{tovar['id']}/availability").json()
+        assert est["reserved_milli"] == 3000, f"бронь после гонки: {est['reserved_milli']}"
+    finally:
+        assert root_client.post(
+            f"{API}/modules/orders", json={"enabled": False}
+        ).status_code == 200
+        modules_service.invalidate()
