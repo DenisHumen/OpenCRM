@@ -645,8 +645,12 @@ def test_pravka_ostavlyaet_zapis_v_zhurnale(root_client, cost_category):
     accrual = money_of(root_client, order["id"])["accruals"][0]
     root_client.patch(f"{FINANCE}/accruals/{accrual['id']}", json={"amount": 14_000})
 
+    # По номеру СВОЕГО начисления: поправок начислений в прогоне несколько, и
+    # «самая свежая с таким действием» принадлежит соседнему тесту, если он
+    # оказался ниже по порядку файлов. Проверка краснела на неизменном коде.
     entries = root_client.get(
-        f"{API}/audit", params={"entity_type": "finance_operation"}
+        f"{API}/audit",
+        params={"entity_type": "finance_operation", "entity_id": accrual["id"]},
     ).json()["items"]
     mine = [row for row in entries if row["action"] == "finance.accrual_adjusted"]
     assert mine, "поправка прошла мимо журнала"

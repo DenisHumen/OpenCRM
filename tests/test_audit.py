@@ -832,8 +832,15 @@ def test_the_permission_constructor_leaves_a_trail(root_client):
         user_id = _user_id(root_client, "trail@test.local")
         assert root_client.post(f"{ROLES}/assign/{user_id}", json={"role_id": role["id"]}).status_code == 200
 
-        given = about(root_client, "user", user_id)[0]
-        assert given["action"] == "role.assigned"
+        # По ДЕЙСТВИЮ, а не «самая свежая про этого человека»: заведение
+        # сотрудника оставляет свои записи (`staff.approved`), и какая из них
+        # окажется первой, решает порядок файлов в прогоне, а не наш код.
+        naznacheniya = [
+            row for row in about(root_client, "user", user_id)
+            if row["action"] == "role.assigned"
+        ]
+        assert naznacheniya, "назначение прошло мимо журнала"
+        given = naznacheniya[0]
         assert given["value_after"] == "Бухгалтер для журнала"
     finally:
         from tests.test_roles import _user_id as _uid
