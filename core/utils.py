@@ -38,6 +38,20 @@ def divide_money(total: int, count: int) -> int:
     return sign * ((abs(total) * 2 + count) // (count * 2))
 
 
+def money_for_print(minor: int | None, currency: str) -> str:
+    """Деньги строкой для бумаги. Пусто — цену не назвали, и это не ноль.
+
+    Считаем целыми: делить на 100 через float нельзя нигде в проекте. Функция
+    жила в четырёх копиях — три печатных формы и наклейка, — и разойтись им
+    мешало только то, что их никто не трогал.
+    """
+    if minor is None:
+        return ""
+    whole, cents = divmod(abs(int(minor)), 100)
+    sign = "-" if minor < 0 else ""
+    return f"{sign}{whole}.{cents:02d} {currency}".strip()
+
+
 def to_utc_naive(value: datetime | None) -> datetime | None:
     """Момент из запроса — к тому виду, в каком время лежит в базе: naive UTC.
 

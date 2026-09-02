@@ -126,3 +126,66 @@ def test_znachki_razdelov_sushchestvuyut():
         + ", ".join(net)
         + ". Он не нарисуется ничем, и место слева от подписи останется пустым"
     )
+
+
+def _marshruty() -> set[str]:
+    """Полные адреса экранов из `App.tsx`, вложенные — собранными.
+
+    Читать `path="…"` по одной строке НЕЛЬЗЯ, и это проверено: настройки
+    объявлены вложенно (`/settings` и внутри `brand`), поэтому наивный разбор
+    объявил битыми три живые ссылки сразу. Сторож, врущий в первый же день,
+    отучает смотреть на себя быстрее, чем приносит пользу.
+
+    Вложенность в JSX выражена отступом, по нему и собираем.
+    """
+    tekst = (KOREN / "web" / "frontend" / "crm" / "src" / "App.tsx").read_text(
+        encoding="utf-8"
+    )
+    polnye: set[str] = set()
+    stek: list[tuple[int, str]] = []
+    for stroka in tekst.splitlines():
+        if "<Route" not in stroka:
+            continue
+        otstup = len(stroka) - len(stroka.lstrip())
+        while stek and stek[-1][0] >= otstup:
+            stek.pop()
+        roditel = stek[-1][1] if stek else ""
+        nayd = re.search(r'path="([^"]+)"', stroka)
+        if nayd:
+            put = nayd.group(1)
+            polnyy = put if put.startswith("/") else f"{roditel.rstrip('/')}/{put}"
+            polnye.add(polnyy)
+        else:
+            polnyy = roditel
+        # Открывает ли строка вложенные — видно по ХВОСТУ, а не по наличию
+        # «/>» где-нибудь в ней: `element={<SettingsLayout />}` содержит его в
+        # середине, и проверка «нет в строке» теряла весь раздел настроек.
+        if not stroka.rstrip().endswith("/>"):
+            stek.append((otstup, polnyy))
+    return polnye
+
+
+def test_ssylki_na_ekrany_vedut_kuda_to():
+    """«Открыть накладные» обязано открывать накладные, а не пустоту.
+
+    Ссылка на несуществующий адрес не роняет ничего: роутер уводит на главную,
+    и человек, пришедший в справку за помощью, получает от неё круг. Найти это
+    можно только руками, перещёлкав тридцать статей.
+
+    Проверяются только куски `ekran`: у `ruchka` в статье про API путь тоже
+    есть, но он адрес СЕРВЕРА, и в роутере ему делать нечего.
+    """
+    puti = set(re.findall(r'vid:\s*"ekran",\s*put:\s*"([^"]+)"', _tekst()))
+    assert puti, "перебор ссылок на экраны пуст — сменился способ их писать"
+
+    izvestnye = _marshruty()
+    assert "/settings/brand" in izvestnye, (
+        "разбор маршрутов не собирает вложенные адреса — проверка ниже объявит "
+        "битыми живые ссылки"
+    )
+    net = sorted(p for p in puti if p not in izvestnye)
+    assert not net, (
+        "справка зовёт на адрес, которого в системе нет: "
+        + ", ".join(net)
+        + ". Читатель нажмёт и вернётся на главную"
+    )

@@ -22,6 +22,7 @@ from core.services import (
     permissions_service,
 )
 from core.services import settings_service
+from core.utils import money_for_print
 from database.models import User
 from database.models.document import DOCUMENT_LOCALES, ORDER_KINDS, WAYBILL_KINDS
 from database.repositories import documents as documents_repo
@@ -378,8 +379,8 @@ def print_order(
         {
             "name": line.name_snapshot,
             "quantity": _quantity(line.quantity_milli),
-            "price": _money(line.price_minor, currency),
-            "sum": _money(summa, currency),
+            "price": money_for_print(line.price_minor, currency),
+            "sum": money_for_print(summa, currency),
         }
         for line, summa in zip(rows, document_service.line_totals(rows))
     ]
@@ -395,7 +396,7 @@ def print_order(
         party=(payload.get("client") or {}).get("name"),
         created=order.created_at.strftime("%d.%m.%Y %H:%M") if order.created_at else "",
         lines=lines,
-        total=_money(order_service.total_minor(rows), currency),
+        total=money_for_print(order_service.total_minor(rows), currency),
         barcode=codes.barcode_svg(order.number),
     )
     return HTMLResponse(html)
@@ -410,13 +411,6 @@ def print_order(
 #
 # Теперь суммы строк берутся из `document_service.line_totals` — общим счётом,
 # нарастающим итогом, так что колонка складывается в итог тождественно.
-
-
-def _money(minor: int | None, currency: str) -> str:
-    if minor is None:
-        return ""
-    whole, cents = divmod(abs(int(minor)), 100)
-    return f"{'-' if minor < 0 else ''}{whole}.{cents:02d} {currency}"
 
 
 def _quantity(milli: int) -> str:

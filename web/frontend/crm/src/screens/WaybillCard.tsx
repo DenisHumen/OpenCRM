@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { Icon } from "../components/Icon";
+import { PrintLangs } from "../components/PrintLangs";
 import { Chip, ConfirmModal, ScreenLoading } from "../components/ui";
 import { api, ApiError } from "../lib/api";
 import { useApp } from "../lib/app";
@@ -160,6 +161,15 @@ export function WaybillCard() {
           )}
         </div>
       </div>
+
+      {/* Печать — только у проведённой, и это правило сервера, а не вкус экрана.
+          Напечатанный черновик дал бы лист с подписью получателя под перечнем,
+          который назавтра станет другим. */}
+      {(waybill.status === "issued" || waybill.status === "closed") && (
+        <div style={{ marginBottom: 16 }}>
+          <PrintLangs base={`/api/v1/waybills/${waybill.id}/print`} current={waybill.locale} />
+        </div>
+      )}
 
       {/* Почему кнопок правки нет — сказано словами, а не показано пустотой.
           Исчезнувшая без объяснения кнопка читается как поломка. */}

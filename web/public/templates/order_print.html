@@ -58,7 +58,9 @@
   {% if company %}
     <div class="who">
       <b>{{ company.name }}</b><br>
-      {% if company.address %}{{ company.address }}<br>{% endif %}
+      {# `company.address` в снимке нет — есть `legal_address`; шапка молча
+         печаталась без адреса. Jinja на несуществующий ключ не жалуется. #}
+      {% if company.legal_address or company.actual_address %}{{ company.legal_address or company.actual_address }}<br>{% endif %}
       {% if company.phone %}{{ company.phone }}{% endif %}
     </div>
   {% endif %}

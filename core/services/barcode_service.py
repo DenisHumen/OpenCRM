@@ -29,6 +29,7 @@ from sqlalchemy.orm import Session
 from core import exceptions as errors
 from core import uniqueness
 from core.services import codes as code_render
+from core.utils import money_for_print
 from database.models import Product, ProductBarcode
 from database.models.warehouse import (
     BARCODE_CODE128,
@@ -85,12 +86,16 @@ MAX_NOTE_ON_LABEL = 60
 
 #: Единицы измерения словами. Короткими: на наклейке 58 мм «килограмм» съедает
 #: пол-строки, а «кг» понятно всем и всюду.
+#: «Штука» здесь есть, хотя наклейка её не печатает (`_pole_unit` отсеивает
+#: `pcs` раньше, чем заглянет сюда). Нужна она накладной: получатель сверяет
+#: «2 шт» с тем, что в коробке, и пустая клетка в столбце единиц читается как
+#: недописанная строка. Второй словарь единиц завёл бы «м²» в двух местах.
 UNIT_NAMES = {
-    "ru": {"kg": "кг", "g": "г", "l": "л", "ml": "мл", "m": "м",
+    "ru": {"pcs": "шт", "kg": "кг", "g": "г", "l": "л", "ml": "мл", "m": "м",
            "m2": "м²", "pack": "упак", "hour": "ч"},
-    "uk": {"kg": "кг", "g": "г", "l": "л", "ml": "мл", "m": "м",
+    "uk": {"pcs": "шт", "kg": "кг", "g": "г", "l": "л", "ml": "мл", "m": "м",
            "m2": "м²", "pack": "упак", "hour": "год"},
-    "en": {"kg": "kg", "g": "g", "l": "l", "ml": "ml", "m": "m",
+    "en": {"pcs": "pcs", "kg": "kg", "g": "g", "l": "l", "ml": "ml", "m": "m",
            "m2": "m²", "pack": "pack", "hour": "h"},
 }
 
@@ -140,7 +145,7 @@ def _pole_sku(product, kod, sreda) -> str:
 
 
 def _pole_price(product, kod, sreda) -> str:
-    return _money(product.price_minor, sreda["currency"])
+    return money_for_print(product.price_minor, sreda["currency"])
 
 
 def _pole_unit(product, kod, sreda) -> str:
@@ -599,14 +604,3 @@ def _kolichestvo(milli: int) -> str:
     return warehouse_service.format_quantity(milli)
 
 
-def _money(minor: int | None, currency: str) -> str:
-    """Цена для печати. Пусто — цену не назвали, и это не ноль.
-
-    Считаем целыми: делить на 100 через float нельзя, деньги в этом проекте
-    через float не считаются нигде.
-    """
-    if minor is None:
-        return ""
-    whole, cents = divmod(abs(int(minor)), 100)
-    sign = "-" if minor < 0 else ""
-    return f"{sign}{whole}.{cents:02d} {currency}".strip()
