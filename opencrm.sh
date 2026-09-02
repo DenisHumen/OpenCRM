@@ -3570,11 +3570,16 @@ TUI_KE=$(printf '\033[K')
 
 #: Видимая ширина строки в ЗНАКАХ, без управляющих последовательностей.
 #:
-#: `wc -m` считает знаки, а не байты, — замерено на Debian и Alpine: строка из
-#: 44 кириллических знаков даёт 44 при 75 байтах. Байтовый счёт разносил бы
-#: рамку на любой русской подписи.
+#: `wc -m` считает знаки НЕ САМ ПО СЕБЕ, а по локали: под `LANG=C` он считает
+#: байты, кириллица двухбайтная, и рамка разъезжается ровно на длину русской
+#: подписи. Локаль задаётся на одну команду — тем же приёмом, что в `pad`.
 tui_shirina() {
-    printf '%s' "$1" | sed "s/${TUI_ESC}\[[0-9;?]*[A-Za-z]//g" | wc -m | tr -d ' '
+    _tui_sh_golyy=$(printf '%s' "$1" | sed "s/${TUI_ESC}\[[0-9;?]*[A-Za-z]//g")
+    _tui_sh_dlina=$(printf '%s' "$_tui_sh_golyy" | LC_ALL=C.UTF-8 wc -m 2>/dev/null | tr -d ' ')
+    # Локали C.UTF-8 на машине нет — считаем как умеем. Кривая ширина лучше
+    # пустоты: на ней встанет вся арифметика рамки.
+    case "$_tui_sh_dlina" in ''|*[!0-9]*) _tui_sh_dlina=${#_tui_sh_golyy} ;; esac
+    printf '%s' "$_tui_sh_dlina"
 }
 
 #: Кусок строки по ЗНАКАМ: с какого и по какой.
@@ -3583,12 +3588,63 @@ tui_shirina() {
 #: системах: оба режут БАЙТЫ и оставляют половину буквы — «последнее \xd0»
 #: вместо «последнее обновление».
 #:
+#: Локаль задана на команду по той же причине: под `LANG=C` точка в `sed` —
+#: это тоже БАЙТ, и та же половина буквы возвращается через чёрный ход.
+#:
 #: Перевод строки в замене — обратной косой с настоящим переносом, а не `\n`:
 #: последнее — расширение GNU, а в Ubuntu под именем awk живёт mawk, и такие
 #: расширения молча не работают. Тот же урок записан у раскраски.
 tui_srez() {
-    printf '%s' "$1" | sed 's/./&\
+    printf '%s' "$1" | LC_ALL=C.UTF-8 sed 's/./&\
 /g' | sed -n "$2,$3p" | tr -d '\n'
+}
+
+#: Обрезать строку до N ЗНАКОВ, не считая управляющих последовательностей.
+#:
+#: Строка длиннее рамки не «вылезает вправо», а ПЕРЕНОСИТСЯ терминалом: кадр
+#: рисуется от `ESC[H` без очистки, и весь остаток съезжает на строку вниз.
+#: Разъехавшаяся рамка остаётся такой до выхода из меню.
+tui_obrezat() {
+    _tui_ob_tekst=$1; _tui_ob_predel=$2
+    [ "$_tui_ob_predel" -ge 1 ] || return 0
+    if [ "$(tui_shirina "$_tui_ob_tekst")" -le "$_tui_ob_predel" ]; then
+        printf '%s' "$_tui_ob_tekst"
+        return 0
+    fi
+    if tui_ramki; then _tui_ob_znak='…'; else _tui_ob_znak='>'; fi
+    _tui_ob_mesto=$(( _tui_ob_predel - 1 ))
+    _tui_ob_vyhod=""
+    _tui_ob_hvost=$_tui_ob_tekst
+    while [ -n "$_tui_ob_hvost" ]; do
+        # Управляющая последовательность идёт целиком и ширины не занимает:
+        # разрезанная посередине, она вылезет на экран своими же буквами.
+        case "$_tui_ob_hvost" in
+            "$TUI_ESC"*)
+                _tui_ob_dalshe=${_tui_ob_hvost#*[A-Za-z]}
+                _tui_ob_kusok=${_tui_ob_hvost%"$_tui_ob_dalshe"}
+                [ -n "$_tui_ob_kusok" ] || break
+                _tui_ob_vyhod="$_tui_ob_vyhod$_tui_ob_kusok"
+                _tui_ob_hvost=$_tui_ob_dalshe
+                continue ;;
+        esac
+        _tui_ob_kusok=${_tui_ob_hvost%%"$TUI_ESC"*}
+        _tui_ob_hvost=${_tui_ob_hvost#"$_tui_ob_kusok"}
+        _tui_ob_dlina=$(tui_shirina "$_tui_ob_kusok")
+        if [ "$_tui_ob_dlina" -le "$_tui_ob_mesto" ]; then
+            _tui_ob_vyhod="$_tui_ob_vyhod$_tui_ob_kusok"
+            _tui_ob_mesto=$(( _tui_ob_mesto - _tui_ob_dlina ))
+            continue
+        fi
+        # Ноль места — и резать нечего: `sed -n "1,0p"` отдаёт ПЕРВУЮ строку,
+        # то есть лишний знак сверх предела.
+        if [ "$_tui_ob_mesto" -gt 0 ]; then
+            _tui_ob_vyhod="$_tui_ob_vyhod$(tui_srez "$_tui_ob_kusok" 1 "$_tui_ob_mesto")"
+        fi
+        break
+    done
+    # Сброс цвета обязателен: закрывающая последовательность осталась в
+    # отрезанном хвосте, и без него в цвет уйдёт весь остаток экрана.
+    printf '%s%s%s' "$_tui_ob_vyhod" "$_tui_ob_znak" "$R"
 }
 
 #: Рисовать рамками или палочками. UTF-8 есть не в каждой консоли хостера, а
@@ -3838,7 +3894,7 @@ tui_vertushka() {
         # не зависят — вертушка крутится по кругу.
         _tui_kadry='-\|/'
     fi
-    _tui_vsego=$(printf '%s' "$_tui_kadry" | wc -m | tr -d ' ')
+    _tui_vsego=$(tui_shirina "$_tui_kadry")
     _tui_n=$(( TUI_VERTUSHKA_KADR % _tui_vsego ))
     tui_srez "$_tui_kadry" $(( _tui_n + 1 )) $(( _tui_n + 1 ))
 }
@@ -3934,6 +3990,13 @@ tui_shapka() {
 tui_stroka_ramki() {
     _tui_v=$1; _tui_shirina=$2; _tui_tekst=$3
     _tui_vidno=$(tui_shirina "$_tui_tekst")
+    # Не влезло — режем, а не оставляем терминалу. Перенесённая им строка
+    # сдвигает вниз весь остаток кадра, и рамка разъезжается: в окне 60–71
+    # колонки третья строка шапки длиннее рамки просто по своему тексту.
+    if [ "$_tui_vidno" -gt "$_tui_shirina" ]; then
+        _tui_tekst=$(tui_obrezat "$_tui_tekst" "$_tui_shirina")
+        _tui_vidno=$(tui_shirina "$_tui_tekst")
+    fi
     _tui_hvost=$(( _tui_shirina - _tui_vidno ))
     [ "$_tui_hvost" -lt 0 ] && _tui_hvost=0
     printf '%s%s%s%s %s%s %s%s%s\n' "$TUI_KE" "$CYAN" "$_tui_v" "$R" "$_tui_tekst" "$(tui_liniya ' ' "$_tui_hvost")" "$CYAN" "$_tui_v" "$R"
@@ -4073,9 +4136,11 @@ tui_narisovat() {
         printf '%s  %s%s%s\n' "$TUI_KE" "$D" \
             "$(tui_begushchaya "$(tui_pole_stroki "$_tui_tek" 3)" $(( TUI_STOLBCOV - 6 )) "$TUI_VERTUSHKA_KADR")" "$R"
         printf '%s\n' "$TUI_KE"
+        # Подсказка длиннее окна переносится и уводит кадр вниз ровно так же,
+        # как строка шапки, — она просто короче и рвётся в окне поуже.
         printf '%s  %s%s%s\n' "$TUI_KE" "$D" \
-            "$(tr_ '↑↓ выбор · → Enter открыть · ← назад · 1-9 быстрый выбор · q выход' \
-                   '↑↓ move · → Enter open · ← back · 1-9 quick pick · q quit')" "$R"
+            "$(tui_obrezat "$(tr_ '↑↓ выбор · → Enter открыть · ← назад · 1-9 быстрый выбор · q выход' \
+                   '↑↓ move · → Enter open · ← back · 1-9 quick pick · q quit')" $(( TUI_STOLBCOV - 4 )))" "$R"
         # Дочищаем хвост экрана: прошлый кадр мог быть длиннее нынешнего.
         printf '\033[J'
     } > /dev/tty
@@ -4093,7 +4158,11 @@ tui_vypolnit() {
     clear 2>/dev/null || printf '\033[2J\033[H' > /dev/tty
     # Ошибка внутри команды не должна ронять меню: человек остался бы без пульта
     # ровно в тот момент, когда что-то пошло не так.
-    "$_tui_deystvie" || warn "$(tr_ "команда закончилась ошибкой" "the command ended with an error")"
+    #
+    # Одного `||` для этого мало: `die` — это `exit`, он закрывает ТУ ЖЕ
+    # оболочку. В подоболочке он становится кодом возврата, а вывод и терминал
+    # у неё общие с меню — не выходит наружу только присвоенное ею.
+    ( "$_tui_deystvie" ) || warn "$(tr_ "команда закончилась ошибкой" "the command ended with an error")"
     printf '\n%s' "$D"
     ask "$(tr_ "  Enter — вернуться в меню" "  Enter — back to the menu")" "" >/dev/null
     printf '%s' "$R"

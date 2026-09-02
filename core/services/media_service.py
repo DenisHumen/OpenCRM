@@ -7,8 +7,11 @@ import threading
 import shutil
 import subprocess
 import tempfile
+import time
+import uuid
 import zipfile
 from collections.abc import Iterable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 from PIL import Image
@@ -17,6 +20,7 @@ import blurhash as blurhash_lib
 
 from config.settings import get_settings
 from core import exceptions as errors
+from core import redis_client
 
 # размеры производных изображений (по длинной стороне)
 SIZE_LARGE = 1920
@@ -239,8 +243,8 @@ def derive(im: Image.Image, box: int) -> Image.Image:
 
     Замерено в боевом образе на PNG 7100×7042 (49,99 Мпикс, 0,67 МБ файлом):
     одно разжатие давало пик 612 МБ при 227 МБ до работы, два потока — 1185 МБ.
-    Комментарий над `_razzhatie` при этом обещал «предсказуемый пик 382 МБ»: он
-    считал только сам разжатый кадр и не знал про копии.
+    Комментарий над ограничителем разжатия при этом обещал «предсказуемый пик
+    382 МБ»: он считал только сам разжатый кадр и не знал про копии.
 
     `resize` выделяет РЕЗУЛЬТАТ и ничего сверх него. Качество то же: `thumbnail`
     внутри зовёт тот же `resize` тем же фильтром, разница только в том, что он
@@ -276,42 +280,172 @@ def derive(im: Image.Image, box: int) -> Image.Image:
 #: через `draft` и приходит к проверке уже уменьшенным.
 MAX_DECODE_MEGAPIXELS = 50
 
-#: Сколько картинок разжимается ОДНОВРЕМЕННО.
+# --- очередь на разжатие: общая на всю установку -----------------------------
+#
+# Предел живёт в Redis, а не в памяти процесса. Пока он был
+# `threading.BoundedSemaphore(2)`, четыре рабочих процесса давали четыре
+# независимых пика против общего `mem_limit: 3g`. Замеры, выбор числа и что
+# делаем при лежащем Redis — `docs/08-deployment.md`, «Память на разжатии
+# картинок» и «Несколько рабочих процессов».
+
+#: Сколько картинок разжимается ОДНОВРЕМЕННО во всей установке.
 #:
-#: Бюджет выше ограничивает одну картинку, а редактор доски принимает пачку
-#: файлов сразу, и превью строятся фоновыми задачами. Каждая такая задача —
-#: синхронная функция, значит Starlette уводит её в общий пул потоков, а его
-#: ёмкость по умолчанию сорок (проверено:
-#: `anyio.to_thread.current_default_thread_limiter().total_tokens` = 40). Без
-#: этого замка худший случай — сорок разжатий по 191 МБ, то есть 7,6 ГБ на
-#: машине с двумя.
+#: Замерено в боевом образе на PNG 7100×7042: два разжатия держат пик около
+#: 550 МБ при холостых 227, шесть — 937. Два, а не одно, потому что превью
+#: строятся в фоне и очередь из двадцати фотографий проходит вдвое быстрее.
+ODNOVREMENNO = 2
+
+#: Ключ общей очереди: сортированное множество, член — метка занявшего, очко —
+#: момент, после которого место считается брошенным.
+KLYUCH_MESTA = f"{redis_client.PREFIX}razzhatie"
+
+#: Через сколько секунд занятое место считается брошенным.
 #:
-#: Два, а не один: превью строятся в фоне, и очередь из двадцати фотографий
-#: пойдёт вдвое быстрее.
+#: Убитый по памяти процесс своего места не отдаст, а место без срока — это
+#: загрузка картинок, переставшая работать до перезапуска. Запас стократный:
+#: разжатие с тремя производными укладывается в секунду.
+SROK_MESTA_SEKUND = 120
+
+#: Сколько ждём свободного места, прежде чем отказаться от работы.
 #:
-#: ЗАМЕРЕНО В БОЕВОМ ОБРАЗЕ, а не выведено из цены разжатия. PNG 7100×7042
-#: (49,99 Мпикс — впритык под предел, 0,67 МБ файлом), пик VmHWM процесса:
+#: Ждать без предела нельзя: обработка идёт в общем пуле потоков Starlette
+#: (сорок мест), и вставшая очередь остановила бы все синхронные ручки сразу.
+#: Одна работа с пометкой `failed` дешевле вставшего приложения.
+OZHIDANIE_SEKUND = 120
+
+#: Шаг опроса очереди и его потолок.
 #:
-#:     потоков   было      стало
-#:     1         612 МБ    293 МБ
-#:     2        1185 МБ    550 МБ
-#:     6        1577 МБ    937 МБ
+#: Ожидающих бывает до сорока — столько мест в пуле потоков, — и опрос каждые
+#: двадцать миллисекунд стоил бы двух тысяч команд в секунду на ровном месте.
+_SHAG_SEKUND = 0.02
+_SHAG_POTOLOK = 0.25
+
+#: Не чаще раза в столько секунд говорим, что общего предела нет.
+KRICHAT_RAZ_V_SEKUND = 30.0
+
+#: Запасной предел в памяти процесса: Redis не задан или не ответил.
+_mestnoe = threading.BoundedSemaphore(ODNOVREMENNO)
+
+_bez_obshchego = 0
+_krik_zamok = threading.Lock()
+_poslednii_krik = 0.0
+
+
+def bez_obshchego_zamka_total() -> int:
+    """Сколько раз разжатие обошлось без общего предела. Читают проверки и `/metrics`."""
+    return _bez_obshchego
+
+
+def _krichat(deystvie: str, exc: Exception) -> None:
+    """Общего предела нет — сказать вслух. Тихого варианта здесь не бывает."""
+    global _bez_obshchego, _poslednii_krik
+    with _krik_zamok:
+        _bez_obshchego += 1
+        teper = time.monotonic()
+        skazat = teper - _poslednii_krik >= KRICHAT_RAZ_V_SEKUND
+        if skazat:
+            _poslednii_krik = teper
+    if skazat:
+        print(
+            f"[opencrm] ТРЕВОГА: общая очередь на разжатие недоступна ({deystvie}): {exc}. "
+            f"Предел {ODNOVREMENNO} держится в каждом процессе отдельно — пик памяти "
+            "умножается на число рабочих процессов.",
+            flush=True,
+        )
+
+
+#: «Выбросить брошенные места, сосчитать, и если есть свободное — занять его».
 #:
-#: «Было» — это до того, как из `derive` и `compute_blurhash` убрали
-#: полноразмерные копии. Прежняя редакция этого комментария обещала «пик 382 МБ»
-#: и была НЕВЕРНА уже при одном процессе: она считала только сам разжатый кадр и
-#: не знала про три копии оригинала, которые `derive` делал ради трёх
-#: производных, и ещё две, которые делал `compute_blurhash` ради картинки 32×32.
-#:
-#: Холостое потребление процесса — 227 МБ; значит сама работа стоит теперь
-#: 66 МБ на поток вместо 385. Отсюда и предел: два потока держат пик около
-#: 550 МБ, что машина переживает вместе с базой.
-#:
-#: **Замок живёт в памяти ПРОЦЕССА.** При нескольких рабочих процессах порог
-#: умножается на их число — тот же класс беды, что у ограничителя входа, только
-#: платят памятью. Прежде чем поднимать `OPENCRM_WORKERS`, замок обязан стать
-#: общим (разбор — в `docs/08-deployment.md`).
-_razzhatie = threading.BoundedSemaphore(2)
+#: Скриптом, а не конвейером, по той же причине, что у ограничителя попыток
+#: (`core/ratelimit._ZANYAT`): нужно ветвление на ТОЛЬКО ЧТО прочитанном счёте.
+#: Конвейер вычислял бы условие снаружи — то есть снова оставлял бы окно.
+_ZANYAT_MESTO = """
+redis.call('zremrangebyscore', KEYS[1], '-inf', ARGV[1])
+local zanyato = redis.call('zcard', KEYS[1])
+if zanyato >= tonumber(ARGV[4]) then
+  return 1
+end
+redis.call('zadd', KEYS[1], ARGV[2], ARGV[3])
+redis.call('expire', KEYS[1], ARGV[5])
+return 0
+"""
+
+
+@contextmanager
+def mesto_razzhatiya():
+    """Место в общей очереди на разжатие. Отдаётся при любом исходе.
+
+    Redis не ответил — держим предел В СВОЁМ процессе и кричим об этом. Цена
+    известна и посчитана (`docs/08-deployment.md`): четыре процесса по два
+    места — 2,2 ГБ худшего случая, ровно то, подо что и брался `mem_limit: 3g`.
+    Отказать в загрузке дороже, а пропустить без предела нельзя вовсе.
+    """
+    otdat = _zanyat_mesto()
+    try:
+        yield
+    finally:
+        otdat()
+
+
+def _zanyat_mesto():
+    """Занять место и вернуть то, чем его отдают."""
+    client = redis_client.get_client()
+    if client is None:
+        # Адрес не задан — процесс ровно один (шапка `core/redis_client.py`), и
+        # предел в его памяти И ЕСТЬ общий. Это не авария, кричать не о чем.
+        return _zanyat_mestnoe()
+    otdat = _zanyat_obshchee(client)
+    return otdat if otdat is not None else _zanyat_mestnoe()
+
+
+def _zanyat_obshchee(client):
+    """Место в общей очереди. `None` — Redis не ответил, держать предел нечем."""
+    metka = uuid.uuid4().hex
+    shag = _SHAG_SEKUND
+    do = time.monotonic() + OZHIDANIE_SEKUND
+    while True:
+        teper = time.time()
+        try:
+            polno = client.eval(
+                _ZANYAT_MESTO,
+                1,
+                KLYUCH_MESTA,
+                teper,
+                teper + SROK_MESTA_SEKUND,
+                metka,
+                ODNOVREMENNO,
+                SROK_MESTA_SEKUND + 1,
+            )
+        except Exception as exc:  # noqa: BLE001 — сеть, таймаут, отказ сервера
+            _krichat("занять место", exc)
+            return None
+        if not int(polno):
+            return lambda: _otdat_obshchee(client, metka)
+        if time.monotonic() >= do:
+            raise errors.PrehodyashchayaBedaError(
+                "Image processing is busy, try again in a minute",
+                code="decode_queue_busy",
+            )
+        time.sleep(shag)
+        shag = min(shag * 2, _SHAG_POTOLOK)
+
+
+def _otdat_obshchee(client, metka: str) -> None:
+    """Отдать место. Не падает: неудача стоит одного места до конца его срока."""
+    try:
+        client.zrem(KLYUCH_MESTA, metka)
+    except Exception as exc:  # noqa: BLE001
+        _krichat("отдать место", exc)
+
+
+def _zanyat_mestnoe():
+    """Тот же предел, но в памяти процесса. Срок ожидания общий с редисовым."""
+    if not _mestnoe.acquire(timeout=OZHIDANIE_SEKUND):
+        raise errors.PrehodyashchayaBedaError(
+            "Image processing is busy, try again in a minute",
+            code="decode_queue_busy",
+        )
+    return _mestnoe.release
 
 
 def _proverit_byudzhet(im: Image.Image) -> None:
@@ -372,7 +506,7 @@ def process_image(work_uid: str, original: Path) -> dict:
         # бесплатно (`draft` к PNG неприменим и отвечает `None`).
         _proverit_byudzhet(im)
 
-        with _razzhatie:
+        with mesto_razzhatiya():
             im.load()
             if im.mode not in ("RGB", "RGBA"):
                 im = im.convert(

@@ -37,6 +37,7 @@ from sqlalchemy.orm import Session
 
 from core import events
 from core import exceptions as errors
+from core.security import tokens
 from core.services import client_service, deal_service, settings_service
 from core.utils import is_valid_email, normalize_phone, now_utc
 from database.models import Client, Deal, User
@@ -54,7 +55,18 @@ logger = logging.getLogger("opencrm.leads")
 # же причине: ключ приёма — секрет, ему нечего делать в общем `GET /settings`, а
 # общий `PATCH /settings` не должен уметь его менять.
 SETTINGS_PREFIX = "leads_"
-SETTING_INTAKE_KEY = "leads_intake_key"
+#: Отпечаток ключа приёма; сам ключ не хранится нигде.
+#:
+#: Лежал он открытым текстом — копия базы открывала форму тому, кто её достал, а
+#: копии отсюда уезжают наружу намеренно. Имя новое: под прежним
+#: (`leads_intake_key`) откат к старому коду принял бы отпечаток за годный ключ.
+SETTING_INTAKE_KEY_HASH = "leads_intake_key_hash"
+#: «Ключ стёрт обновлением — выдайте новый». Ставит миграция `d4c17e6b0a92`.
+#:
+#: Без отметки экран сказал бы владельцу, у которого форма работала, ровно то
+#: же, что свежей установке: «ключа нет». А форма на его сайте к этому времени
+#: уже молчит, и причину неоткуда узнать.
+SETTING_INTAKE_REISSUE = "leads_intake_key_reissue"
 SETTING_MANAGER_ID = "leads_manager_id"
 
 #: Заголовок, в котором приезжает ключ приёма.
@@ -148,7 +160,7 @@ class Outcome:
 # --- настройки ---
 
 def get_settings_values(db: Session) -> dict[str, str]:
-    values = {SETTING_INTAKE_KEY: "", SETTING_MANAGER_ID: ""}
+    values = {SETTING_INTAKE_KEY_HASH: "", SETTING_INTAKE_REISSUE: "", SETTING_MANAGER_ID: ""}
     for row in settings_repo.rows_with_prefix(db, SETTINGS_PREFIX):
         if row.key in values:
             values[row.key] = row.value
@@ -156,7 +168,7 @@ def get_settings_values(db: Session) -> dict[str, str]:
 
 
 def public_settings(db: Session) -> dict:
-    """Настройки для экрана: сам ключ не отдаём, только факт, что он задан.
+    """Настройки для экрана: ключа не отдаём, потому что его и нет — есть отпечаток.
 
     Здесь же — всё, из чего экран собирает инструкцию для того, кто пишет форму
     на сайте: адрес, заголовок с ключом, состав полей и имя ловушки. Всё это
@@ -171,13 +183,19 @@ def public_settings(db: Session) -> dict:
     только действующего — экран показывал бы владельца выбранным, то есть врал
     бы про настройку; только выбранного — умалчивал бы, что заявки уходят не
     ему. Обе половины вместе дают экрану сказать это вслух.
+
+    `intake_key_reissue` — про то же самое умалчивание, только про ключ.
+    Обновление, переведшее ключ на отпечаток, стёрло открытое значение; без этой
+    половины ответа владелец с работающим сайтом увидел бы «ключа нет» — ровно
+    то же, что видит свежая установка, — и не узнал бы, почему форма замолчала.
     """
     values = get_settings_values(db)
     manager = responsible(db, silent=True)
     raw = values[SETTING_MANAGER_ID].strip()
     chosen = users_repo.get_by_id(db, int(raw)) if raw.isdigit() else None
     return {
-        "has_intake_key": bool(values[SETTING_INTAKE_KEY]),
+        "has_intake_key": bool(values[SETTING_INTAKE_KEY_HASH]),
+        "intake_key_reissue": bool(values[SETTING_INTAKE_REISSUE]),
         "manager_id": manager.id if manager else None,
         "manager_name": manager.name if manager else "",
         # Выбранный может быть отключён, и тогда его нет в списке коллег
@@ -192,22 +210,43 @@ def public_settings(db: Session) -> dict:
     }
 
 
-def regenerate_intake_key(db: Session) -> str:
-    """Новый ключ приёма. Показывается один раз — как секрет вебхука АТС.
+def otpechatok(key: str) -> str:
+    """Отпечаток ключа — то, что хранится вместо него.
 
-    Смена ключа немедленно закрывает форму для всех, кто знал прежний. Это и
-    есть единственный способ отозвать доступ: подписи у формы нет (почему —
-    в `check_intake_key`), и отличить «наш сайт» от «чужой сайт с нашим старым
-    ключом» больше нечем.
+    Голый sha256, как у пропусков (`auth_service`): ключ выдаём мы сами, в нём
+    256 бит случайности, перебирать там нечего. Соль и медленный хэш берегут
+    слабый людской пароль, а здесь только замедлили бы каждую заявку с сайта.
+    """
+    return tokens.sha256_hex(key)
+
+
+def regenerate_intake_key(db: Session) -> str:
+    """Новый ключ приёма. Показывается один раз — второго раза нет ни у кого.
+
+    Это не строгость интерфейса: в базе остаётся отпечаток, и восстановить ключ
+    нечем ни экрану, ни человеку с консолью. Потерявший выдаёт новый — и в ту же
+    секунду перестают работать все чужие формы, в которые вписан прежний.
+
+    Смена ключа и есть единственный способ отозвать доступ: подписи у формы нет
+    (почему — в `check_intake_key`), и отличить «наш сайт» от «чужой сайт с
+    нашим старым ключом» больше нечем.
     """
     key = secrets.token_urlsafe(32)
-    settings_repo.write(db, SETTING_INTAKE_KEY, key)
+    # Отметка о перевыдаче снимается тем же движением: ключ выдан, сказать
+    # «выдайте новый» больше не о чем.
+    settings_repo.write_many(
+        db, {SETTING_INTAKE_KEY_HASH: otpechatok(key), SETTING_INTAKE_REISSUE: ""}
+    )
     return key
 
 
 def clear_intake_key(db: Session) -> None:
-    """Закрыть приём совсем. Пустой ключ — это «ручки нет»."""
-    settings_repo.write(db, SETTING_INTAKE_KEY, "")
+    """Закрыть приём совсем. Пустой отпечаток — это «ручки нет».
+
+    Отметку о перевыдаче снимаем вместе с ним: владелец закрыл приём сам, и
+    «выдайте новый» после этого — совет невпопад.
+    """
+    settings_repo.write_many(db, {SETTING_INTAKE_KEY_HASH: "", SETTING_INTAKE_REISSUE: ""})
 
 
 def set_manager(db: Session, user_id: int | None) -> None:
@@ -259,21 +298,22 @@ def check_intake_key(db: Session, presented: str) -> None:
     доказывает, что тело не подменили по дороге, и не спасает, если его вставили
     прямо в HTML. От перебора и потока защищают ограничитель и потолки, а не он.
 
-    Ключ не задан — приёма нет вовсе. Так и задумано: свежая установка не должна
-    держать открытой ручку, о которой владелец ещё не знает.
+    **Сверяются отпечатки, а не ключи.** В базе лежит sha256 выданного ключа, и
+    унесённая копия базы больше не открывает форму: из отпечатка ключа не
+    получить. Хранение открытым текстом отсюда ушло целиком — второго пути
+    проверки нет, и старый ключ из старой копии не подходит никуда.
+
+    **Отказ один на оба случая.** «Ключ не задан» и «ключ не подошёл» отвечают
+    одинаково: разные ответы сообщили бы любому из интернета, настроен ли приём
+    у этой установки. Ключ не задан — приёма нет вовсе, и так задумано: свежая
+    установка не должна держать открытой ручку, о которой владелец ещё не знает.
     """
-    expected = get_settings_values(db)[SETTING_INTAKE_KEY]
-    if not expected:
-        raise errors.AuthError("Lead intake is not configured", code="intake_not_configured")
     candidate = (presented or "").strip()
-    # `compare_digest` на не-ASCII бросает TypeError, а заголовки Starlette
-    # декодирует как latin-1: один байт 0xFF в заголовке иначе давал бы 500 на
-    # запросе, для которого не нужно знать вообще ничего. Урок из телефонии.
-    if not candidate.isascii():
-        raise errors.AuthError("Bad intake key", code="bad_intake_key")
-    # Побайтно и за постоянное время: обычное сравнение строк отвечает тем
-    # быстрее, чем раньше разошлись байты, и ключ подбирается посимвольно.
-    if not hmac.compare_digest(expected, candidate):
+    expected = get_settings_values(db)[SETTING_INTAKE_KEY_HASH]
+    # Сравнение за постоянное время: обычное отвечает тем быстрее, чем раньше
+    # разошлись байты. Отпечаток к тому же берётся с любой строки — байт 0xFF в
+    # заголовке (Starlette декодирует их как latin-1) больше не роняет сравнение.
+    if not expected or not hmac.compare_digest(expected, otpechatok(candidate)):
         raise errors.AuthError("Bad intake key", code="bad_intake_key")
 
 
