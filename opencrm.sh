@@ -170,6 +170,46 @@ ask() {
     printf '%s' "$_answer"
 }
 
+# Спросить СЕКРЕТ: то же самое, но без эха.
+#
+# Пароль владельца и токен бота набирались на виду и оставались в прокрутке
+# терминала — то есть на общей машине их читал следующий, кто сядет, а в
+# записанной сессии они лежат вечно. Пароль в `ps` из этого файла убрали
+# дважды с объяснением, а про экран не подумали ни разу.
+#
+# `stty` возвращается на место ЛОВУШКОЙ, а не строкой следом: человек жмёт
+# Ctrl+C в этом месте чаще, чем где-либо ещё («не тот пароль набрал»), и
+# терминал остался бы немым до `stty sane`.
+ask_secret() {
+    _as_prompt=$1
+    if [ "$ASSUME_YES" = "1" ]; then
+        return 0
+    fi
+    # Нет управляющего терминала — глушить нечего: ввод пришёл трубой, и
+    # эха там не бывает. Тогда обычный путь, иначе `stty` отказом свалит
+    # установку под `set -e`.
+    if [ "${OPENCRM_INPUT:-tty}" = "stdin" ] || [ ! -r /dev/tty ]; then
+        ask "$_as_prompt" ""
+        return 0
+    fi
+
+    _as_tty=$(stty -g < /dev/tty 2>/dev/null || printf "")
+    if [ -n "$_as_tty" ]; then
+        trap 'stty "$_as_tty" < /dev/tty 2>/dev/null || true' INT TERM EXIT
+        stty -echo < /dev/tty 2>/dev/null || true
+    fi
+    printf '%s: ' "$_as_prompt" > /dev/tty
+    IFS= read -r _as_secret < /dev/tty || _as_secret=""
+    if [ -n "$_as_tty" ]; then
+        stty "$_as_tty" < /dev/tty 2>/dev/null || true
+        trap - INT TERM EXIT
+    fi
+    # Перевод строки за человека: его Enter съеден вместе с эхом, и без
+    # этого следующая строка вывода начиналась бы в конце приглашения.
+    printf '\n' > /dev/tty
+    printf '%s' "$_as_secret"
+}
+
 confirm() {
     _reply=$(ask "$1 (y/n)" "${2:-y}")
     # Кириллица вынесена ИЗ скобочного набора, и это не косметика записи.
@@ -1394,7 +1434,7 @@ configure_monitoring() {
     say "$(tr_ \
         "    ${D}а сообщение приходит само.${R}" \
         "    ${D}already suspect something; a message arrives on its own.${R}")"
-    _tok=$(ask "$(tr_ "    Telegram-токен бота (Enter — без оповещений)" "    Telegram bot token (Enter — no alerts)")" "")
+    _tok=$(ask_secret "$(tr_ "    Telegram-токен бота (Enter — без оповещений)" "    Telegram bot token (Enter — no alerts)")")
     if [ -z "$_tok" ]; then
         warn "$(tr_ "канал не настроен — тревоги будут копиться в Grafana, но никуда не уйдут" "no channel — alerts will pile up in Grafana but go nowhere")"
         return 0
@@ -1726,7 +1766,7 @@ setup_autoupdate() {
         return 0
     fi
 
-    _token=$(ask "$(tr_ "    Telegram-токен бота для уведомлений (Enter — без уведомлений)" "    Telegram bot token for notifications (Enter — no notifications)")" "")
+    _token=$(ask_secret "$(tr_ "    Telegram-токен бота для уведомлений (Enter — без уведомлений)" "    Telegram bot token for notifications (Enter — no notifications)")")
     if [ -n "$_token" ]; then
         _chat=$(ask "    Telegram chat_id" "")
         env_set "$_env_file" OPENCRM_UPDATE_TELEGRAM_TOKEN "$_token"
@@ -2644,7 +2684,7 @@ cmd_password() {
     need_install
     step "$(tr_ "Сброс пароля администратора" "Resetting the admin password")"
     _email=$(ask "    Email" "$(env_get "$APP_ENV" OPENCRM_ROOT_EMAIL)")
-    _password=$(ask "$(tr_ "    Новый пароль (Enter — сгенерировать)" "    New password (Enter — generate one)")" "")
+    _password=$(ask_secret "$(tr_ "    Новый пароль (Enter — сгенерировать)" "    New password (Enter — generate one)")")
     if [ -z "$_password" ]; then
         _password=$(gen_secret 20)
         printf '    Сгенерирован: %s%s%s\n' "$B" "$_password" "$R"

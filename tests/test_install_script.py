@@ -807,3 +807,70 @@ def test_parol_so_vvoda_vpravdu_chitaetsya():
     assert "короче" in vyvod, (
         "ключ --password-stdin ввод не прочитал: " + vyvod[:300]
     )
+
+
+#: Слова, по которым видно, что у человека спрашивают СЕКРЕТ.
+#:
+#: По-русски и по-английски сразу: приглашения в этом файле двуязычные, и
+#: половина из них написана только на одном языке в каждой ветке `tr_`.
+SEKRETNYE = ("парол", "password", "токен", "token", "секрет", "secret", "ключ", "key")
+
+
+def _prigashcheniya():
+    """Строки вида `_x=$(ask ...)` — вопрос человеку с ответом в переменную."""
+    for nomer, stroka in enumerate(source().splitlines(), 1):
+        if "=$(ask " in stroka or "=$(ask_secret " in stroka:
+            yield nomer, stroka
+
+
+def test_perebor_nahodit_voprosy():
+    """Сторож, ничего не нашедший, зеленеет на любой беде."""
+    naydeno = list(_prigashcheniya())
+    assert len(naydeno) >= 5, (
+        f"вопросов человеку нашлось {len(naydeno)} — сменился способ их писать, "
+        "и проверка ниже стерегла бы пустоту"
+    )
+
+
+def test_sekret_ne_nabiraetsya_na_vidu():
+    """Пароль и токен не должны оставаться в прокрутке терминала.
+
+    **Беда, которая была.** Пароль владельца из `ps` в этом файле убирали
+    ДВАЖДЫ, каждый раз с разбором в комментарии, — а про экран не подумали ни
+    разу. На общей машине набранный пароль читает следующий, кто сядет за
+    терминал; в записанной сессии он лежит вечно.
+
+    Проверка механическая, потому что мест таких три и они в разных местах
+    файла: два токена бота и пароль. Четвёртое появится тем же путём — кто-то
+    напишет `ask`, и это будет выглядеть правильно.
+    """
+    na_vidu = []
+    for nomer, stroka in _prigashcheniya():
+        if "=$(ask_secret " in stroka:
+            continue
+        nizhnyaya = stroka.lower()
+        if any(slovo in nizhnyaya for slovo in SEKRETNYE):
+            na_vidu.append(f"строка {nomer}")
+
+    assert not na_vidu, (
+        "секрет спрашивается обычным `ask` — он наберётся на виду и останется в "
+        "прокрутке терминала: " + ", ".join(na_vidu) + ". Зовите `ask_secret`"
+    )
+
+
+def test_ask_secret_vozvrashchaet_ekho_dazhe_pri_obryve():
+    """Немой терминал после Ctrl+C — беда хуже той, что чинили.
+
+    Человек жмёт Ctrl+C именно здесь чаще всего («не тот пароль набрал»), и без
+    ловушки терминал остаётся без эха до `stty sane` — а знать про `stty sane`
+    владелец не обязан.
+    """
+    telo = source().split("ask_secret() {", 1)[1].split("\nconfirm()", 1)[0]
+    assert "stty -echo" in telo, "`ask_secret` не глушит ввод вовсе"
+    assert "trap " in telo and "INT" in telo, (
+        "эхо возвращается строкой следом, а не ловушкой: Ctrl+C оставит терминал "
+        "немым"
+    )
+    assert "stty -g" in telo, (
+        "состояние терминала не снимается перед правкой — возвращать будет нечего"
+    )
