@@ -55,11 +55,23 @@ export function Staff() {
     api.get("/staff").then((d) => setItems(d.items)).catch(fail);
   }, [fail, clear]);
 
+  // Присутствие меняется со временем, и список освежается сам — но ТОЛЬКО в
+  // видимой вкладке: пять запросов раз в минуту из свёрнутой это триста в час
+  // за список, на который никто не смотрит.
   useEffect(() => {
+    const vidno = () => document.visibilityState === "visible";
     load();
-    // присутствие меняется со временем — периодически освежаем список
-    const timer = window.setInterval(load, 60_000);
-    return () => window.clearInterval(timer);
+    const timer = window.setInterval(() => {
+      if (vidno()) load();
+    }, 60_000);
+    const vernulis = () => {
+      if (vidno()) load();
+    };
+    document.addEventListener("visibilitychange", vernulis);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", vernulis);
+    };
   }, [load]);
 
   if (!items) return <ScreenLoading error={failure} onRetry={load} />;

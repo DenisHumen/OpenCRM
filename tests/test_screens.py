@@ -1234,10 +1234,19 @@ def test_myortvaya_shina_ne_ostavlyaet_messendzher_zamershim():
         "экран не читает признак готовности шины — про мёртвый Redis он не узнает"
     )
     assert "tgLiveOff" in text, "про неработающее живое обновление человеку не сказано"
-    assert re.search(r"setInterval\(\s*\(\)\s*=>\s*\{[^}]*dochitat\(\)", text), (
+    # Смотрим на СМЫСЛ, а не на написание: раньше проверка требовала стрелки
+    # прямо в `setInterval`, и покраснела на правке, где таймер всего лишь
+    # назвали функцией. Запасной опрос обязан звать `dochitat` — как именно он
+    # это делает, проверке знать незачем.
+    zapasnoy = [
+        kusok
+        for kusok in text.split("useEffect(")
+        if "ZAPASNOY_OPROS" in kusok and "setInterval" in kusok
+    ]
+    assert zapasnoy, "запасного опроса при мёртвой шине нет вовсе"
+    assert all("dochitat()" in kusok for kusok in zapasnoy), (
         "нет запасного перечитывания: при мёртвой шине лента останется замершей"
     )
-
     potok = (SCREENS / "lib" / "tgpotok.ts").read_text(encoding="utf-8")
     assert "bus?: boolean" in potok, "признак шины не объявлен в типе события"
 

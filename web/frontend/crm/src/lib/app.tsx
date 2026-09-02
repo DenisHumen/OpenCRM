@@ -284,11 +284,24 @@ export function AppProvider({ children }: { children: ReactNode }) {
     navigate("/setup", { replace: true });
   }, [user, modulesUntouched, navigate]);
 
+  // Только видимая вкладка. Свёрнутая спрашивала место тоже — пять запросов
+  // раз в две минуты с КАЖДОЙ вкладки любого сотрудника, независимо от экрана.
+  // Десять забытых вкладок на фирму — полторы тысячи запросов в час ни за чем.
   useEffect(() => {
     if (!user || user.must_change_password) return;
+    const vidno = () => document.visibilityState === "visible";
     void refreshStorage();
-    const timer = window.setInterval(() => void refreshStorage(), STORAGE_POLL_MS);
-    return () => window.clearInterval(timer);
+    const timer = window.setInterval(() => {
+      if (vidno()) void refreshStorage();
+    }, STORAGE_POLL_MS);
+    const vernulis = () => {
+      if (vidno()) void refreshStorage();
+    };
+    document.addEventListener("visibilitychange", vernulis);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", vernulis);
+    };
   }, [user, refreshStorage]);
 
   // heartbeat присутствия: пока вкладка на переднем плане, отмечаемся «в сети»

@@ -585,10 +585,19 @@ export function Telegram() {
    */
   useEffect(() => {
     if (zhivoe || vybran == null) return;
-    const chasy = window.setInterval(() => {
-      void dochitat().then(() => zagruzit_chats());
-    }, ZAPASNOY_OPROS);
-    return () => window.clearInterval(chasy);
+    // Только видимая вкладка. Раз в десять секунд из свёрнутой — это 360
+    // дочитываний в час по диалогу, на который никто не смотрит, и ровно
+    // тогда, когда поток и так лежит.
+    const vidno = () => document.visibilityState === "visible";
+    const dogonyat = () => {
+      if (vidno()) void dochitat().then(() => zagruzit_chats());
+    };
+    const chasy = window.setInterval(dogonyat, ZAPASNOY_OPROS);
+    document.addEventListener("visibilitychange", dogonyat);
+    return () => {
+      window.clearInterval(chasy);
+      document.removeEventListener("visibilitychange", dogonyat);
+    };
   }, [zhivoe, vybran, dochitat, zagruzit_chats]);
 
   // Какой диалог открыт — знать обязана и оболочка: сигнал о сообщении в
@@ -615,6 +624,9 @@ export function Telegram() {
     // Отметка живёт двенадцать секунд и подтверждается каждые пять: закрытая на
     // полуслове вкладка иначе навсегда заглушила бы сигналы по своему диалогу.
     // Тот же срок и то же биение, что у присутствия, — и по той же причине.
+    //
+    // таймер-без-сети: пишет в localStorage своей вкладки, а видимость
+    // спрашивает сам `otmetit_otkrytyy_chat` — свёрнутая вкладка отметку снимает.
     const bienie = window.setInterval(() => otmetit_otkrytyy_chat(vybran), PULS_PRISUTSTVIYA);
     // Свернули вкладку — отметка снимается сразу, не дожидаясь протухания:
     // двенадцать секунд тишины по открытому диалогу это уже пропущенный клиент.
@@ -680,11 +692,24 @@ export function Telegram() {
         // отвечать клиенту.
       }
     };
-    void otmetitsya();
-    const chasy = window.setInterval(otmetitsya, PULS_PRISUTSTVIYA);
     const ushyol = vybran;
+    // Свёрнутая вкладка присутствием НЕ считается, и это не только про
+    // нагрузку (раз в пять секунд — 720 отметок в час): коллега видел бы
+    // «он в чате» там, где на чат никто не смотрит.
+    const vidno = () => document.visibilityState === "visible";
+    const ushli = () =>
+      void api
+        .post(`/telegram/chats/${ushyol}/presence`, { present: false })
+        .catch(() => {});
+    const na_vidimost = () => (vidno() ? void otmetitsya() : ushli());
+    if (vidno()) void otmetitsya();
+    const chasy = window.setInterval(() => {
+      if (vidno()) void otmetitsya();
+    }, PULS_PRISUTSTVIYA);
+    document.addEventListener("visibilitychange", na_vidimost);
     return () => {
       window.clearInterval(chasy);
+      document.removeEventListener("visibilitychange", na_vidimost);
       void api
         .post(`/telegram/chats/${ushyol}/presence`, { present: false })
         .catch(() => {});
