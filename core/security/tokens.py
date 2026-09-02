@@ -64,4 +64,7 @@ def check_pin_access_cookie(value: str, share_link_id: int, pin_hash: str) -> bo
         return False
     if not isinstance(data, dict) or data.get("sid") != share_link_id:
         return False
+    # не-секрет: отпечаток лежит ВНУТРИ уже проверенной подписи, а подделать
+    # её нечем — ключ сервера. Подбирающий сравнивает свой же старый пропуск
+    # со свежим отпечатком и узнаёт из времени ровно ничего.
     return data.get("fp") == _pin_fingerprint(pin_hash)
