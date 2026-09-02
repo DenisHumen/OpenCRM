@@ -535,13 +535,19 @@ def test_the_last_role_that_manages_permissions_cannot_be_stripped(
 ):
     """Снять роль с единственного, кто может управлять правами, нельзя.
 
-    Root при этом остаётся, но опираться на него нельзя: «владелец завёл
-    гендиректора и забыл пароль root» — не выдуманный сценарий.
+    Сценарий, ради которого запрет живёт: «владелец завёл гендиректора и забыл
+    пароль root». В нём действует НЕ root, поэтому и проверяем не им: сам
+    управляющий пытается снять право со своей должности и получает отказ.
+
+    **Root — исключение, и это условие достижимости.** Без него состояние
+    «только root, никаких управляющих» стало бы недостижимым: назначили первого
+    управляющего — и убрать всех уже нечем. Действующий root доказывает доступ
+    входом, а в сценарии выше он ничего не делает вовсе.
     """
     role = role_maker("Единственный кадровик", ["roles.view", "roles.manage"])
-    staff_maker("onlyhr@test.local", role["id"])
+    upravlyayushchiy = staff_maker("onlyhr@test.local", role["id"])
 
-    denied = root_client.patch(f"{ROLES}/{role['id']}", json={"permissions": ["roles.view"]})
+    denied = upravlyayushchiy.patch(f"{ROLES}/{role['id']}", json={"permissions": ["roles.view"]})
     assert denied.status_code == 403, denied.text
     assert denied.json()["error"]["code"] == "last_roles_manager"
 
@@ -549,17 +555,30 @@ def test_the_last_role_that_manages_permissions_cannot_be_stripped(
     assert "roles.manage" in root_client.get(f"{ROLES}/{role['id']}").json()["permissions"]
 
 
-def test_the_last_manager_of_permissions_cannot_be_reassigned(
+def test_root_vprave_ubrat_poslednego_upravlyayushchego(
     root_client, role_maker, staff_maker
 ):
+    """Root — исключение из инварианта, и без него «только root» недостижимо.
+
+    Назначили первого управляющего — и, будь запрет общим, убрать всех было бы
+    нечем: право у своей должности он снять не может (последний), перевести себя
+    не может (`cannot_change_own_role`), уволить себя не может
+    (`cannot_delete_self`). А «только root, никаких управляющих» — законное
+    состояние, с которого начинается любая установка.
+
+    Сценарий, ради которого запрет живёт, этим не открывается: в «владелец завёл
+    гендиректора и забыл пароль root» root не действует вовсе, а все остальные
+    заперты — см. соседние проверки.
+    """
     role = role_maker("Кадровик номер два", ["roles.view", "roles.manage"])
     plain = role_maker("Совсем обычный", ["clients.view"])
     staff_maker("onlyhr2@test.local", role["id"])
     user_id = _user_id(root_client, "onlyhr2@test.local")
 
-    denied = root_client.post(f"{ROLES}/assign/{user_id}", json={"role_id": plain["id"]})
-    assert denied.status_code == 403
-    assert denied.json()["error"]["code"] == "last_roles_manager"
+    razreshili = root_client.post(f"{ROLES}/assign/{user_id}", json={"role_id": plain["id"]})
+    assert razreshili.status_code == 200, razreshili.text
+    # Управляющих не осталось, и это законное состояние, а не поломка.
+    assert root_client.get(f"{ROLES}/{role['id']}").json()["permissions"]
 
 
 def test_with_two_managers_of_permissions_one_may_go(root_client, role_maker, staff_maker):
@@ -857,38 +876,46 @@ def test_your_own_role_may_still_be_renamed_and_narrowed(role_maker, staff_maker
     assert owner.post(f"{API}/clients", json={"name": "Уже нельзя"}).status_code == 403
 
 
-def test_disabling_the_last_permissions_manager_still_works_and_that_is_the_open_question(
+def test_posledniy_upravlyayushchiy_ne_mozhet_snyat_sam_sebya(
     root_client, role_maker, staff_maker
 ):
-    """Здесь зафиксировано НЕ желаемое поведение, а известное расхождение.
+    """Две двери, которые были открыты, закрыты: право со своей роли и отключение.
 
-    Инвариант «раздавать права всегда есть кому» стоит на четырёх путях из
-    шести: снять `roles.manage` с последней роли нельзя, перевести её
-    единственного носителя на другую должность нельзя, — а отключить или
-    удалить его самого можно, и система остаётся без управляющего доступами.
+    Итог у них один и тот же — система без управляющего доступами, — и
+    восстановить её после этого можно только с доступом к серверу.
 
-    Просто дописать проверку в `auth_service.disable` нельзя: инвариант не
-    считает root'а нарочно, и тогда назначение первого «гендиректора» стало бы
-    необратимым — снять право уже нельзя, перевести нельзя, уволить нельзя, а
-    «только root и никаких управляющих» есть законное состояние, с которого
-    начинается любая установка. Развязка — решение о модели прав (считать ли
-    root'а при снятии человека, или заводить явную передачу полномочий), и
-    принимать его правкой на месте не следует.
+    Проверяем НЕ root-ом: он исключение (см. соседнюю проверку), а сценарий, ради
+    которого запрет живёт, — это «пароль root потерян», то есть действует как раз
+    не он.
 
-    Тест стоит здесь, чтобы это расхождение не закрылось и не разъехалось
-    молча: поменяется поведение — придётся прочитать этот текст.
+    **Две оставшиеся двери не-root'у недостижимы, и это не пробел.** Перевести
+    себя на другую должность запрещает `cannot_change_own_role`, уволить себя —
+    `cannot_delete_self`; обе стоят РАНЬШЕ инварианта. Проверка там осталась
+    вторым рубежом: снимут раннее правило — этот удержит.
     """
-    role = role_maker("Единственный управляющий", ["roles.view", "roles.manage"])
-    staff_maker("lastone@test.local", role["id"])
-    user_id = _user_id(root_client, "lastone@test.local")
+    role = role_maker(
+        "Сам себе кадровик", ["roles.view", "roles.manage", "staff.view", "staff.manage"]
+    )
+    upravlyayushchiy = staff_maker("selfhr@test.local", role["id"])
+    user_id = _user_id(root_client, "selfhr@test.local")
 
-    # Через роль — закрыто, и это работает.
-    denied = root_client.patch(f"{ROLES}/{role['id']}", json={"permissions": ["roles.view"]})
-    assert denied.status_code == 403
-    assert denied.json()["error"]["code"] == "last_roles_manager"
+    # Дверь первая: снять право со своей должности.
+    otkaz = upravlyayushchiy.patch(
+        f"{ROLES}/{role['id']}",
+        json={"permissions": ["roles.view", "staff.view", "staff.manage"]},
+    )
+    assert otkaz.status_code == 403, otkaz.text
+    assert otkaz.json()["error"]["code"] == "last_roles_manager"
 
-    # Через человека — открыто. Ровно то же итоговое состояние.
-    assert root_client.post(f"{STAFF}/{user_id}/disable").status_code == 200
+    # Дверь вторая: отключить самого себя. Прежде это проходило.
+    off = upravlyayushchiy.post(f"{STAFF}/{user_id}/disable")
+    assert off.status_code == 403, f"отключение последнего управляющего прошло: {off.text}"
+    assert off.json()["error"]["code"] == "last_roles_manager"
+
+    # А с преемником — можно: тупика запрет не создаёт.
+    vtoraya = role_maker("Преемник", ["roles.view", "roles.manage"])
+    staff_maker("successor@test.local", vtoraya["id"])
+    assert upravlyayushchiy.post(f"{STAFF}/{user_id}/disable").status_code == 200
     assert root_client.post(f"{STAFF}/{user_id}/enable").status_code == 200
 
 

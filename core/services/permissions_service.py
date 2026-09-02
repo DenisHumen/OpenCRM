@@ -43,8 +43,20 @@ from database.models.user import ROLE_ROOT
 
 
 def _crud(*areas: str) -> list[str]:
-    """Полный набор по разделу: видеть, создавать, изменять, удалять."""
-    return [f"{area}.{action}" for area in areas for action in permissions.BASE_ACTIONS]
+    """Полный набор по разделу: видеть, создавать, изменять, удалять.
+
+    **Спрашивает реестр, а не перечисляет вслепую.** У областей набор действий
+    свой: бумага не удаляется, а отменяется, и `documents.delete` в матрице нет.
+    Пока помощник выдавал все четыре, пресет обещал несуществующее право — и
+    должность по нему не заводилась вовсе: `422 unknown_permission` на первом же
+    нажатии. То есть ошибка в ОДНОЙ области ломала пресеты целиком.
+    """
+    return [
+        f"{area}.{action}"
+        for area in areas
+        for action in permissions.BASE_ACTIONS
+        if permissions.exists(area, action)
+    ]
 
 
 def _view(*areas: str) -> list[str]:
@@ -331,7 +343,9 @@ def _managers_of_roles(
     )
 
 
-def _refuse_if_nobody_left_to_manage_roles(db: Session, **exclusions) -> None:
+def _refuse_if_nobody_left_to_manage_roles(
+    db: Session, actor: User | None = None, **exclusions
+) -> None:
     """Отказать, если после правки раздавать права станет некому.
 
     Сценарий, ради которого это существует: владелец завёл «гендиректора»,
@@ -339,11 +353,24 @@ def _refuse_if_nobody_left_to_manage_roles(db: Session, **exclusions) -> None:
     право значит запереть систему — восстановить её после этого можно только с
     доступом к файлу базы.
 
-    Стоит на четырёх путях из шести: отключение и удаление сотрудника
-    (`auth_service.disable`, `auth_service.delete_user`) приводят к тому же
-    состоянию и этой проверки не делают. Это известное расхождение, а не
-    недосмотр, — почему оно не закрывается здесь, написано в `disable`.
+    Стоит на ВСЕХ шести путях: снятие права с роли, перевод человека на другую
+    роль, отключение и удаление сотрудника (`auth_service`). Четыре двери из
+    шести были закрыты, а две — нет, и система оставалась без управляющего
+    доступами ровно тем способом, от которого проверка и заведена.
+
+    **Root — исключение, и это не послабление, а условие достижимости.** Без
+    него состояние «только root, никаких управляющих» становится НЕДОСТИЖИМЫМ:
+    назначили первого управляющего — и убрать всех уже нельзя ничем, кроме
+    правки базы. А состояние это законное, с него начинается любая установка.
+
+    Сценарий, ради которого проверка живёт, при этом закрыт полностью: «владелец
+    завёл гендиректора и забыл пароль root». В нём root НИЧЕГО не делает — он
+    недоступен, — а все остальные заперты. Мы опираемся не на существование
+    root'а где-то в базе (на это опираться и правда нельзя), а на то, что он
+    сейчас, вот этим запросом, ДЕЙСТВУЕТ: доступ есть, и доказан он входом.
     """
+    if actor is not None and actor.role == ROLE_ROOT:
+        return
     # Очередь на должности: счёт идёт до записи, и без неё двое снимают право
     # у разных должностей разом. Разбор — `roles_repo.zapert_roli`.
     roles_repo.zapert_roli(db)
@@ -354,6 +381,24 @@ def _refuse_if_nobody_left_to_manage_roles(db: Session, **exclusions) -> None:
         "grant 'roles.manage' to someone else first",
         code="last_roles_manager",
     )
+
+
+def ubedis_est_komu_razdavat(db: Session, actor: User, *, exclude_user: int) -> None:
+    """Убедиться, что после снятия ЭТОГО человека раздавать права будет кому.
+
+    Вход для `auth_service`: там отключают и удаляют сотрудников, и оба действия
+    приводят к тому же состоянию, что и снятие права. Своя функция, а не вызов
+    внутренней с подчёркиванием: имя объясняет, о чём спрашивают, — а
+    `_refuse_if_nobody_left_to_manage_roles(db, exclude_user=...)` в чужом модуле
+    читается как обращение к чужой кухне.
+
+    **Тупика это не создаёт, вопреки прежнему опасению.** У управляющего есть
+    `roles.manage`, то есть он вправе назначить преемника сам; выход из
+    положения — сначала дать право второму человеку, потом увольнять первого.
+    Необратимым назначение «гендиректора» стало бы только если бы права нельзя
+    было выдать никому, а это не так.
+    """
+    _refuse_if_nobody_left_to_manage_roles(db, actor, exclude_user=exclude_user)
 
 
 # --- изменение ---
@@ -514,7 +559,7 @@ def update_role(db: Session, role_id: int, name: str | None, codes, *, actor: Us
             ("roles", permissions.MANAGE) not in pairs
         )
         if loses_manage:
-            _refuse_if_nobody_left_to_manage_roles(db, exclude_role=role.id)
+            _refuse_if_nobody_left_to_manage_roles(db, actor, exclude_role=role.id)
         was = codes_of_role(db, role.id)
         _write_codes(db, role, pairs)
         if added != was:
@@ -614,7 +659,7 @@ def assign(db: Session, actor: User, user_id: int, role_id: int | None) -> User:
     # должность его не даёт. Себя из счёта исключаем: после правки он уже не
     # в числе тех, кто может.
     if _grants_manage(db, user.role_id) and not (role and _grants_manage(db, role.id)):
-        _refuse_if_nobody_left_to_manage_roles(db, exclude_user=user.id)
+        _refuse_if_nobody_left_to_manage_roles(db, actor, exclude_user=user.id)
 
     was = get_role(db, user.role_id).name if user.role_id else ""
     user.role_id = role.id if role else None

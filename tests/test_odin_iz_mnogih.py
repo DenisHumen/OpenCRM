@@ -581,6 +581,12 @@ def test_dvoe_snimayut_posledneye_pravo_na_roli_razom(root_client):
     Значит после гонки система оказывается в том самом состоянии, ради
     недопущения которого проверка и написана.
 
+    **Бьются не root-ом, и это существенно.** Root — исключение из инварианта
+    (без него «только root, никаких управляющих» стало бы недостижимым), и
+    дуэль его руками проверяла бы отсутствующий запрет. Гонка выглядит так, как
+    она выглядит на деле: двое управляющих снимают право у должностей друг
+    друга.
+
     Утверждение — «инвариант цел»: гонку никто не обязан выигрывать.
     """
     pervaya = root_client.post(
@@ -590,10 +596,11 @@ def test_dvoe_snimayut_posledneye_pravo_na_roli_razom(root_client):
         f"{ROLES}", json={"name": "Дуэль прав Б", "permissions": ["roles.manage", "clients.view"]}
     ).json()
     lyudi = []
+    klienty = {}
     try:
         for nomer, rol in ((1, pervaya), (2, vtoraya)):
             pochta = f"duel-prav-{nomer}@test.local"
-            make_manager(root_client, pochta)
+            klienty[rol["id"]] = make_manager(root_client, pochta)
             from tests.test_roles import _user_id as _uid
 
             user_id = _uid(root_client, pochta)
@@ -602,8 +609,11 @@ def test_dvoe_snimayut_posledneye_pravo_na_roli_razom(root_client):
                 f"{ROLES}/assign/{user_id}", json={"role_id": rol["id"]}
             ).status_code == 200
 
+        # Каждый бьёт по ЧУЖОЙ должности: свою он и так не тронет — отказ был бы
+        # не от инварианта, а от «нельзя менять себе».
+        chuzhaya = {pervaya["id"]: vtoraya["id"], vtoraya["id"]: pervaya["id"]}
         codes = duel(
-            lambda rol_id: root_client.patch(
+            lambda rol_id: klienty[chuzhaya[rol_id]].patch(
                 f"{ROLES}/{rol_id}", json={"permissions": ["clients.view"]}
             ).status_code,
             pervaya["id"],
