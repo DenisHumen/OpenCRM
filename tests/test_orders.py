@@ -909,3 +909,27 @@ def test_chastichnaya_otgruzka_snimaet_rezerv_na_otgruzhennoe(root_client, clien
         f"обещание не вернулось вместе с товаром: {vernuli['reserved_milli']}"
     )
     assert vernuli["available_milli"] == 6000
+
+def test_istoriya_zakaza_prihodit_na_kartochku(root_client, client_row):
+    """Примечание, которого не показывают, — запись для никого.
+
+    Закрытие при выключенном складе пишет в историю «движений нет», и это
+    единственное место, где человек отличает «списали» от «не списали»:
+    остаток не изменился, бумаги нет, а почему — не сказано нигде. Пока
+    карточка заказа историю не отдавала, запись существовала для журнала
+    базы и больше ни для кого.
+    """
+    item = product(root_client, stock="10")
+    order = order_with(root_client, client_row, item, quantity="2")
+    assert root_client.post(f"{ORDERS}/{order['id']}/close", json={}).status_code == 200
+
+    karta = root_client.get(f"{ORDERS}/{order['id']}")
+    assert karta.status_code == 200, karta.text
+    events = karta.json().get("events")
+    assert events, "карточка заказа не отдаёт историю переходов"
+    assert any(e["to_status"] == "closed" for e in events), (
+        "в истории нет закрытия — показывать нечего"
+    )
+    assert all("author_name" in e and "created_at" in e for e in events), (
+        "у записи нет автора или времени: спор о сроках такой историей не решить"
+    )

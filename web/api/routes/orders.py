@@ -26,6 +26,7 @@ from core.utils import money_for_print
 from database.models import User
 from database.models.document import DOCUMENT_LOCALES, ORDER_KINDS, WAYBILL_KINDS
 from database.repositories import documents as documents_repo
+from database.repositories import users as users_repo
 from web.api import schemas
 from web.api.deps import MAX_SEARCH, get_db, require_module, require_perm
 from web.public import routes as public_routes
@@ -189,6 +190,28 @@ def get_order(
             }
             for w in bumagi
         ]
+
+    # История заказа — тем же составом, что у бланка и акта.
+    #
+    # Заводится по беде: закрытие при выключенном складе пишет в примечание
+    # «движений нет», а показать это было негде — запись существовала для
+    # никого, и человек не отличал «списали» от «не списали».
+    events = documents_repo.events(db, order.id)
+    authors = {
+        u.id: u.name
+        for u in users_repo.get_many(db, {e.author_id for e in events if e.author_id})
+    }
+    data["events"] = [
+        {
+            "id": e.id,
+            "from_status": e.from_status,
+            "to_status": e.to_status,
+            "note": e.note,
+            "author_name": (e.author_name or "") or authors.get(e.author_id),
+            "created_at": e.created_at.isoformat(),
+        }
+        for e in events
+    ]
     return data
 
 
