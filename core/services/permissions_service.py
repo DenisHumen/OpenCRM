@@ -344,6 +344,9 @@ def _refuse_if_nobody_left_to_manage_roles(db: Session, **exclusions) -> None:
     состоянию и этой проверки не делают. Это известное расхождение, а не
     недосмотр, — почему оно не закрывается здесь, написано в `disable`.
     """
+    # Очередь на должности: счёт идёт до записи, и без неё двое снимают право
+    # у разных должностей разом. Разбор — `roles_repo.zapert_roli`.
+    roles_repo.zapert_roli(db)
     if _managers_of_roles(db, **exclusions) > 0:
         return
     raise errors.ForbiddenError(
