@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useState, type ReactNode } from "react";
-import { Link, Navigate, Outlet, Route, Routes, useLocation, useParams } from "react-router-dom";
+import { Link, Navigate, Outlet, Route, Routes, useLocation, useOutletContext, useParams } from "react-router-dom";
 
 import { CommandPalette } from "./components/CommandPalette";
 import { Icon } from "./components/Icon";
@@ -153,8 +153,14 @@ function MaintenanceBar() {
  * нет, как нет его и в меню. */
 function ModuleRoute({ module }: { module: string }) {
   const { modules } = useApp();
+  // Контекст родительского каркаса пробрасывается насквозь. Без этого сторож,
+  // поставленный ВНУТРИ каркаса, съедает его: `useOutletContext` берёт значение
+  // у ближайшего `Outlet`, а он здесь свой. Разделы настроек, закрытые блоком,
+  // падали на `Cannot destructure property 'values'` — белый экран вместо
+  // страницы. Найдено живой пробой, чтением не видно вовсе.
+  const nasledie = useOutletContext();
   if (!moduleOn(modules, module)) return <Navigate to="/" replace />;
-  return <Outlet />;
+  return <Outlet context={nasledie} />;
 }
 
 /**
@@ -187,8 +193,10 @@ function ById({ children }: { children: ReactNode }) {
  * на главную — раздела для него просто нет, как нет его и в меню. */
 function PermRoute({ perm }: { perm: string }) {
   const { user } = useApp();
+  // Контекст насквозь — по тому же доводу, что у `ModuleRoute` выше.
+  const nasledie = useOutletContext();
   if (!can(user, perm)) return <Navigate to="/" replace />;
-  return <Outlet />;
+  return <Outlet context={nasledie} />;
 }
 
 /**
@@ -409,10 +417,22 @@ export default function App() {
                   неё не было вовсе, хотя ключи в настройках лежали с самого
                   начала, — то есть размер рулона и состав полей задать было
                   нечем. */}
-              <Route path="labels" element={<SettingsLabels />} />
+              {/* Блок закрывает и МАРШРУТ, а не только пункт меню. Пункты
+                  были спрятаны, а адреса оставались живыми: с выключенными
+                  наклейками `/settings/labels` открывался по прямой ссылке и по
+                  закладке, и настроить можно было печать того, чего в системе
+                  нет. Спрятанный пункт при живом адресе — это не защита, а её
+                  видимость. */}
+              <Route element={<ModuleRoute module="labels" />}>
+                <Route path="labels" element={<SettingsLabels />} />
+              </Route>
               <Route path="contacts" element={<SettingsContacts />} />
-              <Route path="showcase" element={<SettingsShowcase />} />
-              <Route path="return-button" element={<SettingsReturnButton />} />
+              {/* Витрина и ссылка на сайт — то же самое: витрина показывает
+                  ДОСКИ, и с выключенным блоком показывать ей нечего. */}
+              <Route element={<ModuleRoute module="boards" />}>
+                <Route path="showcase" element={<SettingsShowcase />} />
+                <Route path="return-button" element={<SettingsReturnButton />} />
+              </Route>
               <Route path="maintenance" element={<SettingsMaintenance />} />
             </Route>
           </Route>

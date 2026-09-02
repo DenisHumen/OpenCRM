@@ -9,6 +9,87 @@ import { term } from "../lib/terms";
 import { Icon } from "./Icon";
 import { Avatar } from "./ui";
 
+/** Ссылка в меню. */
+type NavLinkItem = { to: string; label: string };
+/** Категория второго уровня: своё имя, свой ключ памяти, свои разделы. */
+type NavCategory = { key: string; label: string; items: NavLinkItem[] };
+type NavEntry = NavLinkItem | NavCategory;
+
+const eto_kategoriya = (entry: NavEntry): entry is NavCategory => "items" in entry;
+
+/** Все ссылки списка, включая лежащие в категориях. */
+function vse_ssylki(items: NavEntry[]): NavLinkItem[] {
+  return items.flatMap((entry) => (eto_kategoriya(entry) ? entry.items : [entry]));
+}
+
+/**
+ * Категория внутри группы — второй уровень.
+ *
+ * Своё открытое состояние и СВОЙ ключ памяти: при общем ключе две категории
+ * открывались бы и закрывались вместе, а третья — вместе с самой группой.
+ *
+ * Раскрытие идёт по всей цепочке: заход на `/settings/return-button` открывает
+ * и группу «Настройки сайта», и категорию «Витрина». Иначе открытый раздел
+ * прятался бы внутри свёрнутого родителя — на экране это выглядит как «пункт
+ * пропал», хотя он ровно там, куда человек и перешёл.
+ */
+function NavCategoryBlock({
+  klyuch,
+  label,
+  items,
+}: {
+  klyuch: string;
+  label: string;
+  items: NavLinkItem[];
+}) {
+  const { pathname } = useLocation();
+  const inside = items.some(
+    (item) => pathname === item.to || pathname.startsWith(item.to + "/"),
+  );
+  const [open, setOpen] = useState(
+    () => inside || localStorage.getItem(klyuch) === "1",
+  );
+
+  useEffect(() => {
+    if (inside) setOpen(true);
+  }, [inside]);
+
+  const toggle = () => {
+    const next = !open;
+    setOpen(next);
+    localStorage.setItem(klyuch, next ? "1" : "0");
+  };
+
+  // Имена классов свои, а не `nav-cat`: тот уже занят СЕКЦИЕЙ меню («Работа»,
+  // «Админ»), и её правила стрелки поймали бы и эту.
+  return (
+    <div className={"nav-sub-cat" + (open ? " open" : "")}>
+      <button
+        type="button"
+        className={"nav-item nav-sub-cat-head" + (inside ? " active" : "")}
+        aria-expanded={open}
+        onClick={toggle}
+      >
+        <span style={{ flex: 1, textAlign: "left" }}>{label}</span>
+        <Icon name="chevronDown" size={12} className="nav-sub-chevron" />
+      </button>
+      {open && (
+        <div className="nav-sub nav-sub-deep">
+          {items.map((item) => (
+            <NavLink
+              key={item.to}
+              to={item.to}
+              className={({ isActive }) => "nav-item" + (isActive ? " active" : "")}
+            >
+              {item.label}
+            </NavLink>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /**
  * Пункт навигации с вложенным списком.
  *
@@ -18,7 +99,14 @@ import { Avatar } from "./ui";
  * любой вложенный маршрут группа раскрывается сама.
  *
  * Пустая группа не рисуется, как и пустая категория: заголовок без пунктов —
- * обещание раздела, которого нет.
+ * обещание раздела, которого нет. Считается это СНИЗУ ВВЕРХ: пустеют
+ * категории, от них пустеет группа.
+ *
+ * **Категория из одного раздела показывается самим разделом**, без заголовка и
+ * без второго нажатия. Причина не в экономии места: заголовок, за которым
+ * лежит ровно один пункт, обещает выбор, которого нет, — а с выключёнными
+ * блоками такие категории получаются сами. «Склад и товар» у того, кто выключил
+ * наклейки, — это просто «Склады».
  */
 function NavGroup({
   icon,
@@ -29,7 +117,7 @@ function NavGroup({
   icon: string;
   label: string;
   base: string;
-  items: { to: string; label: string }[];
+  items: NavEntry[];
 }) {
   const { pathname } = useLocation();
   const inside = pathname === base || pathname.startsWith(base + "/");
@@ -47,7 +135,7 @@ function NavGroup({
     localStorage.setItem(`nav:${base}`, next ? "1" : "0");
   };
 
-  if (items.length === 0) return null;
+  if (vse_ssylki(items).length === 0) return null;
 
   return (
     <div className={"nav-group" + (open ? " open" : "")}>
@@ -63,15 +151,43 @@ function NavGroup({
       </button>
       {open && (
         <div className="nav-sub">
-          {items.map((item) => (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              className={({ isActive }) => "nav-item" + (isActive ? " active" : "")}
-            >
-              {item.label}
-            </NavLink>
-          ))}
+          {items.map((entry) => {
+            if (!eto_kategoriya(entry)) {
+              return (
+                <NavLink
+                  key={entry.to}
+                  to={entry.to}
+                  className={({ isActive }) => "nav-item" + (isActive ? " active" : "")}
+                >
+                  {entry.label}
+                </NavLink>
+              );
+            }
+            if (entry.items.length === 0) return null;
+            if (entry.items.length === 1) {
+              const odin = entry.items[0];
+              return (
+                <NavLink
+                  key={odin.to}
+                  to={odin.to}
+                  className={({ isActive }) => "nav-item" + (isActive ? " active" : "")}
+                >
+                  {odin.label}
+                </NavLink>
+              );
+            }
+            return (
+              // Поля перечисляются, а не разворачиваются: у категории есть
+              // своё поле `key`, и `{...entry}` перебивало бы им служебный
+              // ключ React — молча, если бы не типы.
+              <NavCategoryBlock
+                key={entry.key}
+                klyuch={`nav:${base}/${entry.key}`}
+                label={entry.label}
+                items={entry.items}
+              />
+            );
+          })}
         </div>
       )}
     </div>
@@ -315,49 +431,83 @@ export function Sidebar({
   // это противоречило правилу «выключено значит не видно»: у того, кто почтой не
   // пользуется, в настройках всё равно висел раздел про ящики. Порядок для
   // пользователя обратный: включить блок → настроить его.
-  const settingsItems = allowed<Guarded & { to: string; label: string }>(user, modules, [
-    // Роли стоят первыми и на своём праве: тот, кто раздаёт доступы, не
-    // обязательно правит логотип сайта, и наоборот.
-    { perm: "roles.view", to: "/settings/roles", label: t("roles") },
-    { perm: "settings.manage", to: "/settings/modules", label: t("modules") },
-    // Склады как места. Своё право: их заводит тот, кто отвечает за структуру,
-    // а не тот, кто правит логотип.
-    { module: "warehouse", perm: "warehouse.manage", to: "/settings/warehouses", label: t("warehouses") },
-    // Статьи и планы — там же, где склады: справочник, который заводят один раз
-    // и правят редко, а последствия правки видны во всех прошлых отчётах.
-    { module: "finance", perm: "finance.manage", to: "/settings/finance", label: t("finCategories") },
-    // Ящики стоят в настройках, а не в «Работе»: это конфигурация фирмы, а не
-    // то, чем пользуются каждый день.
-    { module: "mail", perm: "settings.manage", to: "/settings/mailboxes", label: t("mailboxes") },
-    { module: "telephony", perm: "settings.manage", to: "/settings/telephony", label: t("telephony") },
+  //
+  // Разделы разложены по КАТЕГОРИЯМ (заказ владельца 02.09.2026): плоский
+  // список из четырнадцати пунктов не отвечал на вопрос «где искать», а порядок
+  // в нём сложился исторически. Категория складывается тем же `allowed`, что и
+  // всё остальное, — то есть пустеет вместе с блоками и правами, а пустая
+  // исчезает целиком.
+  const kategoriya = (
+    key: string,
+    label: string,
+    items: (Guarded & { to: string; label: string })[],
+  ) => ({ key, label, items: allowed(user, modules, items) });
+
+  const settingsItems: NavEntry[] = [
+    // Блоки — первым пунктом и ВНЕ категорий. Не украшение порядка: они решают,
+    // какие категории вообще существуют, поэтому лежать внутри одной из них не
+    // могут. Заодно это единственный раздел, где переключатель применяется
+    // сразу, а не по кнопке «Сохранить», — и рядом с теми, где по кнопке, он
+    // обещал бы не то (разбор — App.tsx у маршрута `/settings/modules`).
+    ...allowed<Guarded & { to: string; label: string }>(user, modules, [
+      { perm: "settings.manage", to: "/settings/modules", label: t("modules") },
+    ]),
+    // Роли на своём праве: тот, кто раздаёт доступы, не обязательно правит
+    // логотип сайта, и наоборот. Категория из одного раздела показывается самим
+    // разделом, поэтому лишнего нажатия здесь не появится.
+    kategoriya("access", t("catAccess"), [
+      { perm: "roles.view", to: "/settings/roles", label: t("roles") },
+    ]),
+    // Как фирма называется и как с ней связаться. Оба раздела — про саму
+    // фирму, а не про то, чем она пользуется.
+    kategoriya("company", t("catCompany"), [
+      { perm: "settings.manage", to: "/settings/brand", label: t("brand") },
+      { perm: "settings.manage", to: "/settings/contacts", label: t("contacts") },
+    ]),
+    // Витрина и ссылка на сайт — под блоком `boards`: витрина показывает ДОСКИ,
+    // и с выключенным блоком показывать ей нечего. Пункты при этом оставались, и
+    // настроить можно было оформление того, чего в системе нет.
+    kategoriya("showcase", t("catShowcase"), [
+      { module: "boards", perm: "settings.manage", to: "/settings/showcase", label: t("showcase") },
+      {
+        module: "boards",
+        perm: "settings.manage",
+        to: "/settings/return-button",
+        label: t("returnButtonShort"),
+      },
+    ]),
+    // Склады как места и наклейки на коробки. Своё право у складов: их заводит
+    // тот, кто отвечает за структуру, а не тот, кто правит логотип.
+    kategoriya("stock", t("catStock"), [
+      { module: "warehouse", perm: "warehouse.manage", to: "/settings/warehouses", label: t("warehouses") },
+      { module: "labels", perm: "settings.manage", to: "/settings/labels", label: t("labelSettings") },
+    ]),
+    // Все способы, которыми клиент до нас достучится. Заявки с сайта — без
+    // блока: они держатся на несущих (клиент и работа), выключить которые
+    // нельзя, а выключателем служит сам ключ приёма.
+    //
     // Настройки бота — на праве КАНАЛА, а не на общем `settings.manage`. Так
     // спрашивает сервер (`require_perm("telegram", "manage")`), и расхождение
     // было двусторонним: тот, кому канал доверили, пункта не видел вовсе, а
     // тот, кто правит логотип сайта, видел пункт и получал отказ на первом же
     // открытии.
-    { module: "telegram", perm: "telegram.manage", to: "/settings/telegram", label: t("modTelegram") },
-    // Заявки с сайта — рядом с каналами общения и без привязки к блоку: это
-    // четвёртый способ, которым клиент до нас достучится, и держится он на
-    // несущих блоках (клиент и работа), выключить которые нельзя.
-    { perm: "settings.manage", to: "/settings/leads", label: t("leads") },
-    // Наклейка — под блоком `labels`: выключен блок, и печатать нечего, а
-    // пункт настроек, ведущий в никуда, — это обещание, которого нет.
-    { module: "labels", perm: "settings.manage", to: "/settings/labels", label: t("labelSettings") },
-    { perm: "settings.manage", to: "/settings/brand", label: t("brand") },
-    { perm: "settings.manage", to: "/settings/contacts", label: t("contacts") },
-    // Витрина и её кнопка возврата — под блоком `boards`, по тому же доводу,
-    // что у наклейки строкой выше: витрина показывает ДОСКИ, и с выключённым
-    // блоком показывать ей нечего. Пункты при этом оставались, и настроить
-    // можно было оформление того, чего в системе нет.
-    { module: "boards", perm: "settings.manage", to: "/settings/showcase", label: t("showcase") },
-    {
-      module: "boards",
-      perm: "settings.manage",
-      to: "/settings/return-button",
-      label: t("returnButtonShort"),
-    },
-    { perm: "settings.manage", to: "/settings/maintenance", label: t("maintenance") },
-  ]);
+    kategoriya("channels", t("catChannels"), [
+      { module: "mail", perm: "settings.manage", to: "/settings/mailboxes", label: t("mailboxes") },
+      { module: "telephony", perm: "settings.manage", to: "/settings/telephony", label: t("telephony") },
+      { module: "telegram", perm: "telegram.manage", to: "/settings/telegram", label: t("modTelegram") },
+      { perm: "settings.manage", to: "/settings/leads", label: t("leads") },
+    ]),
+    // Статьи и планы: справочник, который заводят один раз и правят редко, а
+    // последствия правки видны во всех прошлых отчётах.
+    kategoriya("money", t("catMoney"), [
+      { module: "finance", perm: "finance.manage", to: "/settings/finance", label: t("finCategories") },
+    ]),
+    // Обслуживание — последним: за ним приходят, когда надо закрыть сайт, а не
+    // когда настраивают работу.
+    kategoriya("system", t("catSystem"), [
+      { perm: "settings.manage", to: "/settings/maintenance", label: t("maintenance") },
+    ]),
+  ];
 
   return (
     <aside className={"sidebar" + (open ? " open" : "")}>
@@ -416,11 +566,14 @@ export function Sidebar({
         ))}
         <NavSection id="work" label={t("navWork")} items={work} />
         <NavSection id="admin" label={t("admin")} items={admin}>
-          {/* Условие именно на длину списка, а не на его наличие: пустой
+          {/* Условие именно на число ССЫЛОК, а не на длину списка: пустой
               `NavGroup` не рисует себя, но для `NavSection` он всё равно
               остаётся ребёнком — и категория «Админ» показывала бы заголовок
-              без единого пункта тому, у кого нет ни одного из этих прав. */}
-          {settingsItems.length > 0 && (
+              без единого пункта тому, у кого нет ни одного из этих прав.
+              Считать надо ссылки, а не пункты: список из семи категорий, в
+              каждой из которых ничего не осталось, длину имеет, а показывать
+              ему нечего. */}
+          {vse_ssylki(settingsItems).length > 0 && (
             <NavGroup
               icon="settings"
               label={t("siteSettings")}

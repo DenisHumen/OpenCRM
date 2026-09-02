@@ -214,6 +214,31 @@ export function SettingsBrand() {
           <div className="field-desc">{t("currencyDesc")}</div>
         </div>
       </div>
+      {/* Язык публичных страниц. Стоит здесь, а не в «Витрине», хотя ключ
+          зовётся `showcase_locale`: он задаёт язык ВСЕХ страниц, которые видит
+          посторонний, — витрины, страницы ввода PIN, страницы «ссылка закрыта»
+          и заглушки режима обслуживания. Последняя показывается и тогда, когда
+          блок досок выключен, а вместе с ним спрятан и раздел «Витрина». */}
+      <div style={{ marginTop: 18 }}>
+        <label className="label" style={{ marginBottom: 6 }}>
+          {t("publicLanguage")}
+        </label>
+        <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
+          {[
+            { id: "en", label: "English" },
+            { id: "ru", label: "Русский" },
+          ].map((lang) => (
+            <button
+              key={lang.id}
+              className={"option-chip lang-chip" + (values.showcase_locale === lang.id ? " active" : "")}
+              onClick={() => patch({ showcase_locale: lang.id })}
+            >
+              {lang.label}
+            </button>
+          ))}
+        </div>
+        <div className="field-desc">{t("publicLanguageDesc")}</div>
+      </div>
       <div style={{ marginTop: 18 }}>
         <label className="label" style={{ marginBottom: 8 }}>
           {t("accentColor")}
@@ -285,27 +310,12 @@ export function SettingsShowcase() {
     <div className="card" style={{ padding: "20px 22px" }}>
       <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>{t("showcase")}</div>
       <div style={{ color: "var(--faint)", fontSize: 12.5, marginBottom: 18 }}>{t("showcaseSub")}</div>
+      {/* Языка публичных страниц здесь БОЛЬШЕ НЕТ — он переехал в «Бренд».
+          Ключ `showcase_locale` называется витринным, но правит и заглушку
+          режима обслуживания (`web/middleware.py`), а она показывается и с
+          выключёнными досками — то есть когда этого раздела не существует.
+          Оставить настройку здесь значило бы спрятать её вместе с блоком. */}
       <div style={{ display: "flex", gap: 20, alignItems: "flex-start" }}>
-        <div style={{ flex: 1 }}>
-          <label className="label" style={{ marginBottom: 6 }}>
-            {t("showcaseLanguage")}
-          </label>
-          <div style={{ display: "flex", gap: 6, marginBottom: 16 }}>
-            {[
-              { id: "en", label: "English" },
-              { id: "ru", label: "Русский" },
-            ].map((lang) => (
-              <button
-                key={lang.id}
-                className={"option-chip lang-chip" + (values.showcase_locale === lang.id ? " active" : "")}
-                onClick={() => patch({ showcase_locale: lang.id })}
-              >
-                {lang.label}
-              </button>
-            ))}
-          </div>
-          <div style={{ color: "var(--faint)", fontSize: 11.5, lineHeight: 1.5 }}>{t("showcaseLangHint")}</div>
-        </div>
         <div>
           <label className="label" style={{ marginBottom: 6 }}>
             {t("ogImage")}
@@ -420,16 +430,23 @@ export function SettingsReturnButton() {
           <div className="field-desc">{t("fetchLogoHint")}</div>
         </div>
       </div>
-      {values.studio_site_url && (
-        <div style={{ marginTop: 18 }}>
-          <label className="label" style={{ marginBottom: 8 }}>
-            {t("preview")}
-          </label>
-          {/* Наведите — превью проигрывает ту же волну, что кнопка на витрине
-              (см. .btn-site в web/public/templates/showcase.html). Ширина не
-              задана: пилюля подгоняется под длину надписи, как и там. */}
-          <div className="preview-plate">
-            <div className="site-btn-preview">
+      {/* Превью показывается ВСЕГДА и вместе с МЕСТОМ.
+          Раньше оно появлялось только при заполненном адресе, и человек,
+          зашедший впервые, видел три пустых поля и больше ничего: ни что это
+          за кнопка, ни где она стоит. Владелец так и сказал — «даже перейдя в
+          неё не понятно до конца». Поэтому рисуется кусок шапки доски: слева
+          название студии, справа кнопка, ниже — заголовок доски. */}
+      <div style={{ marginTop: 18 }}>
+        <label className="label" style={{ marginBottom: 8 }}>
+          {t("preview")}
+        </label>
+        <div className="preview-plate wide">
+          <div className="showcase-head-preview">
+            <span className="showcase-head-brand">{values.brand_name || "Studio"}</span>
+            {/* Наведите — превью проигрывает ту же волну, что кнопка на витрине
+                (см. .btn-site в web/public/templates/showcase.html). Ширина не
+                задана: пилюля подгоняется под длину надписи, как и там. */}
+            <div className={"site-btn-preview" + (values.studio_site_url ? "" : " off")}>
               {values.studio_site_logo && (
                 <span className="seg">
                   <img src={values.studio_site_logo} alt="" style={{ height: 17, width: "auto", maxWidth: 92, objectFit: "contain", display: "block" }} />
@@ -438,8 +455,10 @@ export function SettingsReturnButton() {
               <span style={{ padding: "0 18px" }}>{values.studio_site_label || "Return to the site"}</span>
             </div>
           </div>
+          <div className="showcase-head-title">{t("previewBoardTitle")}</div>
         </div>
-      )}
+        {!values.studio_site_url && <div className="field-desc">{t("returnButtonEmpty")}</div>}
+      </div>
     </div>
   );
 }
