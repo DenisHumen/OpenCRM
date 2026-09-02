@@ -396,11 +396,35 @@ def search(
     status: str | None = None,
     client_id: int | None = None,
     deal_id: int | None = None,
+    kinds: tuple[str, ...] | None = None,
+    sort: str | None = None,
     page: int = 1,
     per_page: int = 50,
 ) -> tuple[list[Document], int]:
     return documents_repo.search(
-        db, q=q, status=status, client_id=client_id, deal_id=deal_id, page=page, per_page=per_page
+        db,
+        q=q,
+        status=status,
+        client_id=client_id,
+        deal_id=deal_id,
+        kinds=kinds,
+        sort=sort,
+        page=page,
+        per_page=per_page,
+    )
+
+
+def schyot_po_vidam(
+    db: Session,
+    q: str | None = None,
+    status: str | None = None,
+    client_id: int | None = None,
+    deal_id: int | None = None,
+    sredi: tuple[str, ...] | None = None,
+) -> dict[str, int]:
+    """Сколько бумаг каждого вида при этом отборе — для заголовков категорий."""
+    return documents_repo.schyot_po_vidam(
+        db, q=q, status=status, client_id=client_id, deal_id=deal_id, sredi=sredi
     )
 
 

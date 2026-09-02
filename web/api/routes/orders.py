@@ -13,6 +13,7 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from core import exceptions as errors
 from core.services import (
     codes,
     document_service,
@@ -95,6 +96,7 @@ def list_orders(
     search: str | None = Query(default=None, max_length=MAX_SEARCH),
     kind: str | None = None,
     status: str | None = None,
+    sort: str | None = None,
     client_id: int | None = None,
     deal_id: int | None = None,
     page: int = Query(default=1, ge=1),
@@ -102,19 +104,37 @@ def list_orders(
     user: User = Depends(require_perm("orders", "view")),
     db: Session = Depends(get_db),
 ):
+    """Список заказов. Категория здесь — СОСТОЯНИЕ, а не вид.
+
+    Вид у заказа выбирается чипами и их всего два (покупателю, поставщику), а
+    вопрос «что делать сейчас» задаёт состояние: новые собирают, готовые
+    отгружают, закрытые не трогают. Поэтому счёт категорий здесь по статусам, а
+    у бланков — по видам: там шесть видов вперемешку и различить их нечем.
+    """
+    if sort and sort not in documents_repo.PORYADKI:
+        raise errors.ValidationError(
+            f"Unknown sort: {sort}. Known: {', '.join(sorted(documents_repo.PORYADKI))}",
+            code="unknown_sort",
+        )
     kinds = (kind,) if kind in ORDER_KINDS else ORDER_KINDS
     items, total = documents_repo.search(
         db, q=search, status=status, client_id=client_id, deal_id=deal_id,
-        kinds=kinds, page=page, per_page=per_page,
+        kinds=kinds, sort=sort, page=page, per_page=per_page,
     )
     # Строки — одним запросом на страницу, а не запросом на строку списка:
     # сумма заказа складывается из них, и без них список молчит о деньгах.
     rows = documents_repo.lines_by_documents(db, [item.id for item in items])
     amounts = permissions_service.sees_amounts(db, user, "orders")
-    return schemas.paginated(
+    otvet = schemas.paginated(
         [schemas.order_out(item, rows.get(item.id, []), amounts=amounts) for item in items],
         total, page, per_page,
     )
+    # Счёт по состояниям — БЕЗ отбора по состоянию: иначе, свернув «закрытые»,
+    # человек потерял бы и число рядом с ними, то есть способ их вернуть.
+    otvet["counts"] = documents_repo.schyot_po_statusam(
+        db, q=search, client_id=client_id, deal_id=deal_id, kinds=kinds
+    )
+    return otvet
 
 
 @router.post("", status_code=201)

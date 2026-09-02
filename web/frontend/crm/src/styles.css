@@ -578,6 +578,13 @@ button:active [data-icon="plus"] { transition-duration: 0s; }
    всегда, а без переноса они уносили вбок всю страницу списка бланков. */
 .doc-toolbar { display: flex; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
 .doc-toolbar .input { width: 190px; flex: none; }
+/* Выпадающий порядок. Своя ширина обязательна: `.input` тянется на всю строку,
+   и на экране заказов, где панель размечена своими стилями, а не `.doc-toolbar`,
+   он уехал отдельной строкой во всю ширину. Увидено на живом экране.
+   Селектор из ДВУХ классов, а не одного: `.input` объявлен ниже по файлу, вес у
+   них был бы одинаковый, и побеждал бы он — по порядку. Вес надёжнее порядка:
+   строку однажды переставят, и правило замолчит. */
+.input.sort-select { width: 190px; flex: none; }
 /* Поиск с иконкой — та же коробка, что и на клиентах, но одним классом:
    повторять её восемью строчками inline-стилей на каждом экране незачем. */
 .search-field {
@@ -914,6 +921,28 @@ summary:focus-visible,
 
 /* Списки */
 .list-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+/* Категория внутри списка: заголовок сворачивает свои строки.
+   Заголовок — кнопка во всю ширину, а не значок сбоку: попасть в него надо с
+   первого раза и мышью, и пальцем, а список из шести категорий сворачивают
+   каждый день. Полоса сверху отделяет категорию от предыдущей; у первой её
+   нет, иначе она читалась бы как вторая строка рамки карточки. */
+.spisok-kategoriya + .spisok-kategoriya .spisok-kategoriya-head { border-top: 1px solid var(--line); }
+.spisok-kategoriya-head {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 9px 14px; background: var(--surface-2); border: none; cursor: pointer;
+  font-family: var(--sans); font-size: 12px; font-weight: 600;
+  letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted);
+}
+.spisok-kategoriya-head:hover { color: var(--text); }
+.spisok-kategoriya-imya { flex: 1; text-align: left; }
+/* Счёт цифрами, а не словами: «7 / 41» читается мельком, «7 из 41 квитанции» —
+   нет, а глазами по этой строке пробегают, а не читают её. */
+.spisok-kategoriya-schyot { color: var(--faint); font-weight: 500; letter-spacing: 0; }
+.spisok-kategoriya-chevron { transition: transform 180ms ease; flex-shrink: 0; }
+.spisok-kategoriya.svyornuta .spisok-kategoriya-chevron { transform: rotate(-90deg); }
+@media (prefers-reduced-motion: reduce) {
+  .spisok-kategoriya-chevron { transition: none; }
+}
 .list-header {
   display: flex; align-items: center; gap: 14px; padding: 0 16px; height: 36px;
   border-bottom: 1px solid var(--line); color: var(--faint);
@@ -981,6 +1010,11 @@ summary:focus-visible,
   font-size: 12px; cursor: pointer; background: none;
 }
 .filter-chip.active { background: var(--surface-2); border-color: var(--border); color: var(--text); font-weight: 500; }
+/* Полоса чипов видов бумаги: перенос обязателен — видов шесть, и на ноутбучном
+   экране в одну строку они не помещаются вместе с числами. */
+.kind-chips { display: flex; gap: 8px; flex-wrap: wrap; margin: -6px 0 16px; }
+/* Число рядом с подписью чипа: серверное, и от снятия вида не меняется. */
+.chip-schyot { margin-left: 6px; color: var(--faint); font-weight: 500; }
 .option-chip {
   height: 26px; display: inline-flex; align-items: center; gap: 5px; padding: 0 10px;
   border-radius: 6px; border: 1px solid var(--border); color: var(--muted);
