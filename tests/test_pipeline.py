@@ -45,6 +45,33 @@ def test_presets_cover_different_businesses(root_client):
     assert {"universal", "services", "beauty", "shop", "agency"} <= presets
 
 
+def test_every_preset_keeps_all_three_kinds():
+    """У каждого пресета есть открытый, выигранный и проигранный этап.
+
+    Пресет заменяет воронку целиком, минуя оба охранника (`last_open_stage`,
+    `last_stage_of_kind`): те стерегут правку по одному этапу, а здесь набор
+    ставится разом. Значит инвариант держится только тем, что написано в самих
+    наборах, — а это данные, и правят их руками.
+
+    Цена ошибки — вся система: без открытого этапа новая заявка рождается
+    закрытой, без «выиграна» заявку некуда закрыть, а склад не получает
+    списания по выигрышу.
+
+    Проверяются НАБОРЫ, а не ответ ручки: пресет, ещё не применённый ни разу,
+    ломает первого, кто его выберет, — и узнать об этом из ответа нельзя.
+    """
+    from core.services.pipeline_service import PRESETS
+    from database.models.pipeline import KIND_LOST, KIND_OPEN, KIND_WON
+
+    bedy = {}
+    for imya, nabor in PRESETS.items():
+        vidy = {kind for _, _, kind in nabor["stages"]}
+        ne_hvataet = [v for v in (KIND_OPEN, KIND_WON, KIND_LOST) if v not in vidy]
+        if ne_hvataet:
+            bedy[imya] = ne_hvataet
+    assert not bedy, f"пресетам не хватает видов этапов: {bedy}"
+
+
 def test_preset_replaces_the_pipeline(root_client):
     applied = root_client.post(f"{PIPE}/preset", json={"preset": "services"}).json()["items"]
     # По КЛЮЧУ, а не по названию: докстрока этого файла обещает проверять
@@ -135,6 +162,37 @@ def test_the_pipeline_cannot_lose_its_closing_stages(root_client):
 
     retyped = root_client.patch(f"{PIPE}/stages/{won['key']}", json={"kind": "open"})
     assert retyped.status_code == 422
+
+
+def test_the_pipeline_cannot_lose_its_last_open_stage(root_client):
+    """Открытый этап обязан остаться хотя бы один — и на СМЕНЕ ВИДА тоже.
+
+    Убрать последний открытый с доски система отказывается (`last_open_stage`),
+    а перевести его в «выиграна» — молча позволяла. Итог тот же и хуже: новая
+    заявка заводится на первый открытый этап, а без него `first_open_key`
+    отдаёт просто первый попавшийся — то есть каждая новая заявка рождается
+    закрытой, и человек этого не выбирал.
+
+    Отказ один и тот же на обоих путях: правило про воронку, а не про кнопку.
+    """
+    stages = root_client.get(f"{PIPE}/stages").json()["items"]
+    otkrytye = [s for s in stages if s["kind"] == "open"]
+    assert len(otkrytye) > 1, "в наборе по умолчанию открытых этапов должно быть несколько"
+
+    # Доводим воронку до края: открытый остаётся ровно один.
+    for stage in otkrytye[1:]:
+        assert root_client.delete(f"{PIPE}/stages/{stage['key']}").status_code == 200
+    posledniy = otkrytye[0]
+
+    otvet = root_client.patch(f"{PIPE}/stages/{posledniy['key']}", json={"kind": "won"})
+    assert otvet.status_code == 422, (
+        f"последний открытый этап перевели в «выиграна» ({otvet.status_code}) — "
+        "новые заявки станут рождаться закрытыми"
+    )
+    assert otvet.json()["error"]["code"] == "last_open_stage"
+
+    ostalis = root_client.get(f"{PIPE}/stages").json()["items"]
+    assert any(s["kind"] == "open" for s in ostalis), "открытых этапов не осталось вовсе"
 
 
 def test_archived_stage_hands_its_deals_to_an_open_one(root_client, manager_client):
