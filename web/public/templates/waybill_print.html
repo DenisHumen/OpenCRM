@@ -1,0 +1,176 @@
+{# Печатная форма накладной: бумага, которую отдают вместе с грузом.
+
+   От акта отличается по существу. Акт отвечает «что сделано и принято» — его
+   подписывают, когда работа кончилась. Накладная отвечает «что передали
+   физически», и подписывают её В МОМЕНТ передачи, стоя у машины. Отсюда две
+   подписи с именами и отсюда же штрихкод: получатель находит бумагу сканером,
+   а не листает папку.
+
+   **Многостраничность здесь настоящая, а не про запас.** Остальные формы в
+   системе одностраничные, и одна из них подогнана под лист замером
+   (`document_service.MAX_TEXT = 160`). Накладная это допущение ломает первой:
+   пятьдесят позиций на A4 не помещаются. Поэтому шапка таблицы в `thead`
+   (браузер повторит её сам), запрет разрыва строки и номер в колонтитуле
+   каждого листа — он и связывает листы между собой.
+
+   **«Лист N из M» не пишем.** `counter(pages)` в печати поддержан браузерами
+   неровно, и «Лист 2 из 0» на чужом принтере хуже, чем не писать ничего.
+
+   Себестоимости нет и быть не может: получателю показывают, во сколько
+   поставка обошлась ЕМУ. Закупочная цена — внутреннее дело, ей место на экране
+   под правом. Дословно то же правило записано у акта.
+
+   Печатает браузер, как и всё остальное в системе. #}
+<!doctype html>
+<html lang="{{ locale }}">
+<head>
+<meta charset="utf-8">
+<meta name="robots" content="noindex">
+<title>{{ title }} {{ t.number }} {{ doc.number }}</title>
+<style>
+  /* Нижнее поле больше остальных: в нём живёт колонтитул с номером, и без
+     запаса он лёг бы поверх последней строки таблицы. */
+  @page { size: A4 portrait; margin: 12mm 12mm 16mm; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { background: #fff; color: #000; }
+  body { font: 10pt/1.45 "Segoe UI", system-ui, -apple-system, Arial, sans-serif; }
+  .head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12mm; }
+  .who { font-size: 9pt; line-height: 1.5; text-align: right; }
+  .who b { font-size: 11pt; }
+  h1 { font-size: 15pt; font-weight: 700; margin-bottom: 2mm; }
+  .when { color: #444; font-size: 9pt; }
+  .party { margin-top: 6mm; font-size: 10pt; }
+  .party div { margin-top: 1mm; }
+  .party span { color: #444; }
+  table { width: 100%; border-collapse: collapse; margin-top: 6mm; }
+  th, td { padding: 2mm 2.5mm; border-bottom: 0.3mm solid #000; text-align: left; vertical-align: top; }
+  th { font-size: 8.5pt; text-transform: uppercase; letter-spacing: 0.04em; color: #333; }
+  /* Числа — вправо и моноширинно: столбец сумм читают сверху вниз, а не по
+     строкам, и разъезжающиеся разряды делают это невозможным. */
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  tr.total td { border-bottom: none; padding-top: 3mm; font-weight: 700; font-size: 11pt; }
+  .sign { margin-top: 14mm; display: flex; justify-content: space-between; gap: 12mm; font-size: 9pt; }
+  .sign div { flex: 1; border-top: 0.3mm solid #000; padding-top: 1.5mm; color: #444; }
+  .sign b { display: block; color: #000; font-size: 10pt; font-weight: 600; min-height: 1.4em; }
+  .codes { margin-top: 8mm; text-align: center; }
+  .codes svg { height: 14mm; }
+  .digits { font: 8pt/1 "Courier New", monospace; letter-spacing: 0.1em; margin-top: 1mm; }
+  /* Колонтитул: только в печати и только на бумаге. На экране он был бы
+     полосой поперёк страницы, а на втором листе он единственное, что связывает
+     лист с накладной. */
+  .footer { display: none; }
+  @media print {
+    .bar { display: none; }
+    .footer {
+      display: block; position: fixed; bottom: 0; left: 0; right: 0;
+      font-size: 8pt; color: #444; text-align: center;
+    }
+    /* Позиция, разорванная между листами, читается как две разные. */
+    tr { page-break-inside: avoid; }
+    thead { display: table-header-group; }
+  }
+  .bar { margin-top: 10mm; text-align: center; }
+  .bar button {
+    font: 500 13px/1 system-ui, sans-serif; padding: 8px 18px;
+    border: 1px solid #000; border-radius: 6px; background: #fff; cursor: pointer;
+  }
+</style>
+</head>
+<body>
+<div class="head">
+  <div>
+    <h1>{{ title }} {{ t.number }} {{ doc.number }}</h1>
+    <div class="when">{{ t.date }}: {{ created }}</div>
+  </div>
+  {% if company and company.name %}
+    {# Реквизиты — из снимка накладной, а не из справочника: фирма сменит счёт,
+       а подписанная бумага обязана показывать тот, что лежит у получателя. #}
+    {# Адрес лежит под `legal_address`, и это не мелочь: `company.address` в
+       снимке НЕ существует никогда, а Jinja молча выдаёт пустоту вместо
+       несуществующего ключа. Ровно так акт и заказ печатали шапку без адреса. #}
+    {% set adres = company.legal_address or company.actual_address %}
+    <div class="who">
+      <b>{{ company.name }}</b><br>
+      {% if company.tax_number %}{{ t.taxId }}: {{ company.tax_number }}<br>{% endif %}
+      {% if adres %}{{ adres }}<br>{% endif %}
+      {% if company.bank_name %}{{ company.bank_name }}{% if company.bank_account %}, {{ company.bank_account }}{% endif %}<br>{% endif %}
+      {% if company.phone %}{{ company.phone }}{% endif %}
+      {% if company.email %} · {{ company.email }}{% endif %}
+    </div>
+  {% endif %}
+</div>
+
+<div class="party">
+  <div><span>{{ party_label }}:</span> {{ client or "—" }}</div>
+  {% if basis %}<div><span>{{ t.basis }}:</span> {{ basis }}</div>{% endif %}
+  {% if deal %}<div><span>{{ t.deal }}:</span> {{ deal }}</div>{% endif %}
+  {% if warehouse %}<div><span>{{ t.warehouse }}:</span> {{ warehouse }}</div>{% endif %}
+</div>
+
+<table>
+  <thead>
+    <tr>
+      <th style="width: 8mm">№</th>
+      <th>{{ t.item }}</th>
+      <th style="width: 16mm">{{ t.unit }}</th>
+      <th class="num" style="width: 22mm">{{ t.qty }}</th>
+      {% if money %}
+        <th class="num" style="width: 28mm">{{ t.price }}</th>
+        <th class="num" style="width: 30mm">{{ t.sum }}</th>
+      {% endif %}
+    </tr>
+  </thead>
+  <tbody>
+    {% for line in lines %}
+      <tr>
+        <td>{{ loop.index }}</td>
+        <td>{{ line.name }}</td>
+        <td>{{ line.unit }}</td>
+        <td class="num">{{ line.quantity }}</td>
+        {% if money %}
+          <td class="num">{{ line.price }}</td>
+          <td class="num">{{ line.sum }}</td>
+        {% endif %}
+      </tr>
+    {% endfor %}
+    {% if money %}
+      <tr class="total">
+        <td colspan="5" class="num">{{ t.total }}</td>
+        <td class="num">{{ total }}</td>
+      </tr>
+    {% endif %}
+  </tbody>
+</table>
+
+{% if note %}<div class="party"><div><span>{{ t.note }}:</span> {{ note }}</div></div>{% endif %}
+
+{# Имя того, кто отпустил, — из события проведения. Пустая строка означает, что
+   имя не сохранилось; линия для подписи остаётся в любом случае. #}
+<div class="sign">
+  <div>{{ t.gave }}<b>{{ released_by }}</b></div>
+  <div>{{ t.took }}<b></b></div>
+</div>
+
+{# Штрихкод есть, QR нет — вопреки макету в `docs/17-nakladnye.md`, §12.2.
+   QR на квитанции ведёт на `/d/{номер}`, а та страница заперта блоком БЛАНКОВ и
+   показывает поля приёмки, которых у накладной нет: получатель открыл бы лист с
+   одним номером. Публичной страницы накладной не существует, и заводить её —
+   решение о том, показывать ли состав отгрузки без входа, а не мелочь печати.
+
+   Номер цифрами под штрихкодом — не украшение: сканер не читает мятую или
+   залитую бумагу, и тогда номер набирают руками. #}
+{% if barcode %}
+  <div class="codes">
+    {{ barcode|safe }}
+    <div class="digits">{{ doc.number }}</div>
+  </div>
+{% endif %}
+
+<div class="footer">{{ title }} {{ t.number }} {{ doc.number }} · {{ created }}</div>
+
+<div class="bar"><button onclick="window.print()">{{ t.print }}</button></div>
+<script>
+  window.addEventListener("load", function () { window.print(); });
+</script>
+</body>
+</html>

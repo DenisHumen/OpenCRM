@@ -4,20 +4,41 @@
 пропущенный маршрут остался бы открытым, и выключенный блок продолжал бы
 отвечать тому, кто помнит адрес.
 
-Накладная — вид бланка, поэтому номер, статусы, печать и поиск сканом живут в
-`documents`; здесь только то, чего у квитанции нет.
+Накладная — вид бланка, поэтому номер, статусы и поиск сканом живут в
+`documents`; здесь только то, чего у квитанции нет. Печать — здесь: у квитанции
+и у накладной общего в ней ровно номер, а общая ручка бланка печатала накладную
+квитанцией приёма, без единой позиции на листе.
 """
 
 from fastapi import APIRouter, Depends, Query
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from core.services import permissions_service, waybill_service
+from core import exceptions as errors
+from core.services import (
+    codes,
+    document_service,
+    permissions_service,
+    settings_service,
+    warehouse_service,
+    waybill_service,
+)
+from core.services.barcode_service import UNIT_NAMES
+from core.utils import money_for_print
 from database.models import User
-from database.models.document import WAYBILL_KINDS
+from database.models.document import (
+    DOCUMENT_LOCALES,
+    KIND_WAYBILL_OUT,
+    STATUS_CLOSED,
+    STATUS_ISSUED,
+    WAYBILL_KINDS,
+)
 from database.repositories import documents as documents_repo
+from database.repositories import warehouse as warehouse_repo
 from web.api import schemas
 from web.api.deps import MAX_SEARCH, get_db, require_module, require_perm
+from web.public import routes as public_routes
 
 router = APIRouter(
     prefix="/waybills",
@@ -261,3 +282,131 @@ def stornirovat(
     return schemas.waybill_out(
         storno, waybill_service.lines(db, storno.id), amounts=_amounts(db, user)
     )
+
+
+#: Словарь бумаги, отдельный от интерфейса и отдельный от акта.
+#:
+#: Общий словарь с актом пришлось бы делить прямо в шаблоне: акт отвечает «что
+#: сделано и принято», накладная — «что передали физически», и совпадают у них
+#: только «№» и «Итого». Перевод бумаги к тому же живёт своей жизнью от
+#: интерфейса — её печатают под ПОЛУЧАТЕЛЯ, а не под сотрудника.
+WAYBILL_PRINT_STRINGS = {
+    "ru": {
+        "out": "Расходная накладная", "in": "Приходная накладная",
+        "number": "№", "date": "Дата", "party": "Получатель", "partyIn": "Поставщик",
+        "basis": "Основание", "deal": "Заявка", "warehouse": "Склад",
+        "item": "Наименование", "unit": "Ед.", "qty": "Кол-во", "price": "Цена",
+        "sum": "Сумма", "total": "Итого", "note": "Примечание", "taxId": "Налоговый номер",
+        "gave": "Отпустил", "took": "Получил", "print": "Печать",
+    },
+    "en": {
+        "out": "Delivery note", "in": "Goods receipt note",
+        "number": "No.", "date": "Date", "party": "Consignee", "partyIn": "Supplier",
+        "basis": "Reference", "deal": "Request", "warehouse": "Warehouse",
+        "item": "Item", "unit": "Unit", "qty": "Qty", "price": "Price",
+        "sum": "Amount", "total": "Total", "note": "Note", "taxId": "Tax number",
+        "gave": "Released by", "took": "Received by", "print": "Print",
+    },
+    "uk": {
+        "out": "Видаткова накладна", "in": "Прибуткова накладна",
+        "number": "№", "date": "Дата", "party": "Одержувач", "partyIn": "Постачальник",
+        "basis": "Підстава", "deal": "Заявка", "warehouse": "Склад",
+        "item": "Найменування", "unit": "Од.", "qty": "К-сть", "price": "Ціна",
+        "sum": "Сума", "total": "Разом", "note": "Примітка", "taxId": "Податковий номер",
+        "gave": "Відпустив", "took": "Одержав", "print": "Друк",
+    },
+}
+
+
+@router.get("/{waybill_id}/print", response_class=HTMLResponse)
+def print_waybill(
+    waybill_id: int,
+    locale: str | None = None,
+    user: User = Depends(require_perm("waybills", "view")),
+    db: Session = Depends(get_db),
+):
+    """Печатная форма накладной: перечень, итог и две подписи.
+
+    **Черновик не печатается, и это правило, а не придирка.** Черновик правится
+    целиком, а подписанная бумага — нет; напечатанный черновик даёт лист с
+    номером и подписями получателя под перечнем, который назавтра станет другим.
+    Ровно от этого модуль и построен вокруг деления «до проведения — после».
+
+    Цены печатаются только тому, кому они видны на экране (`view_amounts`). Без
+    права столбцы не пустеют, а исчезают: пустая колонка «Сумма» под подписью
+    читается как «бесплатно», а не как «вам не показано».
+    """
+    waybill = waybill_service.get(db, waybill_id)
+    if waybill.kind not in WAYBILL_KINDS:
+        raise errors.NotFoundError("Waybill not found", code="waybill_not_found")
+    if waybill.status not in (STATUS_ISSUED, STATUS_CLOSED):
+        raise errors.ValidationError(
+            "Only a posted waybill can be printed", code="waybill_not_posted"
+        )
+
+    lang = locale if locale in DOCUMENT_LOCALES else waybill.locale
+    t = WAYBILL_PRINT_STRINGS.get(lang, WAYBILL_PRINT_STRINGS["ru"])
+    ishodyashchaya = waybill.kind == KIND_WAYBILL_OUT
+    rows = waybill_service.lines(db, waybill.id)
+    payload = waybill_service.payload_of(waybill)
+    money = _amounts(db, user)
+    currency = settings_service.get_all(db).get("currency", "USD")
+
+    # Единицы — из товаров, одним запросом. По строке за штуку это дало бы
+    # полсотни обращений на печать пятидесятипозиционной накладной.
+    tovary = warehouse_repo.products_by_ids(
+        db, {line.product_id for line in rows if line.product_id}
+    )
+    edinicy = {p.id: p.unit for p in tovary}
+    nazvaniya = UNIT_NAMES.get(lang, UNIT_NAMES["ru"])
+
+    warehouse = None
+    if waybill.warehouse_id:
+        warehouse = warehouse_service.get_warehouse(
+            db, waybill.warehouse_id, include_deleted=True
+        ).name
+    basis = None
+    if waybill.basis_id:
+        basis = document_service.get(db, waybill.basis_id).number
+
+    html = public_routes.templates.get_template("waybill_print.html").render(
+        doc=waybill,
+        locale=lang,
+        t=t,
+        # Заголовок и вторая сторона зависят от направления: у приходной
+        # накладной «Получатель» — это мы, и печатать там имя клиента значило
+        # бы напечатать неправду.
+        title=t["out"] if ishodyashchaya else t["in"],
+        party_label=t["party"] if ishodyashchaya else t["partyIn"],
+        company=payload.get("company") or {},
+        client=(payload.get("client") or {}).get("name"),
+        deal=(payload.get("deal") or {}).get("title"),
+        note=payload.get("note"),
+        basis=basis,
+        warehouse=warehouse,
+        created=waybill.created_at.strftime("%d.%m.%Y %H:%M") if waybill.created_at else "",
+        released_by=waybill_service.kto_otpustil(db, waybill),
+        money=money,
+        lines=[
+            {
+                "name": line.name_snapshot,
+                "unit": nazvaniya.get(edinicy.get(line.product_id, ""), ""),
+                "quantity": _quantity(line.quantity_milli),
+                "price": money_for_print(line.price_minor, currency),
+                # Сумма строки — из общего счёта нарастающим итогом, чтобы
+                # колонка СКЛАДЫВАЛАСЬ в «Итого» под ней. Округление на каждой
+                # строке против округления один раз на итоге даёт лист, где
+                # 61.73 + 61.73 стоит под «Итого 123.45». Разбор — в
+                # `document_service.line_totals`.
+                "sum": money_for_print(summa, currency),
+            }
+            for line, summa in zip(rows, document_service.line_totals(rows))
+        ],
+        total=money_for_print(waybill_service.total_minor(rows), currency),
+        barcode=codes.barcode_svg(waybill.number),
+    )
+    return HTMLResponse(html)
+
+
+def _quantity(milli: int) -> str:
+    return warehouse_service.format_quantity(milli)

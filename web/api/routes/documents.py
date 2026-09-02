@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from core import exceptions as errors
+from core.utils import money_for_print
 from core.services import act_service, codes, document_service, settings_service
 from database.models import User
 from database.models.document import DOCUMENT_KINDS, DOCUMENT_LOCALES
@@ -243,8 +244,13 @@ def print_document(
     Язык можно переопределить параметром: бланк печатают под клиента, а не под
     сотрудника — приехал турист, печатаем по-английски, интерфейс мастера при
     этом остаётся прежним.
+
+    **Заказ и накладная сюда не попадают** (`tolko_blank`). Здесь стоял общий
+    `get`, и по этому адресу они печатались КВИТАНЦИЕЙ ПРИЁМА: две половины с
+    линией отреза, поля «что приняли» пустые, перечня позиций и сумм нет вовсе.
+    У обоих есть своя форма, и бумага молча выходила не та.
     """
-    document = document_service.get(db, document_id)
+    document = document_service.tolko_blank(db, document_id)
     lang = locale if locale in DOCUMENT_LOCALES else document.locale
 
     from config.settings import get_settings
@@ -449,7 +455,7 @@ def print_act(
             {
                 "name": line.name_snapshot,
                 "quantity": _quantity(line.quantity_milli),
-                "price": _money(line.price_minor, currency),
+                "price": money_for_print(line.price_minor, currency),
                 # Сумма строки — из общего счёта нарастающим итогом, чтобы
                 # колонка СКЛАДЫВАЛАСЬ в «Итого» под ней. Здесь стоял вызов
                 # `total_minor` по одной строке, и намерение было верным
@@ -457,21 +463,14 @@ def print_act(
                 # на каждой строке против округления один раз на итоге даёт
                 # расхождение, и заказчик подписывал лист, где 61.73 + 61.73
                 # стоит под «Итого 123.45». Разбор — в `document_service.line_totals`.
-                "sum": _money(summa, currency),
+                "sum": money_for_print(summa, currency),
             }
             for line, summa in zip(rows, document_service.line_totals(rows))
         ],
-        total=_money(document_service.total_minor(rows), currency),
+        total=money_for_print(document_service.total_minor(rows), currency),
         barcode=codes.barcode_svg(act.number),
     )
     return HTMLResponse(html)
-
-
-def _money(minor: int | None, currency: str) -> str:
-    if minor is None:
-        return ""
-    whole, cents = divmod(abs(int(minor)), 100)
-    return f"{'-' if minor < 0 else ''}{whole}.{cents:02d} {currency}"
 
 
 def _quantity(milli: int) -> str:

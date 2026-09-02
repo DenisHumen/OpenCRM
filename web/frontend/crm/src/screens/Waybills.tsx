@@ -38,6 +38,8 @@ export interface Waybill {
   deal_id: number | null;
   basis_id: number | null;
   warehouse_id: number | null;
+  /** Язык бумаги. Сервер отдавал его и раньше, а описание про него не знало. */
+  locale: string;
   /** Считает сервер, а не экран: правило «черновик правится» живёт в службе. */
   pravitsya: boolean;
   lines: WaybillLine[];

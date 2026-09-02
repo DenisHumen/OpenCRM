@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { Icon } from "../components/Icon";
+import { PrintLangs } from "../components/PrintLangs";
 import { Chip, ConfirmModal, LoadFailed, ScreenLoading } from "../components/ui";
 import { WarehousePicker, useWarehouses } from "../components/Warehouses";
 import { api, ApiError } from "../lib/api";
@@ -14,14 +15,6 @@ import { isFinished, nextStatuses, statusLabel, statusVariant } from "../lib/doc
 import { formatDateTime, formatMoney, formatQuantity } from "../lib/format";
 import { useReference } from "../lib/reference";
 import type { Product } from "./Warehouse";
-
-/** Языки печати. Бумагу печатают под клиента, а не под сотрудника: приехал
- *  турист — печатаем по-английски, ничего в базе не меняя. */
-const PRINT_LANGS = [
-  { id: "ru", label: "Рус" },
-  { id: "en", label: "Eng" },
-  { id: "uk", label: "Укр" },
-];
 
 const ROWS = [
   ["item", "docItem"],
@@ -210,31 +203,6 @@ export function DocumentCard() {
           onClose={() => setConfirmCancel(false)}
         />
       )}
-    </div>
-  );
-}
-
-/** Кнопки печати на трёх языках. Общие у квитанции и у акта: язык бумаги
- *  выбирают под клиента, и правило это одно на все бланки. */
-function PrintLangs({ base, current }: { base: string; current: string }) {
-  const { t } = useApp();
-  return (
-    <div className="print-actions">
-      <span className="print-label">
-        <Icon name="printer" size={14} />
-        {t("docPrint")}
-      </span>
-      {PRINT_LANGS.map((lang) => (
-        <a
-          key={lang.id}
-          className={"btn btn-secondary btn-sm" + (lang.id === current ? " btn-current" : "")}
-          href={`${base}?locale=${lang.id}`}
-          target="_blank"
-          rel="noreferrer"
-        >
-          {lang.label}
-        </a>
-      ))}
     </div>
   );
 }

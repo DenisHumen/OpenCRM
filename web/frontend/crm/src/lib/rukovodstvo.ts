@@ -531,6 +531,40 @@ export const RUKOVODSTVO: Razdel[] = [
               en: "Goods already shipped by a waybill will not ship twice: processing the order refuses and names the waybills that carried them.",
             },
           },
+          {
+            vid: "svyortka",
+            zagolovok: { ru: "Печать накладной", en: "Printing a waybill" },
+            kuski: [
+              {
+                vid: "abzats",
+                tekst: {
+                  ru: "Накладную печатают на трёх языках — по получателю, а не по сотруднику. На листе перечень с единицами, столбец сумм, складывающийся в «Итого», реквизиты вашей фирмы и две подписи: отпустил и получил.",
+                  en: "A waybill prints in three languages — chosen for the recipient, not the employee. The sheet carries the item list with units, an amount column that adds up to the total, your company details and two signatures: released and received.",
+                },
+              },
+              {
+                vid: "abzats",
+                tekst: {
+                  ru: "Длинная накладная печатается на нескольких листах: шапка таблицы повторяется на каждом, позиция не разрывается пополам, а номер стоит внизу каждого листа — он и связывает их между собой.",
+                  en: "A long waybill prints across several sheets: the table header repeats on each, an item is never split in half, and the number sits at the bottom of every sheet — that is what ties them together.",
+                },
+              },
+              {
+                vid: "vnimanie",
+                tekst: {
+                  ru: "Печатается только проведённая. У черновика кнопки печати нет: перечень в нём ещё изменится, а подпись получателя под изменившимся листом не значит ничего.",
+                  en: "Only a processed waybill prints. A draft has no print button: its list can still change, and a recipient signature under a changed sheet means nothing.",
+                },
+              },
+              {
+                vid: "abzats",
+                tekst: {
+                  ru: "Имя отпустившего берётся на момент проведения и остаётся на бумаге навсегда — даже если сотрудник потом уволился и удалён. Цены на листе видит только тот, кому они видны на экране; без этого права столбцы сумм не пустеют, а исчезают.",
+                  en: "The name of the person who released the goods is captured at processing and stays on the paper forever — even after that employee leaves and is deleted. Prices print only for those allowed to see them on screen; without that permission the amount columns disappear rather than going blank.",
+                },
+              },
+            ],
+          },
           { vid: "ekran", put: "/waybills", podpis: { ru: "Открыть накладные", en: "Open waybills" } },
         ],
       },

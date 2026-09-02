@@ -40,8 +40,10 @@ from core import exceptions as errors
 from core import references
 from core.services import (
     audit_service,
+    company_service,
     document_service,
     modules_service,
+    settings_service,
     warehouse_service,
 )
 from database.models import Document, DocumentEvent, DocumentLine, User
@@ -92,6 +94,24 @@ def get(db: Session, document_id: int) -> Document:
 
 def lines(db: Session, document_id: int) -> list[DocumentLine]:
     return documents_repo.lines_of(db, document_id)
+
+
+def events(db: Session, document_id: int) -> list[DocumentEvent]:
+    return documents_repo.events(db, document_id)
+
+
+def kto_otpustil(db: Session, waybill: Document) -> str:
+    """Имя того, кто провёл накладную, — для строки «Отпустил» на бумаге.
+
+    Берётся из события перехода, а не из `created_by`: черновик заводит один
+    человек, а отпускает товар тот, кто нажал «провести», и на бумаге обязан
+    стоять второй. Отдельной колонки под это нет намеренно — она стала бы вторым
+    местом для факта, который уже записан переходом.
+    """
+    for event in events(db, waybill.id):
+        if event.to_status == STATUS_ISSUED:
+            return event.author_name or ""
+    return ""
 
 
 def total_minor(rows: list[DocumentLine]) -> int:
@@ -152,6 +172,8 @@ def create(db: Session, data: dict, author: User) -> Document:
     payload = json.dumps(
         {
             "client": _snimok_klienta(db, client_id, basis),
+            "company": _snimok_firmy(db, data, basis, deal_id),
+            "deal": _snimok_zayavki(db, deal_id, basis),
             "note": str(data.get("note") or "").strip()[:document_service.MAX_TEXT],
         },
         ensure_ascii=False,
@@ -687,6 +709,42 @@ def _snimok_klienta(db: Session, client_id, basis: Document | None) -> dict:
     if client is None:
         return {"name": "", "phone": "", "email": ""}
     return {"name": client.name, "phone": client.phone or "", "email": client.email or ""}
+
+
+def _snimok_zayavki(db: Session, deal_id, basis: Document | None) -> dict:
+    """Название заявки снимком. Тот же довод, что у клиента: заявку переименуют.
+
+    Пустой словарь у накладной без заявки — строка на бумаге тогда не печатается
+    вовсе; писать «Заявка: —» значит занимать место ответом «ничего».
+    """
+    if basis is not None:
+        snimok = document_service.payload_of(basis).get("deal")
+        if snimok and snimok.get("title"):
+            return snimok
+    if deal_id is None:
+        return {}
+    from database.repositories import deals as deals_repo
+
+    deal = deals_repo.get(db, deal_id)
+    return {"id": deal.id, "title": deal.title} if deal else {}
+
+
+def _snimok_firmy(db: Session, data: dict, basis: Document | None, deal_id) -> dict:
+    """Реквизиты фирмы снимком, в том виде, в каком уйдут на бумагу.
+
+    Довод дословно тот же, что у квитанции (`document_service._company_snapshot`):
+    фирма сменит банк, и перепечатанная через полгода накладная покажет новый
+    счёт там, где у получателя на руках лежит бумага со старым.
+    """
+    if basis is not None:
+        snimok = document_service.payload_of(basis).get("company")
+        if snimok:
+            return snimok
+    from database.repositories import deals as deals_repo
+
+    deal = deals_repo.get(db, deal_id) if deal_id else None
+    company = company_service.for_document(db, data.get("company_id"), deal)
+    return document_service._company_snapshot(company, settings_service.get_all(db))
 
 
 def _zapisat_perehod(
