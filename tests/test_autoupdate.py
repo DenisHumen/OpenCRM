@@ -30,6 +30,7 @@ from deploy.github import (
 from deploy.journal import Journal
 from deploy.runner import Response, Result, Shell
 from deploy.updater import (
+    PROEKT_NABORA,
     STATUS_ABORTED,
     STATUS_BROKEN,
     STATUS_DEPLOYED,
@@ -1057,6 +1058,38 @@ def test_checks_can_be_switched_off(tmp_path):
     assert not updater.shell.ran("docker-compose.tests.yml")
     tests_step = next(step for step in outcome.steps if step.name == "tests")
     assert "пропущены" in tests_step.detail
+
+
+def test_nabor_gonyaetsya_pod_svoim_imenem_proekta(tmp_path):
+    """БЕДА, СЛУЧИВШАЯСЯ НА СТЕНДЕ: уборка после набора снесла боевой стек.
+
+    После набора идёт `down -v --remove-orphans`. Пока набор — отдельный
+    проект compose, она убирает только его. Но имя проекта берётся не из
+    строки `name:` в файле: `COMPOSE_PROJECT_NAME` из окружения или из
+    `docker/.env` перебивает её, и тогда набор и БОЕВОЙ стек — один проект.
+    `--remove-orphans` в нём означает «снести всё, чего нет в файле набора»:
+    приложение, nginx, базу. С `-v` уезжают и тома.
+
+    На стенде так и вышло: обновление снесло собственное приложение и встало на
+    следующем же шаге — копии базы. Живой сайт это остановило бы ровно так же,
+    только копии базы к тому моменту уже не существовало бы.
+
+    Флаг `-p` сильнее переменной окружения, поэтому проверяем именно его — и на
+    обоих вызовах: забытый на уборке опаснее забытого на запуске.
+    """
+    updater = make_updater(tmp_path)
+
+    updater.run_once()
+
+    nabor = [c for c in updater.shell.calls if "docker-compose.tests.yml" in c]
+    assert len(nabor) == 2, f"ожидались запуск и уборка набора, а вызовов {len(nabor)}"
+    for vyzov in nabor:
+        assert f"-p {PROEKT_NABORA}" in vyzov, (
+            "набор тестов гоняется без своего имени проекта: "
+            + vyzov
+            + ". COMPOSE_PROJECT_NAME сложит его с боевым стеком, и уборка "
+            "`down -v --remove-orphans` снесёт живую установку"
+        )
 
 
 # --- обновление: откат ---

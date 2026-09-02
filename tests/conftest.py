@@ -11,7 +11,7 @@
 
 Адрес берётся из `OPENCRM_TEST_DB_URL`. Поднять базу под набор:
 
-    docker compose -f docker/docker-compose.tests.yml up --build \
+    docker compose -p opencrm-tests -f docker/docker-compose.tests.yml up --build \
         --abort-on-container-exit --exit-code-from tests
 
 Она эфемерная: данные в tmpfs, после прогона не остаётся ничего."""
@@ -26,7 +26,7 @@ import pytest
 _PODSKAZKA = "\n".join((
     "Набор гоняется против настоящей MySQL — другой базы у продукта нет.",
     "Задайте OPENCRM_TEST_DB_URL или поднимите базу вместе с набором:",
-    "    docker compose -f docker/docker-compose.tests.yml up --build \\",
+    "    docker compose -p opencrm-tests -f docker/docker-compose.tests.yml up --build \\",
     "        --abort-on-container-exit --exit-code-from tests",
 ))
 

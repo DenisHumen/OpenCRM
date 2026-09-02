@@ -86,15 +86,27 @@ scripts/
 запускают его снаружи, где база уже поднята:
 
 ```bash
-docker compose -f docker/docker-compose.tests.yml up --build \
+docker compose -p opencrm-tests -f docker/docker-compose.tests.yml up --build \
     --abort-on-container-exit --exit-code-from tests
 ```
 
 У этого файла своё имя проекта (`opencrm-tests`), своя сеть, своя MySQL с данными
-в tmpfs и свой Redis: перепутать с боевым стеком нельзя даже опечаткой, а после
-прогона не остаётся ничего — уборку (`down -v --remove-orphans`) делает сам
-обновлятор в любом исходе. `--exit-code-from tests` обязателен: без него код
-возврата принадлежал бы компоузу, и красный набор проехал бы дальше зелёным.
+в tmpfs и свой Redis, а после прогона не остаётся ничего — уборку
+(`down -v --remove-orphans`) делает сам обновлятор в любом исходе.
+
+**Обновлятор задаёт имя проекта флагом `-p`, и это не украшение.** Строка
+`name:` в файле слабее переменной `COMPOSE_PROJECT_NAME` — хоть из окружения,
+хоть из `docker/.env`. Совпади имена, и набор с боевым стеком становятся одним
+проектом, а уборка `--remove-orphans` означает в нём «снести всё, чего нет в
+файле набора»: приложение, nginx, базу; с `-v` уезжают и тома. Поймано на
+стенде, где имя проекта задано ради трёх установок на одной машине: обновление
+снесло собственное приложение и встало на снятии копии базы. Стережёт
+`tests/test_autoupdate.py::test_nabor_gonyaetsya_pod_svoim_imenem_proekta`.
+
+Запуская набор руками, имя стоит назвать так же.
+
+`--exit-code-from tests` обязателен: без него код возврата принадлежал бы
+компоузу, и красный набор проехал бы дальше зелёным.
 Redis в этом файле стоит не для полноты: шина событий и присутствие живут только
 в нём, и проверка живого слоя без Redis либо пропускается, либо зеленеет, ничего
 не проверив.
@@ -796,7 +808,7 @@ NAT. Цена вопроса мала: `Accept: application/vnd.github.sha` во
 |---|---|---|
 | `preflight` | рабочее дерево чистое **и** на разделе с данными есть место (`OPENCRM_UPDATE_MIN_FREE_MB`, по умолчанию 2048) | стоп: правку, сделанную руками на сервере, затирать нельзя; отказ по месту дёшев только до первой записи |
 | `fetch` / `checkout` | забирает коммит, встаёт на него (detached HEAD) | стоп, чекаут возвращается назад |
-| `tests` | `docker compose -f docker/docker-compose.tests.yml up --build --abort-on-container-exit --exit-code-from tests` — pytest на **новом** коде против своей MySQL | стоп; сайт не тронут, клиенты ничего не заметили |
+| `tests` | `docker compose -p opencrm-tests -f docker/docker-compose.tests.yml up --build --abort-on-container-exit --exit-code-from tests` — pytest на **новом** коде против своей MySQL | стоп; сайт не тронут, клиенты ничего не заметили |
 | `config` | `compose build app`, затем `compose run --rm --no-deps -T --entrypoint python app -m config.selfcheck` | стоп; сайт не тронут |
 | `backup` | копия базы: `scripts/snapshot_db.py` заходом в контейнер приложения | стоп: без копии миграции необратимы |
 | `deploy` | `docker compose up -d --build --remove-orphans` | откат |
