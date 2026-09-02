@@ -55,7 +55,7 @@ def list_for_board(db: Session, board_id: int) -> list[ShareLink]:
         db.scalars(
             select(ShareLink)
             .where(ShareLink.board_id == board_id)
-            .order_by(ShareLink.created_at.desc())
+            .order_by(ShareLink.created_at.desc(), ShareLink.id.desc())
         )
     )
 

@@ -129,7 +129,7 @@ def find_client_by_number(db: Session, number_norm: str) -> Client | None:
     return db.scalars(
         select(Client)
         .where(Client.phone_norm == number_norm, Client.deleted_at.is_(None))
-        .order_by(Client.updated_at.desc())
+        .order_by(Client.updated_at.desc(), Client.id.desc())
         .limit(1)
     ).first()
 

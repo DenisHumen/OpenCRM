@@ -71,8 +71,12 @@ def test_too_long_url_rejected():
 # --- работа ---
 
 def test_work_project_url_saved_and_cleared(manager_client):
-    _board, work_id = _board_with_work(manager_client)
-    board_id = manager_client.get(f"{API}/boards").json()["items"][0]["id"]
+    # Доска берётся СВОЯ, а не первая из общего списка. Список отсортирован по
+    # свежести, и «первая» — это чужая доска, если сосед завёл её позже: работа
+    # ищется не в той, и ответ — `work_not_found` на ровном месте. Поймано
+    # обратным проходом ворот, где порядок файлов другой.
+    board, work_id = _board_with_work(manager_client)
+    board_id = board["id"]
 
     saved = manager_client.patch(
         f"{API}/boards/{board_id}/works/{work_id}",

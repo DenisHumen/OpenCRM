@@ -112,7 +112,7 @@ def for_deal(db: Session, deal_id: int) -> list[Board]:
         db.scalars(
             select(Board)
             .where(Board.deal_id == deal_id, Board.deleted_at.is_(None))
-            .order_by(Board.created_at.desc())
+            .order_by(Board.created_at.desc(), Board.id.desc())
         )
     )
 

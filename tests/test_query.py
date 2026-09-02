@@ -344,6 +344,35 @@ def test_pervichnyy_klyuch_dopisan_v_sortirovku():
     assert "ORDER BY clients.updated_at DESC, clients.id DESC" in sql, sql
 
 
+def test_stranitsa_uhodit_v_bazu_s_klyuchom(db):
+    """Ключ дописывает не помощник сам по себе, а СТРАНИЦА — по-настоящему.
+
+    Соседняя проверка зовёт `_with_tiebreak` напрямую и смотрит на текст. Она
+    остаётся зелёной, если из `page_of` убрать сам вызов: помощник цел, звать
+    его перестали. А `page_of` — единственное место, где ключ дописывается всем
+    страничным спискам разом, то есть половине выборок проекта.
+
+    Поймано подрывом: строка `ordered = _with_tiebreak(stmt)`, заменённая на
+    `ordered = stmt`, не уронила ни одной проверки в наборе.
+
+    Поэтому смотрим на SQL, УШЕДШИЙ В БАЗУ, а не на выражение в коде.
+    """
+    from database.query import page_of
+    from tests.conftest import Zaprosy
+
+    with Zaprosy() as zapisano:
+        page_of(db, select(Client).order_by(Client.updated_at.desc()), page=1, per_page=5)
+
+    vyborki = [
+        s for s in zapisano.spisok
+        if "FROM clients" in s and "ORDER BY" in s
+    ]
+    assert vyborki, "страница не сходила в базу — проверять нечего"
+    assert any("clients.id DESC" in s for s in vyborki), (
+        "страница ушла в базу без первичного ключа в сортировке: " + "; ".join(vyborki)
+    )
+
+
 def test_schyotchik_ne_sortiruet(db):
     """Считать количество можно без сортировки — а база об этом не знает.
 

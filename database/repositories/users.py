@@ -118,7 +118,7 @@ def get_root(db: Session) -> User | None:
 
 
 def list_staff(db: Session, status: str | None = None) -> list[User]:
-    q = select(User).order_by(User.created_at.desc())
+    q = select(User).order_by(User.created_at.desc(), User.id.desc())
     if status:
         q = q.where(User.status == status)
     return list(db.scalars(q))
