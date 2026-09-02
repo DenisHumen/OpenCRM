@@ -8,13 +8,33 @@
 export type Yazyk = "ru" | "en";
 export type Dvuyazychno = Record<Yazyk, string>;
 
-/** Кусок статьи. Виды намеренно наперечёт: чем их меньше, тем ровнее вид. */
+/** Кусок статьи. Виды намеренно наперечёт: чем их меньше, тем ровнее вид.
+ *
+ * Каждый новый вид — это новый способ, которым сотня статей может выглядеть
+ * по-разному, поэтому у каждого свой довод:
+ *
+ * - `svyortka` — длинный разбор под заголовком. Без неё «максимально детально»
+ *   и «читаемо» противоречат друг другу: статья на блок отвечает «зачем и как»,
+ *   а перечень всех полей прячется под заголовок и открывается тем, кому нужен;
+ * - `tablitsa` — там, где у строки две стороны: право и что оно даёт, состояние
+ *   и что с ним делать. Списком это не показать, а разбивать на два списка —
+ *   значит заставить сличать их глазами;
+ * - `vnimanie` — отдельно от `vazhno`. «Важно» — это совет, «внимание» — это
+ *   «данные не вернуть». Одним видом их путают, и тогда перестают читать оба;
+ * - `ekran` — ссылка на место в системе. Читатель уже внутри, и отправлять его
+ *   искать раздел глазами после того, как о нём рассказали, — потеря половины
+ *   пользы.
+ */
 export type Kusok =
   | { vid: "abzats"; tekst: Dvuyazychno }
   | { vid: "spisok"; punkty: Dvuyazychno[] }
   | { vid: "shagi"; punkty: Dvuyazychno[] }
   | { vid: "vazhno"; tekst: Dvuyazychno }
+  | { vid: "vnimanie"; tekst: Dvuyazychno }
   | { vid: "kod"; yazyk: string; tekst: string }
+  | { vid: "svyortka"; zagolovok: Dvuyazychno; kuski: Kusok[] }
+  | { vid: "tablitsa"; shapka: Dvuyazychno[]; ryady: Dvuyazychno[][] }
+  | { vid: "ekran"; put: string; podpis: Dvuyazychno }
   | {
       vid: "ruchka";
       metod: string;
@@ -25,14 +45,29 @@ export type Kusok =
       otvet?: string;
     };
 
-export type Statya = {
+/** Кому статья видна.
+ *
+ * Те же два признака, что у пункта меню (`lib/permissions.ts`), и по тому же
+ * правилу: у кого нет блока — у того нет и статьи про него. Иначе руководство
+ * описывает чужую систему, и читатель идёт искать раздел, которого у него нет.
+ *
+ * Без признаков — видно всем: так у общих статей про начало работы и поиск.
+ */
+export type Vidimost = {
+  /** Блок, вместе с которым статья исчезает. */
+  module?: string;
+  /** Право, без которого статью показывать незачем. */
+  perm?: string;
+};
+
+export type Statya = Vidimost & {
   id: string;
   nazvanie: Dvuyazychno;
   kratko: Dvuyazychno;
   kuski: Kusok[];
 };
 
-export type Razdel = {
+export type Razdel = Vidimost & {
   id: string;
   nazvanie: Dvuyazychno;
   znachok: string;
@@ -109,6 +144,7 @@ export const RUKOVODSTVO: Razdel[] = [
     statyi: [
       {
         id: "klienty",
+        module: "clients",
         nazvanie: { ru: "Клиенты", en: "Clients" },
         kratko: {
           ru: "Карточка клиента — стержень: к ней сходятся заявки, бланки, звонки и переписка.",
@@ -143,6 +179,7 @@ export const RUKOVODSTVO: Razdel[] = [
       },
       {
         id: "zayavki",
+        module: "deals",
         nazvanie: { ru: "Заявки и заказы", en: "Deals and orders" },
         kratko: {
           ru: "Заявка — работа, заказ — перечень товаров. У каждого свой путь.",
@@ -167,6 +204,7 @@ export const RUKOVODSTVO: Razdel[] = [
       },
       {
         id: "sklad",
+        module: "warehouse",
         nazvanie: { ru: "Склад", en: "Stock" },
         kratko: {
           ru: "Остаток не хранится числом — он равен сумме движений.",
@@ -195,6 +233,683 @@ export const RUKOVODSTVO: Razdel[] = [
           },
         ],
       },
+      {
+        id: "nakleyki",
+        module: "labels",
+        nazvanie: { ru: "Наклейки и сканер", en: "Labels and the scanner" },
+        kratko: {
+          ru: "Свой штрихкод на коробке, печать по размеру рулона, поиск сканом.",
+          en: "Your own barcode on the box, printing to your roll size, scan lookup.",
+        },
+        kuski: [
+          {
+            vid: "abzats",
+            tekst: {
+              ru: "У позиции бывает несколько кодов сразу: штука, блок, коробка. Отсканировали код коробки — в строку встало столько штук, сколько в ней лежит, а не одна.",
+              en: "One item can carry several codes at once: a piece, a pack, a box. Scan the box code and the line takes the number of pieces inside it, not one.",
+            },
+          },
+          {
+            vid: "spisok",
+            punkty: [
+              {
+                ru: "Штрихкоды рисует само приложение — сторонний сервис для этого не нужен и не подключается.",
+                en: "Barcodes are drawn by the application itself — no third-party service is needed or used.",
+              },
+              {
+                ru: "Что печатать на наклейке, выбираете вы: десять полей от единицы измерения до QR на карточку товара.",
+                en: "You choose what goes on the label: ten fields from the unit of measure to a QR code pointing at the product card.",
+              },
+              {
+                ru: "Размер задаётся под ваш рулон, а не под лист А4.",
+                en: "The size is set for your roll, not for an A4 sheet.",
+              },
+              {
+                ru: "Чужой код за своим не закрепится: сканер иначе молча подставлял бы не тот товар, и заметили бы это на инвентаризации.",
+                en: "A foreign code will not attach to your product: otherwise the scanner would silently substitute the wrong item, and you would find out at stocktaking.",
+              },
+            ],
+          },
+          { vid: "ekran", put: "/settings/labels", podpis: { ru: "Настроить наклейку", en: "Set up the label" } },
+        ],
+      },
+      {
+        id: "napominaniya",
+        module: "tasks",
+        nazvanie: { ru: "Напоминания", en: "Reminders" },
+        kratko: {
+          ru: "Срок, исполнитель и счётчик просрочки в меню.",
+          en: "A due date, an assignee and an overdue counter in the menu.",
+        },
+        kuski: [
+          {
+            vid: "abzats",
+            tekst: {
+              ru: "Напоминание — это то, о чём нельзя забыть: перезвонить, заказать деталь, отдать вещь. У него есть срок и исполнитель; клиент и заявка необязательны, потому что часть дел ни к кому не привязана.",
+              en: "A reminder is something you must not forget: call back, order a part, hand the item over. It has a due date and an assignee; a client and a deal are optional, because some things belong to nobody in particular.",
+            },
+          },
+          {
+            vid: "abzats",
+            tekst: {
+              ru: "Просроченные считаются и показываются числом рядом с пунктом меню. Число видно с любого экрана — в этом и смысл: напоминание, которое надо пойти и посмотреть, работает хуже того, которое само попадается на глаза.",
+              en: "Overdue ones are counted and shown as a number next to the menu item. You see it from any screen — that is the point: a reminder you have to go and look up works worse than one that catches your eye.",
+            },
+          },
+          {
+            vid: "vazhno",
+            tekst: {
+              ru: "Напоминание заводится прямо из карточки клиента, из заявки и из переписки в телеграме — не выходя туда, где оно понадобилось.",
+              en: "A reminder can be created straight from a client card, a deal and a Telegram chat — without leaving the place where you needed it.",
+            },
+          },
+          { vid: "ekran", put: "/tasks", podpis: { ru: "Открыть напоминания", en: "Open reminders" } },
+        ],
+      },
+      {
+        id: "shablony",
+        module: "templates",
+        nazvanie: { ru: "Шаблоны сообщений", en: "Message templates" },
+        kratko: {
+          ru: "Готовые тексты с подстановками: имя клиента, название заявки, ссылка на доску.",
+          en: "Ready-made texts with placeholders: client name, deal title, board link.",
+        },
+        kuski: [
+          {
+            vid: "abzats",
+            tekst: {
+              ru: "Шаблон — это текст, который пишут один раз и потом подставляют. Внутри него места для подстановки: имя клиента, название заявки, номер бланка, ссылка на доску работ, название вашей фирмы.",
+              en: "A template is a text you write once and reuse. Inside it there are placeholders: client name, deal title, form number, work board link, your company name.",
+            },
+          },
+          {
+            vid: "abzats",
+            tekst: {
+              ru: "Незаполненные подстановки видно ДО отправки. Это не придирка: письмо с обращением по пустому имени уходит к клиенту один раз, а помнят о нём долго.",
+              en: "Unfilled placeholders are visible BEFORE you send. That is not fussiness: a letter greeting an empty name goes out once and is remembered for a long time.",
+            },
+          },
+          {
+            vid: "svyortka",
+            zagolovok: { ru: "Откуда берутся значения подстановок", en: "Where placeholder values come from" },
+            kuski: [
+              {
+                vid: "spisok",
+                punkty: [
+                  {
+                    ru: "Ссылка на доску — ЖИВАЯ: отозванная и просроченная не подставляются, потому что ведут на страницу с отказом. Из нескольких берётся самая ранняя, чтобы текст не менялся между отправками.",
+                    en: "The board link is a LIVE one: revoked and expired links are not used, because they lead to a refusal page. Of several, the earliest is taken so the text does not change between sends.",
+                  },
+                  {
+                    ru: "Название фирмы: фирма заявки, иначе основная фирма, иначе название бизнеса из настроек.",
+                    en: "Company name: the deal company, else the default company, else the business name from settings.",
+                  },
+                  {
+                    ru: "Выключенные блоки в текст не подтекают: без досок поле станет прочерком, а не ссылкой в никуда.",
+                    en: "Disabled modules do not leak into the text: with boards off the field becomes a dash, not a link to nowhere.",
+                  },
+                ],
+              },
+            ],
+          },
+          { vid: "ekran", put: "/templates", podpis: { ru: "Открыть шаблоны", en: "Open templates" } },
+        ],
+      },
+    ],
+  },
+  {
+    id: "bumagi",
+    znachok: "receipt",
+    nazvanie: { ru: "Бумаги", en: "Paperwork" },
+    statyi: [
+      {
+        id: "blanki",
+        module: "documents",
+        nazvanie: { ru: "Бланки", en: "Forms" },
+        kratko: {
+          ru: "Квитанция приёмки и акт работ: номер, состояния, печать, штрихкод.",
+          en: "Intake receipt and act of works: number, statuses, printing, barcode.",
+        },
+        kuski: [
+          {
+            vid: "abzats",
+            tekst: {
+              ru: "Бланк — единственное, что уходит из системы на руки человеку. Поэтому у него сквозной номер внутри года, история состояний с именами и печатная форма на русском, английском или украинском.",
+              en: "A form is the only thing that leaves the system into someone else's hands. Hence a sequential number within the year, a status history with names, and a printable form in Russian, English or Ukrainian.",
+            },
+          },
+          {
+            vid: "tablitsa",
+            shapka: [
+              { ru: "Состояние", en: "Status" },
+              { ru: "Что оно значит", en: "What it means" },
+            ],
+            ryady: [
+              [
+                { ru: "Выдан", en: "Issued" },
+                { ru: "Бумага напечатана и отдана.", en: "The paper is printed and handed over." },
+              ],
+              [
+                { ru: "В работе", en: "In progress" },
+                { ru: "Взяли в работу.", en: "Work has started." },
+              ],
+              [
+                { ru: "Готово", en: "Ready" },
+                { ru: "Сделано, ждём выдачи. Можно вернуть в работу: вещь забрали проверить и нашли ещё поломку.", en: "Done, waiting to be handed over. You can send it back to work: the item was checked and another fault turned up." },
+              ],
+              [
+                { ru: "Закрыт", en: "Closed" },
+                { ru: "Отдано. Оживить закрытый бланк нельзя.", en: "Handed over. A closed form cannot be revived." },
+              ],
+              [
+                { ru: "Отменён", en: "Cancelled" },
+                { ru: "Бумага отменена. Именно так бланк и убирают: он остаётся в истории.", en: "The paper is cancelled. This is how a form is put aside: it stays in the history." },
+              ],
+            ],
+          },
+          {
+            vid: "vnimanie",
+            tekst: {
+              ru: "Бланк не удаляется ничем и никогда — ни кнопкой, ни правом. Выданная бумага не исчезает, это правило учёта: у клиента на руках копия, и расхождение с ней дороже любой уборки.",
+              en: "A form is never deleted — not by a button, not by a permission. An issued paper does not vanish; it is an accounting rule: the client holds a copy, and disagreeing with it costs more than any tidiness.",
+            },
+          },
+          {
+            vid: "abzats",
+            tekst: {
+              ru: "На бумаге печатаются штрихкод и QR. Штрихкод читает сканер за стойкой — поле скана стоит вверху списка бланков и ловит ввод само. QR ведёт на публичную страницу состояния: клиент открывает её телефоном и видит, где его вещь, не звоня.",
+              en: "The paper carries a barcode and a QR code. The barcode is read by a counter scanner: the scan box sits at the top of the forms list and catches input on its own. The QR leads to a public status page, so the client opens it on a phone and sees where the item is without calling.",
+            },
+          },
+          {
+            vid: "abzats",
+            tekst: {
+              ru: "Список бланков разложен по видам, и каждую категорию можно свернуть. Числа рядом с видами — серверные и не меняются от того, что вы сняли вид с показа: иначе, спрятав квитанции, вы потеряли бы и способ их вернуть.",
+              en: "The forms list is grouped by kind, and every category can be collapsed. The numbers next to kinds come from the server and do not change when you hide a kind: otherwise, hiding receipts would also hide the way to bring them back.",
+            },
+          },
+          { vid: "ekran", put: "/documents", podpis: { ru: "Открыть бланки", en: "Open forms" } },
+        ],
+      },
+      {
+        id: "zakazy",
+        module: "orders",
+        nazvanie: { ru: "Заказы", en: "Orders" },
+        kratko: {
+          ru: "Заказ покупателю и заказ поставщику: сборка сканом, отгрузка, приёмка.",
+          en: "Customer and supplier orders: scan picking, shipping, receiving.",
+        },
+        kuski: [
+          {
+            vid: "abzats",
+            tekst: {
+              ru: "Заказ покупателя отвечает на вопрос «когда отдадим», заказ поставщику — «когда привезут». Виды не смешиваются, потому что вопросы у них разные.",
+              en: "A customer order answers the question «when do we hand it over», a supplier order answers «when does it arrive». The two kinds are not mixed, because the questions differ.",
+            },
+          },
+          {
+            vid: "abzats",
+            tekst: {
+              ru: "Заказ заводится из заявки одним нажатием: товарные строки переезжают в него сами. Свои траты и услуги при этом НЕ переносятся — по заказу собирают коробки, и строка про упаковку показывала бы «собрано 0 из 1», пока её не отметят руками.",
+              en: "An order is created from a deal in one click: the goods lines move into it by themselves. Your own costs and services are NOT carried over — an order is a picking list, and a packaging line would show «0 of 1 picked» until someone ticked it by hand.",
+            },
+          },
+          {
+            vid: "vazhno",
+            tekst: {
+              ru: "Бронь при этом не удваивается. Заказ ПЕРЕНИМАЕТ её у заявки: обещанное считается вычитанием, а не сложением двух списков.",
+              en: "The reservation is not doubled. The order TAKES IT OVER from the deal: what is promised is computed by subtraction, not by adding two lists together.",
+            },
+          },
+          {
+            vid: "svyortka",
+            zagolovok: { ru: "Сборка и проведение", en: "Picking and processing" },
+            kuski: [
+              {
+                vid: "spisok",
+                punkty: [
+                  {
+                    ru: "Собранное живёт отдельно от заказанного: расхождение «заказано пять, собрано четыре» видно построчно ДО отгрузки, а не на выдаче.",
+                    en: "Picked is stored separately from ordered: a mismatch «five ordered, four picked» is visible line by line BEFORE shipping, not at handover.",
+                  },
+                  {
+                    ru: "Собирают сканером: отсканировали код — строка отметилась. Код чужого товара даёт отказ, а не молчаливую отметку не той строки.",
+                    en: "Picking is done with a scanner: scan a code and the line is ticked. A code from another product is refused, rather than silently ticking the wrong line.",
+                  },
+                  {
+                    ru: "Набирать позиции и двигать склад — разные полномочия: сборщик набирает, отгружает старший.",
+                    en: "Picking items and moving stock are different powers: a picker picks, a senior ships.",
+                  },
+                  {
+                    ru: "Проведение откатывается обратными движениями. Прежние движения остаются на месте: склад — это история, а не текущее число.",
+                    en: "Processing is rolled back with counter-movements. The original movements stay where they were: stock is a history, not a current number.",
+                  },
+                ],
+              },
+            ],
+          },
+          { vid: "ekran", put: "/orders", podpis: { ru: "Открыть заказы", en: "Open orders" } },
+        ],
+      },
+      {
+        id: "nakladnye",
+        module: "waybills",
+        nazvanie: { ru: "Накладные", en: "Waybills" },
+        kratko: {
+          ru: "Отгрузка и приёмка отдельной бумагой, а не движением заодно с заказом.",
+          en: "Shipping and receiving as a separate paper, not as a side effect of an order.",
+        },
+        kuski: [
+          {
+            vid: "abzats",
+            tekst: {
+              ru: "Накладная нужна там, где товар передают из рук в руки и это надо подтвердить. Расходная — отгрузка со склада, приходная — приёмка на склад.",
+              en: "A waybill is needed where goods change hands and that must be confirmed. An outgoing one ships from the warehouse, an incoming one receives into it.",
+            },
+          },
+          {
+            vid: "spisok",
+            punkty: [
+              {
+                ru: "Накладная по заказу заводится одним нажатием: позиции переносятся, повторно набирать их не надо.",
+                en: "A waybill for an order is created in one click: the items are carried over, no need to key them in again.",
+              },
+              {
+                ru: "Проведение двигает остаток. До проведения это черновик, и правится только он.",
+                en: "Processing moves the stock. Until then it is a draft, and only a draft can be edited.",
+              },
+              {
+                ru: "Получатель подтверждает приёмку. Ошиблись — сторнируется черновиком, а не правкой проведённой бумаги.",
+                en: "The recipient confirms receipt. If something is wrong it is reversed with a draft, not by editing a processed paper.",
+              },
+            ],
+          },
+          {
+            vid: "vnimanie",
+            tekst: {
+              ru: "Товар, уже ушедший накладной, второй раз не отгрузится: проведение заказа откажет и назовёт номера накладных, которыми он ушёл.",
+              en: "Goods already shipped by a waybill will not ship twice: processing the order refuses and names the waybills that carried them.",
+            },
+          },
+          { vid: "ekran", put: "/waybills", podpis: { ru: "Открыть накладные", en: "Open waybills" } },
+        ],
+      },
+      {
+        id: "firmy",
+        module: "companies",
+        nazvanie: { ru: "Свои юрлица", en: "Your companies" },
+        kratko: {
+          ru: "От чьего имени печатается бумага: реквизиты, счёт, подписант.",
+          en: "Whose name is on the paper: details, bank account, signatory.",
+        },
+        kuski: [
+          {
+            vid: "abzats",
+            tekst: {
+              ru: "Блок нужен тем, у кого юрлиц больше одного или у кого в бумагах есть реквизиты. Бланк печатается с реквизитами выбранной фирмы; заявка помнит свою.",
+              en: "The module is for those with more than one legal entity, or with details on their papers. A form is printed with the chosen company details; a deal remembers its own.",
+            },
+          },
+          {
+            vid: "vazhno",
+            tekst: {
+              ru: "Основная фирма ровно одна. Сделали основной другую — признак у прежней снимается сам, и промежуточного состояния «основных две» не возникает.",
+              en: "There is exactly one default company. Make another one default and the flag is cleared from the previous one, with no intermediate state of «two defaults».",
+            },
+          },
+          { vid: "ekran", put: "/companies", podpis: { ru: "Открыть фирмы", en: "Open companies" } },
+        ],
+      },
+    ],
+  },
+  {
+    id: "naruzhu",
+    znachok: "boards",
+    nazvanie: { ru: "Клиенту наружу", en: "Facing the client" },
+    statyi: [
+      {
+        id: "doski",
+        module: "boards",
+        nazvanie: { ru: "Доски работ и витрина", en: "Work boards and the showcase" },
+        kratko: {
+          ru: "Подборка работ по ссылке без регистрации: PIN, срок действия, счётчик просмотров.",
+          en: "A set of works behind a link with no sign-up: PIN, expiry, view counter.",
+        },
+        kuski: [
+          {
+            vid: "abzats",
+            tekst: {
+              ru: "Доска — это подборка работ для одного клиента. Витрина — публичная страница, на которой он их видит: без входа в систему, по ссылке, которую вы ему дали.",
+              en: "A board is a set of works for one client. The showcase is the public page where they see it: no sign-in, just the link you sent.",
+            },
+          },
+          {
+            vid: "spisok",
+            punkty: [
+              {
+                ru: "У доски бывает НЕСКОЛЬКО ссылок сразу — разным людям, с разными PIN и сроками. Отозвали одну, остальные работают.",
+                en: "A board can have SEVERAL links at once — for different people, with different PINs and expiry dates. Revoke one and the rest keep working.",
+              },
+              {
+                ru: "PIN — четыре цифры, и подбор их закрыт ограничителем по адресу. Сам PIN показывается вам один раз, при установке.",
+                en: "The PIN is four digits, and guessing is blocked by a per-address rate limit. The PIN itself is shown to you once, when you set it.",
+              },
+              {
+                ru: "Просмотры считаются, а сырые адреса посетителей не хранятся: достаточно отличать уникальных.",
+                en: "Views are counted, and raw visitor addresses are not stored: telling unique visitors apart is enough.",
+              },
+              {
+                ru: "Исходники клиенту не отдаются вовсе. Сотрудник забирает их сам: одну работу файлом или всю доску архивом.",
+                en: "Source files are never handed to the client. Staff take them out themselves: one work as a file or the whole board as an archive.",
+              },
+            ],
+          },
+          {
+            vid: "vnimanie",
+            tekst: {
+              ru: "Выключение блока досок закрывает и уже разосланные ссылки. Это нарочно: выключенный блок исчезает целиком, а не только из меню.",
+              en: "Disabling the boards module also closes links you have already sent. That is deliberate: a disabled module disappears entirely, not just from the menu.",
+            },
+          },
+          {
+            vid: "svyortka",
+            zagolovok: { ru: "Оформление витрины", en: "How the showcase looks" },
+            kuski: [
+              {
+                vid: "spisok",
+                punkty: [
+                  {
+                    ru: "Логотип, название и цвет акцента берутся из настроек бренда — те же, что стоят в панели.",
+                    en: "The logo, name and accent colour come from brand settings — the same ones you see in the sidebar.",
+                  },
+                  {
+                    ru: "Кнопка в шапке уводит клиента на ваш сайт. Не указан адрес — кнопки нет вовсе.",
+                    en: "A button in the header takes the client to your website. With no address there is no button at all.",
+                  },
+                  {
+                    ru: "Язык публичных страниц задаётся отдельно от языка вашего интерфейса: клиент и сотрудник читают разное.",
+                    en: "The language of public pages is set separately from your own interface language: the client and the employee read different things.",
+                  },
+                  {
+                    ru: "Картинка для мессенджеров нужна, чтобы ссылка в чате разворачивалась превью, а не голым адресом.",
+                    en: "A preview image makes the link unfold as a card in chats instead of showing a bare address.",
+                  },
+                ],
+              },
+            ],
+          },
+          { vid: "ekran", put: "/boards", podpis: { ru: "Открыть доски", en: "Open boards" } },
+        ],
+      },
+      {
+        id: "zayavki-s-sayta",
+        perm: "settings.manage",
+        nazvanie: { ru: "Заявки с сайта", en: "Website requests" },
+        kratko: {
+          ru: "Форма на вашем сайте заводит клиента и работу сама.",
+          en: "A form on your website creates the client and the work by itself.",
+        },
+        kuski: [
+          {
+            vid: "abzats",
+            tekst: {
+              ru: "Приём заявок работает по ключу. Ключ создаётся в настройках и показывается ОДИН раз: дальше он живёт у того, кто пишет форму на сайте.",
+              en: "Request intake works with a key. The key is created in settings and shown ONCE: afterwards it lives with whoever writes the form on your site.",
+            },
+          },
+          {
+            vid: "spisok",
+            punkty: [
+              {
+                ru: "Пустой ключ — это и есть выключатель: приёма не существует, пока ключа нет.",
+                en: "An empty key is the switch: intake does not exist while there is no key.",
+              },
+              {
+                ru: "Там же выбирается ответственный — тот, на кого лягут пришедшие заявки.",
+                en: "The same screen picks the owner — the person the incoming requests land on.",
+              },
+              {
+                ru: "Карточка получает источник «сайт». Он лежит в общем справочнике источников, поэтому его же можно поставить руками: человек, посмотревший сайт и позвонивший, пришёл оттуда же, а форму не заполнял.",
+                en: "The card gets the source «site». It sits in the common source list, so you can set it by hand too: someone who looked at the site and then called came from there, without filling the form.",
+              },
+              {
+                ru: "Ловушка для ботов и ограничитель по адресу стоят на приёме: форма в интернете открыта всем.",
+                en: "A bot trap and a per-address rate limit guard the intake: a form on the internet is open to everyone.",
+              },
+            ],
+          },
+          { vid: "ekran", put: "/settings/leads", podpis: { ru: "Настроить приём заявок", en: "Set up request intake" } },
+        ],
+      },
+    ],
+  },
+  {
+    id: "kanaly",
+    znachok: "mail",
+    nazvanie: { ru: "Каналы связи", en: "Channels" },
+    statyi: [
+      {
+        id: "pochta",
+        module: "mail",
+        nazvanie: { ru: "Почта", en: "Mail" },
+        kratko: {
+          ru: "Ящик фирмы: письма привязываются к клиенту и ложатся в общую ленту.",
+          en: "The company mailbox: letters attach to a client and land in the shared feed.",
+        },
+        kuski: [
+          {
+            vid: "abzats",
+            tekst: {
+              ru: "Ящик подключается по IMAP и SMTP. Входящее письмо привязывается к клиенту по адресу отправителя — и попадает в ленту карточки рядом со звонками, встречами и заметками.",
+              en: "The mailbox connects over IMAP and SMTP. An incoming letter is matched to a client by the sender address and lands in the card feed next to calls, meetings and notes.",
+            },
+          },
+          {
+            vid: "vazhno",
+            tekst: {
+              ru: "К ЗАЯВКЕ письмо само не привязывается: у клиента их бывает несколько сразу, и «взять последнюю открытую» — это угадывание. Клиент — факт, заявка — решение человека.",
+              en: "A letter does not attach itself to a DEAL: a client often has several at once, and «take the latest open one» is guesswork. The client is a fact, the deal is a human decision.",
+            },
+          },
+          {
+            vid: "spisok",
+            punkty: [
+              {
+                ru: "Письмо, доставленное сразу на два ящика фирмы, сохраняется дважды — по разу на ящик, и это нарочно.",
+                en: "A letter delivered to two company mailboxes is stored twice — once per mailbox, and that is deliberate.",
+              },
+              {
+                ru: "Повторная синхронизация не задваивает ни письмо, ни строку ленты.",
+                en: "Re-syncing duplicates neither the letter nor the feed entry.",
+              },
+              {
+                ru: "Письма не правятся и не удаляются: почта — зеркало сервера, а правка задним числом была бы способом подделать переписку.",
+                en: "Letters are neither edited nor deleted: mail mirrors the server, and editing after the fact would be a way to forge correspondence.",
+              },
+            ],
+          },
+          { vid: "ekran", put: "/mail", podpis: { ru: "Открыть почту", en: "Open mail" } },
+        ],
+      },
+      {
+        id: "telefoniya",
+        module: "telephony",
+        nazvanie: { ru: "Звонки", en: "Calls" },
+        kratko: {
+          ru: "Журнал звонков от АТС, звонок из карточки и задача «перезвонить».",
+          en: "A call log from your PBX, calling from a card and a «call back» task.",
+        },
+        kuski: [
+          {
+            vid: "abzats",
+            tekst: {
+              ru: "АТС присылает события о звонках вебхуком. Подпись проверяется, повтор того же события не задваивает запись — линия связи с чужой системой обязана быть устойчивой к обоим.",
+              en: "The PBX sends call events over a webhook. The signature is verified and a repeated event does not duplicate the record — a link to someone else's system must survive both.",
+            },
+          },
+          {
+            vid: "spisok",
+            punkty: [
+              {
+                ru: "Звонок ищет карточку по нормализованному номеру: записанный как +7 (900) 000-00-00 и как 89000000000 — один и тот же человек.",
+                en: "A call finds the card by a normalised number: written as +7 (900) 000-00-00 or as 89000000000, it is the same person.",
+              },
+              {
+                ru: "Из карточки звонят одним нажатием, а после разговора заводят напоминание «перезвонить».",
+                en: "You call from a card in one click, and after the conversation you create a «call back» reminder.",
+              },
+              {
+                ru: "Журнал только дописывается: звонок был, и убрать его из истории значит убрать факт.",
+                en: "The log is append-only: the call happened, and removing it from the history would remove the fact.",
+              },
+            ],
+          },
+          { vid: "ekran", put: "/settings/telephony", podpis: { ru: "Подключить АТС", en: "Connect a PBX" } },
+        ],
+      },
+      {
+        id: "telegram",
+        module: "telegram",
+        nazvanie: { ru: "Телеграм", en: "Telegram" },
+        kratko: {
+          ru: "Переписка с клиентами через бота фирмы, прямо в системе.",
+          en: "Chatting with clients through the company bot, right inside the system.",
+        },
+        kuski: [
+          {
+            vid: "abzats",
+            tekst: {
+              ru: "Слева список диалогов, справа лента переписки с вложениями. Отвечают отсюда же; шаблоны подставляются прямо в поле ввода.",
+              en: "Chats on the left, the conversation with attachments on the right. You answer from here, and templates drop straight into the input box.",
+            },
+          },
+          {
+            vid: "spisok",
+            punkty: [
+              {
+                ru: "Диалог привязывается к карточке руками или по точному номеру. Из переписки заводятся карточка, заявка и напоминание.",
+                en: "A chat is attached to a card by hand or by an exact phone number. From the conversation you can create a card, a deal and a reminder.",
+              },
+              {
+                ru: "Когда в диалог заходит второй сотрудник, оба видят баннер с именами — чтобы не отвечать клиенту вдвоём.",
+                en: "When a second employee opens the chat, both see a banner with names — so the client does not get two answers.",
+              },
+              {
+                ru: "Диалоги отбираются по метке источника: наклейка, визитка и письмо дают разные метки, и видно, откуда пришли.",
+                en: "Chats can be filtered by source label: a sticker, a business card and a letter carry different labels, so you see where people came from.",
+              },
+              {
+                ru: "Срок хранения переписки называете вы. Старое убирает таймер, а не человек.",
+                en: "You set how long conversations are kept. Old ones are removed by a timer, not by a person.",
+              },
+            ],
+          },
+          {
+            vid: "svyortka",
+            zagolovok: { ru: "Приглашение и QR", en: "Invitation and QR" },
+            kuski: [
+              {
+                vid: "abzats",
+                tekst: {
+                  ru: "В настройках бота собирается ссылка-приглашение и QR к ней. Рядом задаётся метка: наберите «наклейка» — и QR, распечатанный на коробке, будет отличим от того, что стоит на квитанции.",
+                  en: "Bot settings build an invitation link and its QR code. Next to it you type a label: enter «sticker» and the QR printed on a box becomes distinguishable from the one on a receipt.",
+                },
+              },
+              {
+                vid: "abzats",
+                tekst: {
+                  ru: "Тем же ботом каждое утро уходит сводка по системе, и её НЕПРИХОД сам по себе тревога: тишину нельзя отличить от «всё хорошо», пока о ней не сообщают вслух.",
+                  en: "The same bot sends a morning digest, and its ABSENCE is an alert in itself: silence is indistinguishable from «all good» until someone says so out loud.",
+                },
+              },
+            ],
+          },
+          { vid: "ekran", put: "/telegram", podpis: { ru: "Открыть переписку", en: "Open chats" } },
+        ],
+      },
+    ],
+  },
+  {
+    id: "dengi",
+    znachok: "analytics",
+    nazvanie: { ru: "Деньги и отчёты", en: "Money and reports" },
+    statyi: [
+      {
+        id: "finansy",
+        module: "finance",
+        nazvanie: { ru: "Деньги", en: "Money" },
+        kratko: {
+          ru: "Статьи прихода и расхода, планы на период, прибыль за отрезок.",
+          en: "Income and expense categories, budgets for a period, profit over a range.",
+        },
+        kuski: [
+          {
+            vid: "abzats",
+            tekst: {
+              ru: "Операция — это факт: пришли или ушли деньги. У неё есть статья, сумма и дата события, а не дата занесения.",
+              en: "An operation is a fact: money came in or went out. It has a category, an amount and the date it happened — not the date it was typed in.",
+            },
+          },
+          {
+            vid: "vnimanie",
+            tekst: {
+              ru: "Операция НЕИЗМЕНЯЕМА. Ошиблись — заводится обратная, а не правится прежняя. Иначе прошлый отчёт менялся бы от сегодняшней правки, и сверить его было бы не с чем.",
+              en: "An operation is IMMUTABLE. If you got it wrong, add a reversing one instead of editing the old one. Otherwise last month's report would change from today's edit, and there would be nothing to reconcile against.",
+            },
+          },
+          {
+            vid: "spisok",
+            punkty: [
+              {
+                ru: "Правила начисления записывают то, что повторяется: с каждого заказа — столько-то в такую-то статью.",
+                en: "Accrual rules record what repeats: so much from every order into a given category.",
+              },
+              {
+                ru: "План на период показывает, сколько собирались потратить и сколько потратили на самом деле.",
+                en: "A budget for a period shows what you meant to spend and what you actually spent.",
+              },
+              {
+                ru: "Оплаты привязываются к бланку: видно, сколько получено и сколько осталось.",
+                en: "Payments attach to a form: you see how much came in and how much is left.",
+              },
+            ],
+          },
+          { vid: "ekran", put: "/finance", podpis: { ru: "Открыть деньги", en: "Open money" } },
+        ],
+      },
+      {
+        id: "otchyoty",
+        module: "reports",
+        nazvanie: { ru: "Отчёты", en: "Reports" },
+        kratko: {
+          ru: "Воронка с конверсией, выручка по месяцам, источники клиентов.",
+          en: "A funnel with conversion, revenue by month, client sources.",
+        },
+        kuski: [
+          {
+            vid: "abzats",
+            tekst: {
+              ru: "Три отчёта отвечают на три разных вопроса: где встают заявки, сколько денег пришло и откуда приходят клиенты. Каждый выгружается в CSV тем же отбором, что виден на экране.",
+              en: "Three reports answer three different questions: where deals get stuck, how much money came in, and where clients come from. Each exports to CSV with the same filter you see on screen.",
+            },
+          },
+          {
+            vid: "vazhno",
+            tekst: {
+              ru: "Выручка — это ПОЛУЧЕННЫЕ деньги. Сумма выигранных заявок стоит рядом отдельным числом и так и называется: это разные вещи, и путать их дорого.",
+              en: "Revenue means money RECEIVED. The total of won deals stands next to it as a separate number under its own name: these are different things, and confusing them is expensive.",
+            },
+          },
+          {
+            vid: "abzats",
+            tekst: {
+              ru: "Воронка считается по журналу перемещений, а не по текущему этапу: текущий отвечает «где всё лежит сейчас», а воронка — «сколько прошло через каждый шаг».",
+              en: "The funnel is computed from the stage-change log, not from the current stage: the current one answers «where everything sits now», while the funnel answers «how many went through each step».",
+            },
+          },
+          { vid: "ekran", put: "/reports", podpis: { ru: "Открыть отчёты", en: "Open reports" } },
+        ],
+      },
     ],
   },
   {
@@ -204,6 +919,7 @@ export const RUKOVODSTVO: Razdel[] = [
     statyi: [
       {
         id: "prava",
+        perm: "roles.view",
         nazvanie: { ru: "Должности и права", en: "Roles and permissions" },
         kratko: {
           ru: "Право выдаётся должности. Интерфейс прячет то, на что права нет.",
@@ -221,6 +937,7 @@ export const RUKOVODSTVO: Razdel[] = [
       },
       {
         id: "bloki",
+        perm: "settings.manage",
         nazvanie: { ru: "Блоки системы", en: "Modules" },
         kratko: {
           ru: "Выключенный блок исчезает целиком, но данные его остаются.",
@@ -234,6 +951,122 @@ export const RUKOVODSTVO: Razdel[] = [
               en: "Before switching one off the system tells you what will disappear and how many records it touches. Switch it back on and everything returns; nothing is lost.",
             },
           },
+        ],
+      },
+      {
+        id: "sotrudniki",
+        perm: "staff.view",
+        nazvanie: { ru: "Сотрудники", en: "Staff" },
+        kratko: {
+          ru: "Кого пускаем внутрь, кого отключаем и почему уволить последнего управляющего нельзя.",
+          en: "Who gets in, who gets switched off, and why the last permissions manager cannot be removed.",
+        },
+        kuski: [
+          {
+            vid: "abzats",
+            tekst: {
+              ru: "Сотрудник заводится с почтой и должностью. Права выдаются ДОЛЖНОСТИ, а не человеку: иначе через год никто не ответит, почему у Петрова есть то, чего нет у Иванова на той же работе.",
+              en: "An employee is created with an email and a role. Permissions belong to the ROLE, not to the person: otherwise, a year later nobody can say why Peter has something Ivan on the same job does not.",
+            },
+          },
+          {
+            vid: "spisok",
+            punkty: [
+              {
+                ru: "Отключённый сотрудник остаётся в системе и в истории, но войти не может: его сессии снимаются сразу.",
+                en: "A disabled employee stays in the system and in the history but cannot sign in: their sessions are dropped at once.",
+              },
+              {
+                ru: "Удаление безвозвратно. Авторство при этом сохраняется: заметки, файлы и движения склада остаются, а имя в них — снимком.",
+                en: "Deletion is permanent. Authorship survives: notes, files and stock movements stay, with the name kept as a snapshot.",
+              },
+              {
+                ru: "Себе роль не меняют и себя не удаляют. Это не вежливость: иначе тот, кто раздаёт права, снял бы с себя любое ограничение.",
+                en: "You cannot change your own role or delete yourself. That is not politeness: otherwise whoever grants permissions could lift any limit from themselves.",
+              },
+            ],
+          },
+          {
+            vid: "vnimanie",
+            tekst: {
+              ru: "Последнего, кто умеет раздавать права, снять нельзя ничем: ни правкой должности, ни переводом, ни отключением, ни увольнением. Сначала дайте право второму человеку. Владелец (root) — исключение: он действует, значит доступ у него есть прямо сейчас.",
+              en: "The last person able to grant permissions cannot be removed by any means: not by editing the role, not by reassigning, disabling or deleting. Give the permission to a second person first. The owner (root) is the exception: they are acting, so their access exists right now.",
+            },
+          },
+          { vid: "ekran", put: "/staff", podpis: { ru: "Открыть сотрудников", en: "Open staff" } },
+        ],
+      },
+      {
+        id: "nastroyki-sayta",
+        perm: "settings.manage",
+        nazvanie: { ru: "Настройки сайта", en: "Site settings" },
+        kratko: {
+          ru: "Разложены по категориям: фирма, страницы для клиента, склад, каналы, деньги, система.",
+          en: "Grouped into categories: company, client-facing pages, stock, channels, money, system.",
+        },
+        kuski: [
+          {
+            vid: "abzats",
+            tekst: {
+              ru: "Разделов настроек четырнадцать, и они разложены по категориям. Категория из двух и более разделов сворачивается, из одного — показывается самим разделом: заголовок, за которым лежит ровно один пункт, обещает выбор, которого нет.",
+              en: "There are fourteen settings sections, grouped into categories. A category with two or more sections collapses; one with a single section shows that section directly: a heading hiding exactly one item promises a choice that is not there.",
+            },
+          },
+          {
+            vid: "abzats",
+            tekst: {
+              ru: "Раскладка меняется сама вслед за блоками. Выключили склад — категория «Склад и товар» исчезает целиком, вместе с адресами: спрятанный пункт при живом адресе это не защита, а её видимость.",
+              en: "The layout follows the modules by itself. Switch stock off and the «Stock and goods» category disappears entirely, addresses included: a hidden item with a live address is not protection, only the look of it.",
+            },
+          },
+          {
+            vid: "svyortka",
+            zagolovok: { ru: "Что в какой категории", en: "What lives where" },
+            kuski: [
+              {
+                vid: "tablitsa",
+                shapka: [
+                  { ru: "Категория", en: "Category" },
+                  { ru: "Что внутри", en: "What is inside" },
+                ],
+                ryady: [
+                  [
+                    { ru: "Блоки системы", en: "Modules" },
+                    { ru: "Стоят первыми и вне категорий: они решают, какие категории вообще существуют. Единственные применяются сразу, а не по кнопке «Сохранить».", en: "They come first and outside the categories: they decide which categories exist at all. The only ones applied instantly rather than by a Save button." },
+                  ],
+                  [
+                    { ru: "Доступ", en: "Access" },
+                    { ru: "Должности и права.", en: "Roles and permissions." },
+                  ],
+                  [
+                    { ru: "Фирма", en: "Company" },
+                    { ru: "Бренд (логотип, название, цвет, язык публичных страниц) и контакты.", en: "Brand (logo, name, colour, language of public pages) and contacts." },
+                  ],
+                  [
+                    { ru: "Страницы для клиента", en: "Client-facing pages" },
+                    { ru: "Оформление витрины и ссылка на ваш сайт.", en: "Showcase appearance and the link to your website." },
+                  ],
+                  [
+                    { ru: "Склад и товар", en: "Stock and goods" },
+                    { ru: "Склады как места и настройки наклейки.", en: "Warehouses as places and label settings." },
+                  ],
+                  [
+                    { ru: "Как с вами связываются", en: "Ways to reach you" },
+                    { ru: "Почтовые ящики, АТС, бот телеграма, приём заявок с сайта.", en: "Mailboxes, the PBX, the Telegram bot, website request intake." },
+                  ],
+                  [
+                    { ru: "Деньги", en: "Money" },
+                    { ru: "Статьи прихода и расхода, планы.", en: "Income and expense categories, budgets." },
+                  ],
+                  [
+                    { ru: "Система", en: "System" },
+                    { ru: "Режим обслуживания.", en: "Maintenance mode." },
+                  ],
+                ],
+              },
+            ],
+          },
+          { vid: "ekran", put: "/settings/brand", podpis: { ru: "Открыть настройки", en: "Open settings" } },
         ],
       },
     ],
@@ -251,6 +1084,13 @@ export const RUKOVODSTVO: Razdel[] = [
           en: "One response shape, one error shape, one page shape.",
         },
         kuski: [
+          {
+            vid: "vazhno",
+            tekst: {
+              ru: "Здесь — соглашения и один разобранный пример, а не перечень ручек. Полный справочник со всеми адресами, правами и отказами лежит рядом с исходниками: docs/04-api.md, и полноту его стережёт проверка. Два перечня по одним и тем же ручкам разошлись бы на первой же новой.",
+              en: "This is conventions plus one worked example, not a list of endpoints. The full reference with every address, permission and refusal ships with the sources: docs/04-api.md, and a test guards its completeness. Two lists over the same endpoints would diverge at the very first new one.",
+            },
+          },
           {
             vid: "abzats",
             tekst: {
@@ -387,6 +1227,99 @@ export const RUKOVODSTVO: Razdel[] = [
               en: "A copy counts as sound only if it carries an end marker: a truncated dump looks like an ordinary file and fails exactly when you need to restore from it.",
             },
           },
+        ],
+      },
+      {
+        id: "nablyudenie",
+        module: "monitoring",
+        perm: "monitoring.view",
+        nazvanie: { ru: "Наблюдение за сервером", en: "Server monitoring" },
+        kratko: {
+          ru: "Состояние стека, горящие тревоги и кнопки «принято» и «заглушить» прямо в телеграме.",
+          en: "Stack health, firing alerts and «ack» and «silence» buttons right in Telegram.",
+        },
+        kuski: [
+          {
+            vid: "abzats",
+            tekst: {
+              ru: "Раздел показывает, что происходит с самим сервером: живы ли сборщики метрик, отвечает ли база, что горит прямо сейчас. Он только показывает — заводить и править там нечего, всё приходит снаружи.",
+              en: "The section shows what is happening to the server itself: are the metric collectors alive, does the database answer, what is firing right now. It only shows — there is nothing to create or edit, everything arrives from outside.",
+            },
+          },
+          {
+            vid: "abzats",
+            tekst: {
+              ru: "Тревога приходит в телеграм с кнопками «принято» и «заглушить на час». Кнопки здесь не украшение: без них ночная тревога либо будит всех подряд, либо глушится навсегда и забывается.",
+              en: "An alert arrives in Telegram with «ack» and «silence for an hour» buttons. They are not decoration: without them a night alert either wakes everyone or gets silenced forever and forgotten.",
+            },
+          },
+          {
+            vid: "vnimanie",
+            tekst: {
+              ru: "Это наблюдение ИЗНУТРИ. Упавшая машина о себе не сообщит — закрывает это только наблюдатель со стороны, с чужого адреса. Заведите его отдельно.",
+              en: "This is monitoring from the INSIDE. A machine that is down will not report itself — only an outside watcher on someone else's address covers that. Set one up separately.",
+            },
+          },
+          { vid: "ekran", put: "/server", podpis: { ru: "Открыть наблюдение", en: "Open monitoring" } },
+        ],
+      },
+      {
+        id: "zhurnal",
+        perm: "audit.view",
+        nazvanie: { ru: "Журнал действий", en: "Activity log" },
+        kratko: {
+          ru: "Кто что менял: деньги, этапы, удаления, доступы и блоки.",
+          en: "Who changed what: money, stages, deletions, access and modules.",
+        },
+        kuski: [
+          {
+            vid: "abzats",
+            tekst: {
+              ru: "Журнал отвечает на вопрос «кто это сделал» и больше ни на какой. В нём записаны действия, из-за которых потом спорят: правка денег, смена этапа, удаление, выдача и снятие доступа, переключение блоков.",
+              en: "The log answers the question «who did this» and nothing else. It records the actions people later argue about: money edits, stage changes, deletions, granting and revoking access, module toggles.",
+            },
+          },
+          {
+            vid: "vazhno",
+            tekst: {
+              ru: "Журнал только дописывается. Переписать его нельзя ни правом, ни кнопкой — это единственный раздел, где ничего нельзя изменить, и в этом всё его значение.",
+              en: "The log is append-only. It cannot be rewritten by any permission or button — it is the only section where nothing can be changed, and that is the whole point of it.",
+            },
+          },
+          {
+            vid: "abzats",
+            tekst: {
+              ru: "Имя исполнителя хранится СНИМКОМ. Сотрудника уволили и удалили — запись остаётся с его именем, а не с прочерком: иначе журнал терял бы ответ ровно в тот момент, когда за ним приходят.",
+              en: "The actor name is stored as a SNAPSHOT. If the employee is deleted, the entry keeps their name instead of a dash: otherwise the log would lose the answer exactly when someone comes looking for it.",
+            },
+          },
+          { vid: "ekran", put: "/audit", podpis: { ru: "Открыть журнал", en: "Open the log" } },
+        ],
+      },
+      {
+        id: "obsluzhivanie-rezhim",
+        perm: "settings.manage",
+        nazvanie: { ru: "Режим обслуживания", en: "Maintenance mode" },
+        kratko: {
+          ru: "Заглушка для посетителей, пока вы работаете внутри.",
+          en: "A holding page for visitors while you work inside.",
+        },
+        kuski: [
+          {
+            vid: "abzats",
+            tekst: {
+              ru: "Включённый режим показывает посетителям заглушку с вашей запиской, а владелец продолжает работать. Нужен он там, где правят данные и не хотят, чтобы в этот момент кто-то оформлял заказ.",
+              en: "With the mode on, visitors see a holding page with your note while the owner keeps working. It is for the times you are fixing data and do not want someone placing an order right then.",
+            },
+          },
+          {
+            vid: "abzats",
+            tekst: {
+              ru: "Та же заглушка показывается сама во время обновления. На ней живёт змейка с таблицей рекордов — не шутки ради: страница без единого признака жизни читается как «сайт умер», и звонить начинают через минуту.",
+              en: "The same page appears on its own during an update. It carries a snake game with a leaderboard — not for fun: a page with no sign of life reads as «the site is dead», and the calls start within a minute.",
+            },
+          },
+          { vid: "ekran", put: "/settings/maintenance", podpis: { ru: "Открыть обслуживание", en: "Open maintenance" } },
         ],
       },
     ],

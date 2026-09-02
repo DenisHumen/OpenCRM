@@ -2550,6 +2550,19 @@ a.tg-file:hover { text-decoration: underline; }
 .docs-article h2 { margin: 0 0 6px; font-size: 16px; font-weight: 600; color: var(--text); }
 .docs-article p { margin: 0 0 12px; font-size: 13.5px; line-height: 1.65; color: var(--muted); }
 .docs-lead { color: var(--faint) !important; font-size: 13px !important; }
+/* Оглавление раздела: строкой из ссылок, а не столбцом. Столбец на тридцати
+   статьях занял бы экран целиком, а оглавление нужно, чтобы до статьи дойти, а
+   не чтобы его читать. Прокрутка к якорю плавная — иначе непонятно, куда
+   прыгнули. */
+.docs-toc { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 22px; }
+.docs-toc-item {
+  padding: 5px 10px; border: 1px solid var(--line); border-radius: 999px;
+  color: var(--muted); text-decoration: none; font-size: 12.5px;
+}
+.docs-toc-item:hover { border-color: var(--brand); color: var(--brand); }
+.docs-article { scroll-margin-top: 16px; }
+html { scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
 @keyframes docs-poyavlenie { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { .docs-article { animation: none; } }
 .docs-list { margin: 0 0 12px; padding-left: 18px; }
@@ -2569,6 +2582,37 @@ a.tg-file:hover { text-decoration: underline; }
   background: var(--tint-brand); color: var(--text);
   font-size: 13px; line-height: 1.6;
 }
+/* «Внимание» отдельно от «важно», и цветом тоже. «Важно» — совет, «внимание» —
+   «данные не вернуть»; одинаковые на вид, они перестают читаться оба. */
+.docs-warn {
+  display: flex; gap: 9px; align-items: flex-start;
+  margin: 0 0 12px; padding: 10px 12px;
+  border-left: 2px solid var(--danger); border-radius: 0 8px 8px 0;
+  background: var(--tint-danger); color: var(--text);
+  font-size: 13px; line-height: 1.6;
+}
+/* Свёрнутый разбор: заголовок во всю ширину, чтобы попадать с первого раза. */
+.docs-fold { margin: 0 0 12px; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.docs-fold-head {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 9px 12px; background: var(--surface-2); border: none; cursor: pointer;
+  font-family: var(--sans); font-size: 13px; font-weight: 500; color: var(--text); text-align: left;
+}
+.docs-fold-head:hover { color: var(--brand); }
+.docs-fold-chevron { transition: transform 180ms ease; flex-shrink: 0; }
+.docs-fold.open .docs-fold-chevron { transform: rotate(180deg); }
+.docs-fold-body { padding: 12px 12px 2px; }
+/* Таблица шире колонки статьи не редкость: прокрутка своя, страница вбок не едет. */
+.docs-table-wrap { overflow-x: auto; margin: 0 0 12px; }
+/* Ссылка на место в системе — строкой, а не кнопкой: это переход, а не действие. */
+.docs-screen-link {
+  display: inline-flex; align-items: center; gap: 7px;
+  margin: 0 0 12px; padding: 7px 11px;
+  border: 1px solid var(--line); border-radius: 8px;
+  color: var(--brand); text-decoration: none; font-size: 13px; font-weight: 500;
+}
+.docs-screen-link:hover { border-color: var(--brand); background: var(--tint-brand); }
+@media (prefers-reduced-motion: reduce) { .docs-fold-chevron { transition: none; } }
 .docs-code {
   margin: 0 0 12px; padding: 12px 14px; overflow-x: auto;
   border: 1px solid var(--line); border-radius: 8px; background: var(--well-off);
