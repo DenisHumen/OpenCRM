@@ -410,9 +410,11 @@ def pereselit_iz_etapov(
 
 
 def by_ids(db: Session, deal_ids) -> list[Deal]:
+    # Порядок задан: список уезжает на карточку товара держателями брони, и без
+    # него две загрузки подряд показывают те же заявки в разном порядке.
     if not deal_ids:
         return []
-    return list(db.scalars(select(Deal).where(Deal.id.in_(deal_ids))))
+    return list(db.scalars(select(Deal).where(Deal.id.in_(deal_ids)).order_by(Deal.id.asc())))
 
 
 def zapert_zayavku(db: Session, deal_id: int) -> None:
