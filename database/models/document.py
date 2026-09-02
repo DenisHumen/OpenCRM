@@ -3,6 +3,7 @@ from datetime import datetime
 from sqlalchemy import (
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -195,6 +196,13 @@ class Document(Base):
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()
+    )
+
+    # Списки бумаг отбирают по виду и СЧИТАЮТ категории на каждый заход, а
+    # счёт на пятидесятой строке не останавливается: он читал таблицу целиком.
+    # Замер и отвергнутые формы — в миграции `a3f81c62d947`.
+    __table_args__ = (
+        Index("ix_documents_kind_status_created", "kind", "status", "created_at"),
     )
 
 

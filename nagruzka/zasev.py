@@ -32,7 +32,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from core.security.passwords import hash_password  # noqa: E402
-from database.models import Client, Deal, User  # noqa: E402
+from database.models import Client, Deal, Document, Product, User  # noqa: E402
+from database.models.document import DocumentLine  # noqa: E402
+from database.models.document import LINE_KINDS, statuses_for  # noqa: E402
 from database.models.user import ROLE_MANAGER, STATUS_ACTIVE  # noqa: E402
 from database.repositories import roles as roles_repo  # noqa: E402
 from database.session import SessionLocal  # noqa: E402
@@ -44,6 +46,21 @@ PACHKA = 1000
 IMENA = ("Алексей", "Мария", "Дмитрий", "Ольга", "Сергей", "Анна", "Игорь", "Елена")
 FAMILII = ("Ковалёв", "Соколова", "Морозов", "Волкова", "Зайцев", "Орлова", "Гусев")
 ETAPY = ("new", "in_progress", "won", "lost")
+TOVARY = ("Матрица", "Клавиатура", "Блок питания", "Шлейф", "Аккумулятор", "Термопаста")
+
+#: Доли видов бумаг. Не поровну, и это не украшение: списки бумаг отбирают
+#: ПО ВИДУ, а на равных долях любой отбор попадает в треть таблицы. На живой
+#: базе мастерской квитанций большинство, а накладных единицы — то есть
+#: именно тот случай, когда отбор без индекса читает всё подряд ради
+#: горстки строк. Равные доли это спрятали бы.
+DOLI_VIDOV = (
+    ("intake", 55),
+    ("act", 20),
+    ("sales_order", 14),
+    ("purchase_order", 6),
+    ("waybill_out", 4),
+    ("waybill_in", 1),
+)
 
 
 def zaseyat_klientov(skolko: int, sluchay: random.Random) -> list[int]:
@@ -104,6 +121,132 @@ def zaseyat_zayavki(skolko: int, klienty: list[int], sluchay: random.Random) -> 
     print(f"  заявок: {skolko} за {time.perf_counter() - nachalo:.1f} с" + " " * 20)
 
 
+def zaseyat_bumagi(skolko: int, klienty: list[int], sluchay: random.Random) -> None:
+    """Бумаги пачками: квитанции, акты, заказы и накладные в одной таблице.
+
+    **Зачем они в засеве.** Списки бумаг отбирают по виду и по состоянию и
+    считают над каждой категорией её число — то есть `GROUP BY` на каждый заход.
+    Мерить это было не на чем: засев умел клиентов и заявки, а `documents`
+    оставалась пустой, и любой замер списка бумаг показывал ноль миллисекунд на
+    нулевой таблице.
+
+    **Снимок кладём НАСТОЯЩЕЙ длины.** Поиск по бумагам идёт `LIKE` и по номеру,
+    и по снимку (`payload`); на пустом снимке он читал бы вчетверо меньше и
+    обещал бы вчетверо больше, чем есть.
+
+    Статус берётся из `statuses_for(вид)`, а не из общего списка: квитанция в
+    состоянии «черновик» на живой базе не встречается, и отбор по состоянию на
+    выдуманном сочетании мерил бы то, чего не бывает.
+    """
+    if not klienty:
+        raise SystemExit("сначала клиенты: бумаге нужен клиент")
+    vidy = [vid for vid, dolya in DOLI_VIDOV for _ in range(dolya)]
+    seychas = datetime.now()
+    nachalo = time.perf_counter()
+    with SessionLocal() as db:
+        # Номер сквозной и уникальный — продолжаем с последнего, а не с нуля:
+        # повторный засев иначе падал бы на уникальном индексе `number`.
+        bylo = db.query(Document.id).count()
+        for kusok in range(0, skolko, PACHKA):
+            v_pachke = min(PACHKA, skolko - kusok)
+            stroki = []
+            for n in range(v_pachke):
+                nomer = bylo + kusok + n + 1
+                vid = sluchay.choice(vidy)
+                kogda = seychas - timedelta(days=sluchay.randrange(0, 720))
+                stroki.append({
+                    "number": f"{kogda.year}-{nomer:06d}",
+                    "kind": vid,
+                    "status": sluchay.choice(statuses_for(vid)),
+                    "locale": "ru",
+                    "client_id": sluchay.choice(klienty),
+                    "payload": _snimok(nomer, sluchay),
+                    "created_at": kogda,
+                    "updated_at": kogda,
+                })
+            db.bulk_insert_mappings(Document, stroki)
+            db.commit()
+            print(f"  бумаг: {kusok + v_pachke}/{skolko}", end="\r", flush=True)
+    print(f"  бумаг: {skolko} за {time.perf_counter() - nachalo:.1f} с" + " " * 20)
+
+
+def _snimok(nomer: int, sluchay: random.Random) -> str:
+    """Снимок бумаги — той длины, какая уезжает на печать."""
+    veshch = sluchay.choice(("Ноутбук Asus X515", "Матрица 15.6", "Клавиатура", "Блок питания"))
+    return (
+        '{"company": {"name": "ФОП Иванов", "phone": "+380 44 123-45-67"}, '
+        f'"client": {{"name": "Заказчик {nomer}", "phone": "+380 50 000-00-00"}}, '
+        f'"fields": {{"item": "{veshch}", "serial": "SN{nomer:08d}", '
+        '"condition": "потёртости корпуса", "problem": "не включается", '
+        '"accessories": "зарядное устройство", "terms": "гарантия 30 дней"}}'
+    )
+
+
+def zaseyat_tovary(skolko: int, sluchay: random.Random) -> list[int]:
+    """Товары: без них строки бумаг ссылаться не на что."""
+    nachalo = time.perf_counter()
+    with SessionLocal() as db:
+        bylo = db.query(Product.id).count()
+        for kusok in range(0, skolko, PACHKA):
+            v_pachke = min(PACHKA, skolko - kusok)
+            stroki = [
+                {
+                    "sku": f"N-{bylo + kusok + n:06d}",
+                    "name": f"{sluchay.choice(TOVARY)} {bylo + kusok + n}",
+                    "unit": sluchay.choice(("pcs", "pcs", "pcs", "kg", "m")),
+                    "price_minor": sluchay.randrange(1000, 900_000),
+                    "cost_minor": sluchay.randrange(500, 400_000),
+                    "is_service": False,
+                }
+                for n in range(v_pachke)
+            ]
+            db.bulk_insert_mappings(Product, stroki)
+            db.commit()
+        nomera = [row[0] for row in db.query(Product.id).all()]
+    print(f"  товаров: {skolko} за {time.perf_counter() - nachalo:.1f} с")
+    return nomera
+
+
+def zaseyat_stroki(tovary: list[int], sluchay: random.Random) -> None:
+    """Строки перечня ко всем бумагам, у которых они бывают.
+
+    **Зачем отдельно от бумаг.** Резерв (`documents_repo.promised`) считается
+    СОЕДИНЕНИЕМ строк с бумагами и отбирает по `documents.kind`. На пустой
+    таблице строк он отвечает мгновенно и не мерит ничего — а это самый дорогой
+    запрос карточки товара и один из тех, чей план ломает неудачный индекс.
+
+    Строки не у всех бумаг: у квитанции их не бывает (`LINE_KINDS`), и сеять их
+    туда значило бы мерить то, чего в системе не существует.
+    """
+    if not tovary:
+        raise SystemExit("сначала товары: строке нужен товар")
+    nachalo = time.perf_counter()
+    with SessionLocal() as db:
+        bumagi = [
+            row[0] for row in db.query(Document.id).filter(Document.kind.in_(LINE_KINDS)).all()
+        ]
+        vsego = 0
+        for kusok in range(0, len(bumagi), PACHKA):
+            stroki = []
+            for bumaga in bumagi[kusok:kusok + PACHKA]:
+                for poryadok in range(sluchay.randrange(1, 5)):
+                    tovar = sluchay.choice(tovary)
+                    stroki.append({
+                        "document_id": bumaga,
+                        "product_id": tovar,
+                        "name_snapshot": f"Позиция {tovar}",
+                        "quantity_milli": sluchay.randrange(1, 10) * 1000,
+                        "price_minor": sluchay.randrange(1000, 900_000),
+                        "cost_minor": sluchay.randrange(500, 400_000),
+                        "sort_order": poryadok,
+                    })
+            db.bulk_insert_mappings(DocumentLine, stroki)
+            db.commit()
+            vsego += len(stroki)
+            print(f"  строк: {vsego}", end="\r", flush=True)
+    print(f"  строк: {vsego} за {time.perf_counter() - nachalo:.1f} с" + " " * 20)
+
+
 def zaseyat_lyudey(skolko: int, parol: str) -> None:
     """Сотрудники, которые будут работать в замере.
 
@@ -157,6 +300,10 @@ def main() -> None:
     razbor = argparse.ArgumentParser(description="Наполнить базу объёмом для замера")
     razbor.add_argument("--klientov", type=int, default=20000)
     razbor.add_argument("--zayavok", type=int, default=30000)
+    razbor.add_argument("--bumag", type=int, default=0,
+                        help="квитанции, акты, заказы и накладные в одной таблице")
+    razbor.add_argument("--tovarov", type=int, default=0,
+                        help="товары; нужны строкам бумаг")
     razbor.add_argument("--lyudey", type=int, default=100,
                         help="сотрудников для нагрузочного прогона")
     razbor.add_argument("--parol", default="nagruzka-pass-123")
@@ -169,6 +316,11 @@ def main() -> None:
     zaseyat_lyudey(dovody.lyudey, dovody.parol)
     klienty = zaseyat_klientov(dovody.klientov, sluchay)
     zaseyat_zayavki(dovody.zayavok, klienty, sluchay)
+    if dovody.bumag:
+        zaseyat_bumagi(dovody.bumag, klienty, sluchay)
+    if dovody.tovarov:
+        tovary = zaseyat_tovary(dovody.tovarov, sluchay)
+        zaseyat_stroki(tovary, sluchay)
     print("готово")
 
 
