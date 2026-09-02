@@ -674,12 +674,17 @@ def test_kazhdyy_marshrut_bloka_zakryt_pravom():
 def test_operatsiya_ostavlyaet_sled_v_zhurnale(root_client, money):
     """«Кто завёл этот расход» — тот же вопрос, что «кто списал две матрицы»."""
     _income, expense = money
-    add(root_client, expense["id"], 640_00)
+    operatsiya = add(root_client, expense["id"], 640_00)
 
+    # Спрашиваем про СВОЮ операцию по её номеру, а не «самую свежую с таким
+    # названием статьи»: имена статей у фикстуры постоянные, и записи соседних
+    # тестов ложатся под тот же ярлык. Какая из них окажется первой, решает
+    # порядок файлов в прогоне, — и проверка краснела на неизменном коде.
     entries = root_client.get(
-        f"{API}/audit", params={"entity_type": "finance_operation"}
+        f"{API}/audit",
+        params={"entity_type": "finance_operation", "entity_id": operatsiya["id"]},
     ).json()["items"]
-    mine = [row for row in entries if row["entity_label"] == expense["name"]]
+    mine = [row for row in entries if row["action"] == "finance.operation_added"]
     assert mine, "операция прошла мимо журнала"
     assert mine[0]["action"] == "finance.operation_added"
     # Сумма в журнал уезжает целыми минорными единицами — без валюты и формата.
