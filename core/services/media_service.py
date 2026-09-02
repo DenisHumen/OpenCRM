@@ -398,6 +398,9 @@ def compute_blurhash(im: Image.Image) -> str | None:
         pixels = [[list(small.getpixel((x, y))) for x in range(w)] for y in range(h)]
         return blurhash_lib.encode(pixels, components_x=4, components_y=3)
     except Exception:
+        # Размытая подложка — украшение на время загрузки. Не сосчиталась —
+        # работа всё равно готова, и ронять её обработку из-за подложки
+        # значит терять картинку целиком ради её тени.
         return None
 
 

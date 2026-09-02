@@ -63,6 +63,9 @@ def _sprosit(opener=None) -> int | None:
         znachenie = dannye.get("stargazers_count")
         return int(znachenie) if isinstance(znachenie, int) else None
     except Exception:
+        # Звёзды — украшение, и ради них не падает ни одна страница: сеть,
+        # таймаут, смена ответа GitHub дают `None`, а экран показывает кнопку
+        # без числа. Ноль был бы утверждением, которого мы не делали.
         return None
 
 
