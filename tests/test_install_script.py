@@ -1133,3 +1133,47 @@ def test_kadr_pulta_ostayotsya_pryamougolnym(stolbcov, lokal):
     assert len(set(ramka)) == 1, (
         f"рамка разъехалась, ширина строк разная: {sorted(set(ramka))}"
     )
+
+
+def test_sekret_trevog_odin_na_oba_kontejnera():
+    """Разошедшиеся стороны молча перестают доставлять тревоги.
+
+    Приложение проверяет заголовок, Alertmanager его шлёт. Задай их порознь — и
+    в день, когда значения разъедутся, тревоги перестанут доходить БЕЗ единого
+    признака: не доедет и тревога про эту же поломку. Поэтому переменная одна и
+    та же, и обе службы читают её из одного файла.
+    """
+    compose = (SCRIPT.parent / "docker" / "docker-compose.yml").read_text(encoding="utf-8")
+    # Считаем СТРОКИ, а не вхождения: в строке `X: ${X:-}` имя стоит дважды, и
+    # проверка «вхождений хотя бы два» зеленела на одной службе из двух —
+    # поймано подрывом.
+    sluzhb = sum(
+        1 for stroka in compose.splitlines()
+        if stroka.strip().startswith("OPENCRM_ALERTS_SECRET:")
+    )
+    assert sluzhb >= 2, (
+        f"секрет тревог уходит в {sluzhb} службу из двух — приложение и "
+        "Alertmanager разъедутся, и доставка встанет молча"
+    )
+
+    tochka = (
+        SCRIPT.parent / "docker" / "monitoring" / "alertmanager" / "entrypoint.sh"
+    ).read_text(encoding="utf-8")
+    assert "__ALERTS_SECRET__" in tochka, (
+        "точка входа Alertmanager не подставляет секрет в конфиг — заголовок "
+        "уедет с меткой-заглушкой"
+    )
+
+    shablon = (
+        SCRIPT.parent / "docker" / "monitoring" / "alertmanager"
+        / "alertmanager-crm.yml.template"
+    ).read_text(encoding="utf-8")
+    assert "X-OpenCRM-Alerts-Key" in shablon and "__ALERTS_SECRET__" in shablon, (
+        "в шаблоне конфига нет заголовка с ключом — приложение будет ждать того, "
+        "чего никто не шлёт"
+    )
+
+    assert "configure_alerts_secret" in source(), (
+        "установщик не заводит секрет — свежая установка останется с открытым "
+        "приёмом, о котором никто не узнает"
+    )
