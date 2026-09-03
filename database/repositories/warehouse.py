@@ -465,17 +465,20 @@ def make_primary(db: Session, row: ProductBarcode) -> None:
     db.refresh(row)
 
 
-def products_by_ids(db: Session, product_ids) -> list[Product]:
+def products_by_ids(db: Session, product_ids, include_deleted: bool = False) -> list[Product]:
     """Товары пачкой. Удалённых не отдаём: печатать наклейку на то, чего нет в
-    справочнике, значит наклеить на коробку код, который потом никого не найдёт."""
+    справочнике, значит наклеить на коробку код, который потом никого не найдёт.
+
+    `include_deleted` — для уже выписанной бумаги: она печатается такой, какой
+    её выписали, и удаление товара не имеет права опустошить столбец «Ед.».
+    """
     product_ids = [i for i in set(product_ids) if i]
     if not product_ids:
         return []
-    return list(
-        db.scalars(
-            select(Product).where(Product.id.in_(product_ids), Product.deleted_at.is_(None))
-        )
-    )
+    usloviya = [Product.id.in_(product_ids)]
+    if not include_deleted:
+        usloviya.append(Product.deleted_at.is_(None))
+    return list(db.scalars(select(Product).where(*usloviya)))
 
 
 def moves_of_document(db: Session, document_id: int) -> list[StockMove]:

@@ -354,8 +354,13 @@ def print_waybill(
 
     # Единицы — из товаров, одним запросом. По строке за штуку это дало бы
     # полсотни обращений на печать пятидесятипозиционной накладной.
+    # `include_deleted`: бумага печатается такой, какой её выписали. Без этого
+    # удаление товара опустошало столбец «Ед.» РАЗОМ у всех прошлых накладных —
+    # «3» без единицы, а штуки это, килограммы или метры, сказать нечем.
     tovary = warehouse_repo.products_by_ids(
-        db, {line.product_id for line in rows if line.product_id}
+        db,
+        {line.product_id for line in rows if line.product_id},
+        include_deleted=True,
     )
     edinicy = {p.id: p.unit for p in tovary}
     nazvaniya = UNIT_NAMES.get(lang, UNIT_NAMES["ru"])
@@ -368,6 +373,7 @@ def print_waybill(
     basis = None
     if waybill.basis_id:
         basis = document_service.get(db, waybill.basis_id).number
+    kto_provyol = waybill_service.kto_otpustil(db, waybill)
 
     html = public_routes.templates.get_template("waybill_print.html").render(
         doc=waybill,
@@ -385,7 +391,11 @@ def print_waybill(
         basis=basis,
         warehouse=warehouse,
         created=waybill.created_at.strftime("%d.%m.%Y %H:%M") if waybill.created_at else "",
-        released_by=waybill_service.kto_otpustil(db, waybill),
+        # У ПРИХОДНОЙ наш сотрудник — принимающая сторона: товар отпустил
+        # поставщик. Имя под «Отпустил» было бы неправдой, а пустой осталась
+        # бы ровно та строка, под которой стоит его настоящая подпись.
+        released_by=kto_provyol if ishodyashchaya else "",
+        received_by="" if ishodyashchaya else kto_provyol,
         money=money,
         lines=[
             {

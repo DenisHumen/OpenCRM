@@ -209,6 +209,66 @@ def test_edinica_izmereniya_na_bumage(root_client, klient):
     assert "кг" in html, "единица измерения на бумагу не попала"
 
 
+def test_edinica_perezhivaet_udalenie_tovara(root_client, klient):
+    """Бумага печатается такой, какой её выписали, — включая столбец «Ед.».
+
+    Единица бралась из товара живьём, а удалённых репозиторий не отдаёт: одно
+    удаление опустошало клетку РАЗОМ у всех прошлых накладных с этим товаром.
+    На листе оставалось «3» без единицы — штуки это, килограммы или метры,
+    сказать нечем, и строка выглядит недописанной.
+    """
+    tovar = product(root_client, unit="kg", stock="10")
+    waybill = provedyonnaya(root_client, klient_id=klient["id"], tovar=tovar)
+    do = root_client.get(f"{WAYBILLS}/{waybill['id']}/print").text
+    assert "кг" in do, "единица не попала на бумагу ещё до удаления"
+
+    ubrat = root_client.delete(f"{API}/warehouse/products/{tovar['id']}")
+    assert ubrat.status_code in (200, 204), ubrat.text
+
+    posle = root_client.get(f"{WAYBILLS}/{waybill['id']}/print").text
+    assert "кг" in posle, (
+        "удаление товара опустошило столбец «Ед.» на уже выписанной накладной"
+    )
+
+
+def test_podpisi_stoyat_po_napravleniyu(root_client, klient):
+    """У приходной наш сотрудник ПРИНЯЛ товар, а не отпустил его.
+
+    По приходной накладной товар приехал ОТ поставщика: отпустил поставщик,
+    принял наш кладовщик. Имя проведшего стояло под «Отпустил» при любом виде
+    бумаги — то есть лист утверждал неправду и оставлял пустой ровно ту
+    строку, под которой стоит настоящая подпись.
+    """
+    tovar = product(root_client)
+    rashod = provedyonnaya(root_client, klient_id=klient["id"], tovar=tovar)
+    html_out = root_client.get(f"{WAYBILLS}/{rashod['id']}/print").text
+    otpustil_out = _posle(html_out, "Отпустил")
+    poluchil_out = _posle(html_out, "Получил")
+    assert otpustil_out, "у расходной пусто под «Отпустил»"
+    assert not poluchil_out, "у расходной наше имя уехало под «Получил»"
+
+    chern = chernovik(
+        root_client,
+        klient_id=klient["id"],
+        tovar=tovar,
+        kind="waybill_in",
+    )
+    provesti = root_client.post(f"{WAYBILLS}/{chern['id']}/post", json={})
+    assert provesti.status_code == 200, provesti.text
+    html_in = root_client.get(f"{WAYBILLS}/{chern['id']}/print").text
+    assert not _posle(html_in, "Отпустил"), (
+        "у приходной наше имя стоит под «Отпустил» — товар отпустил поставщик"
+    )
+    assert _posle(html_in, "Получил") == otpustil_out, (
+        "у приходной пуста строка «Получил» — та самая, под которой подпись"
+    )
+
+
+def _posle(html: str, podpis: str) -> str:
+    """Имя, напечатанное сразу за подписью: `Отпустил<b>Root</b>`."""
+    nayd = re.search(re.escape(podpis) + r"<b>([^<]*)</b>", html)
+    return (nayd.group(1) if nayd else "").strip()
+
 def test_adres_firmy_popadaet_v_shapku(root_client, klient):
     """БЫЛО: шаблоны спрашивали `company.address`, а такого ключа нет никогда.
 
