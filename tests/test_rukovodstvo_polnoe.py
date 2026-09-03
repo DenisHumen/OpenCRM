@@ -189,3 +189,93 @@ def test_ssylki_na_ekrany_vedut_kuda_to():
         + ", ".join(net)
         + ". Читатель нажмёт и вернётся на главную"
     )
+
+
+def _prava_marshrutov() -> dict[str, str]:
+    """Адрес экрана -> право, которым он закрыт в `App.tsx`.
+
+    Право стоит на ОБЁРТКЕ (`<Route element={<PermRoute perm="x" />}>`), а не
+    на самом маршруте, и действует на всё вложенное. Собираем по отступу, как
+    и адреса выше.
+    """
+    tekst = (KOREN / "web" / "frontend" / "crm" / "src" / "App.tsx").read_text(
+        encoding="utf-8"
+    )
+    prava: dict[str, str] = {}
+    stek: list[tuple[int, str, str]] = []  # отступ, адрес, право
+    for stroka in tekst.splitlines():
+        if "<Route" not in stroka:
+            continue
+        otstup = len(stroka) - len(stroka.lstrip())
+        while stek and stek[0 - 1][0] >= otstup:
+            stek.pop()
+        roditel = stek[0 - 1][1] if stek else ""
+        pravo = stek[0 - 1][2] if stek else ""
+        nayd = re.search(r'perm="([^"]+)"', stroka)
+        if nayd:
+            pravo = nayd.group(1)
+        put = re.search(r'path="([^"]+)"', stroka)
+        if put:
+            znachenie = put.group(1)
+            polnyy = znachenie if znachenie.startswith("/") else (
+                roditel.rstrip('/') + '/' + znachenie
+            )
+            if pravo:
+                prava[polnyy] = pravo
+        else:
+            polnyy = roditel
+        if not stroka.rstrip().endswith("/>"):
+            stek.append((otstup, polnyy, pravo))
+    return prava
+
+
+def _statyi_so_ssylkami() -> list[tuple[str, str, str]]:
+    """(статья, объявленное право, адрес экрана) — по всем кнопкам `ekran`."""
+    itog = []
+    statya = ""
+    pravo = ""
+    for stroka in _tekst().splitlines():
+        nayd = re.match(r'^\s*id: "([a-z0-9_-]+)",\s*$', stroka)
+        if nayd:
+            statya = nayd.group(1)
+            pravo = ""
+        nayd = re.match(r'^\s*perm: "([^"]+)",\s*$', stroka)
+        if nayd:
+            pravo = nayd.group(1)
+        nayd = re.search(r'vid:\s*"ekran",\s*put:\s*"([^"]+)"', stroka)
+        if nayd:
+            itog.append((statya, pravo, nayd.group(1)))
+    return itog
+
+
+def test_razbor_prav_nahodit_izvestnoe():
+    """Сторож на сам разбор: пустая карта прав зеленела бы на любой беде."""
+    prava = _prava_marshrutov()
+    assert len(prava) > 10, f"маршрутов под правом нашлось {len(prava)} — разбор сломан"
+    assert prava.get("/tasks") == "tasks.view", prava.get("/tasks")
+    assert prava.get("/settings/labels") == "settings.manage", (
+        "вложенный адрес настроек не собрался — право взято не то"
+    )
+
+
+def test_statya_nazyvaet_pravo_svoego_ekrana():
+    """Кнопка «Открыть» у читателя без права уводит на сводку молча.
+
+    Статьи закрыты БЛОКОМ, а экраны — ещё и правом. Руководство при этом
+    описывает раздел, которого у человека нет, и кнопка в нём не открывает
+    ничего: `PermRoute` отскакивает на главную без объяснения. Ради этого в
+    `Docs.tsx` и заведён отбор по видимости — «иначе руководство описывает
+    чужую систему».
+    """
+    prava = _prava_marshrutov()
+    vinovnye = []
+    for statya, obyavleno, put in _statyi_so_ssylkami():
+        nuzhno = prava.get(put)
+        if nuzhno is None or nuzhno == obyavleno:
+            continue
+        vinovnye.append(f"{statya} -> {put}: нужно {nuzhno}, объявлено {obyavleno or '—'}")
+    assert not vinovnye, (
+        "статья ведёт кнопкой на экран, закрытый правом, и права не объявляет:\n  "
+        + "\n  ".join(vinovnye)
+        + "\nПоставьте `perm` рядом с `id` статьи"
+    )

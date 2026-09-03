@@ -235,6 +235,7 @@ export const RUKOVODSTVO: Razdel[] = [
       },
       {
         id: "nakleyki",
+        perm: "settings.manage",
         module: "labels",
         nazvanie: { ru: "Наклейки и сканер", en: "Labels and the scanner" },
         kratko: {
@@ -275,6 +276,7 @@ export const RUKOVODSTVO: Razdel[] = [
       },
       {
         id: "napominaniya",
+        perm: "tasks.view",
         module: "tasks",
         nazvanie: { ru: "Напоминания", en: "Reminders" },
         kratko: {
@@ -308,6 +310,7 @@ export const RUKOVODSTVO: Razdel[] = [
       },
       {
         id: "shablony",
+        perm: "templates.view",
         module: "templates",
         nazvanie: { ru: "Шаблоны сообщений", en: "Message templates" },
         kratko: {
@@ -364,6 +367,7 @@ export const RUKOVODSTVO: Razdel[] = [
     statyi: [
       {
         id: "blanki",
+        perm: "documents.view",
         module: "documents",
         nazvanie: { ru: "Бланки", en: "Forms" },
         kratko: {
@@ -577,6 +581,7 @@ export const RUKOVODSTVO: Razdel[] = [
       },
       {
         id: "firmy",
+        perm: "companies.view",
         module: "companies",
         nazvanie: { ru: "Свои юрлица", en: "Your companies" },
         kratko: {
@@ -610,6 +615,7 @@ export const RUKOVODSTVO: Razdel[] = [
     statyi: [
       {
         id: "doski",
+        perm: "boards.view",
         module: "boards",
         nazvanie: { ru: "Доски работ и витрина", en: "Work boards and the showcase" },
         kratko: {
@@ -731,6 +737,7 @@ export const RUKOVODSTVO: Razdel[] = [
     statyi: [
       {
         id: "pochta",
+        perm: "mail.view",
         module: "mail",
         nazvanie: { ru: "Почта", en: "Mail" },
         kratko: {
@@ -774,6 +781,7 @@ export const RUKOVODSTVO: Razdel[] = [
       },
       {
         id: "telefoniya",
+        perm: "settings.manage",
         module: "telephony",
         nazvanie: { ru: "Звонки", en: "Calls" },
         kratko: {
@@ -810,6 +818,7 @@ export const RUKOVODSTVO: Razdel[] = [
       },
       {
         id: "telegram",
+        perm: "telegram.view",
         module: "telegram",
         nazvanie: { ru: "Телеграм", en: "Telegram" },
         kratko: {
@@ -877,6 +886,7 @@ export const RUKOVODSTVO: Razdel[] = [
     statyi: [
       {
         id: "finansy",
+        perm: "finance.view",
         module: "finance",
         nazvanie: { ru: "Деньги", en: "Money" },
         kratko: {
@@ -920,6 +930,7 @@ export const RUKOVODSTVO: Razdel[] = [
       },
       {
         id: "otchyoty",
+        perm: "reports.view",
         module: "reports",
         nazvanie: { ru: "Отчёты", en: "Reports" },
         kratko: {
