@@ -1179,6 +1179,53 @@ def test_kartochka_klienta_znaet_vse_vidy_zapisey_lenty():
         )
 
 
+def test_sistemnye_vidy_zapisey_odinakovy_na_servere_i_ekranah():
+    """Системную запись нельзя удалить, и кнопки удаления у неё быть не должно.
+
+    Сервер запрет держит (`system_note_immutable`), а список видов повторён на
+    фронте ДВАЖДЫ и под разными именами: `SYSTEM_NOTE_KINDS` в карточке клиента
+    и `SYSTEM_KINDS` в ленте. Заведи сервер четвёртый системный вид — и оба
+    экрана покажут «Удалить» ровно тому, кому нажимать нельзя, а нажатие
+    кончится отказом. Предложенное и отклонённое действие читается как сбой,
+    хотя это правило.
+
+    Довод против «одной копии в lib/» тут не нужен: копий уже две, и проверка
+    дешевле переезда. Разойтись они могут только правкой одного из трёх мест.
+    """
+    model = (KOREN / "database" / "models" / "client.py").read_text(encoding="utf-8")
+
+    # На сервере виды заданы постоянными (`KIND_STAGE`), а не строками.
+    obyavlenie = re.search(r"SYSTEM_NOTE_KINDS = \(([^)]*)\)", model)
+    assert obyavlenie, "на сервере не нашлось SYSTEM_NOTE_KINDS — проверка смотрит не туда"
+    na_servere = set()
+    for imya in re.findall(r"(KIND_\w+)", obyavlenie.group(1)):
+        znachenie = re.search(rf'{imya} = "(\w+)"', model)
+        if znachenie:
+            na_servere.add(znachenie.group(1))
+    assert len(na_servere) >= 3, (
+        f"системных видов разобрано {len(na_servere)} — разбор сломан, и проверка "
+        "ниже стерегла бы пустоту"
+    )
+
+    zerkala = {
+        "screens/ClientCard.tsx": r"SYSTEM_NOTE_KINDS = new Set\(\[([^\]]*)\]\)",
+        "components/Feed.tsx": r"SYSTEM_KINDS = \[([^\]]*)\]",
+    }
+    for otnositelnyy, obrazets in zerkala.items():
+        tekst = (SCREENS / otnositelnyy).read_text(encoding="utf-8")
+        nayd = re.search(obrazets, tekst)
+        assert nayd, (
+            f"в {otnositelnyy} не нашлось списка системных видов — сменился способ "
+            "его писать, и расхождение пройдёт незамеченным"
+        )
+        na_ekrane = set(re.findall(r'"(\w+)"', nayd.group(1)))
+        assert na_ekrane == na_servere, (
+            f"{otnositelnyy}: список системных видов разошёлся с сервером. "
+            f"На сервере {sorted(na_servere)}, на экране {sorted(na_ekrane)}. "
+            "Лишний вид прячет кнопку там, где она законна; недостающий — "
+            "показывает её там, где сервер откажет"
+        )
+
 def test_nastroyki_kanala_stoyat_na_prave_kanala():
     """Экран настроек бота закрыт тем же правом, что спрашивают его ручки.
 
