@@ -504,7 +504,7 @@ def provesti(
         # Подтверждение нехватки записывается в историю бумаги, а не проходит
         # молча: «отгрузили в минус» — это решение человека, и через месяц
         # спросят, кто его принял.
-        primechanie = "проведено с подтверждением нехватки"
+        primechanie = "posted with a confirmed shortage"
     _zapisat_perehod(db, waybill, previous, STATUS_ISSUED, author, primechanie)
     audit_service.record(
         db,
@@ -604,7 +604,10 @@ def stornirovat(db: Session, document_id: int, author: User) -> Document:
             "client_id": ishodnaya.client_id,
             "deal_id": ishodnaya.deal_id,
             "warehouse_id": ishodnaya.warehouse_id,
-            "note": f"сторно накладной {ishodnaya.number}",
+            # По-английски, как всё, что пишет сама система: примечание
+            # уезжает НА БУМАГУ (`waybill_print.html`), и англоязычная
+            # накладная выходила бы с русской строкой посреди листа.
+            "note": f"reversal of waybill {ishodnaya.number}",
         },
         author,
     )

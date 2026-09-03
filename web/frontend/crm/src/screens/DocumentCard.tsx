@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
 
 import { Icon } from "../components/Icon";
 import { History } from "../components/History";
@@ -69,6 +69,17 @@ export function DocumentCard() {
   if (!doc) return <ScreenLoading error={failure} onRetry={() => void load()} />;
 
   if (doc.kind === "act") return <ActCard act={doc} reload={load} />;
+
+  // Накладная и заказ — свои экраны, а не квитанция приёмки. Список бумаг
+  // показывает их чипами видов, и вход сюда рисовал накладную квитанцией со
+  // сплошными прочерками, а кнопка печати открывала вкладку с голым отказом
+  // `document_is_a_waybill`: печать бланка накладную не печатает.
+  if (doc.kind === "waybill_out" || doc.kind === "waybill_in") {
+    return <Navigate to={`/waybills/${doc.id}`} replace />;
+  }
+  if (doc.kind === "sales_order" || doc.kind === "purchase_order") {
+    return <Navigate to={`/orders/${doc.id}`} replace />;
+  }
 
   const fields = doc.payload?.fields ?? {};
   const client = doc.payload?.client ?? {};

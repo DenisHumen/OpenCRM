@@ -187,7 +187,7 @@ def test_nehvatku_mozhno_podtverdit_i_eto_zapisyvaetsya(root_client, client_row)
     karta = root_client.get(f"{API}/documents/{waybill['id']}")
     assert karta.status_code == 200, karta.text
     zapisi = karta.json()["events"]
-    assert any("нехватк" in (z.get("note") or "") for z in zapisi), (
+    assert any("shortage" in (z.get("note") or "") for z in zapisi), (
         f"подтверждение нехватки не записано в историю: {zapisi}"
     )
 
