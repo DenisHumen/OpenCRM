@@ -272,8 +272,15 @@ def test_ekran_zapiraet_summu_i_perechityvaet_eyo(root_client, zayavka):
     karta = (KOREN / "web/frontend/crm/src/screens/DealCard.tsx").read_text(encoding="utf-8")
     stroki_tsx = (KOREN / "web/frontend/crm/src/components/DealLines.tsx").read_text(encoding="utf-8")
 
-    assert "readOnly={strok > 0}" in karta, "поле суммы правится руками при наборе строк"
+    assert "readOnly={summaIzStrok}" in karta, "поле суммы правится руками при наборе строк"
     assert 't("amountFromLines")' in karta, "поле заперто молча — непонятно почему"
+    # Признак считается по ДВУМ источникам: живой счёт от `DealLines`, пока склад
+    # включён, и `has_lines` из ручки, когда он выключен. Со вторым карточка
+    # открывала поле, сервер отвечал `amount_from_lines`, и починить сумму было
+    # нельзя вовсе — данные-то остались.
+    assert "sostavOtkryt ? strok > 0 : Boolean(deal?.has_lines)" in karta, (
+        "при выключенном складе поле суммы снова откроется, а сервер откажет"
+    )
     assert "onSostav" in stroki_tsx and "onSostav" in karta, "карточка не знает про строки"
     assert "if (deal && deal.amount !== itog) void load();" in karta, (
         "карточка не перечитывает себя — покажет устаревшую сумму"

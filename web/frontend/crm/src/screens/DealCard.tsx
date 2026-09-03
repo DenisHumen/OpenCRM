@@ -52,6 +52,12 @@ export function DealCard() {
   // сервер правку отказывает: поле, которое всегда отвечает отказом, выглядит
   // сломанной карточкой. Счёт приходит из раздела строк, он его уже загрузил.
   const [strok, setStrok] = useState(0);
+  // Сумма производна от строк — и остаётся такой при ВЫКЛЮЧЕННОМ складе:
+  // блок прячет строки, но данные не стирает, и сервер по-прежнему отвечает
+  // `amount_from_lines`. Пока склад включён, судим по живому счёту от
+  // `DealLines` (он приходит сразу после правки), иначе — по ответу ручки.
+  const sostavOtkryt = moduleOn(modules, "warehouse");
+  const summaIzStrok = sostavOtkryt ? strok > 0 : Boolean(deal?.has_lines);
   const [issuing, setIssuing] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [askReason, setAskReason] = useState<string | null>(null);
@@ -364,7 +370,7 @@ export function DealCard() {
               type="number"
               min={0}
               step="0.01"
-              readOnly={strok > 0}
+              readOnly={summaIzStrok}
               // `readOnly`, а не `disabled`: серое нечитаемое поле прячет саму
               // сумму, а её как раз и смотрят. Значение остаётся выделяемым и
               // копируемым, править нельзя.
@@ -378,7 +384,7 @@ export function DealCard() {
                 if (next !== deal.amount) void patch({ amount: next });
               }}
             />
-            {strok > 0 && <div className="field-desc">{t("amountFromLines")}</div>}
+            {summaIzStrok && <div className="field-desc">{t("amountFromLines")}</div>}
           </div>
           <div className="field">
             <label className="label">{t("dealPrepaid")}</label>

@@ -11,6 +11,7 @@
 """
 
 import itertools
+import re
 from decimal import Decimal, InvalidOperation
 
 from sqlalchemy.orm import Session
@@ -154,6 +155,11 @@ def get_product(db: Session, product_id: int, include_deleted: bool = False) -> 
 #: получит два вида артикула вместо одного. Разбор — в docs/19-sborka-zakaza.md §Р1.
 SKU_PRISTAVKA = "A-"
 SKU_ZNAKOV = 6
+
+#: Артикул НАШЕГО вида. Руками такой набирать нельзя: счётчик выдачи считает
+#: максимум по этому же образцу, и один `A-999999`, набранный кладовщиком,
+#: навсегда закрывает выдачу всем, включая root, — без единой ошибки.
+NASH_SKU = re.compile(f"^{re.escape(SKU_PRISTAVKA)}[0-9]{{{SKU_ZNAKOV}}}$")
 
 
 def _sku_zanyat(db: Session):
@@ -323,6 +329,11 @@ def _clean_sku(db: Session, sku: str | None, product_id: int | None) -> str | No
     existing = warehouse_repo.get_by_sku(db, value)
     if existing is not None and existing.id != product_id:
         raise errors.ConflictError(f"SKU {value} is already used", code="sku_taken")
+    if existing is None and NASH_SKU.match(value):
+        raise errors.ValidationError(
+            f"SKU like {SKU_PRISTAVKA}{'0' * SKU_ZNAKOV} is issued automatically",
+            code="sku_reserved",
+        )
     return value
 
 
