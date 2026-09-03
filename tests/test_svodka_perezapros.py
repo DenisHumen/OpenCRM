@@ -21,6 +21,12 @@
 import pathlib
 import re
 
+from tests.test_fonovye_perezaprosy import (
+    _telo_effekta,
+    sprashivaet_vidimost,
+    telo_tajmera,
+)
+
 KOREN = pathlib.Path(__file__).resolve().parent.parent
 SVODKA = KOREN / "web" / "frontend" / "crm" / "src" / "screens" / "Dashboard.tsx"
 
@@ -53,12 +59,27 @@ def test_perezapros_ne_chashche_dvukh_minut():
 
 
 def test_perezapros_tolko_v_vidimoy_vkladke():
+    """Спрашивать обязан САМ таймер, а не файл где-нибудь.
+
+    Первая редакция искала слово `visibilityState` по всему файлу — и находила
+    его в определении `vidno`, даже если таймер эту функцию не звал. Снять
+    `if (vidno())` из таймера, оставив слушателя `visibilitychange`, — самая
+    естественная правка, и она сторожа не красила. Разбор общий с
+    `tests/test_fonovye_perezaprosy.py`, там же его собственная самопроверка.
+    """
     tekst = _tekst()
-    assert "visibilityState" in tekst, (
-        "перезапрос сводки не спрашивает, видна ли вкладка. Десять забытых "
-        "вкладок на фирму дают десять потоков перезапросов самой дорогой ручки "
-        "круглосуточно"
-    )
+    stroki = tekst.splitlines()
+    nomera = [n for n, st in enumerate(stroki) if "setInterval" in st]
+    assert nomera, "в сводке не нашлось повторяющегося таймера вовсе"
+
+    for nomer in nomera:
+        telo = _telo_effekta(stroki, nomer)
+        assert sprashivaet_vidimost(telo, telo_tajmera(telo)), (
+            f"таймер сводки (строка {nomer + 1}) не спрашивает, видна ли вкладка. "
+            "Десять забытых вкладок на фирму дают десять потоков перезапросов "
+            "самой дорогой ручки круглосуточно"
+        )
+
     assert "visibilitychange" in tekst, (
         "возвращение на вкладку не перечитывает сводку. Человек вернулся именно "
         "затем, чтобы посмотреть, — и увидел бы утренние числа под свежим "
