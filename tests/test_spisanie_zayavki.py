@@ -276,6 +276,33 @@ def test_zakrytie_ne_spisyvaet_to_chto_otgruzit_zakaz(root_client, tovar, zayavk
     )
 
 
+def test_vyklyuchennyy_blok_zakazov_ne_daet_spisat_dvazhdy(root_client, tovar, zayavka):
+    """Выключенный блок заказов не отменяет открытый заказ — он его прячет.
+
+    Вычитаемое «непогашенное заказами» стояло под `is_enabled("orders")`, и
+    выключение блока снимало единственную защиту: заявка списывала то, что ещё
+    держит заказ. Отгрузить его после этого можно даже не включая блок обратно —
+    накладную по заказу выписывает блок накладных.
+    """
+    prihod(root_client, tovar["id"], "20")
+    root_client.post(
+        f"{API}/deals/{zayavka['id']}/lines",
+        json={"product_id": tovar["id"], "quantity": "5"},
+    )
+    zakaz = root_client.post(f"{API}/deals/{zayavka['id']}/order")
+    assert zakaz.status_code == 201, zakaz.text
+
+    vykl = root_client.post(f"{API}/modules/orders", json={"enabled": False})
+    assert vykl.status_code == 200, vykl.text
+    try:
+        peredvinut(root_client, zayavka["id"], etap(root_client, "won"))
+        assert ostatok(root_client, tovar["id"]) == 20000, (
+            "закрытие списало товар, который держит открытый заказ: блок выключен, "
+            "но заказ жив и отгрузится накладной"
+        )
+    finally:
+        root_client.post(f"{API}/modules/orders", json={"enabled": True})
+
 def test_odin_tovar_s_dvukh_skladov_uhodit_s_oboikh(root_client, tovar, zayavka):
     """Две строки одного товара с разных складов — уйти обязано с обоих.
 

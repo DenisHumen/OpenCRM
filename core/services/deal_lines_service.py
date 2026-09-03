@@ -13,7 +13,6 @@ from sqlalchemy.orm import Session
 from core import exceptions as errors
 from core.services import (
     barcode_service,
-    modules_service,
     reserve_service,
     warehouse_service,
 )
@@ -34,6 +33,15 @@ MAX_NAME = DealLine.__table__.c.name_snapshot.type.length
 def spisok(db: Session, deal_id: int) -> list[DealLine]:
     get_deal(db, deal_id)
     return lines_repo.list_for_deal(db, deal_id)
+
+
+def est_stroki(db: Session, deal_id: int) -> bool:
+    """Есть ли у заявки строки. Нужен карточке, чтобы запереть поле «Сумма».
+
+    Карточка судила по ответу списка строк, а он при выключенном складе не
+    приходит вовсе — поле открывалось, сервер отвечал `amount_from_lines`.
+    """
+    return bool(lines_repo.count_for_deals(db, [deal_id]).get(deal_id))
 
 
 def itog(db: Session, deal_id: int) -> int | None:
@@ -230,12 +238,11 @@ def spisat_pri_zakrytii(db: Session, deal: Deal, author: User | None) -> int:
 
     tovary = {product_id for product_id, _ in nuzhno}
     spisano = warehouse_repo.spisano_po_zayavkam(db, list(tovary))
-    peredano = (
-        documents_repo.zakazano_po_zayavkam(
-            db, KIND_SALES_ORDER, OPEN_ORDER_STATUSES, list(tovary)
-        )
-        if modules_service.is_enabled(db, "orders")
-        else {}
+    # Блок заказов НЕ спрашиваем: выключенный блок убирает меню и ручки, но
+    # заказы остаются в базе и остаются отгружаемыми (накладную по заказу
+    # выписывает блок накладных). Спрятать их здесь значит списать дважды.
+    peredano = documents_repo.zakazano_po_zayavkam(
+        db, KIND_SALES_ORDER, OPEN_ORDER_STATUSES, list(tovary)
     )
 
     po_umolchaniyu = None

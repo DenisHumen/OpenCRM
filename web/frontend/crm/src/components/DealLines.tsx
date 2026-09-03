@@ -21,7 +21,15 @@ type Stroka = {
   kind: "product" | "extra";
 };
 
-type Tovar = { id: number; name: string; sku: string; price: number | null };
+type Tovar = {
+  id: number;
+  name: string;
+  sku: string;
+  price: number | null;
+  // Услуге склад не положен, и без этого поля отличить её было нечем:
+  // выбрал склад — и услуги перестали добавляться в заявку вовсе.
+  is_service: boolean;
+};
 
 /**
  * Состав заявки: что продаём и во сколько это встаёт клиенту.
@@ -138,8 +146,12 @@ export function DealLines({
         ...(vybran ? { product_id: vybran.id } : { name: poisk.trim() }),
         quantity: kolichestvo,
         ...(kopeyki === null || Number.isNaN(kopeyki) ? {} : { price: kopeyki }),
-        // Склад — только у товарной строки: упаковку не берут с полки.
-        ...(vybran && sklad !== null ? { warehouse_id: sklad } : {}),
+        // Склад — только у ТОВАРНОЙ строки: упаковку не берут с полки, а у
+        // услуги остатка нет и сервер отвечает `line_has_no_warehouse`. Тот же
+        // случай разобран у сканера (`test_skan_uslugi_ne_upiraetsya_v_sklad`).
+        ...(vybran && !vybran.is_service && sklad !== null
+          ? { warehouse_id: sklad }
+          : {}),
       });
       sbrosit();
       await zagruzit();

@@ -388,6 +388,34 @@ def test_artikul_vydayotsya_sam(root_client):
     assert int(vtoroy["sku"][2:]) == int(pervyy["sku"][2:]) + 1, "номер не сдвинулся"
 
 
+def test_nash_diapazon_rukami_ne_nabirayut(root_client):
+    """`A-999999` руками — это отказ в обслуживании всему складу.
+
+    Счётчик выдачи берёт максимум по образцу `A-` плюс шесть цифр и упирается
+    в потолок: один такой товар, заведённый правом `warehouse.create`, навсегда
+    закрывает заведение БЕЗ артикула — всем, включая root, и молча.
+    """
+    otkaz = root_client.post(
+        f"{WH}/products", json={"name": "Подделка у потолка", "sku": "A-999999"}
+    )
+    assert otkaz.status_code == 422, otkaz.text
+    assert otkaz.json()["error"]["code"] == "sku_reserved"
+
+    # А выдача после этого обязана работать.
+    posle = new_product(root_client, name="После отказа", sku=None)
+    assert re.fullmatch(r"A-\d{6}", posle["sku"]), posle["sku"]
+
+
+def test_svoy_vydannyy_artikul_pravitsya_bez_otkaza(root_client):
+    """Запрет выше не должен запирать правку собственной карточки."""
+    tovar = new_product(root_client, name="Выданный", sku=None)
+    otvet = root_client.patch(
+        f"{WH}/products/{tovar['id']}",
+        json={"name": "Переименован", "sku": tovar["sku"]},
+    )
+    assert otvet.status_code == 200, otvet.text
+    assert otvet.json()["sku"] == tovar["sku"]
+
 def test_chuzhoy_artikul_ne_dvigaet_schyotchik(root_client):
     """`A-100` похож на наш, но короче: считать его выданным нельзя.
 
