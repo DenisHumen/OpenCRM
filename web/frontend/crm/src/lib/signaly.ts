@@ -226,6 +226,32 @@ function zagudet(): void {
 }
 
 /**
+ * Подать сигнал об уведомлении из системы: заказ закрыт, накладная заведена.
+ *
+ * Тот же выключатель и та же ведущая вкладка, что у писем клиентов: человек
+ * включает сигналы один раз, а не по одному на каждый вид события.
+ */
+export function signal_o_sobytii(opts: { zagolovok: string; telo: string }): void {
+  if (!signaly_vklyucheny() || !vedushchaya) return;
+  propikat();
+  try {
+    if (typeof Notification !== "undefined" && Notification.permission === "granted") {
+      const okno = new Notification(opts.zagolovok, {
+        body: opts.telo,
+        tag: "opencrm-notify",
+        icon: "/static/favicon.svg",
+      });
+      okno.onclick = () => {
+        window.focus();
+        okno.close();
+      };
+    }
+  } catch {
+    /* окно не показалось — звук уже прозвучал */
+  }
+}
+
+/**
  * Подать сигнал о новом сообщении.
  *
  * `na_vidu` — смотрит ли человек прямо сейчас на этот самый диалог. Знает об

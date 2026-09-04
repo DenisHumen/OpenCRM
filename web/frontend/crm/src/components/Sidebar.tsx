@@ -7,6 +7,7 @@ import { formatBytes, initials } from "../lib/format";
 import { allowed, can, type Guarded } from "../lib/permissions";
 import { nazvanieZakazov, term } from "../lib/terms";
 import { Icon } from "./Icon";
+import { Kolokolchik } from "./Kolokolchik";
 import { Avatar } from "./ui";
 
 /** Ссылка в меню. */
@@ -610,6 +611,7 @@ export function Sidebar({
             </span>
           </NavLink>
         )}
+        <Kolokolchik />
         {/* Внутрь продукта, а не на GitHub: у человека вопрос прямо сейчас, и
             отправлять его читать в другое место — отправлять закрывать вкладку. */}
         <NavLink

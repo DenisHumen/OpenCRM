@@ -25,6 +25,8 @@ def delivers(db: Session, user: User, hint: Hint) -> bool:
         return False
     if tema.area is not None and not permissions_service.has(db, user, tema.area, "view"):
         return False
+    if tema.scope == topics.BY_USER:
+        return hint.scope_key == user.id
     if tema.scope == topics.BY_MANAGER:
         svoi = permissions_service.deals_scope(db, user)
         if svoi is not None:

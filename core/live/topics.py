@@ -58,11 +58,14 @@ from database.models import (
     Work,
 )
 from database.models.audit import AuditEvent
+from database.models.notification import Notification
 from database.models.document import ORDER_KINDS, WAYBILL_KINDS
 
 EVERYONE = "everyone"
 #: По ответственному: `permissions_service.deals_scope` — `None` (все) или свой id.
 BY_MANAGER = "by_manager"
+#: Только тому, кому адресовано: `scope_key` — номер сотрудника.
+BY_USER = "by_user"
 
 
 @dataclass(frozen=True)
@@ -112,6 +115,7 @@ T_ROLES = Topic("roles", None, "roles")
 T_ROLE_PERMS = Topic("roles", None, "roles", id_attr="role_id")
 T_MODULES = Topic("modules", None, None)
 T_API_KEYS = Topic("api_keys", None, "settings")
+T_NOTIFICATIONS = Topic("notifications", None, None, BY_USER, "user_id")
 T_API_KEY_SCOPES = Topic("api_keys", None, "settings", id_attr="api_key_id")
 
 
@@ -166,6 +170,7 @@ TOPICS: dict[type, Topic | Callable | None] = {
     FinanceOperation: T_FINANCE,
     FinanceRule: T_FINANCE,
     User: T_STAFF,
+    Notification: T_NOTIFICATIONS,
     # Сессия пишется на каждом запросе (отметка присутствия) — это не изменение
     # данных, а пульс.
     UserSession: None,
@@ -185,7 +190,7 @@ TOPICS: dict[type, Topic | Callable | None] = {
 
 #: Все темы по имени — для отбора по правам и для проверок.
 BY_NAME: dict[str, Topic] = {}
-for _znachenie in list(TOPICS.values()) + [T_ORDERS, T_WAYBILLS, T_DOCUMENTS]:
+for _znachenie in list(TOPICS.values()) + [T_ORDERS, T_WAYBILLS, T_DOCUMENTS, T_NOTIFICATIONS]:
     if isinstance(_znachenie, Topic):
         BY_NAME.setdefault(_znachenie.name, _znachenie)
 

@@ -163,6 +163,45 @@ export const RUKOVODSTVO: Razdel[] = [
         ],
       },
       {
+        id: "uvedomleniya",
+        nazvanie: { ru: "Уведомления", en: "Notifications" },
+        kratko: {
+          ru: "Что сделали другие и что система сделала сама — колокольчиком в панели слева.",
+          en: "What others did and what the system did by itself — the bell in the left panel.",
+        },
+        kuski: [
+          {
+            vid: "abzats",
+            tekst: {
+              ru: "Колокольчик считает непрочитанное и открывает список: закрытые и отменённые заказы, проведённые накладные и акты, смена этапа заявки, заявка с сайта, напоминание, назначенное вам, и бумаги, которые система завела сама. Нажали строку — перешли к делу, и она прочитана.",
+              en: "The bell counts the unread and opens the list: closed and cancelled orders, posted waybills and acts, deal stage changes, a website request, a reminder assigned to you, and papers the system issued by itself. Press a row to go there — it is then read.",
+            },
+          },
+          {
+            vid: "spisok",
+            punkty: [
+              {
+                ru: "Своё действие вам не сообщается — вы и так видели ответ экрана. Сообщается о том, что сделали другие и что сделалось само.",
+                en: "Your own action is not reported to you — you saw the screen answer. What others did and what happened by itself is.",
+              },
+              {
+                ru: "Приходит только то, что вам можно видеть: без права на заказы — ничего о заказах; менеджер, видящий только свои заявки, о чужих не узнаёт.",
+                en: "Only what you may see arrives: no rights to orders — nothing about orders; a manager who sees only their own deals hears nothing about others.",
+              },
+              {
+                ru: "Звук и всплывающее окно браузера включаются в профиле — теми же «сигналами в этом браузере», что и письма клиентов. Сигналит одна вкладка, даже если открыто три.",
+                en: "The sound and the desktop pop-up are switched on in the profile — the same «alerts in this browser» as client messages. One tab signals, even with three open.",
+              },
+              {
+                ru: "Уведомления хранятся два месяца и убираются сами: это подсказки, а не учёт. Учёт — в журнале действий.",
+                en: "Notifications are kept for two months and then removed by themselves: they are hints, not records. The record is the activity log.",
+              },
+            ],
+          },
+          { vid: "ekran", put: "/profile", podpis: { ru: "Включить сигналы", en: "Switch alerts on" } },
+        ],
+      },
+      {
         id: "profil",
         nazvanie: { ru: "Профиль, язык и тема", en: "Profile, language and theme" },
         kratko: {

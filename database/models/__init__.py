@@ -31,6 +31,7 @@ from database.models.finance import (
     FinanceRule,
 )
 from database.models.audit import AuditEvent
+from database.models.notification import Notification
 
 __all__ = [
     "User",
@@ -75,4 +76,5 @@ __all__ = [
     "FinanceBudget",
     "FinanceRule",
     "AuditEvent",
+    "Notification",
 ]
