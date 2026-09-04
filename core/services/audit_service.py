@@ -93,6 +93,13 @@ ACTION_MODULE_SWITCHED = "module.switched"
 #: стирает данные безвозвратно, — и потому обязано быть в журнале даже
 #: тогда, когда стирать оказалось нечего.
 ACTION_STORAGE_PURGED = "storage.purged"
+#: Копия системы: ключ заведён, копия снята и скачана, база заменена из копии.
+#: Скачивание пишется отдельно от снятия: копия — это вся система в одном
+#: файле, и «кто её унёс» спрашивают чаще, чем «кто снял».
+ACTION_BACKUP_KEY_CREATED = "backup.key_created"
+ACTION_BACKUP_TAKEN = "backup.taken"
+ACTION_BACKUP_DOWNLOADED = "backup.downloaded"
+ACTION_BACKUP_RESTORED = "backup.restored"
 #: Должность собрана, переписана или отдана человеку.
 #:
 #: Права — это и есть то, ради чего журнал заведён: вопрос «кто дал бухгалтеру
@@ -134,6 +141,8 @@ ENTITY_WAREHOUSE = "warehouse"
 ENTITY_DOCUMENT = "document"
 ENTITY_NOTE = "note"
 ENTITY_FILE = "file"
+#: Копия системы: база или архив файлов, снятые или залитые с экрана настроек.
+ENTITY_BACKUP = "backup"
 
 # --- длины строковых полей ---
 #

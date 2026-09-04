@@ -55,6 +55,7 @@ import { OrderCard } from "./screens/OrderCard";
 import { WaybillCard } from "./screens/WaybillCard";
 import { Orders } from "./screens/Orders";
 import { Waybills } from "./screens/Waybills";
+import { SettingsBackups } from "./screens/SettingsBackups";
 import { SettingsRoles } from "./screens/SettingsRoles";
 import { Setup } from "./screens/Setup";
 import { SettingsWarehouses } from "./screens/SettingsWarehouses";
@@ -434,6 +435,7 @@ export default function App() {
                 <Route path="return-button" element={<SettingsReturnButton />} />
               </Route>
               <Route path="maintenance" element={<SettingsMaintenance />} />
+              <Route path="backups" element={<SettingsBackups />} />
             </Route>
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />

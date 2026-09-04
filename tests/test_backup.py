@@ -135,6 +135,26 @@ def test_oborvannaya_kopiya_zamechena(tmp_path):
     ), report["problems"]
 
 
+def test_snimok_prilozheniya_prokhodit_proverku(tmp_path):
+    """Копия, снятую самим приложением, кончается своей меткой, а не mysqldump-овой.
+
+    Сторож, знающий только `-- Dump completed`, отказывал бы каждой копии с
+    экрана настроек — и та отчитывалась бы «не дописана до конца» сразу после
+    снятия. Так и было 04.09.2026: первая же копия с экрана легла красной.
+    """
+    from scripts.snapshot_db import METKA
+
+    assert verify_backup.KHVOST_SNIMKA == METKA, "метка снимка разошлась с той, что ждёт сторож"
+    path = good_dump(tmp_path / "snimok.sql", users=2)
+    text = path.read_text(encoding="utf-8")
+    assert verify_backup.KHVOST_DUMPA in text
+    hvost = text.rindex(verify_backup.KHVOST_DUMPA)
+    path.write_text(text[:hvost] + f"{METKA}: таблиц 3, строк 2\n", encoding="utf-8")
+
+    report = verify_backup.verify(path, None, None)
+    assert report["ok"], report["problems"]
+
+
 def test_pustaya_kopiya_zamechena(tmp_path):
     """Самый коварный случай: файл есть, размер правдоподобный, внутри пусто.
 

@@ -506,6 +506,7 @@ export function Sidebar({
     // когда настраивают работу.
     kategoriya("system", t("catSystem"), [
       { perm: "settings.manage", to: "/settings/maintenance", label: t("maintenance") },
+      { perm: "settings.manage", to: "/settings/backups", label: t("backups") },
     ]),
   ];
 
