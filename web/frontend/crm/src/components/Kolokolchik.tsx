@@ -80,6 +80,16 @@ export function Kolokolchik() {
 
   useLiveTopic("notifications", () => void schitat());
 
+  // Живые обновления могут быть выключены — тогда счётчик пересчитывается,
+  // когда человек возвращается во вкладку: дешевле опроса и достаточно.
+  useEffect(() => {
+    const vernulis = () => {
+      if (document.visibilityState === "visible") void schitat();
+    };
+    document.addEventListener("visibilitychange", vernulis);
+    return () => document.removeEventListener("visibilitychange", vernulis);
+  }, [schitat]);
+
   // Отказ не выдаётся за пустоту: «пока пусто» — это ответ, а «не загрузилось»
   // — его отсутствие, и человек решает по ним разное.
   const otkryt_panel = async () => {
