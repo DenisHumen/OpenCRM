@@ -120,7 +120,7 @@ export function Clients() {
   }
 
   return (
-    <div className="page">
+    <div className="page page-wide">
       <div className="page-head">
         <div>
           <h1 className="page-title">{t("clients")}</h1>

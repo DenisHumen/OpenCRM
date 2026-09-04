@@ -65,6 +65,15 @@ def check_backup(job_id: str):
     return backup_service.proverit(job_id)
 
 
+@router.delete("/jobs/{job_id}")
+def delete_backup(
+    job_id: str,
+    actor: User = Depends(require_perm("settings", "manage")),
+    db: Session = Depends(get_db),
+):
+    return backup_service.udalit(db, actor, job_id)
+
+
 @router.get("/jobs/{job_id}/file")
 def download_backup(
     job_id: str,

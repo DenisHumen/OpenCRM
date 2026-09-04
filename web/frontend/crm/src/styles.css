@@ -251,7 +251,11 @@ button { font-family: var(--sans); }
 .app-shell { display: flex; min-height: 100vh; }
 .app-main { flex: 1; min-width: 0; }
 .page { max-width: 1000px; margin: 0 auto; padding: 32px 40px 64px; } /* было 44 40 72 */
-.page-wide { max-width: 1120px; }
+/* Списки растут вместе с окном: на широком мониторе таблица в тысячу пикселей
+   оставляла половину экрана пустой. Карточки и настройки остаются узкими —
+   форму читают, а не листают вбок. */
+.page-wide { max-width: 1800px; }
+.page-docs { max-width: 1360px; }
 .page-narrow { max-width: 760px; }
 .page-tight { max-width: 640px; }
 /* Доска сделок — единственный экран, который выходит из общей колонки.
@@ -763,6 +767,45 @@ button:active [data-icon="plus"] { transition-duration: 0s; }
 .text-link { color: var(--muted); font-size: 12px; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; background: none; border: none; padding: 0; }
 .text-link:hover { color: var(--text); }
 .text-link.danger { color: var(--danger); }
+/* Опасная кнопка, у которой нет права быть главной: обводка цвета беды, фон тот же. */
+.btn-danger-outline { color: var(--danger); border-color: var(--danger); }
+.btn-danger-outline:hover:not(:disabled) { background: var(--tint-danger); }
+
+/* Экран копий: карточка — заголовок, строка-пояснение, содержимое. */
+.backup-card { padding: 20px 22px; margin-bottom: 16px; }
+.backup-card-danger { border-color: var(--danger); }
+.backup-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.backup-card-title { font-size: 14px; font-weight: 600; margin-bottom: 4px; }
+.backup-card .field-desc { margin-bottom: 12px; line-height: 1.5; }
+.backup-key-shown { margin-top: 14px; }
+.backup-key-warn { color: var(--warning); font-size: 12.5px; line-height: 1.5; margin-bottom: 10px; }
+.backup-key-code { display: block; word-break: break-all; font-size: 13px; padding: 10px 12px; margin-bottom: 14px; background: var(--bg-2); border-radius: 8px; user-select: all; }
+.backup-key-confirm { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
+.backup-key-confirm .input { max-width: 220px; }
+/* Плитки одного роста: кнопки стоят на одной линии независимо от длины текста. */
+.backup-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+.backup-tile { display: flex; flex-direction: column; gap: 8px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2); }
+.backup-tile .field-desc { flex: 1; margin-bottom: 4px; }
+.backup-tile-head { display: flex; align-items: center; gap: 8px; font-size: 13.5px; font-weight: 600; }
+.backup-tile .btn { align-self: flex-start; }
+.backup-note { color: var(--faint); font-size: 12.5px; margin-top: 12px; line-height: 1.5; }
+.backup-note.warn { color: var(--warning); }
+.backup-note.bad { color: var(--danger); }
+.backup-rows { display: flex; flex-direction: column; }
+.backup-row { display: flex; gap: 12px; align-items: flex-start; padding: 12px 0; border-top: 1px solid var(--line); flex-wrap: wrap; }
+.backup-row-icon { flex-shrink: 0; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; border-radius: 8px; background: var(--surface-2); color: var(--muted); }
+.backup-row-main { flex: 1 1 280px; min-width: 0; font-size: 12.5px; line-height: 1.5; }
+.backup-row-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.backup-row-meta { display: flex; flex-wrap: wrap; gap: 4px 0; color: var(--faint); }
+.backup-row-meta span + span::before { content: "\00b7"; margin: 0 6px; }
+.backup-row-meta .bad { color: var(--danger); }
+.backup-row-file { color: var(--faint); font-family: var(--mono); font-size: 11.5px; overflow-wrap: anywhere; }
+.backup-row-error { color: var(--danger); overflow-wrap: anywhere; }
+.backup-row-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.backup-restore { display: flex; gap: 16px; flex-wrap: wrap; align-items: flex-end; }
+.backup-restore .input { min-width: 160px; }
+.backup-restore-go { display: flex; align-items: center; gap: 10px; }
+.backup-restore-go .backup-note { margin-top: 0; }
 
 /* Карточки — фон чуть выше bg, тонкая граница */
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; }
@@ -958,6 +1001,8 @@ summary:focus-visible,
    родительский блок ужимается, но без этого текст всё равно вылезает за его
    границы и наезжает на соседнюю колонку. */
 .truncate { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Имя файла или адрес без пробелов не переносятся сами и вылезали за строку журнала. */
+.wrap-anywhere { overflow-wrap: anywhere; min-width: 0; }
 /* Колонка «имя + подпись» в строке списка. Нижняя граница — чтобы при нехватке
    места текст ужимался до многоточия, а не исчезал совсем: соседние кнопки
    не сжимаются и иначе выдавливают его в ноль. */
@@ -2541,7 +2586,7 @@ a.tg-file:hover { text-decoration: underline; }
 }
 .docs-rail-item:hover { background: var(--surface); color: var(--text); }
 .docs-rail-item.active { background: var(--tint-brand); color: var(--brand); font-weight: 500; }
-.docs-content { display: flex; flex-direction: column; gap: 22px; min-width: 0; }
+.docs-content { display: flex; flex-direction: column; gap: 22px; min-width: 0; max-width: 1000px; }
 .docs-article {
   padding: 20px 22px; border: 1px solid var(--border); border-radius: 12px;
   background: var(--surface);

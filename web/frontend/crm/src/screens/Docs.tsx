@@ -40,7 +40,7 @@ export function Docs() {
 
   // Ни одного видимого раздела не бывает — общие статьи стоят без признаков, —
   // но выключить их когда-нибудь смогут, и пустой экран лучше поломки.
-  if (!razdel) return <div className="page page-wide"><div className="field-desc">{t("nothingFound", { q: "" })}</div></div>;
+  if (!razdel) return <div className="page page-docs"><div className="field-desc">{t("nothingFound", { q: "" })}</div></div>;
 
   // Поиск идёт по названию и короткому описанию: полнотекстовый по всему
   // руководству дал бы совпадения в середине абзаца, куда всё равно не
@@ -54,7 +54,7 @@ export function Docs() {
   );
 
   return (
-    <div className="page page-wide">
+    <div className="page page-docs">
       <div className="page-head">
         <div>
           <h1 className="page-title">{t("documentation")}</h1>

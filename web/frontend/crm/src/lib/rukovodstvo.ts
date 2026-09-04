@@ -137,6 +137,63 @@ export const RUKOVODSTVO: Razdel[] = [
           },
         ],
       },
+      {
+        id: "poisk-i-svodka",
+        nazvanie: { ru: "Поиск и сводка", en: "Search and the dashboard" },
+        kratko: {
+          ru: "Одна строка на всё и один экран о том, как идут дела.",
+          en: "One box for everything and one screen about how things are going.",
+        },
+        kuski: [
+          {
+            vid: "abzats",
+            tekst: {
+              ru: "Строка поиска в панели слева ищет сразу по клиентам, заявкам, бланкам, товарам и остальному, на что есть право. Открывается и с клавиатуры: Ctrl+K (на Mac — ⌘K) с любого экрана. Находки идут группами по разделам, из строки можно сразу перейти.",
+              en: "The search box in the left panel looks through clients, deals, forms, products and everything else you have the right to see. It also opens from the keyboard: Ctrl+K (⌘K on a Mac) from any screen. Results come grouped by section, and you can jump straight from a row.",
+            },
+          },
+          {
+            vid: "abzats",
+            tekst: {
+              ru: "Сводка — первый экран после входа: деньги в работе и полученные с начала месяца, воронка со счётчиками, ваши напоминания на сегодня, просмотры витрины за неделю, последние клиенты и доски. Всё считается на момент открытия и обновляется само.",
+              en: "The dashboard is the first screen after sign-in: money in progress and received since the start of the month, the funnel with counts, your reminders for today, showcase views for the week, recent clients and boards. Everything is computed at the moment you open it and refreshes by itself.",
+            },
+          },
+          { vid: "ekran", put: "/", podpis: { ru: "Открыть сводку", en: "Open the dashboard" } },
+        ],
+      },
+      {
+        id: "profil",
+        nazvanie: { ru: "Профиль, язык и тема", en: "Profile, language and theme" },
+        kratko: {
+          ru: "Своё имя, фотография, пароль, язык интерфейса и тёмная или светлая тема.",
+          en: "Your name, photo, password, interface language and a dark or light theme.",
+        },
+        kuski: [
+          {
+            vid: "spisok",
+            punkty: [
+              {
+                ru: "Язык интерфейса — ваш личный: коллега может работать по-английски, вы — по-русски. Язык публичных страниц для клиентов задаётся отдельно, в настройках бренда.",
+                en: "The interface language is your own: a colleague can work in English while you work in Russian. The language of public pages for clients is set separately, in brand settings.",
+              },
+              {
+                ru: "Тема — светлая, тёмная или как в системе. Запоминается на этом устройстве.",
+                en: "The theme is light, dark or the same as your system. It is remembered on this device.",
+              },
+              {
+                ru: "Фотография обрезается в квадрат сама и видна коллегам в списках и в ленте. Пароль меняется здесь же; временный пароль, выданный владельцем, система попросит сменить при первом входе.",
+                en: "The photo is cropped to a square by itself and shows to colleagues in lists and in the feed. The password is changed here too; a temporary password issued by the owner must be changed at first sign-in.",
+              },
+              {
+                ru: "Сигналы из телеграма — звук и уведомление о новом сообщении клиента — включаются в профиле и действуют только в этом браузере.",
+                en: "Telegram signals — a sound and a notification about a new client message — are switched on in the profile and apply only to this browser.",
+              },
+            ],
+          },
+          { vid: "ekran", put: "/profile", podpis: { ru: "Открыть профиль", en: "Open profile" } },
+        ],
+      },
     ],
   },
   {
@@ -789,8 +846,8 @@ export const RUKOVODSTVO: Razdel[] = [
                 en: "An order from the site is an ordinary customer order marked «reserved until». An expired reservation no longer holds the stock while the order stays open: the order list has a filter «reservation expired» — that is the queue to sort out.",
               },
               {
-                ru: "Ключи выдаёт и отзывает тот же экран или консоль сервера (`./opencrm.sh apikey`). Отзыв действует сразу; перевыпуск оставляет старый ключ живым на сутки, чтобы сайт успели переключить.",
-                en: "Keys are issued and revoked on the same screen or from the server console (`./opencrm.sh apikey`). A revoke takes effect at once; a rotation keeps the old key alive for a day so the site can be switched over.",
+                ru: "Ключи выдаёт и отзывает экран «Ключи API сайта»; тот, кто обслуживает сервер, может сделать то же из его консоли. Отзыв действует сразу; перевыпуск оставляет старый ключ живым на сутки, чтобы сайт успели переключить.",
+                en: "Keys are issued and revoked on the «Site API keys» screen; whoever maintains the server can do the same from its console. A revoke takes effect at once; a rotation keeps the old key alive for a day so the site can be switched over.",
               },
             ],
           },
@@ -821,8 +878,8 @@ export const RUKOVODSTVO: Razdel[] = [
           {
             vid: "vazhno",
             tekst: {
-              ru: "Полный справочник ручек, кодов отказов и порядок первичной настройки — docs/04-api.md, раздел «API сайта магазина»; доводы устройства — docs/16-api-sayta.md.",
-              en: "The full reference of endpoints, error codes and the first-time setup order is in docs/04-api.md, section «Shop-site API»; the reasoning behind the design is in docs/16-api-sayta.md.",
+              ru: "Все адреса, которые сайт может вызвать, с правами и отказами собраны в разделе «API», статья «Все ручки» — там же поиск по адресу и слову. Эту статью и стоит отдать тому, кто пишет сайт.",
+              en: "Every address the site can call, with permissions and refusals, is collected in the «API» section, article «All endpoints» — with a search by address and word. That is the article to hand to whoever builds the site.",
             },
           },
           { vid: "ekran", put: "/settings/api-keys", podpis: { ru: "Открыть ключи API сайта", en: "Open site API keys" } },
@@ -892,8 +949,8 @@ export const RUKOVODSTVO: Razdel[] = [
           {
             vid: "abzats",
             tekst: {
-              ru: "АТС присылает события о звонках вебхуком. Подпись проверяется, повтор того же события не задваивает запись — линия связи с чужой системой обязана быть устойчивой к обоим.",
-              en: "The PBX sends call events over a webhook. The signature is verified and a repeated event does not duplicate the record — a link to someone else's system must survive both.",
+              ru: "АТС сама сообщает системе о каждом звонке. Сообщение проверяется на подлинность, а повтор одного и того же сообщения запись не задваивает: связь с чужой системой обязана переживать и подделку, и повтор.",
+              en: "The PBX reports every call to the system by itself. Each report is checked for authenticity, and a repeated report does not duplicate the record: a link to someone else's system must survive both forgery and repetition.",
             },
           },
           {
@@ -1085,6 +1142,14 @@ export const RUKOVODSTVO: Razdel[] = [
               en: "A permission is an area plus an action: “clients — view”, “orders — see amounts”. A button a person cannot use is not shown at all: otherwise they press it and get refused.",
             },
           },
+          {
+            vid: "abzats",
+            tekst: {
+              ru: "Готовых должностей пять: менеджер, бухгалтер, проджект-менеджер, гендиректор и наблюдатель. Каждую можно править под себя, можно завести свои. Одна должность помечена «по умолчанию» — её получает новый сотрудник при регистрации.",
+              en: "Five roles come ready-made: manager, accountant, project manager, CEO and observer. Each can be adjusted, and you can create your own. One role is marked «default» — a newly registered employee gets it.",
+            },
+          },
+          { vid: "ekran", put: "/settings/roles", podpis: { ru: "Открыть должности", en: "Open roles" } },
         ],
       },
       {
@@ -1103,6 +1168,14 @@ export const RUKOVODSTVO: Razdel[] = [
               en: "Before switching one off the system tells you what will disappear and how many records it touches. Switch it back on and everything returns; nothing is lost.",
             },
           },
+          {
+            vid: "abzats",
+            tekst: {
+              ru: "Блоки зависят друг от друга: заказы и накладные не живут без бланков, наклейки — без склада. Выключая блок, от которого зависят другие, вы выключаете и их — система назовёт какие.",
+              en: "Modules depend on each other: orders and waybills do not live without forms, labels do not live without stock. Switching off a module others depend on switches them off too — the system names which.",
+            },
+          },
+          { vid: "ekran", put: "/settings/modules", podpis: { ru: "Открыть блоки", en: "Open modules" } },
         ],
       },
       {
@@ -1160,8 +1233,8 @@ export const RUKOVODSTVO: Razdel[] = [
           {
             vid: "abzats",
             tekst: {
-              ru: "Разделов настроек четырнадцать, и они разложены по категориям. Категория из двух и более разделов сворачивается, из одного — показывается самим разделом: заголовок, за которым лежит ровно один пункт, обещает выбор, которого нет.",
-              en: "There are fourteen settings sections, grouped into categories. A category with two or more sections collapses; one with a single section shows that section directly: a heading hiding exactly one item promises a choice that is not there.",
+              ru: "Разделы настроек разложены по категориям. Категория из двух и более разделов сворачивается, из одного — показывается самим разделом: заголовок, за которым лежит ровно один пункт, обещает выбор, которого нет.",
+              en: "Settings sections are grouped into categories. A category with two or more sections collapses; one with a single section shows that section directly: a heading hiding exactly one item promises a choice that is not there.",
             },
           },
           {
@@ -1196,7 +1269,7 @@ export const RUKOVODSTVO: Razdel[] = [
                   ],
                   [
                     { ru: "Страницы для клиента", en: "Client-facing pages" },
-                    { ru: "Оформление витрины и ссылка на ваш сайт.", en: "Showcase appearance and the link to your website." },
+                    { ru: "Оформление витрины и кнопка возврата на ваш сайт.", en: "Showcase appearance and the return button to your website." },
                   ],
                   [
                     { ru: "Склад и товар", en: "Stock and goods" },
@@ -1204,7 +1277,7 @@ export const RUKOVODSTVO: Razdel[] = [
                   ],
                   [
                     { ru: "Как с вами связываются", en: "Ways to reach you" },
-                    { ru: "Почтовые ящики, АТС, бот телеграма, приём заявок с сайта.", en: "Mailboxes, the PBX, the Telegram bot, website request intake." },
+                    { ru: "Почтовые ящики, АТС, бот телеграма, приём заявок с сайта, ключи API сайта.", en: "Mailboxes, the PBX, the Telegram bot, website request intake, site API keys." },
                   ],
                   [
                     { ru: "Деньги", en: "Money" },
@@ -1212,7 +1285,7 @@ export const RUKOVODSTVO: Razdel[] = [
                   ],
                   [
                     { ru: "Система", en: "System" },
-                    { ru: "Режим обслуживания.", en: "Maintenance mode." },
+                    { ru: "Режим обслуживания, живые обновления и резервные копии.", en: "Maintenance mode, live updates and backups." },
                   ],
                 ],
               },
@@ -1239,8 +1312,8 @@ export const RUKOVODSTVO: Razdel[] = [
           {
             vid: "vazhno",
             tekst: {
-              ru: "Здесь — соглашения и один разобранный пример. Все ручки с адресами и правами собраны в статье «Все ручки» ниже: она порождена из справочника docs/04-api.md, полноту которого стережёт проверка, поэтому расходиться этим двум спискам не с чем.",
-              en: "This is conventions plus one worked example. Every endpoint with its address and permission is collected in the «All endpoints» article below: it is generated from the docs/04-api.md reference, whose completeness a test guards, so the two lists have nothing to diverge over.",
+              ru: "Раздел для того, кто подключает к системе свою программу: сайт, магазин, скрипт. Здесь — соглашения и один разобранный пример; все адреса с правами собраны в статье «Все ручки» ниже.",
+              en: "This section is for whoever connects their own program to the system: a website, a shop, a script. Here are the conventions and one worked example; every address with its permission is collected in the «All endpoints» article below.",
             },
           },
           {
@@ -1351,8 +1424,8 @@ export const RUKOVODSTVO: Razdel[] = [
           {
             vid: "abzats",
             tekst: {
-              ru: "Список порождён из справочника docs/04-api.md и обновляется вместе с ним; ручка, не названная в справочнике, не пройдёт проверку, поэтому здесь есть всё. Описания идут на языке справочника. Поиск смотрит в адрес, описание, право и название раздела.",
-              en: "The list is generated from the docs/04-api.md reference and updates together with it; an endpoint missing from the reference fails a test, so everything is here. Descriptions are in the language of the reference. The search looks at the address, the description, the permission and the section name.",
+              ru: "Список полный и обновляется вместе с системой: новая ручка появляется здесь тем же обновлением, которым появилась в системе. Описания даны по-русски. Поиск смотрит в адрес, описание, право и название раздела; разделы свёрнуты, при поиске раскрывается всё найденное.",
+              en: "The list is complete and updates together with the system: a new endpoint appears here with the same update that brought it into the system. Descriptions are in Russian. The search looks at the address, the description, the permission and the section name; sections are collapsed, and a search unfolds everything it finds.",
             },
           },
           {
@@ -1383,8 +1456,8 @@ export const RUKOVODSTVO: Razdel[] = [
           {
             vid: "abzats",
             tekst: {
-              ru: "Перед сменой версии снимается копия базы, затем накатываются миграции. Если новая версия не отвечает, возвращается и код, и база. Состояния «работает, но данные не те» не бывает.",
-              en: "Before a version change a database copy is taken, then migrations run. If the new version does not answer, both the code and the database are rolled back. There is no “running but with the wrong data” state.",
+              ru: "Перед сменой версии снимается копия базы, затем база приводится к новому виду. Если новая версия не отвечает, возвращаются и прежняя версия, и прежняя база. Состояния «работает, но данные не те» не бывает. Во время обновления посетители видят заглушку — о ней в статье «Режим обслуживания».",
+              en: "Before a version change a database copy is taken, then the database is brought to the new shape. If the new version does not answer, both the previous version and the previous database come back. There is no “running but with the wrong data” state. During an update visitors see a holding page — see the «Maintenance mode» article.",
             },
           },
         ],
@@ -1392,7 +1465,7 @@ export const RUKOVODSTVO: Razdel[] = [
       {
         id: "kopii",
         perm: "settings.manage",
-        nazvanie: { ru: "Копии", en: "Backups" },
+        nazvanie: { ru: "Резервные копии", en: "Backups" },
         kratko: {
           ru: "По расписанию — на сервере; с экрана — зашифрованный файл себе.",
           en: "On schedule — on the server; from the screen — an encrypted file for yourself.",
@@ -1401,15 +1474,15 @@ export const RUKOVODSTVO: Razdel[] = [
           {
             vid: "abzats",
             tekst: {
-              ru: "Ежедневная копия снимается на сервере по расписанию и проверяется на годность: годной считается только копия с меткой конца — оборванный дамп выглядит как обычный файл и подводит ровно тогда, когда из него надо восстановиться. Лежит она на том же диске, что и база, поэтому её надо забирать себе.",
+              ru: "Ежедневная копия снимается на сервере по расписанию и проверяется на годность: годной считается только копия с меткой конца — оборванный файл выглядит как целый и подводит ровно тогда, когда из него надо восстановиться. Лежит она на том же диске, что и база, поэтому её надо забирать себе.",
               en: "A daily copy is taken on the server on schedule and checked for soundness: only a copy with an end marker counts — a truncated dump looks like an ordinary file and fails exactly when you need to restore from it. It sits on the same disk as the database, so take it away with you.",
             },
           },
           {
             vid: "abzats",
             tekst: {
-              ru: "Для этого есть экран «Копии»: база и файлы снимаются отдельными зашифрованными файлами, которые вы скачиваете руками. База — минуты, берётся часто; файлы (фотографии, вложения, оформление) — тяжелее и берутся реже. База без файлов — это карточки товаров без фотографий и переписка без вложений.",
-              en: "That is what the Copies screen is for: the database and the files are taken as separate encrypted files that you download by hand. The database takes minutes and is worth taking often; the files (photos, attachments, branding) are heavier and taken less often. A database without the files is product cards without photos and conversations without attachments.",
+              ru: "Для этого есть экран «Резервные копии»: база и файлы снимаются отдельными зашифрованными файлами, которые вы скачиваете руками. База — минуты, берётся часто; файлы (фотографии, вложения, оформление) — тяжелее и берутся реже. База без файлов — это карточки товаров без фотографий и переписка без вложений.",
+              en: "That is what the Backups screen is for: the database and the files are taken as separate encrypted files that you download by hand. The database takes minutes and is worth taking often; the files (photos, attachments, branding) are heavier and taken less often. A database without the files is product cards without photos and conversations without attachments.",
             },
           },
           {
@@ -1453,13 +1526,13 @@ export const RUKOVODSTVO: Razdel[] = [
                   { ru: "Копия расшифровывается нынешним ключом; чужой ключ, не копия или обрывок отвергаются до того, как тронута база.", en: "The copy is decrypted with the current key; a foreign key, a non-copy or a truncated file are refused before the database is touched." },
                   { ru: "Копия от кода, которого здесь нет, отвергается — догнать её нечем.", en: "A copy taken by code this server does not have is refused — there is nothing to bring it up to date with." },
                   { ru: "Сайт закрывается на обслуживание, снимок живой базы остаётся рядом с копиями на неделю.", en: "The site closes for maintenance; a snapshot of the live database stays next to the copies for a week." },
-                  { ru: "Копия заливается, старая версия догоняется миграциями, схема сверяется, обслуживание снимается, событие ложится в журнал.", en: "The copy is loaded, an older version is brought up to date by migrations, the schema is checked, maintenance is lifted and the event is logged." },
+                  { ru: "Копия заливается, копия от прежней версии приводится к нынешней и сверяется, обслуживание снимается, событие ложится в журнал.", en: "The copy is loaded, a copy from an older version is brought up to date and checked, maintenance is lifted and the event is logged." },
                   { ru: "Файлы из копии ложатся поверх нынешних, ничего не стирая. После восстановления базы придётся войти заново.", en: "Files from a copy are added on top of the current ones; nothing is deleted. After a database restore you will need to sign in again." },
                 ],
               },
             ],
           },
-          { vid: "ekran", put: "/settings/backups", podpis: { ru: "Открыть копии", en: "Open copies" } },
+          { vid: "ekran", put: "/settings/backups", podpis: { ru: "Открыть резервные копии", en: "Open backups" } },
         ],
       },
       {
@@ -1490,8 +1563,8 @@ export const RUKOVODSTVO: Razdel[] = [
                 en: "A background tab stays quiet and re-reads once when you come back.",
               },
               {
-                ru: "Пропала связь с шиной — наверху появляется полоса «обновления приостановлены», экраны перечитываются сами, но реже; поднялась — полоса уходит сама.",
-                en: "If the bus goes down, a bar «live updates are paused» appears at the top; screens refresh on their own, less often; when it is back, the bar leaves by itself.",
+                ru: "Пропала связь — наверху появляется полоса «обновления приостановлены», экраны перечитываются сами, но реже; связь вернулась — полоса уходит сама.",
+                en: "If the connection drops, a bar «live updates are paused» appears at the top; screens refresh on their own, less often; once it is back, the bar leaves by itself.",
               },
               {
                 ru: "Выключатель — в настройках обслуживания. Выключенные обновления — это выбор, а не авария: полосы нет, CRM работает как раньше.",
@@ -1508,15 +1581,15 @@ export const RUKOVODSTVO: Razdel[] = [
         perm: "monitoring.view",
         nazvanie: { ru: "Наблюдение за сервером", en: "Server monitoring" },
         kratko: {
-          ru: "Состояние стека, горящие тревоги и кнопки «принято» и «заглушить» прямо в телеграме.",
-          en: "Stack health, firing alerts and «ack» and «silence» buttons right in Telegram.",
+          ru: "Здоровье сервера, горящие тревоги и кнопки «принято» и «заглушить» прямо в телеграме.",
+          en: "Server health, firing alerts and «ack» and «silence» buttons right in Telegram.",
         },
         kuski: [
           {
             vid: "abzats",
             tekst: {
-              ru: "Раздел показывает, что происходит с самим сервером: живы ли сборщики метрик, отвечает ли база, что горит прямо сейчас. Он только показывает — заводить и править там нечего, всё приходит снаружи.",
-              en: "The section shows what is happening to the server itself: are the metric collectors alive, does the database answer, what is firing right now. It only shows — there is nothing to create or edit, everything arrives from outside.",
+              ru: "Раздел показывает, что происходит с самим сервером: живы ли его составные части, отвечает ли база, сколько занято диска, что горит прямо сейчас. Он только показывает — заводить и править там нечего.",
+              en: "The section shows what is happening to the server itself: are its parts alive, does the database answer, how full the disk is, what is firing right now. It only shows — there is nothing to create or edit.",
             },
           },
           {

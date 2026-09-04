@@ -11,10 +11,13 @@ import { term } from "../lib/terms";
 
 // Ширины общие для шапки и строк, иначе колонки разъезжаются.
 const COL = {
-  when: { width: 150 } as const,
-  who: { width: 150 } as const,
-  what: { width: 170 } as const,
-  source: { width: 150 } as const,
+  when: { width: 140, flexShrink: 0 } as const,
+  who: { width: 130, flexShrink: 0 } as const,
+  what: { width: 160, flexShrink: 0 } as const,
+  source: { width: 130, flexShrink: 0 } as const,
+  // Две растущие колонки с нижней границей: без неё узкое окно сжимало их до
+  // одной буквы в строке, а фиксированные соседи оставались при своём.
+  wide: { flex: "1 1 160px", minWidth: 0 } as const,
 };
 
 /** Подписи действий. Ключ приходит с сервера (core/services/audit_service.py).
@@ -37,6 +40,25 @@ const ACTION: Record<string, TranslationKey> = {
   "staff.disabled": "auditActDisabled",
   "staff.enabled": "auditActEnabled",
   "staff.password_reset": "auditActPasswordReset",
+  "client.created": "auditActClientCreated",
+  "stock.transferred": "auditActStockTransferred",
+  "order.closed": "auditActOrderClosed",
+  "order.reverted": "auditActOrderReverted",
+  "act.completed": "auditActActCompleted",
+  "waybill.posted": "auditActWaybillPosted",
+  "waybill.reversed": "auditActWaybillReversed",
+  "storage.purged": "auditActStoragePurged",
+  "backup.key_created": "auditActBackupKeyCreated",
+  "backup.taken": "auditActBackupTaken",
+  "backup.downloaded": "auditActBackupDownloaded",
+  "backup.restored": "auditActBackupRestored",
+  "backup.deleted": "auditActBackupDeleted",
+  "apikey.created": "auditActApikeyCreated",
+  "apikey.revoked": "auditActApikeyRevoked",
+  "apikey.rotated": "auditActApikeyRotated",
+  "apikey.updated": "auditActApikeyUpdated",
+  "warehouse.kind_changed": "auditActWarehouseKind",
+  "customer.registered": "auditActCustomerRegistered",
 };
 
 const ENTITY: Record<string, TranslationKey> = {
@@ -51,12 +73,18 @@ const ENTITY: Record<string, TranslationKey> = {
   module: "auditEntModule",
   note: "auditEntNote",
   file: "auditEntFile",
+  deal: "auditEntDeal",
+  warehouse: "auditEntWarehouse",
+  document: "auditEntDocument",
+  backup: "auditEntBackup",
+  apikey: "auditEntApikey",
 };
 
 const SOURCE: Record<string, TranslationKey> = {
   manual: "auditSrcManual",
   telephony_webhook: "auditSrcTelephonyWebhook",
   mail_sync: "auditSrcMailSync",
+  site_api: "auditSrcSiteApi",
 };
 
 /** Действия, у которых величина — деньги в минорных единицах.
@@ -193,7 +221,7 @@ export function Audit() {
   };
 
   return (
-    <div className="page">
+    <div className="page page-wide">
       <div className="page-head" style={{ alignItems: "flex-start", marginBottom: 20 }}>
         <div>
           <h1 className="page-title">{t("auditLog")}</h1>
@@ -236,8 +264,8 @@ export function Audit() {
             <span style={COL.when}>{t("colWhen")}</span>
             <span style={COL.who}>{t("auditColWho")}</span>
             <span style={COL.what}>{t("auditColWhat")}</span>
-            <span style={{ flex: 1 }}>{t("auditColObject")}</span>
-            <span style={{ flex: 1 }}>{t("auditColChange")}</span>
+            <span style={COL.wide}>{t("auditColObject")}</span>
+            <span style={COL.wide}>{t("auditColChange")}</span>
             <span style={COL.source}>{t("auditColSource")}</span>
           </div>
           {items.map((entry) => (
@@ -256,11 +284,11 @@ export function Audit() {
               <span style={{ ...COL.what, color: "var(--text)", fontSize: 12.5 }}>
                 {actionLabel(entry)}
               </span>
-              <span style={{ flex: 1, minWidth: 0, fontSize: 12.5 }}>
+              <span className="wrap-anywhere" style={{ ...COL.wide, fontSize: 12.5 }}>
                 <span style={{ color: "var(--faint)" }}>{entityLabel(entry.entity_type)}</span>{" "}
                 <span style={{ color: "var(--text)" }}>{entry.entity_label}</span>
               </span>
-              <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, color: "var(--text)" }}>
+              <span className="wrap-anywhere" style={{ ...COL.wide, fontSize: 12.5, color: "var(--text)" }}>
                 {/* Старое значение рядом с новым: «сумма изменена» без «было
                     5 000, стало 500» не отвечает ни на один вопрос, ради
                     которого в журнал заходят. У удаления величины нет вовсе —
@@ -274,7 +302,7 @@ export function Audit() {
                   </>
                 )}
               </span>
-              <span style={{ ...COL.source, color: "var(--muted)", fontSize: 12.5 }}>
+              <span className="wrap-anywhere" style={{ ...COL.source, color: "var(--muted)", fontSize: 12.5 }}>
                 {SOURCE[entry.source] ? t(SOURCE[entry.source]) : entry.source}
                 {entry.source_ref && (
                   <span style={{ color: "var(--faint)" }}> · {entry.source_ref}</span>

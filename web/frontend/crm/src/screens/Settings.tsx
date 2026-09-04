@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { Outlet, useOutletContext } from "react-router-dom";
+import { Outlet, useLocation, useOutletContext } from "react-router-dom";
 
 import { StorageCard } from "../components/StorageCard";
 import { ScreenLoading, Toggle } from "../components/ui";
@@ -33,9 +33,16 @@ export function useSettings() {
  * поэтому каждый живёт своим маршрутом, а в сайдбаре раскрывается списком.
  * Значения при этом общие: сохранение одно на всю группу, как и было.
  */
+/** Разделы, у которых поля собираются в общую форму и уходят кнопкой «Сохранить».
+ *  Остальные (копии, обслуживание) применяют каждое действие сразу, и кнопка
+ *  над ними обещала бы сохранить то, что уже сохранено. */
+const S_FORMOY = new Set(["brand", "labels", "contacts", "showcase", "return-button"]);
+
 export function SettingsLayout() {
   const { t, refreshSettings, refreshWorkspace, toastError } = useApp();
+  const { pathname } = useLocation();
   const [values, setValues] = useState<Values | null>(null);
+  const [sohranyonnye, setSohranyonnye] = useState<Values | null>(null);
   const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState(false);
 
@@ -43,7 +50,7 @@ export function SettingsLayout() {
 
   const load = useCallback(() => {
     clear();
-    api.get("/settings").then(setValues).catch(fail);
+    api.get("/settings").then((v: Values) => { setValues(v); setSohranyonnye(v); }).catch(fail);
   }, [fail, clear]);
 
   useEffect(load, [load]);
@@ -56,7 +63,9 @@ export function SettingsLayout() {
   const save = async () => {
     setBusy(true);
     try {
-      setValues(await api.patch("/settings", { values }));
+      const stalo: Values = await api.patch("/settings", { values });
+      setValues(stalo);
+      setSohranyonnye(stalo);
       await refreshSettings();
       // Название заявок и валюта живут не в настройках сайта, а в рабочем
       // пространстве: настройки читает только root, а подписи в меню и суммы
@@ -103,6 +112,9 @@ export function SettingsLayout() {
     </div>
   );
 
+  const razdel = pathname.split("/").pop() ?? "";
+  const izmeneno = JSON.stringify(values) !== JSON.stringify(sohranyonnye);
+
   return (
     <div className="page page-narrow">
       <div className="page-head" style={{ alignItems: "flex-start", marginBottom: 26 }}>
@@ -110,9 +122,15 @@ export function SettingsLayout() {
           <h1 className="page-title">{t("siteSettings")}</h1>
           <div className="page-sub">{t("settingsSub")}</div>
         </div>
-        <button className={"btn " + (saved ? "btn-success" : "btn-primary")} onClick={() => void save()} disabled={busy}>
-          {saved ? t("saved") : t("save")}
-        </button>
+        {S_FORMOY.has(razdel) && (
+          <button
+            className={"btn " + (saved ? "btn-success" : "btn-primary")}
+            onClick={() => void save()}
+            disabled={busy || (!izmeneno && !saved)}
+          >
+            {saved ? t("saved") : t("save")}
+          </button>
+        )}
       </div>
       <Outlet context={{ values, patch, set, input, switcher } satisfies SettingsCtx} />
     </div>
@@ -540,7 +558,7 @@ export function SettingsMaintenance() {
       </div>
 
       <div className="card" style={{ padding: "20px 22px" }}>
-        <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>{t("maintenance")}</div>
+        <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>{t("diskAndTrash")}</div>
         <div style={{ color: "var(--faint)", fontSize: 12.5, marginBottom: 6 }}>{t("maintenanceSub")}</div>
         <div style={{ color: "var(--faint)", fontSize: 12.5, marginBottom: 18, lineHeight: 1.5 }}>{t("maintenanceWhere")}</div>
         {storage ? (

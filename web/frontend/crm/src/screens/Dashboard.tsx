@@ -128,7 +128,7 @@ export function Dashboard() {
   );
 
   return (
-    <div className="page">
+    <div className="page page-wide">
       <div className="page-head" style={{ marginBottom: 26 }}>
         <div>
           <h1 className="page-title">
