@@ -27,6 +27,9 @@ export interface Warehouse {
   code: string | null;
   address: string;
   is_default: boolean;
+  /** Что это за место: `stock` / `shop` / `transit` / `defect`. Сайту виден
+   *  остаток складов `shop` и только их. */
+  kind: string;
   note: string;
 }
 

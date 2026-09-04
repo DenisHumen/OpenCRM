@@ -198,6 +198,8 @@ export function ProductCard() {
           </div>
         )}
       </div>
+
+      <SiteDescription product={product} onSaved={() => void load()} />
       <ProductHolders productId={product.id} />
 
 
@@ -321,6 +323,42 @@ export function ProductCard() {
  * Движение записывается, а не редактируется: ошибку исправляют обратным
  * движением, поэтому здесь нет ни правки, ни удаления. Иначе остаток на прошлую
  * пятницу зависел бы от того, когда его спросили. */
+/** Описание для сайта — правится прямо на карточке: остальные поля товара
+ *  задаются при заведении, а описание дописывают, когда карточка уже есть. */
+function SiteDescription({ product, onSaved }: { product: Product; onSaved: () => void }) {
+  const { t, toast, toastError } = useApp();
+  const [text, setText] = useState(product.site_description ?? "");
+  const guard = useGuard();
+
+  useEffect(() => setText(product.site_description ?? ""), [product.site_description]);
+
+  const save = async () => {
+    if (!guard.take()) return;
+    try {
+      await api.patch(`/warehouse/products/${product.id}`, { site_description: text });
+      toast(t("save") + " ✓");
+      onSaved();
+    } catch (e) {
+      toastError(e);
+    } finally {
+      guard.free();
+    }
+  };
+
+  return (
+    <div className="card card-pad" style={{ marginBottom: 20 }}>
+      <div className="metric-title" style={{ marginBottom: 8 }}>{t("productSiteDescription")}</div>
+      <textarea className="textarea" value={text} onChange={(e) => setText(e.target.value)} rows={4} />
+      <div className="field-desc" style={{ marginTop: 6 }}>{t("productSiteDescriptionHint")}</div>
+      {text !== (product.site_description ?? "") && (
+        <button className="btn btn-primary btn-sm" style={{ marginTop: 10 }} disabled={guard.busy} onClick={() => void save()}>
+          {t("save")}
+        </button>
+      )}
+    </div>
+  );
+}
+
 function MoveForm({
   product,
   places,

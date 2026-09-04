@@ -55,6 +55,7 @@ import { OrderCard } from "./screens/OrderCard";
 import { WaybillCard } from "./screens/WaybillCard";
 import { Orders } from "./screens/Orders";
 import { Waybills } from "./screens/Waybills";
+import { SettingsApiKeys } from "./screens/SettingsApiKeys";
 import { SettingsBackups } from "./screens/SettingsBackups";
 import { SettingsRoles } from "./screens/SettingsRoles";
 import { Setup } from "./screens/Setup";
@@ -408,6 +409,11 @@ export default function App() {
                 прятать экран не от чего. Выключателем служит сам ключ: пустой
                 означает, что приёма не существует. */}
             <Route path="/settings/leads" element={<SettingsLeads />} />
+            {/* Ключи API сайта — тоже вне каркаса с общим «Сохранить»: ключ
+                выдаётся и отзывается своей кнопкой, а не сохранением формы.
+                Своего блока у них нет намеренно: «наружу открыто» решают живые
+                ключи, а не выключатель (docs/16 §8). */}
+            <Route path="/settings/api-keys" element={<SettingsApiKeys />} />
             {/* разделов настроек будет больше — каждый своим маршрутом,
                 чтобы на них можно было сослаться и открыть из сайдбара */}
             <Route path="/settings" element={<SettingsLayout />}>

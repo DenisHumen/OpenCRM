@@ -449,6 +449,20 @@ erDiagram
 индекс, на который опирается внешний ключ, и `downgrade` миграции упирался бы в
 него ошибкой 1553.
 
+### api_keys / api_key_scopes и след API сайта (миграция `e5a9c3d17b04`)
+
+Ключ для чужой программы — `api_keys`: имя, `prefix` (видимая часть), `token_hash`
+(`ExactString(64)`, уникальный индекс — в базе только отпечаток), склад
+(`RESTRICT`: ключ ссылается на место), режим наличия, потолки, `expires_at`,
+`revoked_at` (отзыв — отметка, не удаление), `last_used_at`/`last_used_ip`.
+Области — строкой на область в `api_key_scopes` с `uq_api_key_scope`, как
+`role_permissions`. Рядом три следа в чужих таблицах: `warehouses.kind`
+(закрытый набор, `stock` по умолчанию — обновление не открывает витрину),
+`products.site_description`, у `documents` — `reserved_until` (бронь истекает
+лениво, условием в `promised`), `site_ref` (`ExactString`, уникальный — это и есть
+идемпотентность заказа) и `api_key_id` (`SET NULL`). Индексы под ленту изменений:
+`ix_products_updated_at` и `ix_stock_moves_wh_created` по дате ЗАПИСИ движения.
+Разбор — [16-api-sayta.md](16-api-sayta.md) §10.
 ### finance_rules и снимки на операции (блок «Финансы»)
 
 Правило отвечает на один вопрос: **что начислить само, когда деньги двинулись.**

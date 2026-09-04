@@ -19,6 +19,7 @@ from core.services import (
     reserve_service,
     product_photo_service,
     settings_service,
+    site_service,
     warehouse_service,
 )
 from database.models import User
@@ -341,14 +342,30 @@ def create_warehouse(
 def update_warehouse(
     warehouse_id: int,
     payload: schemas.WarehousePatchIn,
-    _: User = Depends(require_perm("warehouse", "manage")),
+    user: User = Depends(require_perm("warehouse", "manage")),
     db: Session = Depends(get_db),
 ):
     return schemas.warehouse_out(
         warehouse_service.update_warehouse(
-            db, warehouse_id, payload.model_dump(exclude_unset=True)
+            db, warehouse_id, payload.model_dump(exclude_unset=True), actor=user
         )
     )
+
+
+@places_router.get("/{warehouse_id}/site")
+def warehouse_site_summary(
+    warehouse_id: int,
+    _: User = Depends(require_perm("warehouse", "view")),
+    db: Session = Depends(get_db),
+):
+    """Сколько карточек этого склада на сайте и сколько из них без цены.
+
+    Отвечает и на «что случится, если сменить тип» ДО нажатия, и на строку
+    экрана «На сайте: 132 позиции, 4 без цены» — одним запросом, чтобы двух
+    ответов на один вопрос не было.
+    """
+    warehouse_service.get_warehouse(db, warehouse_id)
+    return site_service.site_summary(db, warehouse_id)
 
 
 @places_router.delete("/{warehouse_id}")

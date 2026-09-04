@@ -1,0 +1,352 @@
+import { useCallback, useEffect, useState, type FormEvent } from "react";
+
+import { Icon } from "../components/Icon";
+import { Chip, ConfirmModal, Modal, ScreenLoading } from "../components/ui";
+import { api } from "../lib/api";
+import { useApp } from "../lib/app";
+import { useFailure } from "../lib/failure";
+import { formatDateTime } from "../lib/format";
+import { useGuard } from "../lib/guard";
+import type { TranslationKey } from "../lib/i18n";
+
+interface ApiKey {
+  id: number;
+  name: string;
+  prefix: string;
+  scopes: string[];
+  warehouse_id: number | null;
+  stock_mode: string;
+  few_threshold_milli: number;
+  rate_per_min: number;
+  max_reserve_minutes: number;
+  ttl_sec: number;
+  expires_at: string | null;
+  revoked_at: string | null;
+  created_at: string | null;
+  last_used_at: string | null;
+  last_used_ip: string;
+  state: "active" | "expired" | "revoked";
+  key?: string;
+}
+
+interface Spisok {
+  items: ApiKey[];
+  alive: number;
+  scopes: string[];
+  stock_modes: string[];
+  header: string;
+}
+
+interface Sklad {
+  id: number;
+  name: string;
+  kind: string;
+  deleted_at: string | null;
+}
+
+const SCOPE_LABEL: Record<string, TranslationKey> = {
+  "catalog.read": "apiKeyScopeCatalogRead",
+  "stock.read": "apiKeyScopeStockRead",
+  "orders.write": "apiKeyScopeOrdersWrite",
+  "orders.read": "apiKeyScopeOrdersRead",
+  "customers.write": "apiKeyScopeCustomersWrite",
+  "leads.write": "apiKeyScopeLeadsWrite",
+};
+
+const STOCK_LABEL: Record<string, TranslationKey> = {
+  exact: "apiKeyStockExact",
+  bucket: "apiKeyStockBucket",
+  boolean: "apiKeyStockBoolean",
+};
+
+const STATE_LABEL: Record<ApiKey["state"], TranslationKey> = {
+  active: "apiKeyStateActive",
+  expired: "apiKeyStateExpired",
+  revoked: "apiKeyStateRevoked",
+};
+
+export function SettingsApiKeys() {
+  const { t, locale, toastError } = useApp();
+  const [data, setData] = useState<Spisok | null>(null);
+  const [sklady, setSklady] = useState<Sklad[]>([]);
+  const { failure, fail, clear } = useFailure();
+  const guard = useGuard();
+  const [creating, setCreating] = useState(false);
+  const [shown, setShown] = useState<ApiKey | null>(null);
+  const [revoking, setRevoking] = useState<ApiKey | null>(null);
+  const [rotating, setRotating] = useState<ApiKey | null>(null);
+
+  const load = useCallback(() => {
+    clear();
+    api.get<Spisok>("/settings/api-keys").then(setData).catch(fail);
+    // Склады могут быть выключены блоком — тогда список пуст, и ключ без
+    // `stock.read` всё равно выпускается: услуги нигде не лежат.
+    api.get<{ items: Sklad[] }>("/warehouses").then((r) => setSklady(r.items)).catch(() => setSklady([]));
+  }, [fail, clear]);
+
+  useEffect(load, [load]);
+
+  if (!data) return <ScreenLoading error={failure} onRetry={load} />;
+
+  const revoke = async (key: ApiKey) => {
+    if (!guard.take()) return;
+    try {
+      await api.post(`/settings/api-keys/${key.id}/revoke`);
+      load();
+    } catch (e) {
+      toastError(e);
+    } finally {
+      guard.free();
+    }
+  };
+
+  const rotate = async (key: ApiKey) => {
+    if (!guard.take()) return;
+    try {
+      setShown(await api.post<ApiKey>(`/settings/api-keys/${key.id}/rotate`, { grace_hours: 24 }));
+      load();
+    } catch (e) {
+      toastError(e);
+    } finally {
+      guard.free();
+    }
+  };
+
+  const skladName = (id: number | null) => sklady.find((s) => s.id === id)?.name ?? (id ? `#${id}` : "—");
+
+  return (
+    <div className="page">
+      <div className="page-head">
+        <div>
+          <h1 className="page-title">{t("apiKeys")}</h1>
+          <div className="page-sub">{t("apiKeysSub")}</div>
+        </div>
+        <button className="btn btn-primary" onClick={() => setCreating(true)}>
+          <Icon name="plus" size={14} />
+          {t("apiKeyNew")}
+        </button>
+      </div>
+
+      {/* Выключателя нет намеренно: «наружу открыто» решают живые ключи. Тот,
+          кто ищет выключатель, должен найти ответ, а не пустое место. */}
+      <div
+        className="card"
+        style={{ padding: "14px 18px", marginBottom: 16, color: data.alive ? "var(--warning)" : "var(--faint)", fontSize: 13 }}
+      >
+        {data.alive ? t("apiKeysOpen", { count: data.alive }) : t("apiKeysClosed")}
+      </div>
+
+      <div className="list-card">
+        {data.items.map((key) => (
+          <div key={key.id} className="list-row" style={{ alignItems: "flex-start", opacity: key.state === "active" ? 1 : 0.55 }}>
+            <div style={{ flex: 1, minWidth: 0, fontSize: 13, lineHeight: 1.5 }}>
+              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                <strong>{key.name}</strong>
+                <code style={{ fontSize: 12, color: "var(--faint)" }}>{key.prefix}…</code>
+                <Chip variant={key.state === "active" ? "success" : undefined}>{t(STATE_LABEL[key.state])}</Chip>
+                <span style={{ color: key.expires_at ? "var(--faint)" : "var(--danger)", fontSize: 12.5 }}>
+                  {key.expires_at ? t("apiKeyExpires", { t: formatDateTime(key.expires_at, locale) }) : t("apiKeyNeverExpires")}
+                </span>
+              </div>
+              <div style={{ color: "var(--faint)", fontSize: 12.5 }}>
+                {key.scopes.map((s) => t(SCOPE_LABEL[s] ?? "apiKeyScopes")).join(" · ")}
+              </div>
+              <div style={{ color: "var(--faint)", fontSize: 12.5 }}>
+                {key.warehouse_id ? <>{t("apiKeyWarehouse")}: {skladName(key.warehouse_id)} · </> : null}
+                {t(STOCK_LABEL[key.stock_mode] ?? "apiKeyStockBucket")} · {key.rate_per_min}/min ·{" "}
+                {key.last_used_at
+                  ? t("apiKeyLastUsed", { t: formatDateTime(key.last_used_at, locale), ip: key.last_used_ip || "—" })
+                  : t("apiKeyNeverUsed")}
+              </div>
+            </div>
+            {key.state === "active" && (
+              <div style={{ display: "flex", gap: 8 }}>
+                <button className="btn btn-secondary btn-sm" disabled={guard.busy} onClick={() => setRotating(key)}>
+                  {t("apiKeyRotate")}
+                </button>
+                <button className="btn btn-secondary btn-sm" disabled={guard.busy} onClick={() => setRevoking(key)}>
+                  {t("apiKeyRevoke")}
+                </button>
+              </div>
+            )}
+          </div>
+        ))}
+        {data.items.length === 0 && (
+          <div style={{ padding: 18, color: "var(--faint)", fontSize: 13 }}>{t("apiKeyEmpty")}</div>
+        )}
+      </div>
+      <div className="field-desc" style={{ marginTop: 12 }}>{t("apiKeyDocs")}</div>
+
+      {creating && (
+        <NewKeyModal
+          scopes={data.scopes}
+          stockModes={data.stock_modes}
+          shops={sklady.filter((s) => s.kind === "shop" && !s.deleted_at)}
+          onClose={() => setCreating(false)}
+          onCreated={(key) => {
+            setCreating(false);
+            setShown(key);
+            load();
+          }}
+        />
+      )}
+      {shown && shown.key && (
+        <Modal title={shown.name} onClose={() => setShown(null)}>
+          <div style={{ color: "var(--warning)", fontSize: 12.5, marginBottom: 10, lineHeight: 1.5 }}>{t("apiKeyShown")}</div>
+          <code style={{ display: "block", wordBreak: "break-all", fontSize: 13, padding: "10px 12px", background: "var(--bg-2)", borderRadius: 8, userSelect: "all" }}>
+            {shown.key}
+          </code>
+          <div className="field-desc" style={{ marginTop: 10 }}>
+            {t("apiKeyHeader")}: <code>{data.header}</code>
+          </div>
+        </Modal>
+      )}
+      {revoking && (
+        <ConfirmModal
+          text={t("apiKeyRevokeConfirm", { name: revoking.name })}
+          confirmLabel={t("apiKeyRevoke")}
+          danger
+          onConfirm={() => { const k = revoking; setRevoking(null); void revoke(k); }}
+          onClose={() => setRevoking(null)}
+        />
+      )}
+      {rotating && (
+        <ConfirmModal
+          text={t("apiKeyRotateConfirm")}
+          confirmLabel={t("apiKeyRotate")}
+          onConfirm={() => { const k = rotating; setRotating(null); void rotate(k); }}
+          onClose={() => setRotating(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+function NewKeyModal({
+  scopes,
+  stockModes,
+  shops,
+  onClose,
+  onCreated,
+}: {
+  scopes: string[];
+  stockModes: string[];
+  shops: Sklad[];
+  onClose: () => void;
+  onCreated: (key: ApiKey) => void;
+}) {
+  const { t, toastError } = useApp();
+  const guard = useGuard();
+  const [form, setForm] = useState({
+    name: "",
+    scopes: ["catalog.read", "stock.read"] as string[],
+    warehouse_id: shops[0]?.id ?? null,
+    days: "365",
+    stock_mode: "bucket",
+    few: "5",
+    rate: "120",
+    reserve_max: "1440",
+    ttl: "60",
+  });
+  const set = (key: string) => (e: any) => setForm((f) => ({ ...f, [key]: e.target.value }));
+  const toggleScope = (scope: string) =>
+    setForm((f) => ({
+      ...f,
+      scopes: f.scopes.includes(scope) ? f.scopes.filter((s) => s !== scope) : [...f.scopes, scope],
+    }));
+  const needsWarehouse = form.scopes.includes("stock.read");
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!guard.take()) return;
+    try {
+      onCreated(
+        await api.post<ApiKey>("/settings/api-keys", {
+          name: form.name,
+          scopes: form.scopes,
+          warehouse_id: needsWarehouse ? form.warehouse_id : null,
+          days: Number(form.days),
+          stock_mode: form.stock_mode,
+          // Порог вводится в единицах, уезжает в тысячных — как всё количество.
+          few_threshold_milli: Math.round(Number(form.few) * 1000),
+          rate_per_min: Number(form.rate),
+          max_reserve_minutes: Number(form.reserve_max),
+          ttl_sec: Number(form.ttl),
+        }),
+      );
+    } catch (err) {
+      toastError(err);
+      guard.free();
+    }
+  };
+
+  return (
+    <Modal title={t("apiKeyNew")} onClose={onClose}>
+      <form onSubmit={submit}>
+        <div className="field">
+          <label className="label">{t("apiKeyName")}</label>
+          <input className="input" value={form.name} onChange={set("name")} autoFocus required />
+          <div className="field-desc">{t("apiKeyNameHint")}</div>
+        </div>
+        <div className="field">
+          <label className="label">{t("apiKeyScopes")}</label>
+          {scopes.map((scope) => (
+            <label key={scope} style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13, marginBottom: 4 }}>
+              <input type="checkbox" checked={form.scopes.includes(scope)} onChange={() => toggleScope(scope)} />
+              {t(SCOPE_LABEL[scope] ?? "apiKeyScopes")}
+            </label>
+          ))}
+        </div>
+        {needsWarehouse && (
+          <div className="field">
+            <label className="label">{t("apiKeyWarehouse")}</label>
+            {shops.length === 0 ? (
+              <div className="field-desc" style={{ color: "var(--warning)" }}>{t("apiKeyNoShops")}</div>
+            ) : (
+              <select className="input" value={form.warehouse_id ?? ""} onChange={(e) => setForm((f) => ({ ...f, warehouse_id: Number(e.target.value) }))}>
+                {shops.map((s) => (
+                  <option key={s.id} value={s.id}>{s.name}</option>
+                ))}
+              </select>
+            )}
+            <div className="field-desc">{t("apiKeyWarehouseHint")}</div>
+          </div>
+        )}
+        <div className="field">
+          <label className="label">{t("apiKeyStockMode")}</label>
+          <select className="input" value={form.stock_mode} onChange={set("stock_mode")}>
+            {stockModes.map((m) => (
+              <option key={m} value={m}>{t(STOCK_LABEL[m] ?? "apiKeyStockBucket")}</option>
+            ))}
+          </select>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <div className="field">
+            <label className="label">{t("apiKeyDays")}</label>
+            <input className="input" type="number" min={0} value={form.days} onChange={set("days")} />
+            <div className="field-desc">{t("apiKeyDaysHint")}</div>
+          </div>
+          <div className="field">
+            <label className="label">{t("apiKeyFew")}</label>
+            <input className="input" type="number" min={0} step="0.001" value={form.few} onChange={set("few")} />
+          </div>
+          <div className="field">
+            <label className="label">{t("apiKeyRate")}</label>
+            <input className="input" type="number" min={1} value={form.rate} onChange={set("rate")} />
+          </div>
+          <div className="field">
+            <label className="label">{t("apiKeyReserveMax")}</label>
+            <input className="input" type="number" min={1} value={form.reserve_max} onChange={set("reserve_max")} />
+          </div>
+          <div className="field">
+            <label className="label">{t("apiKeyTtl")}</label>
+            <input className="input" type="number" min={5} value={form.ttl} onChange={set("ttl")} />
+          </div>
+        </div>
+        <button className="btn btn-primary" style={{ width: "100%" }} disabled={guard.busy || (needsWarehouse && !form.warehouse_id)}>
+          {t("apiKeyNew")}
+        </button>
+      </form>
+    </Modal>
+  );
+}

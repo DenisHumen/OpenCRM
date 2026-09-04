@@ -11,7 +11,7 @@ import { useApp } from "../lib/app";
 import { useDebounced } from "../lib/debounce";
 import { useFailure } from "../lib/failure";
 import { useGuard } from "../lib/guard";
-import { formatDate, formatMoney, formatQuantity, formatRate, toMinorUnits } from "../lib/format";
+import { formatDate, formatDateTime, formatMoney, formatQuantity, formatRate, toMinorUnits } from "../lib/format";
 import { moduleOn } from "../lib/modules";
 import { can } from "../lib/permissions";
 import { useReference } from "../lib/reference";
@@ -107,6 +107,14 @@ export function OrderCard() {
             <Chip variant={order.status === "closed" ? "success" : undefined}>
               {t(ORDER_STATUS_LABEL[order.status as keyof typeof ORDER_STATUS_LABEL] ?? "docIssued")}
             </Chip>
+            {order.site_ref && <span style={{ color: "var(--faint)", fontSize: 12.5 }}>{t("orderFromSite", { ref: order.site_ref })}</span>}
+            {order.reserved_until && (
+              order.reserve_expired ? (
+                <Chip variant="warning">{t("orderReserveExpired")}</Chip>
+              ) : (
+                <span style={{ color: "var(--faint)", fontSize: 12.5 }}>{t("orderReserveUntil", { t: formatDateTime(order.reserved_until, locale) })}</span>
+              )
+            )}
           </div>
         </div>
         <div style={{ display: "flex", gap: 8 }}>

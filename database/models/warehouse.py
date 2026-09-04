@@ -48,6 +48,19 @@ MOVE_ADJUST = "adjust"      # корректировка по инвентари
 MOVE_RETURN = "return"      # возврат
 MOVE_KINDS = (MOVE_IN, MOVE_OUT, MOVE_WRITEOFF, MOVE_ADJUST, MOVE_RETURN)
 
+# Тип склада — закрытый набор ключей, как виды движения. Не название: видимость
+# товара сайту, зависящая от названия, закрывала бы витрину исправлением
+# опечатки в слове «Магазин» (docs/16-api-sayta.md §2).
+#: Обычное место хранения: подсобка, стеллаж, машина мастера. Сайту не виден.
+WH_STOCK = "stock"
+#: Торговый зал магазина. Ровно то место, остаток которого показывает сайт.
+WH_SHOP = "shop"
+#: Товар в пути: уехал от поставщика, до нас не доехал.
+WH_TRANSIT = "transit"
+#: Брак, возврат, карантин. Товар есть, продавать его нельзя.
+WH_DEFECT = "defect"
+WAREHOUSE_KINDS = (WH_STOCK, WH_SHOP, WH_TRANSIT, WH_DEFECT)
+
 
 class Warehouse(Base):
     """Место, где лежит товар: торговый зал, подсобка, машина выездного мастера.
@@ -80,6 +93,9 @@ class Warehouse(Base):
     address: Mapped[str] = mapped_column(Text, default="", server_default=text_default())
     # Куда попадает приход, если склад не выбрали.
     is_default: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    # Что это за место (`WAREHOUSE_KINDS`). Сайту виден остаток складов `shop`
+    # и только их; тип не спорит с `is_default` — основным может быть подсобка.
+    kind: Mapped[str] = mapped_column(String(16), default=WH_STOCK, server_default=WH_STOCK)
     note: Mapped[str] = mapped_column(Text, default="", server_default=text_default())
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
@@ -163,9 +179,13 @@ class Product(Base):
     # «предупреждай, как только уйдёт в минус».
     min_stock_milli: Mapped[int | None] = mapped_column(Integer, nullable=True)
     note: Mapped[str] = mapped_column(Text, default="", server_default=text_default())
+    # Своя колонка, а не `note`: заметка кладовщика («вернули, пахнет») на
+    # витрине объяснению не поддаётся. Разметки нет — текст едет как текст.
+    site_description: Mapped[str] = mapped_column(Text, default="", server_default=text_default())
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    # Индекс — под ленту изменений сайта: она отбирает по этой колонке.
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=func.now(), onupdate=func.now()
+        DateTime, server_default=func.now(), onupdate=func.now(), index=True
     )
     # Мягкое удаление: на товар ссылаются движения, а история списаний не должна
     # исчезать вместе с карточкой.
@@ -348,6 +368,10 @@ class StockMove(Base):
         # товара, но за каждым числом лезет в таблицу: двести тысяч случайных
         # чтений ради одной цифры на строку списка.
         Index("ix_stock_moves_product_qty", "product_id", "quantity_milli"),
+        # Лента изменений сайта отбирает движения склада по дате ЗАПИСИ, а не
+        # операции: занесённое сегодня за прошлый вторник меняет сегодняшний
+        # остаток. Соседний `ix_stock_moves_wh_happened` стоит по другой дате.
+        Index("ix_stock_moves_wh_created", "warehouse_id", "created_at"),
         # История движений в карточке товара — по времени операции, а не записи.
         Index("ix_stock_moves_product_happened", "product_id", "happened_at"),
         # То же самое, но для раскладки по складам: группировка стала парой, и

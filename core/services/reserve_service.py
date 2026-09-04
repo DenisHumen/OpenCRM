@@ -80,17 +80,25 @@ def expected(db: Session, product_ids=None) -> dict[int, int]:
     )
 
 
-def availability(db: Session, product_ids: list[int]) -> dict[int, dict[str, int]]:
+def availability(
+    db: Session, product_ids: list[int], warehouse_id: int | None = None
+) -> dict[int, dict[str, int]]:
     """Остаток, бронь, ожидается и доступно — по каждому товару.
 
     Шесть запросов НА ВЕСЬ СПИСОК, а не шесть на строку: остаток, три на бронь
     по заявкам (нужно, передано заказам, списано) и по одному на бронь заказов
     и на ожидаемую поставку. Со списка в 500 позиций построчный счёт дал бы
     три тысячи обращений.
+
+    `warehouse_id` режет только ОСТАТОК: `available = stock(склад) − reserved(вся
+    система)`. Резерв сквозной намеренно — заказ склада не называет, и наивный
+    фильтр вычел бы ноль (docs/16-api-sayta.md §4). Так витрина магазина видит
+    полку зала, а обещанное вычитается всё; ошибка если и есть, то в безопасную
+    сторону.
     """
     if not product_ids:
         return {}
-    stock = warehouse_repo.stock_by_product(db, product_ids)
+    stock = warehouse_repo.stock_by_product(db, product_ids, warehouse_id=warehouse_id)
     hold = reserved(db, product_ids)
     coming = expected(db, product_ids)
     return {
