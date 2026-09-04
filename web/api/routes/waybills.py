@@ -252,6 +252,16 @@ def podtverdit(
     )
 
 
+@router.delete("/{waybill_id}")
+def udalit(
+    waybill_id: int,
+    user: User = Depends(require_perm("waybills", "edit")),
+    db: Session = Depends(get_db),
+):
+    """Удалить черновик, заведённый по ошибке. Проведённую — нельзя никак."""
+    return document_service.udalit(db, waybill_id, user, WAYBILL_KINDS)
+
+
 @router.post("/{waybill_id}/cancel")
 def otmenit(
     waybill_id: int,

@@ -404,7 +404,7 @@ def add_deal_line(
     db: Session = Depends(get_db),
 ):
     _visible(db, deal_id, user)
-    stroka = deal_lines_service.dobavit(db, deal_id, payload.model_dump(exclude_unset=True))
+    stroka = deal_lines_service.dobavit(db, deal_id, payload.model_dump(exclude_unset=True), user)
     # Нехватка отдаётся ответом на добавление: «добавили, но столько на складе
     # не лежит» — это предупреждение, и сказать его нужно сразу.
     #
@@ -427,7 +427,7 @@ def edit_deal_line(
 ):
     _visible(db, deal_id, user)
     stroka = deal_lines_service.pravit(
-        db, deal_id, line_id, payload.model_dump(exclude_unset=True)
+        db, deal_id, line_id, payload.model_dump(exclude_unset=True), user
     )
     return deal_lines_service.s_nehvatkoy(
         db, [stroka], permissions_service.sees_amounts(db, user)
@@ -444,7 +444,7 @@ def drop_deal_line(
     db: Session = Depends(get_db),
 ):
     _visible(db, deal_id, user)
-    deal_lines_service.ubrat(db, deal_id, line_id)
+    deal_lines_service.ubrat(db, deal_id, line_id, user)
     return {"message": "Line removed"}
 
 

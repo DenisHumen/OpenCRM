@@ -36,7 +36,7 @@ export function OrderCard() {
   // равен их сумме и отличить лишнее от настоящего потом нечем.
   const guard = useGuard();
   const [shortage, setShortage] = useState<string | null>(null);
-  const [confirm, setConfirm] = useState<"cancel" | "revert" | null>(null);
+  const [confirm, setConfirm] = useState<"cancel" | "revert" | "delete" | null>(null);
   const places = useWarehouses();
   const [place, setPlace] = useState<number | null>(null);
   const { failure, fail, clear } = useFailure();
@@ -255,6 +255,11 @@ export function OrderCard() {
           <button className="btn btn-secondary" disabled={guard.busy} onClick={() => setConfirm("cancel")}>
             {t("orderCancel")}
           </button>
+          {can(user, "orders.edit") && (
+            <button className="text-link danger" disabled={guard.busy} onClick={() => setConfirm("delete")}>
+              {t("paperDelete")}
+            </button>
+          )}
           {shortage && (
             <div style={{ flexBasis: "100%" }}>
               <div className="field-desc" style={{ color: "var(--warning)" }}>{shortage}</div>
@@ -291,11 +296,17 @@ export function OrderCard() {
 
       {confirm && (
         <ConfirmModal
-          text={confirm === "cancel" ? t("orderCancelConfirm") : t("orderRevertConfirm")}
-          confirmLabel={confirm === "cancel" ? t("orderCancel") : t("orderRevert")}
+          text={confirm === "cancel" ? t("orderCancelConfirm") : confirm === "delete" ? t("paperDeleteConfirm", { number: order.number }) : t("orderRevertConfirm")}
+          confirmLabel={confirm === "cancel" ? t("orderCancel") : confirm === "delete" ? t("paperDelete") : t("orderRevert")}
           danger
           onConfirm={async () => {
             try {
+              if (confirm === "delete") {
+                await api.del(`/orders/${order.id}`);
+                toast(t("paperDeleted"));
+                navigate("/orders");
+                return;
+              }
               await api.post(`/orders/${order.id}/${confirm === "cancel" ? "cancel" : "revert"}`);
               await load();
             } catch (err) {

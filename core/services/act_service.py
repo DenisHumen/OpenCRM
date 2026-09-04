@@ -29,13 +29,15 @@
 фиксирует, а списывать ему нечем — и это правда о системе без склада, а не дыра.
 """
 
+import json
+
 from sqlalchemy.orm import Session
 
 # Под псевдонимом по той же причине, что и в `document_service`: ниже есть своя
 # `events()` — история акта для его экрана.
 from core import events as event_bus
 from core import exceptions as errors
-from core.services import audit_service, document_service, pipeline_service
+from core.services import audit_service, document_service, pipeline_service, settings_service
 from core.services import warehouse_service
 from database.models import Document, DocumentEvent, DocumentLine, User
 from database.models.audit import SOURCE_MANUAL
@@ -45,6 +47,7 @@ from database.models.document import (
     STATUS_CLOSED,
     STATUS_ISSUED,
 )
+from database.repositories import deal_lines as lines_repo
 from database.repositories import deals as deals_repo
 from database.repositories import documents as documents_repo
 
@@ -338,6 +341,88 @@ def complete(
         after=target,
     )
     return act
+
+
+# --- акт по заявке сам --------------------------------------------------------
+
+
+def nezakrytyy_po_zayavke(db: Session, deal_id: int) -> Document | None:
+    """Непроведённый акт заявки, если есть. Один: заводит его зеркало."""
+    return documents_repo.nezakrytaya(db, deal_id, KIND_ACT, (STATUS_ISSUED,))
+
+
+def avto(act: Document) -> bool:
+    """Заведён ли акт сам, по заявке, а не руками."""
+    return bool(document_service.payload_of(act).get("auto"))
+
+
+def zerkalo_po_zayavke(db: Session, deal, author: User | None) -> None:
+    """Акт работ повторяет строки заявки, пока не проведён.
+
+    Владелец просил (05.09.2026), чтобы бумага появлялась сама: работа набрана
+    строками заявки, и акт по ней — это те же строки, а не второй набор руками.
+    Выключается настройкой `auto_act`; при выключенном блоке бланков сюда не
+    приходят вовсе. Заявка без строк — заведённый сами акт убираем, ручной
+    оставляем человеку.
+    """
+    if settings_service.get_all(db).get("auto_act", "1") != "1":
+        return
+    if deal.closed_at is not None or deal.deleted_at is not None:
+        return
+    stroki = lines_repo.list_for_deal(db, deal.id)
+    act = nezakrytyy_po_zayavke(db, deal.id)
+    if not stroki:
+        if act is not None and avto(act):
+            documents_repo.drop(db, act)
+        return
+    if act is None:
+        if author is None:
+            return
+        act = create(
+            db,
+            {"deal_id": deal.id, "client_id": deal.client_id, "company_id": deal.company_id},
+            author,
+        )
+        snimok = document_service.payload_of(act)
+        snimok["auto"] = True
+        act.payload = json.dumps(snimok, ensure_ascii=False)
+        db.flush()
+    # Строки переписываются целиком — как у накладной по заказу: два перечня
+    # согласуются по сути, а не по номерам строк.
+    for row in documents_repo.lines_of(db, act.id):
+        documents_repo.drop_line(db, row)
+    for stroka in stroki:
+        documents_repo.add_line(
+            db,
+            DocumentLine(
+                document_id=act.id,
+                product_id=stroka.product_id,
+                name_snapshot=stroka.name_snapshot,
+                quantity_milli=stroka.quantity_milli,
+                price_minor=stroka.price_minor,
+                cost_minor=None,
+                sort_order=stroka.sort_order,
+            ),
+        )
+
+
+def zakryt_avto_akt(db: Session, deal_id: int, author: User, note: str) -> None:
+    """Заявка закрылась мимо акта — акт, заведённый сам, отменяется с записью.
+
+    Списание уже сделала заявка (docs/19 §Р4); провести акт после неё значило
+    бы открыть второй путь к складу. Отмена, а не удаление: заявка жила, и
+    номер акта остаётся в её истории.
+    """
+    act = nezakrytyy_po_zayavke(db, deal_id)
+    if act is not None and avto(act):
+        document_service.set_status(db, act.id, STATUS_CANCELLED, author, note)
+
+
+def ubrat_avto_akt(db: Session, deal_id: int) -> None:
+    """Заявка убрана — акт, заведённый по ней сам, уходит вместе с ней."""
+    act = nezakrytyy_po_zayavke(db, deal_id)
+    if act is not None and avto(act):
+        documents_repo.drop(db, act)
 
 
 def cancel(db: Session, act_id: int, author: User, note: str = "") -> Document:

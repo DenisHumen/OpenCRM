@@ -36,7 +36,7 @@ export function WaybillCard() {
   // настоящего потом нечем.
   const guard = useGuard();
   const [shortage, setShortage] = useState<string | null>(null);
-  const [confirm, setConfirm] = useState<"cancel" | "reverse" | null>(null);
+  const [confirm, setConfirm] = useState<"cancel" | "reverse" | "delete" | null>(null);
   const { failure, fail, clear } = useFailure();
 
   const load = useCallback(async () => {
@@ -83,6 +83,19 @@ export function WaybillCard() {
       } else {
         toastError(e);
       }
+    } finally {
+      guard.free();
+    }
+  };
+
+  const udalit = async () => {
+    if (!guard.take()) return;
+    try {
+      await api.del(`/waybills/${waybill.id}`);
+      toast(t("paperDeleted"));
+      navigate("/waybills");
+    } catch (err) {
+      toastError(err);
     } finally {
       guard.free();
     }
@@ -159,6 +172,11 @@ export function WaybillCard() {
               {t("wbCancel")}
             </button>
           )}
+          {(draft || waybill.status === "cancelled") && can(user, "waybills.edit") && (
+            <button className="text-link danger" disabled={guard.busy} onClick={() => setConfirm("delete")}>
+              {t("paperDelete")}
+            </button>
+          )}
         </div>
       </div>
 
@@ -210,10 +228,11 @@ export function WaybillCard() {
 
       {confirm && (
         <ConfirmModal
-          text={confirm === "cancel" ? t("wbCancelAsk") : t("wbReverseAsk")}
-          confirmLabel={confirm === "cancel" ? t("wbCancel") : t("wbReverse")}
+          text={confirm === "cancel" ? t("wbCancelAsk") : confirm === "delete" ? t("paperDeleteConfirm", { number: waybill.number }) : t("wbReverseAsk")}
+          confirmLabel={confirm === "cancel" ? t("wbCancel") : confirm === "delete" ? t("paperDelete") : t("wbReverse")}
           onConfirm={() => {
-            if (confirm === "cancel") void act("cancel");
+            if (confirm === "delete") void udalit();
+            else if (confirm === "cancel") void act("cancel");
             else void reverse();
           }}
           onClose={() => setConfirm(null)}

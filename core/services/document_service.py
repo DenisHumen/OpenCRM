@@ -11,9 +11,10 @@ from core import events as event_bus
 from core import exceptions as errors
 from core import references
 from core import uniqueness
-from core.services import company_service, settings_service
+from core.services import audit_service, company_service, settings_service
 from core.utils import now_utc
 from database.models import Client, Company, Deal, Document, DocumentEvent, User
+from database.models.audit import SOURCE_MANUAL
 from database.models.document import (
     DOCUMENT_KINDS,
     DOCUMENT_LOCALES,
@@ -22,6 +23,7 @@ from database.models.document import (
     ORDER_KINDS,
     STATUS_CANCELLED,
     STATUS_CLOSED,
+    STATUS_DRAFT,
     STATUS_ISSUED,
     WAYBILL_KINDS,
     statuses_for,
@@ -29,6 +31,8 @@ from database.models.document import (
 from database.repositories import clients as clients_repo
 from database.repositories import deals as deals_repo
 from database.repositories import documents as documents_repo
+from database.repositories import finance as finance_repo
+from database.repositories import warehouse as warehouse_repo
 
 # Предел на поле бланка — не придирка к многословию, а условие того, что обе
 # половины помещаются на один A4. Замерено на живой странице: при 400 символах в
@@ -298,6 +302,63 @@ def tolko_blank(db: Session, document_id: int) -> Document:
             code="document_is_a_waybill",
         )
     return document
+
+
+def udalit(db: Session, document_id: int, author: User, kinds) -> dict:
+    """Удалить бумагу, заведённую по ошибке, пока она ничего не сделала.
+
+    Правило «бланк не удаляется» смягчено владельцем 05.09.2026: не удаляется
+    бумага, которая ЖИЛА — двигала склад, принимала деньги, стала основанием
+    накладной или была проведена. Заведённая случайно и нетронутая висела бы в
+    списке вечно, и отмена этого не лечит: отменённая остаётся в списке.
+    Дырку в нумерации объясняет журнал: номер и вид записаны в `document.deleted`.
+    """
+    document = get(db, document_id)
+    if document.kind not in kinds:
+        raise errors.ValidationError(
+            "This paper belongs to another section", code="document_wrong_section"
+        )
+    if document.status == STATUS_CLOSED or (
+        document.kind in WAYBILL_KINDS and document.status not in (STATUS_DRAFT, STATUS_CANCELLED)
+    ):
+        raise errors.ValidationError(
+            f"{document.number} has been carried out and cannot be deleted",
+            code="document_in_use",
+        )
+    prichiny = []
+    if warehouse_repo.moves_of_document(db, document.id):
+        prichiny.append("stock moves")
+    if finance_repo.operations_of_document(db, document.id):
+        prichiny.append("money operations")
+    # Черновик накладной по заказу уходит вместе с ним: он повторяет заказ и без
+    # него не значит ничего. Проведённая — держит заказ: товар по ней уехал.
+    chernoviki = []
+    for waybill in documents_repo.po_osnovaniyu(db, document.id):
+        if waybill.status == STATUS_DRAFT:
+            chernoviki.append(waybill)
+        else:
+            prichiny.append("waybills based on it")
+            break
+    if prichiny:
+        raise errors.ValidationError(
+            f"{document.number} is in use: " + ", ".join(prichiny), code="document_in_use"
+        )
+    number, kind = document.number, document.kind
+    for waybill in chernoviki:
+        documents_repo.drop(db, waybill)
+    documents_repo.drop(db, document)
+    audit_service.record(
+        db,
+        action=audit_service.ACTION_DOCUMENT_DELETED,
+        actor=author,
+        source=SOURCE_MANUAL,
+        entity_type=audit_service.ENTITY_DOCUMENT,
+        entity_id=document_id,
+        entity_label=number,
+        before=kind,
+        after="deleted",
+    )
+    return {"id": document_id, "number": number, "deleted": True}
 
 
 def by_number(db: Session, number: str) -> Document:

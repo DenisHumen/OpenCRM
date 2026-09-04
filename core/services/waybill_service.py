@@ -55,6 +55,7 @@ from database.models.document import (
     KIND_WAYBILL_OUT,
     STATUS_CANCELLED,
     STATUS_CLOSED,
+    OPEN_ORDER_STATUSES,
     STATUS_DRAFT,
     STATUS_ISSUED,
     WAYBILL_KINDS,
@@ -368,6 +369,82 @@ def po_zakazu(
             ),
         )
     return waybill
+
+
+# --- черновик по заказу сам --------------------------------------------------
+
+
+def chernovik_po_zakazu(db: Session, basis_id: int) -> Document | None:
+    """Непроведённая накладная по заказу, если есть. Одна: заводит её зеркало."""
+    for waybill in documents_repo.po_osnovaniyu(db, basis_id):
+        if waybill.status == STATUS_DRAFT:
+            return waybill
+    return None
+
+
+def avto(waybill: Document) -> bool:
+    """Заведена ли бумага сама, по заказу, а не руками."""
+    return bool(payload_of(waybill).get("auto"))
+
+
+def zerkalo_po_zakazu(db: Session, order: Document, author: User | None) -> None:
+    """Черновик накладной повторяет заказ, пока не проведён.
+
+    Владелец просил (05.09.2026), чтобы бумага появлялась сама, а не по кнопке
+    в конце: кладовщик видит, что собирать, с первой строки заказа, и правка
+    заказа не расходится с накладной на одну позицию. Выключается настройкой
+    `auto_waybill`; при выключенном блоке накладных сюда не приходят вовсе.
+
+    Заказ без товарных строк — черновик не нужен: заведённый сами убираем,
+    заведённый руками оставляем человеку.
+    """
+    if settings_service.get_all(db).get("auto_waybill", "1") != "1":
+        return
+    if order.status not in OPEN_ORDER_STATUSES:
+        return
+    tovarnye = [
+        row for row in documents_repo.lines_of(db, order.id)
+        if row.product_id is not None
+        and not warehouse_service.get_product(db, row.product_id, include_deleted=True).is_service
+    ]
+    chernovik = chernovik_po_zakazu(db, order.id)
+    if not tovarnye:
+        if chernovik is not None and avto(chernovik):
+            documents_repo.drop(db, chernovik)
+        return
+    if chernovik is None:
+        if author is None:
+            return
+        chernovik = po_zakazu(db, order.id, author, None)
+        snimok = payload_of(chernovik)
+        snimok["auto"] = True
+        chernovik.payload = json.dumps(snimok, ensure_ascii=False)
+        db.flush()
+        return
+    # Строки переписываются целиком: считать разницу построчно значило бы
+    # держать два перечня согласованными по номерам строк, а не по сути.
+    for row in documents_repo.lines_of(db, chernovik.id):
+        documents_repo.drop_line(db, row)
+    for row in tovarnye:
+        documents_repo.add_line(
+            db,
+            DocumentLine(
+                document_id=chernovik.id,
+                product_id=row.product_id,
+                name_snapshot=row.name_snapshot,
+                quantity_milli=row.quantity_milli,
+                price_minor=row.price_minor,
+                cost_minor=None,
+                sort_order=row.sort_order,
+            ),
+        )
+
+
+def ubrat_avto_chernovik(db: Session, order: Document) -> None:
+    """Заказ отменён — черновик, заведённый по нему сам, уходит вместе с ним."""
+    chernovik = chernovik_po_zakazu(db, order.id)
+    if chernovik is not None and avto(chernovik):
+        documents_repo.drop(db, chernovik)
 
 
 # --- проведение ---------------------------------------------------------------

@@ -379,4 +379,5 @@ this file is the English way into the project, not a translation of all of it.
 | [17 — Waybills](docs/17-nakladnye.md) | Paper, stock moves, immutability |
 | [19 — Order assembly](docs/19-sborka-zakaza.md) | Picking an order from one place |
 | [20 — Usability and in-app guide](docs/20-udobstvo-i-spravka.md) | Live dashboard, sorting, the documentation screen |
+| [21 — Module links](docs/21-svyaz-blokov.md) | Papers issued by themselves, deleting papers created by mistake, notifications |
 | [10 — Security audit](docs/10-security-audit.md), [14 — Rust](docs/14-rust.md), [18 — Third-party components](docs/18-chuzhie-komponenty.md) | One-off reviews and decisions |

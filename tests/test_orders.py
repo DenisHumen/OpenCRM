@@ -842,12 +842,15 @@ def test_kartochka_zakaza_pokazyvaet_svoyu_nakladnuyu(root_client, client_row):
     order = order_with(root_client, client_row, item, quantity="2")
 
     do = root_client.get(f"{ORDERS}/{order['id']}").json()
-    assert do["waybills"] == [], "у неотгруженного заказа откуда-то бумага"
+    # С 05.09.2026 черновик по заказу заводится сам с первой товарной строки:
+    # карточка показывает его сразу, а закрытие проводит ЕГО, не заводя второго.
+    assert [w["status"] for w in do["waybills"]] == ["draft"], "у заказа с товаром нет своего черновика"
 
     root_client.post(f"{ORDERS}/{order['id']}/close", json={})
     posle = root_client.get(f"{ORDERS}/{order['id']}").json()
-    assert len(posle["waybills"]) == 1, "закрытый заказ не показывает свою накладную"
+    assert len(posle["waybills"]) == 1, "закрытие завело вторую накладную вместо проведения черновика"
     bumaga = posle["waybills"][0]
+    assert bumaga["id"] == do["waybills"][0]["id"]
     assert bumaga["number"], "накладная без номера — по чему её искать"
     assert bumaga["status"] == "issued"
 

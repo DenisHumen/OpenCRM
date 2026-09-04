@@ -38,6 +38,7 @@
 from datetime import timedelta
 
 from core import events
+from core.events import DEFAULT_ORDER
 from core.services import (
     deal_lines_service,
     client_service,
@@ -47,10 +48,18 @@ from core.services import (
     task_service,
     warehouse_service,
 )
+from core.services import act_service
 from core.services.act_service import ACT_COMPLETED
+from core.services.deal_lines_service import DEAL_LINES_CHANGED
 from core.services.lead_service import LEAD_RECEIVED
-from core.services.deal_service import DEAL_STAGE_CHANGED
-from core.services.order_service import ORDER_CLOSED, ORDER_REVERTED
+from core.services.deal_service import DEAL_DELETED, DEAL_STAGE_CHANGED
+from core.services import waybill_service
+from core.services.order_service import (
+    ORDER_CANCELLED,
+    ORDER_CLOSED,
+    ORDER_LINES_CHANGED,
+    ORDER_REVERTED,
+)
 from core.services.document_service import (
     DOCUMENT_CLOSED,
     DOCUMENT_ISSUED,
@@ -60,7 +69,48 @@ from core.services.warehouse_service import STOCK_WRITTEN_OFF, format_quantity
 from core.utils import now_utc
 from database.models.client import KIND_DOCUMENT, KIND_STAGE, KIND_STOCK
 from database.models.document import STATUS_CANCELLED
-from database.models.pipeline import KIND_WON
+from database.models.pipeline import CLOSED_KINDS, KIND_WON
+
+
+@events.participant(DEAL_LINES_CHANGED, module="documents")
+def akt_povtoryaet_zayavku(event: events.Event) -> None:
+    """Акт работ по заявке заводится и переписывается сам (docs/21)."""
+    act_service.zerkalo_po_zayavke(event.db, event["deal"], event.actor)
+
+
+@events.participant(DEAL_STAGE_CHANGED, module="documents", order=DEFAULT_ORDER + 10)
+def avto_akt_ukhodit_s_zakrytiem(event: events.Event) -> None:
+    """Заявка закрыта на доске мимо акта — заведённый сам акт отменяется.
+
+    После списания (`spisat_tovar_pri_vyigryshe`, порядок ниже): списала
+    заявка, и второй путь к складу через акт обязан закрыться.
+    """
+    stage = pipeline_service.get_stage(event.db, event["to_stage"])
+    if stage.kind not in CLOSED_KINDS or event.actor is None:
+        return
+    act_service.zakryt_avto_akt(
+        event.db, event["deal"].id, event.actor, "deal closed on the board"
+    )
+
+
+@events.participant(DEAL_DELETED, module="documents")
+def avto_akt_ukhodit_s_zayavkoy(event: events.Event) -> None:
+    act_service.ubrat_avto_akt(event.db, event["deal"].id)
+
+
+@events.participant(ORDER_LINES_CHANGED, module="waybills")
+def nakladnaya_povtoryaet_zakaz(event: events.Event) -> None:
+    """Черновик накладной по заказу заводится и переписывается сам.
+
+    `participant`: не удалось повторить — правка заказа не прошла. Иначе заказ и
+    накладная разошлись бы на одну позицию, и заметил бы это клиент.
+    """
+    waybill_service.zerkalo_po_zakazu(event.db, event["order"], event.actor)
+
+
+@events.participant(ORDER_CANCELLED, module="waybills")
+def chernovik_ukhodit_s_zakazom(event: events.Event) -> None:
+    waybill_service.ubrat_avto_chernovik(event.db, event["order"])
 
 
 @events.participant(DEAL_STAGE_CHANGED, module="warehouse")
