@@ -780,7 +780,7 @@ CRM нет, — человек нажмёт «отправить» снова, �
 | POST | `/orders/{id}/lines` | 🔑 `orders.edit` | Добавить позицию |
 | PATCH | `/orders/{id}/lines/{line_id}` | 🔑 `orders.edit` | Изменить позицию |
 | DELETE | `/orders/{id}/lines/{line_id}` | 🔑 `orders.edit` | Убрать позицию |
-| POST | `/orders/{id}/pick` | 🔑 `orders.edit` | Отметить собранным по отсканированному коду: `{code, quantity_milli}` |
+| POST | `/orders/{id}/pick` | 🔑 `orders.edit` | Отметить собранным по отсканированному коду: `{code, quantity_milli}`. Код, не найденный среди штрихкодов, пробуется как артикул (с 04.09.2026) |
 | POST | `/orders/{id}/ready` | 🔑 `orders.edit` | Заказ собран |
 | POST | `/orders/{id}/close` | 🔑 `orders.issue` | Провести: отгрузить покупателю или принять от поставщика |
 | POST | `/orders/{id}/revert` | 🔑 `orders.issue` | Отменить проведение обратными движениями. Прежние остаются на месте |

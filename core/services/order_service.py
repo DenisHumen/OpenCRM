@@ -559,12 +559,23 @@ def pick(db: Session, document_id: int, code: str, quantity_milli: int = 1000) -
 
     Кода нет в заказе — отказ с самим кодом внутри: пустой ответ после писка
     сканера читается как «сканер сломался».
+
+    Код без штрихкода пробуется как артикул: артикул печатается на наклейке
+    текстом, и у товара без своего штрихкода это единственное, что можно
+    набрать с коробки.
     """
     from core.services import barcode_service
 
     order = get(db, document_id)
     _assert_open(order)
-    product = barcode_service.scan(db, code)
+    try:
+        product = barcode_service.scan(db, code)
+    except errors.NotFoundError:
+        product = warehouse_repo.get_by_sku(db, code.strip()) or warehouse_repo.get_by_sku(
+            db, code.strip().upper()
+        )
+        if product is None or product.deleted_at is not None:
+            raise
 
     line = documents_repo.line_by_product(db, order.id, product.id)
     if line is None:

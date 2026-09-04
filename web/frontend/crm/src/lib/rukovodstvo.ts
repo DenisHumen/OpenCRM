@@ -558,8 +558,8 @@ export const RUKOVODSTVO: Razdel[] = [
                     en: "Picked is stored separately from ordered: a mismatch «five ordered, four picked» is visible line by line BEFORE shipping, not at handover.",
                   },
                   {
-                    ru: "Собирают сканером: отсканировали код — строка отметилась. Код чужого товара даёт отказ, а не молчаливую отметку не той строки.",
-                    en: "Picking is done with a scanner: scan a code and the line is ticked. A code from another product is refused, rather than silently ticking the wrong line.",
+                    ru: "Собирают сканером: отсканировали код — строка отметилась. Код чужого товара даёт отказ, а не молчаливую отметку не той строки. У товара без штрихкода можно набрать артикул с наклейки.",
+                    en: "Picking is done with a scanner: scan a code and the line is ticked. A code from another product is refused, rather than silently ticking the wrong line. For an item without a barcode, type the SKU from the label.",
                   },
                   {
                     ru: "Набирать позиции и двигать склад — разные полномочия: сборщик набирает, отгружает старший.",
