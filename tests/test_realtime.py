@@ -97,6 +97,28 @@ def test_namyok_zayavki_nesyot_otvetstvennogo_i_avtora(root_client, ushedshie):
     assert zayavki[-1].module == "deals"
 
 
+def test_otmetka_prisutstviya_namyoka_ne_rozhdaet(root_client, ushedshie):
+    """Сердцебиение пишет `last_seen_at` каждому сотруднику раз в минуту; намёк на
+    это гнал бы всех на перечитку штата ради точки «в сети». Поймано воротами:
+    в догон приехал лишний намёк `staff` о том, кто сам и подключился."""
+    from core.utils import now_utc
+    from database.repositories import users as users_repo
+
+    with SessionLocal() as db:
+        root = users_repo.get_root(db)
+        root.last_seen_at = now_utc().replace(tzinfo=None)
+        db.commit()
+        assert [h for h in ushedshie if h.topic == "staff"] == []
+        root.name = root.name  # без изменений — тоже тишина
+        db.commit()
+        assert [h for h in ushedshie if h.topic == "staff"] == []
+        root.locale = "ru" if root.locale != "ru" else "en"
+        db.commit()
+        assert [h.id for h in ushedshie if h.topic == "staff"] == [root.id], "настоящая правка карточки — намёк"
+        root.locale = "ru" if root.locale != "ru" else "en"
+        db.commit()
+
+
 def test_yavnyy_announce_uezzhaet_posle_fiksatsii(root_client, ushedshie):
     with SessionLocal() as db:
         collector.announce(db, Hint(topic="warehouse", action="updated", id=5))

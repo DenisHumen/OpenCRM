@@ -84,7 +84,9 @@ def test_dogon_po_last_event_id_i_resync_kogda_dognat_nechem(root_client, pamyat
     for i in (2, 3, 4):
         pamyat.publish(Hint(topic="clients", action="updated", id=i))
     sobytiya = _sobytiya(root_client, {"Last-Event-ID": nomer})
-    izmeneniya = [s for s in sobytiya if s[0] == "change"]
+    # Только своя тема: параллельно поток вправе принести чужие намёки —
+    # например, о записи, которую сделал сам запрос.
+    izmeneniya = [s for s in sobytiya if s[0] == "change" and s[1]["topic"] == "clients"]
     assert [s[1]["id"] for s in izmeneniya] == [2, 3, 4], "ровно три, в порядке"
     assert all(s[2] for s in izmeneniya) and bus._nomer_bolshe(izmeneniya[-1][2], izmeneniya[0][2])
     assert not any(s[0] == "resync" for s in sobytiya)

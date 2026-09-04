@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import logging
 
-from sqlalchemy import event
+from sqlalchemy import event, inspect
 from sqlalchemy.orm import Session
 
 from core.live import bus, topics
@@ -58,6 +58,15 @@ def _tema(session: Session, obj) -> topics.Topic | None:
     return znachenie
 
 
+def _izmeneno(obj) -> set[str]:
+    """Какие поля записи правились в этом сбросе — по истории атрибутов, без запросов."""
+    return {
+        attr.key
+        for attr in inspect(obj).attrs
+        if attr.history.has_changes()
+    }
+
+
 def _namyok(session: Session, obj, action: str) -> Hint | None:
     tema = _tema(session, obj)
     if tema is None:
@@ -84,6 +93,9 @@ def _sobrat(session: Session, _flush_context) -> None:
                 announce(session, hint)
         for obj in session.dirty:
             if not session.is_modified(obj, include_collections=False):
+                continue
+            tema = _tema(session, obj)
+            if tema is not None and tema.tikhie and _izmeneno(obj) <= tema.tikhie:
                 continue
             hint = _namyok(session, obj, ACTION_UPDATED)
             if hint:
