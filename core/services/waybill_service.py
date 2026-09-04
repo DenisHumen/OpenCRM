@@ -39,6 +39,7 @@ from core import events as event_bus
 from core import exceptions as errors
 from core import references
 from core.services import (
+    notification_service,
     audit_service,
     company_service,
     document_service,
@@ -420,6 +421,15 @@ def zerkalo_po_zakazu(db: Session, order: Document, author: User | None) -> None
         snimok["auto"] = True
         chernovik.payload = json.dumps(snimok, ensure_ascii=False)
         db.flush()
+        # Сказать и автору: бумага появилась не по его нажатию, и без слов он
+        # узнает о ней из списка накладных, куда не собирался.
+        notification_service.notify(
+            db,
+            notification_service.adresaty(db, "waybills") ,
+            "auto_waybill",
+            {"number": chernovik.number, "order": order.number},
+            f"/waybills/{chernovik.id}",
+        )
         return
     # Строки переписываются целиком: считать разницу построчно значило бы
     # держать два перечня согласованными по номерам строк, а не по сути.

@@ -53,7 +53,7 @@ from core.services.act_service import ACT_COMPLETED
 from core.services.deal_lines_service import DEAL_LINES_CHANGED
 from core.services.lead_service import LEAD_RECEIVED
 from core.services.deal_service import DEAL_DELETED, DEAL_STAGE_CHANGED
-from core.services import waybill_service
+from core.services import notification_service, waybill_service
 from core.services.order_service import (
     ORDER_CANCELLED,
     ORDER_CLOSED,
@@ -66,10 +66,73 @@ from core.services.document_service import (
     payload_of,
 )
 from core.services.warehouse_service import STOCK_WRITTEN_OFF, format_quantity
+from core.services.waybill_service import WAYBILL_POSTED
 from core.utils import now_utc
 from database.models.client import KIND_DOCUMENT, KIND_STAGE, KIND_STOCK
 from database.models.document import STATUS_CANCELLED
 from database.models.pipeline import CLOSED_KINDS, KIND_WON
+
+
+# --- уведомления сотрудникам (docs/21 §4) ------------------------------------
+#
+# Наблюдатели, не участники: подсказка не стоит отгрузки. Автор действия
+# уведомления не получает — он видит ответ экрана.
+
+
+def _uvedomit(event: events.Event, area: str, kind: str, params: dict, link: str, manager_id=None) -> None:
+    notification_service.notify(
+        event.db,
+        notification_service.adresaty(event.db, area, manager_id=manager_id, krome=event.actor),
+        kind,
+        params,
+        link,
+    )
+
+
+@events.observer(ORDER_CLOSED, module="orders")
+def uvedomit_o_zakrytom_zakaze(event: events.Event) -> None:
+    order = event["order"]
+    _uvedomit(event, "orders", "order_closed", {"number": order.number, "kind": order.kind}, f"/orders/{order.id}")
+
+
+@events.observer(ORDER_REVERTED, module="orders")
+def uvedomit_ob_otkate_zakaza(event: events.Event) -> None:
+    order = event["order"]
+    _uvedomit(event, "orders", "order_reverted", {"number": order.number}, f"/orders/{order.id}")
+
+
+@events.observer(ORDER_CANCELLED, module="orders")
+def uvedomit_ob_otmene_zakaza(event: events.Event) -> None:
+    order = event["order"]
+    _uvedomit(event, "orders", "order_cancelled", {"number": order.number}, f"/orders/{order.id}")
+
+
+@events.observer(WAYBILL_POSTED, module="waybills")
+def uvedomit_o_provedyonnoy_nakladnoy(event: events.Event) -> None:
+    waybill = event["waybill"]
+    _uvedomit(event, "waybills", "waybill_posted", {"number": waybill.number, "kind": waybill.kind}, f"/waybills/{waybill.id}")
+
+
+@events.observer(ACT_COMPLETED, module="documents")
+def uvedomit_o_provedyonnom_akte(event: events.Event) -> None:
+    act = event["act"]
+    _uvedomit(event, "documents", "act_completed", {"number": act.number}, f"/documents/{act.id}")
+
+
+@events.observer(DEAL_STAGE_CHANGED, module="deals")
+def uvedomit_o_smene_etapa(event: events.Event) -> None:
+    deal = event["deal"]
+    _uvedomit(
+        event, "deals", "deal_stage",
+        {"title": deal.title, "from_stage": event["from_stage"], "to_stage": event["to_stage"]},
+        f"/deals/{deal.id}", manager_id=deal.manager_id,
+    )
+
+
+@events.observer(LEAD_RECEIVED, module="deals")
+def uvedomit_o_zayavke_s_sayta(event: events.Event) -> None:
+    deal = event["deal"]
+    _uvedomit(event, "deals", "lead_received", {"title": deal.title, "client": event["client"].name}, f"/deals/{deal.id}", manager_id=deal.manager_id)
 
 
 @events.participant(DEAL_LINES_CHANGED, module="documents")

@@ -88,10 +88,10 @@ def create_task(
 def update_task(
     task_id: int,
     payload: TaskPatchIn,
-    _: User = Depends(require_perm("tasks", "edit")),
+    user: User = Depends(require_perm("tasks", "edit")),
     db: Session = Depends(get_db),
 ):
-    task = task_service.update(db, task_id, payload.model_dump(exclude_unset=True))
+    task = task_service.update(db, task_id, payload.model_dump(exclude_unset=True), user)
     return _out(db, [task])[0]
 
 

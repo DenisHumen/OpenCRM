@@ -1497,6 +1497,28 @@ summary:focus-visible,
 
 /* Число просроченных рядом с пунктом меню. Красное, потому что это долг, а не
    статистика: серое число рядом с названием читается как «всего». */
+/* Колокольчик: кнопка как пункт меню, панель — над ней, как меню сотрудника. */
+.bell-wrap { position: relative; }
+.bell-btn { width: 100%; border: 0; background: none; color: var(--muted); font-size: 13px; text-align: left; cursor: pointer; font-family: var(--sans); }
+.bell-btn.active { color: var(--text); }
+.bell-panel {
+  position: absolute; bottom: 40px; left: 0; right: 0; z-index: 20;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+  display: flex; flex-direction: column; max-height: 420px; overflow: hidden;
+}
+.bell-head { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-bottom: 1px solid var(--line); font-size: 13px; font-weight: 600; }
+.bell-head > span { flex: 1; }
+.bell-empty { padding: 14px 12px; color: var(--faint); font-size: 12.5px; }
+.bell-list { overflow-y: auto; display: flex; flex-direction: column; }
+.bell-row {
+  display: flex; flex-direction: column; gap: 3px; padding: 9px 12px;
+  border: 0; border-bottom: 1px solid var(--line); background: none; text-align: left; cursor: pointer;
+  color: var(--muted); font-family: var(--sans); font-size: 12.5px; line-height: 1.4;
+}
+.bell-row:hover { background: var(--surface-2); }
+.bell-row.unread { color: var(--text); }
+.bell-row.unread .bell-text::before { content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--brand); margin-right: 7px; vertical-align: middle; }
+.bell-when { color: var(--faint); font-size: 11px; }
 .nav-badge {
   min-width: 18px; padding: 0 5px; border-radius: 999px;
   background: var(--danger-solid); color: var(--on-danger);

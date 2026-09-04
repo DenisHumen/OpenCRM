@@ -37,7 +37,7 @@ from sqlalchemy.orm import Session
 # `events()` — история акта для его экрана.
 from core import events as event_bus
 from core import exceptions as errors
-from core.services import audit_service, document_service, pipeline_service, settings_service
+from core.services import audit_service, document_service, notification_service, pipeline_service, settings_service
 from core.services import warehouse_service
 from database.models import Document, DocumentEvent, DocumentLine, User
 from database.models.audit import SOURCE_MANUAL
@@ -387,6 +387,13 @@ def zerkalo_po_zayavke(db: Session, deal, author: User | None) -> None:
         snimok["auto"] = True
         act.payload = json.dumps(snimok, ensure_ascii=False)
         db.flush()
+        notification_service.notify(
+            db,
+            notification_service.adresaty(db, "documents"),
+            "auto_act",
+            {"number": act.number, "deal": deal.title},
+            f"/documents/{act.id}",
+        )
     # Строки переписываются целиком — как у накладной по заказу: два перечня
     # согласуются по сути, а не по номерам строк.
     for row in documents_repo.lines_of(db, act.id):

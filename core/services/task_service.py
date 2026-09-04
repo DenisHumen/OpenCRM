@@ -47,10 +47,11 @@ def create(db: Session, data: dict, author: User) -> Task:
     )
     db.add(task)
     db.flush()
+    _skazat_ispolnitelyu(db, task, author)
     return task
 
 
-def update(db: Session, task_id: int, data: dict) -> Task:
+def update(db: Session, task_id: int, data: dict, author: User | None = None) -> Task:
     task = get_task(db, task_id)
     if "title" in data and data["title"] is not None:
         title = data["title"].strip()
@@ -71,7 +72,21 @@ def update(db: Session, task_id: int, data: dict) -> Task:
         # Дата закрытия отвечает сразу на два вопроса: сделано ли и когда.
         task.done_at = now_utc() if data["is_done"] else None
     db.flush()
+    if "assignee_id" in data:
+        _skazat_ispolnitelyu(db, task, author)
     return task
+
+
+def _skazat_ispolnitelyu(db: Session, task: Task, author: User | None) -> None:
+    """Напоминание повесили на другого — он узнаёт об этом сразу, а не в срок."""
+    from core.services import notification_service
+    from database.repositories import users as users_repo
+
+    if not task.assignee_id or (author is not None and task.assignee_id == author.id):
+        return
+    komu = users_repo.get_by_id(db, task.assignee_id)
+    if komu is not None:
+        notification_service.notify(db, [komu], "task_assigned", {"title": task.title}, "/tasks")
 
 
 def delete(db: Session, task_id: int) -> None:

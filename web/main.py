@@ -47,6 +47,7 @@ from web.api.routes import (
     mail,
     metrics,
     modules,
+    notifications,
     orders,
     people,
     pipeline,
@@ -393,6 +394,7 @@ def create_app() -> FastAPI:
     app.include_router(audit.router, prefix=api_prefix)
     app.include_router(site_settings.router, prefix=api_prefix)
     app.include_router(tasks.router, prefix=api_prefix)
+    app.include_router(notifications.router, prefix=api_prefix)
     app.include_router(templates.router, prefix=api_prefix)
     app.include_router(orders.router, prefix=api_prefix)
     app.include_router(waybills.router, prefix=api_prefix)
