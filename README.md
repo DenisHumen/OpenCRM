@@ -372,3 +372,11 @@ this file is the English way into the project, not a translation of all of it.
 | [08 — Deployment](docs/08-deployment.md) | Docker, VPS, backups, auto-update |
 | [09 — Roadmap](docs/09-roadmap.md) | Delivery stages |
 | [11 — Modules](docs/11-modules.md) | Module registry, dependencies, permissions |
+| [12 — Live updates](docs/12-realtime.md) | Presence and the event bus over Redis: how an edit shows up for everyone |
+| [13 — Telegram inside the CRM](docs/13-telegram-messenger.md) | Company bot, dialogues, linking to clients |
+| [15 — Backups from the settings](docs/15-backup-encryption.md) | Encrypted copy of the database and files, restore from the screen |
+| [16 — Shop-site API](docs/16-api-sayta.md) | Keys and scopes, catalog, availability, reservations: the reasoning |
+| [17 — Waybills](docs/17-nakladnye.md) | Paper, stock moves, immutability |
+| [19 — Order assembly](docs/19-sborka-zakaza.md) | Picking an order from one place |
+| [20 — Usability and in-app guide](docs/20-udobstvo-i-spravka.md) | Live dashboard, sorting, the documentation screen |
+| [10 — Security audit](docs/10-security-audit.md), [14 — Rust](docs/14-rust.md), [18 — Third-party components](docs/18-chuzhie-komponenty.md) | One-off reviews and decisions |
