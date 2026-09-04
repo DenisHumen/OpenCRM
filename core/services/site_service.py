@@ -34,6 +34,7 @@ from database.models.document import (
     KIND_SALES_ORDER,
     OPEN_ORDER_STATUSES,
     STATUS_CANCELLED,
+    STATUS_DRAFT,
     WAYBILL_KINDS,
 )
 from database.repositories import documents as documents_repo
@@ -373,9 +374,11 @@ def _srok_broni(key: ApiKey, payload: dict) -> datetime:
 def order_out(db: Session, order) -> dict:
     lines = documents_repo.lines_of(db, order.id)
     products = {p.id: p for p in warehouse_repo.products_by_ids(db, [l.product_id for l in lines if l.product_id], include_deleted=True)}
+    # Черновик по заказу заводится сам (docs/21) и товара не двигает: сайту
+    # называем только бумаги, по которым товар и вправду уехал.
     nakladnye = [
         d.number for d in documents_repo.po_osnovaniyu(db, order.id)
-        if d.kind in WAYBILL_KINDS and d.status != STATUS_CANCELLED
+        if d.kind in WAYBILL_KINDS and d.status not in (STATUS_CANCELLED, STATUS_DRAFT)
     ]
     now = now_utc().replace(tzinfo=None)
     return {
@@ -488,7 +491,7 @@ def cancel_order(db: Session, key: ApiKey, site_ref: str) -> dict:
         return order_out(db, order)
     nakladnye = [
         d for d in documents_repo.po_osnovaniyu(db, order.id)
-        if d.kind in WAYBILL_KINDS and d.status != STATUS_CANCELLED
+        if d.kind in WAYBILL_KINDS and d.status not in (STATUS_CANCELLED, STATUS_DRAFT)
     ]
     if order.status not in OPEN_ORDER_STATUSES or nakladnye:
         # Товар физически ушёл: дальше это возврат, а не отмена, и через сайт

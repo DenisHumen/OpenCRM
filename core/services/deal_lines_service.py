@@ -10,6 +10,7 @@
 
 from sqlalchemy.orm import Session
 
+from core import events as event_bus
 from core import exceptions as errors
 from core.services import (
     barcode_service,
@@ -63,7 +64,22 @@ def pribyl(db: Session, deal_id: int) -> tuple[int | None, int | None]:
     return sebes, None if itog_strok is None else itog_strok - sebes
 
 
-def dobavit(db: Session, deal_id: int, data: dict) -> DealLine:
+#: Состав заявки изменился. Слушает блок бланков: акт по заявке повторяет её
+#: строки, пока не проведён.
+DEAL_LINES_CHANGED = "deal.lines_changed"
+
+
+def _stroki_izmenilis(db: Session, deal: Deal, author: User | None) -> None:
+    event_bus.emit(
+        DEAL_LINES_CHANGED,
+        db=db,
+        actor=author,
+        reason=f"deal {deal.title} lines changed",
+        deal=deal,
+    )
+
+
+def dobavit(db: Session, deal_id: int, data: dict, author: User | None = None) -> DealLine:
     deal = _otkrytaya(db, deal_id)
     kolichestvo = _kolichestvo(data.get("quantity"))
     tovar = _tovar(db, data)
@@ -96,10 +112,13 @@ def dobavit(db: Session, deal_id: int, data: dict) -> DealLine:
         ),
     )
     pereschitat_summu(db, deal)
+    _stroki_izmenilis(db, deal, author)
     return stroka
 
 
-def pravit(db: Session, deal_id: int, line_id: int, data: dict) -> DealLine:
+def pravit(
+    db: Session, deal_id: int, line_id: int, data: dict, author: User | None = None
+) -> DealLine:
     deal = _otkrytaya(db, deal_id)
     stroka = _stroka(db, deal_id, line_id)
     if "quantity" in data:
@@ -118,13 +137,15 @@ def pravit(db: Session, deal_id: int, line_id: int, data: dict) -> DealLine:
         stroka.name_snapshot = _nazvanie(data["name"])
     db.flush()
     pereschitat_summu(db, deal)
+    _stroki_izmenilis(db, deal, author)
     return stroka
 
 
-def ubrat(db: Session, deal_id: int, line_id: int) -> None:
+def ubrat(db: Session, deal_id: int, line_id: int, author: User | None = None) -> None:
     deal = _otkrytaya(db, deal_id)
     lines_repo.drop(db, _stroka(db, deal_id, line_id))
     pereschitat_summu(db, deal)
+    _stroki_izmenilis(db, deal, author)
 
 
 def pereschitat_summu(db: Session, deal: Deal) -> None:

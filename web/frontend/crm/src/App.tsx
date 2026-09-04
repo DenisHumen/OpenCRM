@@ -47,6 +47,7 @@ import {
   SettingsBrand,
   SettingsContacts,
   SettingsLayout,
+  SettingsAutomation,
   SettingsMaintenance,
   SettingsReturnButton,
   SettingsShowcase,
@@ -460,6 +461,7 @@ export default function App() {
                 <Route path="return-button" element={<SettingsReturnButton />} />
               </Route>
               <Route path="maintenance" element={<SettingsMaintenance />} />
+              <Route path="automation" element={<SettingsAutomation />} />
               <Route path="backups" element={<SettingsBackups />} />
             </Route>
           </Route>

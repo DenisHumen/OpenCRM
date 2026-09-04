@@ -72,6 +72,12 @@ def add(db: Session, document: Document) -> Document:
     return document
 
 
+def drop(db: Session, document: Document) -> None:
+    """Стереть бумагу; строки и переходы уходят каскадом по внешнему ключу."""
+    db.delete(document)
+    db.flush()
+
+
 def take_status(db: Session, document: Document, *, expected: str, status: str) -> bool:
     """Сменить статус, пока он тот, что прочитали. False — кто-то успел раньше.
 
@@ -246,6 +252,20 @@ def schyot_po_statusam(
         .group_by(Document.status)
     ).all()
     return {status: int(skolko) for status, skolko in ryady}
+
+
+def nezakrytaya(db: Session, deal_id: int, kind: str, statuses) -> Document | None:
+    """Незакрытая бумага этого вида у заявки, если есть. Первая по номеру записи."""
+    return db.scalar(
+        select(Document)
+        .where(
+            Document.deal_id == deal_id,
+            Document.kind == kind,
+            Document.status.in_(tuple(statuses)),
+        )
+        .order_by(Document.id)
+        .limit(1)
+    )
 
 
 def est_nezakrytaya(db: Session, deal_id: int, kind: str, statuses) -> bool:

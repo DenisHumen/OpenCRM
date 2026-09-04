@@ -94,6 +94,11 @@ ORDER_CLOSED = "order.closed"
 #: защищает та же условная смена статуса — второй нажавший до подписчиков не
 #: дойдёт.
 ORDER_REVERTED = "order.reverted"
+#: Строки заказа изменились (добавили, поправили, убрали). Слушает блок накладных:
+#: черновик по заказу обязан повторять заказ, пока не проведён.
+ORDER_LINES_CHANGED = "order.lines_changed"
+#: Заказ отменён руками. Черновик накладной по нему больше не нужен.
+ORDER_CANCELLED = "order.cancelled"
 
 #: Сколько кандидатов показываем, когда клиент нашёлся не один.
 #:
@@ -504,10 +509,25 @@ def add_line(db: Session, document_id: int, data: dict, author: User) -> Documen
         sort_order=documents_repo.next_sort_order(db, order.id),
     )
     documents_repo.add_line(db, line)
+    _stroki_izmenilis(db, order, author)
     return line
 
 
-def update_line(db: Session, document_id: int, line_id: int, data: dict) -> DocumentLine:
+def _stroki_izmenilis(db: Session, order: Document, author: User | None) -> None:
+    """Сказать слушателям, что состав заказа другой. Кто слушает — не наше дело."""
+    event_bus.emit(
+        ORDER_LINES_CHANGED,
+        db=db,
+        actor=author,
+        reason=f"order {order.number} lines changed",
+        source_ref=order.number,
+        order=order,
+    )
+
+
+def update_line(
+    db: Session, document_id: int, line_id: int, data: dict, author: User | None = None
+) -> DocumentLine:
     order = get(db, document_id)
     _assert_open(order)
     line = _line(db, order.id, line_id)
@@ -527,13 +547,17 @@ def update_line(db: Session, document_id: int, line_id: int, data: dict) -> Docu
             raise errors.ValidationError("Line needs a name", code="line_name_required")
         line.name_snapshot = name[:MAX_LINE_NAME]
     db.flush()
+    _stroki_izmenilis(db, order, author)
     return line
 
 
-def remove_line(db: Session, document_id: int, line_id: int) -> None:
+def remove_line(
+    db: Session, document_id: int, line_id: int, author: User | None = None
+) -> None:
     order = get(db, document_id)
     _assert_open(order)
     documents_repo.drop_line(db, _line(db, order.id, line_id))
+    _stroki_izmenilis(db, order, author)
 
 
 def total_minor(rows: list[DocumentLine]) -> int:
@@ -748,9 +772,18 @@ def close(
         #
         # Склад может быть выключен — тогда его нет и у накладной: бумага
         # выписывается без него, а `provesti` не пишет ни одного движения.
-        nakladnaya = waybill_service.po_zakazu(
-            db, order.id, author, warehouse.id if warehouse else None
-        )
+        # Черновик по заказу уже есть — его и проводим: он и заведён ради
+        # этого, а его количества кладовщик мог поправить руками («собрано
+        # четыре»). Склад — тот, что выбрали при закрытии: черновик получил
+        # основной, а отгружают с названного.
+        nakladnaya = waybill_service.chernovik_po_zakazu(db, order.id)
+        if nakladnaya is None:
+            nakladnaya = waybill_service.po_zakazu(
+                db, order.id, author, warehouse.id if warehouse else None
+            )
+        else:
+            nakladnaya.warehouse_id = warehouse.id if warehouse else None
+            db.flush()
         waybill_service.provesti(
             db,
             nakladnaya.id,
@@ -933,7 +966,16 @@ def cancel(db: Session, document_id: int, author: User, note: str = "") -> Docum
     """Отменить непроведённый заказ. Склада не касается — резерв снимется сам."""
     order = get(db, document_id)
     _assert_open(order)
-    return document_service.set_status(db, order.id, STATUS_CANCELLED, author, note)
+    order = document_service.set_status(db, order.id, STATUS_CANCELLED, author, note)
+    event_bus.emit(
+        ORDER_CANCELLED,
+        db=db,
+        actor=author,
+        reason=f"order {order.number} cancelled",
+        source_ref=order.number,
+        order=order,
+    )
+    return order
 
 
 def mark_ready(db: Session, document_id: int, author: User) -> Document:

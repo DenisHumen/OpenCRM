@@ -45,6 +45,7 @@ const ACTION: Record<string, TranslationKey> = {
   "order.closed": "auditActOrderClosed",
   "order.reverted": "auditActOrderReverted",
   "act.completed": "auditActActCompleted",
+  "document.deleted": "auditActDocDeleted",
   "waybill.posted": "auditActWaybillPosted",
   "waybill.reversed": "auditActWaybillReversed",
   "storage.purged": "auditActStoragePurged",

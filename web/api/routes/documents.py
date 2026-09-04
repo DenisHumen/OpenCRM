@@ -9,7 +9,7 @@ from core import exceptions as errors
 from core.utils import money_for_print
 from core.services import act_service, codes, document_service, settings_service
 from database.models import User
-from database.models.document import DOCUMENT_KINDS, DOCUMENT_LOCALES
+from database.models.document import DOCUMENT_KINDS, DOCUMENT_LOCALES, KIND_ACT, KIND_INTAKE
 from database.repositories import documents as documents_repo
 from database.repositories import users as users_repo
 from web.api import schemas
@@ -216,6 +216,16 @@ def get_document(
         for e in events
     ]
     return data
+
+
+@router.delete("/{document_id}")
+def delete_document(
+    document_id: int,
+    user: User = Depends(require_perm("documents", "edit")),
+    db: Session = Depends(get_db),
+):
+    """Удалить квитанцию или акт, заведённые по ошибке и ничего не сделавшие."""
+    return document_service.udalit(db, document_id, user, (KIND_INTAKE, KIND_ACT))
 
 
 @router.post("/{document_id}/status")

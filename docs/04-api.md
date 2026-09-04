@@ -707,6 +707,7 @@ CRM нет, — человек нажмёт «отправить» снова, �
 | GET | `/documents/by-number/{number}` | 🔑 `documents.view` | Поиск сканом: сюда приходит то, что прочитал сканер штрихкода |
 | GET | `/documents/{id}` | 🔑 `documents.view` | Бланк + история состояний с именами авторов |
 | POST | `/documents/{id}/status` | 🔑 `documents.issue` | Сменить состояние: `{status, note}` |
+| DELETE | `/documents/{id}` | 🔑 `documents.edit` | Удалить квитанцию или акт, заведённые по ошибке: не закрытые, без движений склада, денег и накладных по основанию (`422 document_in_use`). Пишется в журнал `document.deleted` |
 | GET | `/documents/{id}/print` | 🔑 `documents.view` | **HTML на печать**, а не JSON: две одинаковые половины с линией отреза, штрихкод и QR. `?locale=` переопределяет язык бумаги. Заказ и накладная — отказ (`document_is_an_order`, `document_is_a_waybill`): у них свои формы |
 | POST | `/documents/acts` | 🔑 `documents.create` | Завести акт выполненных работ |
 
@@ -787,6 +788,7 @@ CRM нет, — человек нажмёт «отправить» снова, �
 | POST | `/orders/{id}/close` | 🔑 `orders.issue` | Провести: отгрузить покупателю или принять от поставщика |
 | POST | `/orders/{id}/revert` | 🔑 `orders.issue` | Отменить проведение обратными движениями. Прежние остаются на месте |
 | POST | `/orders/{id}/cancel` | 🔑 `orders.edit` | Отменить непроведённый. Резерв снимется сам — он не хранится |
+| DELETE | `/orders/{id}` | 🔑 `orders.edit` | Удалить заказ, заведённый по ошибке: непроведённый, без движений, денег и накладных (`422 document_in_use`). Журнал — `document.deleted` |
 | POST | `/orders/{id}/deal` | 🔑 `orders.edit` | Прицепить заказ к заявке или отцепить (`deal_id: null`) |
 | GET | `/orders/{id}/print` | 🔑 `orders.view` | **HTML на печать**: таблица позиций и итог |
 
@@ -882,6 +884,7 @@ CRM нет, — человек нажмёт «отправить» снова, �
 | POST | `/waybills/{id}/post` | 🔑 `waybills.issue` | Провести: товар уехал, остаток падает. `{confirm_negative: true}` — согласие отгрузить больше, чем лежит |
 | POST | `/waybills/{id}/confirm` | 🔑 `waybills.edit` | Получатель подтвердил приёмку. Склад не двигает |
 | POST | `/waybills/{id}/cancel` | 🔑 `waybills.edit` | Отменить черновик. Проведённую — нельзя, для неё сторно |
+| DELETE | `/waybills/{id}` | 🔑 `waybills.edit` | Удалить черновик (или отменённую), заведённый по ошибке. Проведённую — нельзя никак (`422 document_in_use`) |
 | POST | `/waybills/{id}/reverse` | 🔑 `waybills.issue` | Сторнирующая накладная — черновиком, на основании этой |
 | GET | `/waybills/{id}/print` | 🔑 `waybills.view` | Печатная форма (HTML). `?locale=ru|en|uk` — язык бумаги |
 

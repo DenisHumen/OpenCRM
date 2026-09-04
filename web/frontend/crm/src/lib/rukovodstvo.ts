@@ -259,6 +259,13 @@ export const RUKOVODSTVO: Razdel[] = [
               en: "Closing an order writes goods off stock. With the waybills module on, the write-off goes through a document you can find and reverse.",
             },
           },
+          {
+            vid: "abzats",
+            tekst: {
+              ru: "Акт работ по заявке заводится сам: появляется с первой строки заявки и повторяет её строки, пока его не провели. Провели акт — заявка перешла дальше и материалы списались. Закрыли заявку на доске, не проводя акт, — заявка списала сама, а акт отменился с записью. Выключается в настройках «Что делается само».",
+              en: "The act of works for a deal is issued by itself: it appears with the first line of the deal and repeats its lines until carried out. Carry out the act and the deal moves on with materials written off. Close the deal on the board without the act and the deal writes off by itself while the act is cancelled with a note. Switch it off in «What happens by itself» settings.",
+            },
+          },
         ],
       },
       {
@@ -488,8 +495,8 @@ export const RUKOVODSTVO: Razdel[] = [
           {
             vid: "vnimanie",
             tekst: {
-              ru: "Бланк не удаляется ничем и никогда — ни кнопкой, ни правом. Выданная бумага не исчезает, это правило учёта: у клиента на руках копия, и расхождение с ней дороже любой уборки.",
-              en: "A form is never deleted — not by a button, not by a permission. An issued paper does not vanish; it is an accounting rule: the client holds a copy, and disagreeing with it costs more than any tidiness.",
+              ru: "Бумага, которая жила, не удаляется: выданная и закрытая, двигавшая склад, принимавшая деньги. У клиента на руках копия, и расхождение с ней дороже любой уборки. Заведённую по ошибке и нетронутую удалить можно — кнопкой «Удалить» на карточке; номер остаётся в журнале действий.",
+              en: "A paper that has lived is never deleted: issued and closed, moved stock, took money. The client holds a copy, and disagreeing with it costs more than any tidiness. One created by mistake and never touched can be deleted — with «Delete» on its card; the number stays in the activity log.",
             },
           },
           {
@@ -572,6 +579,13 @@ export const RUKOVODSTVO: Razdel[] = [
                 ],
               },
             ],
+          },
+          {
+            vid: "vazhno",
+            tekst: {
+              ru: "Накладная по заказу заводится сама: черновик появляется с первой товарной строки и повторяет заказ, пока не проведён. Отгрузка проводит этот же черновик, отмена заказа убирает его. Выключается в настройках «Что делается само».",
+              en: "The waybill for an order is issued by itself: a draft appears with the first product line and repeats the order until posted. Shipping posts this very draft, cancelling the order removes it. Switch it off in «What happens by itself» settings.",
+            },
           },
           { vid: "ekran", put: "/orders", podpis: { ru: "Открыть заказы", en: "Open orders" } },
         ],
@@ -1292,7 +1306,7 @@ export const RUKOVODSTVO: Razdel[] = [
                   ],
                   [
                     { ru: "Система", en: "System" },
-                    { ru: "Режим обслуживания, живые обновления и резервные копии.", en: "Maintenance mode, live updates and backups." },
+                    { ru: "Режим обслуживания, живые обновления, резервные копии и «что делается само».", en: "Maintenance mode, live updates, backups and «what happens by itself»." },
                   ],
                 ],
               },

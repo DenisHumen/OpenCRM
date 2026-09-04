@@ -7,6 +7,7 @@ import { api } from "../lib/api";
 import { useApp } from "../lib/app";
 import { useFailure } from "../lib/failure";
 import { formatDateTime } from "../lib/format";
+import { moduleOn } from "../lib/modules";
 import { DEAL_TERMS, term } from "../lib/terms";
 
 const SWATCHES = ["#D97757", "#6C8EEF", "#4CAF6E", "#E8A23D"];
@@ -36,7 +37,7 @@ export function useSettings() {
 /** Разделы, у которых поля собираются в общую форму и уходят кнопкой «Сохранить».
  *  Остальные (копии, обслуживание) применяют каждое действие сразу, и кнопка
  *  над ними обещала бы сохранить то, что уже сохранено. */
-const S_FORMOY = new Set(["brand", "labels", "contacts", "showcase", "return-button"]);
+const S_FORMOY = new Set(["brand", "labels", "contacts", "showcase", "return-button", "automation"]);
 
 export function SettingsLayout() {
   const { t, refreshSettings, refreshWorkspace, toastError } = useApp();
@@ -476,6 +477,26 @@ export function SettingsReturnButton() {
           <div className="showcase-head-title">{t("previewBoardTitle")}</div>
         </div>
         {!values.studio_site_url && <div className="field-desc">{t("returnButtonEmpty")}</div>}
+      </div>
+    </div>
+  );
+}
+
+/** Связь блоков: что заводится само (docs/21-svyaz-blokov.md). */
+export function SettingsAutomation() {
+  const { t, modules } = useApp();
+  const { switcher } = useSettings();
+  return (
+    <div className="card" style={{ padding: "20px 22px" }}>
+      <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>{t("automation")}</div>
+      <div style={{ color: "var(--faint)", fontSize: 12.5, marginBottom: 18, lineHeight: 1.5 }}>{t("automationSub")}</div>
+      <div style={{ display: "grid", gap: 16 }}>
+        {/* Выключенный блок исчезает целиком — вместе со своим выключателем. */}
+        {moduleOn(modules, "waybills") && switcher("auto_waybill", t("autoWaybill"), t("autoWaybillHint"))}
+        {moduleOn(modules, "documents") && switcher("auto_act", t("autoAct"), t("autoActHint"))}
+        {!moduleOn(modules, "waybills") && !moduleOn(modules, "documents") && (
+          <div className="field-desc">{t("automationNothing")}</div>
+        )}
       </div>
     </div>
   );

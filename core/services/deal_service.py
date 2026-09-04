@@ -20,6 +20,8 @@ MAX_LOST_REASON = 200
 #: этапов. Заведение сделки событием не считается: этапа до неё не было, менять
 #: было нечего, — поэтому `from_stage` здесь всегда заполнен.
 DEAL_STAGE_CHANGED = "deal.stage_changed"
+#: Заявка убрана в корзину. Бумаги, заведённые по ней сами, уходят вместе с ней.
+DEAL_DELETED = "deal.deleted"
 
 # Потолок суммы в минимальных единицах. Не про ограничение бизнеса, а про две
 # разные беды сразу.
@@ -354,6 +356,15 @@ def delete_deal(
         entity_type=audit_service.ENTITY_DEAL,
         entity_id=deal.id,
         entity_label=deal.title,
+    )
+    events.emit(
+        DEAL_DELETED,
+        db=db,
+        actor=actor,
+        reason=f"deal {deal.title} deleted",
+        source=source,
+        source_ref=source_ref,
+        deal=deal,
     )
 
 

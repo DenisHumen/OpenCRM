@@ -249,7 +249,7 @@ def update_line(
     user: User = Depends(require_perm("orders", "edit")),
     db: Session = Depends(get_db),
 ):
-    line = order_service.update_line(db, order_id, line_id, payload.model_dump(exclude_unset=True))
+    line = order_service.update_line(db, order_id, line_id, payload.model_dump(exclude_unset=True), user)
     return schemas.order_line_out(line, amounts=permissions_service.sees_amounts(db, user, "orders"))
 
 
@@ -257,10 +257,10 @@ def update_line(
 def remove_line(
     order_id: int,
     line_id: int,
-    _: User = Depends(require_perm("orders", "edit")),
+    user: User = Depends(require_perm("orders", "edit")),
     db: Session = Depends(get_db),
 ):
-    order_service.remove_line(db, order_id, line_id)
+    order_service.remove_line(db, order_id, line_id, user)
     return {"message": "Line removed"}
 
 
@@ -353,6 +353,16 @@ def revert_order(
     return schemas.order_out(
         order, order_service.lines(db, order.id), amounts=permissions_service.sees_amounts(db, user, "orders")
     )
+
+
+@router.delete("/{order_id}")
+def delete_order(
+    order_id: int,
+    user: User = Depends(require_perm("orders", "edit")),
+    db: Session = Depends(get_db),
+):
+    """Удалить заказ, заведённый по ошибке: непроведённый, без движений и денег."""
+    return document_service.udalit(db, order_id, user, ORDER_KINDS)
 
 
 @router.post("/{order_id}/cancel")

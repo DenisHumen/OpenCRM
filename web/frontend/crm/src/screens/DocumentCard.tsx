@@ -12,6 +12,7 @@ import { useDebounced } from "../lib/debounce";
 import { useFailure } from "../lib/failure";
 import { useGuard } from "../lib/guard";
 import { copyText } from "../lib/clipboard";
+import { can } from "../lib/permissions";
 import { isFinished, nextStatuses, statusLabel, statusVariant } from "../lib/documents";
 import { formatDateTime, formatMoney, formatQuantity } from "../lib/format";
 import { useReference } from "../lib/reference";
@@ -31,10 +32,12 @@ type Stage = { key: string; name: string; kind: "open" | "won" | "lost" };
 
 export function DocumentCard() {
   const { id } = useParams();
-  const { t, locale, toast, toastError } = useApp();
+  const { t, locale, user, toast, toastError } = useApp();
   const navigate = useNavigate();
   const [doc, setDoc] = useState<any>(null);
   const [confirmCancel, setConfirmCancel] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const guard = useGuard();
 
   const { failure, fail, clear } = useFailure();
 
@@ -206,6 +209,39 @@ export function DocumentCard() {
 
       <History events={doc.events} label={(x) => statusLabel(t, x)} />
 
+      {/* Удаление — не отмена: отменённая остаётся в списке, а заведённую по
+          ошибке и нетронутую незачем хранить. Сервер сам откажет бумаге, которая
+          что-то сделала. */}
+      {doc.status !== "closed" && can(user, "documents.edit") && (
+        <div style={{ marginTop: 12 }}>
+          <button className="text-link danger" disabled={guard.busy} onClick={() => setConfirmDelete(true)}>
+            {t("paperDelete")}
+          </button>
+        </div>
+      )}
+
+      {confirmDelete && (
+        <ConfirmModal
+          text={t("paperDeleteConfirm", { number: doc.number })}
+          confirmLabel={t("paperDelete")}
+          danger
+          onConfirm={async () => {
+            setConfirmDelete(false);
+            if (!guard.take()) return;
+            try {
+              await api.del(`/documents/${doc.id}`);
+              toast(t("paperDeleted"));
+              navigate("/documents");
+            } catch (err) {
+              toastError(err);
+            } finally {
+              guard.free();
+            }
+          }}
+          onClose={() => setConfirmDelete(false)}
+        />
+      )}
+
       {confirmCancel && (
         <ConfirmModal
           text={t("docCancelConfirm")}
@@ -231,13 +267,15 @@ export function DocumentCard() {
  * заявка не переведена» достижимо обычным нажатием, а не только сбоем.
  */
 function ActCard({ act, reload }: { act: any; reload: () => Promise<void> }) {
-  const { t, locale, workspace, toast, toastError } = useApp();
+  const { t, locale, workspace, user, toast, toastError } = useApp();
   // Проведение делает сразу три вещи: списывает материалы, закрывает акт и
   // переводит заявку. Засов, а не флаг состояния: второе нажатие в том же тике
   // списало бы материалы дважды, а остаток склада равен сумме движений.
   const guard = useGuard();
   const [shortage, setShortage] = useState<string | null>(null);
   const [confirm, setConfirm] = useState(false);
+  const [deleteAsk, setDeleteAsk] = useState(false);
+  const navigate = useNavigate();
   const [stage, setStage] = useState<string>(act.next_stage || "");
   const places = useWarehouses();
   const [place, setPlace] = useState<number | null>(null);
@@ -383,6 +421,11 @@ function ActCard({ act, reload }: { act: any; reload: () => Promise<void> }) {
             <button className="btn btn-secondary" disabled={guard.busy} onClick={() => setConfirm(true)}>
               {t("actCancel")}
             </button>
+            {can(user, "documents.edit") && (
+              <button className="text-link danger" disabled={guard.busy} onClick={() => setDeleteAsk(true)}>
+                {t("paperDelete")}
+              </button>
+            )}
           </div>
           {/* Без воронки выбор этапа пуст, и об этом надо сказать: молчаливо
               пустой список читается как «этапов нет», а это не так. */}
@@ -412,6 +455,27 @@ function ActCard({ act, reload }: { act: any; reload: () => Promise<void> }) {
         <History events={act.events} label={(x) => statusLabel(t, x)} />
       </div>
 
+      {deleteAsk && (
+        <ConfirmModal
+          text={t("paperDeleteConfirm", { number: act.number })}
+          confirmLabel={t("paperDelete")}
+          danger
+          onConfirm={async () => {
+            setDeleteAsk(false);
+            if (!guard.take()) return;
+            try {
+              await api.del(`/documents/${act.id}`);
+              toast(t("paperDeleted"));
+              navigate("/documents");
+            } catch (err) {
+              toastError(err);
+            } finally {
+              guard.free();
+            }
+          }}
+          onClose={() => setDeleteAsk(false)}
+        />
+      )}
       {confirm && (
         <ConfirmModal
           text={t("actCancelConfirm")}
