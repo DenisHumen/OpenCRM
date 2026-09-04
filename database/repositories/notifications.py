@@ -6,6 +6,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from database.models.notification import Notification
+from database.query import page_of
 from database.models.user import STATUS_ACTIVE, User
 
 
@@ -20,16 +21,12 @@ def active_users(db: Session) -> list[User]:
 
 
 def list_for_user(db: Session, user_id: int, page: int, per_page: int) -> tuple[list[Notification], int]:
-    usloviya = (Notification.user_id == user_id,)
-    total = int(db.scalar(select(func.count()).select_from(Notification).where(*usloviya)) or 0)
-    rows = db.scalars(
+    stmt = (
         select(Notification)
-        .where(*usloviya)
+        .where(Notification.user_id == user_id)
         .order_by(Notification.created_at.desc(), Notification.id.desc())
-        .offset((page - 1) * per_page)
-        .limit(per_page)
-    ).all()
-    return list(rows), total
+    )
+    return page_of(db, stmt, page=page, per_page=per_page)
 
 
 def unread_count(db: Session, user_id: int) -> int:

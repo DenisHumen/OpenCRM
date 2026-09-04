@@ -162,4 +162,7 @@
 прочитать нельзя по условию запроса.
 
 **Уборка.** Старше 60 дней — `notification_service.ubrat_starye`, подсказки не
-учёт. Сторож — `tests/test_uvedomleniya.py`.
+учёт. Ходит с ночной уборкой переписки (`opencrm.sh tg-uborka` →
+`scripts/telegram_uborka.py`), независимо от срока хранения переписки: вторая
+строка в расписании ради одной таблицы не нужна. Сторож —
+`tests/test_uvedomleniya.py`.
