@@ -26,4 +26,7 @@ def workspace(_: User = Depends(require_staff), db: Session = Depends(get_db)):
         "brand_name": values.get("brand_name", ""),
         "currency": values.get("currency", "USD"),
         "deal_term": values.get("deal_term", "deal"),
+        # Сюда, а не в `GET /settings`: тот закрыт правом `settings.view`, а
+        # открывать ли поток — знать должна каждая вкладка.
+        "realtime_enabled": values.get("realtime_enabled", "1") == "1",
     }

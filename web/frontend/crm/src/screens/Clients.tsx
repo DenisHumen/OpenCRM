@@ -12,6 +12,7 @@ import { SourcePicker } from "../components/SourcePicker";
 import { Avatar, Chip, Dochitat, EmptyState, Modal, ScreenLoading } from "../components/ui";
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
+import { useLiveTopic } from "../lib/live";
 import { useDebounced } from "../lib/debounce";
 import { useFailure } from "../lib/failure";
 import { useGuard } from "../lib/guard";
@@ -51,6 +52,8 @@ export function Clients() {
   const otbor_spiska = useRef("");
   const [showNew, setShowNew] = useState(params.get("new") === "1");
   const [attempt, setAttempt] = useState(0);
+  // Намёк живых обновлений — тот же перезапрос, что и по кнопке «повторить».
+  useLiveTopic("clients", () => setAttempt((a) => a + 1));
 
   const { failure, fail, clear } = useFailure();
 

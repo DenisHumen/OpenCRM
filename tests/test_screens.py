@@ -116,6 +116,10 @@ def test_the_pause_is_measured_in_one_place():
     own_timers = []
     for path in sorted(SCREENS.rglob("*.tsx")):
         text = path.read_text(encoding="utf-8")
+        # `lib/live.tsx` — второй общий крючок, а не экран: склейка намёков и
+        # пауза перед переподключением живут там, где и сам поток.
+        if path.name == "live.tsx":
+            continue
         if "clearTimeout" in text and "setTimeout" in text and "Debounced" not in path.name:
             # Опрос обрабатывающихся работ — не про набор текста: там таймер
             # ждёт сервер, а не человека.
@@ -1137,8 +1141,12 @@ def test_potok_sobytiy_otkryvaetsya_v_odnom_meste():
         if "new EventSource" in text:
             gde.append(put.relative_to(SCREENS).as_posix())
 
-    assert gde == ["lib/tgpotok.ts"], (
-        "поток событий открывается не в одном месте, а в: " + ", ".join(gde)
+    # Два модуля, а не один: у мессенджера свой поток со своим догоном из базы
+    # (`?after=`), у общего слоя — свой с `Last-Event-ID`. Слить их — отдельная
+    # работа (docs/12-realtime.md §6); пока правило прежнее: на назначение —
+    # один источник, экраны подписываются, а не открывают.
+    assert gde == ["lib/live.tsx", "lib/tgpotok.ts"], (
+        "поток событий открывается не в двух названных местах, а в: " + ", ".join(gde)
     )
 
 

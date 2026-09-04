@@ -57,6 +57,12 @@ EXEMPT: dict[str, str] = {
     "/site/orders/{site_ref}/cancel": "отмена своего заказа по ключу с областью orders.write",
     "/site/customers": "регистрация клиента по ключу с областью customers.write",
     "/site/leads": "заявка по ключу с областью leads.write",
+    "/live": (
+        "поток живых обновлений: закрыт `require_staff`, а не правом — данных он "
+        "не отдаёт, отбор по блокам и правам идёт на КАЖДОЕ сообщение "
+        "(`core/live/access.py`), и закрытость проверяется своим тестом "
+        "(`tests/test_realtime_potok.py`)"
+    ),
     "/telephony/webhook": "запрос от АТС: сессии нет, проверяется подпись",
     "/telegram/webhook": "обновление от телеграма: сессии нет, проверяется секрет заголовка",
     "/alerts/webhook": (

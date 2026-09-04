@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { DealLines } from "../components/DealLines";
@@ -10,6 +10,7 @@ import { VyborKlienta } from "../components/VyborKlienta";
 import { Chip, ConfirmModal, LoadFailed, Modal, ScreenLoading } from "../components/ui";
 import { api, ApiError } from "../lib/api";
 import { useApp } from "../lib/app";
+import { useLiveTopic, useNachatayaPravka } from "../lib/live";
 import { useFailure } from "../lib/failure";
 import { useGuard } from "../lib/guard";
 import { statusLabel, statusVariant } from "../lib/documents";
@@ -69,6 +70,18 @@ export function DealCard() {
   const [composing, setComposing] = useState(false);
 
   const { failure, fail, clear } = useFailure();
+
+  // Живое обновление не пишет в то, что человек уже трогал (docs/12 §8):
+  // чистая карточка перечитывается молча, начатая правка получает полосу
+  // «данные изменились — показать». Признак — хук по форме, полями не управляет.
+  const koren = useRef<HTMLDivElement>(null);
+  const nachata = useNachatayaPravka(koren, deal?.updated_at);
+  const [ustarelo, setUstarelo] = useState(false);
+  useLiveTopic("deals", (s) => {
+    if (!s.resync && !s.hints.some((h) => h.id === Number(id))) return;
+    if (nachata) setUstarelo(true);
+    else void load();
+  });
 
   const load = useCallback(async () => {
     clear();
@@ -180,7 +193,16 @@ export function DealCard() {
   const closers = (stages.items ?? []).filter((s) => s.kind !== "open");
 
   return (
-    <div className="page page-narrow">
+    <div className="page page-narrow" ref={koren}>
+      {ustarelo && (
+        <div className="maintenance-bar" style={{ marginBottom: 12 }}>
+          <span className="dot" />
+          {t("liveStale")}
+          <button className="btn btn-secondary btn-sm" style={{ marginLeft: 12 }} onClick={() => { setUstarelo(false); void load(); }}>
+            {t("liveShow")}
+          </button>
+        </div>
+      )}
       <Link to="/deals" className="back-link">
         <Icon name="arrowLeft" size={14} />
         {term(workspace.deal_term, locale, "many")}

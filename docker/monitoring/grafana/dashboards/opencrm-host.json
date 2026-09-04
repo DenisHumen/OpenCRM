@@ -509,6 +509,31 @@
           "legendFormat": "предел в памяти процесса (1 = да)"
         }
       ]
+    },
+    {
+      "id": 48,
+      "type": "timeseries",
+      "title": "Живые обновления",
+      "description": "Открытые потоки /api/v1/live и потерянные намёки (Redis не принял запись). Потери — это вкладки с полосой «обновления приостановлены»; ноль — норма.",
+      "datasource": {"type": "prometheus", "uid": "opencrm-prometheus"},
+      "gridPos": {"h": 6, "w": 24, "x": 0, "y": 62},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "decimals": 0,
+          "custom": {"fillOpacity": 20, "lineWidth": 1}
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {"displayMode": "list", "placement": "bottom", "showLegend": true},
+        "tooltip": {"mode": "multi", "sort": "desc"}
+      },
+      "targets": [
+        {"refId": "A", "expr": "sum(opencrm_realtime_connections)", "legendFormat": "соединений"},
+        {"refId": "B", "expr": "increase(opencrm_realtime_dropped_total[5m])", "legendFormat": "потеряно за 5 мин"}
+      ]
     }
   ]
 }

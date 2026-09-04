@@ -11,6 +11,7 @@ import { Avatar, Chip, ConfirmModal, Dochitat, EmptyState, LoadFailed, ScreenLoa
 import { api, ApiError } from "../lib/api";
 import { dropTarget } from "../lib/dnd";
 import { useApp } from "../lib/app";
+import { useLiveTopic, useNachatayaPravka } from "../lib/live";
 import { flagStrany, nazvanieStrany } from "../lib/strany";
 import { useFailure } from "../lib/failure";
 import { useGuard } from "../lib/guard";
@@ -132,6 +133,18 @@ export function ClientCard() {
   const mailAccounts = useReference<MailSender>(hasMail ? "/mail/senders" : null);
 
   const { failure, fail, clear } = useFailure();
+
+  // Тот же приём, что у карточки заявки: чистая форма перечитывается молча,
+  // начатая правка получает полосу. Лента (`client_notes`) — отдельной темой:
+  // в неё пишут и почта, и телефония, и подписчики событий.
+  const koren = useRef<HTMLDivElement>(null);
+  const nachata = useNachatayaPravka(koren, client?.updated_at);
+  const [ustarelo, setUstarelo] = useState(false);
+  useLiveTopic(["clients", "client_notes"], (s) => {
+    if (!s.resync && !s.hints.some((h) => h.id === Number(id))) return;
+    if (nachata) setUstarelo(true);
+    else void load();
+  });
 
   const load = useCallback(async () => {
     clear();
@@ -286,7 +299,16 @@ export function ClientCard() {
   const activeTab = tabs.some((item) => item.key === tab) ? tab : "history";
 
   return (
-    <div className="page">
+    <div className="page" ref={koren}>
+      {ustarelo && (
+        <div className="maintenance-bar" style={{ marginBottom: 12 }}>
+          <span className="dot" />
+          {t("liveStale")}
+          <button className="btn btn-secondary btn-sm" style={{ marginLeft: 12 }} onClick={() => { setUstarelo(false); void load(); }}>
+            {t("liveShow")}
+          </button>
+        </div>
+      )}
       <Link to="/clients" style={{ display: "inline-flex", alignItems: "center", gap: 6, color: "var(--muted)", fontSize: 13, marginBottom: 20 }}>
         <Icon name="arrowLeft" size={14} />
         {t("clients")}
@@ -618,7 +640,11 @@ function EditableContact({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value);
 
-  useEffect(() => setDraft(value), [value]);
+  // Внешнее обновление (живой намёк перечитал карточку) не затирает набранное:
+  // пока поле правят, черновик остаётся, новое значение придёт после сохранения.
+  useEffect(() => {
+    if (!editing) setDraft(value);
+  }, [value, editing]);
 
   return (
     <div className="contact-cell" onClick={() => !editing && setEditing(true)} style={{ cursor: editing ? "auto" : "text" }}>

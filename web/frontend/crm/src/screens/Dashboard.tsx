@@ -8,6 +8,7 @@ import { StorageCard } from "../components/StorageCard";
 import { Avatar, Chip, EmptyState, ScreenLoading } from "../components/ui";
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
+import { useLive, useLiveTopic } from "../lib/live";
 import { useFailure } from "../lib/failure";
 import { formatDateTime, formatMoney, initials, parseDate, relativeDay } from "../lib/format";
 import { moduleOn } from "../lib/modules";
@@ -74,7 +75,14 @@ export function Dashboard() {
 
   useEffect(() => load(), [load]);
 
-  // Перезапрос по расписанию — ТОЛЬКО пока вкладка на переднем плане.
+  // Сводка живая по намёкам: из тем, из которых она считается, тем же
+  // обработчиком — значит и права те же. Перезапрос идёт после склейки, и
+  // двадцать правок подряд дают одно чтение самой дорогой ручки.
+  useLiveTopic(["deals", "clients", "tasks", "finance", "documents", "orders", "boards"], () => load(true));
+  const zhivost = useLive();
+
+  // Перезапрос по расписанию — ТОЛЬКО пока вкладка на переднем плане и
+  // ТОЛЬКО пока живости нет: с открытым потоком таймер лишний (задача 8.7).
   //
   // Без этого десять забытых вкладок на фирму дают десять потоков перезапросов
   // самой дорогой ручки круглосуточно. Опыт в проекте уже есть: команда,
@@ -85,6 +93,7 @@ export function Dashboard() {
   // вернулся именно затем, чтобы посмотреть, — и утренние числа под свежим
   // заголовком были бы ровно той бедой, ради которой это писалось.
   useEffect(() => {
+    if (zhivost === "on") return;
     const vidno = () => document.visibilityState === "visible";
     const timer = window.setInterval(() => {
       if (vidno()) load(true);
@@ -97,7 +106,7 @@ export function Dashboard() {
       window.clearInterval(timer);
       document.removeEventListener("visibilitychange", vernulis);
     };
-  }, [load]);
+  }, [load, zhivost]);
 
   if (!data) return <ScreenLoading error={failure} onRetry={load} />;
 

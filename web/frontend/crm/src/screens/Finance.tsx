@@ -6,6 +6,7 @@ import { VyborKlienta } from "../components/VyborKlienta";
 import { Chip, Dochitat, EmptyState, LoadFailed, Modal, ScreenLoading } from "../components/ui";
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
+import { useLiveTopic } from "../lib/live";
 import { useFailure } from "../lib/failure";
 import { useGuard } from "../lib/guard";
 import { formatDate, formatMoney } from "../lib/format";
@@ -103,6 +104,7 @@ export function Finance() {
   // на прошлый период мог бы лечь поверх текущего и показать чужие числа. Он
   // же — кнопка «ещё раз» на экране отказа и перезагрузка после новой операции.
   const [attempt, setAttempt] = useState(0);
+  useLiveTopic("finance", () => setAttempt((a) => a + 1));
 
   // Смещение зоны браузера едет вместе с датами: «за август» человек понимает
   // по своему календарю, а в базе время в UTC. Без этого 31 августа терял бы

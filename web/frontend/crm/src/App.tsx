@@ -7,6 +7,7 @@ import { Sidebar } from "./components/Sidebar";
 import { ScreenLoading, Toasts } from "./components/ui";
 import { useApp } from "./lib/app";
 import { moduleOn } from "./lib/modules";
+import { useLive } from "./lib/live";
 import { podpisatsya } from "./lib/tgpotok";
 import {
   chat_na_vidu,
@@ -98,6 +99,7 @@ function Protected() {
     // (сайдбар и содержимое), и любой её ребёнок становится ещё одной колонкой.
     <>
       <MaintenanceBar />
+      <LiveBar />
       <SignalyTelegrama />
       <div className="app-shell">
         <Sidebar open={navOpen} onOpenSearch={() => setSearchOpen(true)} />
@@ -137,6 +139,23 @@ function Protected() {
  * открывается, доски редактируются. Забыть его включённым — значит молча
  * держать закрытыми и витрины клиентов, и вход остальным сотрудникам. Поэтому
  * напоминание висит на каждом экране, а не только в настройках. */
+/** Полоса «обновления приостановлены»: связь потеряна, а не выключена.
+ *
+ * Постоянная, а не тост: тост исчезает через четыре секунды, а состояние
+ * длится сколько длится. Выключенная настройкой живость полосы не даёт — это
+ * выбор владельца, не авария (docs/12-realtime.md §11). */
+function LiveBar() {
+  const { t } = useApp();
+  const sostoyanie = useLive();
+  if (sostoyanie !== "lost") return null;
+  return (
+    <div className="maintenance-bar">
+      <span className="dot" />
+      {t("liveLost")}
+    </div>
+  );
+}
+
 function MaintenanceBar() {
   const { maintenance, t } = useApp();
   if (!maintenance?.enabled) return null;

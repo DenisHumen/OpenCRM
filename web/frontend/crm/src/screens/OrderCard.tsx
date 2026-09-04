@@ -8,6 +8,7 @@ import { Chip, ConfirmModal, LoadFailed, Modal, ScreenLoading } from "../compone
 import { WarehousePicker, useWarehouses } from "../components/Warehouses";
 import { api, ApiError } from "../lib/api";
 import { useApp } from "../lib/app";
+import { useLiveTopic } from "../lib/live";
 import { useDebounced } from "../lib/debounce";
 import { useFailure } from "../lib/failure";
 import { useGuard } from "../lib/guard";
@@ -39,6 +40,10 @@ export function OrderCard() {
   const places = useWarehouses();
   const [place, setPlace] = useState<number | null>(null);
   const { failure, fail, clear } = useFailure();
+
+  useLiveTopic("orders", (s) => {
+    if (s.resync || s.hints.some((h) => h.id === Number(id))) void load();
+  });
 
   const load = useCallback(async () => {
     clear();

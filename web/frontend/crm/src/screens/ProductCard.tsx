@@ -15,6 +15,7 @@ import { ConfirmModal, Dochitat, EmptyState, ScreenLoading } from "../components
 import { api, ApiError } from "../lib/api";
 import { ProductHolders } from "../components/ProductHolders";
 import { useApp } from "../lib/app";
+import { useLiveTopic } from "../lib/live";
 import { useFailure } from "../lib/failure";
 import { useGuard } from "../lib/guard";
 import { formatDateTime, formatMoney, formatQuantity } from "../lib/format";
@@ -76,6 +77,12 @@ export function ProductCard() {
   const [spread, setSpread] = useState<Record<string, number> | undefined>();
 
   const { failure, fail, clear } = useFailure();
+
+  // Списали в другом окне — остаток пересчитался здесь. Намёк говорит
+  // «перечитай», число считает сервер.
+  useLiveTopic("warehouse", (s) => {
+    if (s.resync || s.hints.some((h) => h.id === Number(id))) void load();
+  });
 
   const load = useCallback(async () => {
     clear();

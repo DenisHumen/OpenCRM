@@ -6,6 +6,7 @@ import { Icon } from "../components/Icon";
 import { Chip, Dochitat, EmptyState, ScreenLoading } from "../components/ui";
 import { api, type PhoneCall } from "../lib/api";
 import { useApp } from "../lib/app";
+import { useLiveTopic } from "../lib/live";
 import { useDebounced } from "../lib/debounce";
 import { useFailure } from "../lib/failure";
 import { useGuard } from "../lib/guard";
@@ -49,6 +50,7 @@ export function Calls() {
   const otbor_spiska = useRef("");
 
   const [attempt, setAttempt] = useState(0);
+  useLiveTopic("telephony", () => setAttempt((a) => a + 1));
 
   const { failure, fail, clear } = useFailure();
 

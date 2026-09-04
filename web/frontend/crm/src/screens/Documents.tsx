@@ -7,6 +7,7 @@ import { VyborKlienta } from "../components/VyborKlienta";
 import { Chip, Dochitat, EmptyState, Modal, ScreenLoading } from "../components/ui";
 import { api, ApiError } from "../lib/api";
 import { useApp } from "../lib/app";
+import { useLiveTopic } from "../lib/live";
 import { useDebounced } from "../lib/debounce";
 import { useFailure } from "../lib/failure";
 import { useGuard } from "../lib/guard";
@@ -52,6 +53,7 @@ export function Documents() {
   const otbor_spiska = useRef("");
   const [showNew, setShowNew] = useState(params.get("new") === "1");
   const [attempt, setAttempt] = useState(0);
+  useLiveTopic(["documents", "waybills"], () => setAttempt((a) => a + 1));
   const scanInput = useRef<HTMLInputElement | null>(null);
   const focused = useRef(false);
 
