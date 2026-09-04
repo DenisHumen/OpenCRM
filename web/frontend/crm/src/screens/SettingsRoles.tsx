@@ -30,6 +30,7 @@ const ACTION_LABEL: Record<string, TranslationKey> = {
 
 /** Подписи строк. Блоки берут название своего раздела, системные — своё. */
 const AREA_LABEL: Record<string, TranslationKey> = {
+  backups: "areaBackups",
   clients: "clients",
   deals: "deals",
   companies: "companies",

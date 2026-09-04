@@ -94,6 +94,10 @@ COUNT_TABLES = tuple(dict.fromkeys(
 #: `--skip-comments` её убирает, поэтому в scripts/backup.sh этого флага нет и
 #: быть не должно.
 KHVOST_DUMPA = "-- Dump completed"
+#: Тот же хвост у копии, снятой самим приложением (`scripts/snapshot_db.METKA`):
+#: предмиграционный снимок и копия с экрана настроек. Литерал, а не ввоз: этот
+#: файл зовут и с хоста, где ни SQLAlchemy, ни настроек приложения нет.
+KHVOST_SNIMKA = "-- opencrm snapshot complete"
 
 #: `CREATE TABLE \`users\` (` — имя таблицы в дампе всегда в обратных кавычках.
 _SOZDANIE_TABLICY = re.compile(r"^CREATE TABLE `([^`]+)`", re.IGNORECASE)
@@ -223,7 +227,7 @@ def _proverit_dump(razbor, report: dict, fail) -> None:
     """Дамп базы: дочитан ли до конца, отмечен ли миграцией, есть ли данные."""
     tablicy, stroki, revizia, poslednyaya = razbor
 
-    if KHVOST_DUMPA not in poslednyaya:
+    if KHVOST_DUMPA not in poslednyaya and not poslednyaya.startswith(KHVOST_SNIMKA):
         # Оборванный дамп — обычный текстовый файл: он открывается, читается и
         # выглядит целым. Единственное, чем он себя выдаёт, — отсутствие хвоста,
         # который mysqldump дописывает последним действием.
@@ -584,6 +588,17 @@ def _kormit(kuda, istochnik: Path, nachalo: int, skolko: int) -> None:
             kuda.close()
         except OSError:
             pass
+
+
+def sverit_metku(istochnik: Path, *, parol: str | None = None, klyuch: bytes | None = None) -> int:
+    """Подходит ли ключ к копии и цела ли она. Возвращает длину шифротекста.
+
+    Ничего не расшифровывает и на диск не пишет: метка считается по
+    шифротексту, и её сходство — единственное доказательство, что ключ тот
+    самый (§4 docs/15). Нужна там, где расшифровывать незачем, — при проверке
+    только что снятого архива файлов на гигабайты.
+    """
+    return _sverit(istochnik, parol, klyuch)[1]
 
 
 def rasshifrovat(

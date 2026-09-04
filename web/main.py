@@ -34,6 +34,7 @@ from web.api.routes import (
     arcade,
     audit,
     auth,
+    backups,
     boards,
     companies,
     deals,
@@ -391,6 +392,7 @@ def create_app() -> FastAPI:
     app.include_router(warehouse.places_router, prefix=api_prefix)
     app.include_router(metrics.router, prefix=api_prefix)
     app.include_router(system.router, prefix=api_prefix)
+    app.include_router(backups.router, prefix=api_prefix)
     app.include_router(workspace.router, prefix=api_prefix)
     app.include_router(telegram.router, prefix=api_prefix)
     # Приём от телеграма — без зависимости от блока, обоснование в роутере.

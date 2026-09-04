@@ -145,6 +145,10 @@ SYSTEM_AREAS: tuple[Area, ...] = (
     # в правах: `edit` или `delete` обещали бы то, чего система не позволит
     # никому, включая root: право, которое ничего не даёт, хуже его отсутствия.
     Area(key="audit", module=None, actions=(VIEW,)),
+    # Восстановление из копии ЗАМЕНЯЕТ живую базу — это опаснее любой другой
+    # настройки, и потому право отдельное, а не часть `settings.manage`
+    # (docs/15-backup-encryption.md §6). Снятие копии остаётся под настройками.
+    Area(key="backups", module=None, actions=(MANAGE,)),
 )
 
 

@@ -184,6 +184,14 @@
 | GET | `/system/schema` | 🔑 `settings.manage` | Сходится ли живая база с моделями — подробно, для разбора |
 | GET | `/system/github` | 👤 | Звёзды проекта на GitHub из суточного кэша. `null` — «не спрашивали или не дозвонились»; ноль был бы утверждением, которого мы не делали |
 | GET | `/system/monitoring` | 🔑 `monitoring.view` | Состояние стека наблюдения и путь к панели |
+| GET | `/system/backups` | 🔑 `settings.manage` | Копии с экрана: есть ли ключ, последние работы, итог последней проверки. Разбор — [15-backup-encryption.md](15-backup-encryption.md) §10 |
+| POST | `/system/backups/key` | 🔑 `settings.manage` | Породить ключ копий; показывается один раз и до подтверждения не действует. `409 backup_key_exists` — ключ уже есть, менять через `{"replace": true}` |
+| POST | `/system/backups/key/confirm` | 🔑 `settings.manage` | Подтвердить ключ последними восемью знаками. `404 backup_key_not_pending`, `422 backup_key_fragment_mismatch` |
+| POST | `/system/backups/db`, `/storage` | 🔑 `settings.manage` | Снять копию базы или файлов в потоке; отвечает работой `{id, status}`. `409 backup_key_missing` — ключа нет, `409 backup_busy` — другая работа идёт |
+| GET | `/system/backups/jobs/{id}` | 🔑 `settings.manage` | Состояние работы: `running / done / failed`, имя и размер файла, таблицы и строки, итог проверки ключом |
+| GET | `/system/backups/jobs/{id}/file` | 🔑 `settings.manage` | Готовая копия файлом; пишется в журнал и ставит отметку увоза. `404 backup_not_ready`, `404 backup_gone` (копия старше суток убрана) |
+| POST | `/system/backups/jobs/{id}/check` | 🔑 `settings.manage` | Ещё раз открыть копию нынешним ключом — так обнаруживается потерянный или заменённый ключ |
+| POST | `/system/backups/restore` | 🔑 `backups.manage` | Заменить базу (или дополнить файлы) из зашифрованной копии: multipart `kind=db|storage`, `file`. Отказы до того, как тронута база: `422 backup_not_encrypted`, `backup_bad_key`, `backup_truncated`, `backup_unknown_revision`; `409 backup_busy`. Дальше — работа, за которой следят по `/jobs/{id}` |
 
 `purge` — **единственное место в системе, где данные исчезают безвозвратно**,
 поэтому вызов пишется в журнал действий (`ACTION_STORAGE_PURGED`) с перечнем
