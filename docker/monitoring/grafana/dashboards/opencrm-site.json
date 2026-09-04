@@ -285,6 +285,14 @@
                         "text": "Redis не отвечает (RedisDown)",
                         "index": 15
                       },
+                      "DecodeQueueSaturated": {
+                        "text": "Очередь разжатия картинок занята целиком, загрузка отвечает 503 (DecodeQueueSaturated)",
+                        "index": 27
+                      },
+                      "DecodeQueueLocalLimit": {
+                        "text": "Предел разжатия картинок держится в памяти процесса — Redis не ответил (DecodeQueueLocalLimit)",
+                        "index": 28
+                      },
                       "RateLimiterNotShared": {
                         "text": "Счётчик попыток не общий на процессы (RateLimiterNotShared)",
                         "index": 16

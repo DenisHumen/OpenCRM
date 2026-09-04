@@ -329,6 +329,13 @@ _mestnoe = threading.BoundedSemaphore(ODNOVREMENNO)
 _bez_obshchego = 0
 _krik_zamok = threading.Lock()
 _poslednii_krik = 0.0
+#: Когда в последний раз предел держался в памяти процесса. Состояние, а не
+#: счётчик: Prometheus скребёт один из процессов, и счётчик прыгал бы между
+#: их значениями — тот же довод, что у `ratelimit.recently_unavailable`.
+_poslednee_mestnoe = 0.0
+#: Сколько мест занято В ЭТОМ процессе на местном пределе.
+_mestnyh_zanyato = 0
+RECENT_LOCAL_SECONDS = 60.0
 
 
 def bez_obshchego_zamka_total() -> int:
@@ -336,12 +343,38 @@ def bez_obshchego_zamka_total() -> int:
     return _bez_obshchego
 
 
+def recently_local(seconds: float = RECENT_LOCAL_SECONDS) -> bool:
+    """Держался ли предел в памяти процесса в последнюю минуту. Для `/metrics`."""
+    return _poslednee_mestnoe > 0 and time.monotonic() - _poslednee_mestnoe < seconds
+
+
+def zanyato_mest() -> int:
+    """Сколько мест очереди занято сейчас. Для `/metrics`, ходить в базу не надо.
+
+    Упёршаяся очередь отвечает 503 `decode_queue_busy`, и до этого числа её было
+    видно только по жалобе «картинки не грузятся». Redis не ответил — считаем
+    местные: в эту минуту предел держится именно там.
+    """
+    client = redis_client.get_client()
+    if client is not None:
+        try:
+            pipe = client.pipeline(transaction=True)
+            pipe.zremrangebyscore(KLYUCH_MESTA, "-inf", time.time())
+            pipe.zcard(KLYUCH_MESTA)
+            _, skolko = pipe.execute()
+            return int(skolko)
+        except Exception:  # noqa: BLE001 — метрика не роняет ничего
+            pass
+    return _mestnyh_zanyato
+
+
 def _krichat(deystvie: str, exc: Exception) -> None:
     """Общего предела нет — сказать вслух. Тихого варианта здесь не бывает."""
-    global _bez_obshchego, _poslednii_krik
+    global _bez_obshchego, _poslednii_krik, _poslednee_mestnoe
     with _krik_zamok:
         _bez_obshchego += 1
         teper = time.monotonic()
+        _poslednee_mestnoe = teper
         skazat = teper - _poslednii_krik >= KRICHAT_RAZ_V_SEKUND
         if skazat:
             _poslednii_krik = teper
@@ -440,12 +473,22 @@ def _otdat_obshchee(client, metka: str) -> None:
 
 def _zanyat_mestnoe():
     """Тот же предел, но в памяти процесса. Срок ожидания общий с редисовым."""
+    global _mestnyh_zanyato
     if not _mestnoe.acquire(timeout=OZHIDANIE_SEKUND):
         raise errors.PrehodyashchayaBedaError(
             "Image processing is busy, try again in a minute",
             code="decode_queue_busy",
         )
-    return _mestnoe.release
+    with _krik_zamok:
+        _mestnyh_zanyato += 1
+
+    def otdat() -> None:
+        global _mestnyh_zanyato
+        with _krik_zamok:
+            _mestnyh_zanyato -= 1
+        _mestnoe.release()
+
+    return otdat
 
 
 def _proverit_byudzhet(im: Image.Image) -> None:

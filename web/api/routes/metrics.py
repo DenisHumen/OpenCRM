@@ -476,6 +476,46 @@ def _collect_ratelimiter(out: Metrics) -> None:
         )
 
 
+def _collect_razzhatie(out: Metrics) -> None:
+    """Очередь на разжатие картинок: занято, предел, и держится ли он общим.
+
+    Предел `ODNOVREMENNO` переехал в Redis и стал общим на установку, а не
+    дождавшийся получает 503 `decode_queue_busy`. До этих рядов упёршаяся
+    очередь была видна только по жалобе «картинки не грузятся» — ровно тот
+    случай, ради которого наблюдение и заводили.
+
+    Состояние, а не счётчик, по тому же доводу, что у ограничителя выше:
+    Prometheus скребёт один из процессов, и счётчик в памяти каждого давал
+    бы пилу. Занятость и признак «недавно держали предел в памяти» у всех
+    процессов одинаковы, пока Redis общий.
+    """
+    from core import redis_client
+    from core.services import media_service
+
+    out.add(
+        "opencrm_decode_queue_busy",
+        media_service.zanyato_mest(),
+        help_text="Сколько мест очереди разжатия картинок занято сейчас.",
+    )
+    out.add(
+        "opencrm_decode_queue_limit",
+        media_service.ODNOVREMENNO,
+        help_text="Предел одновременных разжатий на установку.",
+    )
+    out.add(
+        "opencrm_decode_queue_shared",
+        1 if redis_client.configured() else 0,
+        help_text="1 — предел общий на все процессы, 0 — в памяти процесса.",
+    )
+    out.add(
+        "opencrm_decode_queue_recently_local",
+        1 if media_service.recently_local() else 0,
+        help_text=(
+            "1 — в последнюю минуту предел держался в памяти процесса: Redis не "
+            "ответил, и пик памяти умножается на число рабочих процессов."
+        ),
+    )
+
 def _collect_bezopasnost(out: Metrics) -> None:
     """Сколько раз защиту щупали и сколько раз она не пустила.
 
@@ -520,6 +560,7 @@ COLLECTORS = (
     _collect_build,
     _collect_started,
     _collect_ratelimiter,
+    _collect_razzhatie,
     _collect_bezopasnost,
     _collect_schema,
     _collect_database,
