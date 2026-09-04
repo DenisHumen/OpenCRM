@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 
 import { CopyButton } from "../components/CopyButton";
 import { Icon } from "../components/Icon";
+import { SpravochnikApi } from "../components/SpravochnikApi";
 import { useApp } from "../lib/app";
 import { Link } from "react-router-dom";
 
@@ -176,6 +177,8 @@ function Blok({ kusok, yaz }: { kusok: Kusok; yaz: Yazyk }) {
   if (kusok.vid === "kod") return <Kod tekst={kusok.tekst} />;
 
   if (kusok.vid === "svyortka") return <Svyortka kusok={kusok} yaz={yaz} />;
+
+  if (kusok.vid === "spravochnik") return <SpravochnikApi />;
 
   if (kusok.vid === "tablitsa")
     return (
