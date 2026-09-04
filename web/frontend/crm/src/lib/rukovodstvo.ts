@@ -35,6 +35,8 @@ export type Kusok =
   | { vid: "svyortka"; zagolovok: Dvuyazychno; kuski: Kusok[] }
   | { vid: "tablitsa"; shapka: Dvuyazychno[]; ryady: Dvuyazychno[][] }
   | { vid: "ekran"; put: string; podpis: Dvuyazychno }
+  // Все ручки одним списком; сами данные порождены из docs/04-api.md.
+  | { vid: "spravochnik" }
   | {
       vid: "ruchka";
       metod: string;
@@ -1237,8 +1239,8 @@ export const RUKOVODSTVO: Razdel[] = [
           {
             vid: "vazhno",
             tekst: {
-              ru: "Здесь — соглашения и один разобранный пример, а не перечень ручек. Полный справочник со всеми адресами, правами и отказами лежит рядом с исходниками: docs/04-api.md, и полноту его стережёт проверка. Два перечня по одним и тем же ручкам разошлись бы на первой же новой.",
-              en: "This is conventions plus one worked example, not a list of endpoints. The full reference with every address, permission and refusal ships with the sources: docs/04-api.md, and a test guards its completeness. Two lists over the same endpoints would diverge at the very first new one.",
+              ru: "Здесь — соглашения и один разобранный пример. Все ручки с адресами и правами собраны в статье «Все ручки» ниже: она порождена из справочника docs/04-api.md, полноту которого стережёт проверка, поэтому расходиться этим двум спискам не с чем.",
+              en: "This is conventions plus one worked example. Every endpoint with its address and permission is collected in the «All endpoints» article below: it is generated from the docs/04-api.md reference, whose completeness a test guards, so the two lists have nothing to diverge over.",
             },
           },
           {
@@ -1279,8 +1281,8 @@ export const RUKOVODSTVO: Razdel[] = [
           {
             vid: "vazhno",
             tekst: {
-              ru: "Раздел будет дополняться: публичное API для сайта магазина ещё в работе. Форма ответов и ошибок при этом не изменится — она общая для всего продукта.",
-              en: "This section will grow: the public API for a shop website is still in progress. The response and error shapes will not change — they are shared across the product.",
+              ru: "Публичное API для сайта магазина живёт под тем же адресом, но входит по ключу, а не по сессии: как его завести и что оно умеет — в статье «API для сайта магазина» раздела «Наружу». Форма ответов и ошибок у него та же.",
+              en: "The public API for a shop website lives under the same address but signs in with a key, not a session: how to set it up and what it can do is in the «Shop-site API» article of the «Facing the client» section. Its response and error shapes are the same.",
             },
           },
         ],
@@ -1336,6 +1338,31 @@ export const RUKOVODSTVO: Razdel[] = [
   "per_page": 2
 }`,
           },
+        ],
+      },
+      {
+        id: "vse-ruchki",
+        nazvanie: { ru: "Все ручки", en: "All endpoints" },
+        kratko: {
+          ru: "Каждый адрес системы одним списком: по разделам, с правом и поиском.",
+          en: "Every address in the system in one list: by section, with its permission and a search box.",
+        },
+        kuski: [
+          {
+            vid: "abzats",
+            tekst: {
+              ru: "Список порождён из справочника docs/04-api.md и обновляется вместе с ним; ручка, не названная в справочнике, не пройдёт проверку, поэтому здесь есть всё. Описания идут на языке справочника. Поиск смотрит в адрес, описание, право и название раздела.",
+              en: "The list is generated from the docs/04-api.md reference and updates together with it; an endpoint missing from the reference fails a test, so everything is here. Descriptions are in the language of the reference. The search looks at the address, the description, the permission and the section name.",
+            },
+          },
+          {
+            vid: "vazhno",
+            tekst: {
+              ru: "Право у ручки — то же, что в матрице доступов: «открыто» отвечает без входа, «любой сотрудник» — по сессии, код вида «раздел.действие» — по праву из должности, «ключ сайта» — по ключу с областью.",
+              en: "The permission next to an endpoint is the same as in the access matrix: «public» answers without signing in, «any staff» needs a session, a «section.action» code needs the permission from a job role, «site key» needs a key with that scope.",
+            },
+          },
+          { vid: "spravochnik" },
         ],
       },
     ],
