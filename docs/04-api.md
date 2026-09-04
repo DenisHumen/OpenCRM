@@ -195,6 +195,7 @@
 | GET | `/system/backups/jobs/{id}` | 🔑 `settings.manage` | Состояние работы: `running / done / failed`, имя и размер файла, таблицы и строки, итог проверки ключом |
 | GET | `/system/backups/jobs/{id}/file` | 🔑 `settings.manage` | Готовая копия файлом; пишется в журнал и ставит отметку увоза. `404 backup_not_ready`, `404 backup_gone` (копия старше суток убрана) |
 | POST | `/system/backups/jobs/{id}/check` | 🔑 `settings.manage` | Ещё раз открыть копию нынешним ключом — так обнаруживается потерянный или заменённый ключ |
+| DELETE | `/system/backups/jobs/{id}` | 🔑 `settings.manage` | Убрать копию с сервера раньше суток; идущую нельзя (`409 backup_busy`). Пишется в журнал `backup.deleted` |
 | POST | `/system/backups/restore` | 🔑 `backups.manage` | Заменить базу (или дополнить файлы) из зашифрованной копии: multipart `kind=db|storage`, `file`. Отказы до того, как тронута база: `422 backup_not_encrypted`, `backup_bad_key`, `backup_truncated`, `backup_unknown_revision`; `409 backup_busy`. Дальше — работа, за которой следят по `/jobs/{id}` |
 
 `purge` — **единственное место в системе, где данные исчезают безвозвратно**,

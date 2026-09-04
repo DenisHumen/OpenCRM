@@ -100,6 +100,7 @@ ACTION_BACKUP_KEY_CREATED = "backup.key_created"
 ACTION_BACKUP_TAKEN = "backup.taken"
 ACTION_BACKUP_DOWNLOADED = "backup.downloaded"
 ACTION_BACKUP_RESTORED = "backup.restored"
+ACTION_BACKUP_DELETED = "backup.deleted"
 #: Ключ доступа для чужой программы: выдан, отозван, перевыпущен, поправлен.
 #: Сам факт обращения ключом в журнал не пишется — это тысячи записей в сутки,
 #: и журнал, в котором тонут действия людей, перестают читать.

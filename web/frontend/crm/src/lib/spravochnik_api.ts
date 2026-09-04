@@ -500,6 +500,15 @@ export const SPRAVOCHNIK_API: RazdelApi[] = [
         "vne_api": false
       },
       {
+        "metod": "DELETE",
+        "put": "/system/backups/jobs/{id}",
+        "vid": "pravo",
+        "dostup": "settings.manage",
+        "opisanie": "Убрать копию с сервера раньше суток; идущую нельзя (`409 backup_busy`). Пишется в журнал `backup.deleted`",
+        "podrazdel": "",
+        "vne_api": false
+      },
+      {
         "metod": "POST",
         "put": "/system/backups/restore",
         "vid": "pravo",

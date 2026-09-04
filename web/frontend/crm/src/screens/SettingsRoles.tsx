@@ -188,7 +188,7 @@ export function SettingsRoles() {
   };
 
   return (
-    <div className="page">
+    <div className="page page-wide">
       <div className="page-head" style={{ alignItems: "flex-start", marginBottom: 22 }}>
         <div>
           <h1 className="page-title">{t("roles")}</h1>

@@ -68,7 +68,7 @@ export function Files() {
   };
 
   return (
-    <div className="page">
+    <div className="page page-wide">
       <div style={{ marginBottom: 24 }}>
         <h1 className="page-title">{t("files")}</h1>
         <div className="page-sub">{t("filesSub")}</div>

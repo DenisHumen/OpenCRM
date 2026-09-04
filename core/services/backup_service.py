@@ -371,6 +371,25 @@ def fayl_dlya_skachivaniya(db: Session, actor: User, job_id: str) -> tuple[Path,
     return put, job["filename"]
 
 
+def udalit(db: Session, actor: User, job_id: str) -> dict:
+    """Убрать копию с сервера раньше срока. Идущую — нельзя: файл ещё пишется."""
+    job = rabota(job_id)
+    if job.get("status") == "running":
+        raise errors.ConflictError("The copy is still being taken", code="backup_busy")
+    (katalog() / f"{job_id}.enc").unlink(missing_ok=True)
+    _put_raboty(job_id).unlink(missing_ok=True)
+    audit_service.record(
+        db,
+        actor=actor,
+        source=SOURCE_MANUAL,
+        action=audit_service.ACTION_BACKUP_DELETED,
+        entity_type=audit_service.ENTITY_BACKUP,
+        entity_label=job["kind"],
+        after=job.get("filename") or job_id,
+    )
+    return {"id": job_id, "deleted": True}
+
+
 def proverit(job_id: str) -> dict:
     """Ещё раз открыть готовую копию нынешним ключом. Ловит потерянный ключ."""
     job = rabota(job_id)

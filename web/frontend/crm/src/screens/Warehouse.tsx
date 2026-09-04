@@ -154,7 +154,7 @@ export function Warehouse() {
   const currency = data.currency || workspace.currency;
 
   return (
-    <div className="page">
+    <div className="page page-wide">
       <div className="page-head">
         <div>
           <h1 className="page-title">{t("warehouse")}</h1>

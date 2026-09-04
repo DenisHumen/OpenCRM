@@ -173,7 +173,7 @@ export function Waybills() {
   }
 
   return (
-    <div className="page">
+    <div className="page page-wide">
       <ContextMenu menu={kontekst.menu} zakryt={kontekst.zakryt} />
       <div className="page-head">
         <div>

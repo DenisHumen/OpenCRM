@@ -125,7 +125,7 @@ export function Tasks() {
   const now = Date.now();
 
   return (
-    <div className="page">
+    <div className="page page-wide">
       <div className="page-head">
         <div>
           <h1 className="page-title">{t("tasks")}</h1>

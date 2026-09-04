@@ -147,7 +147,7 @@ export function Calls() {
   };
 
   return (
-    <div className="page">
+    <div className="page page-wide">
       <div className="page-head" style={{ alignItems: "flex-start", marginBottom: 20 }}>
         <div>
           <h1 className="page-title">{t("calls")}</h1>

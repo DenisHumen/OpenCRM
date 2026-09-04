@@ -57,6 +57,7 @@ export function SettingsBackups() {
   const [shownKey, setShownKey] = useState<string | null>(null);
   const [fragment, setFragment] = useState("");
   const [replaceAsk, setReplaceAsk] = useState(false);
+  const [deleteAsk, setDeleteAsk] = useState<Job | null>(null);
 
   const [restoreKind, setRestoreKind] = useState<Kind>("db");
   const [restoreFile, setRestoreFile] = useState<File | null>(null);
@@ -137,6 +138,19 @@ export function SettingsBackups() {
     }
   };
 
+  const remove = async (job: Job) => {
+    if (!guard.take()) return;
+    try {
+      await api.del(`/system/backups/jobs/${job.id}`);
+      toast(t("backupDeleted"));
+      load();
+    } catch (e) {
+      toastError(e);
+    } finally {
+      guard.free();
+    }
+  };
+
   const restore = async () => {
     if (!restoreFile) return;
     if (!guard.take()) return;
@@ -165,30 +179,49 @@ export function SettingsBackups() {
           ? t("backupKindRestoreDb")
           : t("backupKindRestoreStorage");
 
+  const kindIcon = (kind: Job["kind"]) =>
+    kind === "db" ? "database" : kind === "storage" ? "folder" : "refresh";
+
   const key = status.key;
   const canRestore = can(user, "backups.manage");
+  const canTake = key.exists && !running && !guard.busy;
 
   return (
     <>
-      <div className="card" style={{ padding: "20px 22px", marginBottom: 20 }}>
-        <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>{t("backupKeyTitle")}</div>
-        {shownKey ? (
-          <>
-            <div style={{ color: "var(--warning)", fontSize: 12.5, marginBottom: 10, lineHeight: 1.5 }}>
-              {t("backupKeyShown")}
-            </div>
-            <code
-              style={{ display: "block", wordBreak: "break-all", fontSize: 13, padding: "10px 12px", marginBottom: 14, background: "var(--bg-2)", borderRadius: 8, userSelect: "all" }}
-            >
-              {shownKey}
-            </code>
-            <label className="label" style={{ marginBottom: 6 }}>
-              {t("backupKeyConfirmLabel", { n: key.fragment_length })}
-            </label>
-            <div style={{ display: "flex", gap: 8 }}>
+      {/* Ключ: одна строка состояния и одна кнопка. Ключ заводят один раз, и
+          занимать под него целую карточку — отвлекать от того, ради чего пришли. */}
+      <div className="card backup-card">
+        <div className="backup-card-head">
+          <div>
+            <div className="backup-card-title">{t("backupKeyTitle")}</div>
+            {!shownKey && (
+              <div className="field-desc">
+                {key.exists
+                  ? t("backupKeyReady", { t: formatDateTime(key.created_at, locale) })
+                  : key.pending
+                    ? t("backupKeyPending")
+                    : t("backupKeyNone")}
+              </div>
+            )}
+          </div>
+          {!shownKey && (key.exists ? (
+            <button className="btn btn-secondary btn-sm" disabled={guard.busy} onClick={() => setReplaceAsk(true)}>
+              {t("backupKeyReplace")}
+            </button>
+          ) : (
+            <button className="btn btn-primary" disabled={guard.busy} onClick={() => void createKey(false)}>
+              {t("backupKeyCreate")}
+            </button>
+          ))}
+        </div>
+        {shownKey && (
+          <div className="backup-key-shown">
+            <div className="backup-key-warn">{t("backupKeyShown")}</div>
+            <code className="backup-key-code">{shownKey}</code>
+            <label className="label">{t("backupKeyConfirmLabel", { n: key.fragment_length })}</label>
+            <div className="backup-key-confirm">
               <input
                 className="input"
-                style={{ maxWidth: 220 }}
                 maxLength={key.fragment_length}
                 value={fragment}
                 onChange={(e) => setFragment(e.target.value.trim())}
@@ -202,60 +235,41 @@ export function SettingsBackups() {
                 {t("backupKeyConfirm")}
               </button>
             </div>
-          </>
-        ) : key.exists ? (
-          <>
-            <div style={{ color: "var(--faint)", fontSize: 12.5, marginBottom: 12, lineHeight: 1.5 }}>
-              {t("backupKeyReady", { t: formatDateTime(key.created_at, locale) })}
-            </div>
-            <button className="btn btn-secondary btn-sm" disabled={guard.busy} onClick={() => setReplaceAsk(true)}>
-              {t("backupKeyReplace")}
-            </button>
-          </>
-        ) : (
-          <>
-            <div style={{ color: "var(--faint)", fontSize: 12.5, marginBottom: 12, lineHeight: 1.5 }}>
-              {key.pending ? t("backupKeyPending") : t("backupKeyNone")}
-            </div>
-            <button className="btn btn-primary" disabled={guard.busy} onClick={() => void createKey(false)}>
-              {t("backupKeyCreate")}
-            </button>
-          </>
+          </div>
         )}
       </div>
 
-      <div className="card" style={{ padding: "20px 22px", marginBottom: 20 }}>
-        <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>{t("backupTakeTitle")}</div>
-        <div style={{ color: "var(--faint)", fontSize: 12.5, marginBottom: 14, lineHeight: 1.5 }}>{t("backupsSub")}</div>
-        <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
-          <div style={{ flex: "1 1 260px" }}>
-            <button
-              className="btn btn-primary"
-              disabled={guard.busy || !key.exists || running}
-              onClick={() => void take("db")}
-            >
-              <Icon name="database" size={14} />
-              {t("backupTakeDb")}
+      {/* Две плитки одного вида: база и файлы — равноправные половины одной
+          копии, и разные по виду кнопки читались как «главная и запасная». */}
+      <div className="card backup-card">
+        <div className="backup-card-title">{t("backupTakeTitle")}</div>
+        <div className="field-desc">{t("backupBothNote")}</div>
+        <div className="backup-tiles">
+          <div className="backup-tile">
+            <div className="backup-tile-head">
+              <Icon name="database" size={16} />
+              <span>{t("backupTakeDb")}</span>
+            </div>
+            <div className="field-desc">{t("backupDbNote")}</div>
+            <button className="btn btn-primary" disabled={!canTake} onClick={() => void take("db")}>
+              {t("backupTakeDbBtn")}
             </button>
-            <div className="field-desc" style={{ marginTop: 8 }}>{t("backupDbNote")}</div>
           </div>
-          <div style={{ flex: "1 1 260px" }}>
-            <button
-              className="btn btn-secondary"
-              disabled={guard.busy || !key.exists || running}
-              onClick={() => void take("storage")}
-            >
-              <Icon name="download" size={14} />
-              {t("backupTakeStorage")}
+          <div className="backup-tile">
+            <div className="backup-tile-head">
+              <Icon name="folder" size={16} />
+              <span>{t("backupTakeStorage")}</span>
+            </div>
+            <div className="field-desc">{t("backupStorageNote")}</div>
+            <button className="btn btn-primary" disabled={!canTake} onClick={() => void take("storage")}>
+              {t("backupTakeStorageBtn")}
             </button>
-            <div className="field-desc" style={{ marginTop: 8 }}>{t("backupStorageNote")}</div>
           </div>
         </div>
-        {running && (
-          <div style={{ color: "var(--warning)", fontSize: 12.5, marginTop: 12 }}>{t("backupBusy")}</div>
-        )}
+        {!key.exists && <div className="backup-note warn">{t("backupNeedKey")}</div>}
+        {running && <div className="backup-note warn">{t("backupBusy")}</div>}
         {status.last_check && (
-          <div style={{ color: status.last_check.ok ? "var(--faint)" : "var(--danger)", fontSize: 12.5, marginTop: 12 }}>
+          <div className={"backup-note" + (status.last_check.ok ? "" : " bad")}>
             {t("backupLastCheck", {
               t: formatDateTime(status.last_check.checked_at, locale),
               result: status.last_check.ok
@@ -266,46 +280,60 @@ export function SettingsBackups() {
         )}
       </div>
 
-      <div className="card" style={{ padding: "20px 22px", marginBottom: 20 }}>
-        <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 12 }}>{t("backupJobsTitle")}</div>
+      <div className="card backup-card">
+        <div className="backup-card-title">{t("backupJobsTitle")}</div>
+        <div className="field-desc">{t("backupJobsNote")}</div>
         {status.jobs.length === 0 ? (
-          <div style={{ color: "var(--faint)", fontSize: 12.5 }}>{t("backupNoJobs")}</div>
+          <div className="backup-note">{t("backupNoJobs")}</div>
         ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <div className="backup-rows">
             {status.jobs.map((job) => (
-              <div key={job.id} style={{ display: "flex", gap: 12, alignItems: "flex-start", flexWrap: "wrap", borderTop: "1px solid var(--line)", paddingTop: 10 }}>
-                <div style={{ flex: "1 1 320px", fontSize: 12.5, lineHeight: 1.5 }}>
-                  <div>
-                    <strong>{kindLabel(job.kind)}</strong> · {formatDateTime(job.started_at, locale)} · {job.actor}{" "}
+              <div key={job.id} className="backup-row">
+                <div className="backup-row-icon">
+                  <Icon name={kindIcon(job.kind)} size={16} />
+                </div>
+                <div className="backup-row-main">
+                  <div className="backup-row-title">
+                    <strong>{kindLabel(job.kind)}</strong>
                     <Chip variant={job.status === "failed" ? undefined : job.status === "done" ? "success" : "warning"}>
                       {job.status === "running" ? t("backupRunning") : job.status === "done" ? t("backupDone") : t("backupFailed")}
                     </Chip>
                   </div>
-                  <div style={{ color: "var(--faint)" }}>
-                    {job.filename && <span>{job.filename}{job.size !== undefined ? ` · ${formatBytes(job.size)}` : ""} </span>}
+                  <div className="backup-row-meta">
+                    <span>{formatDateTime(job.started_at, locale)}</span>
+                    <span>{job.actor}</span>
+                    {job.size !== undefined && <span>{formatBytes(job.size)}</span>}
                     {job.tables !== undefined && job.rows !== undefined && (
-                      <span>· {t("backupTables", { tables: job.tables, rows: job.rows })} </span>
+                      <span>{t("backupTables", { tables: job.tables, rows: job.rows })}</span>
                     )}
-                    {job.files !== undefined && <span>· {t("backupFiles", { count: job.files })} </span>}
-                    {job.copy_taken_at && <span>· {t("backupCopyTakenAt", { t: job.copy_taken_at })} </span>}
-                    {job.snapshot && <span>· {t("backupRestoreSnapshot", { name: job.snapshot })} </span>}
-                    {job.downloaded_at && <span>· {t("backupDownloadedAt", { t: formatDateTime(job.downloaded_at, locale) })} </span>}
+                    {job.files !== undefined && <span>{t("backupFiles", { count: job.files })}</span>}
+                    {job.copy_taken_at && <span>{t("backupCopyTakenAt", { t: job.copy_taken_at })}</span>}
+                    {job.snapshot && <span>{t("backupRestoreSnapshot", { name: job.snapshot })}</span>}
+                    {job.downloaded_at && <span>{t("backupDownloadedAt", { t: formatDateTime(job.downloaded_at, locale) })}</span>}
                     {job.check && (
-                      <span style={{ color: job.check.ok ? undefined : "var(--danger)" }}>
-                        · {job.check.ok ? t("backupCheckOk") : t("backupCheckFail", { why: job.check.problems.join("; ") })}
+                      <span className={job.check.ok ? undefined : "bad"}>
+                        {job.check.ok ? t("backupCheckOk") : t("backupCheckFail", { why: job.check.problems.join("; ") })}
                       </span>
                     )}
                   </div>
-                  {job.error && <div style={{ color: "var(--danger)" }}>{job.error}</div>}
+                  {job.filename && <div className="backup-row-file">{job.filename}</div>}
+                  {job.error && <div className="backup-row-error">{job.error}</div>}
                 </div>
-                {job.status === "done" && (job.kind === "db" || job.kind === "storage") && (
-                  <div style={{ display: "flex", gap: 8 }}>
-                    <a className="btn btn-secondary btn-sm" href={`/api/v1/system/backups/jobs/${job.id}/file`}>
-                      <Icon name="download" size={13} />
-                      {t("backupDownload")}
-                    </a>
-                    <button className="btn btn-secondary btn-sm" disabled={guard.busy} onClick={() => void check(job)}>
-                      {t("backupCheck")}
+                {job.status !== "running" && (
+                  <div className="backup-row-actions">
+                    {job.status === "done" && (job.kind === "db" || job.kind === "storage") && (
+                      <>
+                        <a className="btn btn-primary btn-sm" href={`/api/v1/system/backups/jobs/${job.id}/file`}>
+                          <Icon name="download" size={13} />
+                          {t("backupDownload")}
+                        </a>
+                        <button className="btn btn-secondary btn-sm" disabled={guard.busy} onClick={() => void check(job)}>
+                          {t("backupCheck")}
+                        </button>
+                      </>
+                    )}
+                    <button className="text-link danger" disabled={guard.busy} onClick={() => setDeleteAsk(job)}>
+                      {t("backupDelete")}
                     </button>
                   </div>
                 )}
@@ -316,30 +344,33 @@ export function SettingsBackups() {
       </div>
 
       {canRestore && (
-        <div className="card" style={{ padding: "20px 22px", borderColor: "var(--danger)" }}>
-          <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>{t("backupRestoreTitle")}</div>
-          <div style={{ color: "var(--faint)", fontSize: 12.5, marginBottom: 14, lineHeight: 1.5 }}>
+        <div className="card backup-card backup-card-danger">
+          <div className="backup-card-title">{t("backupRestoreTitle")}</div>
+          <div className="field-desc">
             {restoreKind === "db" ? t("backupRestoreSub") : t("backupRestoreStorageSub")}
           </div>
-          <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
-            <select className="input" style={{ maxWidth: 160 }} value={restoreKind} onChange={(e) => setRestoreKind(e.target.value as Kind)}>
-              <option value="db">{t("backupTakeDb")}</option>
-              <option value="storage">{t("backupTakeStorage")}</option>
-            </select>
-            <input
-              type="file"
-              aria-label={t("backupRestoreFile")}
-              onChange={(e) => setRestoreFile(e.target.files?.[0] ?? null)}
-            />
-            <button
-              className="btn btn-secondary"
-              style={{ color: "var(--danger)", borderColor: "var(--danger)" }}
-              disabled={guard.busy || !restoreFile || !key.exists || running}
-              onClick={() => setRestoreAsk(true)}
-            >
-              {t("backupRestoreStart")}
-            </button>
-            {restoreProgress !== null && <span style={{ fontSize: 12.5, color: "var(--faint)" }}>{restoreProgress}%</span>}
+          <div className="backup-restore">
+            <div>
+              <label className="label">{t("backupRestoreWhat")}</label>
+              <select className="input" value={restoreKind} onChange={(e) => setRestoreKind(e.target.value as Kind)}>
+                <option value="db">{t("backupTakeDb")}</option>
+                <option value="storage">{t("backupTakeStorage")}</option>
+              </select>
+            </div>
+            <div>
+              <label className="label">{t("backupRestoreFile")}</label>
+              <input type="file" onChange={(e) => setRestoreFile(e.target.files?.[0] ?? null)} />
+            </div>
+            <div className="backup-restore-go">
+              <button
+                className="btn btn-secondary btn-danger-outline"
+                disabled={guard.busy || !restoreFile || !key.exists || running}
+                onClick={() => setRestoreAsk(true)}
+              >
+                {t("backupRestoreStart")}
+              </button>
+              {restoreProgress !== null && <span className="backup-note">{restoreProgress}%</span>}
+            </div>
           </div>
         </div>
       )}
@@ -351,6 +382,15 @@ export function SettingsBackups() {
           danger
           onConfirm={() => { setReplaceAsk(false); void createKey(true); }}
           onClose={() => setReplaceAsk(false)}
+        />
+      )}
+      {deleteAsk && (
+        <ConfirmModal
+          text={t("backupDeleteConfirm")}
+          confirmLabel={t("backupDelete")}
+          danger
+          onConfirm={() => { const job = deleteAsk; setDeleteAsk(null); void remove(job); }}
+          onClose={() => setDeleteAsk(null)}
         />
       )}
       {restoreAsk && (

@@ -128,7 +128,7 @@ export function Staff() {
   };
 
   return (
-    <div className="page">
+    <div className="page page-wide">
       <div style={{ marginBottom: 26 }}>
         <h1 className="page-title">{t("staff")}</h1>
         <div className="page-sub">{t("staffSub")}</div>
@@ -190,7 +190,7 @@ export function Staff() {
               <Avatar text={initials(person.name)} src={person.avatar_url} online={person.is_online} />
               <div className="list-row-text">
                 <div className="truncate" style={{ color: "var(--text)", fontSize: 13.5, fontWeight: 500 }}>{person.name}</div>
-                <div className="truncate" style={{ color: "var(--faint)", fontSize: 12 }}>{person.email}</div>
+                <div className="wrap-anywhere" style={{ color: "var(--faint)", fontSize: 12 }}>{person.email}</div>
               </div>
               <div
                 style={{
@@ -302,7 +302,7 @@ export function Staff() {
                 <Avatar text={initials(person.name)} src={person.avatar_url} />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div className="truncate" style={{ color: "var(--muted)", fontSize: 13.5, fontWeight: 500 }}>{person.name}</div>
-                  <div className="truncate" style={{ color: "var(--faint)", fontSize: 12 }}>{person.email}</div>
+                  <div className="wrap-anywhere" style={{ color: "var(--faint)", fontSize: 12 }}>{person.email}</div>
                 </div>
                 {managesStaff && (
                   <div style={{ display: "flex", gap: 12 }}>

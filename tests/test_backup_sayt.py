@@ -18,6 +18,7 @@ import shutil
 import tarfile
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -75,6 +76,45 @@ def _snyat(root_client, kind: str) -> dict:
 
 def _v_zhurnale(root_client, action: str) -> list[dict]:
     return [e for e in root_client.get(f"{API}/audit", params={"action": action}).json()["items"] if e["action"] == action]
+
+
+# --- удаление ----------------------------------------------------------------
+
+
+def test_kopiya_udalyaetsya_s_servera_ranshe_sroka(root_client, sayt):
+    """Кнопка «Удалить» убирает файл и запись, а след остаётся в журнале.
+
+    Без неё увезённая копия лежала бы на диске сутки: вся система одним файлом
+    рядом с базой, и убрать её мог только таймер.
+    """
+    _zavesti_klyuch(root_client)
+    job = _snyat(root_client, "db")
+    fayl = backup_service.katalog() / f"{job['id']}.enc"
+    assert fayl.is_file()
+
+    r = root_client.delete(f"{BACKUPS}/jobs/{job['id']}")
+    assert r.status_code == 200, r.text
+    assert r.json() == {"id": job["id"], "deleted": True}
+    assert not fayl.exists()
+    assert root_client.get(f"{BACKUPS}/jobs/{job['id']}").status_code == 404
+    assert all(j["id"] != job["id"] for j in root_client.get(BACKUPS).json()["jobs"])
+    sled = _v_zhurnale(root_client, "backup.deleted")
+    assert sled and sled[0]["entity_label"] == "db"
+    assert root_client.delete(f"{BACKUPS}/jobs/{job['id']}").status_code == 404
+
+
+def test_idushchuyu_kopiyu_udalit_nelzya(root_client, sayt):
+    """Файл ещё пишется: удаление из-под потока оставило бы огрызок без записи."""
+    _zavesti_klyuch(root_client)
+    job = backup_service._novaya("db", SimpleNamespace(name="root", email="root@example.test"))
+    backup_service._zapisat(job)
+    try:
+        r = root_client.delete(f"{BACKUPS}/jobs/{job['id']}")
+        assert r.status_code == 409, r.text
+        assert r.json()["error"]["code"] == "backup_busy"
+    finally:
+        backup_service._osvobodit()
+        backup_service._put_raboty(job["id"]).unlink(missing_ok=True)
 
 
 # --- ключ --------------------------------------------------------------------
