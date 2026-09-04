@@ -229,8 +229,11 @@ def snyat(engine, put: Path) -> tuple[int, int]:
     raw = engine.raw_connection()
     try:
         escape = raw.driver_connection.escape
-        with engine.connect() as c:
-            c.execute(text("SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ"))
+        # Уровень изоляции — через SQLAlchemy, а не голым `SET SESSION`: тот
+        # оставался на соединении после возврата в пул, и следующий запрос
+        # приложения шёл под REPEATABLE READ — дуэль «двое увозят последнее»
+        # пропускала обоих. SQLAlchemy снимает свою настройку при возврате.
+        with engine.connect().execution_options(isolation_level="REPEATABLE READ") as c:
             c.execute(text("START TRANSACTION WITH CONSISTENT SNAPSHOT"))
             imena = _tablicy(c)
             vsego_strok = 0

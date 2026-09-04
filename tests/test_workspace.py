@@ -25,7 +25,7 @@ def test_every_employee_can_read_the_workspace(manager_client):
     workspace = manager_client.get(WORKSPACE)
     assert workspace.status_code == 200
     body = workspace.json()
-    assert set(body) == {"brand_name", "currency", "deal_term"}
+    assert set(body) == {"brand_name", "currency", "deal_term", "realtime_enabled"}
 
 
 def test_defaults_are_sane_before_anyone_configures_anything(manager_client):
