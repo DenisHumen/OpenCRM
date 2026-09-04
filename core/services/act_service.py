@@ -378,6 +378,10 @@ def zerkalo_po_zayavke(db: Session, deal, author: User | None) -> None:
     if act is None:
         if author is None:
             return
+        # У заявки уже был акт — проведённый или отменённый руками: заводить
+        # новый после каждой правки строк значит спорить с человеком.
+        if documents_repo.est_nezakrytaya(db, deal.id, KIND_ACT, (STATUS_CLOSED, STATUS_CANCELLED)):
+            return
         act = create(
             db,
             {"deal_id": deal.id, "client_id": deal.client_id, "company_id": deal.company_id},

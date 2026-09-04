@@ -111,6 +111,15 @@ def test_udalenie_zayavki_unosit_avto_akt(root_client, deal):
     assert root_client.get(f"{DOCS}/acts/{act['id']}").status_code == 404
 
 
+def test_posle_otmeny_rukami_akt_ne_zavoditsya_snova(root_client, deal):
+    item = product(root_client)
+    root_client.post(f"{DEALS}/{deal['id']}/lines", json={"product_id": item["id"], "quantity": "1"})
+    [act] = akty(root_client, deal["id"])
+    assert root_client.post(f"{DOCS}/acts/{act['id']}/cancel", json={}).status_code == 200
+    root_client.post(f"{DEALS}/{deal['id']}/lines", json={"product_id": item["id"], "quantity": "2"})
+    assert [a["status"] for a in akty(root_client, deal["id"])] == ["cancelled"]
+
+
 def test_ruchnoy_akt_zerkalo_ne_trogaet(root_client, deal):
     root_client.patch(f"{API}/settings", json={"values": {"auto_act": "0"}})
     try:

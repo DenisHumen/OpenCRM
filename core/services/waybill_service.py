@@ -416,6 +416,11 @@ def zerkalo_po_zakazu(db: Session, order: Document, author: User | None) -> None
     if chernovik is None:
         if author is None:
             return
+        # По заказу уже есть накладная, которая жила: проведённая (товар уехал,
+        # второй черновик — вторая отгрузка) или отменённая руками (человек
+        # сказал «не надо», и заводить снова после каждой правки — спорить).
+        if documents_repo.po_osnovaniyu(db, order.id):
+            return
         chernovik = po_zakazu(db, order.id, author, None)
         snimok = payload_of(chernovik)
         snimok["auto"] = True

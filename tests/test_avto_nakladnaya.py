@@ -131,6 +131,25 @@ def test_ruchnoy_chernovik_zakaz_ne_trogaet(root_client, client_row):
     assert root_client.get(f"{WAYBILLS}/{wb['id']}").status_code == 200, "ручной черновик остался"
 
 
+def test_posle_provedyonnoy_ili_otmenyonnoy_nakladnoy_vtoroy_chernovik_ne_zavoditsya(root_client, client_row):
+    """Проведённая: товар уехал, второй черновик — вторая отгрузка. Отменённая
+    руками: человек сказал «не надо», и спорить с ним после каждой правки нельзя."""
+    item = product(root_client, stock="10")
+    z = order(root_client, client_row)
+    root_client.post(f"{ORDERS}/{z['id']}/lines", json={"product_id": item["id"], "quantity": "1"})
+    [wb] = chernoviki(root_client, z["id"])
+    assert root_client.post(f"{WAYBILLS}/{wb['id']}/cancel", json={}).status_code == 200
+    root_client.post(f"{ORDERS}/{z['id']}/lines", json={"product_id": item["id"], "quantity": "2"})
+    assert [w["status"] for w in chernoviki(root_client, z["id"])] == ["cancelled"], "после отмены руками черновик не заводится снова"
+
+    z2 = order(root_client, client_row)
+    root_client.post(f"{ORDERS}/{z2['id']}/lines", json={"product_id": item["id"], "quantity": "1"})
+    [wb2] = chernoviki(root_client, z2["id"])
+    assert root_client.post(f"{WAYBILLS}/{wb2['id']}/post", json={}).status_code == 200
+    root_client.post(f"{ORDERS}/{z2['id']}/lines", json={"product_id": item["id"], "quantity": "1"})
+    assert [w["status"] for w in chernoviki(root_client, z2["id"])] == ["issued"], "после проведения второй черновик не появляется"
+
+
 def test_bez_bloka_nakladnykh_chernovika_net(root_client, client_row):
     root_client.post(f"{API}/modules/waybills", json={"enabled": False})
     try:
