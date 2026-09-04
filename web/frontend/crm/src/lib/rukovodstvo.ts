@@ -35,7 +35,7 @@ export type Kusok =
   | { vid: "svyortka"; zagolovok: Dvuyazychno; kuski: Kusok[] }
   | { vid: "tablitsa"; shapka: Dvuyazychno[]; ryady: Dvuyazychno[][] }
   | { vid: "ekran"; put: string; podpis: Dvuyazychno }
-  // Все ручки одним списком; сами данные порождены из docs/04-api.md.
+  // Ручки API сайта одним списком; сами данные порождены из docs/04-api.md.
   | { vid: "spravochnik" }
   | {
       vid: "ruchka";
@@ -885,8 +885,8 @@ export const RUKOVODSTVO: Razdel[] = [
           {
             vid: "vazhno",
             tekst: {
-              ru: "Все адреса, которые сайт может вызвать, с правами и отказами собраны в разделе «API», статья «Все ручки» — там же поиск по адресу и слову. Эту статью и стоит отдать тому, кто пишет сайт.",
-              en: "Every address the site can call, with permissions and refusals, is collected in the «API» section, article «All endpoints» — with a search by address and word. That is the article to hand to whoever builds the site.",
+              ru: "Все адреса, которые сайт может вызвать, с областями и отказами собраны в разделе «API сайта», статья «Ручки API сайта» — там же поиск по адресу и слову. Этот раздел и стоит отдать тому, кто пишет сайт.",
+              en: "Every address the site can call, with scopes and refusals, is collected in the «Site API» section, article «Site API endpoints» — with a search by address and word. That is the section to hand to whoever builds the site.",
             },
           },
           { vid: "ekran", put: "/settings/api-keys", podpis: { ru: "Открыть ключи API сайта", en: "Open site API keys" } },
@@ -1306,28 +1306,35 @@ export const RUKOVODSTVO: Razdel[] = [
   {
     id: "api",
     znachok: "docs",
-    nazvanie: { ru: "API", en: "API" },
+    nazvanie: { ru: "API сайта", en: "Site API" },
     statyi: [
       {
         id: "obshchee",
         nazvanie: { ru: "Соглашения", en: "Conventions" },
         kratko: {
-          ru: "Одна форма ответа, одна форма ошибки, одна форма страницы.",
-          en: "One response shape, one error shape, one page shape.",
+          ru: "Как чужая программа разговаривает с системой: ключ, адреса, страницы, отказы.",
+          en: "How another program talks to the system: key, addresses, pages, refusals.",
         },
         kuski: [
           {
             vid: "vazhno",
             tekst: {
-              ru: "Раздел для того, кто подключает к системе свою программу: сайт, магазин, скрипт. Здесь — соглашения и один разобранный пример; все адреса с правами собраны в статье «Все ручки» ниже.",
-              en: "This section is for whoever connects their own program to the system: a website, a shop, a script. Here are the conventions and one worked example; every address with its permission is collected in the «All endpoints» article below.",
+              ru: "Раздел для того, кто пишет сайт магазина, витрину или связку с маркетплейсом. Наружу открыто только это API — по ключу. Всё остальное, что делает система, зовут её собственные экраны, и снаружи оно не нужно.",
+              en: "This section is for whoever builds the shop website, a storefront or a marketplace link. Only this API is open to the outside — with a key. Everything else the system does is called by its own screens and is not needed from outside.",
             },
           },
           {
             vid: "abzats",
             tekst: {
-              ru: "Все ручки живут под /api/v1. Списки отдаются страницами и всегда сообщают, сколько записей всего: по этому числу видно, есть ли ещё.",
-              en: "Every endpoint lives under /api/v1. Lists come in pages and always report the total, so you can tell whether there is more.",
+              ru: "Все адреса живут под /api/v1/site. Каждый запрос несёт заголовок X-OpenCRM-Api-Key с ключом, выданным в настройках; ключ хранится на сервере сайта и в браузер клиента не попадает. Ключ открывает только свои области — читать каталог, читать наличие, заводить заказы и так далее.",
+              en: "Every address lives under /api/v1/site. Each request carries the X-OpenCRM-Api-Key header with a key issued in settings; the key stays on the site's server and never reaches the customer's browser. A key opens only its own scopes — read the catalogue, read stock, create orders and so on.",
+            },
+          },
+          {
+            vid: "abzats",
+            tekst: {
+              ru: "Списки отдаются страницами и всегда сообщают, сколько записей всего: по этому числу видно, есть ли ещё.",
+              en: "Lists come in pages and always report the total, so you can tell whether there is more.",
             },
           },
           {
@@ -1335,16 +1342,17 @@ export const RUKOVODSTVO: Razdel[] = [
             yazyk: "json",
             tekst: `{
   "items": [ /* … */ ],
-  "total": 137,
+  "total": 132,
   "page": 1,
-  "per_page": 100
+  "per_page": 100,
+  "currency": "USD"
 }`,
           },
           {
             vid: "abzats",
             tekst: {
-              ru: "Отказ приходит одной и той же формой, где `code` — для программы, а `message` — для человека.",
-              en: "A refusal always comes in the same shape, where `code` is for the program and `message` is for a human.",
+              ru: "Отказ приходит одной и той же формой, где `code` — для программы, а `message` — для человека. Нет ключа или он отозван — 401; область не выдана — 403; слишком часто — 429 с заголовком Retry-After.",
+              en: "A refusal always comes in the same shape, where `code` is for the program and `message` is for a human. No key or a revoked one — 401; scope not granted — 403; too often — 429 with a Retry-After header.",
             },
           },
           {
@@ -1352,8 +1360,8 @@ export const RUKOVODSTVO: Razdel[] = [
             yazyk: "json",
             tekst: `{
   "error": {
-    "code": "file_content_mismatch",
-    "message": "The file does not look like a .pdf",
+    "code": "not_enough_stock",
+    "message": "Not enough stock for ABC-1",
     "details": { }
   }
 }`,
@@ -1361,38 +1369,29 @@ export const RUKOVODSTVO: Razdel[] = [
           {
             vid: "vazhno",
             tekst: {
-              ru: "Публичное API для сайта магазина живёт под тем же адресом, но входит по ключу, а не по сессии: как его завести и что оно умеет — в статье «API для сайта магазина» раздела «Наружу». Форма ответов и ошибок у него та же.",
-              en: "The public API for a shop website lives under the same address but signs in with a key, not a session: how to set it up and what it can do is in the «Shop-site API» article of the «Facing the client» section. Its response and error shapes are the same.",
+              ru: "Деньги приходят целыми в минорных единицах (12500 — это 125,00), количества — целыми в тысячных (1500 — это 1,5). Дробных чисел в API нет: они округляются по-разному на разных сторонах.",
+              en: "Money comes as integers in minor units (12500 means 125.00), quantities as integers in thousandths (1500 means 1.5). There are no fractional numbers in the API: they round differently on different sides.",
             },
           },
         ],
       },
       {
         id: "primer",
-        nazvanie: { ru: "Пример: список клиентов", en: "Example: list clients" },
+        nazvanie: { ru: "Пример: каталог", en: "Example: the catalogue" },
         kratko: {
-          ru: "Как выглядит обычная читающая ручка.",
-          en: "What an ordinary read endpoint looks like.",
+          ru: "Как выглядит обычная читающая ручка API сайта.",
+          en: "What an ordinary read endpoint of the site API looks like.",
         },
         kuski: [
           {
             vid: "ruchka",
             metod: "GET",
-            put: "/api/v1/clients",
+            put: "/api/v1/site/catalog",
             opisanie: {
-              ru: "Страница списка клиентов с тем же отбором, что и на экране.",
-              en: "A page of the client list with the same selection as on screen.",
+              ru: "Страница карточек товаров, видимых сайту: опубликованные товары склада ключа и все услуги.",
+              en: "A page of product cards visible to the site: published goods of the key's warehouse and every service.",
             },
             polya: [
-              {
-                imya: "search",
-                tip: "string",
-                obyazatelno: false,
-                opisanie: {
-                  ru: "Подстрока: имя, фирма, телефон, почта или метка.",
-                  en: "Substring: name, company, phone, email or tag.",
-                },
-              },
               {
                 imya: "page",
                 tip: "integer ≥ 1",
@@ -1403,46 +1402,72 @@ export const RUKOVODSTVO: Razdel[] = [
                 imya: "per_page",
                 tip: "integer 1…200",
                 obyazatelno: false,
-                opisanie: { ru: "Размер страницы, по умолчанию 50.", en: "Page size, defaults to 50." },
+                opisanie: { ru: "Размер страницы, по умолчанию 100.", en: "Page size, defaults to 100." },
               },
             ],
-            zapros: `curl -s "https://ваш-адрес/api/v1/clients?search=иван&per_page=2" \\
-  -H "Cookie: session=…"`,
+            zapros: `curl -s "https://ваш-адрес/api/v1/site/catalog?per_page=1" \\
+  -H "X-OpenCRM-Api-Key: …"`,
             otvet: `{
-  "items": [
-    { "id": 17, "name": "Иванов Пётр", "phone": "+380 50 111 2233" },
-    { "id": 42, "name": "Иванова Мария", "phone": "+380 67 444 5566" }
-  ],
-  "total": 2,
-  "page": 1,
-  "per_page": 2
+  "items": [{
+    "id": 17,
+    "sku": "ABC-1",
+    "name": "Matrix 15.6\" FHD",
+    "unit": "pcs",
+    "description": "Матовая, 30 pin, разъём слева.",
+    "is_service": false,
+    "prices": [{ "list": "default", "price_minor": 12500 }],
+    "pack_size_milli": 1000,
+    "photos": [
+      { "url": "/media/product/9f2c….webp", "thumb_url": "/media/product/9f2c…-thumb.webp" }
+    ],
+    "updated_at": "2026-09-04T10:12:03Z"
+  }],
+  "total": 132, "page": 1, "per_page": 1,
+  "currency": "USD"
 }`,
+          },
+          {
+            vid: "spisok",
+            punkty: [
+              {
+                ru: "Пустой массив prices — цены нет: карточка на сайте остаётся, кнопки «купить» у неё быть не должно.",
+                en: "An empty prices array means no price: the card stays on the site, but it must have no «buy» button.",
+              },
+              {
+                ru: "Снимки отдаются по адресам из photos без ключа: их показывает страница в браузере покупателя.",
+                en: "Photos are served at the addresses from photos without a key: the buyer's browser page shows them.",
+              },
+              {
+                ru: "Распроданный товар карточку сохраняет и показывается как «нет в наличии» — адрес страницы не умирает в момент продажи последней штуки.",
+                en: "A sold-out product keeps its card and shows as «out of stock» — the page address does not die the moment the last unit sells.",
+              },
+            ],
           },
         ],
       },
       {
-        id: "vse-ruchki",
-        nazvanie: { ru: "Все ручки", en: "All endpoints" },
+        id: "ruchki-sayta",
+        nazvanie: { ru: "Ручки API сайта", en: "Site API endpoints" },
         kratko: {
-          ru: "Каждый адрес системы одним списком: по разделам, с правом и поиском.",
-          en: "Every address in the system in one list: by section, with its permission and a search box.",
+          ru: "Все адреса, которые может вызвать сайт, одним списком: чтение, запись, снимки — с областью ключа и поиском.",
+          en: "Every address the site can call in one list: reading, writing, photos — with the key scope and a search box.",
         },
         kuski: [
           {
             vid: "abzats",
             tekst: {
-              ru: "Список полный и обновляется вместе с системой: новая ручка появляется здесь тем же обновлением, которым появилась в системе. Описания даны по-русски. Поиск смотрит в адрес, описание, право и название раздела; разделы свёрнуты, при поиске раскрывается всё найденное.",
-              en: "The list is complete and updates together with the system: a new endpoint appears here with the same update that brought it into the system. Descriptions are in Russian. The search looks at the address, the description, the permission and the section name; sections are collapsed, and a search unfolds everything it finds.",
-            },
-          },
-          {
-            vid: "vazhno",
-            tekst: {
-              ru: "Право у ручки — то же, что в матрице доступов: «открыто» отвечает без входа, «любой сотрудник» — по сессии, код вида «раздел.действие» — по праву из должности, «ключ сайта» — по ключу с областью.",
-              en: "The permission next to an endpoint is the same as in the access matrix: «public» answers without signing in, «any staff» needs a session, a «section.action» code needs the permission from a job role, «site key» needs a key with that scope.",
+              ru: "Список полный и обновляется вместе с системой. Рядом с каждой ручкой — область, которую должен иметь ключ; снимок товара открыт без ключа. Описания даны по-русски. Поиск смотрит в адрес, описание и область.",
+              en: "The list is complete and updates together with the system. Next to every endpoint is the scope the key must have; product photos are open without a key. Descriptions are in Russian. The search looks at the address, the description and the scope.",
             },
           },
           { vid: "spravochnik" },
+          {
+            vid: "vazhno",
+            tekst: {
+              ru: "Как завести ключ, какие бывают области и что сайт видит на складе — в статье «API для сайта магазина» раздела «Клиенту наружу».",
+              en: "How to issue a key, what scopes exist and what the site sees in stock — see the «Shop-site API» article in the «Facing the client» section.",
+            },
+          },
         ],
       },
     ],

@@ -4,7 +4,7 @@ import { Icon } from "./Icon";
 import { useApp } from "../lib/app";
 import { SPRAVOCHNIK_API, type Ruchka } from "../lib/spravochnik_api";
 
-/** Все ручки API одним списком с поиском.
+/** Ручки API сайта одним списком с поиском.
  *
  * Список не пишется руками: он порождён из docs/04-api.md скриптом
  * scripts/spravochnik_api.py, и свежесть его стережёт тест. Здесь только
