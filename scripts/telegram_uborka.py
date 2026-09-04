@@ -34,7 +34,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from core.services import storage_service, telegram_uborka  # noqa: E402
+from core.services import notification_service, storage_service, telegram_uborka  # noqa: E402
 from database.session import SessionLocal  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -60,6 +60,16 @@ def main() -> int:
         help="только посчитать, не удалять ничего",
     )
     dovody = razbor.parse_args()
+
+    # Заодно — уведомления старше двух месяцев (docs/21 §4): та же ночная
+    # уборка, чтобы не заводить вторую строку в расписании ради одной таблицы.
+    # Идёт ДО переписки и независимо от срока её хранения: подсказки не учёт.
+    if not dovody.dry_run:
+        with SessionLocal() as db:
+            ushlo = notification_service.ubrat_starye(db)
+            db.commit()
+        if ushlo:
+            print(f"уведомлений старше {notification_service.HRANIT_DNEY} дней убрано: {ushlo}")
 
     with SessionLocal() as db:
         itog = telegram_uborka.ubrat(
