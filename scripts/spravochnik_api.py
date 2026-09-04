@@ -1,10 +1,13 @@
-"""Справочник ручек для экрана документации — из `docs/04-api.md`.
+"""Справочник ручек API сайта для экрана документации — из `docs/04-api.md`.
 
-Перечень ручек в приложении не пишется руками: второй список по тем же ручкам
-разошёлся бы с документом на первой же новой. Поэтому экран читает то, что
-породил этот скрипт из справочника, а свежесть порождённого файла стережёт
-`tests/test_spravochnik_api.py`. Полноту самого справочника стережёт
-`tests/test_api_dokumentirovan.py` — так на экране оказывается каждая ручка.
+На экран идёт ТОЛЬКО то, что зовёт чужая программа по ключу: раздел «API сайта
+магазина» справочника, ручки под ключом и снимок товара. Остальные ручки зовёт
+сам экран CRM, и внешнему они не нужны — владелец снял их 05.09.2026, когда
+на экране оказался весь внутренний API.
+
+Перечень не пишется руками: второй список по тем же ручкам разошёлся бы с
+документом на первой же новой. Свежесть порождённого файла стережёт
+`tests/test_spravochnik_api.py`, полноту справочника — `test_api_dokumentirovan`.
 
 Запуск после правки `docs/04-api.md`:
 
@@ -71,18 +74,44 @@ def razobrat(tekst: str) -> list[dict]:
                 "dostup": podpis,
                 "opisanie": " | ".join(yacheyki[1:]) if len(yacheyki) > 1 else yacheyki[0],
                 "podrazdel": podrazdel,
-                # Витрина живёт вне `/api/v1`, и приставка у неё сбила бы с толку.
-                "vne_api": "вне /api" in razdel["nazvanie"],
+                # Витрина и снимки товара живут вне `/api/v1`, и приставка у них
+                # сбила бы с толку.
+                "vne_api": "вне /api" in razdel["nazvanie"] or sovpalo.group(2).startswith("/media/"),
             }
         )
     return [r for r in razdely if r["ruchki"]]
 
 
+RAZDEL_SAYTA = "API сайта магазина"
+
+
+def dlya_sayta(razdely: list[dict]) -> list[dict]:
+    """Ручки под ключом из раздела API сайта, разложенные по его подразделам.
+
+    Настройки ключей, `/live` и соседние ручки CRM из того же раздела остаются
+    за бортом: их зовёт экран сотрудника, а не сайт.
+    """
+    razdel = next((r for r in razdely if r["nazvanie"].startswith(RAZDEL_SAYTA)), None)
+    if razdel is None:
+        raise RuntimeError(f"в справочнике нет раздела «{RAZDEL_SAYTA}»")
+    gruppy: list[dict] = []
+    for ruchka in razdel["ruchki"]:
+        if ruchka["vid"] not in ("klyuch", "inoe"):
+            continue
+        imya = ruchka["podrazdel"] or razdel["nazvanie"]
+        gruppa = next((g for g in gruppy if g["nazvanie"] == imya), None)
+        if gruppa is None:
+            gruppa = {"nazvanie": imya, "ruchki": []}
+            gruppy.append(gruppa)
+        gruppa["ruchki"].append({**ruchka, "podrazdel": ""})
+    return gruppy
+
+
 def porodit(tekst: str) -> str:
     """Текст файла для экрана. Порождённый — руками не правится."""
-    dannye = json.dumps(razobrat(tekst), ensure_ascii=False, indent=2)
+    dannye = json.dumps(dlya_sayta(razobrat(tekst)), ensure_ascii=False, indent=2)
     return (
-        "// Порождено скриптом scripts/spravochnik_api.py из docs/04-api.md.\n"
+        "// Порождено скриптом scripts/spravochnik_api.py из раздела «API сайта магазина» docs/04-api.md.\n"
         "// Руками не править: правится справочник, потом запускается скрипт.\n"
         "\n"
         "export type VidDostupa = \"otkryto\" | \"sotrudnik\" | \"pravo\" | \"klyuch\" | \"inoe\";\n"
@@ -110,7 +139,7 @@ def main() -> int:
         print("справочник свеж")
         return 0
     VYKHOD.write_text(novyy, encoding="utf-8", newline="\n")
-    schyot = sum(len(r["ruchki"]) for r in razobrat(SPRAVOCHNIK.read_text(encoding="utf-8")))
+    schyot = sum(len(r["ruchki"]) for r in dlya_sayta(razobrat(SPRAVOCHNIK.read_text(encoding="utf-8"))))
     print(f"записано: {VYKHOD.relative_to(KOREN)}, ручек {schyot}")
     return 0
 
