@@ -7,6 +7,7 @@ import { VyborKlienta } from "../components/VyborKlienta";
 import { Avatar, Dochitat, EmptyState, LoadFailed, Modal, ScreenLoading } from "../components/ui";
 import { api, ApiError } from "../lib/api";
 import { useApp } from "../lib/app";
+import { useLiveTopic } from "../lib/live";
 import { useFailure } from "../lib/failure";
 import { useGuard } from "../lib/guard";
 import { formatDate, formatMoney, initials } from "../lib/format";
@@ -173,6 +174,26 @@ export function Deals() {
       fail(e);
     }
   }, [fail, clear]);
+
+  // Чужая правка — тот же перезапрос, что после переноса карточки. Пока
+  // тащишь свою, чужой намёк не сбивает перетаскивание: доска перечитается
+  // после того, как карточку отпустили (`stage_moved_meanwhile` остаётся
+  // главной защитой).
+  // Счётчик, а не засов: сколько намёков пришло, пока карточку тащили.
+  const otlozhennyh = useRef(0);
+  useLiveTopic(["deals", "pipeline"], () => {
+    if (dragId !== null) {
+      otlozhennyh.current += 1;
+      return;
+    }
+    void load();
+  });
+  useEffect(() => {
+    if (dragId === null && otlozhennyh.current > 0) {
+      otlozhennyh.current = 0;
+      void load();
+    }
+  }, [dragId, load]);
 
   /** Дочитать одну колонку.
    *

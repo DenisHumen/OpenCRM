@@ -43,6 +43,7 @@ from web.api.routes import (
     finance,
     labels,
     leads,
+    live,
     mail,
     metrics,
     modules,
@@ -69,6 +70,8 @@ from web.api.routes import (
     workspace,
 )
 from web import middleware
+from core.live import bus as live_bus
+from core.live import collector as _live_collector  # noqa: F401 — регистрирует слушателей сессии
 from web.public import leads as public_leads
 from web.public import routes as public_routes
 
@@ -303,6 +306,9 @@ async def lifespan(app: FastAPI):
     finally:
         db.close()
     yield
+    # Чтение потока живых обновлений — фоновый поток процесса; при остановке
+    # его надо отпустить, иначе процесс ждёт `XREAD BLOCK` до конца окна.
+    live_bus.sbrosit()
 
 
 def create_app() -> FastAPI:
@@ -397,6 +403,7 @@ def create_app() -> FastAPI:
     app.include_router(backups.router, prefix=api_prefix)
     app.include_router(apikeys.router, prefix=api_prefix)
     app.include_router(site.router, prefix=api_prefix)
+    app.include_router(live.router, prefix=api_prefix)
     app.include_router(workspace.router, prefix=api_prefix)
     app.include_router(telegram.router, prefix=api_prefix)
     # Приём от телеграма — без зависимости от блока, обоснование в роутере.

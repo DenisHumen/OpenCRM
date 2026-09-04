@@ -686,3 +686,20 @@ groups:
           description: >-
             Дальше начнётся вытеснение старых ключей, то есть забытые попытки
             входа. Потолок — OPENCRM_REDIS_MAXMEMORY в docker/.env.
+
+      - alert: RealtimeHintsDropped
+        # Живые обновления при лежащем Redis не отказывают, а молчат: намёк
+        # теряется, продукт работает как до живого слоя (docs/12-realtime.md
+        # §11). Без тревоги это состояние видно только тому, кто откроет логи,
+        # а вкладки тем временем показывают полосу «обновления приостановлены».
+        expr: increase(opencrm_realtime_dropped_total[10m]) > 0
+        for: 5m
+        keep_firing_for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: >-
+            Живые обновления теряют намёки: {{ $value | printf "%.0f" }} за 10 минут
+          description: >-
+            Redis не принимает записи в поток. Экраны сотрудников перечитываются
+            сами, но реже; проверьте контейнер redis и его память.

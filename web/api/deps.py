@@ -5,6 +5,7 @@ from config.settings import get_settings
 from core import exceptions as errors
 from core import modules as core_modules
 from core import permissions as core_permissions
+from core.live import collector as live_collector
 from core.ratelimit import SlidingWindowLimiter
 from core.services import auth_service, modules_service, permissions_service
 from database.models import User
@@ -132,6 +133,9 @@ def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
     user = auth_service.get_user_by_session(db, token)
     if user is None:
         raise errors.AuthError("Session is invalid or expired", code="session_invalid")
+    # Кто изменил — для намёков живых обновлений (`core/live/collector.py`):
+    # сессия базы не знает сотрудника, а слушатель сброса видит только её.
+    db.info[live_collector.ACTOR] = user.id
     return user
 
 

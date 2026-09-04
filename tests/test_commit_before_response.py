@@ -115,14 +115,25 @@ def _skolko(imya: str) -> int:
 
 
 @pytest.fixture()
-def stend(base_client):
+def stend(base_client, monkeypatch):
     """`base_client` — чтобы схема и root поднялись общим порядком."""
+    from core.live import bus as live_bus
+
     letopis = _Letopis()
     vidno: list[bool] = []
 
     def na_commit(_session):
         letopis.zapisat("фиксация")
 
+    # Третья запись летописи — намёк живых обновлений ушёл в шину. Он обязан
+    # уйти после фиксации и до ответа, а при откате — не уйти вовсе.
+    nastoyashchiy = live_bus.publish
+
+    def otpravit(hint):
+        letopis.zapisat("отправлено")
+        return nastoyashchiy(hint)
+
+    monkeypatch.setattr(live_bus, "publish", otpravit)
     event.listen(SessionLocal, "after_commit", na_commit)
     try:
         yield letopis, vidno, TestClient(_prilozhenie(letopis, vidno))
@@ -133,6 +144,13 @@ def stend(base_client):
 def test_fiksaciya_ranshe_otdachi(stend):
     letopis, vidno, klient = stend
     assert klient.post("/pishet").status_code == 200
+    # «Фиксация» и «отправлено» — оба слушатели `after_commit` (транзакция к
+    # этому моменту уже в базе), и порядок между ними SQLAlchemy не обещает;
+    # обещается другое — оба раньше ответа.
+    assert sorted(letopis.sobytiya[:-1]) == ["отправлено", "фиксация"] and letopis.sobytiya[-1] == "ответ", (
+        f"намёк живых обновлений ушёл не между фиксацией и ответом: {letopis.sobytiya}"
+    )
+    letopis.sobytiya = ["фиксация", "ответ"]
     assert letopis.sobytiya == ["фиксация", "ответ"], (
         "ответ ушёл клиенту раньше, чем транзакция доехала до базы: "
         f"порядок событий {letopis.sobytiya}. На MySQL это «вошёл и тут же "

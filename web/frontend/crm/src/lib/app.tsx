@@ -55,6 +55,8 @@ export interface Workspace {
   currency: string;
   /** Как этот бизнес называет свои записи: deal | order | request | booking. */
   deal_term: string;
+  /** Открывать ли поток живых обновлений. Выключено настройкой — не авария. */
+  realtime_enabled: boolean;
 }
 
 interface AppContextValue {
@@ -114,6 +116,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     brand_name: "",
     currency: "USD",
     deal_term: "deal",
+    // Пока не ответил сервер — не открываем: иначе соединение поднялось бы и
+    // тут же закрылось у тех, кто живость выключил.
+    realtime_enabled: false,
   });
   const [overdueTasks, setOverdueTasks] = useState(0);
   const [toasts, setToasts] = useState<Toast[]>([]);

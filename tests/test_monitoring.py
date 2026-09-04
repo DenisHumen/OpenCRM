@@ -851,6 +851,7 @@ def test_vse_obeshchannye_povody_dlya_trevogi_est():
         "BackupTooOld": "бэкап не снимался больше суток",
         "DecodeQueueSaturated": "очередь разжатия картинок занята целиком",
         "DecodeQueueLocalLimit": "предел разжатия держится в памяти процесса",
+        "RealtimeHintsDropped": "живые обновления теряют намёки",
     }
     for alert, why in promised.items():
         assert f"- alert: {alert}" in rules, f"пропал повод «{why}»"

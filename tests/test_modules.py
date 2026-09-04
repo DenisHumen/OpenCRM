@@ -306,7 +306,27 @@ POTOKOVYE: dict[str, str] = {
         "поток событий мессенджера: держит соединение минутами и тело не "
         "заканчивает — обход, ждущий тело, на нём встаёт навсегда"
     ),
+    f"{API}/live": (
+        "поток живых обновлений для всей системы: то же самое — соединение на "
+        "минуты; закрытость адреса проверяет свой тест (`tests/test_realtime_potok.py`)"
+    ),
 }
+
+
+#: Ручки по ключу сайта: сессии сотрудника у них нет, и обход под root отвечает
+#: 401 при любом состоянии блоков. Что блок закрывает и их — проверяет
+#: `tests/test_site_api.py` (`module_disabled` раньше области).
+PO_KLYUCHU_SAYTA: dict[str, str] = {
+    f"{API}/site/catalog": "каталог по ключу сайта",
+    f"{API}/site/changes": "лента изменений по ключу сайта",
+    f"{API}/site/stock": "наличие по ключу сайта",
+}
+
+
+def test_v_spiske_ruchek_po_klyuchu_net_ukazyvayushchikh_v_pustotu():
+    vse = set(app.openapi()["paths"])
+    propavshie = sorted(set(PO_KLYUCHU_SAYTA) - vse)
+    assert propavshie == [], f"в списке ручек по ключу адреса, которых нет: {propavshie}"
 
 
 def test_v_spiske_potokovykh_net_ukazyvayushchikh_v_pustotu():
@@ -343,6 +363,7 @@ def api_get_paths() -> list[str]:
         and path.startswith(API)
         and "{" not in path
         and path not in POTOKOVYE
+        and path not in PO_KLYUCHU_SAYTA
     )
 
 

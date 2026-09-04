@@ -293,6 +293,10 @@
                         "text": "Предел разжатия картинок держится в памяти процесса — Redis не ответил (DecodeQueueLocalLimit)",
                         "index": 28
                       },
+                      "RealtimeHintsDropped": {
+                        "text": "Живые обновления теряют намёки — Redis не принимает поток (RealtimeHintsDropped)",
+                        "index": 29
+                      },
                       "RateLimiterNotShared": {
                         "text": "Счётчик попыток не общий на процессы (RateLimiterNotShared)",
                         "index": 16

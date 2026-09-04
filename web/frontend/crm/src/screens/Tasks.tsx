@@ -5,6 +5,7 @@ import { Icon } from "../components/Icon";
 import { EmptyState, ScreenLoading } from "../components/ui";
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
+import { useLiveTopic } from "../lib/live";
 import { useFailure } from "../lib/failure";
 import { useGuard } from "../lib/guard";
 import { formatDateTime, parseDate } from "../lib/format";
@@ -51,6 +52,7 @@ export function Tasks() {
   const [title, setTitle] = useState("");
   const [due, setDue] = useState("");
   const [attempt, setAttempt] = useState(0);
+  useLiveTopic("tasks", () => setAttempt((a) => a + 1));
   const guard = useGuard();
 
   const { failure, fail, clear } = useFailure();

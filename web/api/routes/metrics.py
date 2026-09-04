@@ -556,11 +556,41 @@ def _collect_bezopasnost(out: Metrics) -> None:
         )
 
 
+def _collect_live(out: Metrics) -> None:
+    """Живые обновления: отправлено, потеряно, открытых соединений.
+
+    Потери — главное число: при лежащем Redis намёки не отказывают, а тихо
+    теряются (`docs/12-realtime.md` §11), и без счётчика это состояние видно
+    только тому, кто откроет логи. Соединения — состояние процесса, который
+    скребёт Prometheus; счётчики — его же доля, а не сумма по процессам.
+    """
+    from core.live import bus as live_bus
+
+    out.add(
+        "opencrm_realtime_published_total",
+        live_bus.published_total,
+        help_text="Сколько намёков живых обновлений ушло в шину (этот процесс).",
+        kind="counter",
+    )
+    out.add(
+        "opencrm_realtime_dropped_total",
+        live_bus.dropped_total,
+        help_text="Сколько намёков потеряно: Redis не принял запись (этот процесс).",
+        kind="counter",
+    )
+    out.add(
+        "opencrm_realtime_connections",
+        live_bus.connections,
+        help_text="Открытых потоков /api/v1/live в этом процессе.",
+    )
+
+
 COLLECTORS = (
     _collect_build,
     _collect_started,
     _collect_ratelimiter,
     _collect_razzhatie,
+    _collect_live,
     _collect_bezopasnost,
     _collect_schema,
     _collect_database,

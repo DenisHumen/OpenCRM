@@ -10,13 +10,16 @@ import { BrowserRouter } from "react-router-dom";
 
 import App from "./App";
 import { AppProvider } from "./lib/app";
+import { LiveProvider } from "./lib/live";
 import "./styles.css";
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <BrowserRouter>
       <AppProvider>
-        <App />
+        <LiveProvider>
+          <App />
+        </LiveProvider>
       </AppProvider>
     </BrowserRouter>
   </StrictMode>,

@@ -7,6 +7,7 @@ import { Chip, Dochitat, EmptyState, ScreenLoading } from "../components/ui";
 import { api } from "../lib/api";
 import type { HistoryEvent } from "../components/History";
 import { useApp } from "../lib/app";
+import { useLiveTopic } from "../lib/live";
 import { useDebounced } from "../lib/debounce";
 import { useFailure } from "../lib/failure";
 import { useGuard } from "../lib/guard";
@@ -93,6 +94,7 @@ export function Orders() {
   // от прошлого.
   const otbor_spiska = useRef("");
   const [attempt, setAttempt] = useState(0);
+  useLiveTopic("orders", () => setAttempt((a) => a + 1));
   const guard = useGuard();
   const { failure, fail, clear } = useFailure();
 

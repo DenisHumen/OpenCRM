@@ -464,9 +464,24 @@ export function SettingsReturnButton() {
 }
 
 export function SettingsMaintenance() {
-  const { t, locale, storage, refreshStorage, maintenance, setMaintenance } = useApp();
+  const { t, locale, storage, refreshStorage, maintenance, setMaintenance, workspace, refreshWorkspace, toastError } = useApp();
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
+  const [liveBusy, setLiveBusy] = useState(false);
+
+  // Выключатель живых обновлений — здесь, на видном месте: это первое, что
+  // хочется погасить, когда система ведёт себя странно (docs/12 §14 п. 4).
+  const toggleLive = async (enabled: boolean) => {
+    setLiveBusy(true);
+    try {
+      await api.patch("/settings", { values: { realtime_enabled: enabled ? "1" : "0" } });
+      await refreshWorkspace();
+    } catch (e) {
+      toastError(e);
+    } finally {
+      setLiveBusy(false);
+    }
+  };
 
   useEffect(() => {
     setNote(maintenance?.note || "");
@@ -483,6 +498,18 @@ export function SettingsMaintenance() {
 
   return (
     <>
+      <div className="card" style={{ padding: "20px 22px", marginBottom: 20 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, marginBottom: 4 }}>
+          <div style={{ fontSize: 14, fontWeight: 600 }}>{t("liveUpdates")}</div>
+          <Toggle
+            on={workspace.realtime_enabled}
+            label={t("liveUpdates")}
+            onToggle={() => { if (!liveBusy) void toggleLive(!workspace.realtime_enabled); }}
+          />
+        </div>
+        <div style={{ color: "var(--faint)", fontSize: 12.5, lineHeight: 1.5 }}>{t("liveUpdatesSub")}</div>
+      </div>
+
       <div className="card" style={{ padding: "20px 22px", marginBottom: 20 }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, marginBottom: 4 }}>
           <div style={{ fontSize: 14, fontWeight: 600 }}>{t("closedMode")}</div>

@@ -7,6 +7,7 @@ import { WarehousePicker, useWarehouses } from "../components/Warehouses";
 import { Chip, Dochitat, EmptyState, Modal, ScreenLoading } from "../components/ui";
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
+import { useLiveTopic } from "../lib/live";
 import { useDebounced } from "../lib/debounce";
 import { useFailure } from "../lib/failure";
 import { useGuard } from "../lib/guard";
@@ -75,6 +76,8 @@ export function Warehouse() {
   const otbor_spiska = useRef("");
 
   const [attempt, setAttempt] = useState(0);
+  // Остаток не приходит в намёке — он считается запросом; намёк лишь «перечитай».
+  useLiveTopic(["warehouse", "warehouses"], () => setAttempt((a) => a + 1));
 
   const { failure, fail, clear } = useFailure();
 
