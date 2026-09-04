@@ -100,6 +100,19 @@ ACTION_BACKUP_KEY_CREATED = "backup.key_created"
 ACTION_BACKUP_TAKEN = "backup.taken"
 ACTION_BACKUP_DOWNLOADED = "backup.downloaded"
 ACTION_BACKUP_RESTORED = "backup.restored"
+#: Ключ доступа для чужой программы: выдан, отозван, перевыпущен, поправлен.
+#: Сам факт обращения ключом в журнал не пишется — это тысячи записей в сутки,
+#: и журнал, в котором тонут действия людей, перестают читать.
+ACTION_APIKEY_CREATED = "apikey.created"
+ACTION_APIKEY_REVOKED = "apikey.revoked"
+ACTION_APIKEY_ROTATED = "apikey.rotated"
+ACTION_APIKEY_UPDATED = "apikey.updated"
+#: Смена типа склада открывает или закрывает витрину целиком — вопрос «почему с
+#: сайта пропал весь товар» задают через неделю, и отвечать должна запись.
+ACTION_WAREHOUSE_KIND_CHANGED = "warehouse.kind_changed"
+#: Регистрация клиента с сайта: здесь же хранится согласие на обработку данных
+#: (`source_ref` — на что согласился), потому что журнал только дописывается.
+ACTION_CUSTOMER_REGISTERED = "customer.registered"
 #: Должность собрана, переписана или отдана человеку.
 #:
 #: Права — это и есть то, ради чего журнал заведён: вопрос «кто дал бухгалтеру
@@ -143,6 +156,8 @@ ENTITY_NOTE = "note"
 ENTITY_FILE = "file"
 #: Копия системы: база или архив файлов, снятые или залитые с экрана настроек.
 ENTITY_BACKUP = "backup"
+#: Ключ доступа сайта; в `entity_label` — его имя.
+ENTITY_APIKEY = "apikey"
 
 # --- длины строковых полей ---
 #

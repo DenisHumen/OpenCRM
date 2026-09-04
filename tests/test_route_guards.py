@@ -45,6 +45,18 @@ EXEMPT: dict[str, str] = {
         "`require_perm` здесь мало: группа у каждой области своя, и право надо "
         "спрашивать по имени области, а не по маршруту"
     ),
+    # API сайта магазина: сессии нет, вместо неё ключ с областями
+    # (`web/api/routes/site.py:s_klyuchom`) и два ограничителя — на ключ и на
+    # адрес. Каждая ручка называет свою область, и блок проверяется до неё.
+    "/site/catalog": "каталог по ключу с областью catalog.read",
+    "/site/catalog/{product_id}": "карточка по ключу с областью catalog.read",
+    "/site/changes": "лента изменений по ключу с областью catalog.read",
+    "/site/stock": "наличие по ключу с областью stock.read",
+    "/site/orders": "заказ с сайта по ключу с областью orders.write",
+    "/site/orders/{site_ref}": "свой заказ по ключу с областью orders.read",
+    "/site/orders/{site_ref}/cancel": "отмена своего заказа по ключу с областью orders.write",
+    "/site/customers": "регистрация клиента по ключу с областью customers.write",
+    "/site/leads": "заявка по ключу с областью leads.write",
     "/telephony/webhook": "запрос от АТС: сессии нет, проверяется подпись",
     "/telegram/webhook": "обновление от телеграма: сессии нет, проверяется секрет заголовка",
     "/alerts/webhook": (

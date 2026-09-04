@@ -24,7 +24,13 @@ from core.services import (
 from core.services import settings_service
 from core.utils import money_for_print
 from database.models import User
-from database.models.document import DOCUMENT_LOCALES, ORDER_KINDS, WAYBILL_KINDS
+from database.models.document import (
+    DOCUMENT_LOCALES,
+    KIND_SALES_ORDER,
+    OPEN_ORDER_STATUSES,
+    ORDER_KINDS,
+    WAYBILL_KINDS,
+)
 from database.repositories import documents as documents_repo
 from database.repositories import users as users_repo
 from web.api import schemas
@@ -101,12 +107,16 @@ def list_orders(
     sort: str | None = None,
     client_id: int | None = None,
     deal_id: int | None = None,
+    reserve: str | None = None,
     page: int = Query(default=1, ge=1),
     per_page: int = Query(default=50, ge=1, le=200),
     user: User = Depends(require_perm("orders", "view")),
     db: Session = Depends(get_db),
 ):
     """Список заказов. Категория здесь — СОСТОЯНИЕ, а не вид.
+
+    `reserve=expired` — открытые заказы с сайта, чья бронь истекла: товар они
+    уже не держат, а из списка не ушли. Это очередь на разбор, а не мусор.
 
     Вид у заказа выбирается чипами и их всего два (покупателю, поставщику), а
     вопрос «что делать сейчас» задаёт состояние: новые собирают, готовые
@@ -119,10 +129,15 @@ def list_orders(
             code="unknown_sort",
         )
     kinds = (kind,) if kind in ORDER_KINDS else ORDER_KINDS
-    items, total = documents_repo.search(
-        db, q=search, status=status, client_id=client_id, deal_id=deal_id,
-        kinds=kinds, sort=sort, page=page, per_page=per_page,
-    )
+    if reserve == "expired":
+        items, total = documents_repo.bron_istekla(
+            db, KIND_SALES_ORDER, OPEN_ORDER_STATUSES, page=page, per_page=per_page
+        )
+    else:
+        items, total = documents_repo.search(
+            db, q=search, status=status, client_id=client_id, deal_id=deal_id,
+            kinds=kinds, sort=sort, page=page, per_page=per_page,
+        )
     # Строки — одним запросом на страницу, а не запросом на строку списка:
     # сумма заказа складывается из них, и без них список молчит о деньгах.
     rows = documents_repo.lines_by_documents(db, [item.id for item in items])

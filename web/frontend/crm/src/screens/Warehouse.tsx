@@ -37,6 +37,8 @@ export interface Product {
   is_service: boolean;
   min_stock_milli: number | null;
   note: string;
+  /** Описание для покупателя на сайте; `note` — заметка кладовщика. */
+  site_description: string;
   /** null у услуги: остатка не бывает — это не то же самое, что ноль. */
   stock_milli: number | null;
   low_stock: boolean;
@@ -313,6 +315,7 @@ function NewProductModal({
     price: "",
     min_stock: "",
     note: "",
+    site_description: "",
     is_service: false,
   });
   // Засов, а не флаг: два одинаковых товара в справочнике — это два остатка,
@@ -399,9 +402,14 @@ function NewProductModal({
             <div className="field-desc">{t("minStockHint")}</div>
           </div>
         )}
-        <div className="field" style={{ marginBottom: 20 }}>
+        <div className="field">
           <label className="label">{t("productNote")}</label>
           <textarea className="textarea" value={form.note} onChange={set("note")} />
+        </div>
+        <div className="field" style={{ marginBottom: 20 }}>
+          <label className="label">{t("productSiteDescription")}</label>
+          <textarea className="textarea" value={form.site_description} onChange={set("site_description")} />
+          <div className="field-desc">{t("productSiteDescriptionHint")}</div>
         </div>
         <button className="btn btn-primary" style={{ width: "100%" }} disabled={guard.busy}>
           {t("create")}

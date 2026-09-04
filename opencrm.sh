@@ -2527,6 +2527,14 @@ cmd_tg_uborka() {
     fi
 }
 
+cmd_apikey() {
+    need_install
+    # Тонкая обёртка над scripts/apikey.py, как tg-uborka: экран настроек может
+    # быть недоступен ровно тогда, когда ключ надо отозвать срочно. `-T` — под
+    # ssh без терминала docker иначе отказывается выделять псевдотерминал.
+    compose exec -T app python -m scripts.apikey "$@"
+}
+
 cmd_backup() {
     need_install
     step "$(tr_ "Резервная копия" "Backup")"
@@ -4384,6 +4392,7 @@ OpenCRM v$VERSION — установка и управление
   ./opencrm.sh history [N]        журнал обновлений
   ./opencrm.sh logs [сервис]      логи
   ./opencrm.sh backup|restore     резервные копии
+  ./opencrm.sh apikey ...         ключи API сайта: list|new|show|revoke|rotate
   ./opencrm.sh domain|https       домен и сертификат
   ./opencrm.sh firewall           открыть только SSH и сайт (ufw)
   ./opencrm.sh password           сбросить пароль администратора
@@ -4467,6 +4476,7 @@ main() {
         backup)     cmd_backup ;;
         svodka)     cmd_svodka ;;
         tg-uborka)  cmd_tg_uborka "$@" ;;
+        apikey)     cmd_apikey "$@" ;;
         restore)    cmd_restore ;;
         https)      cmd_https ;;
         domain)     cmd_domain ;;

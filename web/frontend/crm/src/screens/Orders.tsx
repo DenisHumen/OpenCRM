@@ -42,6 +42,11 @@ export interface Order {
   deal_id: number | null;
   lines: OrderLine[];
   total: number | null;
+  /** Заказ с сайта: чужой номер и срок брони. Истёкшая бронь товар не держит,
+   *  а заказ остаётся открытым — очередь на разбор, и её надо видеть. */
+  site_ref?: string | null;
+  reserved_until?: string | null;
+  reserve_expired?: boolean;
   created_at: string | null;
   /** Накладные, выписанные по этому заказу.
    *
@@ -72,6 +77,9 @@ export function Orders() {
   const kontekst = useContextMenu();
   const [query, setQuery] = useState("");
   const [kind, setKind] = useState<string>("");
+  // «Бронь истекла» — отдельный отбор, а не состояние: заказ открыт, товар
+  // уже не держит, и его надо разобрать руками.
+  const [reserve, setReserve] = useState<string>("");
   const [data, setData] = useState<{ items: Order[]; total: number } | null>(null);
   // До какой страницы дочитан список. Прежде экран просил сотню заказов и на
   // этом заканчивался — а в подзаголовке честно писал «всего N». Сам сообщал,
@@ -99,9 +107,10 @@ export function Orders() {
     const params = new URLSearchParams({ per_page: String(NA_STRANITSE) });
     if (search) params.set("search", search);
     if (kind) params.set("kind", kind);
+    if (reserve) params.set("reserve", reserve);
     if (poryadok !== "new") params.set("sort", poryadok);
     return `/orders?${params}`;
-  }, [search, kind, poryadok]);
+  }, [search, kind, poryadok, reserve]);
 
   useEffect(() => {
     // Вид заказа переключают быстрее, чем отвечает сервер: без счётчика ответ
@@ -236,6 +245,12 @@ export function Orders() {
             {label}
           </button>
         ))}
+        <button
+          className={"filter-chip" + (reserve === "expired" ? " active" : "")}
+          onClick={() => setReserve(reserve === "expired" ? "" : "expired")}
+        >
+          {t("ordersReserveExpiredFilter")}
+        </button>
         {/* Порядок — тот же закрытый перечень, что у бланков: список один и
             тот же (`documents`), и два разных набора ключей на одну таблицу
             разошлись бы при первой же правке. */}
@@ -285,6 +300,7 @@ export function Orders() {
               {formatMoney(order.total, workspace.currency, locale)}
             </span>
             <span style={{ width: 110, textAlign: "right" }}>
+              {order.reserve_expired && <Chip variant="warning">{t("orderReserveExpired")}</Chip>}{" "}
               <Chip variant={order.status === "closed" ? "success" : undefined}>
                 {t(ORDER_STATUS_LABEL[order.status as keyof typeof ORDER_STATUS_LABEL] ?? "docIssued")}
               </Chip>

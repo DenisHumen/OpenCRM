@@ -16,9 +16,10 @@
 её и ведут.
 """
 
-from sqlalchemy import case, func, select, update
+from sqlalchemy import case, func, or_, select, update
 from sqlalchemy.orm import Session, aliased
 
+from core.utils import now_utc
 from database.models import Document, DocumentEvent, DocumentLine
 from database.models.document import KIND_SALES_ORDER
 from database.models.warehouse import StockMove
@@ -377,6 +378,10 @@ def promised(db: Session, kind: str, statuses, product_ids=None) -> dict[int, in
             Document.kind == kind,
             Document.status.in_(tuple(statuses)),
             DocumentLine.product_id.is_not(None),
+            # Бронь с сайта истекает ЛЕНИВО, этим условием: истёкшая перестаёт
+            # занимать товар ровно в свою секунду, без таймера, которому можно
+            # не сработать. Заказ при этом остаётся открытым — очередь на разбор.
+            _bron_zhiva(),
         )
         .group_by(Document.id, DocumentLine.product_id)
     )
@@ -545,3 +550,57 @@ def otkrytye_s_tovarom(db: Session, kind: str, statuses, product_id: int):
         (bumaga, max(0, as_int(skolko) - otgruzheno.get((bumaga.id, product_id), 0)))
         for bumaga, skolko in ryady
     ]
+
+
+# --- заказы с сайта ------------------------------------------------------------
+
+
+def _bron_zhiva():
+    """Условие «бронь ещё держит»: без срока или срок впереди."""
+    return or_(Document.reserved_until.is_(None), Document.reserved_until > now_utc())
+
+
+def get_by_site_ref(db: Session, site_ref: str) -> Document | None:
+    return db.scalar(select(Document).where(Document.site_ref == site_ref))
+
+
+def min_reserved_until(db: Session, kind: str, statuses):
+    """Ближайший срок брони среди открытых заказов — когда картинка сайта устареет сама."""
+    return db.scalar(
+        select(func.min(Document.reserved_until)).where(
+            Document.kind == kind,
+            Document.status.in_(tuple(statuses)),
+            Document.reserved_until > now_utc(),
+        )
+    )
+
+
+def tovary_zakazov_s(db: Session, kind: str, statuses, since) -> set[int]:
+    """Товары открытых заказов, менявшихся после `since` — для ленты изменений."""
+    stmt = (
+        select(DocumentLine.product_id)
+        .join(Document, Document.id == DocumentLine.document_id)
+        .where(
+            Document.kind == kind,
+            Document.status.in_(tuple(statuses)),
+            Document.updated_at > since,
+            DocumentLine.product_id.is_not(None),
+        )
+        .distinct()
+    )
+    return {as_int(product_id) for product_id in db.scalars(stmt)}
+
+
+def bron_istekla(db: Session, kind: str, statuses, page: int = 1, per_page: int = 50):
+    """Заказы, чья бронь истекла, а сами они открыты: очередь на разбор, не мусор."""
+    stmt = (
+        select(Document)
+        .where(
+            Document.kind == kind,
+            Document.status.in_(tuple(statuses)),
+            Document.reserved_until.is_not(None),
+            Document.reserved_until <= now_utc(),
+        )
+        .order_by(Document.reserved_until.asc())
+    )
+    return page_of(db, stmt, page=page, per_page=per_page)

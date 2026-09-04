@@ -5,7 +5,7 @@ from datetime import datetime
 from pydantic import BaseModel, Field
 
 from core.services import deal_service, media_service, warehouse_service
-from core.utils import is_online
+from core.utils import is_online, now_utc
 from database.models import (
     AuditEvent,
     Board,
@@ -256,6 +256,8 @@ class ProductIn(BaseModel):
     is_service: bool = False
     min_stock: Quantity = None
     note: str | None = None
+    # Описание для покупателя на сайте — не `note`: та для кладовщика.
+    site_description: str | None = None
 
 
 class ProductPatchIn(BaseModel):
@@ -267,6 +269,7 @@ class ProductPatchIn(BaseModel):
     is_service: bool | None = None
     min_stock: Quantity = None
     note: str | None = None
+    site_description: str | None = None
 
 
 class StockMoveIn(BaseModel):
@@ -288,6 +291,8 @@ class WarehouseIn(BaseModel):
     address: str | None = None
     note: str | None = None
     is_default: bool = False
+    # Тип места (`WAREHOUSE_KINDS`); `shop` — то, что видит сайт магазина.
+    kind: str | None = None
 
 
 class WarehousePatchIn(BaseModel):
@@ -296,6 +301,7 @@ class WarehousePatchIn(BaseModel):
     address: str | None = None
     note: str | None = None
     is_default: bool = False
+    kind: str | None = None
 
 
 class TransferIn(BaseModel):
@@ -815,6 +821,7 @@ def _product_fields(product: Product, stock_milli: int | None) -> dict:
         "is_service": product.is_service,
         "min_stock_milli": product.min_stock_milli,
         "note": product.note,
+        "site_description": product.site_description,
         # У услуги остатка нет — именно null, а не 0: «остатка не бывает» и
         # «товар закончился» на экране должны выглядеть по-разному.
         "stock_milli": stock_milli,
@@ -891,6 +898,7 @@ def warehouse_out(warehouse) -> dict:
         "code": warehouse.code,
         "address": warehouse.address,
         "is_default": warehouse.is_default,
+        "kind": warehouse.kind,
         "note": warehouse.note,
         "created_at": _iso(warehouse.created_at),
         "deleted_at": _iso(warehouse.deleted_at),
@@ -1052,6 +1060,16 @@ def order_out(order, lines: list | None = None, amounts: bool = True) -> dict:
         "locale": order.locale,
         "lines": [order_line_out(line, amounts=amounts) for line in rows],
         "total": order_service.total_minor(rows) if amounts else None,
+        # Бронь с сайта: срок и истёк ли он. Истёкшая бронь товар не держит, а
+        # заказ остаётся открытым — менеджер обязан это видеть, иначе решит, что
+        # товар отложен, и обидит человека у стойки.
+        "site_ref": order.site_ref,
+        "reserved_until": _iso(order.reserved_until),
+        "reserve_expired": bool(
+            order.reserved_until
+            and order.reserved_until <= now_utc().replace(tzinfo=None)
+            and order.status in ("issued", "ready")
+        ),
         "created_at": _iso(order.created_at),
         "updated_at": _iso(order.updated_at),
     }

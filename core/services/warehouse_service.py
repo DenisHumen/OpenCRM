@@ -33,7 +33,7 @@ from database.models.warehouse import (
     QUANTITY_SCALE,
     UNITS,
 )
-from database.models.warehouse import StockTransfer, Warehouse
+from database.models.warehouse import WAREHOUSE_KINDS, WH_STOCK, StockTransfer, Warehouse
 from database.repositories import deals as deals_repo
 from database.repositories import warehouse as warehouse_repo
 from database.repositories import warehouses as places_repo
@@ -202,6 +202,7 @@ def create_product(db: Session, data: dict) -> Product:
         is_service=is_service,
         min_stock_milli=min_stock_milli,
         note=(data.get("note") or "").strip(),
+        site_description=(data.get("site_description") or "").strip(),
     )
 
     # Свой артикул назвали — второго такого быть не должно, и проигравший узнаёт
@@ -251,6 +252,8 @@ def update_product(db: Session, product_id: int, data: dict) -> Product:
         product.min_stock_milli = parse_quantity(data["min_stock"])
     if "note" in data and data["note"] is not None:
         product.note = data["note"].strip()
+    if "site_description" in data and data["site_description"] is not None:
+        product.site_description = data["site_description"].strip()
     if "is_service" in data and data["is_service"] is not None:
         # Превратить товар с историей движений в услугу нельзя: остаток у него
         # уже есть, а у услуги остатка не бывает — получилась бы позиция, у
@@ -733,6 +736,7 @@ def create_warehouse(db: Session, data: dict) -> Warehouse:
         code=_clean_warehouse_code(db, data.get("code"), warehouse_id=None),
         address=(data.get("address") or "").strip(),
         note=(data.get("note") or "").strip(),
+        kind=_clean_warehouse_kind(data.get("kind")),
     )
     # Код уникален, и проверка выше не спасает от соседа, который завёл такой же
     # между «проверили» и «вставили». Ловим отказ базы и отвечаем по-человечески.
@@ -754,7 +758,9 @@ def create_warehouse(db: Session, data: dict) -> Warehouse:
     return warehouse
 
 
-def update_warehouse(db: Session, warehouse_id: int, data: dict) -> Warehouse:
+def update_warehouse(
+    db: Session, warehouse_id: int, data: dict, actor: User | None = None
+) -> Warehouse:
     warehouse = get_warehouse(db, warehouse_id)
     if "name" in data:
         warehouse.name = _clean_warehouse_name(data.get("name"))
@@ -764,6 +770,24 @@ def update_warehouse(db: Session, warehouse_id: int, data: dict) -> Warehouse:
         warehouse.address = (data.get("address") or "").strip()
     if "note" in data:
         warehouse.note = (data.get("note") or "").strip()
+    if "kind" in data and data.get("kind") is not None:
+        novyy = _clean_warehouse_kind(data.get("kind"))
+        if novyy != warehouse.kind:
+            # Смена типа открывает или закрывает витрину целиком — «почему с
+            # сайта пропал весь товар» спрашивают через неделю, и отвечать
+            # должна запись, а не память.
+            audit_service.record(
+                db,
+                actor=actor,
+                source=SOURCE_MANUAL,
+                action=audit_service.ACTION_WAREHOUSE_KIND_CHANGED,
+                entity_type=audit_service.ENTITY_WAREHOUSE,
+                entity_id=warehouse.id,
+                entity_label=warehouse.name,
+                before=warehouse.kind,
+                after=novyy,
+            )
+            warehouse.kind = novyy
     db.flush()
 
     if data.get("is_default"):
@@ -826,6 +850,18 @@ def close_warehouse(db: Session, warehouse_id: int, actor: User) -> None:
         replacement = places_repo.oldest_alive(db)
         if replacement is not None:
             places_repo.make_default(db, replacement)
+
+
+def _clean_warehouse_kind(kind: str | None) -> str:
+    """Тип — из закрытого набора; не назвали — обычное место хранения."""
+    if not kind:
+        return WH_STOCK
+    if kind not in WAREHOUSE_KINDS:
+        raise errors.ValidationError(
+            f"Unknown warehouse kind: {kind}. Known: {', '.join(WAREHOUSE_KINDS)}",
+            code="unknown_warehouse_kind",
+        )
+    return kind
 
 
 def _clean_warehouse_name(name: str | None) -> str:

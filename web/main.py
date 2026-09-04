@@ -32,6 +32,7 @@ from database.repositories import users as users_repo
 from database.session import Base, SessionLocal, engine, predel_odnovremennyh
 from web.api.routes import (
     arcade,
+    apikeys,
     audit,
     auth,
     backups,
@@ -54,6 +55,7 @@ from web.api.routes import (
     roles,
     search,
     shares,
+    site,
     site_settings,
     staff,
     system,
@@ -393,6 +395,8 @@ def create_app() -> FastAPI:
     app.include_router(metrics.router, prefix=api_prefix)
     app.include_router(system.router, prefix=api_prefix)
     app.include_router(backups.router, prefix=api_prefix)
+    app.include_router(apikeys.router, prefix=api_prefix)
+    app.include_router(site.router, prefix=api_prefix)
     app.include_router(workspace.router, prefix=api_prefix)
     app.include_router(telegram.router, prefix=api_prefix)
     # Приём от телеграма — без зависимости от блока, обоснование в роутере.

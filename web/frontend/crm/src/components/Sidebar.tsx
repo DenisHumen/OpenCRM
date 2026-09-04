@@ -496,6 +496,7 @@ export function Sidebar({
       { module: "telephony", perm: "settings.manage", to: "/settings/telephony", label: t("telephony") },
       { module: "telegram", perm: "telegram.manage", to: "/settings/telegram", label: t("modTelegram") },
       { perm: "settings.manage", to: "/settings/leads", label: t("leads") },
+      { perm: "settings.manage", to: "/settings/api-keys", label: t("apiKeys") },
     ]),
     // Статьи и планы: справочник, который заводят один раз и правят редко, а
     // последствия правки видны во всех прошлых отчётах.

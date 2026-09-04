@@ -7,6 +7,7 @@ import { api } from "../lib/api";
 import { useApp } from "../lib/app";
 import { useFailure } from "../lib/failure";
 import { useGuard } from "../lib/guard";
+import type { TranslationKey } from "../lib/i18n";
 
 /** Склады как места: завести, переименовать, закрыть.
  *
@@ -67,7 +68,9 @@ export function SettingsWarehouses() {
               {warehouse.address && (
                 <div style={{ color: "var(--faint)", fontSize: 12 }}>{warehouse.address}</div>
               )}
+              {warehouse.kind === "shop" && <SiteLine warehouseId={warehouse.id} />}
             </div>
+            {warehouse.kind !== "stock" && <Chip>{t(KIND_LABEL[warehouse.kind] ?? "warehouseKindStock")}</Chip>}
             {warehouse.is_default ? (
               <Chip variant="brand">{t("warehouseDefault")}</Chip>
             ) : (
@@ -142,6 +145,36 @@ export function SettingsWarehouses() {
   );
 }
 
+const KIND_LABEL: Record<string, TranslationKey> = {
+  stock: "warehouseKindStock",
+  shop: "warehouseKindShop",
+  transit: "warehouseKindTransit",
+  defect: "warehouseKindDefect",
+};
+
+/** «На сайте: 132 позиции, 4 без цены» — у магазинного склада. Молчать об
+ *  этом нельзя: товар без цены на сайте есть, а купить его нельзя. */
+function SiteLine({ warehouseId }: { warehouseId: number }) {
+  const { t } = useApp();
+  const [itog, setItog] = useState<{ published: number; without_price: number } | null>(null);
+
+  useEffect(() => {
+    let zhiv = true;
+    api
+      .get<{ published: number; without_price: number }>(`/warehouses/${warehouseId}/site`)
+      .then((r) => { if (zhiv) setItog(r); })
+      .catch(() => undefined);
+    return () => { zhiv = false; };
+  }, [warehouseId]);
+
+  if (!itog) return null;
+  return (
+    <div style={{ color: itog.without_price ? "var(--warning)" : "var(--faint)", fontSize: 12 }}>
+      {t("warehouseOnSite", { published: itog.published, without_price: itog.without_price })}
+    </div>
+  );
+}
+
 function WarehouseModal({
   warehouse,
   onClose,
@@ -157,16 +190,19 @@ function WarehouseModal({
     code: warehouse?.code ?? "",
     address: warehouse?.address ?? "",
     note: warehouse?.note ?? "",
+    kind: warehouse?.kind ?? "stock",
   });
   // Засов, а не флаг состояния: второй склад с тем же названием — это
   // второе место, по которому потом разъедется остаток одного и того же
   // товара. Отпускаем только на отказе: при успехе окно закрывается.
   const guard = useGuard();
+  // Уход из «магазина» убирает с сайта весь каталог склада разом — экран
+  // спрашивает подтверждение и называет число ДО нажатия.
+  const [leavingShop, setLeavingShop] = useState<number | null>(null);
 
   const set = (key: string) => (e: any) => setForm((f) => ({ ...f, [key]: e.target.value }));
 
-  const submit = async (e: FormEvent) => {
-    e.preventDefault();
+  const save = async () => {
     if (!guard.take()) return;
     try {
       const body = {
@@ -176,6 +212,7 @@ function WarehouseModal({
         code: form.code.trim() || null,
         address: form.address,
         note: form.note,
+        kind: form.kind,
       };
       if (warehouse) await api.patch(`/warehouses/${warehouse.id}`, body);
       else await api.post("/warehouses", body);
@@ -186,12 +223,45 @@ function WarehouseModal({
     }
   };
 
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    if (warehouse && warehouse.kind === "shop" && form.kind !== "shop") {
+      try {
+        const itog = await api.get<{ published: number }>(`/warehouses/${warehouse.id}/site`);
+        setLeavingShop(itog.published);
+      } catch (err) {
+        toastError(err);
+      }
+      return;
+    }
+    await save();
+  };
+
   return (
     <Modal title={warehouse ? warehouse.name : t("newWarehouse")} onClose={onClose}>
+      {leavingShop !== null && (
+        <ConfirmModal
+          text={t("warehouseKindLeaveShop", { count: leavingShop })}
+          confirmLabel={t("save")}
+          danger
+          onConfirm={() => { setLeavingShop(null); void save(); }}
+          onClose={() => setLeavingShop(null)}
+        />
+      )}
       <form onSubmit={submit}>
         <div className="field">
           <label className="label">{t("warehouseName")}</label>
           <input className="input" value={form.name} onChange={set("name")} autoFocus required />
+        </div>
+        <div className="field">
+          <label className="label">{t("warehouseKind")}</label>
+          <select className="input" value={form.kind} onChange={set("kind")}>
+            <option value="stock">{t("warehouseKindStock")}</option>
+            <option value="shop">{t("warehouseKindShop")}</option>
+            <option value="transit">{t("warehouseKindTransit")}</option>
+            <option value="defect">{t("warehouseKindDefect")}</option>
+          </select>
+          <div className="field-desc">{t("warehouseKindHint")}</div>
         </div>
         <div className="field">
           <label className="label">{t("warehouseCode")}</label>

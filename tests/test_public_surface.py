@@ -117,6 +117,20 @@ PUBLIC_ROUTES = {
     # запрос, прошедший через nginx, узнаётся по X-Forwarded-For и отвергается.
     # Та же по природе защита, что `deny all` у /metrics, только в приложении
     ("POST", f"{API}/alerts/webhook"),
+    # API сайта магазина: ключ с областями в `X-OpenCRM-Api-Key` вместо сессии,
+    # ограничитель на ключ и на адрес (docs/16-api-sayta.md §8–§9)
+    ("GET", f"{API}/site/catalog"),
+    ("GET", f"{API}/site/catalog/{{product_id}}"),
+    ("GET", f"{API}/site/changes"),
+    ("GET", f"{API}/site/stock"),
+    ("POST", f"{API}/site/orders"),
+    ("GET", f"{API}/site/orders/{{site_ref}}"),
+    ("POST", f"{API}/site/orders/{{site_ref}}/cancel"),
+    ("POST", f"{API}/site/customers"),
+    ("POST", f"{API}/site/leads"),
+    # снимок товара для сайта: адрес без ключа (картинку тянет браузер), uid 128
+    # бит, неопубликованный товар — 404
+    ("GET", "/media/product/{filename}"),
     ("GET", f"{API}/alerts/ready"),
     # змейка со страницы обслуживания: своих данных студии здесь нет
     ("GET", f"{API}/arcade/leaderboard"),

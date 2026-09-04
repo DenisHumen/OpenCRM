@@ -1424,6 +1424,48 @@ SVG только `width` и `height`; пока картинку показыва
 названием, а не ключом, и выбирается руками: человек, который посмотрел сайт и
 позвонил, пришёл оттуда же, а форму при этом не заполнял.
 
+## API сайта магазина (`/site/*`, по ключу)
+
+Всё под `/api/v1/site/`, всё требует заголовок `X-OpenCRM-Api-Key`. Сессии нет:
+запрос шлёт сервер сайта. Устройство, области ключа, точность наличия и
+лента изменений — [16-api-sayta.md](16-api-sayta.md); коды отказов там же, §11.
+Ключ выдаётся на экране «Ключи API сайта» или консолью `./opencrm.sh apikey new`.
+
+| Метод | Путь | Область | Описание |
+|---|---|---|---|
+| GET | `/site/catalog?page=&per_page=` | `catalog.read` | Карточки: `sku`, `name`, `unit`, `description`, `prices[]` (пусто — купить нельзя), `pack_size_milli`, `photos[]`; `currency` на уровне ответа. `ETag` / `If-None-Match` → `304`. Виден товар, по складу ключа было хоть одно движение, и услуги; ключ без склада — одни услуги |
+| GET | `/site/catalog/{id}` | `catalog.read` | Одна карточка; `404 product_not_found` — не опубликован |
+| GET | `/site/changes?since=&limit=` | `catalog.read` | Лента изменений: карточки целиком со `stock`, `next_since` (непрозрачный курсор, отстаёт на 10 с), `has_more`, `recheck_after`. Без `since` — полная выгрузка. `422 bad_cursor` |
+| GET | `/site/stock?id=17,42` / `?sku=A,B` | `stock.read` | Наличие в режиме ключа: `state` (`many/few/none/always`), `available_milli` только при `exact`; `as_of`, `ttl_sec`, `recheck_after`. До 200 позиций (`422 too_many_ids`) |
+| POST | `/site/orders` | `orders.write` | Заказ со сроком брони: `site_ref`, `items[{id|sku, quantity}]`, `reserve_minutes`, `customer{name,email,phone}`, `comment`. `201` — новый, `200` — повтор с тем же `site_ref` (тот же заказ). Отказы: `422 site_ref_required / product_unknown / price_not_set / quantity_too_precise / reserve_too_long / lines_required`, `409 not_enough_stock` с `details.items[{id,sku,requested_milli,available_milli}]`, `409 warehouse_not_serving` |
+| GET | `/site/orders/{site_ref}` | `orders.read` | Свой заказ: `number`, `status`, `reserved_until`, `reserve_expired`, `total_minor`, `lines[]`, `waybills[]`. Чужой — `404` |
+| POST | `/site/orders/{site_ref}/cancel` | `orders.write` | Снять бронь до накладной; после — `409 order_already_fulfilled` |
+| POST | `/site/customers` | `customers.write` | Завести карточку или узнать свою: `name`, `email`/`phone`, `consent: true`, `consent_ref`. Ответ всегда `202 {customer_ref, status}`. `422 consent_required / contact_required / name_required`, `429 customers_flooded` |
+| POST | `/site/leads` | `leads.write` | Та же заявка, что `/public/leads`, по ключу сайта |
+
+Общие отказы: `401 bad_api_key / api_key_expired / api_key_revoked`, `403
+module_disabled` (проверяется ДО области), `403 scope_required`, `429
+rate_limited` (потолок ключа в минуту; промахи неизвестным ключом — 30 за 10
+минут с адреса), `503 limiter_unavailable` — показывай кэш.
+
+Снимок товара тянет браузер посетителя, поэтому у него адрес без ключа:
+`GET /media/product/{uid}.webp` и `{uid}-thumb.webp`, только для опубликованного
+товара, `Cache-Control: public, immutable`.
+
+### Ключи API сайта (настройки)
+
+| Метод | Путь | Права | Описание |
+|---|---|---|---|
+| GET | `/settings/api-keys` | 🔑 `settings.manage` | Все ключи (и отозванные), `alive` — сколько живых, словари областей и режимов |
+| POST | `/settings/api-keys` | 🔑 `settings.manage` | Выдать: `name`, `scopes[]`, `warehouse_id` (обязателен при `stock.read`, склад типа `shop`), `days` (0 — бессрочный), `stock_mode`, `few_threshold_milli`, `rate_per_min`, `max_reserve_minutes`, `ttl_sec`. Ответ `201` содержит `key` — **один раз**. `422 unknown_scope / warehouse_required / warehouse_not_shop` |
+| PATCH | `/settings/api-keys/{id}` | 🔑 `settings.manage` | Имя, режим и потолки; области и склад не правятся — на них выпускают новый |
+| POST | `/settings/api-keys/{id}/revoke` | 🔑 `settings.manage` | Отзыв отметкой; строка остаётся |
+| POST | `/settings/api-keys/{id}/rotate` | 🔑 `settings.manage` | Новый ключ с теми же полями (`201`, `key` один раз); старый живёт ещё `grace_hours` (24) |
+
+Рядом: `PATCH /warehouses/{id}` принимает `kind` (`stock/shop/transit/defect`),
+`GET /warehouses/{id}/site` отвечает `{published, without_price}`; у товара
+появилось `site_description`; `GET /orders?reserve=expired` — открытые заказы с
+истёкшей бронью, у каждого заказа `site_ref`, `reserved_until`, `reserve_expired`.
 ## Служебные ручки без сессии
 
 Пять адресов внутри `/api/v1`, у которых нет ни сессии, ни права. Каждый закрыт

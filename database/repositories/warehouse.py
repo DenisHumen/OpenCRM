@@ -11,7 +11,7 @@
 
 import re
 
-from sqlalchemy import Select, func, or_, select, update
+from sqlalchemy import Select, case, func, or_, select, update
 from sqlalchemy.orm import Session
 
 from database.models import Product, ProductBarcode, ProductPhoto, StockMove
@@ -531,3 +531,100 @@ def spisano_po_zayavkam(db: Session, product_ids=None) -> dict[tuple[int, int], 
         (zayavka, tovar): max(0, as_int(skolko))
         for zayavka, tovar, skolko in db.execute(zapros).all()
     }
+
+
+# --- витрина сайта ---------------------------------------------------------------
+#
+# Карточка опубликована, когда товар не удалён и по складу магазина было хоть одно
+# движение (услуга — только не удалена). «Было движение», а не «остаток больше
+# нуля»: распроданный до нуля товар карточку сохраняет, иначе адрес страницы
+# умирал бы в момент продажи последней штуки (docs/16-api-sayta.md §3).
+
+
+def _opublikovan(warehouse_id: int | None):
+    # Ключ без склада видит одни услуги: у товара без места нет и полки.
+    if warehouse_id is None:
+        return Product.is_service.is_(True)
+    dvigalsya = select(StockMove.product_id).where(StockMove.warehouse_id == warehouse_id)
+    return or_(Product.is_service.is_(True), Product.id.in_(dvigalsya))
+
+
+def site_catalog(db: Session, warehouse_id: int | None, page: int = 1, per_page: int = 100):
+    stmt = (
+        select(Product)
+        .where(Product.deleted_at.is_(None), _opublikovan(warehouse_id))
+        .order_by(Product.id)
+    )
+    return page_of(db, stmt, page=page, per_page=per_page)
+
+
+def site_product(db: Session, warehouse_id: int | None, product_id: int) -> Product | None:
+    return db.scalar(
+        select(Product).where(
+            Product.id == product_id, Product.deleted_at.is_(None), _opublikovan(warehouse_id)
+        )
+    )
+
+
+def site_products(db: Session, warehouse_id: int | None, product_ids) -> list[Product]:
+    product_ids = list(set(product_ids))
+    if not product_ids:
+        return []
+    return list(
+        db.scalars(
+            select(Product).where(
+                Product.id.in_(product_ids), Product.deleted_at.is_(None), _opublikovan(warehouse_id)
+            )
+        )
+    )
+
+
+def site_summary(db: Session, warehouse_id: int) -> dict[str, int]:
+    """Сколько карточек на сайте и сколько из них без цены — одним запросом на оба."""
+    stmt = select(
+        func.count(Product.id),
+        func.coalesce(func.sum(case((Product.price_minor.is_(None), 1), else_=0)), 0),
+    ).where(Product.deleted_at.is_(None), _opublikovan(warehouse_id))
+    vsego, bez_tseny = db.execute(stmt).one()
+    return {"published": as_int(vsego), "without_price": as_int(bez_tseny)}
+
+
+def site_changed_since(db: Session, warehouse_id: int | None, since) -> set[int]:
+    """Товары, чья карточка правилась или по складу магазина было движение после `since`."""
+    pravleny = select(Product.id).where(Product.updated_at > since)
+    itog = {as_int(i) for i in db.scalars(pravleny)}
+    if warehouse_id is not None:
+        dvigalis = (
+            select(StockMove.product_id)
+            .where(StockMove.warehouse_id == warehouse_id, StockMove.created_at > since)
+            .distinct()
+        )
+        itog |= {as_int(i) for i in db.scalars(dvigalis)}
+    return itog
+
+
+def all_photos_of_products(db: Session, product_ids) -> dict[int, list[ProductPhoto]]:
+    """Все снимки каждого товара, в порядке показа. Одним запросом на страницу."""
+    product_ids = [i for i in set(product_ids) if i]
+    if not product_ids:
+        return {}
+    rows = db.scalars(
+        select(ProductPhoto)
+        .where(ProductPhoto.product_id.in_(product_ids))
+        .order_by(ProductPhoto.sort_order.asc(), ProductPhoto.id.asc())
+    )
+    itog: dict[int, list[ProductPhoto]] = {}
+    for row in rows:
+        itog.setdefault(row.product_id, []).append(row)
+    return itog
+
+
+def photo_by_uid(db: Session, photo_uid: str) -> ProductPhoto | None:
+    return db.scalar(select(ProductPhoto).where(ProductPhoto.photo_uid == photo_uid))
+
+
+def products_by_skus(db: Session, skus) -> list[Product]:
+    skus = list(set(skus))
+    if not skus:
+        return []
+    return list(db.scalars(select(Product).where(Product.sku.in_(skus), Product.deleted_at.is_(None))))

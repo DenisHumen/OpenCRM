@@ -17,6 +17,7 @@ from sqlalchemy.sql import func
 
 from core import exceptions as errors
 from database.session import Base
+from database.types import ExactString
 
 # Виды бланков.
 #
@@ -190,6 +191,22 @@ class Document(Base):
 
     created_by: Mapped[int | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    # Бронь с сайта — это заказ со сроком; пусто — обычный заказ, держит резерв
+    # пока открыт. Срок истекает ЛЕНИВО, условием в `documents_repo.promised`:
+    # верность остатка не должна зависеть от того, отработал ли таймер (docs/16 §4).
+    reserved_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # Номер заказа в чужой системе. Уникальный индекс — и есть идемпотентность:
+    # повтор доставки возвращает заказ победителя. Побайтно: «A1» и «a1» — разные.
+    site_ref: Mapped[str | None] = mapped_column(
+        ExactString(64), nullable=True, unique=True, index=True
+    )
+    # Каким ключом заведён: по нему сайт видит СВОИ заказы и только их. SET NULL —
+    # ключ отзовут, а заказ останется.
+    api_key_id: Mapped[int | None] = mapped_column(
+        ForeignKey("api_keys.id", ondelete="SET NULL", name="fk_documents_api_key"),
+        nullable=True,
+        index=True,
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), index=True

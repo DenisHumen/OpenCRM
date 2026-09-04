@@ -16,6 +16,7 @@ from core.services import (
     settings_service,
     share_service,
 )
+from core.services import site_service
 from database.repositories import boards as boards_repo
 from web.api import schemas
 from web.api.deps import client_ip, document_limiter, get_db, pin_limiter
@@ -370,6 +371,34 @@ def _is_staff(request: Request, db: Session) -> bool:
 
     token = request.cookies.get(SESSION_COOKIE)
     return bool(token and auth_service.get_user_by_session(db, token) is not None)
+
+
+@router.get("/media/product/{filename}")
+def product_photo(filename: str, db: Session = Depends(get_db)):
+    """Снимок товара для сайта магазина — адрес без ключа, потому что картинку
+    тянет браузер посетителя, а ключ в `<img src>` роздан был бы всем.
+
+    Стоит ВЫШЕ `/media/{work_uid}/{filename}`: иначе `product` читался бы как
+    опознаватель работы. Три проверки те же, что у файла работы: блок склада
+    выключен — 404, путь собирает сервис, неопубликованный товар — 404, а не
+    «есть, но не покажем» (docs/16-api-sayta.md §3).
+    """
+    otkaz = JSONResponse({"error": {"code": "not_found", "message": "Not found"}}, status_code=404)
+    if not modules_service.is_enabled(db, "warehouse"):
+        return otkaz
+    path = site_service.photo_path(db, filename)
+    if path is None:
+        return otkaz
+    return FileResponse(
+        path,
+        media_type="image/webp",
+        headers={
+            # `public`: за файлом нет проверки, это витрина магазина — открытые
+            # данные; имя неизменяемо, повторная загрузка бессмысленна.
+            "Cache-Control": "public, max-age=31536000, immutable",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 @router.get("/media/{work_uid}/{filename}")

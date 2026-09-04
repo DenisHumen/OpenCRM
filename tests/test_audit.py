@@ -196,13 +196,16 @@ def test_source_is_required_and_checked(session, root_client):
 
 
 def test_only_the_pbx_and_mail_may_have_no_actor():
-    """Список источников без человека — закрытый и ровно из двух.
+    """Список источников без человека — закрытый и ровно из трёх.
 
-    Тест сторожит именно список: третий источник «без человека» появится не
+    Тест сторожит именно список: следующий источник «без человека» появится не
     потому, что там правда нет человека, а потому, что протащить его оказалось
-    неудобно.
+    неудобно. Третий — `site_api` — добавлен 04.09.2026 с доводом: за запросом
+    по ключу сайта стоит чужая программа, а не сотрудник (docs/16 §7).
     """
-    assert set(FACELESS_SOURCES) == {SOURCE_TELEPHONY_WEBHOOK, SOURCE_MAIL_SYNC}
+    from database.models.audit import SOURCE_SITE_API
+
+    assert set(FACELESS_SOURCES) == {SOURCE_TELEPHONY_WEBHOOK, SOURCE_MAIL_SYNC, SOURCE_SITE_API}
 
 
 def test_empty_actor_is_refused_everywhere_else(session):

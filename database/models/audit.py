@@ -28,13 +28,17 @@ SOURCE_TELEPHONY_WEBHOOK = "telephony_webhook"
 #: Забор почты по расписанию. Человека нет — письмо пришло само.
 SOURCE_MAIL_SYNC = "mail_sync"
 
-SOURCES = (SOURCE_MANUAL, SOURCE_TELEPHONY_WEBHOOK, SOURCE_MAIL_SYNC)
+#: Запрос по ключу сайта (`docs/16-api-sayta.md`). Человека нет — за ключом
+#: стоит чужая программа.
+SOURCE_SITE_API = "site_api"
+
+SOURCES = (SOURCE_MANUAL, SOURCE_TELEPHONY_WEBHOOK, SOURCE_MAIL_SYNC, SOURCE_SITE_API)
 
 #: Источники, у которых исполнителя действительно нет.
 #:
 #: Список закрытый намеренно: разреши пустого исполнителя вообще — и «пусто»
 #: станет заглушкой везде, где протащить человека оказалось лень.
-FACELESS_SOURCES = (SOURCE_TELEPHONY_WEBHOOK, SOURCE_MAIL_SYNC)
+FACELESS_SOURCES = (SOURCE_TELEPHONY_WEBHOOK, SOURCE_MAIL_SYNC, SOURCE_SITE_API)
 
 
 class AuditEvent(Base):

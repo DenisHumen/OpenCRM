@@ -21,6 +21,7 @@ from database.models.warehouse import (
     StockTransfer,
     Warehouse,
 )
+from database.models.api_key import ApiKey, ApiKeyScope
 from database.models.telegram import TelegramChat, TelegramMessage
 from database.models.telephony import PhoneCall
 from database.models.finance import (
@@ -64,6 +65,8 @@ __all__ = [
     "StockMove",
     "StockTransfer",
     "Warehouse",
+    "ApiKey",
+    "ApiKeyScope",
     "PhoneCall",
     "TelegramChat",
     "TelegramMessage",
