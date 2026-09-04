@@ -228,6 +228,13 @@ today's reminders, and who's been opening your boards.
   right after it is taken. Restore is a separate right and a guarded procedure.
 - **Live updates.** A colleague's change shows up on your open screen by
   itself — board, cards, lists, dashboard. One switch turns it off.
+- **Papers issued by themselves.** A waybill draft appears with the first
+  product line of an order and repeats the order until posted; an act of works
+  appears with the first line of a deal. A paper created by mistake and never
+  used can be deleted.
+- **Notifications.** A bell with what others did and what the system did by
+  itself: closed orders, posted waybills, deal stages, website requests,
+  reminders assigned to you — with a browser alert on top.
 ---
 
 ## Installing it
