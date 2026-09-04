@@ -122,9 +122,18 @@ def uvedomit_o_provedyonnom_akte(event: events.Event) -> None:
 @events.observer(DEAL_STAGE_CHANGED, module="deals")
 def uvedomit_o_smene_etapa(event: events.Event) -> None:
     deal = event["deal"]
+
+    # Названиями этапов, а не ключами: «new → packed» читается хуже, чем
+    # «Новый заказ → Собран». Ключ остаётся на случай, если этап уже убрали.
+    def imya(klyuch: str) -> str:
+        try:
+            return pipeline_service.get_stage(event.db, klyuch).name
+        except Exception:  # noqa: BLE001 — уведомление не стоит смены этапа
+            return klyuch
+
     _uvedomit(
         event, "deals", "deal_stage",
-        {"title": deal.title, "from_stage": event["from_stage"], "to_stage": event["to_stage"]},
+        {"title": deal.title, "from_stage": imya(event["from_stage"]), "to_stage": imya(event["to_stage"])},
         f"/deals/{deal.id}", manager_id=deal.manager_id,
     )
 
