@@ -220,7 +220,14 @@ today's reminders, and who's been opening your boards.
 - **Activity log** for root: who changed what, read-only.
 - **Maintenance mode.** Visitors get a holding page; root keeps working.
 - **Two interface languages** — English and Russian, per user.
-
+- **Shop-site API.** Keyed endpoints for a storefront or marketplace: catalogue,
+  stock of one shop warehouse, a change feed, orders that reserve stock for a
+  while, customer sign-ups. Keys have scopes, limits and an expiry.
+- **Backups from the settings screen.** Encrypted copies of the database and
+  of the files, downloaded by hand; every copy is checked with the current key
+  right after it is taken. Restore is a separate right and a guarded procedure.
+- **Live updates.** A colleague's change shows up on your open screen by
+  itself — board, cards, lists, dashboard. One switch turns it off.
 ---
 
 ## Installing it

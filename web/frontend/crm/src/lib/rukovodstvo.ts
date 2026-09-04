@@ -229,6 +229,14 @@ export const RUKOVODSTVO: Razdel[] = [
                 ru: "Отгрузили часть заказа — обещание уменьшается ровно на отгруженное.",
                 en: "Ship part of an order and the promise drops by exactly what shipped.",
               },
+              {
+                ru: "У склада есть тип: хранение, магазин, в пути, брак. Сайту магазина виден остаток складов типа «магазин» и только их — подробности в статье «API для сайта магазина».",
+                en: "A warehouse has a kind: storage, shop, transit, defect. The shop site sees the balance of «shop» warehouses and only them — details in the «Shop-site API» article.",
+              },
+              {
+                ru: "У товара два текста: заметка кладовщика (наружу не уходит) и описание для сайта.",
+                en: "A product has two texts: the storekeeper's note (never leaves the CRM) and the description for the site.",
+              },
             ],
           },
         ],
@@ -726,6 +734,96 @@ export const RUKOVODSTVO: Razdel[] = [
             ],
           },
           { vid: "ekran", put: "/settings/leads", podpis: { ru: "Настроить приём заявок", en: "Set up request intake" } },
+        ],
+      },
+      {
+        id: "api-sayta",
+        perm: "settings.manage",
+        nazvanie: { ru: "API для сайта магазина", en: "Shop-site API" },
+        kratko: {
+          ru: "Сайт, витрина или маркетплейс читают каталог и наличие, заводят заказы и клиентов — по ключу.",
+          en: "A site, storefront or marketplace reads the catalogue and stock, creates orders and customers — with a key.",
+        },
+        kuski: [
+          {
+            vid: "abzats",
+            tekst: {
+              ru: "Ключ — пропуск для чужой программы, а не сотрудник и не роль. У него есть имя, области действия, срок, потолок запросов в минуту, потолок срока брони и режим наличия. Строка ключа показывается ОДИН раз при выдаче: в базе лежит только отпечаток, «показать ещё раз» не существует — потеряли, выпустите новый.",
+              en: "A key is a pass for another program, not an employee or a role. It has a name, scopes, an expiry, a per-minute request limit, a reservation limit and a stock precision mode. The key string is shown ONCE when issued: only a fingerprint is stored, there is no «show again» — lose it, issue a new one.",
+            },
+          },
+          {
+            vid: "tablitsa",
+            shapka: [
+              { ru: "Область", en: "Scope" },
+              { ru: "Что открывает", en: "What it opens" },
+            ],
+            ryady: [
+              [{ ru: "Читать каталог", en: "Read the catalogue" }, { ru: "карточки: артикул, имя, единица, описание для сайта, цены, снимки", en: "cards: SKU, name, unit, site description, prices, photos" }],
+              [{ ru: "Читать наличие", en: "Read stock" }, { ru: "остаток ОДНОГО склада типа «магазин», названного в ключе; точность — число, много/мало/нет или есть/нет", en: "the balance of ONE warehouse of kind «shop» named in the key; precision — a number, many/few/none, or in/out of stock" }],
+              [{ ru: "Заводить заказы", en: "Create orders" }, { ru: "заказ со сроком брони: товар отложен на время, срок истекает сам; отмена — пока нет накладной", en: "an order with a reservation: stock is held for a while, the term expires by itself; cancel until a waybill exists" }],
+              [{ ru: "Читать свои заказы", en: "Read own orders" }, { ru: "только заказы, заведённые этим же ключом", en: "only orders created by this very key" }],
+              [{ ru: "Регистрировать клиентов", en: "Register customers" }, { ru: "завести карточку или узнать свою; известная карточка не переписывается", en: "create a card or recognise an existing one; a known card is never overwritten" }],
+              [{ ru: "Присылать заявки", en: "Submit requests" }, { ru: "та же заявка, что с формы, только по ключу сайта", en: "the same request as from the form, only with the site key" }],
+            ],
+          },
+          {
+            vid: "spisok",
+            punkty: [
+              {
+                ru: "Сайту виден остаток складов типа «магазин» и только их: подсобка, товар в пути и брак наружу не отдаются ни при каком ключе. Тип задаётся у склада в настройках; уход склада из «магазина» убирает с сайта весь его каталог, и экран спрашивает подтверждение с числом.",
+                en: "The site sees the balance of «shop» warehouses and only them: the back room, goods in transit and defects are never exposed, whatever the key. The kind is set on the warehouse in settings; taking a warehouse out of «shop» removes its whole catalogue from the site, and the screen asks for confirmation with a count.",
+              },
+              {
+                ru: "Карточка публикуется, когда по складу магазина было хоть одно движение. Распроданный товар остаётся на сайте с «нет в наличии»; товар без цены остаётся без кнопки «купить». Описание для сайта — отдельное поле карточки товара, заметка кладовщика наружу не уходит.",
+                en: "A card is published once there has been at least one movement on the shop warehouse. A sold-out product stays on the site as «out of stock»; a product without a price stays without a «buy» button. The site description is a separate field on the product card; the storekeeper's note never leaves the CRM.",
+              },
+              {
+                ru: "Сайт узнаёт об изменениях лентой: «что поменялось с такого-то момента» — сам догоняет после любого простоя, а система ничего не помнит и не повторяет.",
+                en: "The site learns about changes from a feed: «what changed since a moment» — it catches up by itself after any downtime while the system remembers and repeats nothing.",
+              },
+              {
+                ru: "Заказ с сайта — обычный заказ покупателя с пометкой «бронь до». Истёкшая бронь товар не держит, а заказ остаётся открытым: в списке заказов есть отбор «бронь истекла» — это очередь на разбор.",
+                en: "An order from the site is an ordinary customer order marked «reserved until». An expired reservation no longer holds the stock while the order stays open: the order list has a filter «reservation expired» — that is the queue to sort out.",
+              },
+              {
+                ru: "Ключи выдаёт и отзывает тот же экран или консоль сервера (`./opencrm.sh apikey`). Отзыв действует сразу; перевыпуск оставляет старый ключ живым на сутки, чтобы сайт успели переключить.",
+                en: "Keys are issued and revoked on the same screen or from the server console (`./opencrm.sh apikey`). A revoke takes effect at once; a rotation keeps the old key alive for a day so the site can be switched over.",
+              },
+            ],
+          },
+          {
+            vid: "ruchka",
+            metod: "GET",
+            put: "/api/v1/site/stock",
+            opisanie: {
+              ru: "Наличие по складу ключа в режиме ключа. Заголовок X-OpenCRM-Api-Key обязателен; запрос шлёт сервер сайта, а не страница в браузере.",
+              en: "Stock of the key's warehouse in the key's precision. The X-OpenCRM-Api-Key header is required; the request is sent by the site's server, not by a page in the browser.",
+            },
+            polya: [
+              { imya: "id", tip: "string", obyazatelno: false, opisanie: { ru: "Номера товаров через запятую, до 200.", en: "Product ids, comma-separated, up to 200." } },
+              { imya: "sku", tip: "string", obyazatelno: false, opisanie: { ru: "Артикулы через запятую — вместо номеров или вместе с ними.", en: "SKUs, comma-separated — instead of ids or together with them." } },
+            ],
+            zapros: `curl -s "https://ваш-адрес/api/v1/site/stock?sku=ABC-1,ABC-2" \\
+  -H "X-OpenCRM-Api-Key: …"`,
+            otvet: `{
+  "as_of": "2026-09-04T14:32:11Z",
+  "ttl_sec": 60,
+  "recheck_after": "2026-09-04T14:47:00Z",
+  "items": [
+    { "id": 17, "sku": "ABC-1", "unit": "pcs", "state": "many", "available_milli": 12000 },
+    { "id": 42, "sku": "ABC-2", "unit": "pcs", "state": "none", "available_milli": 0 }
+  ]
+}`,
+          },
+          {
+            vid: "vazhno",
+            tekst: {
+              ru: "Полный справочник ручек, кодов отказов и порядок первичной настройки — docs/04-api.md, раздел «API сайта магазина»; доводы устройства — docs/16-api-sayta.md.",
+              en: "The full reference of endpoints, error codes and the first-time setup order is in docs/04-api.md, section «Shop-site API»; the reasoning behind the design is in docs/16-api-sayta.md.",
+            },
+          },
+          { vid: "ekran", put: "/settings/api-keys", podpis: { ru: "Открыть ключи API сайта", en: "Open site API keys" } },
         ],
       },
     ],
@@ -1266,19 +1364,115 @@ export const RUKOVODSTVO: Razdel[] = [
       },
       {
         id: "kopii",
-        nazvanie: { ru: "Копии базы", en: "Backups" },
+        perm: "settings.manage",
+        nazvanie: { ru: "Копии", en: "Backups" },
         kratko: {
-          ru: "Копия снимается по расписанию и проверяется на годность.",
-          en: "A copy is taken on schedule and checked for soundness.",
+          ru: "По расписанию — на сервере; с экрана — зашифрованный файл себе.",
+          en: "On schedule — on the server; from the screen — an encrypted file for yourself.",
         },
         kuski: [
           {
             vid: "abzats",
             tekst: {
-              ru: "Копия считается годной, только если в ней есть метка конца: оборванный дамп выглядит как обычный файл и подводит ровно тогда, когда из него надо восстановиться.",
-              en: "A copy counts as sound only if it carries an end marker: a truncated dump looks like an ordinary file and fails exactly when you need to restore from it.",
+              ru: "Ежедневная копия снимается на сервере по расписанию и проверяется на годность: годной считается только копия с меткой конца — оборванный дамп выглядит как обычный файл и подводит ровно тогда, когда из него надо восстановиться. Лежит она на том же диске, что и база, поэтому её надо забирать себе.",
+              en: "A daily copy is taken on the server on schedule and checked for soundness: only a copy with an end marker counts — a truncated dump looks like an ordinary file and fails exactly when you need to restore from it. It sits on the same disk as the database, so take it away with you.",
             },
           },
+          {
+            vid: "abzats",
+            tekst: {
+              ru: "Для этого есть экран «Копии»: база и файлы снимаются отдельными зашифрованными файлами, которые вы скачиваете руками. База — минуты, берётся часто; файлы (фотографии, вложения, оформление) — тяжелее и берутся реже. База без файлов — это карточки товаров без фотографий и переписка без вложений.",
+              en: "That is what the Copies screen is for: the database and the files are taken as separate encrypted files that you download by hand. The database takes minutes and is worth taking often; the files (photos, attachments, branding) are heavier and taken less often. A database without the files is product cards without photos and conversations without attachments.",
+            },
+          },
+          {
+            vid: "shagi",
+            punkty: [
+              {
+                ru: "Заведите ключ копий. Он показывается ОДИН раз и подтверждается вводом последних знаков — так система убеждается, что вы его сохранили.",
+                en: "Create the copy key. It is shown ONCE and confirmed by typing its last characters — that is how the system makes sure you saved it.",
+              },
+              {
+                ru: "Снимите копию базы, затем файлов. Каждая сразу открывается нынешним ключом — итог проверки виден в списке.",
+                en: "Take a copy of the database, then of the files. Each is opened with the current key right away — the check result shows in the list.",
+              },
+              {
+                ru: "Скачайте и уберите файлы в надёжное место. Готовая копия лежит на сервере сутки, потом убирается.",
+                en: "Download the files and keep them somewhere safe. A finished copy stays on the server for a day, then it is removed.",
+              },
+            ],
+          },
+          {
+            vid: "vnimanie",
+            tekst: {
+              ru: "Потерянный ключ — потерянная копия: подбирать нечего и восстановить неоткуда. Храните ключ не на этом сервере. Кнопка «Проверить ключ» у готовой копии повторяет сверку — заменённый или потерянный ключ обнаруживается на экране, а не в день аварии.",
+              en: "A lost key is a lost copy: there is nothing to guess and nowhere to recover it from. Keep the key off this server. The «Check the key» button on a finished copy repeats the check — a replaced or lost key shows up on screen, not on the day of the disaster.",
+            },
+          },
+          {
+            vid: "svyortka",
+            zagolovok: { ru: "Восстановление из копии", en: "Restoring from a copy" },
+            kuski: [
+              {
+                vid: "abzats",
+                tekst: {
+                  ru: "Самая опасная кнопка в системе, и потому под отдельным правом «Восстановление из копии», а не под общими настройками. Она закрывает случай «испортили данные», а не «сгорела машина»: кнопкой на упавшем сервере упавший сервер не поднимают.",
+                  en: "The most dangerous button in the system, hence its own right «Restore from a copy» rather than the general settings right. It covers «we corrupted the data», not «the machine burned down»: a button on a dead server does not bring the server back.",
+                },
+              },
+              {
+                vid: "shagi",
+                punkty: [
+                  { ru: "Копия расшифровывается нынешним ключом; чужой ключ, не копия или обрывок отвергаются до того, как тронута база.", en: "The copy is decrypted with the current key; a foreign key, a non-copy or a truncated file are refused before the database is touched." },
+                  { ru: "Копия от кода, которого здесь нет, отвергается — догнать её нечем.", en: "A copy taken by code this server does not have is refused — there is nothing to bring it up to date with." },
+                  { ru: "Сайт закрывается на обслуживание, снимок живой базы остаётся рядом с копиями на неделю.", en: "The site closes for maintenance; a snapshot of the live database stays next to the copies for a week." },
+                  { ru: "Копия заливается, старая версия догоняется миграциями, схема сверяется, обслуживание снимается, событие ложится в журнал.", en: "The copy is loaded, an older version is brought up to date by migrations, the schema is checked, maintenance is lifted and the event is logged." },
+                  { ru: "Файлы из копии ложатся поверх нынешних, ничего не стирая. После восстановления базы придётся войти заново.", en: "Files from a copy are added on top of the current ones; nothing is deleted. After a database restore you will need to sign in again." },
+                ],
+              },
+            ],
+          },
+          { vid: "ekran", put: "/settings/backups", podpis: { ru: "Открыть копии", en: "Open copies" } },
+        ],
+      },
+      {
+        id: "zhivye-obnovleniya",
+        perm: "settings.manage",
+        nazvanie: { ru: "Живые обновления", en: "Live updates" },
+        kratko: {
+          ru: "Правка коллеги появляется на открытом экране сама.",
+          en: "A colleague's change shows up on an open screen by itself.",
+        },
+        kuski: [
+          {
+            vid: "abzats",
+            tekst: {
+              ru: "Перенесли карточку на доске — она поехала у всех; списали товар — остаток пересчитался у всех; завели клиента — он появился в списке. Без кнопки «обновить». Вкладка держит одно соединение с сервером, сервер шлёт намёк «перечитай вот это», и экран перечитывает данные обычным запросом — значит увидеть больше, чем разрешают права, нельзя по устройству.",
+              en: "Move a card on the board and it moves for everyone; write stock off and the balance updates for everyone; create a client and they appear in the list. No refresh button. A tab keeps one connection to the server, the server sends a hint «re-read this», and the screen re-reads the data with an ordinary request — so seeing more than your rights allow is impossible by construction.",
+            },
+          },
+          {
+            vid: "spisok",
+            punkty: [
+              {
+                ru: "Начатую правку живое обновление не затирает: если вы печатаете в карточке, а коллега её изменил, появится полоса «данные изменились — показать».",
+                en: "A live update never overwrites an edit in progress: if you are typing in a card and a colleague changed it, a bar «this record was changed — show» appears.",
+              },
+              {
+                ru: "Свёрнутая вкладка молчит и перечитывает один раз при возвращении.",
+                en: "A background tab stays quiet and re-reads once when you come back.",
+              },
+              {
+                ru: "Пропала связь с шиной — наверху появляется полоса «обновления приостановлены», экраны перечитываются сами, но реже; поднялась — полоса уходит сама.",
+                en: "If the bus goes down, a bar «live updates are paused» appears at the top; screens refresh on their own, less often; when it is back, the bar leaves by itself.",
+              },
+              {
+                ru: "Выключатель — в настройках обслуживания. Выключенные обновления — это выбор, а не авария: полосы нет, CRM работает как раньше.",
+                en: "The switch is in the maintenance settings. Updates switched off are a choice, not a failure: no bar, the CRM works as before.",
+              },
+            ],
+          },
+          { vid: "ekran", put: "/settings/maintenance", podpis: { ru: "Открыть обслуживание", en: "Open maintenance" } },
         ],
       },
       {

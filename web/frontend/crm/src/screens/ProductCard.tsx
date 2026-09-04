@@ -206,7 +206,7 @@ export function ProductCard() {
         )}
       </div>
 
-      <SiteDescription product={product} onSaved={() => void load()} />
+      <ProductTexts product={product} onSaved={() => void load()} />
       <ProductHolders productId={product.id} />
 
 
@@ -330,19 +330,23 @@ export function ProductCard() {
  * Движение записывается, а не редактируется: ошибку исправляют обратным
  * движением, поэтому здесь нет ни правки, ни удаления. Иначе остаток на прошлую
  * пятницу зависел бы от того, когда его спросили. */
-/** Описание для сайта — правится прямо на карточке: остальные поля товара
- *  задаются при заведении, а описание дописывают, когда карточка уже есть. */
-function SiteDescription({ product, onSaved }: { product: Product; onSaved: () => void }) {
+/** Два текста товара — заметка кладовщика и описание для сайта — правятся
+ *  прямо на карточке. Заметка заполнялась при заведении, печаталась на наклейке
+ *  и нигде больше не показывалась: узнать, что написано, было неоткуда. */
+function ProductTexts({ product, onSaved }: { product: Product; onSaved: () => void }) {
   const { t, toast, toastError } = useApp();
-  const [text, setText] = useState(product.site_description ?? "");
+  const [note, setNote] = useState(product.note ?? "");
+  const [description, setDescription] = useState(product.site_description ?? "");
   const guard = useGuard();
 
-  useEffect(() => setText(product.site_description ?? ""), [product.site_description]);
+  useEffect(() => setNote(product.note ?? ""), [product.note]);
+  useEffect(() => setDescription(product.site_description ?? ""), [product.site_description]);
+  const izmeneno = note !== (product.note ?? "") || description !== (product.site_description ?? "");
 
   const save = async () => {
     if (!guard.take()) return;
     try {
-      await api.patch(`/warehouse/products/${product.id}`, { site_description: text });
+      await api.patch(`/warehouse/products/${product.id}`, { note, site_description: description });
       toast(t("save") + " ✓");
       onSaved();
     } catch (e) {
@@ -354,10 +358,13 @@ function SiteDescription({ product, onSaved }: { product: Product; onSaved: () =
 
   return (
     <div className="card card-pad" style={{ marginBottom: 20 }}>
+      <div className="metric-title" style={{ marginBottom: 8 }}>{t("productNote")}</div>
+      <textarea className="textarea" value={note} onChange={(e) => setNote(e.target.value)} rows={3} />
+      <div className="field-desc" style={{ marginTop: 6, marginBottom: 14 }}>{t("productNoteHint")}</div>
       <div className="metric-title" style={{ marginBottom: 8 }}>{t("productSiteDescription")}</div>
-      <textarea className="textarea" value={text} onChange={(e) => setText(e.target.value)} rows={4} />
+      <textarea className="textarea" value={description} onChange={(e) => setDescription(e.target.value)} rows={4} />
       <div className="field-desc" style={{ marginTop: 6 }}>{t("productSiteDescriptionHint")}</div>
-      {text !== (product.site_description ?? "") && (
+      {izmeneno && (
         <button className="btn btn-primary btn-sm" style={{ marginTop: 10 }} disabled={guard.busy} onClick={() => void save()}>
           {t("save")}
         </button>
