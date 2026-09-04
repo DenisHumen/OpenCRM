@@ -5,7 +5,7 @@ import { api } from "../lib/api";
 import { useApp } from "../lib/app";
 import { formatBytes, initials } from "../lib/format";
 import { allowed, can, type Guarded } from "../lib/permissions";
-import { term } from "../lib/terms";
+import { nazvanieZakazov, term } from "../lib/terms";
 import { Icon } from "./Icon";
 import { Avatar } from "./ui";
 
@@ -384,7 +384,9 @@ export function Sidebar({
     { module: "templates", perm: "templates.view", to: "/templates", label: t("templates"), icon: "note" },
     { module: "boards", perm: "boards.view", to: "/boards", label: t("boards"), icon: "boards" },
     // Склад по умолчанию выключен: он нужен магазину и мастерской, а студии нет.
-    { module: "orders", perm: "orders.view", to: "/orders", label: t("orders"), icon: "receipt" },
+    // Магазин зовёт заявки «заказами», и рядом стоял второй пункт «Заказы» —
+    // блок заказов. Два одинаковых слова в одном меню — угадывание.
+    { module: "orders", perm: "orders.view", to: "/orders", label: nazvanieZakazov(t, term(workspace.deal_term, locale, "many")), icon: "receipt" },
     { module: "waybills", perm: "waybills.view", to: "/waybills", label: t("waybills"), icon: "arrowOut" },
     { module: "warehouse", perm: "warehouse.view", to: "/warehouse", label: t("warehouse"), icon: "warehouse" },
     // Деньги — перед отчётами: отчёты отвечают «как идут дела», а этот раздел

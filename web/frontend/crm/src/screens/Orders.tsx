@@ -7,6 +7,7 @@ import { Chip, Dochitat, EmptyState, ScreenLoading } from "../components/ui";
 import { api } from "../lib/api";
 import type { HistoryEvent } from "../components/History";
 import { useApp } from "../lib/app";
+import { nazvanieZakazov, term } from "../lib/terms";
 import { useLiveTopic } from "../lib/live";
 import { useDebounced } from "../lib/debounce";
 import { useFailure } from "../lib/failure";
@@ -193,7 +194,7 @@ export function Orders() {
       <ContextMenu menu={kontekst.menu} zakryt={kontekst.zakryt} />
       <div className="page-head">
         <div>
-          <h1 className="page-title">{t("orders")}</h1>
+          <h1 className="page-title">{nazvanieZakazov(t, term(workspace.deal_term, locale, "many"))}</h1>
           <div className="page-sub">{t("ordersSub", { total: data.total })}</div>
         </div>
         <div style={{ display: "flex", gap: 8 }}>

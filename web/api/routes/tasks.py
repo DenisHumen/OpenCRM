@@ -8,6 +8,8 @@ from sqlalchemy.orm import Session
 
 from core.services import task_service
 from database.models import User
+from database.repositories import clients as clients_repo
+from database.repositories import deals as deals_repo
 from database.repositories import users as users_repo
 from web.api import schemas
 from web.api.deps import get_db, require_module, require_perm
@@ -36,11 +38,18 @@ class TaskPatchIn(BaseModel):
 
 
 def _out(db: Session, tasks: list) -> list[dict]:
+    """Имена рядом с номерами: в списке «Заявка» и «Клиент» без названий
+    отвечали лишь на вопрос «есть ли», а спрашивают «какая»."""
     names = {
         u.id: u.name
         for u in users_repo.get_many(db, {t.assignee_id for t in tasks if t.assignee_id})
     }
-    return [schemas.task_out(t, names.get(t.assignee_id)) for t in tasks]
+    klienty = clients_repo.names_by_ids(db, [t.client_id for t in tasks if t.client_id])
+    zayavki = {d.id: d.title for d in deals_repo.by_ids(db, {t.deal_id for t in tasks if t.deal_id})}
+    return [
+        schemas.task_out(t, names.get(t.assignee_id), klienty.get(t.client_id), zayavki.get(t.deal_id))
+        for t in tasks
+    ]
 
 
 @router.get("")

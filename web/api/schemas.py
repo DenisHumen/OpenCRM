@@ -441,7 +441,12 @@ def document_out(document: Document) -> dict:
     }
 
 
-def task_out(task: Task, assignee_name: str | None = None) -> dict:
+def task_out(
+    task: Task,
+    assignee_name: str | None = None,
+    client_name: str | None = None,
+    deal_title: str | None = None,
+) -> dict:
     return {
         "id": task.id,
         "title": task.title,
@@ -451,7 +456,9 @@ def task_out(task: Task, assignee_name: str | None = None) -> dict:
         "assignee_id": task.assignee_id,
         "assignee_name": assignee_name,
         "client_id": task.client_id,
+        "client_name": client_name,
         "deal_id": task.deal_id,
+        "deal_title": deal_title,
         "is_done": task.done_at is not None,
         "done_at": _iso(task.done_at),
         "created_at": _iso(task.created_at),

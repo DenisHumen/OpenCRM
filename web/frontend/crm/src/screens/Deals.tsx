@@ -574,7 +574,7 @@ export function Deals() {
       )}
 
       {creating && (
-        <Modal title={t("newDeal")} onClose={() => setCreating(false)}>
+        <Modal title={term(workspace.deal_term, locale, "new")} onClose={() => setCreating(false)}>
           <div className="field">
             <label className="label">{t("dealTitle")}</label>
             <input
