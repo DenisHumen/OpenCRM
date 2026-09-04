@@ -1,0 +1,51 @@
+name: lighthouse
+
+# Формальный прогон Lighthouse на боевом домене (ZADACHI 3.2 → docs/08-deployment.md,
+# «Замер Lighthouse»). Порог — LCP < 1,5 с на mobile; архитектурно он заложен
+# (SSR витрины, blurhash, WebP, immutable-кэш), но замера ни разу не было.
+#
+# Меряется страница, названная переменной OPENCRM_LIGHTHOUSE_URL (публичная
+# витрина или страница входа); без переменной задание выходит зелёным молча.
+# Отчёт — артефактом прогона, число — в журнале шага.
+on:
+  schedule:
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lighthouse:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: замер
+        env:
+          URL: ${{ vars.OPENCRM_LIGHTHOUSE_URL }}
+        run: |
+          if [ -z "$URL" ]; then
+            echo "OPENCRM_LIGHTHOUSE_URL не задан — замер выключен"
+            exit 0
+          fi
+          npx --yes lighthouse@12 "$URL" \
+            --preset=perf --form-factor=mobile --screenEmulation.mobile \
+            --chrome-flags="--headless=new --no-sandbox" \
+            --output=json --output=html --output-path=./lighthouse \
+            --quiet
+          lcp=$(node -e 'const r=require("./lighthouse.report.json");console.log(Math.round(r.audits["largest-contentful-paint"].numericValue))')
+          perf=$(node -e 'const r=require("./lighthouse.report.json");console.log(Math.round(r.categories.performance.score*100))')
+          echo "LCP ${lcp} мс, performance ${perf}"
+          if [ "$lcp" -ge 1500 ]; then
+            echo "::error::LCP ${lcp} мс — порог 1500 мс не выдержан"
+            exit 1
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: lighthouse
+          path: lighthouse.report.*
+          if-no-files-found: ignore

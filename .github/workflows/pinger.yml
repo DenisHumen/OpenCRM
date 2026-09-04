@@ -1,0 +1,45 @@
+name: pinger
+
+# Внешний пингер с ЧУЖОЙ машины (ZADACHI 3.1 → docs/08-deployment.md, «Внешний
+# пингер»). Внутреннее наблюдение стоит на том же сервере, что и сайт, и упавшая
+# машина о себе не сообщит — это единственное, чего изнутри увидеть нельзя.
+# Машины GitHub — чужие по определению, а упавший прогон приходит владельцу
+# письмом без единой новой службы.
+#
+# Адрес — переменная репозитория OPENCRM_PING_URL (Settings → Variables), без
+# неё задание молча выходит зелёным: у форка и у свежего клона боевого домена нет.
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: healthz
+        env:
+          URL: ${{ vars.OPENCRM_PING_URL }}
+        run: |
+          if [ -z "$URL" ]; then
+            echo "OPENCRM_PING_URL не задан — пингер выключен"
+            exit 0
+          fi
+          # Три попытки с паузой: моргнувшая сеть у GitHub — не авария у нас.
+          # `/healthz` отвечает 200 и при закрытом на обслуживание сайте, так
+          # что тревога здесь только о машине, которой нет.
+          for i in 1 2 3; do
+            kod=$(curl -sS -o /tmp/otvet -w '%{http_code}' --max-time 15 "${URL%/}/healthz" || echo 000)
+            if [ "$kod" = "200" ]; then
+              echo "жив: $(cat /tmp/otvet)"
+              exit 0
+            fi
+            echo "попытка $i: код $kod"
+            sleep 20
+          done
+          echo "::error::сайт не отвечает на /healthz с чужой машины"
+          exit 1
