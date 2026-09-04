@@ -86,7 +86,12 @@ class _Soedinenie:
             return _Otvet(self.tablicy[imya], kolonki=("id", "name"))
         return _Otvet([])
 
-    def execution_options(self, **_kwargs):
+    def execution_options(self, **kwargs):
+        # Уровень изоляции ставится через SQLAlchemy, а не голым SET SESSION:
+        # тот переживал возврат соединения в пул (см. `snapshot_db.snyat`).
+        # Записываем в след, чтобы проверка видела и его.
+        if "isolation_level" in kwargs:
+            self.sled.append(f"[isolation_level={kwargs['isolation_level']}]")
         return self
 
     def __enter__(self):
@@ -147,7 +152,10 @@ def test_snimok_soglasovannyy(dvizhok, tmp_path):
     assert "START TRANSACTION WITH CONSISTENT SNAPSHOT" in dvizhok.sled, (
         "дамп собирается из разных моментов времени — копия несогласованная"
     )
-    assert "SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ" in dvizhok.sled
+    assert "[isolation_level=REPEATABLE READ]" in dvizhok.sled, (
+        "уровень изоляции обязан ставиться через execution_options: голый "
+        "SET SESSION переживал возврат соединения в пул"
+    )
     # Порядок важен: транзакция обязана открыться ДО первого чтения данных.
     nachalo = dvizhok.sled.index("START TRANSACTION WITH CONSISTENT SNAPSHOT")
     pervoe_chtenie = next(

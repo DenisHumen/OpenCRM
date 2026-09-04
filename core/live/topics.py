@@ -78,6 +78,10 @@ class Topic:
     #: Атрибут записи, из которого берётся номер для намёка: у строки заявки
     #: это сама заявка, у снимка товара — товар. Пусто — свой `id`.
     id_attr: str = "id"
+    #: Поля, правка которых намёка не рождает: отметка присутствия сотрудника
+    #: пишется каждым сердцебиением, и намёк на неё гнал бы всех на перечитку
+    #: штата раз в минуту ради точки «в сети».
+    tikhie: frozenset = frozenset()
 
 
 T_DEALS = Topic("deals", "deals", "deals", BY_MANAGER, "manager_id")
@@ -103,7 +107,7 @@ T_PRODUCT_CHILD = Topic("warehouse", "warehouse", "warehouse", id_attr="product_
 T_PLACES = Topic("warehouses", "warehouse", "warehouse")
 T_TELEPHONY = Topic("telephony", "telephony", "telephony")
 T_FINANCE = Topic("finance", "finance", "finance")
-T_STAFF = Topic("staff", None, "staff")
+T_STAFF = Topic("staff", None, "staff", tikhie=frozenset({"last_seen_at"}))
 T_ROLES = Topic("roles", None, "roles")
 T_ROLE_PERMS = Topic("roles", None, "roles", id_attr="role_id")
 T_MODULES = Topic("modules", None, None)
