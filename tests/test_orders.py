@@ -362,6 +362,22 @@ def test_chuzhoy_kod_v_zakaze_nazvan_v_otkaze(root_client, client_row):
     assert outside["name"] in denied.json()["error"]["message"]
 
 
+def test_sborka_po_artikulu_bez_shtrihkoda(root_client, client_row):
+    """Артикул печатается на наклейке текстом: у товара без своего штрихкода
+    это единственное, что можно набрать с коробки."""
+    item = product(root_client, stock="3")
+    order = order_with(root_client, client_row, item, quantity="2")
+
+    picked = root_client.post(f"{ORDERS}/{order['id']}/pick", json={"code": item["sku"].lower()})
+    assert picked.status_code == 200, picked.text
+    line = root_client.get(f"{ORDERS}/{order['id']}").json()["lines"][0]
+    assert line["picked_milli"] == 1000
+
+    denied = root_client.post(f"{ORDERS}/{order['id']}/pick", json={"code": "NO-SUCH-SKU"})
+    assert denied.status_code == 404, denied.text
+    assert denied.json()["error"]["code"] == "barcode_unknown"
+
+
 # --- блоки включаются и выключаются -------------------------------------------
 
 

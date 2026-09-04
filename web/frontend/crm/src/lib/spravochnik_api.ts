@@ -1595,7 +1595,7 @@ export const SPRAVOCHNIK_API: RazdelApi[] = [
         "put": "/orders/{id}/pick",
         "vid": "pravo",
         "dostup": "orders.edit",
-        "opisanie": "Отметить собранным по отсканированному коду: `{code, quantity_milli}`",
+        "opisanie": "Отметить собранным по отсканированному коду: `{code, quantity_milli}`. Код, не найденный среди штрихкодов, пробуется как артикул (с 04.09.2026)",
         "podrazdel": "",
         "vne_api": false
       },
