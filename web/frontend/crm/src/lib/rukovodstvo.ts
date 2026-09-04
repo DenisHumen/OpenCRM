@@ -526,6 +526,13 @@ export const RUKOVODSTVO: Razdel[] = [
             },
           },
           {
+            vid: "vazhno",
+            tekst: {
+              ru: "Если заявки у вас тоже зовутся «заказами» (так у магазина), этот блок в меню называется «Складские заказы» — чтобы два одинаковых слова не стояли рядом.",
+              en: "If your deals are also called «orders» (as in a shop), this module shows in the menu as «Stock orders» — so two identical words do not sit side by side.",
+            },
+          },
+          {
             vid: "abzats",
             tekst: {
               ru: "Заказ заводится из заявки одним нажатием: товарные строки переезжают в него сами. Свои траты и услуги при этом НЕ переносятся — по заказу собирают коробки, и строка про упаковку показывала бы «собрано 0 из 1», пока её не отметят руками.",

@@ -89,6 +89,14 @@ const TERMS: Record<DealTerm, Record<Locale, Forms>> = {
 /** Список для выбора в настройках. Порядок — от самого частого. */
 export const DEAL_TERMS: DealTerm[] = ["deal", "order", "request", "booking"];
 
+/** Подпись блока заказов, когда заявки тоже зовутся «заказами». */
+export function nazvanieZakazov(
+  t: (klyuch: "orders" | "ordersStock") => string,
+  zayavki: string,
+): string {
+  return zayavki.trim().toLowerCase() === t("orders").trim().toLowerCase() ? t("ordersStock") : t("orders");
+}
+
 export function term(name: string | undefined, locale: Locale, form: TermForm): string {
   // Неизвестное значение из базы не должно оставлять экран без подписи:
   // возвращаемся к набору по умолчанию, а не к пустой строке.

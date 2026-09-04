@@ -848,7 +848,7 @@ export const SPRAVOCHNIK_API: RazdelApi[] = [
         "put": "/tasks",
         "vid": "pravo",
         "dostup": "tasks.view",
-        "opisanie": "Список одним `items`. Фильтры `scope` (по умолчанию `open`), `assignee_id`, `client_id`, `deal_id`",
+        "opisanie": "Список одним `items`; у записи рядом с номерами — `assignee_name`, `client_name`, `deal_title`. Фильтры `scope` (по умолчанию `open`), `assignee_id`, `client_id`, `deal_id`",
         "podrazdel": "",
         "vne_api": false
       },

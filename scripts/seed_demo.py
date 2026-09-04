@@ -6,18 +6,21 @@
 
 import io
 import math
+import os
 import random
 import sys
 
 import httpx
 from PIL import Image, ImageDraw
 
-BASE = "http://localhost:8000"
+# Адрес и root — из окружения: проба живёт на другом порту и с другим root,
+# а править константы под каждый запуск значит однажды засеять боевой.
+BASE = os.environ.get("OPENCRM_SEED_URL", "http://localhost:8000")
 API = f"{BASE}/api/v1"
 
-ROOT_EMAIL = "root@opencrm.local"
-ROOT_INITIAL = "root-changeme"
-ROOT_PASSWORD = "demo-root-password-1"
+ROOT_EMAIL = os.environ.get("OPENCRM_SEED_ROOT_EMAIL", "root@opencrm.local")
+ROOT_INITIAL = os.environ.get("OPENCRM_SEED_ROOT_INITIAL", "root-changeme")
+ROOT_PASSWORD = os.environ.get("OPENCRM_SEED_ROOT_PASSWORD", "demo-root-password-1")
 
 # тёплая палитра проекта
 PALETTES = [

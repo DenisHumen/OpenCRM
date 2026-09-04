@@ -207,12 +207,12 @@ export function Tasks() {
                     {task.assignee_name && <span>{task.assignee_name}</span>}
                     {task.deal_id && (
                       <Link to={`/deals/${task.deal_id}`} className="text-link">
-                        {t("deal")}
+                        {task.deal_title || t("deal")}
                       </Link>
                     )}
                     {task.client_id && (
                       <Link to={`/clients/${task.client_id}`} className="text-link">
-                        {t("client")}
+                        {task.client_name || t("client")}
                       </Link>
                     )}
                   </div>

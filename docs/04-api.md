@@ -389,7 +389,7 @@
 
 | Метод | Путь | Права | Описание |
 |---|---|---|---|
-| GET | `/tasks` | 🔑 `tasks.view` | Список одним `items`. Фильтры `scope` (по умолчанию `open`), `assignee_id`, `client_id`, `deal_id` |
+| GET | `/tasks` | 🔑 `tasks.view` | Список одним `items`; у записи рядом с номерами — `assignee_name`, `client_name`, `deal_title`. Фильтры `scope` (по умолчанию `open`), `assignee_id`, `client_id`, `deal_id` |
 | GET | `/tasks/summary` | 🔑 `tasks.view` | Счётчики для навигации |
 | POST | `/tasks` | 🔑 `tasks.create` | Завести: `title`, `due_at`, `assignee_id`, `client_id`, `deal_id` |
 | PATCH | `/tasks/{id}` | 🔑 `tasks.edit` | Изменить любое поле, включая `is_done` |
