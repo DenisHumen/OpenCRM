@@ -367,6 +367,42 @@ groups:
             отказывают, а не пропускают.
           lechenie: "./opencrm.sh logs redis"
 
+      - alert: DecodeQueueSaturated
+        # Все места очереди разжатия картинок заняты дольше пяти минут.
+        # Не дождавшийся получает 503 `decode_queue_busy`, и до этой тревоги
+        # упёршаяся очередь была видна только по жалобе «картинки не
+        # грузятся». Пять минут — потому что одно разжатие укладывается в
+        # секунду, а очередь ждёт до двух минут: пять минут сплошной занятости
+        # это не всплеск, а застрявшее место или поток загрузок.
+        expr: max(opencrm_decode_queue_busy) >= max(opencrm_decode_queue_limit)
+        for: 5m
+        keep_firing_for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Очередь разжатия картинок занята целиком"
+          description: >-
+            Все места очереди разжатия заняты дольше пяти минут — загрузка
+            картинок отвечает 503, пока место не освободится.
+          lechenie: "./opencrm.sh logs app"
+
+      - alert: DecodeQueueLocalLimit
+        # Предел разжатия держится в памяти процесса, а не в Redis. Это
+        # запасной путь, и он не отказ — но при нескольких рабочих процессах
+        # пик памяти умножается на их число. Состоянием, а не приростом
+        # счётчика: довод тот же, что у RateLimiterUnavailable выше.
+        expr: max(opencrm_decode_queue_recently_local) > 0
+        for: 2m
+        keep_firing_for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Предел разжатия картинок держится в памяти процесса"
+          description: >-
+            Приложение не достучалось до Redis за местом в очереди разжатия.
+            Загрузка работает, но предел теперь свой у каждого процесса.
+          lechenie: "./opencrm.sh logs redis"
+
       - alert: RedisDown
         # Прямой опрос: `RateLimiterUnavailable` выше срабатывает только когда
         # кто-то попробовал войти, а эта — сразу. Ночью, когда входов нет,

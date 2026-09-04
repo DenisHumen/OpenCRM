@@ -235,6 +235,29 @@ def test_metrics_zakryvaetsya_vmeste_s_blokom(metrics_module, monkeypatch):
     assert response.json()["error"]["code"] == "module_disabled"
 
 
+def test_ochered_razzhatiya_vidna_v_metrikakh(metrics_module, monkeypatch):
+    """Упёршаяся очередь была видна только по жалобе «картинки не грузятся».
+
+    Четыре ряда: занято, предел, общий ли предел и держался ли он в памяти
+    процесса в последнюю минуту. Ряд без HELP/TYPE уже ловит общая проверка.
+    """
+    body = _client(metrics_module, enabled=True, monkeypatch=monkeypatch).get(
+        "/api/v1/metrics"
+    ).text
+    names = {name for name, _labels, _value in _samples(body)}
+    for name in (
+        "opencrm_decode_queue_busy",
+        "opencrm_decode_queue_limit",
+        "opencrm_decode_queue_shared",
+        "opencrm_decode_queue_recently_local",
+    ):
+        assert name in names, f"очередь разжатия не отдаёт {name}"
+    predel = next(int(v) for n, _l, v in _samples(body) if n == "opencrm_decode_queue_limit")
+    from core.services import media_service
+
+    assert predel == media_service.ODNOVREMENNO
+
+
 def test_metrics_ne_khodit_v_bazu(metrics_module):
     """Метрики опрашивают раз в полминуты вечно.
 
@@ -826,6 +849,8 @@ def test_vse_obeshchannye_povody_dlya_trevogi_est():
         "ContainerRestartLoop": "контейнер перезапускается циклически",
         "DeployRolledBack": "деплой откатился",
         "BackupTooOld": "бэкап не снимался больше суток",
+        "DecodeQueueSaturated": "очередь разжатия картинок занята целиком",
+        "DecodeQueueLocalLimit": "предел разжатия держится в памяти процесса",
     }
     for alert, why in promised.items():
         assert f"- alert: {alert}" in rules, f"пропал повод «{why}»"

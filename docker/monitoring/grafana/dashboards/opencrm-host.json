@@ -479,6 +479,36 @@
           "legendFormat": "команда"
         }
       ]
+    },
+    {
+      "id": 47,
+      "type": "timeseries",
+      "title": "Очередь разжатия картинок",
+      "description": "Занятые места против предела. Упёршаяся очередь отвечает 503 `decode_queue_busy`; предел общий на установку, пока Redis жив. Ноль — тихо; сплошная занятость — застрявшее место или поток загрузок.",
+      "datasource": {"type": "prometheus", "uid": "opencrm-prometheus"},
+      "gridPos": {"h": 6, "w": 24, "x": 0, "y": 56},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "decimals": 0,
+          "custom": {"fillOpacity": 20, "lineWidth": 1}
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {"displayMode": "list", "placement": "bottom", "showLegend": true},
+        "tooltip": {"mode": "multi", "sort": "desc"}
+      },
+      "targets": [
+        {"refId": "A", "expr": "max(opencrm_decode_queue_busy)", "legendFormat": "занято"},
+        {"refId": "B", "expr": "max(opencrm_decode_queue_limit)", "legendFormat": "предел"},
+        {
+          "refId": "C",
+          "expr": "max(opencrm_decode_queue_recently_local)",
+          "legendFormat": "предел в памяти процесса (1 = да)"
+        }
+      ]
     }
   ]
 }

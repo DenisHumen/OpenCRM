@@ -67,6 +67,40 @@ class PodstavnoyRedis:
         with self._zamok:
             return len(self.data.get(klyuch, {}))
 
+    # Три команды ниже нужны `media_service.zanyato_mest` — читателю для
+    # `/metrics`. Конвейер здесь исполняется по очереди: атомарность на
+    # чтении изображать нечем и незачем.
+    def zremrangebyscore(self, klyuch, mn, mx):
+        with self._zamok:
+            mesta = self.data.get(klyuch, {})
+            lishnie = [c for c, s in mesta.items() if s <= float(mx)]
+            for c in lishnie:
+                del mesta[c]
+            return len(lishnie)
+
+    def zcard(self, klyuch) -> int:
+        return self.skolko_zanyato(klyuch)
+
+    def pipeline(self, transaction=True):
+        return _Konveyer(self)
+
+
+class _Konveyer:
+    def __init__(self, hranilishche):
+        self._h = hranilishche
+        self._komandy = []
+
+    def zremrangebyscore(self, *args):
+        self._komandy.append(("zremrangebyscore", args))
+        return self
+
+    def zcard(self, *args):
+        self._komandy.append(("zcard", args))
+        return self
+
+    def execute(self):
+        return [getattr(self._h, imya)(*args) for imya, args in self._komandy]
+
 
 class SlomannyyRedis:
     """Redis, который не отвечает. Любая команда — отказ."""
@@ -357,3 +391,43 @@ def test_bez_redisa_predel_ostayotsya_i_ne_krichit(monkeypatch):
     assert media_service.bez_obshchego_zamka_total() == bylo, (
         "ненастроенный Redis посчитан аварией — тревога будет звонить всегда"
     )
+
+
+# --- очередь видна снаружи ----------------------------------------------------
+
+
+def test_zanyato_mest_schitaet_obshchuyu_ochered(obshchee):
+    """`/metrics` обязан видеть чужие места, а не только свои.
+
+    До этого читателя упёршаяся очередь была видна только по жалобе «картинки
+    не грузятся». Считаем по общему хранилищу: место соседнего процесса —
+    тоже занятое место.
+    """
+    assert media_service.zanyato_mest() == 0
+    obshchee.data[media_service.KLYUCH_MESTA] = {
+        "sosed-1": time.time() + 60,
+        "sosed-2": time.time() + 60,
+        "broshennoe": time.time() - 5,
+    }
+    # Брошенное место (срок вышел) не считается: его выбросит первый же
+    # захват, и показывать его занятым значило бы звонить в тревогу зря.
+    assert media_service.zanyato_mest() == 2
+
+
+def test_recently_local_podnimaetsya_posle_otkaza_redisa(slomannyy, tmp_path, monkeypatch):
+    """Ушли на местный предел — состояние держится минуту, и его видит `/metrics`."""
+    monkeypatch.setattr(media_service, "_poslednee_mestnoe", 0.0)
+    assert not media_service.recently_local()
+    with media_service.mesto_razzhatiya():
+        pass
+    assert media_service.recently_local(), (
+        "предел держался в памяти процесса, а признак для /metrics не поднялся"
+    )
+
+
+def test_mestnye_mesta_schitayutsya_poka_zanyaty(slomannyy, monkeypatch):
+    """Без Redis читатель отвечает местными местами — и отдаёт их обратно."""
+    monkeypatch.setattr(media_service, "_mestnyh_zanyato", 0)
+    with media_service.mesto_razzhatiya():
+        assert media_service.zanyato_mest() == 1
+    assert media_service.zanyato_mest() == 0
