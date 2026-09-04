@@ -332,7 +332,8 @@ export function SettingsBackups() {
               onChange={(e) => setRestoreFile(e.target.files?.[0] ?? null)}
             />
             <button
-              className="btn btn-danger"
+              className="btn btn-secondary"
+              style={{ color: "var(--danger)", borderColor: "var(--danger)" }}
               disabled={guard.busy || !restoreFile || !key.exists || running}
               onClick={() => setRestoreAsk(true)}
             >

@@ -149,6 +149,27 @@ def test_kopiya_bazy_snimaetsya_shifruetsya_i_skachivaetsya(root_client, sayt):
     assert sostoyanie["jobs"][0]["id"] == job["id"]
 
 
+def test_snyatie_kopii_ne_portit_uroven_izolyatsii_pula(root_client, sayt):
+    """Дамп идёт под REPEATABLE READ, и это не должно пережить возврат соединения в пул.
+
+    Поймано полным прогоном 04.09.2026: после снятия копии из приложения дуэль
+    «двое увозят последнее» пропускала обоих — соединение вернулось в пул с
+    чужим уровнем изоляции, и пересчёт после замка читал старый снимок.
+    """
+    from sqlalchemy import text
+
+    from database.session import engine
+
+    _zavesti_klyuch(root_client)
+    _snyat(root_client, "db")
+    # Несколько заходов подряд: пул отдаёт соединения по очереди, и заражённое
+    # обязано попасться. Уровень по умолчанию у движка — READ COMMITTED.
+    for _ in range(8):
+        with engine.connect() as c:
+            uroven = c.scalar(text("SELECT @@transaction_isolation"))
+            assert uroven == "READ-COMMITTED", uroven
+
+
 def test_zamena_klyucha_vidna_proverkoy(root_client, sayt):
     """«Потерял ключ — потерял копию» обнаруживается кнопкой, а не в день аварии."""
     _zavesti_klyuch(root_client)

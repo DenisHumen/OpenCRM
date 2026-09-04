@@ -20,7 +20,6 @@ from core.services import (
     api_key_service,
     audit_service,
     client_service,
-    document_service,
     order_service,
     product_photo_service,
     reserve_service,

@@ -41,11 +41,38 @@ def _uniq():
 
 
 @pytest.fixture
-def shop(root_client):
+def sklady(root_client):
+    """Фабрика складов с уборкой.
+
+    Уборка обязательна: база в наборе общая, а соседи считают склады («выбор
+    склада появляется со вторым», «последний склад не закрыть»). Остаток
+    обнуляется корректировкой, потом склад закрывается штатно.
+    """
+    sozdany: list[int] = []
+
+    def sozdat(kind: str = "shop", imya: str | None = None) -> dict:
+        r = root_client.post(f"{API}/warehouses", json={"name": imya or f"Зал {_uniq()}", "kind": kind})
+        assert r.status_code == 201, r.text
+        sozdany.append(r.json()["id"])
+        return r.json()
+
+    yield sozdat
+    from database.models import StockMove
+    from database.repositories import warehouses as places_repo
+
+    with SessionLocal() as db:
+        for sklad_id in sozdany:
+            for product_id, ostatok in places_repo.nonzero_stock(db, sklad_id):
+                db.add(StockMove(product_id=product_id, warehouse_id=sklad_id, kind="adjust", quantity_milli=-ostatok, comment="teardown"))
+        db.commit()
+    for sklad_id in sozdany:
+        root_client.delete(f"{API}/warehouses/{sklad_id}")
+
+
+@pytest.fixture
+def shop(sklady):
     """Торговый зал: свой склад типа `shop` на каждую проверку."""
-    r = root_client.post(f"{API}/warehouses", json={"name": f"Зал {_uniq()}", "kind": "shop"})
-    assert r.status_code == 201, r.text
-    return r.json()
+    return sklady("shop")
 
 
 def product(root_client, warehouse_id=None, stock="10", price=500, service=False, sku=None):
@@ -100,8 +127,8 @@ def test_bez_klyucha_i_s_chuzhim_klyuchom_otkaz_odin(root_client, shop):
     assert r.status_code == 401 and r.json()["error"]["code"] == "bad_api_key"
 
 
-def test_stock_read_trebuet_magazinnyy_sklad(root_client):
-    podsobka = root_client.post(f"{API}/warehouses", json={"name": f"Подсобка {_uniq()}"}).json()
+def test_stock_read_trebuet_magazinnyy_sklad(root_client, sklady):
+    podsobka = sklady("stock", f"Подсобка {_uniq()}")
     assert podsobka["kind"] == "stock"
     r = root_client.post(KEYS, json={"name": "x", "scopes": ["stock.read"], "warehouse_id": podsobka["id"]})
     assert r.status_code == 422 and r.json()["error"]["code"] == "warehouse_not_shop"
@@ -164,9 +191,9 @@ def test_rotatsiya_ostavlyaet_staryy_klyuch_zhit(root_client, shop):
 # --- каталог и наличие ---------------------------------------------------------
 
 
-def test_sayt_vidit_tolko_zal_i_tolko_svoy(root_client, shop):
+def test_sayt_vidit_tolko_zal_i_tolko_svoy(root_client, shop, sklady):
     """Тип склада плюс склад ключа — два независимых условия (§2)."""
-    podsobka = root_client.post(f"{API}/warehouses", json={"name": f"Подсобка {_uniq()}"}).json()
+    podsobka = sklady("stock", f"Подсобка {_uniq()}")
     v_zale = product(root_client, shop["id"], stock="3")
     v_podsobke = product(root_client, podsobka["id"], stock="7")
     usluga = product(root_client, service=True)

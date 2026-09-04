@@ -187,7 +187,8 @@
 | GET | `/system/backups` | 🔑 `settings.manage` | Копии с экрана: есть ли ключ, последние работы, итог последней проверки. Разбор — [15-backup-encryption.md](15-backup-encryption.md) §10 |
 | POST | `/system/backups/key` | 🔑 `settings.manage` | Породить ключ копий; показывается один раз и до подтверждения не действует. `409 backup_key_exists` — ключ уже есть, менять через `{"replace": true}` |
 | POST | `/system/backups/key/confirm` | 🔑 `settings.manage` | Подтвердить ключ последними восемью знаками. `404 backup_key_not_pending`, `422 backup_key_fragment_mismatch` |
-| POST | `/system/backups/db`, `/storage` | 🔑 `settings.manage` | Снять копию базы или файлов в потоке; отвечает работой `{id, status}`. `409 backup_key_missing` — ключа нет, `409 backup_busy` — другая работа идёт |
+| POST | `/system/backups/db` | 🔑 `settings.manage` | Снять копию базы в потоке; отвечает работой `{id, status}`. `409 backup_key_missing` — ключа нет, `409 backup_busy` — другая работа идёт |
+| POST | `/system/backups/storage` | 🔑 `settings.manage` | То же для архива файлов (`storage`): фотографии, вложения, оформление. Отдельным файлом — решение владельца, docs/15 §0 |
 | GET | `/system/backups/jobs/{id}` | 🔑 `settings.manage` | Состояние работы: `running / done / failed`, имя и размер файла, таблицы и строки, итог проверки ключом |
 | GET | `/system/backups/jobs/{id}/file` | 🔑 `settings.manage` | Готовая копия файлом; пишется в журнал и ставит отметку увоза. `404 backup_not_ready`, `404 backup_gone` (копия старше суток убрана) |
 | POST | `/system/backups/jobs/{id}/check` | 🔑 `settings.manage` | Ещё раз открыть копию нынешним ключом — так обнаруживается потерянный или заменённый ключ |
@@ -1436,7 +1437,7 @@ SVG только `width` и `height`; пока картинку показыва
 | GET | `/site/catalog?page=&per_page=` | `catalog.read` | Карточки: `sku`, `name`, `unit`, `description`, `prices[]` (пусто — купить нельзя), `pack_size_milli`, `photos[]`; `currency` на уровне ответа. `ETag` / `If-None-Match` → `304`. Виден товар, по складу ключа было хоть одно движение, и услуги; ключ без склада — одни услуги |
 | GET | `/site/catalog/{id}` | `catalog.read` | Одна карточка; `404 product_not_found` — не опубликован |
 | GET | `/site/changes?since=&limit=` | `catalog.read` | Лента изменений: карточки целиком со `stock`, `next_since` (непрозрачный курсор, отстаёт на 10 с), `has_more`, `recheck_after`. Без `since` — полная выгрузка. `422 bad_cursor` |
-| GET | `/site/stock?id=17,42` / `?sku=A,B` | `stock.read` | Наличие в режиме ключа: `state` (`many/few/none/always`), `available_milli` только при `exact`; `as_of`, `ttl_sec`, `recheck_after`. До 200 позиций (`422 too_many_ids`) |
+| GET | `/site/stock` | `stock.read` | `?id=17,42` либо `?sku=A,B`. Наличие в режиме ключа: `state` (`many/few/none/always`), `available_milli` только при `exact`; `as_of`, `ttl_sec`, `recheck_after`. До 200 позиций (`422 too_many_ids`) |
 | POST | `/site/orders` | `orders.write` | Заказ со сроком брони: `site_ref`, `items[{id|sku, quantity}]`, `reserve_minutes`, `customer{name,email,phone}`, `comment`. `201` — новый, `200` — повтор с тем же `site_ref` (тот же заказ). Отказы: `422 site_ref_required / product_unknown / price_not_set / quantity_too_precise / reserve_too_long / lines_required`, `409 not_enough_stock` с `details.items[{id,sku,requested_milli,available_milli}]`, `409 warehouse_not_serving` |
 | GET | `/site/orders/{site_ref}` | `orders.read` | Свой заказ: `number`, `status`, `reserved_until`, `reserve_expired`, `total_minor`, `lines[]`, `waybills[]`. Чужой — `404` |
 | POST | `/site/orders/{site_ref}/cancel` | `orders.write` | Снять бронь до накладной; после — `409 order_already_fulfilled` |
@@ -1462,10 +1463,20 @@ rate_limited` (потолок ключа в минуту; промахи неи�
 | POST | `/settings/api-keys/{id}/revoke` | 🔑 `settings.manage` | Отзыв отметкой; строка остаётся |
 | POST | `/settings/api-keys/{id}/rotate` | 🔑 `settings.manage` | Новый ключ с теми же полями (`201`, `key` один раз); старый живёт ещё `grace_hours` (24) |
 
-Рядом: `PATCH /warehouses/{id}` принимает `kind` (`stock/shop/transit/defect`),
-`GET /warehouses/{id}/site` отвечает `{published, without_price}`; у товара
-появилось `site_description`; `GET /orders?reserve=expired` — открытые заказы с
-истёкшей бронью, у каждого заказа `site_ref`, `reserved_until`, `reserve_expired`.
+Рядом: `PATCH /warehouses/{id}` принимает `kind` (`stock/shop/transit/defect`);
+у товара появилось `site_description`; `GET /orders?reserve=expired` — открытые
+заказы с истёкшей бронью, у каждого заказа `site_ref`, `reserved_until`,
+`reserve_expired`.
+
+| Метод | Путь | Права | Описание |
+|---|---|---|---|
+| GET | `/warehouses/{warehouse_id}/site` | 🔑 `warehouse.view` | Сколько карточек этого склада на сайте и сколько без цены: `{published, without_price}`. Отвечает и на «что случится, если сменить тип» ДО нажатия, и на строку экрана «На сайте: 132 позиции, 4 без цены» |
+
+### Живые обновления
+
+| Метод | Путь | Права | Описание |
+|---|---|---|---|
+| GET | `/live` | 👤 | Поток намёков «перечитай» (SSE): `resync` первому и когда догнать нечем, `change` с `id:` номера потока (он же `Last-Event-ID`), `mode: off` при выключенной настройке `realtime_enabled` и лежащем Redis. Права и живость сессии — на каждое сообщение. Разбор — [12-realtime.md](12-realtime.md) |
 ## Служебные ручки без сессии
 
 Пять адресов внутри `/api/v1`, у которых нет ни сессии, ни права. Каждый закрыт
