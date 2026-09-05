@@ -14,6 +14,8 @@ import itertools
 import re
 from decimal import Decimal, InvalidOperation
 
+from types import SimpleNamespace
+
 from sqlalchemy.orm import Session
 
 from core import events
@@ -561,8 +563,12 @@ def write_off_materials(
     comment: str = "",
     source: str = SOURCE_MANUAL,
     source_ref: str = "",
+    uzhe_ushlo: dict[int, int] | None = None,
 ) -> list[StockMove]:
     """Снять со склада то, что бланк израсходовал. Возвращает движения.
+
+    `uzhe_ushlo` — {товар: тысячные}, что под ту же заявку уже уехало заказом:
+    вычитается из строк, и списывается только остаток (Д4, 05.09.2026).
 
     **Материал от работы отличает карточка товара, а не колонка строки.** Строка
     с услугой и строка без товара вовсе — выполненная работа: остатка у неё нет,
@@ -588,6 +594,7 @@ def write_off_materials(
     Движения молчаливые (`announce=False`): в ленту заявки идёт одна строка про
     бланк, а не по строке на каждую снятую деталь. Разбор — у самого события.
     """
+    ostatok_vychetov = dict(uzhe_ushlo or {})
     materials = []
     for row in rows:
         if row.product_id is None:
@@ -598,7 +605,14 @@ def write_off_materials(
         product = get_product(db, row.product_id, include_deleted=True)
         if product.is_service:
             continue
-        materials.append((row, product))
+        skolko = row.quantity_milli
+        vychet = min(skolko, ostatok_vychetov.get(row.product_id, 0))
+        if vychet:
+            ostatok_vychetov[row.product_id] -= vychet
+            skolko -= vychet
+        if skolko <= 0:
+            continue
+        materials.append((row, product, skolko))
 
     if not materials:
         return []
@@ -615,18 +629,25 @@ def write_off_materials(
     # Порядок по id — против взаимной блокировки: двое, списывающие одни и те же
     # материалы в разном порядке, встали бы друг против друга насмерть, и беда
     # сменилась бы с «списали лишнее» на «списание иногда падает без причины».
-    for product_id in sorted({row.product_id for row, _ in materials}):
+    for product_id in sorted({row.product_id for row, _, _ in materials}):
         warehouse_repo.zapert_tovar(db, product_id)
 
     if not confirm_negative:
-        short = shortages(db, [row for row, _ in materials], warehouse.id)
+        short = shortages(
+            db,
+            [
+                SimpleNamespace(product_id=row.product_id, quantity_milli=skolko, name_snapshot=row.name_snapshot)
+                for row, _, skolko in materials
+            ],
+            warehouse.id,
+        )
         if short:
             raise errors.ValidationError(
                 "Not enough stock: " + ", ".join(short), code="not_enough_stock"
             )
 
     moves = []
-    for row, product in materials:
+    for row, product, skolko in materials:
         row.cost_minor = product.cost_minor
         move, _ = add_move(
             db,
@@ -636,7 +657,7 @@ def write_off_materials(
                 # а деталь, поставленная в работу, со склада именно списана.
                 # Журнал склада обязан читаться словами, а не только цифрами.
                 "kind": MOVE_WRITEOFF,
-                "quantity": format_quantity(row.quantity_milli),
+                "quantity": format_quantity(skolko),
                 "warehouse_id": warehouse.id,
                 "deal_id": document.deal_id,
                 "comment": comment,

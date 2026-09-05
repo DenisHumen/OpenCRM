@@ -6,6 +6,8 @@ import { Icon } from "../components/Icon";
 import { Chip, Dochitat, EmptyState, ScreenLoading } from "../components/ui";
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
+import { statusLabel, statusVariant } from "../lib/documents";
+import { useLiveTopic } from "../lib/live";
 import { useDebounced } from "../lib/debounce";
 import { useFailure } from "../lib/failure";
 import { useGuard } from "../lib/guard";
@@ -55,12 +57,7 @@ export interface Waybill {
  * «получатель расписался». Показывать здесь слова бланка значит называть
  * отгрузку выдачей квитанции.
  */
-export const WAYBILL_STATUS_LABEL = {
-  draft: "wbDraft",
-  issued: "wbPosted",
-  closed: "wbConfirmed",
-  cancelled: "wbCancelled",
-} as const;
+export { WAYBILL_STATUS_LABEL } from "../lib/documents";
 
 /** По скольку накладных дочитывается список. */
 const NA_STRANITSE = 100;
@@ -84,6 +81,9 @@ export function Waybills() {
   // от прошлого.
   const otbor_spiska = useRef("");
   const [attempt, setAttempt] = useState(0);
+  // Закрытие заказа выписывает и проводит накладную у соседа — список обязан
+  // это увидеть без перезагрузки, как заказы и бланки.
+  useLiveTopic("waybills", () => setAttempt((n) => n + 1));
   const guard = useGuard();
   const { failure, fail, clear } = useFailure();
 
@@ -256,15 +256,7 @@ export function Waybills() {
               {formatMoney(waybill.total, workspace.currency, locale)}
             </span>
             <span style={{ width: 130, textAlign: "right" }}>
-              <Chip
-                variant={
-                  waybill.status === "closed" || waybill.status === "issued"
-                    ? "success"
-                    : undefined
-                }
-              >
-                {t(WAYBILL_STATUS_LABEL[waybill.status as keyof typeof WAYBILL_STATUS_LABEL] ?? "wbDraft")}
-              </Chip>
+              <Chip variant={statusVariant(waybill.status)}>{statusLabel(t, waybill.status, waybill.kind)}</Chip>
             </span>
           </Link>
         ))}

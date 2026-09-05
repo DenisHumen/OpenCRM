@@ -546,9 +546,12 @@ def test_zakaz_s_provedennoy_nakladnoy_ne_zakryvaetsya(root_client, client_row):
     assert root_client.post(f"{WAYBILLS}/{nakladnaya['id']}/post", json={}).status_code == 200
     assert ostatok(root_client, item) == 7_000
 
+    # С 05.09.2026 накладная, покрывшая заказ целиком, сама его закрывает
+    # (`tests/test_svyaz_blokov.py`); вторая отгрузка тем более невозможна.
+    assert root_client.get(f"{ORDERS}/{zakaz['id']}").json()["status"] == "closed"
     otvet = root_client.post(f"{ORDERS}/{zakaz['id']}/close", json={})
     assert otvet.status_code == 422, "товар уехал бы дважды"
-    assert otvet.json()["error"]["code"] == "already_shipped_by_waybill"
+    assert otvet.json()["error"]["code"] == "order_finished"
     assert ostatok(root_client, item) == 7_000
 
 

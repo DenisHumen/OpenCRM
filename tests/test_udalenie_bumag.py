@@ -99,8 +99,10 @@ def test_zakaz_s_provedyonnoy_nakladnoy_ne_udalyaetsya_a_chernovik_ukhodit_s_nim
     root_client.post(f"{ORDERS}/{order2['id']}/lines", json={"product_id": item["id"], "quantity": "1"})
     wb = root_client.get(f"{WAYBILLS}", params={"basis_id": order2["id"]}).json()["items"][0]
     assert root_client.post(f"{WAYBILLS}/{wb['id']}/post", json={}).status_code == 200
+    # Накладная закрыла заказ (05.09.2026): удалять нельзя уже потому, что он
+    # закрыт, — а проведённая бумага по основанию держит его и так.
     r = root_client.delete(f"{ORDERS}/{order2['id']}")
-    assert r.status_code == 422 and "waybills" in r.json()["error"]["message"]
+    assert r.status_code == 422, r.text
 
 
 def test_chernovik_nakladnoy_udalyaetsya_provedyonnaya_net(root_client, client_row):

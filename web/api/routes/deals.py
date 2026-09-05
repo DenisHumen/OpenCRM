@@ -465,8 +465,10 @@ def order_from_deal(
     """
     deal = _visible(db, deal_id, user)
     zakaz = order_service.sozdat_iz_zayavki(db, deal, user)
+    client = clients_repo.get(db, zakaz.client_id, include_deleted=True) if zakaz.client_id else None
     return schemas.order_out(
         zakaz,
         order_service.lines(db, zakaz.id),
         amounts=permissions_service.sees_amounts(db, user, "orders"),
+        client_name=client.name if client else None,
     )

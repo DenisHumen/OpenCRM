@@ -17,6 +17,7 @@ from core.services import (
     share_service,
 )
 from core.services import site_service
+from database.models.document import KIND_ACT, KIND_INTAKE
 from database.repositories import boards as boards_repo
 from web.api import schemas
 from web.api.deps import client_ip, document_limiter, get_db, pin_limiter
@@ -539,6 +540,12 @@ def document_status(number: str, request: Request, db: Session = Depends(get_db)
         bezopasnost.otmetit("blank_promah")
         return _closed_page(request, db)
 
+    # Снаружи показываются только бумаги клиента — квитанция и акт. Заказ и
+    # накладная живут в той же таблице с той же нумерацией, и перебор номеров
+    # открывал бы их с чужими словами про «готово к выдаче».
+    if doc.kind not in (KIND_INTAKE, KIND_ACT):
+        bezopasnost.otmetit("blank_promah")
+        return _closed_page(request, db)
     return templates.TemplateResponse(
         request,
         "document_status.html",

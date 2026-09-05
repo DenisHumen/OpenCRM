@@ -9,9 +9,11 @@ from core.services import audit_service, company_service, pipeline_service
 from core.utils import now_utc, to_utc_naive
 from database.models import Deal, User
 from database.models.audit import SOURCE_MANUAL
+from database.models.document import OPEN_ORDER_STATUSES, ORDER_KINDS
 from database.models.pipeline import CLOSED_KINDS, KIND_LOST
 from database.repositories import deal_lines as lines_repo
 from database.repositories import deals as deals_repo
+from database.repositories import documents as documents_repo
 
 MAX_TITLE = 200
 MAX_LOST_REASON = 200
@@ -346,6 +348,15 @@ def delete_deal(
     source_ref: str = "",
 ) -> None:
     deal = get_deal(db, deal_id)
+    # Открытый заказ по заявке остался бы со ссылкой в корзину, а кладовщик —
+    # с товаром, который собирал неизвестно кому. Сначала заказ, потом заявка.
+    otkrytye, _ = documents_repo.search(db, deal_id=deal.id, kinds=ORDER_KINDS, page=1, per_page=200)
+    otkrytye = [z.number for z in otkrytye if z.status in OPEN_ORDER_STATUSES]
+    if otkrytye:
+        raise errors.ValidationError(
+            "The deal has open orders: " + ", ".join(otkrytye) + "; close or cancel them first",
+            code="deal_has_open_orders",
+        )
     deal.deleted_at = now_utc()
     db.flush()
     audit_service.record_deletion(
