@@ -228,6 +228,24 @@ def s_nehvatkoy(db: Session, stroki: list[DealLine], amounts: bool = True) -> li
     return otvet
 
 
+def ushlo_pod_zayavku(db: Session, deal_id: int, product_ids) -> dict[int, int]:
+    """Сколько товара уже ушло под заявку или стоит в её открытых заказах.
+
+    Это то, чего акт по заявке списывать не должен: заказ по заявке отгрузил
+    деталь, и акт, списавший её снова, дал бы минус на остатке — тот же двойной
+    путь к складу, что закрыт у выигрыша заявки (`spisat_pri_zakrytii`).
+    """
+    tovary = sorted({p for p in product_ids if p})
+    if not tovary:
+        return {}
+    spisano = warehouse_repo.spisano_po_zayavkam(db, tovary)
+    peredano = documents_repo.zakazano_po_zayavkam(db, KIND_SALES_ORDER, OPEN_ORDER_STATUSES, tovary)
+    return {
+        tovar: spisano.get((deal_id, tovar), 0) + peredano.get((deal_id, tovar), 0)
+        for tovar in tovary
+    }
+
+
 def spisat_pri_zakrytii(db: Session, deal: Deal, author: User | None) -> int:
     """Списать со склада то, что заявка обещала и что ещё не ушло. Вернуть число
     списанных позиций.

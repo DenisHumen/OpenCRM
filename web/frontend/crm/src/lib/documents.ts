@@ -6,7 +6,7 @@ import type { TFunc, TranslationKey } from "./i18n";
  * приняли — делаем — готово — отдали. Делать его настраиваемым не за чем, зато
  * на печатной квитанции и на публичной странице состояния совпадают всегда.
  */
-export const DOC_STATUSES = ["issued", "in_progress", "ready", "closed", "cancelled"] as const;
+export const DOC_STATUSES = ["draft", "issued", "in_progress", "ready", "closed", "cancelled"] as const;
 
 export type DocStatus = (typeof DOC_STATUSES)[number];
 
@@ -62,6 +62,7 @@ export function sortLabel(t: TFunc, sort: string): string {
 }
 
 const LABELS: Record<DocStatus, TranslationKey> = {
+  draft: "wbDraft",
   issued: "docIssued",
   in_progress: "docInProgress",
   ready: "docReady",
@@ -77,6 +78,7 @@ const LABELS: Record<DocStatus, TranslationKey> = {
  * вещь забрали проверить, нашли ещё поломку, вернули в работу.
  */
 const NEXT: Record<DocStatus, DocStatus[]> = {
+  draft: [],
   issued: ["in_progress", "ready", "cancelled"],
   in_progress: ["ready", "cancelled"],
   ready: ["closed", "in_progress"],
@@ -84,8 +86,34 @@ const NEXT: Record<DocStatus, DocStatus[]> = {
   cancelled: [],
 };
 
-export function statusLabel(t: TFunc, status: string): string {
+/** Состояния накладной — своими словами: «проведена» и «принята получателем»
+ *  значат не то же, что «выдан» и «выдано» у квитанции. */
+export const WAYBILL_STATUS_LABEL = {
+  draft: "wbDraft",
+  issued: "wbPosted",
+  closed: "wbConfirmed",
+  cancelled: "wbCancelled",
+} as const;
+
+const ORDER_KINDS = ["sales_order", "purchase_order"];
+const WAYBILL_KINDS = ["waybill_out", "waybill_in"];
+
+/** Подпись состояния по виду бумаги. Один статус в трёх разделах подписывался
+ *  тремя словами в зависимости от экрана; теперь слово идёт за видом бумаги,
+ *  а не за экраном: черновик накладной в «Бланках» больше не «Выдан». */
+export function statusLabel(t: TFunc, status: string, kind?: string): string {
+  if (kind && WAYBILL_KINDS.includes(kind)) {
+    return t(WAYBILL_STATUS_LABEL[status as keyof typeof WAYBILL_STATUS_LABEL] ?? "wbDraft");
+  }
   return t(LABELS[status as DocStatus] ?? "docIssued");
+}
+
+/** Куда ведёт бумага: заказ и накладная — на свои карточки, где их проводят;
+ *  ссылка на карточку бланка открывала бы заказ там, где закрыть его нельзя. */
+export function paperLink(doc: { id: number; kind: string }): string {
+  if (ORDER_KINDS.includes(doc.kind)) return `/orders/${doc.id}`;
+  if (WAYBILL_KINDS.includes(doc.kind)) return `/waybills/${doc.id}`;
+  return `/documents/${doc.id}`;
 }
 
 /** Цвет состояния — по смыслу, одинаково у бланка, заказа и накладной:

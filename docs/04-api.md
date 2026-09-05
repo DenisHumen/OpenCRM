@@ -782,6 +782,7 @@ CRM нет, — человек нажмёт «отправить» снова, �
 |---|---|---|---|
 | GET | `/orders` | 🔑 `orders.view` | Список заказов: `search`, `kind`, `status`, `sort`, `client_id`, `deal_id`, пагинация. В ответе `counts` — сколько заказов в каждом состоянии |
 | POST | `/orders` | 🔑 `orders.create` | Завести: `kind`, по желанию `client_id` (или `client_name`/`client_phone`/`client_email` — поиск карточки, разбор в docs/19). В ответе всегда `client_name` — имя или `null` |
+| POST | `/orders/{order_id}/cancel` | 🔑 `orders.edit` | Отменить открытый заказ. `422 already_shipped_by_waybill` — товар уже уехал накладной, путь назад — сторно (05.09.2026) |
 | POST | `/orders/{order_id}/client` | 🔑 `orders.edit` | Кому отгружаем: `client_id` или `null` — привязать или отвязать, пока заказ открыт. `422 order_finished` у проведённого и отменённого (записанное не переписывается), `404 client_not_found` |
 | GET | `/orders/{id}` | 🔑 `orders.view` | Заказ с позициями, выписанными по нему накладными (`waybills`, ключа нет вовсе при выключенном блоке) и историей переходов (`events`) |
 | POST | `/orders/{id}/lines` | 🔑 `orders.edit` | Добавить позицию |

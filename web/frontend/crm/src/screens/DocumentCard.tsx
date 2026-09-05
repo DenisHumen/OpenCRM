@@ -10,6 +10,7 @@ import { api, ApiError } from "../lib/api";
 import { useApp } from "../lib/app";
 import { useDebounced } from "../lib/debounce";
 import { useFailure } from "../lib/failure";
+import { useLiveTopic } from "../lib/live";
 import { useGuard } from "../lib/guard";
 import { copyText } from "../lib/clipboard";
 import { can } from "../lib/permissions";
@@ -68,6 +69,10 @@ export function DocumentCard() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useLiveTopic("documents", (sob) => {
+    if (sob.resync || sob.hints.some((h) => h.id === Number(id))) void load();
+  });
 
   if (!doc) return <ScreenLoading error={failure} onRetry={() => void load()} />;
 

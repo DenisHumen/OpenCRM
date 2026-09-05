@@ -10,6 +10,7 @@ import { SourcePicker } from "../components/SourcePicker";
 import { Avatar, Chip, ConfirmModal, Dochitat, EmptyState, LoadFailed, ScreenLoading } from "../components/ui";
 import { api, ApiError } from "../lib/api";
 import { dropTarget } from "../lib/dnd";
+import { kindLabel, paperLink, statusLabel, statusVariant } from "../lib/documents";
 import { useApp } from "../lib/app";
 import { useLiveTopic, useNachatayaPravka } from "../lib/live";
 import { flagStrany, nazvanieStrany } from "../lib/strany";
@@ -80,7 +81,7 @@ const NOTE_LABELS: Record<string, TranslationKey> = {
   stock: "feedStock",
 };
 
-type TabKey = "history" | "calls" | "files" | "boards" | "deals";
+type TabKey = "history" | "calls" | "files" | "papers" | "boards" | "deals";
 
 /** Иконка записи ленты. У звонка она заодно показывает направление. */
 function noteIcon(note: { kind: string; direction?: string | null }): string {
@@ -128,6 +129,12 @@ export function ClientCard() {
   // Отказ здесь больше не сводится к пустому списку: «Досок пока нет» — это
   // ответ, за которым идут заводить новую, и заводили бы вторую поверх первой.
   const boards = useReference<any>(hasBoards ? `/boards?client_id=${id}` : null);
+  // Бланки и накладные клиента — те, что искали по ленте: «а квитанцию ему
+  // выдавали?» отвечалось только скроллом истории. Заказы — на своей вкладке.
+  const hasDocuments = moduleOn(modules, "documents");
+  const papers = useReference<any>(hasDocuments ? `/documents?client_id=${id}&per_page=100` : null);
+  const bumagi = (papers.items ?? []).filter((d: any) => d.kind !== "sales_order" && d.kind !== "purchase_order");
+  useLiveTopic(["documents", "waybills"], () => papers.reload());
   // Список ящиков нужен только выбору отправителя и доступен только root.
   // Не ответило — форма всё равно работает: сервер возьмёт первый активный.
   const mailAccounts = useReference<MailSender>(hasMail ? "/mail/senders" : null);
@@ -285,6 +292,7 @@ export function ClientCard() {
     // попал записью, здесь — длительность, итог и запись разговора.
     { module: "telephony", key: "calls", label: t("calls") },
     { key: "files", label: t("files"), count: files.length },
+    { module: "documents", key: "papers", label: t("documents"), count: bumagi.length },
     { module: "boards", key: "boards", label: t("boards"), count: boards.items?.length ?? 0 },
     // Заявки клиента: за год их бывает пять, и «что мы для него делали»
     // должно быть вопросом к системе, а не к памяти.
@@ -567,6 +575,34 @@ export function ClientCard() {
             {files.length === 0 && <EmptyState title={t("dropFiles") + " " + t("browse")} />}
           </div>
         </>
+      )}
+
+      {activeTab === "papers" && (
+        papers.failure !== null ? (
+          <LoadFailed error={papers.failure} onRetry={papers.reload} />
+        ) : bumagi.length === 0 ? (
+          <EmptyState icon="receipt" title={t("noDocuments")} />
+        ) : (
+          <div className="list-card">
+            {bumagi.map((doc: any) => (
+              <Link key={doc.id} to={paperLink(doc)} className="list-row hoverable">
+                <span className="doc-number">{doc.number}</span>
+                <div className="list-row-text">
+                  <div className="truncate" style={{ color: "var(--text)", fontSize: 13.5, fontWeight: 500 }}>
+                    {doc.payload?.fields?.item || kindLabel(t, doc.kind)}
+                  </div>
+                  <div className="truncate" style={{ color: "var(--faint)", fontSize: 12 }}>{kindLabel(t, doc.kind)}</div>
+                </div>
+                <span style={{ width: 90, textAlign: "right", color: "var(--faint)", fontSize: 12, flexShrink: 0 }}>
+                  {formatDate(doc.created_at, locale)}
+                </span>
+                <span style={{ width: 130, flexShrink: 0, display: "flex", justifyContent: "flex-end" }}>
+                  <Chip variant={statusVariant(doc.status)}>{statusLabel(t, doc.status, doc.kind)}</Chip>
+                </span>
+              </Link>
+            ))}
+          </div>
+        )
       )}
 
       {activeTab === "boards" && (

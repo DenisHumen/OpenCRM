@@ -13,7 +13,7 @@ import { useApp } from "../lib/app";
 import { useLiveTopic, useNachatayaPravka } from "../lib/live";
 import { useFailure } from "../lib/failure";
 import { useGuard } from "../lib/guard";
-import { statusLabel, statusVariant } from "../lib/documents";
+import { kindLabel, paperLink, statusLabel, statusVariant } from "../lib/documents";
 import { formatDate, formatDateTime, formatMoney } from "../lib/format";
 import { moduleOn } from "../lib/modules";
 import { can } from "../lib/permissions";
@@ -82,6 +82,9 @@ export function DealCard() {
     if (nachata) setUstarelo(true);
     else void load();
   });
+  // Авто-акт заводится правкой строк, отменяется закрытием заявки, накладная
+  // проводится закрытием заказа — врезка бланков обязана это видеть сама.
+  useLiveTopic(["documents", "orders", "waybills"], () => docs.reload());
 
   const load = useCallback(async () => {
     clear();
@@ -584,12 +587,12 @@ export function DealCard() {
         ) : (
           <div className="doc-mini-list">
             {(docs.items ?? []).map((doc) => (
-              <Link key={doc.id} to={`/documents/${doc.id}`} className="doc-mini">
+              <Link key={doc.id} to={paperLink(doc)} className="doc-mini">
                 <span className="doc-number">{doc.number}</span>
                 <span className="truncate" style={{ flex: 1, minWidth: 0 }}>
-                  {doc.payload?.fields?.item || "—"}
+                  {doc.payload?.fields?.item || kindLabel(t, doc.kind)}
                 </span>
-                <Chip variant={statusVariant(doc.status)}>{statusLabel(t, doc.status)}</Chip>
+                <Chip variant={statusVariant(doc.status)}>{statusLabel(t, doc.status, doc.kind)}</Chip>
               </Link>
             ))}
           </div>

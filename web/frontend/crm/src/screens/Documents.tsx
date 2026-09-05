@@ -18,6 +18,7 @@ import {
   DOC_SORTS,
   DOC_STATUSES,
   kindLabel,
+  paperLink,
   sortLabel,
   statusLabel,
   statusVariant,
@@ -279,14 +280,14 @@ export function Documents() {
           klyuchStroki={(doc: any) => doc.id}
           render={(doc: any) => (
             <Link
-              to={`/documents/${doc.id}`}
+              to={paperLink(doc)}
               className="list-row hoverable"
-              onContextMenu={(e) => kontekst.otkryt(e, punktyDlyaZapisi(`/documents/${doc.id}`, t, navigate))}
+              onContextMenu={(e) => kontekst.otkryt(e, punktyDlyaZapisi(paperLink(doc), t, navigate))}
             >
               <span className="doc-number">{doc.number}</span>
               <div className="list-row-text">
                 <div className="truncate" style={{ color: "var(--text)", fontSize: 13.5, fontWeight: 500 }}>
-                  {doc.payload?.fields?.item || "—"}
+                  {doc.payload?.fields?.item || kindLabel(t, doc.kind)}
                 </div>
                 <div className="truncate" style={{ color: "var(--faint)", fontSize: 12 }}>
                   {doc.payload?.client?.name || "—"}
@@ -296,7 +297,7 @@ export function Documents() {
                 {formatDate(doc.created_at, locale)}
               </span>
               <span className="doc-row-status" style={{ width: 130, flexShrink: 0, display: "flex", justifyContent: "flex-end" }}>
-                <Chip variant={statusVariant(doc.status)}>{statusLabel(t, doc.status)}</Chip>
+                <Chip variant={statusVariant(doc.status)}>{statusLabel(t, doc.status, doc.kind)}</Chip>
               </span>
             </Link>
           )}

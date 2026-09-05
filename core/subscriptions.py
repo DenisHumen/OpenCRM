@@ -53,7 +53,7 @@ from core.services.act_service import ACT_COMPLETED
 from core.services.deal_lines_service import DEAL_LINES_CHANGED
 from core.services.lead_service import LEAD_RECEIVED
 from core.services.deal_service import DEAL_DELETED, DEAL_STAGE_CHANGED
-from core.services import notification_service, waybill_service
+from core.services import notification_service, order_service, waybill_service
 from core.services.order_service import (
     ORDER_CANCELLED,
     ORDER_CLOSED,
@@ -69,8 +69,8 @@ from core.services.warehouse_service import STOCK_WRITTEN_OFF, format_quantity
 from core.services.waybill_service import WAYBILL_POSTED
 from core.utils import now_utc
 from database.models.client import KIND_DOCUMENT, KIND_STAGE, KIND_STOCK
-from database.models.document import STATUS_CANCELLED
-from database.models.pipeline import CLOSED_KINDS, KIND_WON
+from database.models.document import KIND_SALES_ORDER, STATUS_CANCELLED
+from database.models.pipeline import CLOSED_KINDS, KIND_LOST, KIND_WON
 
 
 # --- уведомления сотрудникам (docs/21 §4) ------------------------------------
@@ -206,6 +206,79 @@ def spisat_tovar_pri_vyigryshe(event: events.Event) -> None:
     if stage.kind != KIND_WON:
         return
     deal_lines_service.spisat_pri_zakrytii(event.db, event["deal"], event.actor)
+
+
+@events.participant(DEAL_STAGE_CHANGED, module="orders", order=DEFAULT_ORDER + 20)
+def zakazy_ukhodyat_s_proigryshem(event: events.Event) -> None:
+    """Проигранная заявка отменяет свои открытые заказы.
+
+    Отгружать по ней нечего, а открытый заказ держал бы бронь и висел в списке
+    «принято» без единого пути закрыть его честно. Выигранная — не трогает:
+    заказ там и есть путь выдачи, и закрывается своим ходом. Безликий источник
+    (`actor is None`) пропускается, как у авто-акта: отмена пишется от имени
+    человека.
+    """
+    stage = pipeline_service.get_stage(event.db, event["to_stage"])
+    if stage.kind != KIND_LOST or event.actor is None:
+        return
+    for zakaz in order_service.otkrytye_po_zayavke(event.db, event["deal"].id):
+        order_service.cancel(event.db, zakaz.id, event.actor, note="deal lost on the board")
+
+
+@events.observer(ORDER_CLOSED, module="clients")
+def order_closed_into_feed(event: events.Event) -> None:
+    """Отгрузка и приёмка попадают в ленту клиента одной строкой.
+
+    Отмена заказа в ленту шла (через `set_status`), а отгрузка — нет: лента
+    отвечала «заказ отменили» и молчала о том, что товар выдали.
+    """
+    order = event["order"]
+    if order.client_id is None:
+        return
+    what = "shipped" if order.kind == KIND_SALES_ORDER else "received"
+    client_service.add_system_note(
+        event.db,
+        order.client_id,
+        event.actor,
+        KIND_DOCUMENT,
+        f"Order {order.number} {what} ({event.reason})",
+        deal_id=order.deal_id,
+        source=event.source,
+    )
+
+
+@events.observer(ORDER_REVERTED, module="clients")
+def order_reverted_into_feed(event: events.Event) -> None:
+    order = event["order"]
+    if order.client_id is None:
+        return
+    client_service.add_system_note(
+        event.db,
+        order.client_id,
+        event.actor,
+        KIND_DOCUMENT,
+        f"Order {order.number} reverted ({event.reason})",
+        deal_id=order.deal_id,
+        source=event.source,
+    )
+
+
+@events.observer(WAYBILL_POSTED, module="clients")
+def waybill_into_feed(event: events.Event) -> None:
+    """Накладная без заказа — одной строкой в ленту; по заказу строку даёт сам
+    заказ (он закрывается той же накладной и называет её номер)."""
+    waybill = event["waybill"]
+    if waybill.client_id is None or waybill.basis_id is not None:
+        return
+    client_service.add_system_note(
+        event.db,
+        waybill.client_id,
+        event.actor,
+        KIND_DOCUMENT,
+        f"Waybill {waybill.number} posted: {len(event['lines'])} line(s) ({event.reason})",
+        deal_id=waybill.deal_id,
+        source=event.source,
+    )
 
 
 @events.observer(DEAL_STAGE_CHANGED, module="clients")
@@ -399,6 +472,12 @@ def write_off_act_materials(event: events.Event) -> None:
     безликих источников (вебхук АТС, забор почты) у этого события не бывает.
     """
     act = event["act"]
+    # Что под ту же заявку уже отгрузил заказ, акт второй раз не списывает.
+    uzhe_ushlo = None
+    if act.deal_id:
+        uzhe_ushlo = deal_lines_service.ushlo_pod_zayavku(
+            event.db, act.deal_id, [row.product_id for row in event["lines"]]
+        )
     warehouse_service.write_off_materials(
         event.db,
         act,
@@ -406,6 +485,7 @@ def write_off_act_materials(event: events.Event) -> None:
         event.actor,
         warehouse_id=event["warehouse_id"],
         confirm_negative=event["confirm_negative"],
+        uzhe_ushlo=uzhe_ushlo,
         # Комментарий движения — то, чем его назовут вслух: «for certificate
         # 2026-000123». По нему же в журнале склада находят, откуда взялся минус.
         #
@@ -437,6 +517,9 @@ def move_deal_after_act(event: events.Event) -> None:
     Блок `deals` несущий и выключенным не бывает; указан он не для красоты, а
     потому что переводимая запись принадлежит именно ему.
     """
+    if event["to_stage"] is None:
+        # Заявка уже закрыта на доске: акт записал работу, двигать нечего.
+        return
     deal_service.move_stage(
         event.db,
         event["deal_id"],

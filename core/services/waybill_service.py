@@ -353,10 +353,14 @@ def po_zakazu(
         author,
     )
     for row in stroki:
-        if row.product_id is not None:
-            product = warehouse_service.get_product(db, row.product_id, include_deleted=True)
-            if product.is_service:
-                continue
+        # Накладная — о товаре: услуги и разовые позиции («упаковка») в неё не
+        # едут, как и у черновика-зеркала; иначе одна и та же бумага выходила
+        # бы с «упаковкой» или без неё в зависимости от настройки автоматики.
+        if row.product_id is None:
+            continue
+        product = warehouse_service.get_product(db, row.product_id, include_deleted=True)
+        if product.is_service:
+            continue
         documents_repo.add_line(
             db,
             DocumentLine(
@@ -568,6 +572,9 @@ def provesti(
                     "document_id": waybill.id,
                 },
                 author,
+                # Движения молчаливые: в ленту клиента идёт одна строка про
+                # накладную (`core/subscriptions.py`), а не по строке на позицию.
+                announce=False,
             )
 
     # Деньги — событием, а не прямым вызовом финансов: накладные обязаны
@@ -609,6 +616,13 @@ def provesti(
         before=previous,
         after=STATUS_ISSUED,
     )
+    if not po_zakrytiyu_zakaza and waybill.basis_id is not None:
+        osnovanie = documents_repo.get(db, waybill.basis_id)
+        if osnovanie is not None and osnovanie.kind in ORDER_KINDS:
+            # Заказ ввозит накладные на уровне модуля — обратный ввоз только здесь.
+            from core.services import order_service
+
+            order_service.zakryt_po_nakladnoy(db, osnovanie, waybill, author)
     return waybill
 
 
@@ -716,6 +730,17 @@ def stornirovat(db: Session, document_id: int, author: User) -> Document:
                 sort_order=row.sort_order,
             ),
         )
+    audit_service.record(
+        db,
+        action=audit_service.ACTION_WAYBILL_REVERSED,
+        actor=author,
+        source=SOURCE_MANUAL,
+        entity_type=audit_service.ENTITY_DOCUMENT,
+        entity_id=ishodnaya.id,
+        entity_label=ishodnaya.number,
+        before=ishodnaya.status,
+        after=f"reversed by {storno.number}",
+    )
     return storno
 
 

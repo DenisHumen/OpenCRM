@@ -282,7 +282,14 @@ def complete(
     # Куда переводим. Названное руками важнее записанного при заведении: решение
     # принимают в момент подписи, и оно же остаётся на акте — бумага обязана
     # помнить, что именно сделала.
-    target = _clean_stage(db, stage) or act.next_stage or _next_stage_of(db, act.deal_id)
+    zayavka = deals_repo.get(db, act.deal_id)
+    if zayavka is not None and zayavka.closed_at is not None and not _clean_stage(db, stage):
+        # Заявку уже закрыли на доске, а акт заводили руками: он фиксирует
+        # работу и материалы, этап не трогает — двигать некуда, и «нет
+        # следующего этапа» оставлял бы бумагу открытой навсегда.
+        target = None
+    else:
+        target = _clean_stage(db, stage) or act.next_stage or _next_stage_of(db, act.deal_id)
     # Этап заявки спрашиваем ДО события: после него заявка уже переведена, и
     # «было» в журнале совпало бы со «стало» — то есть запись перестала бы
     # отвечать на единственный вопрос, ради которого её читают.
@@ -294,7 +301,8 @@ def complete(
             "The act has already been carried out by someone else",
             code="document_status_changed",
         )
-    act.next_stage = target
+    if target is not None:
+        act.next_stage = target
     documents_repo.add_event(
         db,
         DocumentEvent(
@@ -338,7 +346,7 @@ def complete(
         # «Было» и «стало» у акта — не статус бумаги, а этап работы: спрашивают
         # в журнале именно об этом, а статус виден в истории самого акта.
         before=was_stage,
-        after=target,
+        after=target or was_stage,
     )
     return act
 

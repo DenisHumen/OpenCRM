@@ -11,6 +11,7 @@ import { useGuard } from "../lib/guard";
 import { formatDate, formatMoney, formatQuantity, toMinorUnits } from "../lib/format";
 import { statusVariant } from "../lib/documents";
 import { can } from "../lib/permissions";
+import { useLiveTopic } from "../lib/live";
 import { WAYBILL_STATUS_LABEL, type Waybill } from "./Waybills";
 
 /** Карточка накладной: позиции, проведение, сторнирование.
@@ -57,6 +58,12 @@ export function WaybillCard() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  // Проведённая соседом накладная на открытой карточке оставалась черновиком
+  // с кнопкой «Провести» до перезагрузки.
+  useLiveTopic("waybills", (sob) => {
+    if (sob.resync || sob.hints.some((h) => h.id === Number(id))) void load();
+  });
 
   if (!waybill) return <ScreenLoading error={failure} onRetry={() => void load()} />;
 

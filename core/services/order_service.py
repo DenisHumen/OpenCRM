@@ -259,7 +259,17 @@ def sobran_po_strokam(stroki) -> bool:
     вопрос заявки физический — коробки собраны или нет. Пустой заказ собранным
     не считается: собирать нечего.
     """
-    return bool(stroki) and all(s.picked_milli >= s.quantity_milli for s in stroki)
+    # Разовая позиция («упаковка») сканом не собирается — у неё нет карточки
+    # товара. Считаем по товарным строкам: иначе заказ с одной такой строкой
+    # не стал бы «собран» никогда (владелец, 05.09.2026).
+    tovarnye = [s for s in stroki if s.product_id is not None]
+    return bool(tovarnye) and all(s.picked_milli >= s.quantity_milli for s in tovarnye)
+
+
+def otkrytye_po_zayavke(db: Session, deal_id: int) -> list[Document]:
+    """Открытые заказы заявки — те, что ещё ждут отгрузки или приёмки."""
+    zakazy, _ = documents_repo.search(db, deal_id=deal_id, kinds=ORDER_KINDS, page=1, per_page=200)
+    return [z for z in zakazy if z.status in OPEN_ORDER_STATUSES]
 
 
 def _title(kind: str) -> str:
@@ -697,11 +707,7 @@ def close(
     #
     # Проверка стоит ДО занятия замков и до смены статуса: отказать дешевле,
     # чем откатывать.
-    otgruzheno = [
-        w.number
-        for w in documents_repo.po_osnovaniyu(db, order.id)
-        if w.status in (STATUS_ISSUED, STATUS_CLOSED)
-    ]
+    otgruzheno = [w.number for w in otgruzheno_nakladnymi(db, order.id)]
     if otgruzheno:
         raise errors.ValidationError(
             "Stock has already moved by waybill " + ", ".join(otgruzheno)
@@ -904,11 +910,7 @@ def revert(db: Session, document_id: int, author: User) -> Document:
     # раньше писались без проверки нехватки. Возврат приёмки, товар из которой
     # уже продали, уводит остаток в минус — но отказать здесь значило бы
     # запереть человека с заказом, который нельзя ни отменить, ни исправить.
-    otgruzheno = [
-        w
-        for w in documents_repo.po_osnovaniyu(db, order.id)
-        if w.status in (STATUS_ISSUED, STATUS_CLOSED)
-    ]
+    otgruzheno = otgruzheno_nakladnymi(db, order.id)
     for nakladnaya in otgruzheno:
         storno = waybill_service.stornirovat(db, nakladnaya.id, author)
         waybill_service.provesti(db, storno.id, author, confirm_negative=True)
@@ -982,6 +984,15 @@ def cancel(db: Session, document_id: int, author: User, note: str = "") -> Docum
     """Отменить непроведённый заказ. Склада не касается — резерв снимется сам."""
     order = get(db, document_id)
     _assert_open(order)
+    # Товар уже уехал накладной — «отменён» соврал бы про отгрузку. Такому
+    # заказу путь один: он закрыт накладной, а откат — через сторно.
+    uekhalo = [w.number for w in otgruzheno_nakladnymi(db, order.id)]
+    if uekhalo:
+        raise errors.ValidationError(
+            "Stock has already moved by waybill " + ", ".join(uekhalo)
+            + "; reverse the waybill instead of cancelling the order",
+            code="already_shipped_by_waybill",
+        )
     order = document_service.set_status(db, order.id, STATUS_CANCELLED, author, note)
     event_bus.emit(
         ORDER_CANCELLED,
@@ -1003,6 +1014,89 @@ def mark_ready(db: Session, document_id: int, author: User) -> Document:
 
 
 # --- мелочи -------------------------------------------------------------------
+
+
+def otgruzheno_nakladnymi(db: Session, order_id: int) -> list[Document]:
+    """Проведённые накладные заказа, не снятые проведённым сторно.
+
+    Сторно — обратная бумага по основанию накладной; проведённое сторно значит
+    «товар вернулся», и исходная накладная больше не считается отгрузкой:
+    иначе заказ после возврата нельзя было бы ни закрыть, ни откатить.
+    """
+    itog = []
+    for nakladnaya in documents_repo.po_osnovaniyu(db, order_id):
+        if nakladnaya.status not in (STATUS_ISSUED, STATUS_CLOSED):
+            continue
+        snyato = any(
+            storno.status in (STATUS_ISSUED, STATUS_CLOSED)
+            for storno in documents_repo.po_osnovaniyu(db, nakladnaya.id)
+        )
+        if not snyato:
+            itog.append(nakladnaya)
+    return itog
+
+
+def zakryt_po_nakladnoy(db: Session, order: Document, waybill: Document, author: User) -> None:
+    """Проведённая руками накладная закрывает заказ.
+
+    Раньше заказ оставался открытым и закрыть его было нельзя вовсе
+    (`already_shipped_by_waybill`): товар уехал, а бумага висела «принято»
+    навсегда. Владелец 05.09.2026 попросил, чтобы статус менялся во всех
+    блоках; это отменяет отказ в docs/21 §3. Склад не трогаем — его двинула
+    накладная; остальное (деньги, уведомления, лента) — как у закрытия.
+    """
+    if order.status not in OPEN_ORDER_STATUSES:
+        return
+    rows = documents_repo.lines_of(db, order.id)
+    # Частичная отгрузка («привезли половину») заказ не закрывает: он открыт,
+    # пока по каждому товару накладные не покрыли заказанное. Остаток при этом
+    # честно остаётся в резерве (`reserve_service`).
+    nuzhno: dict[int, int] = {}
+    for row in rows:
+        if row.product_id is not None and not _is_service(db, row):
+            nuzhno[row.product_id] = nuzhno.get(row.product_id, 0) + row.quantity_milli
+    uekhalo: dict[int, int] = {}
+    for nakladnaya in otgruzheno_nakladnymi(db, order.id):
+        for row in documents_repo.lines_of(db, nakladnaya.id):
+            if row.product_id is not None:
+                uekhalo[row.product_id] = uekhalo.get(row.product_id, 0) + row.quantity_milli
+    if any(uekhalo.get(product_id, 0) < skolko for product_id, skolko in nuzhno.items()):
+        return
+    previous = order.status
+    if not documents_repo.take_status(db, order, expected=previous, status=STATUS_CLOSED):
+        raise errors.ConflictError(
+            "The order has already been processed by someone else",
+            code="document_status_changed",
+        )
+    if modules_service.is_enabled(db, "warehouse"):
+        for row in rows:
+            if row.product_id is not None and not _is_service(db, row):
+                product = warehouse_service.get_product(db, row.product_id, include_deleted=True)
+                row.cost_minor = product.cost_minor
+    event_bus.emit(
+        ORDER_CLOSED,
+        db=db,
+        actor=author,
+        reason=f"order {order.number} closed by waybill {waybill.number}",
+        source=SOURCE_MANUAL,
+        source_ref=waybill.number,
+        order=order,
+        lines=rows,
+        from_status=previous,
+    )
+    _record(db, order, previous, STATUS_CLOSED, author, f"shipped by waybill {waybill.number}")
+    audit_service.record(
+        db,
+        action=audit_service.ACTION_ORDER_CLOSED,
+        actor=author,
+        source=SOURCE_MANUAL,
+        source_ref=waybill.number,
+        entity_type=audit_service.ENTITY_DOCUMENT,
+        entity_id=order.id,
+        entity_label=order.number,
+        before=previous,
+        after=STATUS_CLOSED,
+    )
 
 
 def _assert_open(order: Document) -> None:
