@@ -148,8 +148,8 @@ export const RUKOVODSTVO: Razdel[] = [
           {
             vid: "abzats",
             tekst: {
-              ru: "Строка поиска в панели слева ищет сразу по клиентам, заявкам, бланкам, товарам и остальному, на что есть право. Открывается и с клавиатуры: Ctrl+K (на Mac — ⌘K) с любого экрана. Находки идут группами по разделам, из строки можно сразу перейти.",
-              en: "The search box in the left panel looks through clients, deals, forms, products and everything else you have the right to see. It also opens from the keyboard: Ctrl+K (⌘K on a Mac) from any screen. Results come grouped by section, and you can jump straight from a row.",
+              ru: "Кнопка «Создать» над поиском заводит клиента, заявку, бланк, складской заказ или напоминание с любого экрана — в ней только то, на что у вас есть право. Строка поиска ищет сразу по клиентам, заявкам, бланкам, товарам и остальному; открывается и с клавиатуры: Ctrl+K (на Mac — ⌘K). Находки идут группами по разделам, из строки можно сразу перейти.",
+              en: "The «Create» button above the search starts a client, a deal, a form, a stock order or a reminder from any screen — it lists only what you have the right to create. The search box looks through clients, deals, forms, products and the rest; it also opens from the keyboard: Ctrl+K (⌘K on a Mac). Results come grouped by section, and you can jump straight from a row.",
             },
           },
           {

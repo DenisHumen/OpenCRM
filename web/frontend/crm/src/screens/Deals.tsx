@@ -124,7 +124,7 @@ export function Deals() {
   const [openTotal, setOpenTotal] = useState(0);
   const [dragId, setDragId] = useState<number | null>(null);
   const [overStage, setOverStage] = useState<string | null>(null);
-  const [creating, setCreating] = useState(false);
+  const [creating, setCreating] = useState(params.get("new") === "1");
   const guard = useGuard();
   // Элемент, по ширине которого выбирается режим. Ref через состояние, а не
   // useRef: наблюдатель должен подключиться в тот момент, когда узел появился.
