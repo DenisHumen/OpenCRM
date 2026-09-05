@@ -297,6 +297,7 @@ export function ClientCard() {
   // Блок могли выключить, пока карточка открыта на его вкладке — тогда
   // показываем ленту, а не пустой экран под исчезнувшим заголовком.
   const activeTab = tabs.some((item) => item.key === tab) ? tab : "history";
+  const schyotchiki = tabs.filter((item) => item.count !== undefined).slice(0, 3);
 
   return (
     <div className="page" ref={koren}>
@@ -314,22 +315,44 @@ export function ClientCard() {
         {t("clients")}
       </Link>
       <div className="page-head" style={{ alignItems: "flex-start", marginBottom: 24 }}>
-        <div style={{ display: "flex", gap: 16, alignItems: "center" }}>
-          <Avatar text={initials(client.name)} large />
-          <div>
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <h1 className="page-title" style={{ fontSize: 22 }}>
-                {client.name}
-              </h1>
-              {client.tags.map((tag: string) => (
-                <Chip key={tag}>{tag}</Chip>
-              ))}
-            </div>
-            <div className="page-sub" style={{ marginTop: 5 }}>
+        {/* Паспорт — перевод uiverse.io/WattoRex/odd-fish-37 (docs/18): то же имя,
+            метки и «добавлен», плюс счётчики вкладок и ход к заявкам, которых
+            в шапке прежде не было. */}
+        <div className="pasport">
+          <div className="pasport-shapka">
+            <div className="pasport-fon" aria-hidden="true">{initials(client.name)}</div>
+            <div className="pasport-ava" aria-hidden="true">{initials(client.name)}</div>
+            <div className="pasport-status">{client.tags[0] ?? t("clientBadge")}</div>
+          </div>
+          <div className="pasport-telo">
+            <div className="pasport-ruchka">{client.phone || client.email || `#${client.id}`}</div>
+            <h1 className="pasport-imya">{client.name}</h1>
+            <div className="pasport-bio">
               {client.company && <>{client.company} · </>}
               {t("added")} {formatDate(client.created_at, locale)}
+              {client.tags.length > 1 && (
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 6 }}>
+                  {client.tags.slice(1).map((tag: string) => (
+                    <Chip key={tag}>{tag}</Chip>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
+          <div
+            className="pasport-stats"
+            style={{ gridTemplateColumns: `repeat(${schyotchiki.length}, 1fr)` }}
+          >
+            {schyotchiki.map((item) => (
+              <div key={item.key} className="pasport-stat">
+                <span className="pasport-stat-v">{item.count}</span>
+                <span className="pasport-stat-l">{item.label}</span>
+              </div>
+            ))}
+          </div>
+          <button type="button" className="pasport-btn" onClick={() => setTab("deals")}>
+            + {term(workspace.deal_term, locale, "many")}
+          </button>
         </div>
         <div style={{ display: "flex", gap: 10, position: "relative" }}>
           {/* Письмо пишем прямо отсюда: отправленное ляжет в эту же ленту

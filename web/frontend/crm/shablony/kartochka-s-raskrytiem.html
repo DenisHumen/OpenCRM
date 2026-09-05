@@ -1,0 +1,47 @@
+<!doctype html>
+<!--
+  Карточка с раскрытием: знак в центре; по наведению он растёт, размывается и
+  покачивается, а поверх проявляются название, подпись и цена.
+  Перевод uiverse.io/JohnnyCSilva/quick-chicken-16 (CSS). Поведение образца
+  один в один; карточка чуть растёт и поворачивается на градус.
+  Куда: витрина или сайт. В рабочих списках текст до наведения не прятать.
+-->
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<title>Карточка с раскрытием — шаблон</title>
+<style>
+  :root { --bg: #1a1a19; --surface: #232220; --text: #eceae4; --muted: #9a968b; --brand: #dc8063; }
+  body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: var(--bg); font-family: Inter, "Segoe UI", system-ui, sans-serif; }
+
+  .raskr { position: relative; width: 195px; height: 285px; display: flex; flex-direction: column; align-items: center; justify-content: center; border-radius: 20px; background: var(--surface); color: var(--text); transition: transform 200ms ease-in-out; }
+  .raskr-znak { position: absolute; height: 30%; color: var(--brand); transition: height 200ms ease-in-out, filter 200ms ease-in-out; z-index: 1; }
+  .raskr-tekst { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 15px; opacity: 0; transition: opacity 200ms ease-in-out; z-index: 2; }
+  .raskr-tekst p { margin: 0; font-weight: bold; }
+  .raskr-zagolovok { font-size: 20px; }
+  .raskr-tsena { font-size: 17px; }
+  .raskr-tekst span { font-size: 12px; color: var(--muted); }
+  .raskr:hover { transform: scale(1.04) rotate(-1deg); }
+  .raskr:hover .raskr-tekst { opacity: 1; }
+  .raskr:hover .raskr-znak { height: 65%; filter: blur(7px); animation: raskr-kach 3s infinite; }
+  @keyframes raskr-kach { 0% { transform: translateY(0); } 50% { transform: translateY(-20px); } 100% { transform: translateY(0); } }
+  @media (prefers-reduced-motion: reduce) {
+    .raskr, .raskr-znak, .raskr-tekst { transition: none; }
+    .raskr:hover { transform: none; }
+    .raskr:hover .raskr-znak { animation: none; }
+  }
+</style>
+</head>
+<body>
+  <div class="raskr">
+    <svg class="raskr-znak" viewBox="0 0 24 24" aria-hidden="true" fill="currentColor">
+      <path d="M12 2 4 7v10l8 5 8-5V7l-8-5zm0 2.3 5.8 3.6L12 11.6 6.2 7.9 12 4.3zM6 9.8l5 3.1v6.4l-5-3.1V9.8zm7 9.5v-6.4l5-3.1v6.4l-5 3.1z"/>
+    </svg>
+    <div class="raskr-tekst">
+      <p class="raskr-zagolovok">Название</p>
+      <span>Подпись</span>
+      <p class="raskr-tsena">1 654,34 €</p>
+    </div>
+  </div>
+</body>
+</html>

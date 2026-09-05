@@ -1,0 +1,127 @@
+<!doctype html>
+<!--
+  Шар голосового помощника. В покое пульсирует и светится; по нажатию (флажок)
+  уезжает вниз, микрофон сменяется крестиком по наведению, а над ним из
+  размытия проявляется окно переписки с раскадровкой реплик по словам.
+  Перевод uiverse.io/Cobp/hot-dodo-99 (CSS, вложенность раскрыта). Поведение
+  образца один в один: состояние держится на скрытом флажке `input-orb`.
+  Куда: помощника в системе нет — лежит целиком на случай, если появится.
+-->
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<title>Голосовой помощник — шаблон</title>
+<style>
+  :root {
+    --bg: #1a1a19; --surface: #232220; --text: #eceae4; --muted: #9a968b; --faint: #6e6a60;
+    --danger: #e5695e; --accent: #7394f0; --violet: #b9a0f0; --glow: rgba(255, 255, 255, 0.18);
+    --tint-danger: rgba(229, 105, 94, 0.15); --tint-accent: rgba(115, 148, 240, 0.15);
+    --tint-neutral: rgba(255, 255, 255, 0.06); --line: #242320;
+  }
+  body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: var(--bg); font-family: Inter, "Segoe UI", system-ui, sans-serif; }
+
+  .vao { position: relative; display: flex; align-items: center; justify-content: center; width: 340px; height: 460px; flex-shrink: 0; }
+
+  /* Шар нажат: окно раскрыто, шар уехал вниз, значки ярче. */
+  .vao-flag:checked ~ .vao-okno { width: 300px; height: 300px; filter: blur(0); opacity: 1; }
+  .vao-flag:checked ~ .shar { filter: drop-shadow(0 0 12px var(--tint-accent)) drop-shadow(0 0 5px var(--tint-danger)); transform-origin: center center; transform: translate(-50%, 110px); }
+  .vao-flag:checked ~ .shar .shar-znachki .znachok { opacity: 1; filter: drop-shadow(0 0 4px var(--text)); }
+  .vao-flag:checked ~ .shar:hover { transform: translate(-50%, 110px) scale(1.1); }
+  .vao-flag:checked ~ .shar:hover .znachok .mik { opacity: 0; transform: scale(1.1); filter: drop-shadow(0 0 4px var(--text)); }
+  .vao-flag:checked ~ .shar:hover .znachok .krest { opacity: 1; transform: scale(1.1); filter: drop-shadow(0 0 4px var(--text)); }
+  .vao-flag:checked ~ .shar:active { transform: translate(-50%, 110px) scale(0.9); }
+  /* Шар отпущен: окно не анимируется, шар пульсирует и светится. */
+  .vao-flag:not(:checked) ~ .vao-okno * { animation: none; }
+  .vao-flag:not(:checked) ~ .shar { filter: drop-shadow(0 0 4px var(--text)) drop-shadow(0 0 12px var(--glow)) drop-shadow(0 0 12px var(--tint-accent)) drop-shadow(0 0 5px var(--tint-danger)); transform: scale(1.2) translate(-50%, -50%); }
+  .vao-flag:not(:checked) ~ .shar .shar-telo { animation: shar-puls 4.2s ease-in-out infinite; }
+  .vao-flag:not(:checked) ~ .shar:hover { transform: scale(1.4) translate(-50%, -50%); filter: drop-shadow(0 0 4px var(--text)) drop-shadow(0 0 8px var(--glow)) drop-shadow(0 0 12px var(--glow)) drop-shadow(0 0 10px var(--tint-accent)) drop-shadow(0 6px 26px var(--tint-danger)); }
+  .vao-flag:not(:checked) ~ .shar:hover .znachok { transform: scale(1.1); filter: drop-shadow(0 0 4px var(--text)); opacity: 1; }
+  .vao-flag:not(:checked) ~ .shar:active { transform: scale(1.2) translate(-50%, -50%); }
+  .vao-flag:not(:checked) ~ .shar * { animation: none; }
+  @keyframes shar-puls { 0% { transform: scale(1.5); } 15% { transform: scale(1.53); } 30% { transform: scale(1.48); } 45% { transform: scale(1.44); } 60% { transform: scale(1.47); } 85% { transform: scale(1.53); } 100% { transform: scale(1.5); } }
+
+  /* Окно переписки: из размытия в резкость. */
+  .vao-okno { display: flex; flex-direction: column; width: 64px; height: 64px; padding: 8px; box-sizing: border-box; gap: 6px; border-radius: 32px; opacity: 0; filter: blur(50px); box-shadow: 6px 6px 12px var(--tint-danger), -6px 6px 12px var(--tint-accent); transition: all 600ms cubic-bezier(0.175, 0.885, 0.32, 1.1); }
+  .vao-zagolovok { display: flex; align-items: center; justify-content: center; gap: 6px; padding: 8px; }
+  .vao-zagolovok svg { color: var(--danger); animation: vao-tsvet-svg 8s 1s infinite both; }
+  .vao-zagolovok .vao-tekst { margin: 0; font-size: 14px; font-weight: 500; background-image: linear-gradient(to left, var(--danger) 0% 20%, var(--accent) 50%, var(--danger) 80% 100%); background-clip: text; -webkit-background-clip: text; color: transparent; background-size: 800px; animation: vao-tsvet-tekst 8s infinite linear; }
+  @keyframes vao-tsvet-svg { 0%, 30% { color: var(--danger); } 15% { color: var(--accent); } }
+  @keyframes vao-tsvet-tekst { 0% { background-position: -800px; } 50% { background-position: 0; } }
+  .vao-chat { position: relative; display: flex; flex-direction: column; width: 100%; height: 100%; font-size: 13px; border-radius: 24px; background-image: linear-gradient(to top left, var(--tint-danger), var(--tint-accent)); overflow: hidden; }
+  .vao-chat::after { content: ""; position: absolute; inset: 0; background: repeating-conic-gradient(var(--tint-neutral) 0.0000001%, var(--surface) 0.000104%) 60% 60% / 600% 600%; opacity: 0.85; }
+  .vao-predel { display: flex; z-index: 2; -webkit-mask: linear-gradient(0deg, #fff 85%, transparent 95% 100%); mask: linear-gradient(0deg, #fff 85%, transparent 95% 100%); }
+  .vao-repliki { display: flex; flex-direction: column; gap: 4px; padding: 32px 16px 16px; animation: vao-prokrutka 16s both ease; }
+  .replika-ya { display: flex; justify-content: flex-end; }
+  .replika-ya p { width: 85%; display: flex; justify-content: center; flex-wrap: wrap; gap: 4px; margin: 0; padding: 10px; line-height: 1; color: var(--muted); border-radius: 10px 10px 0 10px; background: var(--glow); opacity: 0; transform: translateY(10px); animation: vao-replika 1s calc(var(--delay) * 1s) both cubic-bezier(0.175, 0.885, 0.32, 1.275); }
+  .replika-on { display: flex; }
+  .replika-on p { width: 85%; display: flex; flex-wrap: wrap; gap: 4px; margin: 0; padding: 10px 0; line-height: 1; color: var(--text); opacity: 0; transform: translateY(10px); animation: vao-replika 1s calc(var(--delay) * 1s) both cubic-bezier(0.175, 0.885, 0.32, 1.275); }
+  .replika-ya p span, .replika-on p span { display: block; opacity: 0; transform: translateY(10px); animation: vao-replika 1s calc(var(--delay) * 1s + var(--word) * 0.1s) both cubic-bezier(0.175, 0.885, 0.32, 1.275); }
+  @keyframes vao-replika { 100% { opacity: 1; transform: translateY(0); } }
+  @keyframes vao-prokrutka { 0%, 55% { transform: translateY(0); } 70% { transform: translateY(-70px); } 80%, 100% { transform: translateY(-110px); } }
+
+  /* Сам шар: значки поверх, тело с фильтром слипания, полосы и кольца. */
+  .shar { position: absolute; left: 50%; top: 50%; width: 64px; height: 64px; display: flex; transform-origin: left top; transform: translate(-50%, -50%); transition: all 500ms cubic-bezier(0.175, 0.885, 0.32, 1.275); cursor: pointer; z-index: 20; }
+  .shar .znachok .krest { opacity: 0; }
+  .shar-znachki { position: absolute; top: 50%; left: 50%; display: flex; flex-direction: column; transform: translate(-50%, -50%); color: var(--text); transition: all 300ms ease-in-out; z-index: 3; }
+  .shar-znachki .znachok { width: 24px; height: 24px; flex-shrink: 0; opacity: 0.5; transition: all 300ms ease-in-out; }
+  .shar-telo { display: flex; width: 64px; height: 64px; flex-shrink: 0; border-radius: 50px; background: var(--danger); filter: url(#slipanie); }
+  .shar-polosy { position: absolute; top: 50%; left: 50%; width: 100px; height: 100px; transform: translate(-50%, -50%); background-image: radial-gradient(ellipse at center, var(--glow) 15%, var(--accent) 50%); clip-path: polygon(50% 25%, 65% 30%, 75% 42%, 75% 58%, 65% 70%, 50% 75%, 35% 70%, 26% 58%, 25% 42%, 35% 30%); animation: shar-polosy 15s both ease; pointer-events: none; }
+  @keyframes shar-polosy {
+    2% { clip-path: polygon(50% 25%, 50% 0, 75% 42%, 75% 58%, 65% 70%, 50% 75%, 35% 70%, 26% 58%, 25% 42%, 50% 0); }
+    4% { clip-path: polygon(50% 25%, 70% 0, 75% 42%, 85% 66%, 65% 100%, 50% 75%, 35% 100%, 15% 65%, 25% 42%, 30% 0); }
+    6% { clip-path: polygon(50% 25%, 50% 15%, 75% 42%, 75% 58%, 65% 70%, 50% 75%, 35% 70%, 26% 58%, 25% 42%, 50% 15%); }
+    7%, 59% { clip-path: polygon(50% 25%, 100% 12%, 75% 42%, 85% 66%, 65% 70%, 50% 75%, 35% 70%, 15% 65%, 25% 42%, 0 12%); }
+    9%, 57% { clip-path: polygon(50% 25%, 50% 0, 75% 42%, 75% 58%, 65% 70%, 50% 75%, 35% 70%, 26% 58%, 25% 42%, 50% 0); }
+    12%, 55%, 61% { clip-path: polygon(50% 25%, 65% 30%, 75% 42%, 75% 58%, 65% 70%, 50% 75%, 35% 70%, 26% 58%, 25% 42%, 35% 30%); }
+  }
+  .shar-koltsa { position: absolute; inset: 0; aspect-ratio: 1; border-radius: 50%; perspective: 11rem; }
+  .shar-koltsa::before, .shar-koltsa::after { content: ""; position: absolute; inset: 0; border-radius: 50%; border: 6px solid transparent; background: linear-gradient(var(--text), var(--accent), var(--violet), var(--danger), var(--glow)) border-box; -webkit-mask: linear-gradient(#fff 0 0) padding-box, linear-gradient(#fff 0 0); mask: linear-gradient(#fff 0 0) padding-box, linear-gradient(#fff 0 0); -webkit-mask-composite: xor; mask-composite: exclude; }
+  .shar-koltsa::before { animation: koltso-180 10s linear infinite; }
+  .shar-koltsa::after { animation: koltso-90 10s linear infinite; }
+  @keyframes koltso-180 { 0% { transform: rotateY(180deg) rotateX(180deg) rotateZ(180deg); } 50% { transform: rotateY(360deg) rotateX(360deg) rotateZ(360deg) scale(1.1); } 100% { transform: rotateY(540deg) rotateX(540deg) rotateZ(540deg); } }
+  @keyframes koltso-90 { 0% { transform: rotateY(90deg) rotateX(90deg) rotateZ(90deg); } 50% { transform: rotateY(270deg) rotateX(270deg) rotateZ(270deg) scale(1.1); } 100% { transform: rotateY(450deg) rotateX(450deg) rotateZ(450deg); } }
+
+  @media (prefers-reduced-motion: reduce) {
+    .vao * , .vao *::before, .vao *::after { animation: none !important; transition: none !important; }
+    .replika-ya p, .replika-on p, .replika-ya p span, .replika-on p span { opacity: 1; transform: none; }
+    .vao-zagolovok .vao-tekst { color: var(--text); background: none; }
+  }
+</style>
+</head>
+<body>
+  <div class="vao">
+    <input type="checkbox" class="vao-flag" id="vao" name="vao" style="display: none" />
+    <label for="vao" class="shar">
+      <div class="shar-znachki">
+        <svg class="znachok" viewBox="0 0 24 24" aria-hidden="true">
+          <g class="krest"><path fill="currentColor" d="M18.3 5.71a.996.996 0 0 0-1.41 0L12 10.59L7.11 5.7A.996.996 0 1 0 5.7 7.11L10.59 12L5.7 16.89a.996.996 0 1 0 1.41 1.41L12 13.41l4.89 4.89a.996.996 0 1 0 1.41-1.41L13.41 12l4.89-4.89c.38-.38.38-1.02 0-1.4"/></g>
+          <g class="mik" fill="none"><rect width="8" height="13" x="8" y="2" fill="currentColor" rx="4"/><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 11a7 7 0 1 0 14 0m-7 10v-2"/></g>
+        </svg>
+      </div>
+      <div class="shar-telo">
+        <div class="shar-polosy"></div>
+        <div class="shar-koltsa"></div>
+      </div>
+      <svg style="pointer-events: none; position: absolute; width: 0; height: 0" aria-hidden="true">
+        <filter id="slipanie"><feGaussianBlur in="SourceGraphic" stdDeviation="6"/><feColorMatrix values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 20 -10"/></filter>
+      </svg>
+    </label>
+    <div class="vao-okno">
+      <div class="vao-zagolovok">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M3 14V10M21 14V10M16.5 18V8M12 22V2M7.5 18V6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        <p class="vao-tekst"><span>Слушаю…</span></p>
+      </div>
+      <div class="vao-chat">
+        <div class="vao-predel">
+          <div class="vao-repliki">
+            <div class="replika-ya" style="--delay: 2"><p><span style="--word: 1">Где</span><span style="--word: 2">искать</span><span style="--word: 3">готовые</span><span style="--word: 4">компоненты?</span></p></div>
+            <div class="replika-on" style="--delay: 5"><p><span style="--word: 1">Для</span><span style="--word: 2">начала</span><span style="--word: 3">подойдёт</span><span style="--word: 4"><strong>uiverse</strong>:</span><span style="--word: 5">там</span><span style="--word: 6">только</span><span style="--word: 7">HTML</span><span style="--word: 8">и</span><span style="--word: 9">CSS.</span></p></div>
+            <div class="replika-ya" style="--delay: 9"><p><span style="--word: 1">А</span><span style="--word: 2">как</span><span style="--word: 3">перенести?</span></p></div>
+            <div class="replika-on" style="--delay: 11"><p><span style="--word: 1">По</span><span style="--word: 2">шагам</span><span style="--word: 3">из</span><span style="--word: 4">docs/18:</span><span style="--word: 5">токены,</span><span style="--word: 6">классы,</span><span style="--word: 7">движение.</span></p></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

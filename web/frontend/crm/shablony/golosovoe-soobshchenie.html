@@ -1,0 +1,58 @@
+<!doctype html>
+<!--
+  Голосовое сообщение — пилюля с кнопкой «играть», полосками громкости и временем.
+  Перевод uiverse.io/asif_6635/moody-turtle-2 (Tailwind → CSS). Поведение образца:
+  кнопка светлеет по наведению, первая полоска мигает (`animate-pulse`).
+  Куда: переписка Telegram (голосовые), запись разговора в звонках.
+-->
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<title>Голосовое сообщение — шаблон</title>
+<style>
+  /* Запасные значения токенов: в системе берутся из src/styles.css. */
+  :root {
+    --bg: #1a1a19; --surface: #232220; --surface-2: #2c2b28; --text: #eceae4;
+    --muted: #9a968b; --faint: #6e6a60; --border: #2e2d2a; --accent: #7394f0;
+    --well: #141313; --btn-bg: #eceae4; --btn-text: #1a1a19; --btn-bg-hover: #ffffff;
+    --shade: rgba(0, 0, 0, 0.45);
+  }
+  body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: var(--bg); font-family: Inter, "Segoe UI", system-ui, sans-serif; }
+
+  /* Образец: flex items-center bg-gray-900 text-white p-3 rounded-full shadow-lg max-w-xs space-x-3 */
+  .golos { display: flex; align-items: center; gap: 12px; max-width: 320px; padding: 12px; border-radius: 999px; background: var(--well); color: var(--text); box-shadow: 0 10px 15px -3px var(--shade), 0 4px 6px -4px var(--shade); }
+  /* Кнопка «играть»: bg-white text-gray-900 rounded-full p-2 hover:bg-gray-100 transition duration-200 */
+  .golos-play { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; padding: 0; border: 0; border-radius: 50%; background: var(--btn-bg); color: var(--btn-text); cursor: pointer; transition: background 200ms ease; flex: none; }
+  .golos-play:hover { background: var(--btn-bg-hover); }
+  .golos-play svg { width: 20px; height: 20px; fill: currentColor; }
+  /* Полоски: w-1 rounded-full, высоты h-3..h-8 (12–32px), цвета gray-600/gray-400/blue-400 */
+  .golos-polosy { display: flex; align-items: center; gap: 2px; flex: 1; padding: 0 4px; overflow: hidden; }
+  .golos-polosy span { width: 4px; border-radius: 999px; background: var(--muted); }
+  .golos-polosy .tikho { background: var(--faint); }
+  .golos-polosy .pik { background: var(--accent); }
+  .golos-polosy .mig { animation: golos-mig 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+  @keyframes golos-mig { 50% { opacity: 0.5; } }
+  /* Время: text-xs text-gray-300 pr-1 font-mono */
+  .golos-vremya { padding-right: 4px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; color: var(--muted); }
+  @media (prefers-reduced-motion: reduce) { .golos-polosy .mig { animation: none; } .golos-play { transition: none; } }
+</style>
+</head>
+<body>
+  <div class="golos">
+    <button type="button" class="golos-play" aria-label="Слушать">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"></path></svg>
+    </button>
+    <div class="golos-polosy" aria-hidden="true">
+      <span class="tikho mig" style="height: 12px"></span>
+      <span style="height: 24px"></span>
+      <span style="height: 16px"></span>
+      <span class="pik" style="height: 32px"></span>
+      <span style="height: 20px"></span>
+      <span class="tikho" style="height: 12px"></span>
+      <span style="height: 28px"></span>
+      <span style="height: 16px"></span>
+    </div>
+    <span class="golos-vremya">0:05</span>
+  </div>
+</body>
+</html>

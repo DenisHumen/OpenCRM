@@ -1,5 +1,6 @@
 import { useRef, useState, type FormEvent } from "react";
 
+import { Icon } from "../components/Icon";
 import { Avatar } from "../components/ui";
 import { api, ApiError, type User } from "../lib/api";
 import { useApp } from "../lib/app";
@@ -18,8 +19,62 @@ const THEME_LABEL: Record<Theme, "themeLight" | "themeDark" | "themeSystem"> = {
   system: "themeSystem",
 };
 
+const ZONY = [1, 2, 3, 4, 5, 6, 7, 8, 9];
+
+/** Пропуск сотрудника — карточка, что наклоняется за курсором. Перевод
+ *  uiverse.io/Cobp/silent-bullfrog-72 (docs/18): девять пустых зон ловят
+ *  курсор, карточка идёт после них. Читалке скрыт: всё то же есть в шапке. */
+function Propusk({ user, brand }: { user: User; brand: string }) {
+  const { t, locale } = useApp();
+  return (
+    <div className="propusk-wrap" aria-hidden="true">
+      {ZONY.map((z) => (
+        <div key={z} className="propusk-zona" />
+      ))}
+      <div className="propusk">
+        <div className="propusk-logo">OpenCRM</div>
+        <div className="propusk-rol">
+          <span>{user.role === "root" ? t("root") : user.role_name || t("noRole")}</span>
+          <Icon name="check" size={18} stroke={2} />
+        </div>
+        <div className="propusk-info">
+          <div>
+            <div className="propusk-l">{t("company")}</div>
+            <div className="propusk-v">{brand || "OpenCRM"}</div>
+          </div>
+          <div>
+            <div className="propusk-l">{t("badgeJoined")}</div>
+            <div className="propusk-v">{user.created_at ? formatDate(user.created_at, locale) : ""}</div>
+          </div>
+        </div>
+        <div className="propusk-line" />
+        <div className="propusk-user">
+          <span className="propusk-alias">{user.email}</span>
+          <span className="propusk-name">{user.name}</span>
+        </div>
+        <div className="propusk-niz">
+          <div className="propusk-qr">
+            {user.avatar_url ? <img src={user.avatar_url} alt="" /> : initials(user.name)}
+          </div>
+          <div className="propusk-pos">
+            <div>
+              <div className="propusk-l">{t("badgeId")}</div>
+              <div className="propusk-v">#{user.id}</div>
+            </div>
+            <div>
+              <div className="propusk-l">{t("badgeSince")}</div>
+              <div className="propusk-v">{user.created_at ? user.created_at.slice(0, 4) : ""}</div>
+            </div>
+          </div>
+        </div>
+        <div className="propusk-svet" />
+      </div>
+    </div>
+  );
+}
+
 export function Profile() {
-  const { user, t, locale, theme, setTheme, setUser, toast, toastError } = useApp();
+  const { user, t, locale, theme, setTheme, setUser, toast, toastError, workspace } = useApp();
   const [name, setName] = useState(user?.name ?? "");
   const [saved, setSaved] = useState(false);
   const [oldPassword, setOldPassword] = useState("");
@@ -98,7 +153,7 @@ export function Profile() {
 
   return (
     <div className="page page-tight">
-      <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 26 }}>
+      <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 16, marginBottom: 26 }}>
         <div onClick={() => avatarInput.current?.click()} title={t("changePhoto")} style={{ cursor: "pointer" }}>
           <Avatar text={initials(user.name)} large src={user.avatar_url} online />
         </div>
@@ -132,6 +187,7 @@ export function Profile() {
             <span style={{ color: "var(--faint)", fontSize: 11.5 }}>{t("photoHint")}</span>
           </div>
         </div>
+        <Propusk user={user} brand={workspace.brand_name} />
       </div>
 
       <div className="card" style={{ padding: "20px 22px", marginBottom: 16 }}>

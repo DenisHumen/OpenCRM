@@ -13,6 +13,7 @@ import {
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
 import { useFailure } from "../lib/failure";
+import { formatDate } from "../lib/format";
 import { useGuard } from "../lib/guard";
 import type { TFunc, TranslationKey } from "../lib/i18n";
 import { can } from "../lib/permissions";
@@ -83,7 +84,7 @@ function fieldLabel(key: string, t: TFunc, dealWord: string): string {
 }
 
 export function Templates() {
-  const { t, user, toastError } = useApp();
+  const { t, user, locale, toastError } = useApp();
   const [items, setItems] = useState<MessageTemplate[] | null>(null);
   // Что сейчас правят. `null` — ничего, "new" — заводят новый: разделять эти
   // два состояния двумя флагами значит однажды открыть оба окна разом.
@@ -144,36 +145,43 @@ export function Templates() {
       {items.length === 0 ? (
         <EmptyState title={t("noTemplates")} sub={t("noTemplatesHint")} />
       ) : (
-        <div className="list-card">
+        <div className="tpl-grid">
+          {/* Карточки — перевод stale-yak-33 (docs/18): канал сверху, имя, две
+              строки текста, «обновлено», под чертой действия. Удаление отсюда, а
+              не только из окна правки: до этого шаблон удаляли в три нажатия. */}
           {items.map((template) => (
-            <div key={template.id} className="list-row">
-              <span className="module-icon">
-                <Icon name="note" size={16} />
-              </span>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ color: "var(--text)", fontSize: 13.5, fontWeight: 500 }}>
-                  {template.name}
-                </div>
-                <div className="truncate" style={{ color: "var(--faint)", fontSize: 12 }}>
-                  {template.body}
-                </div>
+            <div key={template.id} className="card tpl-card">
+              <div className="tpl-chan">
+                <Chip>{t(CHANNEL_LABEL[template.channel] ?? "templateChannelAny")}</Chip>
               </div>
-              <Chip>{t(CHANNEL_LABEL[template.channel] ?? "templateChannelAny")}</Chip>
-              {/* Предпросмотр отдельной кнопкой и только у сохранённого:
-                  подстановку считает сервер, и считать её не по чему, пока
-                  шаблона нет. */}
-              <button className="btn btn-secondary btn-sm" onClick={() => setPreviewing(template)}>
-                {t("templatePreview")}
-              </button>
-              {mayEdit && (
-                <button
-                  className="btn-icon"
-                  onClick={() => setEditing(template)}
-                  aria-label={t("edit")}
-                >
-                  <Icon name="note" size={13} />
-                </button>
+              <div className="tpl-name">{template.name}</div>
+              <div className="tpl-body">{template.body}</div>
+              {template.updated_at && (
+                <div className="tpl-meta">
+                  <span>{t("updated")}:</span>
+                  <span>{formatDate(template.updated_at, locale)}</span>
+                </div>
               )}
+              <div className="tpl-actions">
+                {/* Предпросмотр только у сохранённого: подстановку считает
+                    сервер, и считать её не по чему, пока шаблона нет. */}
+                <button type="button" className="tpl-act tpl-act-view" onClick={() => setPreviewing(template)}>
+                  <Icon name="eye" size={15} />
+                  {t("templatePreview")}
+                </button>
+                {mayEdit && (
+                  <button type="button" className="tpl-act tpl-act-edit" onClick={() => setEditing(template)}>
+                    <Icon name="note" size={15} />
+                    {t("edit")}
+                  </button>
+                )}
+                {mayEdit && (
+                  <button type="button" className="tpl-act tpl-act-del" onClick={() => setAsking(template)}>
+                    <Icon name="trash" size={15} />
+                    {t("delete")}
+                  </button>
+                )}
+              </div>
             </div>
           ))}
         </div>

@@ -88,6 +88,7 @@ interface AppContextValue {
   logout: () => Promise<void>;
   toast: (text: string, error?: boolean) => void;
   toastError: (e: unknown) => void;
+  toastDismiss: (id: number) => void;
   toasts: Toast[];
 }
 
@@ -337,6 +338,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     [toast, t],
   );
 
+  const toastDismiss = useCallback((id: number) => {
+    setToasts((prev) => prev.filter((item) => item.id !== id));
+  }, []);
+
   const logout = useCallback(async () => {
     try {
       await api.post("/auth/logout");
@@ -349,11 +354,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     () => ({
       user, ready, locale, theme, setTheme, t, settings, storage, maintenance, modules, refreshModules,
       workspace, refreshWorkspace, overdueTasks, refreshTasks,
-      setUser, setMaintenance, refreshSettings, refreshStorage, logout, toast, toastError, toasts,
+      setUser, setMaintenance, refreshSettings, refreshStorage, logout, toast, toastError, toastDismiss, toasts,
     }),
     [user, ready, locale, theme, setTheme, t, settings, storage, maintenance, modules, refreshModules,
      workspace, refreshWorkspace, overdueTasks, refreshTasks,
-     setMaintenance, refreshSettings, refreshStorage, logout, toast, toastError, toasts],
+     setMaintenance, refreshSettings, refreshStorage, logout, toast, toastError, toastDismiss, toasts],
   );
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

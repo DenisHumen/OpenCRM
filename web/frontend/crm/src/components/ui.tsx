@@ -114,6 +114,21 @@ export function Spinner() {
   return <div className="spinner" />;
 }
 
+/** Кольцо с переливом и буквы по одной: перевод bright-lizard-8 (docs/18).
+ *  Буквы — оформление, читалке достаточно имени на обёртке. */
+export function Zagruzka({ text }: { text: string }) {
+  return (
+    <div className="zagruzka" role="status" aria-label={text}>
+      {Array.from(text).map((bukva, i) => (
+        <span key={i} className="zagruzka-bukva" aria-hidden="true">
+          {bukva === " " ? "\u00a0" : bukva}
+        </span>
+      ))}
+      <div className="zagruzka-kolco" />
+    </div>
+  );
+}
+
 /**
  * Место экрана, пока данных нет.
  *
@@ -130,13 +145,22 @@ export function Spinner() {
  * связи» — разные беды, и на вторую есть смысл нажать «ещё раз», а на первую
  * нет. Своё общее объяснение — только когда сервер промолчал.
  */
-export function ScreenLoading({ error, onRetry }: { error?: unknown; onRetry?: () => void }) {
+export function ScreenLoading({
+  error,
+  onRetry,
+  polnyy,
+}: {
+  error?: unknown;
+  onRetry?: () => void;
+  /** На весь экран — пока приложение ещё не знает, кто вошёл. */
+  polnyy?: boolean;
+}) {
   const { t } = useApp();
 
   if (error === undefined || error === null) {
     return (
-      <div className="screen-loading">
-        <Spinner />
+      <div className={"screen-loading" + (polnyy ? " screen-loading-full" : "")}>
+        <Zagruzka text={t("loading")} />
       </div>
     );
   }
@@ -389,15 +413,23 @@ export function ConfirmModal({
   );
 }
 
+/** Плашки исхода — перевод heavy-cobra-18 / wicked-chipmunk-81 (docs/18):
+ *  значок на плитке, текст, крестик. Крестик нужен: четыре секунды — мало,
+ *  чтобы дочитать длинный отказ, и много, чтобы плашка заслоняла кнопку. */
 export function Toasts() {
-  const { toasts } = useApp();
+  const { t, toasts, toastDismiss } = useApp();
   if (toasts.length === 0) return null;
   return (
     <div className="toast-wrap">
       {toasts.map((toast) => (
-        <div key={toast.id} className={"toast" + (toast.error ? " error" : "")}>
-          <Icon name={toast.error ? "x" : "check"} size={14} />
-          {toast.text}
+        <div key={toast.id} className={"toast" + (toast.error ? " error" : "")} role="status">
+          <span className="toast-ico">
+            <Icon name={toast.error ? "alert" : "check"} size={16} />
+          </span>
+          <span className="toast-text">{toast.text}</span>
+          <button type="button" className="toast-close" aria-label={t("close")} onClick={() => toastDismiss(toast.id)}>
+            <Icon name="x" size={14} />
+          </button>
         </div>
       ))}
     </div>

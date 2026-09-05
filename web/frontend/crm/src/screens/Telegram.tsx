@@ -1599,6 +1599,23 @@ export function Telegram() {
             {!mozhno_pisat && <div className="tg-readonly">{t("tgReadOnly")}</div>}
             {mozhno_pisat && (
             <footer className="tg-compose">
+              <div className="tg-compose-box">
+                <div className="tg-compose-in">
+              <textarea
+                value={tekst}
+                onChange={(e) => setTekst(e.target.value)}
+                placeholder={t("tgWrite")}
+                onKeyDown={(e) => {
+                  // Enter отправляет, Shift+Enter переносит строку — как во
+                  // всяком мессенджере. Обратное поведение здесь удивляло бы.
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    void otvetit();
+                  }
+                }}
+              />
+              <div className="tg-compose-tools">
+                <div className="tg-compose-add">
               {/*
                 Выбор стоит на месте всегда, пока блок включён и право есть, —
                 и когда шаблонов ещё ни одного тоже. Прежде он появлялся только
@@ -1655,28 +1672,23 @@ export function Telegram() {
                   }}
                 />
               </label>
-              <textarea
-                value={tekst}
-                onChange={(e) => setTekst(e.target.value)}
-                placeholder={t("tgWrite")}
-                onKeyDown={(e) => {
-                  // Enter отправляет, Shift+Enter переносит строку — как во
-                  // всяком мессенджере. Обратное поведение здесь удивляло бы.
-                  if (e.key === "Enter" && !e.shiftKey) {
-                    e.preventDefault();
-                    void otvetit();
-                  }
-                }}
-              />
+                </div>
+              
               <button
                 type="button"
+                className="tg-send"
                 onClick={() => void otvetit()}
                 disabled={otpravka}
                 aria-label={t("tgSend")}
                 title={t("tgSend")}
               >
-                <Icon name="send" />
+                <i className="tg-send-i">
+                  <Icon name="send" />
+                </i>
               </button>
+                          </div>
+                </div>
+              </div>
             </footer>
             )}
           </>

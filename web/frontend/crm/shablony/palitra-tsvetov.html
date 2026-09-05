@@ -1,0 +1,48 @@
+<!doctype html>
+<!--
+  Ряд цветов, как док: наведённый растёт в полтора раза, соседи — на 1.3 и 1.15,
+  над наведённым всплывает подсказка с кодом цвета, по нажатию подсказка
+  сменяется на «скопировано».
+  Перевод uiverse.io/Cobp/horrible-quail-18 (CSS, вложенность раскрыта).
+  Поведение образца один в один; «скопировано» у образца держится на :focus —
+  при переносе в систему это состояние React (см. docs/18, «чего не брать»).
+  Куда: выбор цвета этапа или метки, когда он появится.
+-->
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<title>Палитра цветов — шаблон</title>
+<style>
+  :root { --bg: #1a1a19; --surface: #232220; --text: #eceae4; }
+  body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: var(--bg); font-family: Inter, "Segoe UI", system-ui, sans-serif; }
+
+  .palitra { display: flex; transform-style: preserve-3d; transform: perspective(1000px); }
+  .tsvet { position: relative; flex-shrink: 0; width: 32px; height: 40px; border: 0; outline: 0; background: none; cursor: pointer; transition: 500ms cubic-bezier(0.175, 0.885, 0.32, 1.1); }
+  .tsvet::after { content: ""; position: absolute; inset: 0; width: 40px; height: 40px; border-radius: 6px; background: var(--color); transform: scale(1.2); pointer-events: none; transition: 500ms cubic-bezier(0.175, 0.885, 0.32, 1.1); }
+  .tsvet::before { content: attr(data-color); position: absolute; left: 65%; bottom: 52px; padding: 2px 4px; border-radius: 6px; background: var(--surface); color: var(--text); font-size: 8px; line-height: 12px; transform: translateX(-50%); opacity: 0; visibility: hidden; pointer-events: none; transition: 500ms cubic-bezier(0.175, 0.885, 0.32, 1.1); }
+  .tsvet:hover { transform: scale(1.5); z-index: 5; }
+  .tsvet:hover::before { opacity: 1; visibility: visible; }
+  .tsvet:active::after { transform: scale(1.1); }
+  .tsvet:focus::before { content: "✓ скопировано"; }
+  .tsvet:hover + * { transform: scale(1.3); z-index: 4; }
+  .tsvet:hover + * + * { transform: scale(1.15); z-index: 3; }
+  .tsvet:has(+ *:hover) { transform: scale(1.3); z-index: 4; }
+  .tsvet:has(+ * + *:hover) { transform: scale(1.15); z-index: 3; }
+  @media (prefers-reduced-motion: reduce) { .tsvet, .tsvet::after, .tsvet::before { transition: none; } }
+</style>
+</head>
+<body>
+  <div class="palitra">
+    <button type="button" class="tsvet" style="--color: #e11d48" data-color="#e11d48" aria-label="#e11d48"></button>
+    <button type="button" class="tsvet" style="--color: #f472b6" data-color="#f472b6" aria-label="#f472b6"></button>
+    <button type="button" class="tsvet" style="--color: #fb923c" data-color="#fb923c" aria-label="#fb923c"></button>
+    <button type="button" class="tsvet" style="--color: #facc15" data-color="#facc15" aria-label="#facc15"></button>
+    <button type="button" class="tsvet" style="--color: #84cc16" data-color="#84cc16" aria-label="#84cc16"></button>
+    <button type="button" class="tsvet" style="--color: #10b981" data-color="#10b981" aria-label="#10b981"></button>
+    <button type="button" class="tsvet" style="--color: #0ea5e9" data-color="#0ea5e9" aria-label="#0ea5e9"></button>
+    <button type="button" class="tsvet" style="--color: #3b82f6" data-color="#3b82f6" aria-label="#3b82f6"></button>
+    <button type="button" class="tsvet" style="--color: #8b5cf6" data-color="#8b5cf6" aria-label="#8b5cf6"></button>
+    <button type="button" class="tsvet" style="--color: #a78bfa" data-color="#a78bfa" aria-label="#a78bfa"></button>
+  </div>
+</body>
+</html>
