@@ -831,3 +831,45 @@ def test_bez_bloka_snimkov_net(root_client):
     finally:
         root_client.post(f"{API}/modules/warehouse", json={"enabled": True})
         modules_service.invalidate()
+
+
+def test_kartochka_tovara_znaet_prodazhi_vozvraty_i_bron(root_client):
+    """Плитки карточки: доступно с бронью, продано за 30/90 дней, возвраты за 90
+    (владелец 06.09.2026: наполнить карточку полезным). Ключи — только с блоком
+    заказов; без него их нет вовсе."""
+    for klyuch in ("documents", "orders", "waybills"):
+        assert root_client.post(f"{API}/modules/{klyuch}", json={"enabled": True}).status_code == 200
+    try:
+        item = new_product(root_client, name="Плитки карточки", sku="KART-1", price=500, cost=100)
+        move(root_client, item["id"], "in", "10")
+        klient = root_client.post(f"{API}/clients", json={"name": "Покупатель карточки"}).json()
+        zakaz = root_client.post(f"{API}/orders", json={"kind": "sales_order", "client_id": klient["id"]}).json()
+        root_client.post(f"{API}/orders/{zakaz['id']}/lines", json={"product_id": item["id"], "quantity": "3"})
+        assert root_client.post(f"{API}/orders/{zakaz['id']}/close", json={}).status_code == 200
+        otkrytyy = root_client.post(f"{API}/orders", json={"kind": "sales_order"}).json()
+        root_client.post(f"{API}/orders/{otkrytyy['id']}/lines", json={"product_id": item["id"], "quantity": "2"})
+        vozvrat = root_client.post(f"{API}/orders/{zakaz['id']}/returns").json()
+        [stroka] = vozvrat["lines"]
+        root_client.patch(f"{API}/returns/{vozvrat['id']}/lines/{stroka['id']}", json={"quantity": "1"})
+        assert root_client.post(f"{API}/returns/{vozvrat['id']}/post", json={}).status_code == 200
+
+        karta = root_client.get(f"{WH}/products/{item['id']}").json()
+        assert karta["stock_milli"] == 8_000, "10 − 3 отгружено + 1 вернулось"
+        assert karta["reserved_milli"] == 2_000 and karta["available_milli"] == 6_000
+        assert karta["sales_30d"] == {"quantity_milli": 3_000, "count": 1}
+        assert karta["sales_90d"]["quantity_milli"] == 3_000
+        assert karta["returns_90d"] == {"quantity_milli": 1_000, "count": 1}
+
+        vozvraty = root_client.get(f"{WH}/products/{item['id']}/moves", params={"kind": "return"}).json()
+        assert [m["kind"] for m in vozvraty["items"]] == ["return"]
+        assert vozvraty["total"] == 1
+        vse = root_client.get(f"{WH}/products/{item['id']}/moves").json()
+        assert vse["total"] == 3, "приход, расход накладной, возврат"
+        otkaz = root_client.get(f"{WH}/products/{item['id']}/moves", params={"kind": "teleport"})
+        assert otkaz.status_code == 422 and otkaz.json()["error"]["code"] == "unknown_kind"
+    finally:
+        for klyuch in ("orders", "waybills"):
+            root_client.post(f"{API}/modules/{klyuch}", json={"enabled": False})
+
+    bez = root_client.get(f"{WH}/products/{item['id']}").json()
+    assert "sales_30d" not in bez and "available_milli" not in bez, "блок заказов выключен — ключей нет"

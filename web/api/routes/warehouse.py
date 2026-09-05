@@ -26,6 +26,11 @@ from database.models import User
 from database.repositories import users as users_repo
 from database.repositories import warehouse as warehouse_repo
 from database.repositories import warehouses as places_repo
+from database.models.warehouse import MOVE_KINDS
+from database.repositories import vozvraty as vozvraty_repo
+from datetime import timedelta
+from core.utils import now_utc
+from core.services import modules_service
 from web.api import schemas
 from web.api.deps import MAX_SEARCH, get_db, require_module, require_perm
 
@@ -166,6 +171,17 @@ def get_product(
         data["by_warehouse"] = warehouse_repo.stock_by_warehouse(db, [product.id]).get(
             product.id, {}
         )
+    # Бронь и «доступно», продажи и возвраты — блок заказов; без него ключей
+    # нет вовсе: выключенный блок исчезает из чужих ответов целиком.
+    if not product.is_service and modules_service.is_enabled(db, "orders"):
+        nalichie = reserve_service.availability(db, [product.id]).get(product.id, {})
+        data["reserved_milli"] = nalichie.get("reserved_milli", 0)
+        data["expected_milli"] = nalichie.get("expected_milli", 0)
+        data["available_milli"] = nalichie.get("available_milli", data["stock_milli"])
+        seychas = now_utc()
+        data["sales_30d"] = vozvraty_repo.prodazhi_tovara(db, product.id, seychas - timedelta(days=30))
+        data["sales_90d"] = vozvraty_repo.prodazhi_tovara(db, product.id, seychas - timedelta(days=90))
+        data["returns_90d"] = vozvraty_repo.vozvraty_tovara(db, product.id, seychas - timedelta(days=90))
     data["currency"] = _currency(db)
     return data
 
@@ -238,15 +254,24 @@ def product_availability(
 @router.get("/products/{product_id}/moves")
 def product_moves(
     product_id: int,
+    kind: str | None = None,
     page: int = Query(default=1, ge=1),
     per_page: int = Query(default=50, ge=1, le=200),
     user: User = Depends(require_perm("warehouse", "view")),
     db: Session = Depends(get_db),
 ):
-    """История по товару. Товар ищем вместе с удалёнными: карточки нет, а история есть."""
+    """История по товару. Товар ищем вместе с удалёнными: карточки нет, а история есть.
+
+    `kind` — один вид движения (приход, расход, возврат, списание, корректировка):
+    в истории на тысячу строк ищут «когда возвращали», а не листают всё подряд.
+    """
+    if kind and kind not in MOVE_KINDS:
+        raise errors.ValidationError(
+            f"Unknown move kind: {kind}. Known: {', '.join(MOVE_KINDS)}", code="unknown_kind"
+        )
     amounts = permissions_service.sees_amounts(db, user, "warehouse")
     product = warehouse_service.get_product(db, product_id, include_deleted=True)
-    items, total = warehouse_repo.list_moves(db, product_id=product.id, page=page, per_page=per_page)
+    items, total = warehouse_repo.list_moves(db, product_id=product.id, page=page, per_page=per_page, kind=kind or None)
     data = schemas.paginated(
         _decorate(db, [schemas.stock_move_out(m, amounts=amounts) for m in items]),
         total,

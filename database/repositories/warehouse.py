@@ -274,9 +274,11 @@ def stock_by_warehouse(
 
 
 def _moves_base(
-    product_id: int | None, deal_id: int | None, warehouse_id: int | None = None
+    product_id: int | None, deal_id: int | None, warehouse_id: int | None = None, kind: str | None = None
 ) -> Select:
     stmt = select(StockMove)
+    if kind:
+        stmt = stmt.where(StockMove.kind == kind)
     if product_id is not None:
         stmt = stmt.where(StockMove.product_id == product_id)
     if deal_id is not None:
@@ -293,8 +295,9 @@ def list_moves(
     warehouse_id: int | None = None,
     page: int = 1,
     per_page: int = 50,
+    kind: str | None = None,
 ) -> tuple[list[StockMove], int]:
-    stmt = _moves_base(product_id, deal_id, warehouse_id).order_by(
+    stmt = _moves_base(product_id, deal_id, warehouse_id, kind).order_by(
         StockMove.happened_at.desc(), StockMove.id.desc()
     )
     return page_of(db, stmt, page=page, per_page=per_page)
