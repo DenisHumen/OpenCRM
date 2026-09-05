@@ -170,6 +170,7 @@ export function Dashboard() {
           <>
             <div className="card card-pad">
               <div className="metric-title" style={{ marginBottom: 14 }}>
+                <Icon name="deals" size={14} />
                 {t("moneyInWork")}
               </div>
               <div className="metric-value money-value">
@@ -189,6 +190,7 @@ export function Dashboard() {
             {data.money_basis === "cash" && (
               <div className="card card-pad">
                 <div className="metric-title" style={{ marginBottom: 14 }}>
+                  <Icon name="receipt" size={14} />
                   {t("moneyReceivedThisMonth")}
                 </div>
                 <div className="metric-value money-value">
@@ -199,6 +201,7 @@ export function Dashboard() {
             )}
             <div className="card card-pad">
               <div className="metric-title" style={{ marginBottom: 14 }}>
+                <Icon name="analytics" size={14} />
                 {data.money_basis === "cash" ? t("moneyWonValue") : t("moneyWonThisMonth")}
               </div>
               <div className="metric-value money-value">
@@ -212,6 +215,7 @@ export function Dashboard() {
             </div>
             <div className="card card-pad">
               <div className="metric-title" style={{ marginBottom: 14 }}>
+                <Icon name="star" size={14} />
                 {t("avgCheck")}
               </div>
               {/* Без единой сделки с ценой средний чек — прочерк, а не ноль: ноль
@@ -227,6 +231,7 @@ export function Dashboard() {
         )}
         <div className="card card-pad">
           <div className="metric-title" style={{ marginBottom: 14 }}>
+            <Icon name="clients" size={14} />
             {t("metricClients")}
           </div>
           <div className="metric-value">{data.clients_total}</div>
@@ -307,6 +312,7 @@ export function Dashboard() {
           <div style={{ display: "flex", gap: 40, flexWrap: "wrap" }}>
             <div>
               <div className="metric-title" style={{ marginBottom: 14 }}>
+                <Icon name="eye" size={14} />
                 {t("showcaseViews")}
               </div>
               <div className="metric-value">{data.views_7d}</div>
@@ -326,6 +332,7 @@ export function Dashboard() {
             </div>
             <div>
               <div className="metric-title" style={{ marginBottom: 14 }}>
+                <Icon name="user" size={14} />
                 {t("uniqueViewersTitle")}
               </div>
               <div className="metric-value">{data.unique_viewers_7d ?? 0}</div>
@@ -333,7 +340,7 @@ export function Dashboard() {
             </div>
             <div>
               <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 14 }}>
-                <div className="metric-title">{t("metricBoards")}</div>
+                <div className="metric-title"><Icon name="boards" size={14} />{t("metricBoards")}</div>
                 {data.boards_total - data.boards_published > 0 && (
                   <Chip>
                     <span className="dot" />

@@ -149,6 +149,13 @@
   --tint-warning: rgba(217, 154, 78, 0.14);
   --tint-danger: rgba(229, 105, 94, 0.15);
   --danger-line: rgba(229, 105, 94, 0.45);
+  /* Ещё два оттенка ради аватаров: шесть тинтов различимы, четыре — нет. */
+  --violet: #b9a0f0;        /* 8.5:1 на своём тинте */
+  --tint-violet: rgba(160, 128, 240, 0.16);
+  --teal: #62c9c1;          /* 9.3:1 на своём тинте */
+  --tint-teal: rgba(80, 200, 190, 0.14);
+  /* Блик сверху карточки: тёплый графит без него плоский, как окрашенный лист. */
+  --card-sheen: rgba(255, 255, 255, 0.025);
 
   /* Полосы диаграмм: заливка без текста поверх, поэтому доли крупнее. */
   --chart-brand: rgba(217, 119, 87, 0.13);
@@ -227,6 +234,11 @@
   --tint-warning: rgba(132, 84, 19, 0.13);
   --tint-danger: rgba(179, 45, 35, 0.11);
   --danger-line: rgba(179, 45, 35, 0.38);
+  --violet: #6b46c8;        /* 6.6:1 на белом */
+  --tint-violet: rgba(107, 70, 200, 0.12);
+  --teal: #0a6862;          /* 6.7:1 на белом */
+  --tint-teal: rgba(15, 125, 118, 0.12);
+  --card-sheen: rgba(255, 255, 255, 0);  /* белой карточке блик не нужен */
 
   --chart-brand: rgba(169, 74, 38, 0.16);
   --chart-success: rgba(27, 110, 62, 0.34);
@@ -361,6 +373,12 @@ button:active [data-icon="plus"] { transition-duration: 0s; }
 /* Конечные этапы приглушены: доску просматривают ради того, что в работе, а
    закрытое и потерянное не должно перетягивать взгляд. Тип приходит с сервера
    (open/won/lost) — названия у каждого бизнеса свои, а тип общий. */
+/* Верхняя полоса колонки — вид этапа: в работе, выиграно, потеряно. Без неё шесть
+   колонок одного цвета отличаются только словами в шапке. */
+.kanban-col { border-top: 2px solid var(--border-hover); }
+.kanban-open { border-top-color: var(--accent); }
+.kanban-won { border-top-color: var(--success); }
+.kanban-lost { border-top-color: var(--faint); }
 .kanban-won .kanban-head span:first-child { color: var(--success); }
 .kanban-lost .kanban-head span:first-child { color: var(--faint); }
 .kanban-lost .deal-card { opacity: 0.72; }
@@ -808,7 +826,7 @@ button:active [data-icon="plus"] { transition-duration: 0s; }
 .backup-restore-go .backup-note { margin-top: 0; }
 
 /* Карточки — фон чуть выше bg, тонкая граница */
-.card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; }
+.card { background: var(--surface); background-image: linear-gradient(180deg, var(--card-sheen), transparent 56px); border: 1px solid var(--border); border-radius: 12px; }
 .card-pad { padding: 16px 18px; }                /* было 20px */
 .card-hover { transition: background 150ms, border-color 150ms; }
 .card-hover:hover { background: var(--surface-2); border-color: var(--border-hover); }
@@ -823,6 +841,7 @@ button:active [data-icon="plus"] { transition-duration: 0s; }
 .chip-warning { background: var(--tint-warning); color: var(--warning); }
 .chip-accent { background: var(--tint-accent); color: var(--accent); }
 .chip-brand { background: var(--tint-brand); color: var(--brand); }
+.chip-danger { background: var(--tint-danger); color: var(--danger); }
 /* Точка-индикатор для нейтрального статуса (напр. черновик) */
 .chip .dot { width: 5px; height: 5px; border-radius: 50%; background: var(--warning); }
 
@@ -1013,7 +1032,15 @@ summary:focus-visible,
   color: var(--muted); display: inline-flex; align-items: center; justify-content: center;
   font-size: 11px; font-weight: 600; flex-shrink: 0; overflow: hidden;
 }
-.avatar-lg { width: 46px; height: 46px; font-size: 15px; color: var(--text); }
+/* Оттенок аватара — по имени (`ottenok` в ui.tsx): в списке из двадцати серых
+   кружков человека не найти глазами, по цвету — за секунду. Фото поверх. */
+.avatar-t0 { background: var(--tint-brand); color: var(--brand); }
+.avatar-t1 { background: var(--tint-accent); color: var(--accent); }
+.avatar-t2 { background: var(--tint-success); color: var(--success); }
+.avatar-t3 { background: var(--tint-warning); color: var(--warning); }
+.avatar-t4 { background: var(--tint-violet); color: var(--violet); }
+.avatar-t5 { background: var(--tint-teal); color: var(--teal); }
+.avatar-lg { width: 46px; height: 46px; font-size: 15px; }
 .avatar-sm { width: 18px; height: 18px; font-size: 8.5px; }
 .avatar-img { width: 100%; height: 100%; object-fit: cover; display: block; }
 /* обёртка нужна для точки-индикатора присутствия поверх аватара */
@@ -1112,7 +1139,9 @@ summary:focus-visible,
 .side-search:hover { background: var(--surface); border-color: var(--border-hover); }
 .kbd { font-size: 10px; color: var(--muted); background: var(--tint-neutral); border-radius: 4px; padding: 2px 5px; font-weight: 500; }
 .side-nav { padding: 8px; display: flex; flex-direction: column; gap: 2px; flex: 1; overflow-y: auto; }
-.nav-item { display: flex; align-items: center; gap: 9px; padding: 7px 10px; border-radius: 8px; font-size: 13px; text-decoration: none; color: var(--muted); font-weight: 450; }
+.nav-item { position: relative; display: flex; align-items: center; gap: 9px; padding: 7px 10px; border-radius: 8px; font-size: 13px; text-decoration: none; color: var(--muted); font-weight: 450; }
+/* Полоса бренда у активного пункта: подсветки фона мало, когда пунктов тридцать. */
+.nav-item.active::before { content: ""; position: absolute; left: 0; top: 8px; bottom: 8px; width: 2px; border-radius: 2px; background: var(--brand); }
 .nav-item:hover { background: var(--surface); color: var(--text); }
 .nav-item.active { color: var(--text); font-weight: 500; background: var(--surface-2); }
 /* Категория меню: заголовок сам сворачивает свои пункты */
@@ -1411,9 +1440,11 @@ summary:focus-visible,
 }
 .load-failed-text { flex: 1; min-width: 120px; }
 
-.empty-state { padding: 44px 24px; text-align: center; }
-.empty-title { color: var(--muted); font-size: 14px; margin-bottom: 4px; }
-.empty-sub { color: var(--faint); font-size: 13px; }
+.empty-state { padding: 44px 24px; text-align: center; display: flex; flex-direction: column; align-items: center; }
+.empty-icon { width: 44px; height: 44px; border-radius: 50%; background: var(--surface-2); color: var(--faint); display: inline-flex; align-items: center; justify-content: center; margin-bottom: 12px; }
+.empty-title { color: var(--text); font-size: 14px; font-weight: 500; margin-bottom: 4px; }
+.empty-sub { color: var(--faint); font-size: 13px; max-width: 420px; line-height: 1.5; }
+.empty-action { margin-top: 14px; }
 
 .center-screen { min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 32px; }
 .auth-card { width: 380px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 26px 28px 24px; }

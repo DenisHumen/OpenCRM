@@ -75,7 +75,7 @@ export function Files() {
       </div>
 
       {items.length === 0 ? (
-        <EmptyState title={t("filesEmpty")} />
+        <EmptyState icon="folder" title={t("filesEmpty")} />
       ) : (
         <>
           <div style={{ color: "var(--faint)", fontSize: 12.5, marginBottom: 14 }}>

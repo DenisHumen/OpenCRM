@@ -124,7 +124,7 @@ export function Boards() {
 
       {filtered.length === 0 ? (
         <div className="card">
-          <EmptyState title={t("noBoardsYet")} />
+          <EmptyState icon="boards" title={t("noBoardsYet")} />
         </div>
       ) : (
         <div className="board-grid">

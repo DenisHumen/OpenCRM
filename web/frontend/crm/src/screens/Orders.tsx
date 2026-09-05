@@ -14,7 +14,7 @@ import { useFailure } from "../lib/failure";
 import { useGuard } from "../lib/guard";
 import { formatMoney } from "../lib/format";
 import { SpisokPoKategoriyam } from "../components/SpisokPoKategoriyam";
-import { DOC_SORTS, sortLabel } from "../lib/documents";
+import { DOC_SORTS, sortLabel, statusVariant } from "../lib/documents";
 
 /** Список заказов: покупателей и поставщикам.
  *
@@ -304,7 +304,7 @@ export function Orders() {
             </span>
             <span style={{ width: 110, textAlign: "right" }}>
               {order.reserve_expired && <Chip variant="warning">{t("orderReserveExpired")}</Chip>}{" "}
-              <Chip variant={order.status === "closed" ? "success" : undefined}>
+              <Chip variant={statusVariant(order.status)}>
                 {t(ORDER_STATUS_LABEL[order.status as keyof typeof ORDER_STATUS_LABEL] ?? "docIssued")}
               </Chip>
             </span>
@@ -319,7 +319,7 @@ export function Orders() {
           zanyat={dochityvaem}
           onClick={() => void dochitat()}
         />
-        {data.items.length === 0 && <EmptyState title={t("ordersEmpty")} />}
+        {data.items.length === 0 && <EmptyState icon="receipt" title={t("ordersEmpty")} />}
       </div>
     </div>
   );

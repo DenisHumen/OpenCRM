@@ -258,7 +258,7 @@ export function Audit() {
       </div>
 
       {items.length === 0 ? (
-        <EmptyState title={t("auditEmpty")} />
+        <EmptyState icon="lock" title={t("auditEmpty")} />
       ) : (
         <div className="list-card">
           <div className="list-header">

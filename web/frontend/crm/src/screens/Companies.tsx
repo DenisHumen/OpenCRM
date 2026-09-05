@@ -83,7 +83,7 @@ export function Companies() {
       </div>
 
       {items.length === 0 ? (
-        <EmptyState title={t("noCompanies")} sub={t("noCompaniesHint")} />
+        <EmptyState icon="building" title={t("noCompanies")} sub={t("noCompaniesHint")} />
       ) : (
         <div className="list-card">
           {items.map((company) => (

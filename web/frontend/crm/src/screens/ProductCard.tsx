@@ -286,7 +286,7 @@ export function ProductCard() {
             </div>
           </div>
         ))}
-        {moves.length === 0 && <EmptyState title={t("noMovesYet")} />}
+        {moves.length === 0 && <EmptyState icon="warehouse" title={t("noMovesYet")} />}
         <Dochitat
           pokazano={moves.length}
           vsego={total}

@@ -267,7 +267,7 @@ export function Mail() {
             </div>
           </div>
         ))}
-        {messages.length === 0 && <EmptyState title={t("mailEmpty")} />}
+        {messages.length === 0 && <EmptyState icon="email" title={t("mailEmpty")} />}
         <Dochitat
           pokazano={messages.length}
           vsego={total}
