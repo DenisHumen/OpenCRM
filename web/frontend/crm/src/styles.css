@@ -602,6 +602,14 @@ button:active [data-icon="plus"] { transition-duration: 0s; }
 .stage-log-when { color: var(--faint); font-size: 11.5px; flex: none; width: 116px; }
 .stage-log-what { flex: 1; min-width: 0; color: var(--text); }
 .stage-log-who { color: var(--muted); font-size: 11.5px; flex: none; }
+/* Сколько заявка простояла в этапе — рядом с переходом, а не в отчёте. */
+.stage-log-span { color: var(--faint); font-size: 11.5px; flex: none; width: 64px; text-align: right; font-variant-numeric: tabular-nums; }
+/* Выпадающие подсказки над содержимым: без тени они сливались с карточкой
+   под ними и читались как прозрачные (владелец, 06.09.2026). */
+.vsplyvashka { box-shadow: var(--hard); }
+.svodka-plitki.szhato .svodka-v { font-size: 17px; }
+.svodka-plitka.beda .svodka-v { color: var(--danger); }
+.svodka-plitka.horosho .svodka-v { color: var(--success); }
 
 /* Бланки.
    Поле скана — отдельной полосой над фильтрами, а не одним из них. За стойкой

@@ -171,6 +171,18 @@ export function fileExt(name: string): string {
   return dot === -1 ? "?" : name.slice(dot + 1).toUpperCase().slice(0, 4);
 }
 
+/** Промежуток словами: «3 д», «5 ч», «12 мин». Для «сколько простояла в
+ *  этапе» точнее не нужно, а секунды там читались бы как счётчик. */
+export function formatSpan(ms: number, locale: Locale): string {
+  const min = Math.max(0, Math.round(ms / 60_000));
+  const ru = locale === "ru";
+  if (min < 60) return ru ? `${min} мин` : `${min} min`;
+  const hours = Math.round(min / 60);
+  if (hours < 48) return ru ? `${hours} ч` : `${hours} h`;
+  const days = Math.round(hours / 24);
+  return ru ? `${days} д` : `${days} d`;
+}
+
 export function formatDuration(sec: number | null | undefined): string | null {
   if (!sec) return null;
   const m = Math.floor(sec / 60);
