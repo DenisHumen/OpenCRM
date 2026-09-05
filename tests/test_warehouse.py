@@ -325,8 +325,16 @@ def test_nol_eto_zakonchilsya_a_ne_malo(root_client):
         assert card["out_of_stock"] is True, tovar["name"]
     assert root_client.get(f"{WH}/products/{bez_poroga['id']}").json()["low_stock"] is False
 
-    low = root_client.get(f"{WH}/products?low_only=true&per_page=200").json()["items"]
-    assert {s_porogom["id"], bez_poroga["id"]} <= {row["id"] for row in low}
+    # Фильтр «мало» режет уже отобранную страницу, поэтому ищем по имени, а не
+    # листаем: на населённой базе «Тонер» стоит дальше двухсотой строки.
+    def malo(nazvanie: str) -> set[int]:
+        otvet = root_client.get(
+            f"{WH}/products", params={"low_only": "true", "search": nazvanie, "per_page": 50}
+        ).json()
+        return {row["id"] for row in otvet["items"]}
+
+    assert s_porogom["id"] in malo("Тонер")
+    assert bez_poroga["id"] in malo("Барабан")
 
     move(root_client, bez_poroga["id"], "in", 1)
     card = root_client.get(f"{WH}/products/{bez_poroga['id']}").json()
