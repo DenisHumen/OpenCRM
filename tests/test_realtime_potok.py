@@ -1,3 +1,5 @@
+import logging
+import time
 """`GET /api/v1/live`: закрытость, режим «выключено», resync, догон, отбор, обрыв сессии.
 
 Ожидание здесь одного вида — чтение строк потока с крайним сроком жизни
@@ -192,3 +194,20 @@ def test_metriki_zhivyh_obnovleniy(root_client):
         root_client.post(f"{API}/modules/monitoring", json={"enabled": False})
     for imya in ("opencrm_realtime_published_total", "opencrm_realtime_dropped_total", "opencrm_realtime_connections"):
         assert f"# HELP {imya}" in text and f"# TYPE {imya}" in text, imya
+
+
+def test_tikhiy_potok_ne_vyglyadit_obryvom(caplog):
+    """`XREAD BLOCK 1000` на тихом потоке молчит секунду — столько же жил сокет
+    общего клиента, и ожидание считалось отказом: на боевом сервере жалоба
+    «чтение потока не удалось — TimeoutError» шла каждые полминуты, а намёки
+    опаздывали до двух секунд. Читатель обязан ждать на своём соединении с
+    более длинным сроком (`redis_client.blocking_client`)."""
+    if not bus.redis_client.configured():
+        pytest.skip("нужен Redis")
+    potok = bus._Potok()
+    with caplog.at_level(logging.WARNING, logger="core.live.bus"):
+        potok.start()
+        time.sleep(2.6)
+        potok.stop()
+    zhaloby = [r.getMessage() for r in caplog.records if "чтение потока" in r.getMessage()]
+    assert zhaloby == [], f"тихий поток принят за обрыв: {zhaloby}"

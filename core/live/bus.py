@@ -243,10 +243,16 @@ class _Potok(_Shina):
         self._chitatel = None
 
     def _chitat(self) -> None:
-        """Читает с «сейчас»: прошлое раздаёт `catch_up` тому, кто пришёл с номером."""
+        """Читает с «сейчас»: прошлое раздаёт `catch_up` тому, кто пришёл с номером.
+
+        Соединение своё, со сроком длиннее `BLOCK_MS` (`redis_client.blocking_client`):
+        на общем клиенте тихий поток выглядел как обрыв каждую секунду.
+        """
         posledniy = "$"
+        client = None
         while not self._stop.is_set():
-            client = redis_client.get_client()
+            if client is None:
+                client = redis_client.blocking_client(BLOCK_MS / 1000)
             if client is None:
                 time.sleep(1.0)
                 continue
@@ -254,6 +260,11 @@ class _Potok(_Shina):
                 otvet = client.xread({STREAM: posledniy}, block=BLOCK_MS, count=100)
             except Exception as beda:  # noqa: BLE001 — Redis лёг: ждём и пробуем снова
                 self._pozhalovatsya("чтение потока", beda)
+                try:
+                    client.close()
+                except Exception:  # noqa: BLE001 — соединение и так мертво
+                    pass
+                client = None
                 time.sleep(1.0)
                 continue
             for _klyuch, zapisi in otvet or []:

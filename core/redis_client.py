@@ -99,6 +99,28 @@ def get_client():
     return _client
 
 
+def blocking_client(wait_seconds: float):
+    """Отдельное соединение для команд, которые ЖДУТ (`XREAD BLOCK`).
+
+    Общий клиент рвёт сокет через `TIMEOUT_SECONDS`, и это правильно для
+    ограничителя на входе. Но `XREAD BLOCK 1000` на тихом потоке молчит ровно
+    секунду — столько же, сколько живёт сокет, — и клиент считал ожидание
+    отказом: `TimeoutError` каждую секунду, жалоба в журнал каждые полминуты,
+    намёки с опозданием до двух секунд. Ожидающему соединению срок ставится
+    длиннее ожидания, и оно не делится с остальными — их срок остаётся коротким.
+    """
+    if not configured():
+        return None
+    import redis  # локальный импорт: без Redis модуль незачем грузить
+
+    return redis.Redis.from_url(
+        get_settings().redis_url,
+        socket_timeout=wait_seconds + TIMEOUT_SECONDS,
+        socket_connect_timeout=TIMEOUT_SECONDS,
+        decode_responses=True,
+    )
+
+
 def reset_client() -> None:
     """Забыть клиента. Нужно тестам и смене настроек, в боевом коде не зовётся."""
     global _client
