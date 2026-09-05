@@ -541,6 +541,14 @@ class Updater:
     def head_sha(self) -> str:
         return self._git("rev-parse", "HEAD").out.strip()
 
+    def _checkout_args(self, target: str) -> tuple[str, ...]:
+        # `--force` только когда грязь — одни переводы строк: без него git
+        # отказал бы «local changes would be overwritten» ровно на том файле,
+        # который новая версия и чинит.
+        if getattr(self, "_tolko_perevody_strok", False):
+            return ("checkout", "--force", "--detach", "--quiet", target)
+        return ("checkout", "--detach", "--quiet", target)
+
     # --- сам деплой ---
 
     def _deploy(self, previous: str, target: str) -> Outcome:
@@ -573,7 +581,7 @@ class Updater:
             self._pribrat_snimki()
             self._preflight(steps)
             self._step(steps, "fetch", self._git("fetch", "--quiet", "origin", self.config.branch))
-            self._step(steps, "checkout", self._git("checkout", "--detach", "--quiet", target))
+            self._step(steps, "checkout", self._git(*self._checkout_args(target)))
             self._checks(steps)
             self._config_check(steps)
             # Шаги объявляются ДО работы, а не после: страницу читают ровно в ту
@@ -615,7 +623,7 @@ class Updater:
                 if previous:
                     self._step(
                         steps, "restore-checkout",
-                        self._git("checkout", "--detach", "--quiet", previous), fatal=False,
+                        self._git(*self._checkout_args(previous)), fatal=False,
                     )
                 outcome = Outcome(STATUS_ABORTED, previous, target, summary, str(stop), steps)
             else:
@@ -629,6 +637,17 @@ class Updater:
         self.journal.append(outcome.as_record())
         self._notify(outcome)
         return outcome
+
+    def _gryaz_tolko_v_perevodakh_strok(self, porcelain: str) -> bool:
+        """Все правки — отслеживаемые файлы, и без CR в конце строк их нет."""
+        for stroka in porcelain.splitlines():
+            if not stroka.strip():
+                continue
+            # `??` — лишний файл, ` M` — правка рабочей копии; всё прочее
+            # (индекс, переименование, удаление) — настоящее.
+            if stroka[:2] != " M":
+                return False
+        return self._git("diff", "--quiet", "--ignore-cr-at-eol").ok
 
     def _preflight(self, steps: list[Step]) -> None:
         if not (self.config.project_dir / ".git").exists():
@@ -646,7 +665,14 @@ class Updater:
         if not dirty.ok:
             steps.append(Step("preflight", False, dirty.tail(4)))
             raise _Stop(f"git status не отвечает: {dirty.tail(4)}")
-        if dirty.out.strip() and not self.config.allow_dirty:
+        # Правки только в переводах строк — не правки. Блоб со смешанными CRLF/LF
+        # (`*.py text`) на Linux «грязный» сразу после чекаута, и `checkout -- .`
+        # это не лечит: чекаут пишет тот же блоб. Содержимого в такой правке нет,
+        # значит и терять нечего — идём дальше, а чекаут делаем с `--force`.
+        self._tolko_perevody_strok = bool(dirty.out.strip()) and self._gryaz_tolko_v_perevodakh_strok(dirty.out)
+        if self._tolko_perevody_strok:
+            steps.append(Step("preflight", True, "правки только в переводах строк — содержимое не тронуто"))
+        elif dirty.out.strip() and not self.config.allow_dirty:
             steps.append(Step("preflight", False, dirty.out.strip()[:400]))
             # Отказ обязан назвать лекарство. Без него человек знает только, что
             # обновление не идёт, — и дальше либо ждёт, либо сносит каталог
@@ -1130,7 +1156,7 @@ class Updater:
     ) -> str:
         self.log(f"откат на {previous[:12]}")
         self._step(steps, "rollback-checkout",
-                   self._git("checkout", "--detach", "--quiet", previous), fatal=False)
+                   self._git(*self._checkout_args(previous)), fatal=False)
         # Контейнер держит файл базы открытым — до подмены его надо остановить.
         self._step(steps, "rollback-stop", self._compose("stop", "app", timeout=300), fatal=False)
 
