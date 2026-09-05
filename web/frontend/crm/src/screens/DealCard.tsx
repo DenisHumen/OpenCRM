@@ -14,7 +14,7 @@ import { useLiveTopic, useNachatayaPravka } from "../lib/live";
 import { useFailure } from "../lib/failure";
 import { useGuard } from "../lib/guard";
 import { kindLabel, paperLink, statusLabel, statusVariant } from "../lib/documents";
-import { formatDate, formatDateTime, formatMoney } from "../lib/format";
+import { formatDate, formatDateTime, formatMoney, formatSpan, parseDate } from "../lib/format";
 import { moduleOn } from "../lib/modules";
 import { can } from "../lib/permissions";
 import { useReference } from "../lib/reference";
@@ -253,10 +253,27 @@ export function DealCard() {
         </div>
       </div>
 
+      {/* Итоги плитками — то, что спрашивают, открыв заявку: сумма, оплачено,
+          остаток, срок. Своей строкой под шапкой, а не в ней: на узкой карточке
+          плитки отжимали название до нечитаемого. Поля для правки — ниже. */}
+      <DealItogi deal={deal} seesMoney={seesMoney} currency={currency} />
+
       {/* Действия — первым делом. Главный вопрос к открытой сделке «что
           дальше», и ответ не должен требовать возврата на доску. */}
       <div className="card card-pad" style={{ marginBottom: 20 }}>
         <div className="metric-title" style={{ marginBottom: 12 }}>{t("whatNext")}</div>
+        {/* Закрытая заявка: исход словами — когда и кем, — а не одни серые шаги. */}
+        {deal.closed_at && stage && (stage.kind === "won" || stage.kind === "lost") && (
+          <div
+            className={"field-desc"}
+            style={{ marginTop: 0, marginBottom: 12, color: stage.kind === "won" ? "var(--success)" : "var(--danger)", fontWeight: 500 }}
+          >
+            {t(stage.kind === "won" ? "dealOutcomeWon" : "dealOutcomeLost", {
+              when: formatDateTime(deal.closed_at, locale),
+              who: (deal.stage_history ?? []).slice(-1)[0]?.author_name || "—",
+            })}
+          </div>
+        )}
         <ol className="shagi">
           {nextOpen.map((s, i) => {
             const gde =
@@ -605,15 +622,23 @@ export function DealCard() {
         {/* `?? []` — не перестраховка: неполный ответ уже отправлял этот экран
             в белое. Пустая история читается, отсутствующий экран — нет. */}
         <ol className="stage-log">
-          {(deal.stage_history ?? []).map((h: any) => (
-            <li key={h.id}>
-              <span className="stage-log-when">{formatDateTime(h.changed_at, locale)}</span>
-              <span className="stage-log-what">
-                {h.from_name ? `${h.from_name} → ${h.to_name}` : h.to_name}
-              </span>
-              <span className="stage-log-who">{h.author_name || "—"}</span>
-            </li>
-          ))}
+          {(deal.stage_history ?? []).map((h: any, i: number, vse: any[]) => {
+            // Сколько простояла в этапе: до следующего перехода, у последнего —
+            // до сих пор (закрытой — до закрытия).
+            const ot = parseDate(h.changed_at);
+            const do_ = i + 1 < vse.length ? parseDate(vse[i + 1].changed_at) : deal.closed_at ? parseDate(deal.closed_at) : new Date();
+            const span = ot && do_ && !(i + 1 === vse.length && deal.closed_at) ? formatSpan(do_.getTime() - ot.getTime(), locale) : "";
+            return (
+              <li key={h.id}>
+                <span className="stage-log-when">{formatDateTime(h.changed_at, locale)}</span>
+                <span className="stage-log-what">
+                  {h.from_name ? `${h.from_name} → ${h.to_name}` : h.to_name}
+                </span>
+                <span className="stage-log-span" title={span ? t("stageSpanHint") : undefined}>{span}</span>
+                <span className="stage-log-who">{h.author_name || "—"}</span>
+              </li>
+            );
+          })}
         </ol>
         <div className="field-desc" style={{ marginTop: 10 }}>
           {t("createdAt", { t: formatDate(deal.created_at, locale) })}
@@ -689,6 +714,52 @@ export function DealCard() {
           onClose={() => setConfirmDelete(false)}
         />
       )}
+    </div>
+  );
+}
+
+
+/** Итоги заявки в шапке: сумма, оплачено, остаток, срок. Без права на суммы —
+ *  только срок: пустые плитки читались бы как «денег нет». */
+function DealItogi({ deal, seesMoney, currency }: { deal: any; seesMoney: boolean; currency: string }) {
+  const { t, locale } = useApp();
+  const money = (value: number | null) => formatMoney(value, currency, locale);
+  const srok = parseDate(deal.due_at);
+  const dney = srok ? Math.round((srok.getTime() - Date.now()) / 86_400_000) : null;
+  const prosrocheno = dney !== null && dney < 0 && !deal.closed_at;
+  return (
+    <div className="svodka-plitki szhato" style={{ marginBottom: 20 }}>
+      {seesMoney && (
+        <>
+          <div className="svodka-plitka">
+            <div className="svodka-l">{t("dealAmount")}</div>
+            <div className="svodka-v">{deal.amount === null ? "—" : money(deal.amount)}</div>
+            <div className="svodka-sub">{deal.amount === null ? t("dealNoAmount") : t("dealPrepaid").toLowerCase() + ": " + money(deal.prepaid)}</div>
+          </div>
+          <div className={"svodka-plitka" + (deal.is_paid ? " horosho" : "")}>
+            <div className="svodka-l">{t("dealRemainder")}</div>
+            <div className="svodka-v">{deal.is_paid ? t("dealPaidInFull") : deal.remainder === null ? "—" : money(deal.remainder)}</div>
+            <div className="svodka-sub">
+              {deal.remainder !== null && deal.remainder < 0 ? t("dealOverpaid", { sum: money(-deal.remainder) }) : t("dealRemainderHint")}
+            </div>
+          </div>
+        </>
+      )}
+      <div className={"svodka-plitka" + (prosrocheno ? " beda" : "")}>
+        <div className="svodka-l">{t("dueDate")}</div>
+        <div className="svodka-v">{srok ? formatDate(deal.due_at, locale) : "—"}</div>
+        <div className="svodka-sub">
+          {dney === null
+            ? t("dealNoDue")
+            : deal.closed_at
+              ? t("closedAt", { t: formatDate(deal.closed_at, locale) })
+              : dney < 0
+                ? t("dealOverdueDays", { n: -dney })
+                : dney === 0
+                  ? t("dealDueToday")
+                  : t("dealDueIn", { n: dney })}
+        </div>
+      </div>
     </div>
   );
 }
