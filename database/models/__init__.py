@@ -67,6 +67,7 @@ __all__ = [
     "StockTransfer",
     "Warehouse",
     "ApiKey",
+    "ApiKeyHit",
     "ApiKeyScope",
     "PhoneCall",
     "TelegramChat",
