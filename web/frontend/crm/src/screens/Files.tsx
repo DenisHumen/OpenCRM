@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 
-import { Chip, ConfirmModal, EmptyState, ScreenLoading } from "../components/ui";
+import { Papka } from "../components/Papka";
+import { Chip, ConfirmModal, ScreenLoading } from "../components/ui";
 import { Icon } from "../components/Icon";
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
@@ -75,7 +76,10 @@ export function Files() {
       </div>
 
       {items.length === 0 ? (
-        <EmptyState icon="folder" title={t("filesEmpty")} />
+        <div className="empty-state">
+          <Papka />
+          <div className="empty-title" style={{ marginTop: 18 }}>{t("filesEmpty")}</div>
+        </div>
       ) : (
         <>
           <div style={{ color: "var(--faint)", fontSize: 12.5, marginBottom: 14 }}>

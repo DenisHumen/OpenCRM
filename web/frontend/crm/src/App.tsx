@@ -92,7 +92,7 @@ function Protected() {
   // экран остаётся под шторкой, и кажется, что нажатие не сработало.
   useEffect(() => setNavOpen(false), [location.pathname]);
 
-  if (!ready) return <ScreenLoading />;
+  if (!ready) return <ScreenLoading polnyy />;
   if (!user) return <Navigate to="/login" state={{ from: location }} replace />;
   if (user.must_change_password) return <ForcePasswordChange />;
   return (

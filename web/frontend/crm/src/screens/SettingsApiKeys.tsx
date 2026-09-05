@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 
+import { CopyButton } from "../components/CopyButton";
 import { Icon } from "../components/Icon";
 import { Chip, ConfirmModal, Modal, ScreenLoading } from "../components/ui";
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
 import { useFailure } from "../lib/failure";
-import { formatDateTime } from "../lib/format";
+import { formatDate, formatDateTime } from "../lib/format";
 import { useGuard } from "../lib/guard";
 import type { TranslationKey } from "../lib/i18n";
 
@@ -193,9 +194,7 @@ export function SettingsApiKeys() {
       {shown && shown.key && (
         <Modal title={shown.name} onClose={() => setShown(null)}>
           <div style={{ color: "var(--warning)", fontSize: 12.5, marginBottom: 10, lineHeight: 1.5 }}>{t("apiKeyShown")}</div>
-          <code style={{ display: "block", wordBreak: "break-all", fontSize: 13, padding: "10px 12px", background: "var(--bg-2)", borderRadius: 8, userSelect: "all" }}>
-            {shown.key}
-          </code>
+          <KlyuchKarta klyuch={shown} />
           <div className="field-desc" style={{ marginTop: 10 }}>
             {t("apiKeyHeader")}: <code>{data.header}</code>
           </div>
@@ -348,5 +347,53 @@ function NewKeyModal({
         </button>
       </form>
     </Modal>
+  );
+}
+
+/** Ключ как банковская карта: лицо с приставкой, оборот с самим ключом.
+ *  Перевод uiverse.io/Praashoo7/black-lizard-62 (docs/18). По наведению
+ *  переворачивается сам; на касании — по нажатию, иначе оборот не увидеть. */
+function KlyuchKarta({ klyuch }: { klyuch: ApiKey }) {
+  const { t, locale } = useApp();
+  const [perevyornut, setPerevyornut] = useState(false);
+  const srok = klyuch.expires_at ? formatDate(klyuch.expires_at, locale) : t("apiKeyNeverExpires");
+  return (
+    <>
+      <div
+        className={"klyuch" + (perevyornut ? " klyuch-flipped" : "")}
+        role="button"
+        tabIndex={0}
+        aria-label={t("apiKeyFlipHint")}
+        onClick={() => setPerevyornut((bylo) => !bylo)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            setPerevyornut((bylo) => !bylo);
+          }
+        }}
+      >
+        <div className="klyuch-inner">
+          <div className="klyuch-front">
+            <span className="klyuch-head">OpenCRM · API</span>
+            <span className="klyuch-chip" />
+            <span className="klyuch-wave">
+              <Icon name="globe" size={18} />
+            </span>
+            <span className="klyuch-num">{klyuch.prefix} •••• •••• ••••</span>
+            <span className="klyuch-valid">{t("apiKeyValid")}</span>
+            <span className="klyuch-date">{srok}</span>
+            <span className="klyuch-name">{klyuch.name}</span>
+          </div>
+          <div className="klyuch-back">
+            <div className="klyuch-strip" />
+            <code className="klyuch-sign">{klyuch.key}</code>
+            <span className="klyuch-copy" onClick={(e) => e.stopPropagation()}>
+              <CopyButton text={klyuch.key ?? ""} />
+            </span>
+          </div>
+        </div>
+      </div>
+      <div className="klyuch-hint">{t("apiKeyFlipHint")}</div>
+    </>
   );
 }

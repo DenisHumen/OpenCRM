@@ -1,0 +1,52 @@
+<!doctype html>
+<!--
+  Плитка товара: картинка, название, цена и старая цена, кнопка, ярлык скидки.
+  Перевод uiverse.io/vinodjangid07/tender-fireant-6 (CSS). Поведение образца:
+  по наведению на плитку картинка сжимается (170 → 120px) и кнопка поднимается
+  на её место; кнопка по наведению меняет цвет на цвет ярлыка.
+  Куда: плиточный вид склада, когда список товаров понесёт фотографии.
+-->
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<title>Плитка товара — шаблон</title>
+<style>
+  :root {
+    --bg: #1a1a19; --surface: #232220; --surface-2: #2c2b28; --text: #eceae4;
+    --muted: #9a968b; --faint: #6e6a60; --brand: #dc8063; --success: #5fbf8a;
+    --btn-bg: #eceae4; --btn-text: #1a1a19; --tint-success: rgba(95, 191, 138, 0.16);
+  }
+  body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: var(--bg); font-family: Inter, "Segoe UI", system-ui, sans-serif; color: var(--text); }
+
+  .plitka { position: relative; width: 190px; height: 254px; padding: 15px; box-sizing: border-box; border-radius: 10px; background: var(--surface); overflow: hidden; transition: background 300ms; }
+  .plitka:hover { background: var(--surface-2); }
+  .plitka-telo { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 15px; width: 100%; }
+  .plitka-foto { display: flex; align-items: center; justify-content: center; width: 100%; height: 170px; font-size: 5em; font-weight: 900; transition: height 300ms; }
+  .plitka-foto img { max-width: 100%; max-height: 100%; object-fit: contain; }
+  .plitka-opis { display: flex; align-items: flex-start; justify-content: center; gap: 4px; }
+  .plitka-imya { margin: 0; font-size: 0.72em; font-weight: 500; text-transform: uppercase; color: var(--muted); }
+  .plitka-tsena { margin: 0; font-size: 1em; font-weight: 700; color: var(--text); }
+  .plitka-bylo { margin: 0; font-size: 0.7em; color: var(--faint); text-decoration: line-through; }
+  .plitka-btn { width: 100%; height: 40px; margin-top: 10px; border: 0; border-radius: 40px; background: var(--btn-bg); color: var(--btn-text); font-weight: 500; cursor: pointer; transition: margin 300ms, background 300ms, color 300ms; }
+  .plitka:hover .plitka-foto { height: 120px; }
+  .plitka:hover .plitka-btn { margin-top: 0; }
+  .plitka-btn:hover { background: var(--success); color: var(--btn-text); }
+  .plitka-yarlyk { position: absolute; top: 12px; left: 12px; margin: 0; padding: 6px 12px; border-radius: 15px; background: var(--success); color: var(--btn-text); font-size: 0.75em; font-weight: 500; }
+  @media (prefers-reduced-motion: reduce) { .plitka, .plitka-foto, .plitka-btn { transition: none; } }
+</style>
+</head>
+<body>
+  <div class="plitka">
+    <div class="plitka-telo">
+      <div class="plitka-foto">III</div>
+      <div class="plitka-opis">
+        <p class="plitka-imya">Название товара</p>
+        <p class="plitka-tsena">$3</p>
+        <p class="plitka-bylo">&nbsp;$6</p>
+      </div>
+      <button type="button" class="plitka-btn">В ЗАКАЗ</button>
+    </div>
+    <p class="plitka-yarlyk">-50%</p>
+  </div>
+</body>
+</html>

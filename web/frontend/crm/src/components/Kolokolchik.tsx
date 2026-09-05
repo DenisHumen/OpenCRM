@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { Icon } from "./Icon";
-import { LoadFailed } from "./ui";
+import { LoadFailed, ottenok } from "./ui";
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
 import { useFailure } from "../lib/failure";
@@ -21,6 +21,34 @@ export interface Uvedomlenie {
 }
 
 type Perevod = ReturnType<typeof useApp>["t"];
+
+/** Значок вида в углу кружка: о чём речь, видно раньше, чем прочитан текст. */
+const ZNACHOK: Record<string, string> = {
+  order_closed: "receipt",
+  order_reverted: "receipt",
+  order_cancelled: "receipt",
+  waybill_posted: "clipboard",
+  auto_waybill: "clipboard",
+  act_completed: "note",
+  auto_act: "note",
+  deal_stage: "deals",
+  lead_received: "inbox",
+  task_assigned: "clock",
+};
+
+/** Предмет уведомления — чьей буквой подписан кружок. Имя ищется раньше
+ *  номера: у заявки и клиента буква говорящая, у «2026-000009» — нет. */
+function predmet(n: Uvedomlenie): string {
+  const p = n.params;
+  return p.title || p.client || p.deal || p.order || p.number || n.kind;
+}
+
+/** Первая буква предмета, если она буква: цифра номера в кружке ничего не
+ *  говорит, тогда кружок несёт значок вида, а уголок пустует. */
+function bukva(n: Uvedomlenie): string | null {
+  const b = predmet(n).slice(0, 1).toUpperCase();
+  return /\p{L}/u.test(b) ? b : null;
+}
 
 /** Подпись по виду. Неизвестный вид не роняет колокольчик — показывается ключом. */
 export function podpis(t: Perevod, n: Uvedomlenie): string {
@@ -166,8 +194,22 @@ export function Kolokolchik() {
                   className={"bell-row" + (n.read ? "" : " unread")}
                   onClick={() => void perejti(n)}
                 >
-                  <span className="bell-text">{podpis(t, n)}</span>
-                  <span className="bell-when">{n.created_at ? formatDateTime(n.created_at, locale) : ""}</span>
+                  {/* Строка — перевод weak-vampirebat-44 (docs/18): кружок с буквой
+                      предмета, значок вида в углу, текст, время. */}
+                  <span className="bell-ava" aria-hidden="true">
+                    <span className={"avatar avatar-t" + ottenok(predmet(n))}>
+                      {bukva(n) ?? <Icon name={ZNACHOK[n.kind] ?? "inbox"} size={16} />}
+                    </span>
+                    {bukva(n) !== null && (
+                      <span className="bell-badge">
+                        <Icon name={ZNACHOK[n.kind] ?? "inbox"} size={10} stroke={2} />
+                      </span>
+                    )}
+                  </span>
+                  <span className="bell-body">
+                    <span className="bell-text">{podpis(t, n)}</span>
+                    <span className="bell-when">{n.created_at ? formatDateTime(n.created_at, locale) : ""}</span>
+                  </span>
                 </button>
               ))}
             </div>

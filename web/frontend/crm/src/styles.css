@@ -157,6 +157,10 @@
   --tint-teal: rgba(80, 200, 190, 0.14);
   /* Блик сверху карточки: тёплый графит без него плоский, как окрашенный лист. */
   --card-sheen: rgba(255, 255, 255, 0.025);
+  /* Свет и тень объёмных карточек (пропуск, папка, ключ): образцы кладут их
+     белым и чёрным, у нас — токенами, чтобы светлая тема не слепла. */
+  --glow: rgba(255, 255, 255, 0.18);
+  --shade: rgba(0, 0, 0, 0.45);
 
   /* Полосы диаграмм: заливка без текста поверх, поэтому доли крупнее. */
   --chart-brand: rgba(217, 119, 87, 0.13);
@@ -241,6 +245,8 @@
   --teal: #0a6862;          /* 6.7:1 на белом */
   --tint-teal: rgba(15, 125, 118, 0.12);
   --card-sheen: rgba(255, 255, 255, 0);  /* белой карточке блик не нужен */
+  --glow: rgba(255, 255, 255, 0.85);
+  --shade: rgba(38, 36, 31, 0.16);
 
   --chart-brand: rgba(169, 74, 38, 0.16);
   --chart-success: rgba(27, 110, 62, 0.34);
@@ -2222,13 +2228,14 @@ summary:focus-visible,
   color: inherit;
 }
 
-.tg-compose {
-  display: flex;
-  align-items: flex-end;
-  gap: 8px;
-  padding: 10px 12px;
-  border-top: 1px solid var(--line);
-}
+/* Поле ответа — перевод uiverse.io/Cobp/dangerous-dolphin-47 (docs/18): поле
+   сверху, под ним инструменты слева и глянцевая «отправить» справа; рамка —
+   градиент от светлой кромки к обычной, в углу блик, в фокусе — цвет ссылки. */
+.tg-compose { padding: 10px 12px; border-top: 1px solid var(--line); }
+.tg-compose-box { position: relative; display: flex; padding: 1.5px; border-radius: 16px; background: linear-gradient(to bottom right, var(--border-hover), var(--border) 45%, var(--border)); overflow: hidden; }
+.tg-compose-box:focus-within { background: linear-gradient(to bottom right, var(--accent), var(--border) 60%, var(--border)); }
+.tg-compose-box::after { content: ""; position: absolute; top: -10px; left: -10px; width: 30px; height: 30px; border-radius: 50%; background: radial-gradient(ellipse at center, var(--glow), transparent 70%); filter: blur(1px); pointer-events: none; }
+.tg-compose-in { display: flex; flex-direction: column; width: 100%; border-radius: 15px; background: var(--well); overflow: hidden; }
 /* Низ переписки у того, кому писать нельзя. Занимает место поля ввода и несёт
    ту же границу сверху: убери её вовсе — и лента упирается в край окна, что
    читается как оборванная вёрстка, а не как «мне сюда нельзя». */
@@ -2239,48 +2246,22 @@ summary:focus-visible,
   font-size: 12.5px;
   text-align: center;
 }
-.tg-compose textarea {
-  flex: 1;
-  min-height: 38px;
-  max-height: 140px;
-  resize: vertical;
-  padding: 8px 10px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-}
-/* Спутники поля ввода — скрепка, шаблон, отправка — одной высоты с самим
-   полем: разнобой в 3–4 пикселя не назовёшь, но строка от него выглядит
-   развалившейся. */
-.tg-attach {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 38px;
-  height: 38px;
-  flex: none;
-  border-radius: 10px;
-  cursor: pointer;
-  opacity: 0.75;
-}
-.tg-attach:hover { opacity: 1; background: var(--well-off); }
-.tg-compose > button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 38px;
-  height: 38px;
-  flex: none;
-  border: 0;
-  border-radius: 10px;
-  background: var(--brand);
-  color: var(--on-brand);
-  cursor: pointer;
-}
-.tg-compose > button:disabled { opacity: 0.5; cursor: default; }
-.tg-templates { height: 38px; flex: none; }
+.tg-compose textarea { min-height: 50px; max-height: 140px; resize: vertical; padding: 10px 12px; border: 0; border-radius: 15px 15px 0 0; background: transparent; color: inherit; font: inherit; }
+.tg-compose textarea::placeholder { color: var(--muted); transition: color 300ms ease; }
+.tg-compose textarea:focus::placeholder { color: var(--faint); }
+.tg-compose textarea:focus-visible { outline: none; }
+.tg-compose-tools { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 6px 8px 8px; }
+.tg-compose-add { display: flex; align-items: center; gap: 6px; }
+.tg-attach { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; flex: none; border-radius: 8px; cursor: pointer; color: var(--muted); opacity: 0.6; transition: transform 300ms ease, opacity 300ms ease, color 300ms ease; }
+.tg-attach:hover { opacity: 1; color: var(--text); transform: translateY(-4px); }
+.tg-templates { height: 32px; flex: none; }
+.tg-send { display: inline-flex; padding: 2px; border: 0; border-radius: 10px; background: linear-gradient(to top, var(--surface-2), var(--border-hover), var(--surface-2)); box-shadow: inset 0 6px 2px -4px var(--glow); cursor: pointer; transition: transform 150ms ease; }
+.tg-send-i { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; border-radius: 8px; background: var(--tint-neutral); color: var(--brand); }
+.tg-send svg { transition: transform 300ms ease, color 300ms ease, filter 300ms ease; }
+.tg-send:hover svg { color: var(--text); filter: drop-shadow(0 0 5px var(--glow)); }
+.tg-send:focus-visible svg { color: var(--text); transform: scale(1.2) rotate(45deg) translateX(-2px) translateY(1px); }
+.tg-send:active { transform: scale(0.92); }
+.tg-send:disabled { opacity: 0.5; cursor: default; }
 
 /* Фотография прямо в переписке. Ширина по пузырю, высота ограничена: снимок с
    телефона вертикальный, и без потолка одно фото занимало бы весь экран. */
@@ -2934,3 +2915,211 @@ html { scroll-behavior: smooth; }
   .skachat, .skachat:hover, .skachat-vsyo, .skachat-vsyo:hover { transition: none; transform: none; }
   .skachat-razmer, .skachat:hover .skachat-razmer { transition: none; }
 }
+
+/* ==========================================================================
+   Переводы с uiverse.io (порядок и таблица — docs/18-chuzhie-komponenty.md).
+   Каждый блок: откуда, что оставлено от образца, что заменено токенами.
+   ========================================================================== */
+
+/* ---- Загрузка: кольцо с переливом и буквы по одной --------------------------
+   dexter-st/bright-lizard-8. Кольцо — три внутренние тени на прозрачном круге,
+   буквы всплывают со сдвигом на десятую секунды. Без движения кольцо стоит. */
+.zagruzka { position: relative; display: flex; align-items: center; justify-content: center; width: 120px; height: 120px; border-radius: 50%; color: var(--text); font-size: 14px; letter-spacing: 0.02em; user-select: none; }
+.zagruzka-kolco { position: absolute; inset: 0; border-radius: 50%; animation: zagruzka-krug 2s linear infinite; z-index: 0; }
+@keyframes zagruzka-krug {
+  0% { transform: rotate(90deg); box-shadow: 0 7px 14px 0 var(--text) inset, 0 14px 20px 0 var(--violet) inset, 0 40px 40px 0 var(--brand) inset; }
+  50% { transform: rotate(270deg); box-shadow: 0 7px 14px 0 var(--text) inset, 0 14px 7px 0 var(--accent) inset, 0 27px 40px 0 var(--teal) inset; }
+  100% { transform: rotate(450deg); box-shadow: 0 7px 14px 0 var(--text) inset, 0 14px 20px 0 var(--violet) inset, 0 40px 40px 0 var(--brand) inset; }
+}
+.zagruzka-bukva { display: inline-block; opacity: 0.4; animation: zagruzka-bukva 2s infinite; z-index: 1; }
+.zagruzka-bukva:nth-child(2) { animation-delay: 0.1s; }
+.zagruzka-bukva:nth-child(3) { animation-delay: 0.2s; }
+.zagruzka-bukva:nth-child(4) { animation-delay: 0.3s; }
+.zagruzka-bukva:nth-child(5) { animation-delay: 0.4s; }
+.zagruzka-bukva:nth-child(6) { animation-delay: 0.5s; }
+.zagruzka-bukva:nth-child(7) { animation-delay: 0.6s; }
+.zagruzka-bukva:nth-child(8) { animation-delay: 0.7s; }
+.zagruzka-bukva:nth-child(9) { animation-delay: 0.8s; }
+.zagruzka-bukva:nth-child(10) { animation-delay: 0.9s; }
+.zagruzka-bukva:nth-child(11) { animation-delay: 1s; }
+.zagruzka-bukva:nth-child(12) { animation-delay: 1.1s; }
+@keyframes zagruzka-bukva {
+  0%, 100% { opacity: 0.4; transform: translateY(0); }
+  20% { opacity: 1; transform: scale(1.15); }
+  40% { opacity: 0.7; transform: translateY(0); }
+}
+.screen-loading-full { min-height: 100vh; }
+@media (prefers-reduced-motion: reduce) {
+  .zagruzka-kolco { animation: none; opacity: 0.6; box-shadow: 0 7px 14px 0 var(--text) inset, 0 14px 20px 0 var(--violet) inset, 0 40px 40px 0 var(--brand) inset; }
+  .zagruzka-bukva { animation: none; opacity: 0.8; }
+}
+
+/* ---- Всплывающие сообщения: плитка значка, текст, крестик ------------------
+   seyed-mohsen-mousavi/heavy-cobra-18 и wicked-chipmunk-81 — одна и та же
+   плашка в двух цветах. Значок на матовой плитке тинтом исхода, крестик с
+   подсветкой по наведению. Плашка остаётся нашей `.toast`. */
+.toast { min-width: 260px; max-width: 380px; padding: 8px 8px 8px 10px; gap: 10px; }
+.toast-ico { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; flex: none; border-radius: 8px; background: var(--tint-success); color: var(--success); }
+.toast.error .toast-ico { background: var(--tint-danger); color: var(--danger); }
+.toast-text { flex: 1; min-width: 0; line-height: 1.35; }
+.toast-close { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; flex: none; border: 0; border-radius: 6px; background: none; color: var(--faint); cursor: pointer; transition: background 120ms linear, color 120ms linear; }
+.toast-close:hover { background: var(--tint-neutral); color: var(--text); }
+
+/* ---- Строка уведомления: кружок с буквой и значком вида, текст, время ------
+   Manish-Tamang/weak-vampirebat-44. Кружок — буква предмета (заявки, заказа,
+   клиента) своим оттенком, значок вида в углу, время цветом ссылки. */
+.bell-row { flex-direction: row; align-items: flex-start; gap: 10px; padding: 10px 12px; }
+.bell-ava { position: relative; flex: none; width: 36px; height: 36px; }
+.bell-ava .avatar { width: 36px; height: 36px; font-size: 13px; }
+.bell-badge { position: absolute; right: -4px; bottom: -4px; display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border-radius: 50%; background: var(--accent); color: var(--on-brand); border: 2px solid var(--surface); }
+.bell-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.bell-row.unread .bell-text { font-weight: 500; }
+.bell-when { color: var(--accent); font-weight: 500; }
+
+/* ---- Папка, раскрывающаяся по наведению ------------------------------------
+   Cobp/mighty-pig-13. Задник с ярлыком слева, три листа и передняя стенка с
+   ярлыком справа; по наведению листы откидываются на разный угол. Цвет папки —
+   бренд, листы — три ступени серого из палитры. */
+.papka { position: relative; width: 180px; height: 120px; perspective: 1500px; cursor: pointer; }
+.papka-zad, .papka-list, .papka-pered { position: absolute; border-radius: 14px; transition: transform 300ms ease, box-shadow 300ms ease; }
+.papka-zad { inset: 0; border-top-left-radius: 0; background: var(--brand); transform-origin: top; }
+.papka-zad::after { content: ""; position: absolute; bottom: 99%; left: 0; width: 60px; height: 12px; background: var(--brand); border-radius: 14px 14px 0 0; }
+.papka-zad::before { content: ""; position: absolute; top: -11px; left: 57px; width: 12px; height: 12px; background: var(--brand); clip-path: polygon(0 35%, 0 100%, 50% 100%); }
+.papka-list { inset: 3px; transform-origin: bottom; }
+.papka-l1 { background: var(--border-hover); }
+.papka-l2 { background: var(--border); }
+.papka-l3 { background: var(--surface-2); }
+.papka-pered { left: 0; right: 0; bottom: 0; height: 117px; border-top-right-radius: 0; background: var(--brand); box-shadow: inset 0 14px 20px -12px var(--glow); transform-origin: bottom; }
+.papka-pered::after { content: ""; position: absolute; bottom: 99%; right: 0; width: 110px; height: 12px; background: var(--brand); border-radius: 14px 14px 0 0; }
+.papka-pered::before { content: ""; position: absolute; top: -8px; right: 107px; width: 9px; height: 9px; background: var(--brand); clip-path: polygon(100% 14%, 50% 100%, 100% 100%); }
+.papka:hover .papka-zad { box-shadow: 0 20px 40px var(--shade); }
+.papka:hover .papka-l1 { transform: rotateX(-20deg); }
+.papka:hover .papka-l2 { transform: rotateX(-30deg); }
+.papka:hover .papka-l3 { transform: rotateX(-38deg); }
+.papka:hover .papka-pered { transform: rotateX(-46deg) translateY(1px); box-shadow: inset 0 20px 40px var(--glow), inset 0 -20px 40px var(--shade); }
+@media (prefers-reduced-motion: reduce) { .papka-zad, .papka-list, .papka-pered { transition: none; } }
+
+/* ---- Заготовки сообщений карточками ----------------------------------------
+   EcheverriaJesus/stale-yak-33. Канал по центру сверху (у образца там цена),
+   имя, две строки текста, «обновлено» над чертой, под чертой действия,
+   растущие по наведению. */
+.tpl-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; }
+.tpl-card { display: flex; flex-direction: column; padding: 16px 20px 6px; min-height: 180px; }
+.tpl-chan { align-self: center; margin-bottom: 8px; }
+.tpl-name { color: var(--text); font-size: 15px; font-weight: 600; }
+.tpl-body { color: var(--muted); font-size: 12.5px; line-height: 1.45; margin: 2px 0 10px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.tpl-meta { display: flex; gap: 6px; padding-bottom: 8px; border-bottom: 1px solid var(--line); color: var(--faint); font-size: 12px; }
+.tpl-actions { display: flex; justify-content: space-around; align-items: center; margin-top: auto; padding: 10px 0 6px; }
+.tpl-act { display: inline-flex; align-items: center; gap: 7px; border: 0; background: none; padding: 4px 6px; border-radius: 6px; color: var(--muted); font-family: var(--sans); font-size: 12.5px; font-weight: 600; cursor: pointer; transition: transform 200ms ease; }
+.tpl-act:hover { transform: scale(1.1); }
+.tpl-act-view { color: var(--accent); }
+.tpl-act-edit { color: var(--success); }
+.tpl-act-del { color: var(--danger); }
+@media (prefers-reduced-motion: reduce) { .tpl-act { transition: none; } .tpl-act:hover { transform: none; } }
+
+/* ---- Пропуск сотрудника: наклон за курсором и блик -------------------------
+   Cobp/silent-bullfrog-72. Девять невидимых зон над карточкой: каждая
+   поворачивает её в свою сторону и кладёт свой свет внутренней тенью. За
+   лицом карточки крутится размытая полоса бренда — видна только по кромке. */
+.propusk-wrap { position: relative; width: 260px; height: 350px; perspective: 1500px; flex: none; }
+.propusk-zona { position: absolute; width: 41%; height: 34%; z-index: 19; }
+.propusk-zona:nth-child(1) { top: -3%; left: -11%; }
+.propusk-zona:nth-child(2) { top: -3%; left: 30%; }
+.propusk-zona:nth-child(3) { top: -3%; left: 71%; }
+.propusk-zona:nth-child(4) { top: 32%; left: -11%; }
+.propusk-zona:nth-child(5) { top: 32%; left: 30%; }
+.propusk-zona:nth-child(6) { top: 32%; left: 71%; }
+.propusk-zona:nth-child(7) { top: 66%; left: -11%; }
+.propusk-zona:nth-child(8) { top: 66%; left: 30%; }
+.propusk-zona:nth-child(9) { top: 66%; left: 71%; }
+.propusk { position: relative; width: 100%; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; padding: 14px; color: var(--text); background: var(--surface); box-shadow: 0 12px 12px var(--shade); border-radius: 16px; transform: scale(0.9); transition: transform 600ms cubic-bezier(0.175, 0.885, 0.32, 1.25); overflow: hidden; z-index: 10; }
+.propusk::before, .propusk::after { content: ""; position: absolute; z-index: -1; transition: opacity 500ms ease; }
+.propusk::before { top: 50%; left: 50%; width: 100px; height: 400px; transform: translate(-50%, -50%); background: var(--brand); filter: blur(50px); animation: propusk-ten 10s linear infinite; }
+.propusk::after { inset: 1.5px; background: var(--surface); border-radius: 15px; }
+@keyframes propusk-ten { to { transform: translate(-50%, -50%) rotate(360deg); } }
+.propusk-wrap:hover .propusk { transform: scale(1); }
+.propusk-wrap:hover .propusk::before { opacity: 0; animation-play-state: paused; }
+.propusk-svet { position: absolute; inset: 0; pointer-events: none; transition: box-shadow 600ms cubic-bezier(0.175, 0.885, 0.32, 1.275); }
+.propusk-zona:nth-child(1):hover ~ .propusk { transform: rotateX(-20deg) rotateY(20deg); }
+.propusk-zona:nth-child(1):hover ~ .propusk .propusk-svet { box-shadow: inset 32px 32px 120px 5px var(--glow), inset -32px -32px 120px 5px var(--shade); }
+.propusk-zona:nth-child(2):hover ~ .propusk { transform: rotateX(-20deg); }
+.propusk-zona:nth-child(2):hover ~ .propusk .propusk-svet { box-shadow: inset 0 32px 120px var(--glow), inset 0 -32px 120px var(--shade); }
+.propusk-zona:nth-child(3):hover ~ .propusk { transform: rotateX(-20deg) rotateY(-20deg); }
+.propusk-zona:nth-child(3):hover ~ .propusk .propusk-svet { box-shadow: inset -32px 32px 120px 5px var(--glow), inset 32px -32px 120px 5px var(--shade); }
+.propusk-zona:nth-child(4):hover ~ .propusk { transform: rotateY(20deg); }
+.propusk-zona:nth-child(4):hover ~ .propusk .propusk-svet { box-shadow: inset 32px 0 120px var(--glow), inset -32px 0 120px var(--shade); }
+.propusk-zona:nth-child(5):hover ~ .propusk { transform: scale(1.05); }
+.propusk-zona:nth-child(5):hover ~ .propusk .propusk-svet { box-shadow: inset 0 0 120px var(--glow), inset 0 0 120px var(--shade); }
+.propusk-zona:nth-child(6):hover ~ .propusk { transform: rotateY(-20deg); }
+.propusk-zona:nth-child(6):hover ~ .propusk .propusk-svet { box-shadow: inset -32px 0 120px var(--glow), inset 32px 0 120px var(--shade); }
+.propusk-zona:nth-child(7):hover ~ .propusk { transform: rotateX(20deg) rotateY(20deg); }
+.propusk-zona:nth-child(7):hover ~ .propusk .propusk-svet { box-shadow: inset -32px 0 120px 5px var(--glow); }
+.propusk-zona:nth-child(8):hover ~ .propusk { transform: rotateX(20deg); }
+.propusk-zona:nth-child(8):hover ~ .propusk .propusk-svet { box-shadow: inset 0 0 120px 5px var(--glow); }
+.propusk-zona:nth-child(9):hover ~ .propusk { transform: rotateX(20deg) rotateY(-20deg); }
+.propusk-zona:nth-child(9):hover ~ .propusk .propusk-svet { box-shadow: inset 32px 0 120px 5px var(--glow); }
+.propusk-logo { padding: 8px 4px; font-size: 22px; font-weight: 800; letter-spacing: -0.02em; color: var(--brand); }
+.propusk-rol { display: flex; align-items: center; gap: 5px; padding: 0 6px; font-size: 18px; font-weight: 600; text-transform: uppercase; color: var(--text); }
+.propusk-rol svg { color: var(--success); }
+.propusk-info { display: flex; padding: 6px; }
+.propusk-info > div { width: 100%; }
+.propusk-l { font-size: 8px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--faint); }
+.propusk-v { font-size: 10px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.propusk-line { width: 100%; border-top: 2px dashed var(--border-hover); margin: 6px 0; }
+.propusk-user { display: flex; flex-direction: column; padding: 6px; }
+.propusk-alias { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.propusk-name { font-size: 18px; font-weight: 600; color: var(--text); }
+.propusk-niz { display: flex; width: 100%; align-items: center; }
+.propusk-qr { display: flex; align-items: center; justify-content: center; width: 64px; height: 64px; margin: 6px 10px; border-radius: 12px; background: var(--surface-2); color: var(--muted); font-size: 22px; font-weight: 700; overflow: hidden; flex: none; }
+.propusk-qr img { width: 100%; height: 100%; object-fit: cover; }
+.propusk-pos { display: flex; flex-direction: column; width: 100%; padding: 4px 6px; }
+.propusk-pos > div { padding: 3px 0; }
+@media (prefers-reduced-motion: reduce) {
+  .propusk, .propusk-svet, .propusk-zona:hover ~ .propusk { transition: none; transform: none; }
+  .propusk::before { animation: none; }
+}
+
+/* ---- Паспорт клиента: толстая рамка, жёсткая тень, полосатая шапка --------
+   WattoRex/odd-fish-37. Бруталистская карточка: рамка и тень цветом текста
+   (в тёмной теме — светлые, инверсия образца), шапка тинтом бренда с косыми
+   полосами, инициалы во всю шапку, три цифры под чертой, кнопка во всю ширину. */
+.pasport { position: relative; width: 360px; max-width: 100%; background: var(--surface); border: 3px solid var(--text); box-shadow: 6px 6px 0 var(--text); overflow: hidden; }
+.pasport-shapka { position: relative; height: 128px; display: flex; align-items: flex-end; background: var(--tint-brand); border-bottom: 3px solid var(--text); overflow: hidden; }
+.pasport-shapka::before { content: ""; position: absolute; inset: 0; background: repeating-linear-gradient(45deg, transparent 0 8px, var(--tint-neutral) 8px 10px); }
+.pasport-fon { position: absolute; right: -6px; bottom: -8px; font-size: 96px; line-height: 0.85; font-weight: 800; letter-spacing: -0.02em; color: var(--text); opacity: 0.07; text-transform: uppercase; pointer-events: none; }
+.pasport-ava { position: relative; z-index: 1; width: 64px; height: 64px; margin-left: 18px; display: flex; align-items: center; justify-content: center; background: var(--text); color: var(--surface); font-size: 24px; font-weight: 800; border: 3px solid var(--text); border-bottom: 0; border-left: 0; overflow: hidden; flex: none; }
+.pasport-status { position: absolute; top: 12px; right: 12px; z-index: 2; padding: 3px 8px; background: var(--success); color: var(--surface); border: 2px solid var(--text); box-shadow: 3px 3px 0 var(--text); font-size: 9px; font-weight: 800; letter-spacing: 0.18em; text-transform: uppercase; }
+.pasport-telo { padding: 14px 16px 0; }
+.pasport-ruchka { font-size: 9.5px; font-weight: 700; letter-spacing: 0.2em; color: var(--faint); text-transform: uppercase; margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pasport-imya { font-size: 30px; line-height: 0.95; font-weight: 800; letter-spacing: -0.01em; color: var(--text); text-transform: uppercase; margin-bottom: 10px; overflow-wrap: anywhere; }
+.pasport-bio { font-size: 12px; font-weight: 500; color: var(--text); border-left: 4px solid var(--brand); padding-left: 10px; line-height: 1.5; margin-bottom: 14px; }
+.pasport-stats { display: grid; grid-template-columns: 1fr 1fr 1fr; border-top: 3px solid var(--text); }
+.pasport-stat { padding: 10px 8px; border-right: 3px solid var(--text); text-align: center; }
+.pasport-stat:last-child { border-right: 0; }
+.pasport-stat-v { display: block; font-size: 24px; line-height: 1; font-weight: 800; color: var(--text); font-variant-numeric: tabular-nums; }
+.pasport-stat-l { display: block; margin-top: 3px; font-size: 8.5px; font-weight: 700; letter-spacing: 0.15em; color: var(--faint); text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pasport-btn { display: block; width: 100%; padding: 12px; background: var(--text); color: var(--surface); border: 0; border-top: 3px solid var(--text); font-family: var(--sans); font-size: 14px; font-weight: 800; letter-spacing: 0.2em; text-transform: uppercase; cursor: pointer; text-align: center; transition: background 150ms, color 150ms; }
+.pasport-btn:hover { background: var(--tint-brand); color: var(--text); }
+
+/* ---- Ключ сайта как банковская карта: переворот по наведению ---------------
+   Praashoo7/black-lizard-62. Лицо — чип, номер (приставка ключа), срок, имя;
+   оборот — магнитная полоса и полоса подписи, в которой лежит сам ключ.
+   Переворот по наведению, а на касании — по нажатию (класс `klyuch-flipped`). */
+.klyuch { width: 100%; max-width: 300px; height: 190px; margin: 0 auto; perspective: 1000px; cursor: pointer; }
+.klyuch-inner { position: relative; width: 100%; height: 100%; transition: transform 800ms; transform-style: preserve-3d; }
+.klyuch:hover .klyuch-inner, .klyuch.klyuch-flipped .klyuch-inner, .klyuch:focus-within .klyuch-inner { transform: rotateY(180deg); }
+.klyuch-front, .klyuch-back { position: absolute; inset: 0; border-radius: 14px; background: var(--bg-sidebar); border: 1px solid var(--border); box-shadow: 0 2px 2px var(--shade), 0 7px 13px -3px var(--shade); backface-visibility: hidden; -webkit-backface-visibility: hidden; color: var(--text); }
+.klyuch-back { transform: rotateY(180deg); }
+.klyuch-head { position: absolute; top: 16px; right: 18px; font-size: 9px; letter-spacing: 0.2em; color: var(--muted); text-transform: uppercase; }
+.klyuch-chip { position: absolute; top: 28px; left: 20px; width: 34px; height: 26px; border-radius: 5px; background: linear-gradient(135deg, var(--star), var(--warning)); }
+.klyuch-chip::before { content: ""; position: absolute; inset: 6px 5px; border: 1px solid var(--shade); border-radius: 3px; }
+.klyuch-wave { position: absolute; top: 33px; left: 62px; color: var(--muted); }
+.klyuch-num { position: absolute; top: 84px; left: 20px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 15px; letter-spacing: 0.12em; font-weight: 600; }
+.klyuch-valid { position: absolute; top: 118px; left: 20px; font-size: 7.5px; letter-spacing: 0.1em; color: var(--muted); text-transform: uppercase; }
+.klyuch-date { position: absolute; top: 128px; left: 20px; font-size: 11px; font-weight: 600; }
+.klyuch-name { position: absolute; top: 152px; left: 20px; right: 20px; font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.klyuch-strip { position: absolute; top: 22px; left: 0; right: 0; height: 30px; background: repeating-linear-gradient(45deg, var(--surface-2), var(--surface-2) 10px, var(--well) 10px, var(--well) 20px); }
+.klyuch-sign { position: absolute; top: 68px; left: 14px; right: 14px; min-height: 42px; padding: 6px 8px; background: var(--surface); border: 1px solid var(--border); border-radius: 4px; color: var(--text); font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 10.5px; line-height: 1.4; word-break: break-all; user-select: all; }
+.klyuch-copy { position: absolute; bottom: 10px; right: 12px; }
+.klyuch-hint { margin-top: 10px; text-align: center; color: var(--faint); font-size: 12px; }
+@media (prefers-reduced-motion: reduce) { .klyuch-inner { transition: none; } }
