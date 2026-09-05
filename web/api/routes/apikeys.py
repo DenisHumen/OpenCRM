@@ -4,7 +4,8 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from core.services import api_key_service
+from core import exceptions as errors
+from core.services import api_key_service, api_stats_service
 from database.models import User
 from database.models.api_key import SCOPES, STOCK_MODES
 from database.repositories import api_keys as keys_repo
@@ -44,13 +45,26 @@ class RotateIn(BaseModel):
 def list_api_keys(db: Session = Depends(get_db)):
     """Все ключи, включая отозванные и просроченные — серым, но видны: пропавшая
     строка не отвечает на вопрос «а был ли у нас ключ для маркетплейса»."""
+    items = api_key_service.list_keys(db)
+    obrashcheniya = api_stats_service.itogi_po_klyucham(db, [i["id"] for i in items])
+    for item in items:
+        item["hits_30d"] = obrashcheniya.get(item["id"], 0)
     return {
-        "items": api_key_service.list_keys(db),
+        "items": items,
         "alive": api_key_service.alive_count(db),
         "scopes": list(SCOPES),
         "stock_modes": list(STOCK_MODES),
         "header": api_key_service.HEADER,
     }
+
+
+@router.get("/{key_id}/stats", dependencies=[manage])
+def api_key_stats(key_id: int, db: Session = Depends(get_db)):
+    """Сводка обращений за месяц: числа, по видам, по дням, по часам."""
+    key = keys_repo.get(db, key_id)
+    if key is None:
+        raise errors.NotFoundError("API key not found", code="api_key_not_found")
+    return api_stats_service.svodka(db, key)
 
 
 @router.post("", status_code=201)

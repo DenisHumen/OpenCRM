@@ -633,7 +633,10 @@ def file_out(file: ClientFile) -> dict:
 
 
 def board_out(
-    board: Board, works_count: int | None = None, client_name: str | None = None
+    board: Board,
+    works_count: int | None = None,
+    client_name: str | None = None,
+    created_by_name: str | None = None,
 ) -> dict:
     """`client_name` — подписью «доска для такого-то».
 
@@ -651,6 +654,10 @@ def board_out(
         "deal_id": board.deal_id,
         "cover_work_id": board.cover_work_id,
         "created_by": board.created_by,
+        # Кто завёл — именем, как просил владелец 05.09.2026; у старых досок
+        # автора нет (колонка появилась позже), и ключ тогда пустой, а не
+        # отсутствует: экран подставляет «неизвестно кто».
+        "created_by_name": created_by_name,
         "is_published": board.is_published,
         "created_at": _iso(board.created_at),
         "updated_at": _iso(board.updated_at),

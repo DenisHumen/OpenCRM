@@ -339,6 +339,9 @@ export function BoardEditor() {
               </>
             )}
             {board.works.length} {t("works")} · {t("updated")} {formatDateTime(board.updated_at, locale)}
+            {" · "}
+            {t("createdBy")} {board.created_by_name ?? t("unknownAuthor")},{" "}
+            {board.created_at ? formatDateTime(board.created_at, locale) : t("unknownTime")}
           </div>
         </div>
         {/* Обёртка расширяет область нажатия мышью на подпись рядом; сам

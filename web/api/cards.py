@@ -16,6 +16,7 @@ from database.models import Board, Work
 from database.repositories import boards as boards_repo
 from database.repositories import clients as clients_repo
 from database.repositories import stats as stats_repo
+from database.repositories import users as users_repo
 from web.api import schemas
 
 
@@ -60,10 +61,15 @@ def board_cards(db: Session, boards: list[Board], with_client: bool = False) -> 
     if with_client:
         client_ids = [board.client_id for board in boards if board.client_id]
         names = clients_repo.names_by_ids(db, client_ids)
+    avtory = {
+        u.id: u.name for u in users_repo.get_many(db, {b.created_by for b in boards if b.created_by})
+    }
 
     cards = []
     for board in boards:
-        data = schemas.board_out(board, works_count=works_count.get(board.id, 0))
+        data = schemas.board_out(
+            board, works_count=works_count.get(board.id, 0), created_by_name=avtory.get(board.created_by)
+        )
         cover = _pick_cover(board, ready_works.get(board.id, []))
         data["cover"] = schemas.work_out(cover)["media"] if cover else None
         data["views_count"] = views.get(board.id, 0)

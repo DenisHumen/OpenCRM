@@ -415,7 +415,7 @@
 
 | Метод | Путь | Права | Описание |
 |---|---|---|---|
-| GET | `/boards` | 🔑 `boards.view` | Список: `?search=`, `?client_id=`, счётчики работ и просмотров |
+| GET | `/boards` | 🔑 `boards.view` | Список: `?search=`, `?client_id=`, счётчики работ и просмотров; у каждой доски `created_by_name` (кто завёл; `null` у досок до колонки автора) и `created_at` со временем |
 | POST | `/boards` | 🔑 `boards.create` | Создать: `title`, `description?`, `client_id?`, `deal_id?` |
 | GET | `/boards/{id}` | 🔑 `boards.view` | Доска + работы по порядку + **все** ссылки доски (ключ `shares`) |
 | PATCH | `/boards/{id}` | 🔑 `boards.edit` | Название, описание, `client_id`, `deal_id`, `cover_work_id`, `is_published` |
@@ -1735,6 +1735,7 @@ SVG только `width` и `height`; пока картинку показыва
 | POST | `/settings/api-keys` | 🔑 `settings.manage` | Выдать: `name`, `scopes[]`, `warehouse_id` (обязателен при `stock.read`, склад типа `shop`), `days` (365; 0 — бессрочный), `stock_mode`, `few_threshold_milli`, `rate_per_min`, `max_reserve_minutes`, `ttl_sec`. Ответ `201` содержит `key` — **один раз**. `422 unknown_scope` / `scope_required` / `warehouse_required` / `warehouse_not_shop` / `unknown_stock_mode` |
 | PATCH | `/settings/api-keys/{key_id}` | 🔑 `settings.manage` | Имя, режим наличия, порог и потолки. Области и склад не правятся — на них выпускают новый ключ |
 | POST | `/settings/api-keys/{key_id}/revoke` | 🔑 `settings.manage` | Отзыв отметкой; строка остаётся |
+| GET | `/settings/api-keys/{key_id}/stats` | 🔑 `settings.manage` | Сводка обращений за 30 дней: `today`, `week`, `month`, `rejected_month`, `avg_per_day`, `peak_hour`, `rate_per_min`, `by_category[]`, `by_day[30]`, `by_hour[24]`. В списке ключей у строки — `hits_30d`. Устройство — docs/16 §18. `404 api_key_not_found` |
 | POST | `/settings/api-keys/{key_id}/rotate` | 🔑 `settings.manage` | Новый ключ с теми же полями (`201`, `key` один раз); старый живёт ещё `grace_hours` (24). `409 api_key_revoked` — отозванный не ротируется |
 
 Те же действия из консоли: `./opencrm.sh apikey list|new|show|revoke|rotate`
