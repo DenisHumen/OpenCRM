@@ -87,6 +87,7 @@ export function WarehousePicker({
   onChange,
   allowAll = false,
   label,
+  inline = false,
 }: {
   places: Places | null;
   value: number | null;
@@ -94,12 +95,14 @@ export function WarehousePicker({
   /** Пункт «все склады» — для фильтров, но не для форм записи движения. */
   allowAll?: boolean;
   label?: string;
+  /** В ряду с другими полями, а не на всю ширину. */
+  inline?: boolean;
 }) {
   const { t } = useApp();
   if (!places?.many) return null;
   return (
     <select
-      className="select"
+      className={"select" + (inline ? " select-inline" : "")}
       aria-label={label ?? t("warehousePick")}
       value={value === null ? "" : String(value)}
       onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}

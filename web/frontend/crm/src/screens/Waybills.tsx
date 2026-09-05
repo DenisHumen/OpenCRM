@@ -256,7 +256,7 @@ export function Waybills() {
               {formatMoney(waybill.total, workspace.currency, locale)}
             </span>
             <span style={{ width: 130, textAlign: "right" }}>
-              <Chip variant={statusVariant(waybill.status)}>{statusLabel(t, waybill.status, waybill.kind)}</Chip>
+              <Chip variant={statusVariant(waybill.status, waybill.kind)}>{statusLabel(t, waybill.status, waybill.kind)}</Chip>
             </span>
           </Link>
         ))}

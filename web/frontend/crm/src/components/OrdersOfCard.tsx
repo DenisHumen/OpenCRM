@@ -7,7 +7,8 @@ import { useApp } from "../lib/app";
 import { formatMoney } from "../lib/format";
 import { moduleOn } from "../lib/modules";
 import { can } from "../lib/permissions";
-import { ORDER_STATUS_LABEL, type Order } from "../screens/Orders";
+import { orderStatusLabel, statusVariant } from "../lib/documents";
+import { type Order } from "../screens/Orders";
 
 /** Заказы клиента или заявки — врезкой в карточке.
  *
@@ -129,9 +130,7 @@ export function OrdersOfCard({ clientId, dealId }: { clientId?: number; dealId?:
             {/* «Собран» рядом со статусом, а не вместо него: статус ставит
                 человек, а собранность — это про коробки на полу склада. */}
             {order.assembled && <Chip variant="success">{t("assembled")}</Chip>}
-            <Chip variant={order.status === "closed" ? "success" : undefined}>
-              {t(ORDER_STATUS_LABEL[order.status as keyof typeof ORDER_STATUS_LABEL] ?? "docIssued")}
-            </Chip>
+            <Chip variant={statusVariant(order.status)}>{orderStatusLabel(t, order.status, order.kind)}</Chip>
           </Link>
         ))}
         <Dochitat

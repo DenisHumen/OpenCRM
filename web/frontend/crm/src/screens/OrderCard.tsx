@@ -15,10 +15,11 @@ import { useFailure } from "../lib/failure";
 import { useGuard } from "../lib/guard";
 import { formatDate, formatDateTime, formatMoney, formatQuantity, formatRate, toMinorUnits } from "../lib/format";
 import { moduleOn } from "../lib/modules";
+import { orderStatusLabel, statusLabel } from "../lib/documents";
 import { can } from "../lib/permissions";
 import { useReference } from "../lib/reference";
 import type { FinanceCategory } from "./Finance";
-import { ORDER_STATUS_LABEL, type Order } from "./Orders";
+import { type Order } from "./Orders";
 import type { Product } from "./Warehouse";
 
 /** Карточка заказа: позиции, сборка сканером, проведение.
@@ -115,7 +116,7 @@ export function OrderCard() {
           <div className="page-sub" style={{ marginTop: 5, display: "flex", gap: 8, alignItems: "center" }}>
             <Chip>{outgoing ? t("orderKindSales") : t("orderKindPurchase")}</Chip>
             <Chip variant={order.status === "closed" ? "success" : undefined}>
-              {t(ORDER_STATUS_LABEL[order.status as keyof typeof ORDER_STATUS_LABEL] ?? "docIssued")}
+              {orderStatusLabel(t, order.status, order.kind)}
             </Chip>
             {order.client_id ? (
               <Link
@@ -195,7 +196,7 @@ export function OrderCard() {
             <span className="page-sub" style={{ marginTop: 0 }}>{t("orderWaybills")}</span>
             {order.waybills.map((w) => (
               <Link key={w.id} className="chip" to={`/waybills/${w.id}`}>
-                {w.number}
+                {w.number} · {statusLabel(t, w.status, w.kind)}
               </Link>
             ))}
           </div>
@@ -272,7 +273,7 @@ export function OrderCard() {
         <div className="card card-pad" style={{ marginTop: 16, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
           {/* Склад выбирается явно: молчаливое списание с основного однажды
               снимет деталь не оттуда, где её взяли. */}
-          <WarehousePicker places={places} value={place ?? places?.items[0]?.id ?? null} onChange={setPlace} />
+          <WarehousePicker places={places} value={place ?? places?.items[0]?.id ?? null} onChange={setPlace} inline />
           <button
             className="btn btn-primary"
             disabled={guard.busy || order.lines.length === 0}
@@ -357,9 +358,7 @@ export function OrderCard() {
       <div style={{ marginTop: 20 }}>
         <History
           events={order.events}
-          label={(status) =>
-            t(ORDER_STATUS_LABEL[status as keyof typeof ORDER_STATUS_LABEL] ?? "docIssued")
-          }
+          label={(status) => orderStatusLabel(t, status, order.kind)}
         />
       </div>
 
@@ -877,7 +876,7 @@ function PaymentModal({
  * замусорить его одноразовыми записями.
  */
 function AddLine({ orderId, onAdded }: { orderId: number; onAdded: () => Promise<void> }) {
-  const { t, toastError } = useApp();
+  const { t, locale, workspace, toastError } = useApp();
   const [fromCatalogue, setFromCatalogue] = useState(true);
   const [name, setName] = useState("");
   const [picked, setPicked] = useState<Product | null>(null);
@@ -988,6 +987,9 @@ function AddLine({ orderId, onAdded }: { orderId: number; onAdded: () => Promise
                 >
                   <span style={{ flex: 1, color: "var(--text)", fontSize: 13 }}>{item.name}</span>
                   <span style={{ color: "var(--faint)", fontSize: 12 }}>{item.sku ?? ""}</span>
+                  <span style={{ color: "var(--muted)", fontSize: 12.5, minWidth: 70, textAlign: "right" }}>
+                    {formatMoney(item.price, workspace.currency, locale)}
+                  </span>
                 </button>
               ))}
             </div>

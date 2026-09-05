@@ -98,12 +98,38 @@ export const WAYBILL_STATUS_LABEL = {
 const ORDER_KINDS = ["sales_order", "purchase_order"];
 const WAYBILL_KINDS = ["waybill_out", "waybill_in"];
 
+/** Состояния заказа — словами склада, а не квитанции: «Принято» у нового
+ *  заказа читалось как «принят на склад». Проведённый заказ покупателя —
+ *  отгружен, поставщику — принят; в категориях списка, где вид смешан, —
+ *  «проведён». */
+export const ORDER_STATUS_LABEL = {
+  issued: "orderStatusNew",
+  ready: "orderStatusPicked",
+  closed: "orderStatusDone",
+  cancelled: "orderStatusCancelled",
+} as const;
+
+export function orderStatusLabel(t: TFunc, status: string, kind?: string): string {
+  if (status === "closed" && kind) {
+    return t(kind === "purchase_order" ? "orderStatusReceived" : "orderStatusShipped");
+  }
+  return t(ORDER_STATUS_LABEL[status as keyof typeof ORDER_STATUS_LABEL] ?? "orderStatusNew");
+}
+
 /** Подпись состояния по виду бумаги. Один статус в трёх разделах подписывался
- *  тремя словами в зависимости от экрана; теперь слово идёт за видом бумаги,
- *  а не за экраном: черновик накладной в «Бланках» больше не «Выдан». */
+ *  тремя словами в зависимости от экрана; теперь слово идёт за видом бумаги:
+ *  расходная «отгружена», приходная «принята на склад», акт «проведён»,
+ *  заказ «отгружен» — а не общее «Выдано» на всех. */
 export function statusLabel(t: TFunc, status: string, kind?: string): string {
   if (kind && WAYBILL_KINDS.includes(kind)) {
+    if (status === "issued") return t(kind === "waybill_in" ? "wbReceivedIn" : "wbShipped");
+    if (status === "closed" && kind === "waybill_in") return t("wbClosedIn");
     return t(WAYBILL_STATUS_LABEL[status as keyof typeof WAYBILL_STATUS_LABEL] ?? "wbDraft");
+  }
+  if (kind && ORDER_KINDS.includes(kind)) return orderStatusLabel(t, status, kind);
+  if (kind === "act") {
+    if (status === "issued") return t("actOpen");
+    if (status === "closed") return t("actDone");
   }
   return t(LABELS[status as DocStatus] ?? "docIssued");
 }
@@ -119,9 +145,19 @@ export function paperLink(doc: { id: number; kind: string }): string {
 /** Цвет состояния — по смыслу, одинаково у бланка, заказа и накладной:
  *  выдан/принят — в работе (accent), готов — ждёт (warning), закрыт — сделано
  *  (success), отменён — беда (danger). Черновик и прочее — нейтрально. */
-export function statusVariant(status: string): "success" | "warning" | "accent" | "danger" | undefined {
-  if (status === "issued" || status === "in_progress") return "accent";
-  if (status === "ready") return "warning";
+/** У каждого состояния свой цвет — человек различает их цветом раньше, чем
+ *  словом. Накладная: отгружена — сделано (success), получена клиентом —
+ *  бренд; черновик — без цвета. */
+export function statusVariant(status: string, kind?: string): "success" | "warning" | "accent" | "brand" | "danger" | undefined {
+  if (kind && WAYBILL_KINDS.includes(kind)) {
+    if (status === "issued") return "success";
+    if (status === "closed") return "brand";
+    if (status === "cancelled") return "danger";
+    return undefined;
+  }
+  if (status === "issued") return "accent";
+  if (status === "in_progress") return "warning";
+  if (status === "ready") return "brand";
   if (status === "closed") return "success";
   if (status === "cancelled") return "danger";
   return undefined;
