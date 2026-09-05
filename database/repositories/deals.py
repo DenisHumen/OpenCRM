@@ -256,8 +256,26 @@ def money_summary(db: Session, since, only_manager_id: int | None = None) -> dic
         counted = counted.where(Deal.manager_id == only_manager_id)
     won_count = int(db.scalar(counted) or 0)
 
+    # К получению: цена открытых заявок минус предоплата, только где она
+    # положительна — переплата соседей чужой долг не гасит. Здесь, а не своей
+    # функцией: справочник этапов на сводку читается ровно один раз
+    # (`tests/test_speed.py`), и второй запрос читал бы его снова.
+    open_keys = keys_of(KIND_OPEN)
+    due = 0
+    if open_keys:
+        dolg = select(func.coalesce(func.sum(Deal.amount - Deal.prepaid), 0)).where(
+            Deal.deleted_at.is_(None),
+            Deal.stage.in_(open_keys),
+            Deal.amount.is_not(None),
+            Deal.amount > Deal.prepaid,
+        )
+        if only_manager_id is not None:
+            dolg = dolg.where(Deal.manager_id == only_manager_id)
+        due = int(db.scalar(dolg) or 0)
+
     return {
         "in_work": total(KIND_OPEN),
+        "due": due,
         # «Цену не назвали» и «работа бесплатная» — разные вещи, и на сводке
         # тоже: без единой оценённой сделки здесь прочерк, а не ноль. Иначе
         # плитка пишет «0 ₽» там, где верный ответ — «пока не о чем говорить»,
@@ -438,3 +456,32 @@ def zapert_zayavku(db: Session, deal_id: int) -> None:
     """
     db.execute(select(Deal.id).where(Deal.id == deal_id).with_for_update()).all()
 
+
+def svodka_klienta(db: Session, client_id: int, only_manager_id: int | None = None) -> dict:
+    """Заявки клиента по виду этапа: сколько открыто и на сколько, сколько выиграно.
+
+    Одним запросом с группировкой по этапу, а не перебором заявок: карточку
+    открывают чаще, чем правят, и сумма обязана считаться там же, где живёт
+    остаток склада, — запросом. Вид этапа складывается уже здесь, по
+    справочнику (`pipeline_repo.kinds_by_key`), как в сводке.
+    """
+    kinds = pipeline_repo.kinds_by_key(db)
+    stmt = (
+        select(Deal.stage, func.count(), func.coalesce(func.sum(Deal.amount), 0))
+        .where(Deal.client_id == client_id, Deal.deleted_at.is_(None))
+        .group_by(Deal.stage)
+    )
+    if only_manager_id is not None:
+        stmt = stmt.where(Deal.manager_id == only_manager_id)
+    itog = {"open_count": 0, "open_amount": 0, "won_count": 0, "won_amount": 0, "lost_count": 0}
+    for stage, skolko, summa in db.execute(stmt).all():
+        kind = kinds.get(stage, KIND_OPEN)
+        if kind == KIND_WON:
+            itog["won_count"] += int(skolko or 0)
+            itog["won_amount"] += int(summa or 0)
+        elif kind in CLOSED_KINDS:
+            itog["lost_count"] += int(skolko or 0)
+        else:
+            itog["open_count"] += int(skolko or 0)
+            itog["open_amount"] += int(summa or 0)
+    return itog

@@ -628,3 +628,34 @@ def products_by_skus(db: Session, skus) -> list[Product]:
     if not skus:
         return []
     return list(db.scalars(select(Product).where(Product.sku.in_(skus), Product.deleted_at.is_(None))))
+
+
+def malo_ili_konchilos(db: Session, limit: int = 5) -> tuple[list[tuple[Product, int]], int]:
+    """Товары, чей остаток не выше порога «заканчивается» или ноль, — и сколько их всего.
+
+    Остаток считается здесь же суммой движений (правило: он не хранится), а
+    товар без единого движения — это ноль, и он «закончился» так же честно,
+    как и списанный до нуля: внешнее соединение, а не внутреннее.
+    """
+    ostatok = (
+        select(StockMove.product_id.label("tovar"), func.sum(StockMove.quantity_milli).label("milli"))
+        .group_by(StockMove.product_id)
+        .subquery()
+    )
+    milli = func.coalesce(ostatok.c.milli, 0)
+    usloviya = (
+        Product.deleted_at.is_(None),
+        Product.is_service.is_(False),
+        milli <= func.coalesce(Product.min_stock_milli, 0),
+    )
+    ryady = db.execute(
+        select(Product, milli)
+        .outerjoin(ostatok, ostatok.c.tovar == Product.id)
+        .where(*usloviya)
+        .order_by(milli.asc(), Product.id.asc())
+        .limit(limit)
+    ).all()
+    vsego = db.scalar(
+        select(func.count()).select_from(Product).outerjoin(ostatok, ostatok.c.tovar == Product.id).where(*usloviya)
+    )
+    return [(product, as_int(summa)) for product, summa in ryady], int(vsego or 0)

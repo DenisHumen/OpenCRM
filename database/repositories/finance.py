@@ -426,6 +426,22 @@ def received_of(
     return int(db.scalar(stmt) or 0)
 
 
+def received_of_client(db: Session, client_id: int, since=None) -> int:
+    """Сколько денег пришло от клиента — тем же отбором, что и по бланку.
+
+    По `client_id` операции, а не через заявки: платёж по заказу без заявки
+    клиента называет сам, и через заявки он потерялся бы.
+    """
+    stmt = (
+        select(func.coalesce(func.sum(FinanceOperation.amount_minor), 0))
+        .join(FinanceCategory, FinanceCategory.id == FinanceOperation.category_id)
+        .where(*_postupleniya(), FinanceOperation.client_id == client_id)
+    )
+    if since is not None:
+        stmt = stmt.where(FinanceOperation.happened_at >= since)
+    return int(db.scalar(stmt) or 0)
+
+
 def _postupleniya():
     """Что считается пришедшими в кассу деньгами. Одно условие на весь файл.
 

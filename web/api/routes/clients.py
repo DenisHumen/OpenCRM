@@ -118,6 +118,8 @@ def get_client(
         )
     ]
     data["currency"] = settings_service.get_all(db).get("currency", "USD")
+    # Сводка справа от паспорта: заявки, деньги, последний контакт, бумаги.
+    data["svodka"] = client_service.svodka(db, client_id, user)
     return data
 
 
