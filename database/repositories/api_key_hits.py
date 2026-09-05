@@ -46,7 +46,7 @@ def stroki(db: Session, key_id: int, since: datetime) -> list[ApiKeyHit]:
         db.scalars(
             select(ApiKeyHit)
             .where(ApiKeyHit.api_key_id == key_id, ApiKeyHit.bucket_at >= since)
-            .order_by(ApiKeyHit.bucket_at)
+            .order_by(ApiKeyHit.bucket_at, ApiKeyHit.id)
         )
     )
 
