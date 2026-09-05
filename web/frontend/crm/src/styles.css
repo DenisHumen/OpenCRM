@@ -78,6 +78,7 @@
   color-scheme: dark;
 
   --bg: #1a1a19;            /* было #262624 — почти-чёрный, холоднее */
+  --bg-glow: rgba(220, 128, 99, 0.07);   /* тёплое свечение в углу: плоский графит получает глубину */
   --bg-sidebar: #161514;    /* было #1f1e1c */
   --surface: #1e1d1b;       /* было #2b2a27 — карточка чуть выше фона */
   --surface-2: #232220;     /* было #34322e */
@@ -180,6 +181,7 @@
   color-scheme: light;
 
   --bg: #faf9f6;            /* тёплая бумага, а не белое: белым остаются карточки */
+  --bg-glow: rgba(220, 128, 99, 0.09);
   --bg-sidebar: #f2f0ea;
   --surface: #ffffff;
   --surface-2: #eceae2;     /* наведение и выделенная строка — ВНИЗ от белого */
@@ -261,7 +263,10 @@ a { color: var(--accent); text-decoration: none; }
 button { font-family: var(--sans); }
 
 .app-shell { display: flex; min-height: 100vh; }
-.app-main { flex: 1; min-width: 0; }
+/* Свечение бренда в верхнем левом углу рабочей области: одна тёплая нота на
+   ровном графите — и экран перестаёт быть окрашенным листом. Не тень и не
+   картинка: градиент токеном, в светлой теме такой же тёплый. */
+.app-main { flex: 1; min-width: 0; background: radial-gradient(900px 480px at 14% -10%, var(--bg-glow), transparent 70%); }
 .page { max-width: 1000px; margin: 0 auto; padding: 32px 40px 64px; } /* было 44 40 72 */
 /* Списки растут вместе с окном: на широком мониторе таблица в тысячу пикселей
    оставляла половину экрана пустой. Карточки и настройки остаются узкими —
@@ -308,8 +313,10 @@ button { font-family: var(--sans); }
   display: inline-flex; align-items: center; justify-content: center; gap: 6px;
   height: 34px; padding: 0 13px; border-radius: 8px; border: none;
   font-size: 12.5px; font-weight: 600; cursor: pointer; text-decoration: none;
-  transition: background 150ms, border-color 150ms;
+  transition: background 150ms, border-color 150ms, transform 120ms;
 }
+/* Нажатие отзывается телом кнопки, а не только цветом. */
+.btn:active:not(:disabled) { transform: translateY(1px); }
 
 /* Плюс на кнопке доворачивается по наведению: движение отличает кнопку, которая
    создаёт запись, от той, что просто открывает. Крестик четырёхкратно
@@ -327,6 +334,7 @@ button:active [data-icon="plus"] { transition-duration: 0s; }
   button:hover [data-icon="plus"], a:hover [data-icon="plus"] { transform: none; }
   [data-icon="github"] { transition: none; }
   .side-github:hover [data-icon="github"] { transform: none; }
+  .btn:active:not(:disabled), .deal-card:hover, .card-hover:hover { transform: none; }
 }
 .btn-primary { background: var(--btn-bg); color: var(--btn-text); }
 .btn-primary:hover { background: var(--btn-bg-hover); }
@@ -387,7 +395,7 @@ button:active [data-icon="plus"] { transition-duration: 0s; }
   padding: 2px 4px 10px; color: var(--muted);
   font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase;
 }
-.kanban-count { color: var(--faint); font-variant-numeric: tabular-nums; }
+.kanban-count { color: var(--muted); font-variant-numeric: tabular-nums; padding: 1px 7px; border-radius: 10px; background: var(--tint-neutral); }
 .kanban-body { display: flex; flex-direction: column; gap: 8px; }
 
 .deal-card {
@@ -397,7 +405,7 @@ button:active [data-icon="plus"] { transition-duration: 0s; }
   color: inherit; font: inherit;
   transition: border-color 160ms ease, transform 160ms ease;
 }
-.deal-card:hover { border-color: var(--border-hover); }
+.deal-card:hover { border-color: var(--border-hover); transform: translateY(-1px); }
 .deal-card:active { cursor: grabbing; }
 /* Перетаскиваемая карточка гаснет, но остаётся на месте: убери её совсем —
    колонка дёрнется и «поедет» под курсором. */
@@ -828,8 +836,8 @@ button:active [data-icon="plus"] { transition-duration: 0s; }
 /* Карточки — фон чуть выше bg, тонкая граница */
 .card { background: var(--surface); background-image: linear-gradient(180deg, var(--card-sheen), transparent 56px); border: 1px solid var(--border); border-radius: 12px; }
 .card-pad { padding: 16px 18px; }                /* было 20px */
-.card-hover { transition: background 150ms, border-color 150ms; }
-.card-hover:hover { background: var(--surface-2); border-color: var(--border-hover); }
+.card-hover { transition: background 150ms, border-color 150ms, transform 150ms; }
+.card-hover:hover { background: var(--surface-2); border-color: var(--border-hover); transform: translateY(-1px); }
 
 /* Чипы — компактнее, по умолчанию нейтральные */
 .chip {
@@ -1296,7 +1304,7 @@ summary:focus-visible,
 .dash-task > span:first-of-type { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dash-task-due { font-size: 12px; color: var(--faint); flex-shrink: 0; }
 .metric-title { display: flex; align-items: center; gap: 5px; color: var(--muted); font-size: 13px; }  /* было 14 */
-.metric-value { color: var(--num); font-size: 27px; font-weight: 600; letter-spacing: -0.02em; line-height: 1; } /* было 30 */
+.metric-value { color: var(--num); font-size: 27px; font-weight: 600; letter-spacing: -0.02em; line-height: 1; font-variant-numeric: tabular-nums; } /* было 30 */
 .metric-sub { color: var(--sub); font-size: 12px; margin-top: 7px; }
 
 /* Сетки карточек досок */
@@ -1458,7 +1466,11 @@ summary:focus-visible,
 .contact-value { color: var(--text); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .contact-input { width: 100%; background: none; border: none; outline: none; color: var(--text); font-size: 13px; font-family: var(--sans); padding: 0; }
 
-.feed-item { display: flex; gap: 13px; padding: 15px 4px; border-bottom: 1px solid var(--line); }
+/* Лента читается как хронология: линия между значками связывает записи в
+   одну историю, а не в стопку карточек. */
+.feed-item { position: relative; display: flex; gap: 13px; padding: 15px 4px; border-bottom: 1px solid var(--line); }
+.feed-item::before { content: ""; position: absolute; left: 18px; top: 46px; bottom: -1px; width: 1px; background: var(--line); }
+.feed-item:last-child::before { display: none; }
 .feed-icon { width: 30px; height: 30px; border-radius: 8px; background: var(--surface); border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; flex-shrink: 0; color: var(--muted); }
 
 .bars { display: flex; align-items: flex-end; gap: 7px; height: 60px; padding-bottom: 1px; }
@@ -1679,6 +1691,14 @@ summary:focus-visible,
    уехал, места стало больше), а окно шире — список. Читалось бы как поломка.
    ============================================================ */
 .app-topbar { display: none; }
+
+/* Телефон: строка списка с фиксированными колонками не помещается в 375px и
+   накладывалась сама на себя. Колонки переносятся, шапка колонок уходит —
+   на телефоне её нечем выровнять. */
+@media (max-width: 640px) {
+  .list-header { display: none; }
+  .list-row { flex-wrap: wrap; height: auto; min-height: 52px; padding-top: 10px; padding-bottom: 10px; row-gap: 4px; }
+}
 
 @media (max-width: 900px) {
   .app-topbar {
