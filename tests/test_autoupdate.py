@@ -89,6 +89,11 @@ class FakeShell:
             return Result(tuple(argv), 0, self.head, "")
         if "status --porcelain" in line:
             return Result(tuple(argv), 0, self.dirty, "")
+        # Грязное дерево по умолчанию — настоящая правка: `diff --quiet`
+        # отвечает «есть разница». Правку только в переводах строк тест
+        # объявляет сам, правилом `otvet`.
+        if "diff --quiet --ignore-cr-at-eol" in line:
+            return Result(tuple(argv), 1 if self.dirty.strip() else 0, "", "")
         return Result(tuple(argv), 0, "", "")
 
     def ran(self, needle: str) -> bool:
@@ -946,6 +951,49 @@ def test_local_edits_stop_the_update(tmp_path):
     assert outcome.status == STATUS_ABORTED
     assert "затёрло" in outcome.reason
     assert not shell.ran("docker")
+
+
+def test_edits_only_in_line_endings_do_not_stop_the_update(tmp_path):
+    """Блоб со смешанными CRLF/LF на Linux «грязный» сразу после чекаута.
+
+    Так 06.09.2026 встала репетиция: `web/public/routes.py` с одной CRLF-строкой,
+    `git status` — « M», а `checkout -- .` не лечит, чекаут пишет тот же блоб.
+    Содержимого в такой правке нет, и терять нечего: обновление идёт, чекаут —
+    с `--force`, иначе git откажет на том самом файле, который новая версия чинит.
+    """
+    shell = FakeShell()
+    shell.dirty = " M web/public/routes.py\n"
+    shell.otvet("diff --quiet --ignore-cr-at-eol", "")
+    updater = make_updater(tmp_path, shell=shell)
+
+    outcome = updater.run_once()
+
+    assert outcome.status == STATUS_DEPLOYED, outcome.reason
+    assert shell.ran("checkout --force --detach --quiet"), shell.calls
+    assert any(s.name == "preflight" and "переводах строк" in s.detail for s in outcome.steps)
+
+
+def test_a_real_edit_is_not_mistaken_for_line_endings(tmp_path):
+    """Содержательная правка: `diff --ignore-cr-at-eol` не пуст — остановка как прежде."""
+    shell = FakeShell()
+    shell.dirty = " M web/public/routes.py\n"
+    shell.fail("diff --quiet --ignore-cr-at-eol", err="")
+    updater = make_updater(tmp_path, shell=shell)
+
+    outcome = updater.run_once()
+
+    assert outcome.status == STATUS_ABORTED
+    assert not shell.ran("checkout --force")
+
+
+def test_an_untracked_file_is_not_a_line_ending(tmp_path):
+    """Лишний файл — не отслеживаемый: `diff` его не видит, а затирать нельзя."""
+    shell = FakeShell()
+    shell.dirty = "?? config/moyo.env\n"
+    shell.otvet("diff --quiet --ignore-cr-at-eol", "")
+    updater = make_updater(tmp_path, shell=shell)
+
+    assert updater.run_once().status == STATUS_ABORTED
 
 
 def test_local_edits_can_be_overridden_on_purpose(tmp_path):
