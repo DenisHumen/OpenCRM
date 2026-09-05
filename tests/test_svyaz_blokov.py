@@ -22,7 +22,8 @@ WB = f"{API}/waybills"
 
 @pytest.fixture(autouse=True)
 def blocks_on(root_client):
-    for key in ("documents", "warehouse", "orders", "waybills", "finance"):
+    # Финансы не включаем: отчёты ждут их выключенными, а связям они не нужны.
+    for key in ("documents", "warehouse", "orders", "waybills"):
         root_client.post(f"{API}/modules/{key}", json={"enabled": True})
     root_client.patch(f"{API}/settings", json={"values": {"auto_waybill": "1", "auto_act": "1"}})
 
