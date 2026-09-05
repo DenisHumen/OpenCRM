@@ -489,3 +489,24 @@ def test_ruchnaya_strana_perezhivaet_pravku_nomera(manager_client):
         f"{API}/clients/{klient['id']}", json={"phone": "+48 12 345 67 89"}
     )
     assert stalo.json()["country"] == "DE"
+
+
+def test_svodka_klienta_v_kartochke(root_client):
+    """Справа от паспорта — заявки, деньги, последний контакт, бумаги, кто ведёт
+    (владелец, 06.09.2026: пустое место заполнить полезным)."""
+    me = root_client.get(f"{API}/auth/me").json()
+    klient = root_client.post(f"{API}/clients", json={"name": "Сводка карточки", "manager_id": me["id"]}).json()
+    root_client.post(f"{API}/deals", json={"title": "Открытая", "client_id": klient["id"], "amount": 5_000})
+    stages = {s["kind"]: s["key"] for s in root_client.get(f"{API}/pipeline/stages").json()["items"]}
+    vyigrana = root_client.post(f"{API}/deals", json={"title": "Выигранная", "client_id": klient["id"], "amount": 7_000}).json()
+    assert root_client.post(f"{API}/deals/{vyigrana['id']}/move", json={"stage": stages["won"]}).status_code == 200
+    root_client.post(f"{API}/clients/{klient['id']}/notes", json={"kind": "note", "body": "Звонил, просил счёт"})
+
+    svodka = root_client.get(f"{API}/clients/{klient['id']}").json()["svodka"]
+    assert svodka["open_count"] == 1 and svodka["open_amount"] == 5_000
+    assert svodka["won_count"] == 1 and svodka["won_amount"] == 7_000
+    assert svodka["lost_count"] == 0
+    assert svodka["last_contact"]["kind"] == "note" and "просил счёт" in svodka["last_contact"]["body"]
+    assert svodka["last_contact"]["at"]
+    assert svodka["manager_name"] == me["name"]
+    assert svodka["received_12m"] is None, "деньги выключены — плитки нет"

@@ -1,3 +1,4 @@
+from datetime import timedelta
 from pathlib import Path
 
 from sqlalchemy import event as sa_event
@@ -499,6 +500,71 @@ def delete_note(db: Session, client_id: int, note_id: int, actor: User) -> None:
         entity_label=note.body,
     )
     db.delete(note)
+
+
+# --- сводка карточки ---
+
+
+def svodka(db: Session, client_id: int, user: User) -> dict:
+    """Что справа от паспорта: заявки, деньги, последний контакт, бумаги, кто ведёт.
+
+    Считается на каждое открытие карточки, а не хранится, и сужается теми же
+    правами, что разделы: чужие заявки в счёт не идут, суммы пустеют без права
+    на них, выключенный блок отсутствует ключом `None`, а не нулём.
+    """
+    # Ввозы внутри: права и блоки сами ввозят клиентов, и общий верх дал бы круг.
+    from core.services import modules_service, permissions_service
+    from database.repositories import deals as deals_repo
+    from database.repositories import documents as documents_repo
+    from database.repositories import finance as finance_repo
+    from database.repositories import telephony as telephony_repo
+
+    client = get_client(db, client_id)
+    scope = permissions_service.deals_scope(db, user)
+    amounts = permissions_service.sees_amounts(db, user)
+    zayavki = deals_repo.svodka_klienta(db, client_id, only_manager_id=scope)
+
+    poluchen = None
+    if modules_service.is_enabled(db, "finance") and amounts and permissions_service.has(db, user, "finance", "view"):
+        poluchen = finance_repo.received_of_client(db, client_id, since=now_utc() - timedelta(days=365))
+
+    notes, _vsego = clients_repo.list_notes(db, client_id, page=1, per_page=1)
+    posledniy = None
+    if notes:
+        zapis = notes[0]
+        posledniy = {
+            "kind": zapis.kind,
+            "at": zapis.happened_at.isoformat() if zapis.happened_at else None,
+            "body": (zapis.body or "")[:120],
+        }
+    posledniy_zvonok = None
+    if modules_service.is_enabled(db, "telephony") and permissions_service.has(db, user, "telephony", "view"):
+        zvonki, _vsego = telephony_repo.list_calls(db, client_id=client_id, page=1, per_page=1)
+        if zvonki:
+            posledniy_zvonok = zvonki[0].started_at.isoformat() if zvonki[0].started_at else None
+
+    bumagi = None
+    if modules_service.is_enabled(db, "documents") and permissions_service.has(db, user, "documents", "view"):
+        bumagi = documents_repo.schyot_po_vidam(db, client_id=client_id)
+
+    vedyot = None
+    if client.manager_id:
+        lyudi = users_repo.get_many(db, {client.manager_id})
+        vedyot = lyudi[0].name if lyudi else None
+
+    return {
+        "open_count": zayavki["open_count"],
+        "open_amount": zayavki["open_amount"] if amounts else None,
+        "won_count": zayavki["won_count"],
+        "won_amount": zayavki["won_amount"] if amounts else None,
+        "lost_count": zayavki["lost_count"],
+        "received_12m": poluchen,
+        "last_contact": posledniy,
+        "last_call_at": posledniy_zvonok,
+        "papers": bumagi,
+        "papers_total": sum(bumagi.values()) if bumagi else 0,
+        "manager_name": vedyot,
+    }
 
 
 # --- файлы клиента (внутренние) ---

@@ -22,6 +22,8 @@ import pathlib
 import re
 import subprocess
 
+import pytest
+
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 #: Текстовые расширения — те же, что объявлены `text` в `.gitattributes`.
@@ -31,15 +33,23 @@ TEKSTOVYE = {
 }
 #: Не исходники: окружения, сборки, данные, чужой код.
 MIMO = {
-    ".git", ".venv", "venv", "node_modules", "dist", "__pycache__", ".pytest_cache",
+    ".git", ".venv", "venv", "node_modules", "dist", "build", "__pycache__", ".pytest_cache",
     ".ruff_cache", "data", "storage", "tmp", "shablony",
 }
 
 LONE_CR = re.compile(rb"\r(?!\n)")
 
 
-def _po_baytam() -> list[str]:
+def _po_baytam() -> list[str] | None:
+    """Смешанные файлы по байтам; `None` — это копия Windows, судить нельзя.
+
+    Образ ворот, собранный на Windows, несёт рабочую копию с autocrlf: почти
+    все файлы целиком CRLF, а тронутые скриптами — с LF-строками внутри, и
+    блоб тут ни при чём. Такую копию отличает доля CRLF-файлов: у Linux-чекаута
+    (CI, боевой сервер) их нет вовсе.
+    """
     vinovnye = []
+    vsego = crlf_faylov = 0
     for put in sorted(ROOT.rglob("*")):
         if any(chast in MIMO for chast in put.relative_to(ROOT).parts):
             continue
@@ -49,8 +59,17 @@ def _po_baytam() -> list[str]:
         crlf = b.count(b"\r\n")
         lf = b.count(b"\n") - crlf
         lone = len(LONE_CR.findall(b))
+        vsego += 1
+        if crlf and not lf:
+            crlf_faylov += 1
         if lone or (crlf and lf):
             vinovnye.append(f"{put.relative_to(ROOT).as_posix()}: CRLF {crlf}, LF {lf}, одиночных CR {lone}")
+    # Два десятка файлов целиком в CRLF бывает только у копии Windows: у
+    # Linux-чекаута блобы LF, а редкий целиком-CRLF блоб ловит проверка по
+    # индексу там, где есть `.git`. Доля не годится: новые файлы и `.md`
+    # пишутся инструментами с LF, и половина не набирается.
+    if crlf_faylov >= 20:
+        return None
     return vinovnye
 
 
@@ -97,6 +116,8 @@ def test_ni_odnogo_fayla_so_smeshannymi_perevodami_strok():
     vinovnye = _po_indeksu()
     if vinovnye is None:
         vinovnye = _po_baytam()
+    if vinovnye is None:
+        pytest.skip("рабочая копия Windows без .git: судить по индексу git негде, а по байтам нельзя")
     assert vinovnye == [], (
         "смешанные переводы строк — на Linux такой файл «грязный» сразу после чекаута, "
         "и обновлятор откажется обновляться:\n  " + "\n  ".join(vinovnye)
@@ -113,4 +134,16 @@ def test_baytovyy_perebor_lovit_smeshannoe(tmp_path, monkeypatch):
     (koren / "core" / "odinochnyy.py").write_bytes(b"a = 1\rb = 2\n")
     monkeypatch.setattr("tests.test_perevody_strok.ROOT", koren)
     naydeno = _po_baytam()
+    assert naydeno is not None
     assert [v.split(":")[0] for v in naydeno] == ["core/odinochnyy.py", "core/smeshannyy.py"]
+
+
+def test_kopiya_windows_bez_git_ne_sudit(tmp_path, monkeypatch):
+    """Копия с autocrlf (все файлы CRLF) — не улика: перебор отвечает «не знаю»."""
+    koren = tmp_path / "proekt"
+    (koren / "core").mkdir(parents=True)
+    for i in range(25):
+        (koren / "core" / f"f{i}.py").write_bytes(b"a = 1\r\nb = 2\r\n")
+    (koren / "core" / "tronutyy.py").write_bytes(b"a = 1\r\nb = 2\n")
+    monkeypatch.setattr("tests.test_perevody_strok.ROOT", koren)
+    assert _po_baytam() is None

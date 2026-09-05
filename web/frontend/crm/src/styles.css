@@ -280,6 +280,14 @@ button { font-family: var(--sans); }
    оставляла половину экрана пустой. Карточки и настройки остаются узкими —
    форму читают, а не листают вбок. */
 .page-wide { max-width: 1800px; }
+/* Сводка: 1800px на обычном мониторе растягивала плитки и ленты во всю ширину;
+   две колонки в 1320px читаются лучше (владелец, 06.09.2026). */
+.page-svodka { max-width: 1320px; }
+.dash-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; align-items: start; }
+.dash-cols-one { grid-template-columns: 1fr; }
+.dash-cols > .card { margin-bottom: 0; }
+@media (max-width: 900px) { .dash-cols { grid-template-columns: 1fr; } }
+.board-grid-2 { grid-template-columns: repeat(2, 1fr); }
 .page-docs { max-width: 1360px; }
 .page-narrow { max-width: 760px; }
 .page-tight { max-width: 640px; }
@@ -3077,6 +3085,14 @@ html { scroll-behavior: smooth; }
 .pasport-ruchka { font-size: 9.5px; font-weight: 700; letter-spacing: 0.2em; color: var(--faint); text-transform: uppercase; margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pasport-imya { font-size: 30px; line-height: 0.95; font-weight: 800; letter-spacing: -0.01em; color: var(--text); text-transform: uppercase; margin-bottom: 10px; overflow-wrap: anywhere; }
 .pasport-bio { font-size: 12px; font-weight: 500; color: var(--text); border-left: 4px solid var(--brand); padding-left: 10px; line-height: 1.5; margin-bottom: 14px; }
+/* Сводка справа от паспорта: пустое место рядом с карточкой заполнено тем,
+   что спрашивают первым — заявки, деньги, последний контакт, бумаги, кто ведёт. */
+.svodka-plitki { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; background: var(--frame); border: 1px solid var(--frame); border-radius: 6px; overflow: hidden; }
+.svodka-plitka { background: var(--surface); padding: 12px 14px; min-width: 0; }
+.svodka-l { font-size: 10.5px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--faint); margin-bottom: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.svodka-v { font-size: 19px; font-weight: 700; letter-spacing: -0.02em; color: var(--num); line-height: 1.1; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.svodka-sub { font-size: 12px; color: var(--muted); margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 720px) { .svodka-plitki { grid-template-columns: repeat(2, 1fr); } }
 .pasport-stats { display: grid; grid-template-columns: 1fr 1fr 1fr; border-top: 3px solid var(--text); }
 .pasport-stat { padding: 10px 8px; border-right: 3px solid var(--text); text-align: center; }
 .pasport-stat:last-child { border-right: 0; }

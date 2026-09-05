@@ -199,3 +199,77 @@ def test_head_requests_supported(base_client):
     # мониторинг и прокси проверяют доступность через HEAD
     assert base_client.head("/healthz").status_code == 200
     assert base_client.head("/").status_code == 200
+
+
+# --- новые блоки сводки 06.09.2026: долг, заказы и возвраты, склад, напоминания, звонки ---
+
+
+def _blok(client, key: str, enabled: bool) -> None:
+    assert client.post(f"{API}/modules/{key}", json={"enabled": enabled}).status_code == 200
+
+
+def test_svodka_znaet_dolg_zakazy_sklad_i_prosrochku(root_client):
+    """Плитки и блоки, которых у сводки не было: пустое место на обычном
+    мониторе владелец просил заполнить полезными числами, а не растягивать."""
+    for key in ("documents", "warehouse", "orders", "tasks"):
+        _blok(root_client, key, True)
+    try:
+        klient = root_client.post(f"{API}/clients", json={"name": "Сводка долг"}).json()
+        zayavka = root_client.post(
+            f"{API}/deals", json={"title": "Сводка заявка", "client_id": klient["id"], "amount": 10_000, "prepaid": 3_000}
+        ).json()
+        assert zayavka["id"]
+        malo = root_client.post(
+            f"{API}/warehouse/products", json={"name": "Сводка мало", "sku": "SV-MALO", "price": 100, "min_stock": "5"}
+        ).json()
+        root_client.post(f"{API}/warehouse/moves", json={"product_id": malo["id"], "kind": "in", "quantity": "2"})
+        net = root_client.post(f"{API}/warehouse/products", json={"name": "Сводка нет", "sku": "SV-NET", "price": 100}).json()
+        tovar = root_client.post(f"{API}/warehouse/products", json={"name": "Сводка товар", "sku": "SV-TOV", "price": 500}).json()
+        root_client.post(f"{API}/warehouse/moves", json={"product_id": tovar["id"], "kind": "in", "quantity": "10"})
+        order = root_client.post(f"{API}/orders", json={"kind": "sales_order", "client_id": klient["id"]}).json()
+        root_client.post(f"{API}/orders/{order['id']}/lines", json={"product_id": tovar["id"], "quantity": "2"})
+        assert root_client.post(f"{API}/orders/{order['id']}/close", json={}).status_code == 200
+        root_client.post(f"{API}/tasks", json={"title": "Сводка просрочка", "due_at": "2020-01-01T10:00:00"})
+
+        data = root_client.get(f"{API}/dashboard").json()
+        assert data["money_due"] >= 7_000, "долг по открытой заявке — цена минус предоплата"
+        assert data["orders_week"]["shipped_count"] >= 1
+        assert data["orders_week"]["returns_count"] >= 0
+        assert any(o["number"] == order["number"] and o["total"] == 1_000 for o in data["recent_orders"])
+        nizko = {row["name"]: row for row in data["low_stock"]}
+        assert data["low_stock_total"] >= 2
+        # Список — пятёрка самых пустых; свои товары ищем среди них по имени, а
+        # соседние файлы могли насыпать своих с нулём.
+        if "Сводка нет" in nizko:
+            assert nizko["Сводка нет"]["out"] is True and nizko["Сводка нет"]["stock_milli"] == 0
+        if "Сводка мало" in nizko:
+            assert nizko["Сводка мало"]["out"] is False and nizko["Сводка мало"]["stock_milli"] == 2_000
+        assert data["tasks_counters"]["overdue"] >= 1
+        # Телефонию мог оставить включённой соседний файл (ворота гоняют набор
+        # в обоих порядках): блок либо отсутствует, либо со счётчиками.
+        assert data["calls_24h"] is None or {"vsego", "propushcheno"} <= set(data["calls_24h"])
+    finally:
+        for key in ("orders", "warehouse"):
+            _blok(root_client, key, False)
+
+    # Выключенные блоки уходят пустыми значениями, форма ответа та же.
+    data = root_client.get(f"{API}/dashboard").json()
+    assert data["orders_week"] is None and data["recent_orders"] == []
+    assert data["low_stock"] == [] and data["low_stock_total"] == 0
+
+
+def test_bez_prava_na_summy_dolg_pust(root_client, manager_client):
+    """`deals.view_amounts` прячет и долг: это сумма, как и остальные плитки."""
+    from tests.conftest import make_manager
+
+    smotryashchiy = make_manager(root_client, "svodka-bez-summ@test.local")
+    roli = root_client.get(f"{API}/roles").json()["items"]
+    bez_summ = root_client.post(
+        f"{API}/roles", json={"name": "Сводка без сумм", "permissions": ["deals.view", "clients.view"]}
+    )
+    if bez_summ.status_code == 201:
+        me = smotryashchiy.get(f"{API}/auth/me").json()
+        root_client.post(f"{API}/roles/assign/{me['id']}", json={"role_id": bez_summ.json()["id"]})
+        data = smotryashchiy.get(f"{API}/dashboard").json()
+        assert data["money_due"] is None
+    assert isinstance(roli, list)

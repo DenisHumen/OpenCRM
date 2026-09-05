@@ -161,8 +161,15 @@
 `deals_by_stage`, `my_tasks`,
 `clients_total`, `clients_this_month`, `boards_total`, `boards_published`,
 `views_7d`, `views_prev_7d`, `unique_viewers_7d`, `views_by_day`, `last_view_at`,
-`recent_boards`, `recent_clients`. **При выключенном блоке ключи остаются, а
-значения пустеют** — то же правило, что у поиска. Деньги считаются с начала
+`recent_boards`, `recent_clients`; с 06.09.2026 — `money_due` (цена открытых
+заявок минус предоплата, только с правом на суммы), `orders_week`
+(`shipped_count`, `returns_count`, `refund_amount` за 7 дней; `null` без блока
+заказов), `recent_orders` (пять свежих: номер, вид, состояние, клиент, сумма),
+`low_stock` и `low_stock_total` (товары с остатком не выше порога или нулём;
+блок склада), `tasks_counters` (`overdue`, `today`, `mine`, `open` того, кто
+смотрит; блок напоминаний), `calls_24h` (`vsego`, `propushcheno`; блок
+телефонии). **При выключенном блоке ключи остаются, а значения пустеют** — то
+же правило, что у поиска. Деньги считаются с начала
 календарного месяца, а не за последние 30 дней: владелец сверяет их с месячной
 отчётностью, и скользящее окно давало бы число, которое ни с чем не сходится.
 `deals.view_others` сужает и числа тоже — спрятать чужие карточки и оставить их
@@ -239,7 +246,7 @@
 | GET | `/clients` | 🔑 `clients.view` | Список: `?search=`, `?tag=`, `?manager_id=`, пагинация, сортировка по обновлению |
 | GET | `/clients/export.csv` | 🔑 `clients.view` | Тот же отбор файлом, целиком и без страниц. Больше 10 000 строк — отказ `export_too_large`, а не молчаливое обрезание. Право то же, что на просмотр: выгрузка отдаёт ровно то, что человек и так видит |
 | POST | `/clients` | 🔑 `clients.create` | Создать карточку |
-| GET | `/clients/{id}` | 🔑 `clients.view` | Карточка целиком: контакты, последние заметки, файлы, связанные доски |
+| GET | `/clients/{id}` | 🔑 `clients.view` | Карточка целиком: контакты, последние заметки, файлы, заявки, `svodka` — заявки по виду этапа (`open_count`/`open_amount`, `won_count`/`won_amount`, `lost_count`), `received_12m` (касса за год; блок денег и право на суммы), `last_contact` (последняя запись ленты), `last_call_at`, `papers` по видам, `manager_name`. Чужие заявки в счёт не идут, суммы пустеют без права |
 | PATCH | `/clients/{id}` | 🔑 `clients.edit` | Обновить поля |
 | DELETE | `/clients/{id}` | 🔑 `clients.delete` | Мягкое удаление |
 | POST | `/clients/{id}/restore` | 🔑 `clients.restore` | Вернуть из корзины |

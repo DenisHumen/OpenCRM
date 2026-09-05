@@ -362,7 +362,9 @@ export function ClientCard() {
             + {term(workspace.deal_term, locale, "many")}
           </button>
         </div>
-        <div style={{ display: "flex", gap: 10, position: "relative" }}>
+        <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 12 }}>
+        {client.svodka && <KlientSvodka svodka={client.svodka} currency={client.currency} />}
+        <div style={{ display: "flex", gap: 10, position: "relative", flexWrap: "wrap" }}>
           {/* Письмо пишем прямо отсюда: отправленное ляжет в эту же ленту
               строкой «письмо · исходящее», а не в отдельную переписку. */}
           {hasMail && client.email && (
@@ -398,6 +400,7 @@ export function ClientCard() {
               </button>
             </div>
           )}
+        </div>
         </div>
       </div>
 
@@ -729,6 +732,87 @@ function EditableContact({
       ) : (
         <div className="contact-value">{display || value || "—"}</div>
       )}
+    </div>
+  );
+}
+
+
+interface Svodka {
+  open_count: number;
+  open_amount: number | null;
+  won_count: number;
+  won_amount: number | null;
+  lost_count: number;
+  received_12m: number | null;
+  last_contact: { kind: string; at: string | null; body: string } | null;
+  last_call_at: string | null;
+  papers: Record<string, number> | null;
+  papers_total: number;
+  manager_name: string | null;
+}
+
+/** Подписи видов записей ленты — те же ключи, что у самой ленты (`Feed`). */
+const VID_ZAPISI: Record<string, TranslationKey> = {
+  note: "feedNote",
+  call: "feedCall",
+  meeting: "feedMeeting",
+  email: "feedEmail",
+  stage: "feedStage",
+  document: "feedDocument",
+  stock: "feedStock",
+};
+
+/** Что справа от паспорта. Считает сервер (`client_service.svodka`): чужие
+ *  заявки не в счёт, суммы пустеют без права, выключенный блок — плитки нет. */
+function KlientSvodka({ svodka, currency }: { svodka: Svodka; currency: string }) {
+  const { t, locale } = useApp();
+  const money = (value: number | null) => formatMoney(value, currency, locale);
+  const kontakt = svodka.last_contact;
+  const kontaktAt = [kontakt?.at, svodka.last_call_at].filter(Boolean).sort().pop() ?? null;
+  return (
+    <div className="svodka-plitki">
+      <div className="svodka-plitka">
+        <div className="svodka-l">{t("clientSummaryOpen")}</div>
+        <div className="svodka-v">{svodka.open_count}</div>
+        <div className="svodka-sub">{svodka.open_amount !== null ? money(svodka.open_amount) : t("clientSummaryNoAmounts")}</div>
+      </div>
+      <div className="svodka-plitka">
+        <div className="svodka-l">{t("clientSummaryWon")}</div>
+        <div className="svodka-v">{svodka.won_count}</div>
+        <div className="svodka-sub">
+          {svodka.won_amount !== null ? money(svodka.won_amount) : t("clientSummaryLost", { n: svodka.lost_count })}
+        </div>
+      </div>
+      {svodka.received_12m !== null && (
+        <div className="svodka-plitka">
+          <div className="svodka-l">{t("clientSummaryReceived")}</div>
+          <div className="svodka-v">{money(svodka.received_12m)}</div>
+          <div className="svodka-sub">{t("clientSummaryReceivedHint")}</div>
+        </div>
+      )}
+      <div className="svodka-plitka">
+        <div className="svodka-l">{t("clientSummaryLastContact")}</div>
+        <div className="svodka-v">{kontaktAt ? relativeDay(kontaktAt, locale) : "—"}</div>
+        <div className="svodka-sub" title={kontakt?.body}>
+          {kontakt ? kontakt.body || t(VID_ZAPISI[kontakt.kind] ?? "feedNote") : t("clientSummaryNoContact")}
+        </div>
+      </div>
+      {svodka.papers !== null && (
+        <div className="svodka-plitka">
+          <div className="svodka-l">{t("clientSummaryPapers")}</div>
+          <div className="svodka-v">{svodka.papers_total}</div>
+          <div className="svodka-sub">
+            {Object.entries(svodka.papers)
+              .map(([kind, n]) => `${kindLabel(t, kind)} ${n}`)
+              .join(" · ") || t("noDocuments")}
+          </div>
+        </div>
+      )}
+      <div className="svodka-plitka">
+        <div className="svodka-l">{t("clientSummaryManager")}</div>
+        <div className="svodka-v">{svodka.manager_name ?? "—"}</div>
+        <div className="svodka-sub">{svodka.manager_name ? t("responsible") : t("clientSummaryNobody")}</div>
+      </div>
     </div>
   );
 }

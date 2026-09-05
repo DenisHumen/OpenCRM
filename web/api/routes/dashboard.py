@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from core.services import (
     finance_service,
     modules_service,
+    order_service,
     permissions_service,
     pipeline_service,
     settings_service,
@@ -13,10 +14,15 @@ from core.services import (
 )
 from core.utils import now_utc
 from database.models import User
+from database.models.document import ORDER_KINDS
 from database.repositories import boards as boards_repo
 from database.repositories import clients as clients_repo
 from database.repositories import deals as deals_repo
+from database.repositories import documents as documents_repo
 from database.repositories import stats as stats_repo
+from database.repositories import svodka as svodka_repo
+from database.repositories import vozvraty as vozvraty_repo
+from database.repositories import warehouse as warehouse_repo
 from web.api import cards, schemas
 from web.api.deps import get_db, require_staff
 
@@ -113,8 +119,67 @@ def dashboard(user: User = Depends(require_staff), db: Session = Depends(get_db)
             )
         ]
 
+    # Блоки ниже — только при включённом блоке и праве на него; выключенный
+    # уходит ключом `None`/пустым списком, форма ответа одна.
+    orders_week = None
+    recent_orders: list[dict] = []
+    if modules_service.is_enabled(db, "orders") and permissions_service.has(db, user, "orders", "view"):
+        nedelya = vozvraty_repo.svodka(db, now - timedelta(days=7), now)
+        order_amounts = permissions_service.sees_amounts(db, user, "orders")
+        orders_week = {
+            "shipped_count": nedelya["shipped_count"],
+            "returns_count": nedelya["count"],
+            "refund_amount": nedelya["refund"] if order_amounts else None,
+        }
+        svezhie, _vsego = documents_repo.search(db, kinds=ORDER_KINDS, page=1, per_page=5)
+        rows = documents_repo.lines_by_documents(db, [o.id for o in svezhie])
+        imena = clients_repo.names_by_ids(db, [o.client_id for o in svezhie if o.client_id])
+        recent_orders = [
+            {
+                "id": o.id,
+                "number": o.number,
+                "kind": o.kind,
+                "status": o.status,
+                "client_name": imena.get(o.client_id),
+                "total": order_service.total_minor(rows.get(o.id, [])) if order_amounts else None,
+                "updated_at": o.updated_at.isoformat() if o.updated_at else None,
+            }
+            for o in svezhie
+        ]
+
+    low_stock: list[dict] = []
+    low_stock_total = 0
+    if modules_service.is_enabled(db, "warehouse") and permissions_service.has(db, user, "warehouse", "view"):
+        malo, low_stock_total = warehouse_repo.malo_ili_konchilos(db, limit=5)
+        low_stock = [
+            {
+                "id": product.id,
+                "name": product.name,
+                "unit": product.unit,
+                "stock_milli": milli,
+                "min_stock_milli": product.min_stock_milli,
+                "out": milli <= 0,
+            }
+            for product, milli in malo
+        ]
+
+    tasks_counters = task_service.summary(db, user) if modules_service.is_enabled(db, "tasks") else None
+
+    calls_24h = None
+    if modules_service.is_enabled(db, "telephony") and permissions_service.has(db, user, "telephony", "view"):
+        calls_24h = svodka_repo.zvonki(db, now - timedelta(hours=24), now)
+
     return {
         "currency": settings_service.get_all(db).get("currency", "USD"),
+        # Долг по открытым заявкам — из той же сводки денег, что и плитки выше:
+        # без права на суммы он уже пуст.
+        "money_due": money["due"],
+        "orders_week": orders_week,
+        "recent_orders": recent_orders,
+        "low_stock": low_stock,
+        "low_stock_total": low_stock_total,
+        "tasks_counters": tasks_counters,
+        "calls_24h": calls_24h,
         "money_in_work": money["in_work"],
         "money_won_this_month": money["won_since"],
         # Чем меряется выручка — экран берёт ось отсюда, а не из своей карты
