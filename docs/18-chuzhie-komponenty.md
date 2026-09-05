@@ -58,15 +58,15 @@
 
 | Откуда | Что | Где у нас |
 |---|---|---|
-| `uiverse.io/elijahgummer/bright-chicken-11` | кнопка со ссылкой на GitHub, блик по наведению | `.side-github` |
-| тот же приём | перелив по знаку продукта | `.side-brand-name` |
+| `uiverse.io/elijahgummer/bright-chicken-11` | кнопка со ссылкой на GitHub; блик по наведению снят 05.09.2026 вместе с прочими градиентами (docs/05) — осталась плашка с тенью-сдвигом | `.side-github` |
+| тот же приём | перелив по знаку продукта — снят тогда же, знак плотным весом | `.side-brand-name` |
 | `uiverse.io/catraco/fluffy-quail-74` | доворот плюса по наведению | `[data-icon="plus"]` |
 | `uiverse.io/EcheverriaJesus/kind-badger-70` | значок GitHub растёт по наведению | `[data-icon="github"]` |
 | `uiverse.io/liyaxu123/warm-eel-62` | подпись поля всплывает по буквам | `.pole-plav` |
 | `uiverse.io/nazar-gavrylyk/terrible-gecko-91` | меню по правой кнопке | `.ctx-menu` |
 | `uiverse.io/PriyanshuGupta28/orange-newt-23` | путь сделки по воронке | `.shagi` |
 | `uiverse.io/Galahhad/kind-cheetah-52` | «скопировать» у блока кода | `.copy-btn` |
-| `uiverse.io/dexter-st/bright-lizard-8` | кольцо с переливом и буквы по одной | `.zagruzka` — `ScreenLoading`, в том числе на весь экран при входе |
+| `uiverse.io/dexter-st/bright-lizard-8` | буквы по одной; кольцо переведено плоским (две дуги на рамке), перелив снят | `.zagruzka` — `ScreenLoading`, в том числе на весь экран при входе |
 | `uiverse.io/seyed-mohsen-mousavi/heavy-cobra-18`, `wicked-chipmunk-81` | плашка исхода: значок на плитке, текст, крестик | `.toast` — все всплывающие сообщения; крестик закрывает раньше срока |
 | `uiverse.io/Manish-Tamang/weak-vampirebat-44` | строка уведомления: кружок с буквой и значком вида | `.bell-row` в колокольчике |
 | `uiverse.io/Cobp/dangerous-dolphin-47` | поле ответа: рамка-градиент, инструменты, глянцевая «отправить» | `.tg-compose` в переписке Telegram |

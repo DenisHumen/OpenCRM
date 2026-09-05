@@ -43,6 +43,7 @@ export interface Product {
   /** null у услуги: остатка не бывает — это не то же самое, что ноль. */
   stock_milli: number | null;
   low_stock: boolean;
+  out_of_stock: boolean;
   /** Где и сколько. Приходит только когда складов больше одного. */
   by_warehouse?: Record<string, number>;
 }
@@ -265,9 +266,9 @@ export function Warehouse() {
 
 /** Остаток одной строкой.
  *
- * Три состояния, которые нельзя путать: у услуги остатка не бывает, минус —
- * товар отдали без прихода, «мало» — пора закупать. Ноль и «нет остатка»
- * выглядят по-разному намеренно. */
+ * Четыре состояния, которые нельзя путать: у услуги остатка не бывает, минус —
+ * товар отдали без прихода, ноль — закончился (порог ни при чём), «мало» —
+ * пора закупать. Ноль и «нет остатка» выглядят по-разному намеренно. */
 export function StockValue({ product }: { product: Product }) {
   const { t } = useApp();
   if (product.stock_milli === null) {
@@ -279,7 +280,11 @@ export function StockValue({ product }: { product: Product }) {
       {negative ? (
         <Chip variant="brand">{t("negativeStock")}</Chip>
       ) : (
-        product.low_stock && <Chip variant="warning">{t("lowStock")}</Chip>
+        product.out_of_stock ? (
+          <Chip variant="danger">{t("outOfStock")}</Chip>
+        ) : (
+          product.low_stock && <Chip variant="warning">{t("lowStock")}</Chip>
+        )
       )}
       <span
         style={{

@@ -833,6 +833,7 @@ def _product_fields(product: Product, stock_milli: int | None) -> dict:
         # «товар закончился» на экране должны выглядеть по-разному.
         "stock_milli": stock_milli,
         "low_stock": warehouse_service.is_low(product, stock_milli),
+        "out_of_stock": warehouse_service.is_out(product, stock_milli),
         "created_at": _iso(product.created_at),
         "updated_at": _iso(product.updated_at),
         "deleted_at": _iso(product.deleted_at),

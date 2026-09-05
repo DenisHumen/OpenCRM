@@ -947,7 +947,7 @@ CRM нет, — человек нажмёт «отправить» снова, �
 
 | Метод | Путь | Права | Описание |
 |---|---|---|---|
-| GET | `/warehouse/products` | 🔑 `warehouse.view` | Список с остатками. `search`, `low_only`, `include_services`, `warehouse_id`, пагинация |
+| GET | `/warehouse/products` | 🔑 `warehouse.view` | Список с остатками. `search`, `low_only` (мало **или** кончилось), `include_services`, `warehouse_id`, пагинация. В карточке `low_stock` — остаток на пороге или ниже, `out_of_stock` — ноль или минус независимо от порога; у услуги оба `false` |
 | POST | `/warehouse/products` | 🔑 `warehouse.create` | Создать позицию. `sku` уникален, но необязателен (пусто → `NULL`); `409 sku_taken` |
 | GET | `/warehouse/products/{id}` | 🔑 `warehouse.view` | Карточка с остатком |
 | GET | `/warehouse/products/{id}/availability` | 🔑 `warehouse.view` | Остаток, бронь, ожидается, доступно и `holders` — кто держит |

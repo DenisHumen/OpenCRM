@@ -121,7 +121,8 @@ def list_products(
         # в таблице, а суммы движений, и в WHERE его не выразить, не повторив тот
         # же агрегат. `total` остаётся числом товаров, а не строк после фильтра:
         # иначе пагинация прыгала бы при каждом движении.
-        rows = [row for row in rows if row["low_stock"]]
+        # Кончившийся — тоже «мало», даже без порога: закупать его нужнее всех.
+        rows = [row for row in rows if row["low_stock"] or row["out_of_stock"]]
     data = schemas.paginated(rows, total, page, per_page)
     data["currency"] = _currency(db)
     return data

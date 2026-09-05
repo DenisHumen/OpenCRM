@@ -310,6 +310,32 @@ def test_low_stock_warning_uses_the_threshold(root_client):
     assert product["id"] in [row["id"] for row in low]
 
 
+def test_nol_eto_zakonchilsya_a_ne_malo(root_client):
+    """Ноль — «закончился» независимо от порога.
+
+    С порогом 0 ноль подписывался «заканчивается», без порога — никак; владелец
+    05.09.2026 попросил, чтобы пустая полка называлась пустой. Кончившийся
+    попадает и в фильтр «мало»: закупать его нужнее всех.
+    """
+    s_porogom = new_product(root_client, name="Тонер", unit="pcs", min_stock=0)
+    bez_poroga = new_product(root_client, name="Барабан", unit="pcs")
+    for tovar in (s_porogom, bez_poroga):
+        card = root_client.get(f"{WH}/products/{tovar['id']}").json()
+        assert card["stock_milli"] == 0
+        assert card["out_of_stock"] is True, tovar["name"]
+    assert root_client.get(f"{WH}/products/{bez_poroga['id']}").json()["low_stock"] is False
+
+    low = root_client.get(f"{WH}/products?low_only=true&per_page=200").json()["items"]
+    assert {s_porogom["id"], bez_poroga["id"]} <= {row["id"] for row in low}
+
+    move(root_client, bez_poroga["id"], "in", 1)
+    card = root_client.get(f"{WH}/products/{bez_poroga['id']}").json()
+    assert card["out_of_stock"] is False and card["low_stock"] is False
+
+    usluga = new_product(root_client, name="Выезд", unit="hour", is_service=True, cost=None)
+    assert root_client.get(f"{WH}/products/{usluga['id']}").json()["out_of_stock"] is False
+
+
 def test_money_stays_in_minor_units(root_client):
     """Цены — целые копейки; «цену не назвали» это NULL, а не ноль."""
     product = new_product(root_client, name="Краска", unit="l", price=125050, cost=90000)

@@ -1106,6 +1106,7 @@ const en = {
   stock: "In stock",
   noStock: "—",
   lowStock: "Running low",
+  outOfStock: "Out of stock",
   negativeStock: "Below zero",
   negativeStockHint:
     "The goods left before the receipt was entered. Add the missing receipt — the balance fixes itself, no history rewriting.",
@@ -2638,6 +2639,7 @@ const ru: typeof en = {
   stock: "Остаток",
   noStock: "—",
   lowStock: "Заканчивается",
+  outOfStock: "Закончился",
   negativeStock: "Ушёл в минус",
   negativeStockHint:
     "Товар отдали раньше, чем занесли приход. Добавьте недостающий приход — остаток сойдётся сам, историю править не нужно.",
