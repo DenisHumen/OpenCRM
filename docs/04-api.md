@@ -985,7 +985,7 @@ CRM нет, — человек нажмёт «отправить» снова, �
 |---|---|---|---|
 | GET | `/warehouse/products` | 🔑 `warehouse.view` | Список с остатками. `search`, `low_only` (мало **или** кончилось), `include_services`, `warehouse_id`, пагинация. В карточке `low_stock` — остаток на пороге или ниже, `out_of_stock` — ноль или минус независимо от порога; у услуги оба `false` |
 | POST | `/warehouse/products` | 🔑 `warehouse.create` | Создать позицию. `sku` уникален, но необязателен (пусто → `NULL`); `409 sku_taken` |
-| GET | `/warehouse/products/{id}` | 🔑 `warehouse.view` | Карточка с остатком |
+| GET | `/warehouse/products/{id}` | 🔑 `warehouse.view` | Карточка с остатком; при включённых заказах — `reserved_milli`, `expected_milli`, `available_milli`, `sales_30d`/`sales_90d` (количество и заказов по проведённым заказам покупателя), `returns_90d` (по проведённым возвратам); без блока ключей нет |
 | GET | `/warehouse/products/{id}/availability` | 🔑 `warehouse.view` | Остаток, бронь, ожидается, доступно и `holders` — кто держит |
 | PATCH | `/warehouse/products/{id}` | 🔑 `warehouse.edit` | Изменить. Товар с остатком нельзя сделать услугой (`422 product_has_stock`) |
 | DELETE | `/warehouse/products/{id}` | 🔑 `warehouse.delete` | Мягкое удаление. Движения остаются |
@@ -995,7 +995,7 @@ CRM нет, — человек нажмёт «отправить» снова, �
 | GET | `/warehouse/products/{id}/photos/{photo_id}` | 🔑 `warehouse.view` | Отдать снимок. `?size=view` (по умолчанию) или `thumb` |
 | DELETE | `/warehouse/products/{id}/photos/{photo_id}` | 🔑 `warehouse.edit` | Убрать снимок вместе с файлами |
 | PUT | `/warehouse/products/{id}/photos/order` | 🔑 `warehouse.edit` | Задать порядок: `{"order": [id, …]}` целиком |
-| GET | `/warehouse/products/{id}/moves` | 🔑 `warehouse.view` | История по товару + `stock_milli` (агрегат, а не сумма страницы) |
+| GET | `/warehouse/products/{id}/moves` | 🔑 `warehouse.view` | История по товару + `stock_milli` (агрегат, а не сумма страницы). `kind` — один вид движения (`in`, `out`, `return`, `writeoff`, `adjust`), незнакомый — `422 unknown_kind` |
 | GET | `/warehouse/moves` | 🔑 `warehouse.view` | Движения. Фильтры `product_id`, `deal_id`, `warehouse_id`; при `deal_id` в ответе `cost` — себестоимость списанного под заявку |
 | POST | `/warehouse/moves` | 🔑 `warehouse.create` | Записать движение. Виды: `in`, `out`, `writeoff`, `adjust`, `return` |
 | GET | `/warehouses` | 🔑 `warehouse.view` | Склады как места, одним `items` + признак `many` |

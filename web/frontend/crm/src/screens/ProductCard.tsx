@@ -19,7 +19,7 @@ import { useLiveTopic } from "../lib/live";
 import { useFailure } from "../lib/failure";
 import { useGuard } from "../lib/guard";
 import { formatDateTime, formatMoney, formatQuantity } from "../lib/format";
-import { StockValue, unitKey, type Product } from "./Warehouse";
+import { unitKey, type Product } from "./Warehouse";
 
 const MOVE_KINDS = ["in", "out", "writeoff", "adjust", "return"] as const;
 export type MoveKind = (typeof MOVE_KINDS)[number];
@@ -61,6 +61,8 @@ export function ProductCard() {
   const [product, setProduct] = useState<Product | null>(null);
   const [moves, setMoves] = useState<StockMove[]>([]);
   const [total, setTotal] = useState(0);
+  // Один вид движения: в истории на тысячу строк ищут «когда возвращали».
+  const [vidDvizheniy, setVidDvizheniy] = useState<string>("");
   const [stranitsaDvizheniy, setStranitsaDvizheniy] = useState(1);
   const [dochityvaem, setDochityvaem] = useState(false);
   // Чему принадлежит показанное. Ставит загрузка, сверяет дочитка: пока
@@ -96,7 +98,7 @@ export function ProductCard() {
       // рядом с заголовком честно писалось «всего 640», а показывались первые
       // двести, и добраться до остальных было нечем.
       const history = await api.get<{ items: StockMove[]; total: number }>(
-        `/warehouse/products/${id}/moves?page=1&per_page=${DVIZHENIY_NA_STRANITSE}`,
+        `/warehouse/products/${id}/moves?page=1&per_page=${DVIZHENIY_NA_STRANITSE}${vidDvizheniy ? `&kind=${vidDvizheniy}` : ""}`,
       );
       setMoves(history.items);
       setTotal(history.total);
@@ -113,7 +115,7 @@ export function ProductCard() {
       // строке верный, и повторить имеет смысл именно его, а не список.
       fail(e);
     }
-  }, [id, workspace.currency, toastError, navigate, fail, clear]);
+  }, [id, workspace.currency, toastError, navigate, fail, clear, vidDvizheniy]);
 
   /** Дочитать историю движений.
    *
@@ -128,7 +130,7 @@ export function ProductCard() {
     try {
       const dalshe = await api.get<{ items: StockMove[]; total: number }>(
         `/warehouse/products/${id}/moves` +
-          `?page=${stranitsaDvizheniy + 1}&per_page=${DVIZHENIY_NA_STRANITSE}`,
+          `?page=${stranitsaDvizheniy + 1}&per_page=${DVIZHENIY_NA_STRANITSE}${vidDvizheniy ? `&kind=${vidDvizheniy}` : ""}`,
       );
       // Отбор сменился, пока страница ехала, — ответ чужой.
       if (otbor_spiska.current !== sprosheno) return;
@@ -176,23 +178,11 @@ export function ProductCard() {
         </button>
       </div>
 
+      {/* Плитки — то, что спрашивают, открыв товар: остаток, доступно с бронью,
+          цена с наценкой, продажи и возвраты (владелец, 06.09.2026). Продажи и
+          возвраты приходят только с блоком заказов — без него и плиток нет. */}
+      <TovarPlitki product={product} currency={currency} />
       <div className="card card-pad" style={{ marginBottom: 20 }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16 }}>
-          <div>
-            <div className="metric-title" style={{ marginBottom: 6 }}>{t("stock")}</div>
-            <div style={{ fontSize: 20 }}>
-              <StockValue product={product} />
-            </div>
-          </div>
-          <div style={{ textAlign: "right", color: "var(--muted)", fontSize: 12.5, lineHeight: 1.6 }}>
-            <div>
-              {t("costPrice")}: {formatMoney(product.cost, currency, locale)}
-            </div>
-            <div>
-              {t("sellPrice")}: {formatMoney(product.price, currency, locale)}
-            </div>
-          </div>
-        </div>
         {/* Где лежит. Раскладка по местам появляется вместе со вторым складом:
             пока склад один, она повторяла бы общий остаток. */}
         <WarehouseSpread places={places} spread={spread} unit={t(unitKey(product.unit))} />
@@ -246,6 +236,18 @@ export function ProductCard() {
       <div className="section-head" style={{ marginTop: 28 }}>
         <h2 className="section-title">{t("moves")}</h2>
         <span className="page-sub">{total}</span>
+      </div>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 12 }}>
+        {(["", ...Object.keys(KIND_LABEL)] as const).map((vid) => (
+          <button
+            key={vid || "all"}
+            type="button"
+            className={"filter-chip" + (vidDvizheniy === vid ? " active" : "")}
+            onClick={() => setVidDvizheniy(vid)}
+          >
+            {vid ? t(KIND_LABEL[vid as MoveKind]) : t("movesAll")}
+          </button>
+        ))}
       </div>
       <div>
         {moves.map((move) => (
@@ -468,5 +470,74 @@ function MoveForm({
       </div>
       <div className="field-desc">{t("quantityHint")}</div>
     </form>
+  );
+}
+
+
+/** Плитки карточки товара. Наценка считается здесь из цены и себестоимости —
+ *  это подпись, а не деньги, которые где-то хранятся. */
+function TovarPlitki({ product, currency }: { product: Product; currency: string }) {
+  const { t, locale } = useApp();
+  const edinitsa = t(unitKey(product.unit));
+  const kolvo = (milli: number) => `${formatQuantity(milli)} ${edinitsa}`;
+  const natsenka =
+    product.price !== null && product.cost !== null && product.cost > 0
+      ? Math.round(((product.price - product.cost) * 100) / product.cost)
+      : null;
+  const prodano90 = product.sales_90d?.quantity_milli ?? 0;
+  const vernulos90 = product.returns_90d?.quantity_milli ?? 0;
+  const dolya = prodano90 > 0 ? Math.round((vernulos90 * 100) / prodano90) : null;
+  return (
+    <div className="svodka-plitki szhato" style={{ marginBottom: 12 }}>
+      <div className={"svodka-plitka" + (product.out_of_stock ? " beda" : "")}>
+        <div className="svodka-l">{t("stock")}</div>
+        <div className="svodka-v">{product.stock_milli === null ? t("noStock") : kolvo(product.stock_milli)}</div>
+        <div className="svodka-sub">
+          {product.stock_milli === null
+            ? t("isService")
+            : product.stock_milli < 0
+              ? t("negativeStock")
+              : product.out_of_stock
+                ? t("outOfStock")
+                : product.low_stock
+                  ? t("lowStock")
+                  : product.min_stock_milli !== null
+                    ? t("productMinStockSub", { n: formatQuantity(product.min_stock_milli) })
+                    : t("productNoMinStock")}
+        </div>
+      </div>
+      {product.available_milli !== undefined && (
+        <div className="svodka-plitka">
+          <div className="svodka-l">{t("productAvailable")}</div>
+          <div className="svodka-v">{kolvo(product.available_milli)}</div>
+          <div className="svodka-sub">
+            {product.reserved_milli ? t("productReservedSub", { n: formatQuantity(product.reserved_milli) }) : t("productNoReserve")}
+            {product.expected_milli ? ` · ${t("productExpectedSub", { n: formatQuantity(product.expected_milli) })}` : ""}
+          </div>
+        </div>
+      )}
+      <div className="svodka-plitka">
+        <div className="svodka-l">{t("sellPrice")}</div>
+        <div className="svodka-v">{formatMoney(product.price, currency, locale)}</div>
+        <div className="svodka-sub">
+          {t("costPrice")}: {formatMoney(product.cost, currency, locale)}
+          {natsenka !== null && ` · ${t("productMargin", { p: natsenka })}`}
+        </div>
+      </div>
+      {product.sales_30d && (
+        <div className="svodka-plitka">
+          <div className="svodka-l">{t("productSold30")}</div>
+          <div className="svodka-v">{kolvo(product.sales_30d.quantity_milli)}</div>
+          <div className="svodka-sub">{t("productSold90", { n: formatQuantity(prodano90), orders: product.sales_90d?.count ?? 0 })}</div>
+        </div>
+      )}
+      {product.returns_90d && (
+        <div className={"svodka-plitka" + (vernulos90 > 0 ? " beda" : "")}>
+          <div className="svodka-l">{t("productReturns90")}</div>
+          <div className="svodka-v">{kolvo(vernulos90)}</div>
+          <div className="svodka-sub">{dolya !== null ? t("productReturnsShare", { p: dolya }) : t("productNoReturns")}</div>
+        </div>
+      )}
+    </div>
   );
 }

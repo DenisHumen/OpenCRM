@@ -107,3 +107,39 @@ def tovary(db: Session, start: datetime, end: datetime, limit: int = 10) -> list
         }
         for product_id, name, quantity, skolko in rows
     ]
+
+
+def prodazhi_tovara(db: Session, product_id: int, start: datetime) -> dict:
+    """Сколько товара ушло проведёнными заказами покупателя с даты: количество и заказов."""
+    stroka = db.execute(
+        select(
+            func.coalesce(func.sum(DocumentLine.quantity_milli), 0),
+            func.count(func.distinct(DocumentLine.document_id)),
+        )
+        .join(Document, Document.id == DocumentLine.document_id)
+        .where(
+            Document.kind == KIND_SALES_ORDER,
+            Document.status == STATUS_CLOSED,
+            Document.updated_at >= start,
+            DocumentLine.product_id == product_id,
+        )
+    ).one()
+    return {"quantity_milli": as_int(stroka[0]), "count": int(stroka[1] or 0)}
+
+
+def vozvraty_tovara(db: Session, product_id: int, start: datetime) -> dict:
+    """Сколько товара вернулось проведёнными возвратами с даты: количество и возвратов."""
+    stroka = db.execute(
+        select(
+            func.coalesce(func.sum(DocumentLine.quantity_milli), 0),
+            func.count(func.distinct(DocumentLine.document_id)),
+        )
+        .join(Document, Document.id == DocumentLine.document_id)
+        .where(
+            Document.kind == KIND_RETURN,
+            Document.status == STATUS_CLOSED,
+            Document.updated_at >= start,
+            DocumentLine.product_id == product_id,
+        )
+    ).one()
+    return {"quantity_milli": as_int(stroka[0]), "count": int(stroka[1] or 0)}

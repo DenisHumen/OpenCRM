@@ -46,6 +46,14 @@ export interface Product {
   out_of_stock: boolean;
   /** Где и сколько. Приходит только когда складов больше одного. */
   by_warehouse?: Record<string, number>;
+  /** Бронь, ожидается, доступно, продажи и возвраты — только при включённом
+   *  блоке заказов и только у карточки. */
+  reserved_milli?: number;
+  expected_milli?: number;
+  available_milli?: number;
+  sales_30d?: { quantity_milli: number; count: number };
+  sales_90d?: { quantity_milli: number; count: number };
+  returns_90d?: { quantity_milli: number; count: number };
 }
 
 export function Warehouse() {
