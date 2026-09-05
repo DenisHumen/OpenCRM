@@ -315,7 +315,7 @@ export function Sidebar({
     { perm: "clients.create", to: "/clients?new=1", label: t("newClient"), icon: "userPlus" },
     { perm: "deals.create", to: "/deals?new=1", label: term(workspace.deal_term, locale, "new"), icon: "deals" },
     { module: "documents", perm: "documents.create", to: "/documents?new=1", label: t("newDocument"), icon: "receipt" },
-    { module: "orders", perm: "orders.create", to: "/orders", label: t("quickOrder"), icon: "clipboard" },
+    { module: "orders", perm: "orders.create", to: "/orders", label: t("quickOrder"), icon: "receipt" },
     { module: "tasks", perm: "tasks.create", to: "/tasks", label: t("quickTask"), icon: "clock" },
   ]);
 
