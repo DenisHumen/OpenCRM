@@ -18,13 +18,13 @@ import { useFailure } from "../lib/failure";
 import { useGuard } from "../lib/guard";
 import { copyText } from "../lib/clipboard";
 import { flagStrany } from "../lib/strany";
-import { initials, relativeDay } from "../lib/format";
+import { formatMoney, initials, relativeDay } from "../lib/format";
 
 /** По скольку клиентов дочитывается список. */
 const NA_STRANITSE = 100;
 
 export function Clients() {
-  const { t, locale, toastError } = useApp();
+  const { t, locale, toastError, workspace } = useApp();
   const navigate = useNavigate();
   const kontekst = useContextMenu();
 
@@ -180,7 +180,8 @@ export function Clients() {
           <span style={{ flex: 1 }}>{t("client")}</span>
           <span style={{ width: 190 }}>{t("contact")}</span>
           <span style={{ width: 170 }}>{t("tags")}</span>
-          <span style={{ width: 90, textAlign: "right" }}>{t("activity")}</span>
+          <span style={{ width: 120, textAlign: "right" }}>{t("clientsDealsCol")}</span>
+          <span style={{ width: 110, textAlign: "right" }}>{t("clientSummaryLastContact")}</span>
         </div>
         {data.items.map((client: any) => (
           <Link
@@ -212,8 +213,26 @@ export function Clients() {
                 <Chip key={tag}>{tag}</Chip>
               ))}
             </div>
-            <div style={{ width: 90, textAlign: "right", color: "var(--faint)", fontSize: 12, flexShrink: 0 }}>
-              {relativeDay(client.updated_at, locale)}
+            {/* Заявок и на сколько: список отвечает «с кем мы работаем», а не
+                только «кто есть». Без права на суммы — только число. */}
+            <div style={{ width: 120, textAlign: "right", flexShrink: 0 }}>
+              <div style={{ color: client.deals_open ? "var(--text)" : "var(--faint)", fontSize: 12.5 }}>
+                {client.deals_open
+                  ? t("clientsDealsOpen", { n: client.deals_open })
+                  : client.deals_won
+                    ? t("clientsDealsWon", { n: client.deals_won })
+                    : t("clientsDealsNone")}
+              </div>
+              {client.deals_open_amount !== null && client.deals_open_amount !== undefined && client.deals_open > 0 && (
+                <div style={{ color: "var(--muted)", fontSize: 12 }}>
+                  {formatMoney(client.deals_open_amount, workspace.currency, locale)}
+                </div>
+              )}
+            </div>
+            {/* Последний контакт — запись ленты; без единой записи показываем
+                дату правки карточки серым, чтобы столбец не пустовал. */}
+            <div style={{ width: 110, textAlign: "right", color: client.last_contact_at ? "var(--muted)" : "var(--faint)", fontSize: 12, flexShrink: 0 }}>
+              {relativeDay(client.last_contact_at ?? client.updated_at, locale)}
             </div>
           </Link>
         ))}
@@ -228,6 +247,7 @@ export function Clients() {
           <EmptyState icon="clients"
             title={query ? t("nothingFound", { q: query }) : t("noClientsYet")}
             sub={query ? t("tryDifferent") : undefined}
+            action={query ? undefined : <button type="button" className="btn btn-primary btn-sm" onClick={() => setShowNew(true)}>{t("newClient")}</button>}
           />
         )}
       </div>

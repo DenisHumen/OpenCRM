@@ -3,7 +3,8 @@ import { Link, useNavigate } from "react-router-dom";
 
 import { ContextMenu, punktyDlyaZapisi, useContextMenu } from "../components/ContextMenu";
 import { Icon } from "../components/Icon";
-import { Chip, Dochitat, EmptyState, ScreenLoading } from "../components/ui";
+import { useWarehouses } from "../components/Warehouses";
+import { Chip, Dochitat, EmptyState, ItogSpiska, ScreenLoading } from "../components/ui";
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
 import { statusLabel, statusVariant } from "../lib/documents";
@@ -11,7 +12,7 @@ import { useLiveTopic } from "../lib/live";
 import { useDebounced } from "../lib/debounce";
 import { useFailure } from "../lib/failure";
 import { useGuard } from "../lib/guard";
-import { formatMoney } from "../lib/format";
+import { formatDate, formatMoney } from "../lib/format";
 
 /** Список накладных: расходных и приходных.
  *
@@ -81,6 +82,7 @@ export function Waybills() {
   // от прошлого.
   const otbor_spiska = useRef("");
   const [attempt, setAttempt] = useState(0);
+  const places = useWarehouses();
   // Закрытие заказа выписывает и проводит накладную у соседа — список обязан
   // это увидеть без перезагрузки, как заказы и бланки.
   useLiveTopic("waybills", () => setAttempt((n) => n + 1));
@@ -255,12 +257,28 @@ export function Waybills() {
             <span style={{ width: 120, textAlign: "right", color: "var(--text)", fontSize: 13 }}>
               {formatMoney(waybill.total, workspace.currency, locale)}
             </span>
+            {/* Склад и дата: «с какого склада и когда» — первое, что спрашивают у
+                накладной; склад показывается, когда их больше одного. */}
+            <span className="truncate" style={{ width: 120, textAlign: "right", color: "var(--faint)", fontSize: 12 }}>
+              {places?.many && waybill.warehouse_id !== null
+                ? (places.items.find((w) => w.id === waybill.warehouse_id)?.name ?? "")
+                : ""}
+              {places?.many && waybill.warehouse_id !== null ? " · " : ""}
+              {formatDate(waybill.created_at, locale)}
+            </span>
             <span style={{ width: 130, textAlign: "right" }}>
               <Chip variant={statusVariant(waybill.status, waybill.kind)}>{statusLabel(t, waybill.status, waybill.kind)}</Chip>
             </span>
           </Link>
         ))}
-        {data.items.length === 0 && <EmptyState title={t("waybillsEmpty")} />}
+        {data.items.length === 0 && (
+          <EmptyState
+            icon="arrowOut"
+            title={t("waybillsEmpty")}
+            action={<button type="button" className="btn btn-primary btn-sm" disabled={guard.busy} onClick={() => void create("waybill_out")}>{t("newWaybillOut")}</button>}
+          />
+        )}
+        <ItogSpiska pokazano={data.items.length} vsego={data.total} summa={data.items.reduce((s, w) => s + (w.total ?? 0), 0)} currency={workspace.currency} />
         <Dochitat
           pokazano={data.items.length}
           vsego={data.total}

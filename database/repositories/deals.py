@@ -485,3 +485,30 @@ def svodka_klienta(db: Session, client_id: int, only_manager_id: int | None = No
             itog["open_count"] += int(skolko or 0)
             itog["open_amount"] += int(summa or 0)
     return itog
+
+
+def svodka_po_klientam(db: Session, client_ids, only_manager_id: int | None = None) -> dict[int, dict]:
+    """Заявки по каждому клиенту страницы одним запросом: {клиент: {open_count,
+    open_amount, won_count}}. Запрос на строку списка превратил бы полсотни
+    клиентов в полсотни обращений — та же беда, что закрыта у остатков склада."""
+    ids = [int(i) for i in set(client_ids) if i]
+    if not ids:
+        return {}
+    kinds = pipeline_repo.kinds_by_key(db)
+    stmt = (
+        select(Deal.client_id, Deal.stage, func.count(), func.coalesce(func.sum(Deal.amount), 0))
+        .where(Deal.client_id.in_(ids), Deal.deleted_at.is_(None))
+        .group_by(Deal.client_id, Deal.stage)
+    )
+    if only_manager_id is not None:
+        stmt = stmt.where(Deal.manager_id == only_manager_id)
+    itog: dict[int, dict] = {}
+    for client_id, stage, skolko, summa in db.execute(stmt).all():
+        yacheyka = itog.setdefault(int(client_id), {"open_count": 0, "open_amount": 0, "won_count": 0})
+        kind = kinds.get(stage, KIND_OPEN)
+        if kind == KIND_WON:
+            yacheyka["won_count"] += int(skolko or 0)
+        elif kind not in CLOSED_KINDS:
+            yacheyka["open_count"] += int(skolko or 0)
+            yacheyka["open_amount"] += int(summa or 0)
+    return itog

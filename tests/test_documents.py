@@ -440,3 +440,25 @@ def test_blank_ruchkoy_blankov_po_prezhnemu_zakryvaetsya(root_client, manager_cl
     gotov = root_client.post(f"{DOCS}/{blank['id']}/status", json={"status": "ready"})
     assert gotov.status_code == 200, gotov.text
     assert gotov.json()["status"] == "ready"
+
+
+def test_spisok_blankov_otdayot_summu_po_strokam(root_client):
+    """В списке бланков — сумма бумаги (по строкам); у квитанции без строк — пусто."""
+    for klyuch in ("documents", "warehouse", "orders"):
+        assert root_client.post(f"{API}/modules/{klyuch}", json={"enabled": True}).status_code == 200
+    try:
+        item = root_client.post(
+            f"{API}/warehouse/products", json={"name": "Сумма списка", "sku": "SUM-1", "price": 700}
+        ).json()
+        order = root_client.post(f"{API}/orders", json={"kind": "sales_order"}).json()
+        root_client.post(f"{API}/orders/{order['id']}/lines", json={"product_id": item["id"], "quantity": "2"})
+        klient = root_client.post(f"{API}/clients", json={"name": "Клиент суммы"}).json()
+        kv = root_client.post(f"{API}/documents", json={"kind": "intake", "client_id": klient["id"], "item": "Вещь"}).json()
+
+        spisok = root_client.get(f"{API}/documents", params={"per_page": 200}).json()["items"]
+        po_id = {d["id"]: d for d in spisok}
+        assert po_id[order["id"]]["total"] == 1_400
+        assert po_id[kv["id"]]["total"] is None
+    finally:
+        for klyuch in ("orders", "warehouse"):
+            root_client.post(f"{API}/modules/{klyuch}", json={"enabled": False})

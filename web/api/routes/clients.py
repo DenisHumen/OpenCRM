@@ -34,13 +34,30 @@ def list_clients(
     manager_id: int | None = None,
     page: int = Query(default=1, ge=1),
     per_page: int = Query(default=50, ge=1, le=200),
-    _: User = Depends(require_perm("clients", "view")),
+    user: User = Depends(require_perm("clients", "view")),
     db: Session = Depends(get_db),
 ):
     items, total = clients_repo.search(
         db, q=search, tag=tag, manager_id=manager_id, page=page, per_page=per_page
     )
-    return schemas.paginated([schemas.client_out(c) for c in items], total, page, per_page)
+    # Заявки и последний контакт — по два запроса на страницу, а не по два на
+    # строку: список отвечает «с кем мы работаем», а не только «кто есть».
+    # Чужие заявки в счёт не идут, суммы пустеют без права — как в карточке.
+    ids = [c.id for c in items]
+    zayavki = deals_repo.svodka_po_klientam(db, ids, only_manager_id=permissions_service.deals_scope(db, user))
+    kontakty = clients_repo.posledniy_kontakt(db, ids)
+    amounts = permissions_service.sees_amounts(db, user)
+    stroki = []
+    for c in items:
+        stroka = schemas.client_out(c)
+        svodka = zayavki.get(c.id, {"open_count": 0, "open_amount": 0, "won_count": 0})
+        stroka["deals_open"] = svodka["open_count"]
+        stroka["deals_open_amount"] = svodka["open_amount"] if amounts else None
+        stroka["deals_won"] = svodka["won_count"]
+        kogda = kontakty.get(c.id)
+        stroka["last_contact_at"] = kogda.isoformat() if kogda else None
+        stroki.append(stroka)
+    return schemas.paginated(stroki, total, page, per_page)
 
 
 @router.get("/export.csv")

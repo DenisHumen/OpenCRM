@@ -608,6 +608,9 @@ button:active [data-icon="plus"] { transition-duration: 0s; }
    под ними и читались как прозрачные (владелец, 06.09.2026). */
 .vsplyvashka { box-shadow: var(--hard); }
 .svodka-plitki.szhato .svodka-v { font-size: 17px; }
+/* Итог под списком: число показанных и сумма показанных строк. */
+.itog-spiska { display: flex; justify-content: space-between; gap: 12px; padding: 9px 16px; border-top: 1px solid var(--line); color: var(--faint); font-size: 12px; }
+.itog-spiska-summa { color: var(--muted); font-variant-numeric: tabular-nums; }
 .svodka-plitka.beda .svodka-v { color: var(--danger); }
 .svodka-plitka.horosho .svodka-v { color: var(--success); }
 

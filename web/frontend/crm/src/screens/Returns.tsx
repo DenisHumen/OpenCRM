@@ -4,7 +4,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { ContextMenu, punktyDlyaZapisi, useContextMenu } from "../components/ContextMenu";
 import { Icon } from "../components/Icon";
 import { SpisokPoKategoriyam } from "../components/SpisokPoKategoriyam";
-import { Chip, Dochitat, LoadFailed, ScreenLoading } from "../components/ui";
+import { Chip, Dochitat, ItogSpiska, LoadFailed, ScreenLoading } from "../components/ui";
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
 import { DOC_SORTS, sortLabel, statusLabel, statusVariant } from "../lib/documents";
@@ -210,6 +210,7 @@ export function Returns() {
         {data.items.length === 0 && (
           <div className="list-row" style={{ color: "var(--faint)" }}>{t("noReturns")}</div>
         )}
+        <ItogSpiska pokazano={data.items.length} vsego={data.total} summa={data.items.reduce((s, v) => s + (v.refund ?? 0), 0)} currency={workspace.currency} />
         <Dochitat pokazano={data.items.length} vsego={data.total} zanyat={dochityvaem} onClick={() => void dochitat()} />
       </div>
     </div>
