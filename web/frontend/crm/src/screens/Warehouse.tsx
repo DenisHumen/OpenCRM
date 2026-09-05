@@ -199,7 +199,7 @@ export function Warehouse() {
         <BarcodeScanner />
         {/* Выбор склада появляется сам, когда складов больше одного, — правило
             считает сервер, не этот экран. */}
-        <WarehousePicker places={places} value={place} onChange={setPlace} allowAll />
+        <WarehousePicker places={places} value={place} onChange={setPlace} allowAll inline />
         <button
           className={"filter-chip" + (lowOnly ? " active" : "")}
           onClick={() => setLowOnly((on) => !on)}

@@ -592,7 +592,7 @@ export function DealCard() {
                 <span className="truncate" style={{ flex: 1, minWidth: 0 }}>
                   {doc.payload?.fields?.item || kindLabel(t, doc.kind)}
                 </span>
-                <Chip variant={statusVariant(doc.status)}>{statusLabel(t, doc.status, doc.kind)}</Chip>
+                <Chip variant={statusVariant(doc.status, doc.kind)}>{statusLabel(t, doc.status, doc.kind)}</Chip>
               </Link>
             ))}
           </div>

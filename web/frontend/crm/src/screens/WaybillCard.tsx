@@ -9,10 +9,10 @@ import { useApp } from "../lib/app";
 import { useFailure } from "../lib/failure";
 import { useGuard } from "../lib/guard";
 import { formatDate, formatMoney, formatQuantity, toMinorUnits } from "../lib/format";
-import { statusVariant } from "../lib/documents";
+import { statusLabel, statusVariant } from "../lib/documents";
 import { can } from "../lib/permissions";
 import { useLiveTopic } from "../lib/live";
-import { WAYBILL_STATUS_LABEL, type Waybill } from "./Waybills";
+import { type Waybill } from "./Waybills";
 
 /** Карточка накладной: позиции, проведение, сторнирование.
  *
@@ -149,9 +149,7 @@ export function WaybillCard() {
           </h1>
           <div className="page-sub" style={{ display: "flex", gap: 8, alignItems: "center" }}>
             <Chip>{outgoing ? t("waybillKindOut") : t("waybillKindIn")}</Chip>
-            <Chip variant={draft ? undefined : statusVariant(waybill.status)}>
-              {t(WAYBILL_STATUS_LABEL[waybill.status as keyof typeof WAYBILL_STATUS_LABEL] ?? "wbDraft")}
-            </Chip>
+            <Chip variant={statusVariant(waybill.status, waybill.kind)}>{statusLabel(t, waybill.status, waybill.kind)}</Chip>
             {waybill.created_at && <span>{formatDate(waybill.created_at, locale)}</span>}
           </div>
         </div>
@@ -167,7 +165,7 @@ export function WaybillCard() {
           )}
           {waybill.status === "issued" && can(user, "waybills.edit") && (
             <button className="btn btn-secondary" disabled={guard.busy} onClick={() => void act("confirm")}>
-              {t("wbConfirm")}
+              {outgoing ? t("wbConfirm") : t("wbCloseIn")}
             </button>
           )}
           {!draft && waybill.status !== "cancelled" && canIssue && (

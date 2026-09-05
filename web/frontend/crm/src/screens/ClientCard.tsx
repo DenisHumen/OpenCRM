@@ -597,7 +597,7 @@ export function ClientCard() {
                   {formatDate(doc.created_at, locale)}
                 </span>
                 <span style={{ width: 130, flexShrink: 0, display: "flex", justifyContent: "flex-end" }}>
-                  <Chip variant={statusVariant(doc.status)}>{statusLabel(t, doc.status, doc.kind)}</Chip>
+                  <Chip variant={statusVariant(doc.status, doc.kind)}>{statusLabel(t, doc.status, doc.kind)}</Chip>
                 </span>
               </Link>
             ))}

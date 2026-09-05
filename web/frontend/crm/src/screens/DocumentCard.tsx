@@ -328,7 +328,7 @@ function ActCard({ act, reload }: { act: any; reload: () => Promise<void> }) {
           <h1 className="page-title doc-number-title">{act.number}</h1>
           <div className="page-sub" style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
             <span>{act.payload?.fields?.item || t("actTitle")}</span>
-            <Chip variant={statusVariant(act.status)}>{statusLabel(t, act.status)}</Chip>
+            <Chip variant={statusVariant(act.status)}>{statusLabel(t, act.status, "act")}</Chip>
             {act.deal_id && (
               <Link to={`/deals/${act.deal_id}`} className="text-link">
                 {act.payload?.deal?.title || `#${act.deal_id}`}
@@ -407,9 +407,9 @@ function ActCard({ act, reload }: { act: any; reload: () => Promise<void> }) {
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
             {/* Склад выбирается явно: молчаливое списание с основного однажды
                 снимет деталь не оттуда, где её взяли. */}
-            <WarehousePicker places={places} value={place ?? places?.items[0]?.id ?? null} onChange={setPlace} />
+            <WarehousePicker places={places} value={place ?? places?.items[0]?.id ?? null} onChange={setPlace} inline />
             <label className="label" style={{ marginBottom: 0 }}>{t("actNextStage")}</label>
-            <select className="select" value={stage} onChange={(e) => setStage(e.target.value)}>
+            <select className="select select-inline" value={stage} onChange={(e) => setStage(e.target.value)}>
               <option value="">{t("actNextStageAuto")}</option>
               {(stages.items ?? []).map((s) => (
                 <option key={s.key} value={s.key}>{s.name}</option>
@@ -457,7 +457,7 @@ function ActCard({ act, reload }: { act: any; reload: () => Promise<void> }) {
       )}
 
       <div style={{ marginTop: 16 }}>
-        <History events={act.events} label={(x) => statusLabel(t, x)} />
+        <History events={act.events} label={(x) => statusLabel(t, x, "act")} />
       </div>
 
       {deleteAsk && (
@@ -512,7 +512,7 @@ function ActCard({ act, reload }: { act: any; reload: () => Promise<void> }) {
  * неоткуда, а без неё в подписываемом акте окажется пустой столбец.
  */
 function ActLineForm({ actId, onAdded }: { actId: number; onAdded: () => Promise<void> }) {
-  const { t, toastError } = useApp();
+  const { t, locale, workspace, toastError } = useApp();
   const [fromCatalogue, setFromCatalogue] = useState(false);
   const [name, setName] = useState("");
   const [picked, setPicked] = useState<Product | null>(null);
@@ -630,6 +630,9 @@ function ActLineForm({ actId, onAdded }: { actId: number; onAdded: () => Promise
                 >
                   <span style={{ flex: 1, color: "var(--text)", fontSize: 13 }}>{item.name}</span>
                   <span style={{ color: "var(--faint)", fontSize: 12 }}>{item.sku ?? ""}</span>
+                  <span style={{ color: "var(--muted)", fontSize: 12.5, minWidth: 70, textAlign: "right" }}>
+                    {formatMoney(item.price, workspace.currency, locale)}
+                  </span>
                 </button>
               ))}
             </div>

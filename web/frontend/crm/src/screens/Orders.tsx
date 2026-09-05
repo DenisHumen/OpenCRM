@@ -15,7 +15,7 @@ import { useFailure } from "../lib/failure";
 import { useGuard } from "../lib/guard";
 import { formatMoney } from "../lib/format";
 import { SpisokPoKategoriyam } from "../components/SpisokPoKategoriyam";
-import { DOC_SORTS, sortLabel, statusVariant } from "../lib/documents";
+import { DOC_SORTS, ORDER_STATUS_LABEL, orderStatusLabel, sortLabel, statusVariant } from "../lib/documents";
 
 /** Список заказов: покупателей и поставщикам.
  *
@@ -65,12 +65,7 @@ export interface Order {
 
 /** Подписи состояний — те же, что у бланка: состояния общие, и заводить им
  *  второй набор слов значит однажды назвать одно и то же по-разному. */
-export const ORDER_STATUS_LABEL = {
-  issued: "docIssued",
-  ready: "docReady",
-  closed: "docClosed",
-  cancelled: "docCancelled",
-} as const;
+export { ORDER_STATUS_LABEL } from "../lib/documents";
 
 /** По скольку заказов дочитывается список. */
 const NA_STRANITSE = 100;
@@ -337,7 +332,7 @@ export function Orders() {
             <span style={{ width: 110, textAlign: "right" }}>
               {order.reserve_expired && <Chip variant="warning">{t("orderReserveExpired")}</Chip>}{" "}
               <Chip variant={statusVariant(order.status)}>
-                {t(ORDER_STATUS_LABEL[order.status as keyof typeof ORDER_STATUS_LABEL] ?? "docIssued")}
+                {orderStatusLabel(t, order.status, order.kind)}
               </Chip>
             </span>
           </Link>

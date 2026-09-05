@@ -307,19 +307,32 @@ export function DealLines({
                 setVybran(null);
               }}
             />
-            {podskazki.length > 0 && (
-              <div className="cp-list" style={{ position: "absolute", left: 0, right: 0, top: 38, zIndex: 5 }}>
-                {podskazki.map((tovar) => (
-                  <button key={tovar.id} className="cp-row" onClick={() => vzyat(tovar)}>
-                    <span className="cp-text">
-                      <span className="cp-title">{tovar.name}</span>
-                      <span className="cp-sub">{tovar.sku}</span>
-                    </span>
-                  </button>
-                ))}
-              </div>
-            )}
           </div>
+          {/* Список во всю строку, а не под одним полем: с тремя колонками (имя, артикул,
+              цена) в ширину поля названия он не помещался; у прежнего к тому же не было
+              ни фона, ни рамки — строки палитры Ctrl+K ложились прямо на текст. */}
+          {podskazki.length > 0 && (
+            <div
+              className="card"
+              style={{ position: "absolute", top: "100%", left: 0, right: 0, zIndex: 20, marginTop: 4, overflow: "hidden" }}
+            >
+              {podskazki.map((tovar) => (
+                <button
+                  key={tovar.id}
+                  type="button"
+                  className="list-row hoverable"
+                  style={{ width: "100%", textAlign: "left", background: "none", border: "none", cursor: "pointer" }}
+                  onClick={() => vzyat(tovar)}
+                >
+                  <span style={{ flex: 1, color: "var(--text)", fontSize: 13 }}>{tovar.name}</span>
+                  <span style={{ color: "var(--faint)", fontSize: 12 }}>{tovar.sku ?? ""}</span>
+                  <span style={{ color: "var(--muted)", fontSize: 12.5, minWidth: 70, textAlign: "right" }}>
+                    {formatMoney(tovar.price, workspace.currency, locale)}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
           <input
             className="input"
             style={{ width: 90 }}
@@ -338,6 +351,7 @@ export function DealLines({
             places={places}
             value={sklad ?? places?.items[0]?.id ?? null}
             onChange={setSklad}
+            inline
           />
           <button
             className="btn btn-primary"
