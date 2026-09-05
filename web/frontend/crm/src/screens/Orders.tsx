@@ -59,6 +59,9 @@ export interface Order {
    * себе в чужих ответах. Пустой массив значит другое — «бумаг не
    * выписывалось», и так выглядят заказы, закрытые до переезда. */
   waybills?: { id: number; number: string; kind: string; status: string }[];
+  /** Возвраты по заказу. Ключ есть только у заказа покупателя: у заказа
+   *  поставщику возврата нет. */
+  returns?: { id: number; number: string; status: string; refund: number | null }[];
   /** История переходов. Приходит только у карточки, в списке её нет. */
   events?: HistoryEvent[];
 }

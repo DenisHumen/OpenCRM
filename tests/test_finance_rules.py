@@ -684,14 +684,14 @@ def test_platyozh_ne_pravitsya_kak_nachislenie(root_client, income_category):
 # --- отмена проведения --------------------------------------------------------
 
 
-def test_otmena_zakaza_zavodit_obratnye_operatsii_a_platezhi_ne_trogaet(
+def test_vozvrat_otdayot_dengi_minusom_a_upakovku_ne_trogaet(
     root_client, cost_category, income_category
 ):
-    """Отмена сторнирует НАЧИСЛЕННОЕ и не отменяет полученных денег.
+    """Возврат клиенту — минус по доходной статье НА ВОЗВРАТЕ.
 
-    Товар вернули, а деньги ещё нет: возврат клиенту — отдельное осознанное
-    действие человека. И сторнируется итог цепочки, а не первая записанная
-    сумма: упаковку могли поправить с 80 на 140.
+    Полученное по заказу и упаковка остаются на месте: коробку и курьера
+    оплатили, и возврат товара этих денег не возвращает. А на заказе минус
+    показал бы долг клиента там, где клиенту только что вернули деньги.
     """
     make_rule(
         root_client, base="per_order", category_id=cost_category["id"], amount=8_000
@@ -701,39 +701,35 @@ def test_otmena_zakaza_zavodit_obratnye_operatsii_a_platezhi_ne_trogaet(
     root_client.post(f"{ORDERS}/{order['id']}/close", json={})
     pay(root_client, income_category["id"], 50_000, document_id=order["id"])
 
-    accrual = money_of(root_client, order["id"])["accruals"][0]
-    root_client.patch(f"{FINANCE}/accruals/{accrual['id']}", json={"amount": 14_000})
-
-    reverted = root_client.post(f"{ORDERS}/{order['id']}/revert")
-    assert reverted.status_code == 200, reverted.text
+    vozvrat = root_client.post(f"{ORDERS}/{order['id']}/returns").json()
+    root_client.patch(
+        f"{API}/returns/{vozvrat['id']}",
+        json={"refund": 30_000, "category_id": income_category["id"]},
+    )
+    otvet = root_client.post(f"{API}/returns/{vozvrat['id']}/post", json={})
+    assert otvet.status_code == 200, otvet.text
 
     after = money_of(root_client, order["id"])
-    assert after["accruals"][0]["amount"] == 0, "сторнировали не итог цепочки"
-    assert after["accruals"][0]["reverted"] is True
-    assert after["received"] == 50_000, "отмена проведения забрала полученные деньги"
+    assert after["received"] == 50_000, "возврат уменьшил полученное по заказу"
+    assert after["accruals"][0]["amount"] == 8_000 and after["accruals"][0]["reverted"] is False
+    assert money_of(root_client, vozvrat["id"])["received"] == -30_000
 
 
-def test_otmena_ne_stiraet_prezhnie_operatsii(root_client, cost_category):
-    """Обратной операцией, а не стиранием: «куда делись эти восемьдесят» обязано
-    иметь ответ."""
-    from database.repositories import finance as finance_repo
-    from database.session import SessionLocal
-
-    make_rule(
-        root_client, base="per_order", category_id=cost_category["id"], amount=8_000
-    )
+def test_vozvrat_bez_stati_pri_vklyuchennykh_dengakh_ne_provoditsya(root_client):
+    """Деньги — участник события: отказ статьи откатывает проведение целиком,
+    и товар остаётся не возвращённым, а не «вернулся, но без денег»."""
     item = product(root_client)
     order = order_with(root_client, item)
     root_client.post(f"{ORDERS}/{order['id']}/close", json={})
-    root_client.post(f"{ORDERS}/{order['id']}/revert")
+    assert stock_of(root_client, item["id"]) == 8_000
 
-    session = SessionLocal()
-    try:
-        rows = finance_repo.operations_of_document(session, order["id"])
-        assert sorted(row.amount_minor for row in rows) == [-8_000, 8_000]
-        assert {row.correction for row in rows} == {None, "reversal"}
-    finally:
-        session.close()
+    vozvrat = root_client.post(f"{ORDERS}/{order['id']}/returns").json()
+    root_client.patch(f"{API}/returns/{vozvrat['id']}", json={"refund": 10_000})
+    otvet = root_client.post(f"{API}/returns/{vozvrat['id']}/post", json={})
+    assert otvet.status_code == 422, otvet.text
+    assert otvet.json()["error"]["code"] == "refund_needs_category"
+    assert root_client.get(f"{API}/returns/{vozvrat['id']}").json()["status"] == "draft"
+    assert stock_of(root_client, item["id"]) == 8_000, "товар вернулся без денег"
 
 
 # --- справочник ---------------------------------------------------------------
@@ -1062,81 +1058,39 @@ def test_zakaz_postavshchiku_kartochku_klienta_ne_zavodit(root_client):
 # отменой заказа значит снять его с оборота, который никуда не делся.
 
 
-def test_otmena_zakaza_ne_snimaet_nalog_nachislennyy_s_platezha(
-    root_client, income_category, tax_category, cost_category
-):
-    """Отмена заказа сторнирует своё — упаковку, а не налог с живого платежа.
+def test_vozvrat_snimaet_nalog_rovno_odin_raz(root_client, income_category, tax_category):
+    """Налог с оборота сторнируется возвратом сам — правилом, и ровно один раз.
 
-    Налог начислен ПЛАТЕЖОМ и висит на том же бланке только потому, что платёж
-    назвал бланк. Сняв его отменой заказа, мы получаем оборот 100 000 при налоге
-    ноль: деньги в кассе есть, отложенного налога нет.
-
-    Хуже второй шаг, и он штатный: следом человек возвращает деньги отдельным
-    действием, правило снимает налог ВТОРОЙ раз — с отрицательной базы, — и
-    прибыль вырастает из воздуха.
+    Возврат идёт тем же путём, что и возврат оплаты руками: доходная операция с
+    минусом, на которой правило считает отрицательный налог. Второго снятия
+    неоткуда взяться — отмены проведения заказа больше нет.
     """
-    tax_rule(root_client, tax_category, income_category)
-    make_rule(root_client, base="per_order", category_id=cost_category["id"], amount=8_000)
+    from datetime import date, timedelta
 
+    tax_rule(root_client, tax_category, income_category)
     item = product(root_client)
     order = order_with(root_client, item)
     assert root_client.post(f"{ORDERS}/{order['id']}/close", json={}).status_code == 200
     pay(root_client, income_category["id"], 100_000, document_id=order["id"])
-
     assert by_category(profit_of(root_client), tax_category["id"]) == 5_000
 
-    reverted = root_client.post(f"{ORDERS}/{order['id']}/revert")
-    assert reverted.status_code == 200, reverted.text
-
-    money = money_of(root_client, order["id"])
-    packing = accrual_by_category(money, cost_category["id"])
-    assert packing["amount"] == 0 and packing["reverted"] is True, "упаковка не сторнирована"
-    tax = accrual_by_category(money, tax_category["id"])
-    assert tax["reverted"] is False, "налог сторнирован отменой заказа"
-    assert tax["amount"] == 5_000
-    assert money["received"] == 100_000, "отмена проведения забрала полученные деньги"
-    assert by_category(profit_of(root_client), tax_category["id"]) == 5_000, (
-        "налог снят при живом обороте"
+    vozvrat = root_client.post(f"{ORDERS}/{order['id']}/returns").json()
+    root_client.patch(
+        f"{API}/returns/{vozvrat['id']}",
+        json={"refund": 100_000, "category_id": income_category["id"]},
     )
+    assert root_client.post(f"{API}/returns/{vozvrat['id']}/post", json={}).status_code == 200
 
-    # Второй шаг штатной пары: деньги вернули. Налог обязан уйти в ноль — ровно
-    # один раз, а не второй.
-    pay(root_client, income_category["id"], -100_000, document_id=order["id"])
-    after = profit_of(root_client)
-    assert by_category(after, income_category["id"]) == 0
-    assert by_category(after, tax_category["id"]) == 0, (
-        "налог снят дважды: отменой заказа и возвратом денег"
+    # Возврат ложится сегодняшним днём, а платёж — мартом 2032: смотрим свой день.
+    segodnya = date.today()
+    after = profit_of(
+        root_client,
+        date_from=(segodnya - timedelta(days=1)).isoformat(),
+        date_to=(segodnya + timedelta(days=1)).isoformat(),
     )
-
-
-def test_otmena_zakaza_bez_pravil_zakrytiya_nichego_ne_storniruet(
-    root_client, income_category, tax_category
-):
-    """Заказ без единого правила «на заказ» отменяется, не тронув налог.
-
-    Отдельно от соседней проверки: там упаковка есть, и её сторнирование могло бы
-    скрыть, что заодно сторнировали и налог. Здесь сторнировать нечего вовсе, и
-    обратных операций не должно появиться ни одной.
-    """
-    from database.repositories import finance as finance_repo
-    from database.session import SessionLocal
-
-    tax_rule(root_client, tax_category, income_category)
-    item = product(root_client)
-    order = order_with(root_client, item)
-    root_client.post(f"{ORDERS}/{order['id']}/close", json={})
-    pay(root_client, income_category["id"], 100_000, document_id=order["id"])
-
-    assert root_client.post(f"{ORDERS}/{order['id']}/revert").status_code == 200
-
-    session = SessionLocal()
-    try:
-        rows = finance_repo.operations_of_document(session, order["id"])
-        assert [row for row in rows if row.correction == "reversal"] == [], (
-            "отмена заказа завела обратную операцию по чужому начислению"
-        )
-    finally:
-        session.close()
+    assert by_category(after, income_category["id"]) == -100_000
+    assert by_category(after, tax_category["id"]) == -5_000, "налог снят не один раз"
+    assert money_of(root_client, order["id"])["received"] == 100_000, "возврат забрал полученное по заказу"
 
 
 # --- расходов на отгрузку не бывает у приёмки ---------------------------------

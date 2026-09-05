@@ -317,6 +317,47 @@ def test_dva_zakaza_otgruzhayut_posledneye_razom(root_client):
     )
 
 
+def test_dva_vozvrata_po_odnomu_zakazu_razom(root_client):
+    """Вернуть по заказу можно не больше отгруженного — и двумя возвратами разом тоже.
+
+    «Сколько ещё можно вернуть» считается запросом: отгружено минус уже
+    вернулось. Два черновика по два на заказ из трёх законны каждый по
+    отдельности; проведённые разом без замка они вернули бы четыре. Замок — на
+    строку заказа (`documents_repo.zapert_bumagu`).
+    """
+    from tests.test_orders import ORDERS, order_with, product, stock_of
+
+    for key in ("documents", "warehouse", "orders"):
+        root_client.post(f"{API}/modules/{key}", json={"enabled": True})
+
+    tovar = product(root_client, stock="3")
+    pokupatel = root_client.post(f"{API}/clients", json={"name": "Дуэль возврат"}).json()
+    order = order_with(root_client, pokupatel, tovar, quantity="3")
+    assert root_client.post(f"{ORDERS}/{order['id']}/close", json={}).status_code == 200
+    assert stock_of(root_client, tovar["id"]) == 0
+
+    chernoviki = []
+    for _ in range(2):
+        v = root_client.post(f"{ORDERS}/{order['id']}/returns").json()
+        [stroka] = v["lines"]
+        assert root_client.patch(
+            f"{API}/returns/{v['id']}/lines/{stroka['id']}", json={"quantity": "2"}
+        ).status_code == 200
+        chernoviki.append(v["id"])
+
+    codes = duel(
+        lambda vid: root_client.post(f"{API}/returns/{vid}/post", json={}).status_code,
+        *chernoviki,
+    )
+    assert set(codes) == {"first", "second"}, f"об ударе не отчитались: {codes}"
+
+    vernulos = stock_of(root_client, tovar["id"])
+    assert vernulos <= 3000, (
+        f"вернули больше, чем отгрузили: на складе {vernulos} тысячных при трёх "
+        f"отгруженных, ответы {codes}"
+    )
+
+
 def test_dva_akta_spisyvayut_posledneye_razom(root_client):
     """Третье место с тем же устройством — списание материалов по акту.
 

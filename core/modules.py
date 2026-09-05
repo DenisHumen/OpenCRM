@@ -57,7 +57,8 @@ MODULES: tuple[Module, ...] = (
     Module(key="labels", default=False, requires=("warehouse",)),
     # Заказ — вид бланка (номер, статусы, печать, поиск сканом берутся оттуда),
     # отсюда жёсткая связь. Со складом мягкая, проверкой `is_enabled` в
-    # `order_service.close` и `revert`: заказ на услуги складу не нужен.
+    # `order_service.close` и `return_service.provesti`: заказ на услуги
+    # складу не нужен. Возвраты — часть этого же блока.
     Module(key="orders", default=False, requires=("documents",)),
     # Свой переключатель, хотя накладная — вид бланка, как и заказ: мастерская
     # выдаёт квитанции и не отгружает, магазин наоборот. Со складом связь

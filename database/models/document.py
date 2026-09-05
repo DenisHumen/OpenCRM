@@ -43,6 +43,10 @@ KIND_ACT = "act"
 KIND_WAYBILL_OUT = "waybill_out"
 #: Приходная накладная: товар принят на склад.
 KIND_WAYBILL_IN = "waybill_in"
+#: Возврат покупателя по проведённому заказу: товар назад на склад, деньги
+#: назад клиенту. Отмены проведения у заказа нет — только эта бумага
+#: (решение владельца 05.09.2026, разбор — docs/22).
+KIND_RETURN = "return"
 DOCUMENT_KINDS = (
     KIND_INTAKE,
     KIND_SALES_ORDER,
@@ -50,6 +54,7 @@ DOCUMENT_KINDS = (
     KIND_ACT,
     KIND_WAYBILL_OUT,
     KIND_WAYBILL_IN,
+    KIND_RETURN,
 )
 
 #: Виды заказа: покупателю и поставщику.
@@ -68,7 +73,7 @@ SKLADSKIE_KINDS = ORDER_KINDS + WAYBILL_KINDS
 #: Виды, у которых есть перечень позиций (`document_lines`).
 #:
 #: Акт делит таблицу строк с заказами — разбор в докстроке `DocumentLine`.
-LINE_KINDS = ORDER_KINDS + (KIND_ACT,) + WAYBILL_KINDS
+LINE_KINDS = ORDER_KINDS + (KIND_ACT,) + WAYBILL_KINDS + (KIND_RETURN,)
 
 # Состояния документа. Отдельно от этапа сделки намеренно: сделка живёт в
 # настраиваемой воронке, документ — бумага с коротким общим циклом. Смешай их —
@@ -118,6 +123,10 @@ KIND_STATUSES: dict[str, tuple[str, ...]] = {
     KIND_ACT: (STATUS_ISSUED, STATUS_CLOSED, STATUS_CANCELLED),
     KIND_WAYBILL_OUT: (STATUS_DRAFT, STATUS_ISSUED, STATUS_CLOSED, STATUS_CANCELLED),
     KIND_WAYBILL_IN: (STATUS_DRAFT, STATUS_ISSUED, STATUS_CLOSED, STATUS_CANCELLED),
+    # Черновик заполняют (строки, сумма, снимки), проведённый — «closed»: товар
+    # на складе, деньги возвращены. Промежуточного «issued» нет: у возврата
+    # нечего подтверждать после проведения.
+    KIND_RETURN: (STATUS_DRAFT, STATUS_CLOSED, STATUS_CANCELLED),
 }
 
 
@@ -208,6 +217,11 @@ class Document(Base):
         nullable=True,
         index=True,
     )
+    # Сколько денег вернули клиенту по возврату, в минорных единицах. Пусто у
+    # остальных видов. Хранится, а не считается по строкам: сумма возврата —
+    # решение человека (удержали за проверку, вернули без упаковки), а не
+    # арифметика строк; статистика возвратов складывает именно её.
+    refund_minor: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), index=True
     )
@@ -418,3 +432,26 @@ def _nikakih_massovyh_pravok_strok(state) -> None:
         raise errors.ForbiddenError(
             "document_lines cannot be changed in bulk", code=_KOD
         )
+
+
+class DocumentFile(Base):
+    """Фото или видео, приложенное к бумаге, — сегодня только к возврату.
+
+    Файл на диске, в базе след — то же решение, что у файлов клиента. CASCADE:
+    вложение — свойство бумаги, без неё не значит ничего.
+    """
+
+    __tablename__ = "document_files"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    document_id: Mapped[int] = mapped_column(
+        ForeignKey("documents.id", ondelete="CASCADE"), index=True
+    )
+    uploaded_by: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    file_uid: Mapped[str] = mapped_column(String(64), unique=True)
+    original_name: Mapped[str] = mapped_column(String(255))
+    mime: Mapped[str] = mapped_column(String(100))
+    size_bytes: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

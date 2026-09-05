@@ -52,6 +52,10 @@ POLNYY_BEZ_KLYUCHA: dict[tuple[str, str], str] = {
         "roles.py",
         "Role.name.asc()",
     ): "имя должности уникально (отказ `role_name_taken`), порядок и так полный",
+    (
+        "vozvraty.py",
+        "func.coalesce(func.sum(DocumentLine.quantity_milli), 0).desc(), DocumentLine.product_id.asc()",
+    ): "сгруппировано по товару: строка — это группа, а товар уникален по построению GROUP BY",
 }
 
 

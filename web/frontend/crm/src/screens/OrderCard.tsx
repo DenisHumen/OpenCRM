@@ -38,7 +38,7 @@ export function OrderCard() {
   // равен их сумме и отличить лишнее от настоящего потом нечем.
   const guard = useGuard();
   const [shortage, setShortage] = useState<string | null>(null);
-  const [confirm, setConfirm] = useState<"cancel" | "revert" | "delete" | null>(null);
+  const [confirm, setConfirm] = useState<"cancel" | "delete" | null>(null);
   const places = useWarehouses();
   const [place, setPlace] = useState<number | null>(null);
   // Окно «кому отгружаем»: открыто только у открытого заказа — проведённый
@@ -346,10 +346,41 @@ export function OrderCard() {
       )}
       {moduleOn(modules, "finance") && can(user, "finance.view") && <OrderMoney order={order} />}
 
-      {order.status === "closed" && (
-        <button className="btn btn-secondary" onClick={() => setConfirm("revert")}>
-          {t("orderRevert")}
-        </button>
+      {/* Назад по проведённому заказу дорога одна — возврат (владелец,
+          05.09.2026): отмены проведения нет, бумага о свершившемся не
+          переписывается. Заводится черновиком и открывается сразу. */}
+      {order.returns && (
+        <div className="card" style={{ padding: "10px 14px", marginBottom: 16 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <Icon name="arrowIn" size={14} />
+            <span className="page-sub" style={{ marginTop: 0 }}>{t("returnsOfOrder")}</span>
+            {order.returns.map((v) => (
+              <Link key={v.id} className="chip" to={`/returns/${v.id}`}>
+                {v.number} · {statusLabel(t, v.status, "return")}
+                {v.refund !== null && v.status === "closed" && ` · ${formatMoney(v.refund, workspace.currency, locale)}`}
+              </Link>
+            ))}
+            {order.status === "closed" && can(user, "orders.create") && (
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                disabled={guard.busy}
+                onClick={async () => {
+                  if (!guard.take()) return;
+                  try {
+                    const v = await api.post<{ id: number }>(`/orders/${order.id}/returns`);
+                    navigate(`/returns/${v.id}`);
+                  } catch (err) {
+                    toastError(err);
+                    guard.free();
+                  }
+                }}
+              >
+                {t("returnNew")}
+              </button>
+            )}
+          </div>
+        </div>
       )}
 
       {/* История заказа. Заведена по беде: закрытие при выключенном складе
@@ -364,8 +395,8 @@ export function OrderCard() {
 
       {confirm && (
         <ConfirmModal
-          text={confirm === "cancel" ? t("orderCancelConfirm") : confirm === "delete" ? t("paperDeleteConfirm", { number: order.number }) : t("orderRevertConfirm")}
-          confirmLabel={confirm === "cancel" ? t("orderCancel") : confirm === "delete" ? t("paperDelete") : t("orderRevert")}
+          text={confirm === "cancel" ? t("orderCancelConfirm") : t("paperDeleteConfirm", { number: order.number })}
+          confirmLabel={confirm === "cancel" ? t("orderCancel") : t("paperDelete")}
           danger
           onConfirm={async () => {
             try {
@@ -375,7 +406,7 @@ export function OrderCard() {
                 navigate("/orders");
                 return;
               }
-              await api.post(`/orders/${order.id}/${confirm === "cancel" ? "cancel" : "revert"}`);
+              await api.post(`/orders/${order.id}/cancel`);
               await load();
             } catch (err) {
               toastError(err);

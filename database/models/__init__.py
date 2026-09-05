@@ -8,7 +8,7 @@ from database.models.arcade import SnakeScore
 from database.models.company import Company
 from database.models.deal import Deal, DealLine, DealStageChange
 from database.models.pipeline import PipelineStage
-from database.models.document import Document, DocumentEvent, DocumentLine
+from database.models.document import Document, DocumentEvent, DocumentFile, DocumentLine
 from database.models.module import ModuleState
 from database.models.task import Task
 from database.models.template import MessageTemplate
@@ -54,6 +54,7 @@ __all__ = [
     "PipelineStage",
     "Document",
     "DocumentEvent",
+    "DocumentFile",
     "DocumentLine",
     "ModuleState",
     "Task",

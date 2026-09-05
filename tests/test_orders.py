@@ -292,38 +292,19 @@ def test_usluga_v_zakaze_sklada_ne_kasaetsya(root_client, client_row):
 # --- отмена проведения --------------------------------------------------------
 
 
-def test_otmena_provedeniya_obratnymi_dvizheniyami(root_client, client_row):
-    """Сотри мы движения — остаток сошёлся бы, а «куда делись пять матриц»
-    осталось бы без ответа: ошибка стала бы невидимой."""
+def test_provedyonnyy_zakaz_nazad_ne_otkatyvaetsya(root_client, client_row):
+    """Отмены проведения нет (владелец, 05.09.2026): проведённый заказ — свершившееся,
+    назад — только возвратом (`tests/test_vozvraty.py`)."""
     item = product(root_client, stock="10")
     order = order_with(root_client, client_row, item, quantity="4")
     root_client.post(f"{ORDERS}/{order['id']}/close", json={})
     assert stock_of(root_client, item["id"]) == 6000
 
-    reverted = root_client.post(f"{ORDERS}/{order['id']}/revert")
-    assert reverted.status_code == 200, reverted.text
-    assert reverted.json()["status"] == "cancelled"
-
-    assert stock_of(root_client, item["id"]) == 10000
-    moves = root_client.get(f"{STOCK}/products/{item['id']}/moves").json()["items"]
-    # По ТОВАРУ, а не по заказу: после переезда движения принадлежат
-    # накладной и её сторно, а не самому заказу. Суть проверки от этого не
-    # меняется — она про то, что прежнее движение не стёрто, а
-    # скомпенсировано обратным.
-    kinds = [m["kind"] for m in moves]
-    assert "out" in kinds, "движение отгрузки стёрто"
-    assert "return" in kinds, (
-        "возврат записан не возвратом — журнал склада перестаёт читаться "
-        f"словами: {kinds}"
-    )
-
-
-def test_neprovedennyy_zakaz_otmenit_provedenie_nelzya(root_client, client_row):
-    item = product(root_client, stock="5")
-    order = order_with(root_client, client_row, item, quantity="1")
-    denied = root_client.post(f"{ORDERS}/{order['id']}/revert")
-    assert denied.status_code == 422
-    assert denied.json()["error"]["code"] == "order_not_closed"
+    otkaz = root_client.post(f"{ORDERS}/{order['id']}/revert", json={})
+    # Адреса нет: 404, либо 405 от раздачи интерфейса, которая знает только GET.
+    assert otkaz.status_code in (404, 405), otkaz.text
+    assert root_client.get(f"{ORDERS}/{order['id']}").json()["status"] == "closed"
+    assert stock_of(root_client, item["id"]) == 6000
 
 
 # --- сборка сканером ----------------------------------------------------------
@@ -596,16 +577,12 @@ def test_zakaz_postavshchiku_zakryvaetsya_prikhodnoy(root_client, client_row):
     assert nakladnaya["kind"] == "waybill_in"
 
 
-def test_otmena_vozvrashchaet_tovar_i_ostavlyaet_storno(root_client, client_row):
-    """Отмена возвращает товар — и оставляет бумагу о возврате.
+def test_vozvrat_vozvrashchaet_tovar_i_ostavlyaet_bumagu(root_client, client_row):
+    """Возврат возвращает товар — и оставляет бумагу о возврате: приходную по нему.
 
-    Это то место, из-за которого переезд откладывался: прежняя отмена перебирала
-    движения ПО ЗАКАЗУ, а после переезда они принадлежат накладной. Не тронь мы
-    отмену — она перестала бы возвращать товар молча, отчитавшись успехом.
-
-    Проверяется и то и другое: остаток вернулся, и обратная накладная
-    существует. Одного остатка мало — вернуть можно и голыми движениями, а тогда
-    на вопрос «по какой бумаге вернули» ответить нечем.
+    Проверяется и то и другое: остаток вернулся, и приходная существует. Одного
+    остатка мало — вернуть можно и голыми движениями, а тогда на вопрос «по
+    какой бумаге вернули» ответить нечем.
     """
     waybills_on(root_client)
     item = product(root_client, stock="10")
@@ -613,18 +590,17 @@ def test_otmena_vozvrashchaet_tovar_i_ostavlyaet_storno(root_client, client_row)
     root_client.post(f"{ORDERS}/{order['id']}/close", json={})
     assert stock_of(root_client, item["id"]) == 7_000
 
-    otvet = root_client.post(f"{ORDERS}/{order['id']}/revert", json={})
+    vozvrat = root_client.post(f"{ORDERS}/{order['id']}/returns").json()
+    otvet = root_client.post(f"{API}/returns/{vozvrat['id']}/post", json={})
     assert otvet.status_code == 200, otvet.text
-    assert stock_of(root_client, item["id"]) == 10_000, "отмена не вернула товар"
+    assert stock_of(root_client, item["id"]) == 10_000, "возврат не вернул товар"
 
     bumagi = root_client.get(f"{API}/waybills?basis_id={order['id']}").json()["items"]
     assert len(bumagi) == 1, "по заказу должна остаться одна исходная накладная"
-    storno = root_client.get(
-        f"{API}/waybills?basis_id={bumagi[0]['id']}"
-    ).json()["items"]
-    assert len(storno) == 1, "возврат прошёл без бумаги — сторно не выписано"
-    assert storno[0]["status"] == "issued", "сторно осталось черновиком, товар вернулся мимо него"
-    assert storno[0]["kind"] == "waybill_in", "сторно расходной обязано быть приходным"
+    prihod = root_client.get(f"{API}/waybills?basis_id={vozvrat['id']}").json()["items"]
+    assert len(prihod) == 1, "возврат прошёл без бумаги — приходная не выписана"
+    assert prihod[0]["status"] == "issued", "приходная осталась черновиком, товар вернулся мимо неё"
+    assert prihod[0]["kind"] == "waybill_in"
 
 
 def test_bez_bloka_nakladnykh_zakaz_rabotaet_po_prezhnemu(root_client, client_row):
@@ -641,20 +617,21 @@ def test_bez_bloka_nakladnykh_zakaz_rabotaet_po_prezhnemu(root_client, client_ro
         assert root_client.post(f"{ORDERS}/{order['id']}/close", json={}).status_code == 200
         assert stock_of(root_client, item["id"]) == 8_000, "без накладных склад не двинулся"
 
-        # И отмена по-прежнему возвращает: движения лежат на самом заказе.
-        assert root_client.post(f"{ORDERS}/{order['id']}/revert", json={}).status_code == 200
+        # И возврат по-прежнему возвращает — голыми движениями: бумаги склада нет.
+        vozvrat = root_client.post(f"{ORDERS}/{order['id']}/returns").json()
+        assert root_client.post(f"{API}/returns/{vozvrat['id']}/post", json={}).status_code == 200
         assert stock_of(root_client, item["id"]) == 10_000
     finally:
         waybills_on(root_client)
 
 
-def test_staryy_zakaz_bez_nakladnoy_otmenyaetsya_po_prezhnemu(root_client, client_row):
-    """Заказы, закрытые ДО переезда, накладных не имеют — и отменяться обязаны.
+def test_staryy_zakaz_bez_nakladnoy_vozvrashchaetsya_prikhodnoy(root_client, client_row):
+    """Заказы, закрытые ДО переезда, накладных не имеют — и возвращаться обязаны.
 
     Задним числом бумага им не выписывается: накладная с сегодняшним номером и
-    вчерашней датой это подделка. Значит старый путь отмены обязан жить, и
-    проверяется он единственным способом, каким такой заказ можно завести
-    сегодня, — закрытием при выключенном блоке накладных.
+    вчерашней датой это подделка. Возврат же выписывает СВОЮ приходную сегодняшним
+    числом — это честно: товар приехал сегодня. Проверяется единственным способом,
+    каким такой заказ можно завести сегодня, — закрытием при выключенном блоке накладных.
     """
     waybills_on(root_client, False)
     item = product(root_client, stock="10")
@@ -666,8 +643,11 @@ def test_staryy_zakaz_bez_nakladnoy_otmenyaetsya_po_prezhnemu(root_client, clien
     waybills_on(root_client)
     assert root_client.get(f"{API}/waybills?basis_id={order['id']}").json()["items"] == []
 
-    assert root_client.post(f"{ORDERS}/{order['id']}/revert", json={}).status_code == 200
+    vozvrat = root_client.post(f"{ORDERS}/{order['id']}/returns").json()
+    assert root_client.post(f"{API}/returns/{vozvrat['id']}/post", json={}).status_code == 200
     assert stock_of(root_client, item["id"]) == 10_000, "старый заказ не вернул товар"
+    prihod = root_client.get(f"{API}/waybills?basis_id={vozvrat['id']}").json()["items"]
+    assert [w["kind"] for w in prihod] == ["waybill_in"]
 
 
 def test_pri_vyklyuchennom_sklade_zakaz_ne_pishet_dvizheniy(root_client, client_row):
@@ -768,7 +748,7 @@ def test_pri_vyklyuchennom_sklade_sebestoimost_ne_snimaetsya(root_client, client
     assert stroka["cost"] is None, "себестоимость снята при выключенном складе"
 
 
-def test_bez_nakladnykh_pri_vyklyuchennom_sklade_otmena_ne_pishet_dvizheniy(
+def test_bez_nakladnykh_pri_vyklyuchennom_sklade_vozvrat_ne_pishet_dvizheniy(
     root_client, client_row
 ):
     """Остаток сошёлся — это ещё не значит, что склад не трогали.
@@ -783,7 +763,8 @@ def test_bez_nakladnykh_pri_vyklyuchennom_sklade_otmena_ne_pishet_dvizheniy(
     root_client.post(f"{API}/modules/warehouse", json={"enabled": False})
     try:
         assert root_client.post(f"{ORDERS}/{order['id']}/close", json={}).status_code == 200
-        otvet = root_client.post(f"{ORDERS}/{order['id']}/revert", json={})
+        vozvrat = root_client.post(f"{ORDERS}/{order['id']}/returns").json()
+        otvet = root_client.post(f"{API}/returns/{vozvrat['id']}/post", json={})
         assert otvet.status_code == 200, otvet.text
     finally:
         root_client.post(f"{API}/modules/warehouse", json={"enabled": True})
@@ -793,38 +774,37 @@ def test_bez_nakladnykh_pri_vyklyuchennom_sklade_otmena_ne_pishet_dvizheniy(
     dvizheniya = root_client.get(f"{STOCK}/products/{item['id']}/moves").json()
     assert dvizheniya["total"] == 1, (
         "склад был выключен, а движений прибавилось: остаток сошёлся лишь потому, "
-        "что отмена вернула то, что закрытие не имело права списывать"
+        "что возврат вернул то, что закрытие не имело права списывать"
     )
 
 
-def test_otmena_pri_vyklyuchennom_sklade_ne_dvigaet_ego_obratno(root_client, client_row):
-    """Склад выключили между закрытием и отменой — обратных движений нет тоже.
+def test_vozvrat_pri_vyklyuchennom_sklade_ne_dvigaet_ego_obratno(root_client, client_row):
+    """Склад выключили между закрытием и возвратом — обратных движений нет тоже.
 
-    Это единственный путь, на котором отмена без накладной находит, что
-    возвращать: движения по заказу уже лежат. Накладная в том же положении не
-    пишет ничего (`waybill_service.provesti`), и голый путь обязан вести себя
-    так же.
+    Накладная в том же положении не пишет ничего (`waybill_service.provesti`),
+    и возврат обязан вести себя так же — и сказать об этом в своей истории.
     """
     waybills_on(root_client, False)
     item = product(root_client, stock="10")
     order = order_with(root_client, client_row, item, quantity="3")
     assert root_client.post(f"{ORDERS}/{order['id']}/close", json={}).status_code == 200
     assert stock_of(root_client, item["id"]) == 7_000, "с включённым складом заказ обязан списать"
+    vozvrat = root_client.post(f"{ORDERS}/{order['id']}/returns").json()
 
     root_client.post(f"{API}/modules/warehouse", json={"enabled": False})
     try:
-        otvet = root_client.post(f"{ORDERS}/{order['id']}/revert", json={})
+        otvet = root_client.post(f"{API}/returns/{vozvrat['id']}/post", json={})
         assert otvet.status_code == 200, otvet.text
     finally:
         root_client.post(f"{API}/modules/warehouse", json={"enabled": True})
         waybills_on(root_client)
 
     assert stock_of(root_client, item["id"]) == 7_000, (
-        "отмена вернула товар при выключенном блоке склада"
+        "возврат вернул товар при выключенном блоке склада"
     )
-    istoriya = root_client.get(f"{API}/documents/{order['id']}").json()["events"]
+    istoriya = root_client.get(f"{API}/returns/{vozvrat['id']}").json()["events"]
     assert any("warehouse module off" in (e["note"] or "") for e in istoriya), (
-        "отмена без движений в истории названа обычной"
+        "возврат без движений в истории назван обычным"
     )
 
 

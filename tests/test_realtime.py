@@ -319,7 +319,7 @@ def test_kazhdoe_sobytie_nazvano_v_karte():
     imena = set()
     for put in (koren / "core" / "services").glob("*.py"):
         imena |= set(re.findall(r'^[A-Z_]+ = "([a-z_]+\.[a-z_]+)"', put.read_text(encoding="utf-8"), re.M))
-    sobytiya = {i for i in imena if i.split(".")[0] in ("deal", "order", "act", "lead", "stock", "document", "waybill")}
+    sobytiya = {i for i in imena if i.split(".")[0] in ("deal", "order", "act", "lead", "stock", "document", "waybill", "return")}
     bez_otveta = sorted(sobytiya - set(topics.EVENT_TOPICS))
     assert bez_otveta == [], f"события без ответа в карте тем: {bez_otveta}"
     for tema in topics.EVENT_TOPICS.values():

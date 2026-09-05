@@ -400,6 +400,9 @@ export function Sidebar({
     // Магазин зовёт заявки «заказами», и рядом стоял второй пункт «Заказы» —
     // блок заказов. Два одинаковых слова в одном меню — угадывание.
     { module: "orders", perm: "orders.view", to: "/orders", label: nazvanieZakazov(t, term(workspace.deal_term, locale, "many")), icon: "receipt" },
+    // Возвраты — рядом с заказами, в их же блоке: назад по проведённому
+    // заказу дорога одна, и искать её надо там же, где заказы.
+    { module: "orders", perm: "orders.view", to: "/returns", label: t("returns"), icon: "receipt" },
     { module: "waybills", perm: "waybills.view", to: "/waybills", label: t("waybills"), icon: "arrowOut" },
     { module: "warehouse", perm: "warehouse.view", to: "/warehouse", label: t("warehouse"), icon: "warehouse" },
     // Деньги — перед отчётами: отчёты отвечают «как идут дела», а этот раздел

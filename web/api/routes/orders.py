@@ -20,6 +20,7 @@ from core.services import (
     modules_service,
     order_service,
     permissions_service,
+    return_service,
 )
 from core.services import settings_service
 from core.utils import money_for_print
@@ -225,6 +226,14 @@ def get_order(
             for w in bumagi
         ]
 
+    # Возвраты по заказу — только у заказа покупателя: у заказа поставщику
+    # возврата нет (docs/22). Ключа нет вовсе у тех, кому он не положен.
+    if order.kind == KIND_SALES_ORDER:
+        data["returns"] = [
+            {"id": v.id, "number": v.number, "status": v.status, "refund": v.refund_minor}
+            for v in return_service.po_zakazu(db, order.id)
+        ]
+
     # История заказа — тем же составом, что у бланка и акта.
     #
     # Заводится по беде: закрытие при выключенном складе пишет в примечание
@@ -387,17 +396,21 @@ def close_order(
     )
 
 
-@router.post("/{order_id}/revert")
-def revert_order(
+@router.post("/{order_id}/returns", status_code=201)
+def create_return(
     order_id: int,
-    user: User = Depends(require_perm("orders", "issue")),
+    user: User = Depends(require_perm("orders", "create")),
     db: Session = Depends(get_db),
 ):
-    """Отменить проведение обратными движениями. Прежние остаются на месте."""
-    order = order_service.revert(db, order_id, user)
-    return schemas.order_out(
-        order, order_service.lines(db, order.id), amounts=permissions_service.sees_amounts(db, user, "orders"),
-        client_name=_imya_klienta(db, order),
+    """Завести возврат по проведённому заказу покупателя. Отмены проведения у
+    заказа нет: назад — только этой бумагой (docs/22)."""
+    vozvrat = return_service.sozdat(db, order_id, user)
+    return schemas.return_out(
+        vozvrat,
+        return_service.lines(db, vozvrat.id),
+        amounts=permissions_service.sees_amounts(db, user, "orders"),
+        client_name=_imya_klienta(db, vozvrat),
+        order_number=order_service.get(db, order_id).number,
     )
 
 

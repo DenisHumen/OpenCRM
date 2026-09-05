@@ -743,10 +743,11 @@ def test_kazhdyy_vyzov_peredayot_schitaemoe_chislo():
 #: слова человека, а не системы. В `transfer` они соседствуют в одном поле —
 #: сочинённая пометка приписывается к введённой строке через `·`.
 PISHUT_V_BAZU: dict[str, set[str]] = {
-    "core/services/finance_service.py": {"accrue_order_costs", "adjust_accrual", "reverse_order_money"},
-    "core/services/order_service.py": {"close", "revert"},
+    "core/services/finance_service.py": {"accrue_order_costs", "adjust_accrual", "refund_for_return"},
+    "core/services/order_service.py": {"close"},
+    "core/services/return_service.py": {"sozdat", "provesti"},
     "core/services/warehouse_service.py": {"revert_transfer", "shortages", "transfer"},
-    "core/subscriptions.py": {"write_off_act_materials"},
+    "core/subscriptions.py": {"write_off_act_materials", "return_into_feed"},
     "core/services/share_service.py": {"delete_share"},
     "core/services/telephony_service.py": {"create_callback_task"},
 }

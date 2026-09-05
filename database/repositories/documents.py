@@ -20,8 +20,15 @@ from sqlalchemy import case, func, or_, select, update
 from sqlalchemy.orm import Session, aliased
 
 from core.utils import now_utc
-from database.models import Document, DocumentEvent, DocumentLine
-from database.models.document import KIND_SALES_ORDER
+from database.models import Document, DocumentEvent, DocumentFile, DocumentLine
+from database.models.document import (
+    KIND_RETURN,
+    KIND_SALES_ORDER,
+    KIND_WAYBILL_IN,
+    KIND_WAYBILL_OUT,
+    STATUS_CLOSED,
+    STATUS_ISSUED,
+)
 from database.models.warehouse import StockMove
 from database.query import as_int, contains, page_of
 
@@ -624,3 +631,108 @@ def bron_istekla(db: Session, kind: str, statuses, page: int = 1, per_page: int 
         .order_by(Document.reserved_until.asc())
     )
     return page_of(db, stmt, page=page, per_page=per_page)
+
+
+# --- возвраты ---
+
+
+def zapert_bumagu(db: Session, document_id: int) -> None:
+    """Занять бумагу до конца транзакции. Нужен возврату: «сколько ещё можно
+    вернуть по заказу» считается запросом, и двое, проводящие два возврата по
+    одному заказу разом, вернули бы больше, чем отгружено. Замок — на строку
+    ЗАКАЗА: она одна и та же для обоих (разбор — `deals.zapert_zayavku`)."""
+    db.execute(select(Document.id).where(Document.id == document_id).with_for_update()).all()
+
+
+def vozvraty_po_zakazu(db: Session, order_id: int) -> list[Document]:
+    return list(
+        db.scalars(
+            select(Document)
+            .where(Document.basis_id == order_id, Document.kind == KIND_RETURN)
+            .order_by(Document.created_at.asc(), Document.id.asc())
+        ).all()
+    )
+
+
+def vozvrashcheno_po_zakazu(db: Session, order_id: int, krome_id: int | None = None) -> dict[int, int]:
+    """Сколько каждого товара уже вернулось по заказу проведёнными возвратами:
+    {товар: тысячные}. `krome_id` — свой черновик в счёт не идёт."""
+    stmt = (
+        select(DocumentLine.product_id, func.coalesce(func.sum(DocumentLine.quantity_milli), 0))
+        .join(Document, Document.id == DocumentLine.document_id)
+        .where(
+            Document.basis_id == order_id,
+            Document.kind == KIND_RETURN,
+            Document.status == STATUS_CLOSED,
+            DocumentLine.product_id.is_not(None),
+        )
+        .group_by(DocumentLine.product_id)
+    )
+    if krome_id is not None:
+        stmt = stmt.where(Document.id != krome_id)
+    return {int(product_id): as_int(summa) for product_id, summa in db.execute(stmt).all()}
+
+
+# --- вложения бумаги ---
+
+
+def files_of(db: Session, document_id: int) -> list[DocumentFile]:
+    return list(
+        db.scalars(
+            select(DocumentFile)
+            .where(DocumentFile.document_id == document_id)
+            .order_by(DocumentFile.created_at.desc(), DocumentFile.id.desc())
+        ).all()
+    )
+
+
+def get_file(db: Session, document_id: int, file_id: int) -> DocumentFile | None:
+    return db.scalar(
+        select(DocumentFile).where(
+            DocumentFile.id == file_id, DocumentFile.document_id == document_id
+        )
+    )
+
+
+def add_file(db: Session, file: DocumentFile) -> DocumentFile:
+    db.add(file)
+    db.flush()
+    return file
+
+
+def drop_file(db: Session, file: DocumentFile) -> None:
+    db.delete(file)
+    db.flush()
+
+
+def po_ids(db: Session, ids) -> list[Document]:
+    """Бумаги по номерам записей — одним запросом на страницу списка."""
+    ids = {int(i) for i in ids if i}
+    if not ids:
+        return []
+    return list(db.scalars(select(Document).where(Document.id.in_(ids)).order_by(Document.id.asc())).all())
+
+
+def stornirovano_po_zakazu(db: Session, order_id: int) -> dict[int, int]:
+    """Сколько товара вернулось сторно накладных заказа: {товар: тысячные}.
+
+    Приходная по основанию-накладной заказа — сторно; проведена (`issued`) или
+    принята (`closed`). Без этого возврат по заказу, чью накладную уже
+    сторнировали, вернул бы товар второй раз.
+    """
+    ishodnaya = aliased(Document)
+    storno = aliased(Document)
+    rows = db.execute(
+        select(DocumentLine.product_id, func.coalesce(func.sum(DocumentLine.quantity_milli), 0))
+        .join(storno, storno.id == DocumentLine.document_id)
+        .join(ishodnaya, ishodnaya.id == storno.basis_id)
+        .where(
+            ishodnaya.basis_id == order_id,
+            ishodnaya.kind == KIND_WAYBILL_OUT,
+            storno.kind == KIND_WAYBILL_IN,
+            storno.status.in_((STATUS_ISSUED, STATUS_CLOSED)),
+            DocumentLine.product_id.is_not(None),
+        )
+        .group_by(DocumentLine.product_id)
+    ).all()
+    return {int(product_id): as_int(summa) for product_id, summa in rows}

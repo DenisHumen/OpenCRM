@@ -87,6 +87,12 @@ class Settings(BaseSettings):
         return self.storage_dir / "client_files"
 
     @property
+    def document_files_dir(self) -> Path:
+        """Фото и видео к бумагам (возвраты). Отдельно от файлов клиента: у тех
+        своя папка по клиенту, а у бумаги клиента может не быть вовсе."""
+        return self.storage_dir / "document_files"
+
+    @property
     def branding_dir(self) -> Path:
         return self.storage_dir / "branding"
 

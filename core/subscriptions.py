@@ -54,12 +54,13 @@ from core.services.deal_lines_service import DEAL_LINES_CHANGED
 from core.services.lead_service import LEAD_RECEIVED
 from core.services.deal_service import DEAL_DELETED, DEAL_STAGE_CHANGED
 from core.services import notification_service, order_service, waybill_service
+from core.services import audit_service
 from core.services.order_service import (
     ORDER_CANCELLED,
     ORDER_CLOSED,
     ORDER_LINES_CHANGED,
-    ORDER_REVERTED,
 )
+from core.services.return_service import RETURN_POSTED
 from core.services.document_service import (
     DOCUMENT_CLOSED,
     DOCUMENT_ISSUED,
@@ -95,10 +96,13 @@ def uvedomit_o_zakrytom_zakaze(event: events.Event) -> None:
     _uvedomit(event, "orders", "order_closed", {"number": order.number, "kind": order.kind}, f"/orders/{order.id}")
 
 
-@events.observer(ORDER_REVERTED, module="orders")
-def uvedomit_ob_otkate_zakaza(event: events.Event) -> None:
-    order = event["order"]
-    _uvedomit(event, "orders", "order_reverted", {"number": order.number}, f"/orders/{order.id}")
+@events.observer(RETURN_POSTED, module="orders")
+def uvedomit_o_vozvrate(event: events.Event) -> None:
+    vozvrat = event["vozvrat"]
+    _uvedomit(
+        event, "orders", "return_posted",
+        {"number": vozvrat.number, "order": event["order"].number}, f"/returns/{vozvrat.id}",
+    )
 
 
 @events.observer(ORDER_CANCELLED, module="orders")
@@ -247,18 +251,20 @@ def order_closed_into_feed(event: events.Event) -> None:
     )
 
 
-@events.observer(ORDER_REVERTED, module="clients")
-def order_reverted_into_feed(event: events.Event) -> None:
-    order = event["order"]
-    if order.client_id is None:
+@events.observer(RETURN_POSTED, module="clients")
+def return_into_feed(event: events.Event) -> None:
+    vozvrat = event["vozvrat"]
+    if vozvrat.client_id is None:
         return
     client_service.add_system_note(
         event.db,
-        order.client_id,
+        vozvrat.client_id,
         event.actor,
         KIND_DOCUMENT,
-        f"Order {order.number} reverted ({event.reason})",
-        deal_id=order.deal_id,
+        f"Return {vozvrat.number} for order {event['order'].number}: "
+        f"{len(event['lines'])} line(s), refund {audit_service.money_text(vozvrat.refund_minor or 0)} "
+        f"({event.reason})",
+        deal_id=vozvrat.deal_id,
         source=event.source,
     )
 
@@ -617,20 +623,18 @@ def money_of_closed_order(event: events.Event) -> None:
     )
 
 
-@events.participant(ORDER_REVERTED, module="finance", order=30)
-def money_of_reverted_order(event: events.Event) -> None:
-    """Отменённое проведение сторнирует начисленное — обратной операцией.
+@events.participant(RETURN_POSTED, module="finance", order=30)
+def money_of_return(event: events.Event) -> None:
+    """Проведённый возврат отдаёт деньги клиенту минусом по доходной статье.
 
-    Начисления не правятся и не удаляются: образец — тот же заказ со складом,
-    где отмена идёт обратными движениями, а не стиранием прежних.
-
-    **Платежи не трогаются.** Полученные деньги отменой проведения не
-    отменяются: возврат клиенту — отдельное осознанное действие человека, под
-    своим правом и своей кнопкой.
+    Участник, а не наблюдатель: возврат без записанных денег при включённых
+    финансах — половина операции, и отказ денег обязан откатить проведение.
     """
-    finance_service.reverse_order_money(
+    finance_service.refund_for_return(
         event.db,
+        event["vozvrat"],
         event["order"],
+        event["category_id"],
         event.actor,
         source=event.source,
         source_ref=event.source_ref,

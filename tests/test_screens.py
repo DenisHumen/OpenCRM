@@ -432,7 +432,7 @@ POST_WITHOUT_LATCH: dict[tuple[str, str], str] = {
     ("Staff.tsx", "/roles/assign/{}"): "должность у человека одна",
     # Стоит за окном подтверждения, а окно закрывается тем же нажатием: второй
     # раз нажимать уже не по чему.
-    ("OrderCard.tsx", "/orders/{}/{}"): "отмена и откат заказа — за окном подтверждения",
+    ("OrderCard.tsx", "/orders/{}/cancel"): "отмена заказа — за окном подтверждения",
     ("DocumentCard.tsx", "/documents/acts/{}/cancel"): "за окном подтверждения",
     ("BoardEditor.tsx", "/shares/{}/regenerate"): "за окном подтверждения",
     ("TelephonySettings.tsx", "/telephony/settings/secret"): "за окном подтверждения",

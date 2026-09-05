@@ -545,24 +545,14 @@ def mime_dlya_otdachi(file: ClientFile) -> str:
     return MIME_PO_RASSHIRENIYU.get(ext, "application/octet-stream")
 
 
-def add_file(
-    db: Session,
-    client_id: int,
-    uploader: User,
-    original_name: str,
-    content: bytes,
-    mime: str = "",
-) -> ClientFile:
-    """Принять файл клиента.
-
-    `mime` принимается и НЕ используется. Довод не в вежливости к вызывающему:
-    заголовок присылает тот, кто загружает, и уйти он должен ровно никуда.
-    Оставлен в подписи, чтобы правка не выглядела как «поле потеряли» и чтобы
-    следующий, кому он понадобится, прочитал здесь, почему его не берут.
-    """
-    get_client(db, client_id)
+def proverit_vlozhenie(original_name: str, content: bytes, dopustimo: set[str]) -> tuple[str, bytes]:
+    """Приёмка файла, одна на всех: расширение из перечня, содержимое похоже
+    на него, не пуст, не велик, место на диске есть. Отвечает расширением и
+    содержимым (SVG — уже очищенным). Файлы клиента и вложения бумаг
+    принимаются здесь же — второй приёмке нечем было бы отличаться, кроме
+    забытых проверок."""
     ext = Path(original_name).suffix.lstrip(".").lower()
-    if ext not in ALLOWED_CLIENT_FILE_EXTS:
+    if ext not in dopustimo:
         raise errors.ValidationError(f"File type .{ext} is not allowed", code="file_type_not_allowed")
     if content and not _soderzhimoe_sootvetstvuet(ext, content):
         # Отказ по содержимому, а не по расширению: файл назвался одним, а
@@ -598,6 +588,26 @@ def add_file(
             raise errors.ValidationError(
                 "The SVG contained nothing but scripts", code="file_empty"
             )
+    return ext, content
+
+
+def add_file(
+    db: Session,
+    client_id: int,
+    uploader: User,
+    original_name: str,
+    content: bytes,
+    mime: str = "",
+) -> ClientFile:
+    """Принять файл клиента.
+
+    `mime` принимается и НЕ используется. Довод не в вежливости к вызывающему:
+    заголовок присылает тот, кто загружает, и уйти он должен ровно никуда.
+    Оставлен в подписи, чтобы правка не выглядела как «поле потеряли» и чтобы
+    следующий, кому он понадобится, прочитал здесь, почему его не берут.
+    """
+    get_client(db, client_id)
+    ext, content = proverit_vlozhenie(original_name, content, ALLOWED_CLIENT_FILE_EXTS)
 
     file = ClientFile(
         client_id=client_id,

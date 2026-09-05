@@ -612,8 +612,8 @@ export const RUKOVODSTVO: Razdel[] = [
                     en: "Picking items and moving stock are different powers: a picker picks, a senior ships.",
                   },
                   {
-                    ru: "Проведение откатывается обратными движениями. Прежние движения остаются на месте: склад — это история, а не текущее число.",
-                    en: "Processing is rolled back with counter-movements. The original movements stay where they were: stock is a history, not a current number.",
+                    ru: "Проведённый заказ не откатывается. Товар назад и деньги клиенту — это возврат: отдельная бумага с описанием, суммой и фото; у неё своя статистика.",
+                    en: "A processed order is not rolled back. Goods back and money to the client is a return: a separate paper with a description, an amount and photos; it has its own statistics.",
                   },
                 ],
               },
@@ -627,6 +627,37 @@ export const RUKOVODSTVO: Razdel[] = [
             },
           },
           { vid: "ekran", put: "/orders", podpis: { ru: "Открыть заказы", en: "Open orders" } },
+          {
+            vid: "svyortka",
+            zagolovok: { ru: "Возвраты", en: "Returns" },
+            kuski: [
+              {
+                vid: "shagi",
+                punkty: [
+                  {
+                    ru: "На проведённом заказе покупателя нажмите «Оформить возврат»: черновик заполнен тем, что ещё можно вернуть.",
+                    en: "On a processed customer order press «Issue a return»: the draft is filled with what can still be returned.",
+                  },
+                  {
+                    ru: "Уберите лишние строки, поправьте количества и сумму к возврату, опишите, что случилось, приложите фото или видео.",
+                    en: "Remove extra lines, adjust quantities and the refund amount, describe what happened, attach photos or videos.",
+                  },
+                  {
+                    ru: "«Провести возврат»: товар возвращается на склад приходной, деньги уходят клиенту минусом по доходной статье — налог снимается сам.",
+                    en: "«Carry out the return»: the goods come back to stock by an incoming waybill, the money goes to the client as a negative income entry — the tax is reversed by itself.",
+                  },
+                ],
+              },
+              {
+                vid: "vazhno",
+                tekst: {
+                  ru: "Вернуть можно не больше отгруженного, считая все возвраты по заказу. Проведённый возврат не правится, как и проведённый заказ.",
+                  en: "No more than what was shipped can be returned, counting all returns of the order. A carried-out return cannot be changed, just like a processed order.",
+                },
+              },
+              { vid: "ekran", put: "/returns", podpis: { ru: "Открыть возвраты", en: "Open returns" } },
+            ],
+          },
         ],
       },
       {

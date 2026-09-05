@@ -347,7 +347,7 @@
   бронь по открытым заявкам остаётся: `reserve_service.reserved` складывает две
   брони, и заявки в неё входят всегда. Выключен склад — **закрытие заказа
   движений не пишет**: заказ закрывается, бумага печатается, остаток не
-  трогается вовсе (`is_enabled` в `order_service.close` и `revert`). Без этой второй
+  трогается вовсе (`is_enabled` в `order_service.close` и `return_service.provesti`). Без этой второй
   половины выключенный склад исчезал бы не целиком: меню и раздела нет, а
   движения на него по-прежнему пишутся — то есть ровно то состояние, ради
   прекращения которого блок и выключают;
@@ -581,7 +581,7 @@
 | `stock.written_off` | `warehouse_service.add_move` (расход под заявку) | `move`, `product`, `deal` | `clients`: запись в ленте о списании (наблюдатель) |
 | `act.completed` | `act_service.complete` | `act`, `lines`, `deal_id`, `to_stage`, `warehouse_id`, `confirm_negative` | `warehouse`: списание материалов (**участник**, order=10); `deals`: перевод заявки на следующий этап (**участник**, order=20); `clients`: одна строка в ленте (наблюдатель) |
 | `order.closed` | `order_service.close` | `order`, `lines`, `from_status` | `finance`: стандартные расходы на закрытый заказ (**участник**, order=30) |
-| `order.reverted` | `order_service.revert` | `order`, `from_status` | `finance`: сторно начисленного обратной операцией (**участник**, order=30) |
+| `return.posted` | `return_service.provesti` | `vozvrat`, `order`, `lines`, `category_id`, `waybill` | `finance`: деньги клиенту минусом по доходной статье (**участник**, order=30); `orders`: уведомление; `clients`: строка в ленте (наблюдатели) |
 | `lead.received` | `lead_service.receive` (заявка с сайта) | `client`, `deal`, `is_new_client` | `tasks`: напоминание ответственному через час (наблюдатель) |
 
 Полный список подписок — в `core/subscriptions.py`.
