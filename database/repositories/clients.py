@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from sqlalchemy import case, func, literal, or_, select
 from sqlalchemy.orm import Session
 
@@ -287,3 +289,16 @@ def get_file(db: Session, client_id: int, file_id: int) -> ClientFile | None:
     if f is None or f.client_id != client_id:
         return None
     return f
+
+
+def posledniy_kontakt(db: Session, client_ids) -> dict[int, datetime]:
+    """Когда в ленте каждого клиента страницы была последняя запись — одним запросом."""
+    ids = [int(i) for i in set(client_ids) if i]
+    if not ids:
+        return {}
+    rows = db.execute(
+        select(ClientNote.client_id, func.max(ClientNote.happened_at))
+        .where(ClientNote.client_id.in_(ids))
+        .group_by(ClientNote.client_id)
+    ).all()
+    return {int(client_id): kogda for client_id, kogda in rows if kogda is not None}

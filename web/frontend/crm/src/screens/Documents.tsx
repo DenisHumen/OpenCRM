@@ -4,14 +4,14 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { ContextMenu, punktyDlyaZapisi, useContextMenu } from "../components/ContextMenu";
 import { Icon } from "../components/Icon";
 import { VyborKlienta } from "../components/VyborKlienta";
-import { Chip, Dochitat, EmptyState, Modal, ScreenLoading } from "../components/ui";
+import { Chip, Dochitat, EmptyState, ItogSpiska, Modal, ScreenLoading } from "../components/ui";
 import { api, ApiError } from "../lib/api";
 import { useApp } from "../lib/app";
 import { useLiveTopic } from "../lib/live";
 import { useDebounced } from "../lib/debounce";
 import { useFailure } from "../lib/failure";
 import { useGuard } from "../lib/guard";
-import { formatDate } from "../lib/format";
+import { formatDate, formatMoney } from "../lib/format";
 import { SpisokPoKategoriyam } from "../components/SpisokPoKategoriyam";
 import {
   DOC_KINDS,
@@ -28,7 +28,7 @@ import {
 const NA_STRANITSE = 100;
 
 export function Documents() {
-  const { t, locale, toast, toastError } = useApp();
+  const { t, locale, toast, toastError, workspace } = useApp();
   const navigate = useNavigate();
   const kontekst = useContextMenu();
   const [params] = useSearchParams();
@@ -293,6 +293,11 @@ export function Documents() {
                   {doc.payload?.client?.name || "—"}
                 </div>
               </div>
+              {/* Сумма по строкам — у заказа, акта, накладной, возврата; у
+                  квитанции строк нет, и столбец пуст, а не «0». */}
+              <span style={{ width: 100, textAlign: "right", color: "var(--text)", fontSize: 12.5, flexShrink: 0 }}>
+                {doc.total !== null && doc.total !== undefined ? formatMoney(doc.total, workspace.currency, locale) : ""}
+              </span>
               <span className="doc-row-date" style={{ width: 90, textAlign: "right", color: "var(--faint)", fontSize: 12, flexShrink: 0 }}>
                 {formatDate(doc.created_at, locale)}
               </span>
@@ -312,8 +317,10 @@ export function Documents() {
           <EmptyState icon="receipt"
             title={query || status ? t("nothingFound", { q: query }) : t("noDocuments")}
             sub={query || status ? t("tryDifferent") : t("noDocumentsHint")}
+            action={query || status ? undefined : <button type="button" className="btn btn-primary btn-sm" onClick={() => setShowNew(true)}>{t("newDocument")}</button>}
           />
         )}
+        <ItogSpiska pokazano={data.items.length} vsego={data.total} summa={(data.items as any[]).reduce((s, d) => s + (d.total ?? 0), 0)} currency={workspace.currency} />
       </div>
 
       {showNew && (

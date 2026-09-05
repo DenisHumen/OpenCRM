@@ -510,3 +510,18 @@ def test_svodka_klienta_v_kartochke(root_client):
     assert svodka["last_contact"]["at"]
     assert svodka["manager_name"] == me["name"]
     assert svodka["received_12m"] is None, "деньги выключены — плитки нет"
+
+
+def test_spisok_klientov_znaet_zayavki_i_posledniy_kontakt(root_client):
+    """Колонки списка (владелец, 06.09.2026): заявок и на сколько, последний
+    контакт — по два запроса на страницу, не на строку."""
+    klient = root_client.post(f"{API}/clients", json={"name": "Список со сводкой"}).json()
+    root_client.post(f"{API}/deals", json={"title": "Первая", "client_id": klient["id"], "amount": 4_000})
+    root_client.post(f"{API}/deals", json={"title": "Вторая", "client_id": klient["id"]})
+    root_client.post(f"{API}/clients/{klient['id']}/notes", json={"kind": "call", "body": "Перезвонил", "direction": "out"})
+
+    stroki = root_client.get(f"{API}/clients", params={"search": "Список со сводкой"}).json()["items"]
+    [stroka] = [s for s in stroki if s["id"] == klient["id"]]
+    assert stroka["deals_open"] == 2 and stroka["deals_open_amount"] == 4_000
+    assert stroka["deals_won"] == 0
+    assert stroka["last_contact_at"], "звонок в ленте — это контакт"

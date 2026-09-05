@@ -243,7 +243,7 @@
 
 | Метод | Путь | Права | Описание |
 |---|---|---|---|
-| GET | `/clients` | 🔑 `clients.view` | Список: `?search=`, `?tag=`, `?manager_id=`, пагинация, сортировка по обновлению |
+| GET | `/clients` | 🔑 `clients.view` | Список: `?search=`, `?tag=`, `?manager_id=`, пагинация, сортировка по обновлению. В строках — `deals_open`, `deals_open_amount` (пусто без права на суммы), `deals_won`, `last_contact_at`: по два запроса на страницу, чужие заявки не в счёт |
 | GET | `/clients/export.csv` | 🔑 `clients.view` | Тот же отбор файлом, целиком и без страниц. Больше 10 000 строк — отказ `export_too_large`, а не молчаливое обрезание. Право то же, что на просмотр: выгрузка отдаёт ровно то, что человек и так видит |
 | POST | `/clients` | 🔑 `clients.create` | Создать карточку |
 | GET | `/clients/{id}` | 🔑 `clients.view` | Карточка целиком: контакты, последние заметки, файлы, заявки, `svodka` — заявки по виду этапа (`open_count`/`open_amount`, `won_count`/`won_amount`, `lost_count`), `received_12m` (касса за год; блок денег и право на суммы), `last_contact` (последняя запись ленты), `last_call_at`, `papers` по видам, `manager_name`. Чужие заявки в счёт не идут, суммы пустеют без права |
@@ -712,7 +712,7 @@ CRM нет, — человек нажмёт «отправить» снова, �
 
 | Метод | Путь | Права | Описание |
 |---|---|---|---|
-| GET | `/documents` | 🔑 `documents.view` | Список: `search`, `status`, `client_id`, `deal_id`, `kind` (повторяемый), `sort`, пагинация. В ответе сверх обычного — `counts`: сколько бумаг каждого вида |
+| GET | `/documents` | 🔑 `documents.view` | Список: `search`, `status`, `client_id`, `deal_id`, `kind` (повторяемый), `sort`, пагинация. В ответе сверх обычного — `counts`: сколько бумаг каждого вида. В строках — `total` по строкам бумаги (пусто у бумаги без строк) |
 | POST | `/documents` | 🔑 `documents.create` | Завести бланк |
 | GET | `/documents/by-number/{number}` | 🔑 `documents.view` | Поиск сканом: сюда приходит то, что прочитал сканер штрихкода |
 | GET | `/documents/{id}` | 🔑 `documents.view` | Бланк + история состояний с именами авторов |

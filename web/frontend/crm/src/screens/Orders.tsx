@@ -3,7 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 
 import { ContextMenu, punktyDlyaZapisi, useContextMenu } from "../components/ContextMenu";
 import { Icon } from "../components/Icon";
-import { Chip, Dochitat, EmptyState, Modal, ScreenLoading } from "../components/ui";
+import { Chip, Dochitat, EmptyState, ItogSpiska, Modal, ScreenLoading } from "../components/ui";
 import { VyborKlienta } from "../components/VyborKlienta";
 import { api } from "../lib/api";
 import type { HistoryEvent } from "../components/History";
@@ -13,7 +13,7 @@ import { useLiveTopic } from "../lib/live";
 import { useDebounced } from "../lib/debounce";
 import { useFailure } from "../lib/failure";
 import { useGuard } from "../lib/guard";
-import { formatMoney } from "../lib/format";
+import { formatDate, formatMoney } from "../lib/format";
 import { SpisokPoKategoriyam } from "../components/SpisokPoKategoriyam";
 import { DOC_SORTS, ORDER_STATUS_LABEL, orderStatusLabel, sortLabel, statusVariant } from "../lib/documents";
 
@@ -52,6 +52,7 @@ export interface Order {
   reserved_until?: string | null;
   reserve_expired?: boolean;
   created_at: string | null;
+  updated_at?: string | null;
   /** Накладные, выписанные по этому заказу.
    *
    * Ключа НЕТ вовсе, когда блок накладных выключен, — не пустой массив, а
@@ -332,6 +333,10 @@ export function Orders() {
             <span style={{ width: 120, textAlign: "right", color: "var(--text)", fontSize: 13 }}>
               {formatMoney(order.total, workspace.currency, locale)}
             </span>
+            {/* Дата: у проведённого — когда провели, у открытого — когда завели. */}
+            <span style={{ width: 92, textAlign: "right", color: "var(--faint)", fontSize: 12 }}>
+              {formatDate(order.status === "closed" ? order.updated_at ?? order.created_at : order.created_at, locale)}
+            </span>
             <span style={{ width: 110, textAlign: "right" }}>
               {order.reserve_expired && <Chip variant="warning">{t("orderReserveExpired")}</Chip>}{" "}
               <Chip variant={statusVariant(order.status)}>
@@ -343,6 +348,7 @@ export function Orders() {
         />
         {/* `data.total` — сколько заказов всего; денежный итог заказа лежит в
             `order.total`, и это разные числа с одинаковым именем. */}
+        <ItogSpiska pokazano={data.items.length} vsego={data.total} summa={data.items.reduce((s, o) => s + (o.total ?? 0), 0)} currency={workspace.currency} />
         <Dochitat
           pokazano={data.items.length}
           vsego={data.total}

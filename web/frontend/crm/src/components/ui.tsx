@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { ApiError } from "../lib/api";
 import { useApp } from "../lib/app";
+import { formatMoney } from "../lib/format";
 import { Icon } from "./Icon";
 
 export function Chip({
@@ -218,6 +219,34 @@ export function LoadFailed({ error, onRetry }: { error: unknown; onRetry: () => 
  * конца или список просто закончился на круглом месте; а именно этим и была
  * прежняя беда — сотня записей выглядела как весь список.
  */
+/** Итог под списком: показано N из M и сумма ПОКАЗАННЫХ строк.
+ *
+ * Сумма считается по экрану и так и подписана: страница показывает сотню из
+ * трёх тысяч, и «итого» без слова «показанных» соврало бы. Полный итог —
+ * дело отчётов, где он считается запросом. */
+export function ItogSpiska({
+  pokazano,
+  vsego,
+  summa,
+  currency,
+}: {
+  pokazano: number;
+  vsego: number;
+  summa?: number | null;
+  currency?: string;
+}) {
+  const { t, locale } = useApp();
+  if (pokazano === 0) return null;
+  return (
+    <div className="itog-spiska">
+      <span>{t("listShown", { n: pokazano, total: vsego })}</span>
+      {summa !== undefined && summa !== null && currency && (
+        <span className="itog-spiska-summa">{t("listSumShown", { sum: formatMoney(summa, currency, locale) })}</span>
+      )}
+    </div>
+  );
+}
+
 export function Dochitat({
   pokazano,
   vsego,

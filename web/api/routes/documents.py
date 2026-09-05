@@ -150,7 +150,16 @@ def list_documents(
         page=page,
         per_page=per_page,
     )
-    otvet = schemas.paginated([schemas.document_out(d) for d in items], total, page, per_page)
+    # Сумма бумаги — по строкам, одним запросом на страницу: список бланков
+    # молчал о деньгах, а «на сколько выписали за неделю» спрашивают по нему.
+    rows = documents_repo.lines_by_documents(db, [d.id for d in items])
+    otvet = schemas.paginated(
+        [
+            {**schemas.document_out(d), "total": document_service.total_minor(rows.get(d.id, [])) if rows.get(d.id) else None}
+            for d in items
+        ],
+        total, page, per_page,
+    )
     # Счёт по видам считается БЕЗ отбора по виду: иначе, спрятав квитанции,
     # человек потерял бы и число рядом с ними — то есть способ вернуть их.
     otvet["counts"] = document_service.schyot_po_vidam(
