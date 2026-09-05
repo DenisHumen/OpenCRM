@@ -9,7 +9,7 @@ export function Chip({
   title,
   children,
 }: {
-  variant?: "success" | "warning" | "accent" | "brand";
+  variant?: "success" | "warning" | "accent" | "brand" | "danger";
   /** Подсказка при наведении: почему метка именно такая. */
   title?: string;
   children: ReactNode;
@@ -82,6 +82,7 @@ export function Avatar({
   online?: boolean;
 }) {
   const size = large ? " avatar-lg" : small ? " avatar-sm" : "";
+  const tint = " avatar-t" + ottenok(text);
   // Картинка может не приехать: файл потеряли при переезде, у собеседника в
   // телеграме аватар закрыт настройками приватности, ссылка ответила 404.
   // Раньше на этом месте оставался пустой кружок (или значок битой картинки), а
@@ -90,7 +91,7 @@ export function Avatar({
   useEffect(() => setUpalo(false), [src]);
   return (
     <div className={"avatar-wrap" + (large ? " avatar-wrap-lg" : "")}>
-      <div className={"avatar" + size}>
+      <div className={"avatar" + size + tint}>
         {src && !upalo ? (
           <img className="avatar-img" src={src} alt="" onError={() => setUpalo(true)} />
         ) : (
@@ -100,6 +101,13 @@ export function Avatar({
       {online !== undefined && <span className={"avatar-dot" + (online ? " on" : "")} />}
     </div>
   );
+}
+
+/** Номер оттенка по тексту: одно и то же имя — один и тот же цвет на всех экранах. */
+export function ottenok(text: string): number {
+  let h = 0;
+  for (let i = 0; i < text.length; i++) h = (h * 31 + text.charCodeAt(i)) >>> 0;
+  return h % 6;
 }
 
 export function Spinner() {
@@ -206,11 +214,27 @@ export function Dochitat({
   );
 }
 
-export function EmptyState({ title, sub }: { title: string; sub?: string }) {
+export function EmptyState({
+  title,
+  sub,
+  icon = "inbox",
+  action,
+}: {
+  title: string;
+  sub?: string;
+  /** Значок раздела: пустой склад и пустой список клиентов выглядят по-разному. */
+  icon?: string;
+  /** Кнопка первого шага — там, где он один и очевиден. */
+  action?: ReactNode;
+}) {
   return (
     <div className="empty-state">
+      <div className="empty-icon">
+        <Icon name={icon} size={20} />
+      </div>
       <div className="empty-title">{title}</div>
       {sub && <div className="empty-sub">{sub}</div>}
+      {action && <div className="empty-action">{action}</div>}
     </div>
   );
 }

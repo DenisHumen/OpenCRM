@@ -176,7 +176,7 @@ export function Reports() {
         </div>
 
         {funnel.entered === 0 && funnel.won === 0 && funnel.lost === 0 ? (
-          <EmptyState title={t("repNothing")} />
+          <EmptyState icon="analytics" title={t("repNothing")} />
         ) : (
           <>
           <div className="field-desc" style={{ marginBottom: 8 }}>{t("repStageEntered")}</div>
@@ -336,7 +336,7 @@ export function Reports() {
         <div className="field-desc" style={{ marginBottom: 12 }}>{t("repSourcesHint")}</div>
 
         {sources.clients_total === 0 && sources.revenue_total === 0 ? (
-          <EmptyState title={t("repNoSources")} />
+          <EmptyState icon="analytics" title={t("repNoSources")} />
         ) : (
           <div className="src-table">
             <div className="src-row src-head">

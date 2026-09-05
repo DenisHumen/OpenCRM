@@ -103,7 +103,7 @@ export function SettingsWarehouses() {
             </button>
           </div>
         ))}
-        {items.length === 0 && <EmptyState title={t("warehouses")} />}
+        {items.length === 0 && <EmptyState icon="warehouse" title={t("warehouses")} />}
       </div>
 
       {(adding || editing) && (

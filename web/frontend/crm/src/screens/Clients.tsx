@@ -225,7 +225,7 @@ export function Clients() {
           onClick={() => void dochitat()}
         />
         {data.items.length === 0 && (
-          <EmptyState
+          <EmptyState icon="clients"
             title={query ? t("nothingFound", { q: query }) : t("noClientsYet")}
             sub={query ? t("tryDifferent") : undefined}
           />

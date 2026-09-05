@@ -312,7 +312,7 @@ export function SettingsRoles() {
           </div>
         </div>
       ) : roles.length === 0 ? (
-        <EmptyState title={t("noRoles")} sub={t("noRolesHint")} />
+        <EmptyState icon="lock" title={t("noRoles")} sub={t("noRolesHint")} />
       ) : (
         <div className="list-card">
           {roles.map((role) => (

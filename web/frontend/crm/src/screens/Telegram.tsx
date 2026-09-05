@@ -1016,7 +1016,7 @@ export function Telegram() {
           </div>
         )}
         {chats.length === 0 ? (
-          <EmptyState title={t("tgNoChats")} sub={t("tgNoChatsHint")} />
+          <EmptyState icon="send" title={t("tgNoChats")} sub={t("tgNoChatsHint")} />
         ) : (
           <ul>
             {chats.map((chat) => (
@@ -1104,7 +1104,7 @@ export function Telegram() {
 
       <section className="tg-talk">
         {otkrytyy === null ? (
-          <EmptyState title={t("tgPickChat")} sub={t("tgPickChatHint")} />
+          <EmptyState icon="send" title={t("tgPickChat")} sub={t("tgPickChatHint")} />
         ) : (
           <>
             <header className="tg-head">

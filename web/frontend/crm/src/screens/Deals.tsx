@@ -408,7 +408,7 @@ export function Deals() {
       </div>
 
       {!anyDeals ? (
-        <EmptyState
+        <EmptyState icon="deals"
           title={term(workspace.deal_term, locale, "none")}
           sub={term(workspace.deal_term, locale, "noneHint")}
         />

@@ -88,10 +88,14 @@ export function statusLabel(t: TFunc, status: string): string {
   return t(LABELS[status as DocStatus] ?? "docIssued");
 }
 
-export function statusVariant(status: string): "success" | "warning" | "accent" | undefined {
-  if (status === "ready") return "success";
-  if (status === "in_progress") return "accent";
-  if (status === "cancelled") return "warning";
+/** Цвет состояния — по смыслу, одинаково у бланка, заказа и накладной:
+ *  выдан/принят — в работе (accent), готов — ждёт (warning), закрыт — сделано
+ *  (success), отменён — беда (danger). Черновик и прочее — нейтрально. */
+export function statusVariant(status: string): "success" | "warning" | "accent" | "danger" | undefined {
+  if (status === "issued" || status === "in_progress") return "accent";
+  if (status === "ready") return "warning";
+  if (status === "closed") return "success";
+  if (status === "cancelled") return "danger";
   return undefined;
 }
 

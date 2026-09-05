@@ -212,7 +212,7 @@ export function FinanceSettings() {
             )}
           </div>
         ))}
-        {shown.length === 0 && <EmptyState title={t("finCategories")} />}
+        {shown.length === 0 && <EmptyState icon="analytics" title={t("finCategories")} />}
       </div>
 
       {/* --- правила начисления ---------------------------------------------
@@ -335,7 +335,7 @@ export function FinanceSettings() {
             );
           })}
         {rules.filter((row) => showClosedRules || !row.closed).length === 0 && (
-          <EmptyState title={t("finNoRules")} />
+          <EmptyState icon="analytics" title={t("finNoRules")} />
         )}
       </div>
 
@@ -385,7 +385,7 @@ export function FinanceSettings() {
             </button>
           </div>
         ))}
-        {budgets.length === 0 && <EmptyState title={t("finNoBudgets")} />}
+        {budgets.length === 0 && <EmptyState icon="analytics" title={t("finNoBudgets")} />}
       </div>
 
       {(adding || editing) && (

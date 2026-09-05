@@ -178,7 +178,7 @@ export function Tasks() {
       </div>
 
       {items.length === 0 ? (
-        <EmptyState title={t("tasksNone")} sub={t("tasksNoneHint")} />
+        <EmptyState icon="clock" title={t("tasksNone")} sub={t("tasksNoneHint")} />
       ) : (
         <div className="list-card">
           {items.map((task) => {

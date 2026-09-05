@@ -308,7 +308,7 @@ export function Documents() {
           onClick={() => void dochitat()}
         />
         {data.items.length === 0 && (
-          <EmptyState
+          <EmptyState icon="receipt"
             title={query || status ? t("nothingFound", { q: query }) : t("noDocuments")}
             sub={query || status ? t("tryDifferent") : t("noDocumentsHint")}
           />

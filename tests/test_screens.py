@@ -1375,6 +1375,8 @@ PARY_KONTRASTA = [
     ("--danger", "--tint-danger", "--surface", "баннер «место кончилось»"),
     ("--accent", "--tint-accent", "--surface", "чип «новое», значок файла"),
     ("--brand", "--tint-brand", "--surface", "чип бренда, знак пространства"),
+    ("--violet", "--tint-violet", "--surface", "аватар пятого оттенка"),
+    ("--teal", "--tint-teal", "--surface", "аватар шестого оттенка"),
     ("--on-danger", "--danger-solid", None, "счётчик просроченных в меню"),
     ("--btn-text", "--btn-bg", None, "главная кнопка экрана"),
 ]

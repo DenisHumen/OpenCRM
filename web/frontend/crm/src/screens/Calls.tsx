@@ -175,7 +175,7 @@ export function Calls() {
       </div>
 
       {items.length === 0 ? (
-        <EmptyState title={t("callsEmpty")} />
+        <EmptyState icon="call" title={t("callsEmpty")} />
       ) : (
         <div className="list-card">
           <div className="list-header">

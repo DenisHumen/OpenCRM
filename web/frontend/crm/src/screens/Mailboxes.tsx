@@ -190,7 +190,7 @@ export function Mailboxes() {
               </button>
             </div>
           ))}
-          {accounts.length === 0 && <EmptyState title={t("noMailboxesYet")} />}
+          {accounts.length === 0 && <EmptyState icon="email" title={t("noMailboxesYet")} />}
         </div>
       )}
 

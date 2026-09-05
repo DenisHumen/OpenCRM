@@ -258,7 +258,7 @@ export function Finance() {
           <div className="metric-title">{t("finByCategory")}</div>
         </div>
         {profit.items.length === 0 ? (
-          <EmptyState title={t("finNothing")} />
+          <EmptyState icon="analytics" title={t("finNothing")} />
         ) : (
           <div className="funnel">
             {profit.items.map((row) => (
@@ -286,7 +286,7 @@ export function Finance() {
         </div>
 
         {operations.length === 0 ? (
-          <EmptyState title={t("finNothing")} />
+          <EmptyState icon="analytics" title={t("finNothing")} />
         ) : (
           <div className="list-card">
             {operations.map((row) => (
