@@ -34,7 +34,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from core.services import notification_service, storage_service, telegram_uborka  # noqa: E402
+from core.services import api_stats_service, notification_service, storage_service, telegram_uborka  # noqa: E402
 from database.session import SessionLocal  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -67,9 +67,12 @@ def main() -> int:
     if not dovody.dry_run:
         with SessionLocal() as db:
             ushlo = notification_service.ubrat_starye(db)
+            ushlo_obrashcheniy = api_stats_service.ubrat_starye(db)
             db.commit()
         if ushlo:
             print(f"уведомлений старше {notification_service.HRANIT_DNEY} дней убрано: {ushlo}")
+        if ushlo_obrashcheniy:
+            print(f"часов обращений по ключам старше {api_stats_service.HRANIT_DNEY} дней убрано: {ushlo_obrashcheniy}")
 
     with SessionLocal() as db:
         itog = telegram_uborka.ubrat(

@@ -10,6 +10,7 @@ from database.models import User
 from database.repositories import clients as clients_repo
 from database.repositories import boards as boards_repo
 from database.repositories import shares as shares_repo
+from database.repositories import users as users_repo
 from web.api import cards, schemas
 from web.api.deps import MAX_SEARCH, get_db, require_module, require_perm
 from web.public import layout
@@ -17,6 +18,14 @@ from web.public import layout
 router = APIRouter(
     prefix="/boards", tags=["boards"], dependencies=[Depends(require_module("boards"))]
 )
+
+
+def _avtor(db: Session, board) -> str | None:
+    """Имя того, кто завёл доску; у досок до колонки `created_by` — пусто."""
+    if not board.created_by:
+        return None
+    avtor = users_repo.get_by_id(db, board.created_by)
+    return avtor.name if avtor else None
 
 
 def _imya(db: Session, board) -> str | None:
@@ -55,7 +64,7 @@ def create_board(
     board = board_service.create_board(
         db, user, payload.title, payload.description or "", payload.client_id, payload.deal_id
     )
-    return schemas.board_out(board, works_count=0)
+    return schemas.board_out(board, works_count=0, created_by_name=user.name)
 
 
 @router.get("/{board_id}")
@@ -67,7 +76,9 @@ def get_board(
     board = board_service.get_board(db, board_id)
     works = boards_repo.list_works(db, board_id)
     links = shares_repo.list_for_board(db, board_id)
-    data = schemas.board_out(board, works_count=len(works), client_name=_imya(db, board))
+    data = schemas.board_out(
+        board, works_count=len(works), client_name=_imya(db, board), created_by_name=_avtor(db, board)
+    )
     data["works"] = [schemas.work_out(w) for w in works]
     # форма места каждой работы на витрине — редактору обрезки, чтобы рамка
     # фрагмента совпадала с тем, что увидит клиент. Композицию собирают только
@@ -98,7 +109,10 @@ def update_board(
 ):
     board = board_service.update_board(db, board_id, payload.model_dump(exclude_unset=True))
     return schemas.board_out(
-        board, works_count=boards_repo.count_works(db, board.id), client_name=_imya(db, board)
+        board,
+        works_count=boards_repo.count_works(db, board.id),
+        client_name=_imya(db, board),
+        created_by_name=_avtor(db, board),
     )
 
 

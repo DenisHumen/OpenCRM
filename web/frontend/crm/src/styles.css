@@ -1618,6 +1618,14 @@ summary:focus-visible,
 
 /* Источники: таблица, у которой полоса выручки лежит под строкой. */
 .src-table { display: flex; flex-direction: column; gap: 1px; }
+/* Сводка обращений под строкой ключа: плитки, два ряда столбиков, доли видов. */
+.stat-blok { padding: 4px 16px 16px; border-bottom: 1px solid var(--line); }
+.stat-tikho { color: var(--faint); font-size: 12.5px; padding: 6px 0; }
+.stat-plitki { margin-bottom: 14px; }
+.stat-ryad { margin-bottom: 14px; }
+.stat-ryad .metric-title { margin-bottom: 8px; }
+.stat-bars { gap: 4px; }
+.stat-bar { width: 10px; }
 .src-row {
   position: relative; display: flex; align-items: center; gap: 10px;
   padding: 7px 10px; border-radius: 4px; overflow: hidden; font-size: 13px; color: var(--text);

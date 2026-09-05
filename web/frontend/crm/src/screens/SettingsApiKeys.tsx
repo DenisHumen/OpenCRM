@@ -1,13 +1,14 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { Fragment, useCallback, useEffect, useState, type FormEvent } from "react";
 
 import { CopyButton } from "../components/CopyButton";
 import { Icon } from "../components/Icon";
-import { Chip, ConfirmModal, Modal, ScreenLoading } from "../components/ui";
+import { Chip, ConfirmModal, LoadFailed, Modal, ScreenLoading } from "../components/ui";
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
 import { useFailure } from "../lib/failure";
 import { formatDate, formatDateTime } from "../lib/format";
 import { useGuard } from "../lib/guard";
+import { useLiveTopic } from "../lib/live";
 import type { TranslationKey } from "../lib/i18n";
 
 interface ApiKey {
@@ -27,6 +28,7 @@ interface ApiKey {
   last_used_at: string | null;
   last_used_ip: string;
   state: "active" | "expired" | "revoked";
+  hits_30d: number;
   key?: string;
 }
 
@@ -73,6 +75,8 @@ export function SettingsApiKeys() {
   const { failure, fail, clear } = useFailure();
   const guard = useGuard();
   const [creating, setCreating] = useState(false);
+  // Чья сводка раскрыта: одна за раз — пять графиков подряд не читаются.
+  const [stats, setStats] = useState<number | null>(null);
   const [shown, setShown] = useState<ApiKey | null>(null);
   const [revoking, setRevoking] = useState<ApiKey | null>(null);
   const [rotating, setRotating] = useState<ApiKey | null>(null);
@@ -86,6 +90,9 @@ export function SettingsApiKeys() {
   }, [fail, clear]);
 
   useEffect(load, [load]);
+
+  // Число обращений в строке ключа растёт вместе со сводкой: тот же намёк.
+  useLiveTopic("api_keys", load);
 
   if (!data) return <ScreenLoading error={failure} onRetry={load} />;
 
@@ -139,7 +146,11 @@ export function SettingsApiKeys() {
 
       <div className="list-card">
         {data.items.map((key) => (
-          <div key={key.id} className="list-row" style={{ alignItems: "flex-start", opacity: key.state === "active" ? 1 : 0.55 }}>
+          <Fragment key={key.id}>
+          <div
+            className="list-row"
+            style={{ alignItems: "flex-start", height: "auto", padding: "12px 16px", opacity: key.state === "active" ? 1 : 0.55 }}
+          >
             <div style={{ flex: 1, minWidth: 0, fontSize: 13, lineHeight: 1.5 }}>
               <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                 <strong>{key.name}</strong>
@@ -159,6 +170,12 @@ export function SettingsApiKeys() {
                   ? t("apiKeyLastUsed", { t: formatDateTime(key.last_used_at, locale), ip: key.last_used_ip || "—" })
                   : t("apiKeyNeverUsed")}
               </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 6 }}>
+                <Chip variant={key.hits_30d > 0 ? "accent" : undefined}>{t("apiStatsHits", { n: key.hits_30d })}</Chip>
+                <button type="button" className="text-link" onClick={() => setStats(stats === key.id ? null : key.id)}>
+                  {stats === key.id ? t("apiStatsHide") : t("apiStats")}
+                </button>
+              </div>
             </div>
             {key.state === "active" && (
               <div style={{ display: "flex", gap: 8 }}>
@@ -171,6 +188,8 @@ export function SettingsApiKeys() {
               </div>
             )}
           </div>
+          {stats === key.id && <KlyuchStatistika klyuch={key} />}
+          </Fragment>
         ))}
         {data.items.length === 0 && (
           <div style={{ padding: 18, color: "var(--faint)", fontSize: 13 }}>{t("apiKeyEmpty")}</div>
@@ -395,5 +414,122 @@ function KlyuchKarta({ klyuch }: { klyuch: ApiKey }) {
       </div>
       <div className="klyuch-hint">{t("apiKeyFlipHint")}</div>
     </>
+  );
+}
+
+interface Svodka {
+  today: number;
+  week: number;
+  month: number;
+  rejected_month: number;
+  avg_per_day: number;
+  peak_hour: number;
+  rate_per_min: number;
+  by_category: { category: string; count: number; share: number }[];
+  by_day: { date: string; count: number; rejected: number }[];
+  by_hour: { hour: string; count: number }[];
+}
+
+function Plitka({ title, value, sub }: { title: string; value: number; sub?: string }) {
+  return (
+    <div className="card card-pad">
+      <div className="metric-title">{title}</div>
+      <div className="metric-value">{value}</div>
+      {sub && <div className="metric-sub">{sub}</div>}
+    </div>
+  );
+}
+
+/** Сводка обращений по ключу: числа, по видам, по дням и часам. Живая: намёк
+ *  темы `api_keys` с номером ключа — перечитать; сервер шлёт его не чаще раза
+ *  в две секунды (`api_stats_service`), своей задержки здесь нет. */
+function KlyuchStatistika({ klyuch }: { klyuch: ApiKey }) {
+  const { t } = useApp();
+  const [svodka, setSvodka] = useState<Svodka | null>(null);
+  const { failure, fail, clear } = useFailure();
+
+  const load = useCallback(async () => {
+    clear();
+    try {
+      setSvodka(await api.get<Svodka>(`/settings/api-keys/${klyuch.id}/stats`));
+    } catch (e) {
+      fail(e);
+    }
+  }, [klyuch.id, fail, clear]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  useLiveTopic("api_keys", (s) => {
+    if (s.resync || s.hints.some((h) => h.id === klyuch.id)) void load();
+  });
+
+  if (failure !== null) {
+    return (
+      <div className="stat-blok">
+        <LoadFailed error={failure} onRetry={() => void load()} />
+      </div>
+    );
+  }
+  if (svodka === null) {
+    return <div className="stat-blok stat-tikho">{t("loading")}</div>;
+  }
+  const maxDen = Math.max(1, ...svodka.by_day.map((d) => d.count));
+  const maxChas = Math.max(1, ...svodka.by_hour.map((h) => h.count));
+  return (
+    <div className="stat-blok">
+      <div className="metric-grid stat-plitki">
+        <Plitka title={t("apiStatsToday")} value={svodka.today} />
+        <Plitka title={t("apiStatsWeek")} value={svodka.week} />
+        <Plitka title={t("apiStatsMonth")} value={svodka.month} sub={t("apiStatsRejected", { n: svodka.rejected_month })} />
+        <Plitka title={t("apiStatsAvg")} value={svodka.avg_per_day} />
+        <Plitka title={t("apiStatsPeak")} value={svodka.peak_hour} sub={t("apiStatsPeakSub", { n: svodka.rate_per_min })} />
+      </div>
+      <div className="stat-ryad">
+        <div className="metric-title">{t("apiStatsByDay")}</div>
+        <div className="bars stat-bars">
+          {svodka.by_day.map((d, i) => (
+            <div className="bar-col" key={d.date}>
+              <div
+                className={"bar stat-bar" + (d.count === maxDen && d.count > 0 ? " top" : "")}
+                style={{ height: Math.max(3, Math.round((d.count / maxDen) * 52)) }}
+                title={`${d.date}: ${d.count}`}
+              />
+              <span className="bar-label">{i % 5 === 4 ? d.date.slice(8) : ""}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className="stat-ryad">
+        <div className="metric-title">{t("apiStatsByHour")}</div>
+        <div className="bars stat-bars">
+          {svodka.by_hour.map((h, i) => (
+            <div className="bar-col" key={h.hour}>
+              <div
+                className={"bar stat-bar" + (h.count === maxChas && h.count > 0 ? " top" : "")}
+                style={{ height: Math.max(3, Math.round((h.count / maxChas) * 52)) }}
+                title={`${h.hour.slice(11, 16)}: ${h.count}`}
+              />
+              <span className="bar-label">{i % 6 === 5 ? h.hour.slice(11, 13) : ""}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className="stat-ryad">
+        <div className="metric-title">{t("apiStatsByCategory")}</div>
+        {svodka.by_category.length === 0 && <div className="stat-tikho">{t("apiStatsEmpty")}</div>}
+        <div className="src-table">
+          {svodka.by_category.map((c) => (
+            <div key={c.category} className="src-row">
+              <div className="src-bar" style={{ width: `${Math.round(c.share * 100)}%` }} />
+              <span className="src-name">{t(SCOPE_LABEL[c.category] ?? "apiKeyScopes")}</span>
+              <span className="src-num">{c.count}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className="field-desc">{t("apiStatsLive")}</div>
+    </div>
   );
 }

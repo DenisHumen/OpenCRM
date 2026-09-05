@@ -99,3 +99,20 @@ class ApiKeyScope(Base):
     scope: Mapped[str] = mapped_column(String(32))
 
     __table_args__ = (UniqueConstraint("api_key_id", "scope", name="uq_api_key_scope"),)
+
+
+class ApiKeyHit(Base):
+    """Обращения по ключу, сложенные по часам и областям: строка на (ключ, час,
+    область). Поштучно каждое обращение хранить незачем — графики строятся по
+    дням и часам, а таблица росла бы на сто тысяч строк в сутки у одного сайта.
+    Устройство и сводка — `core/services/api_stats_service.py`."""
+
+    __tablename__ = "api_key_hits"
+    __table_args__ = (UniqueConstraint("api_key_id", "bucket_at", "category", name="uq_api_key_hit"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    api_key_id: Mapped[int] = mapped_column(ForeignKey("api_keys.id", ondelete="CASCADE"))
+    bucket_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    category: Mapped[str] = mapped_column(String(32))
+    count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    rejected: Mapped[int] = mapped_column(Integer, default=0, server_default="0")

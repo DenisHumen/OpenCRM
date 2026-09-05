@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 from core import exceptions as errors
 from core.ratelimit import SlidingWindowLimiter
 from core.security import tokens
-from core.services import api_key_service, lead_service, site_service
+from core.services import api_stats_service, api_key_service, lead_service, site_service
 from database.models import ApiKey
 from database.models.api_key import (
     SCOPE_CATALOG_READ,
@@ -68,10 +68,16 @@ def s_klyuchom(scope: str):
             _neizvestnye.record_failure(posetitel)
             raise
         if _limiter(key).proverit_i_zanyat(str(key.id)):
+            # Отказ по потолку — тоже обращение, и владельцу оно нужнее прочих:
+            # по нему видно, что потолок мал. Отказ откатит сессию запроса,
+            # поэтому счётчик фиксируется здесь, до него.
+            api_stats_service.zapisat(db, key, scope, rejected=True)
+            db.commit()
             raise errors.RateLimitedError(
                 f"Rate limit of {key.rate_per_min} requests per minute exceeded", code="rate_limited"
             )
         api_key_service.require_scope(db, key, scope)
+        api_stats_service.zapisat(db, key, scope)
         return key
 
     dependency.opencrm_api_scope = scope  # type: ignore[attr-defined]

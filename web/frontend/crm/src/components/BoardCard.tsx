@@ -1,7 +1,7 @@
 import { Link } from "react-router-dom";
 
 import { useApp } from "../lib/app";
-import { formatDate } from "../lib/format";
+import { formatDateTime } from "../lib/format";
 import { Icon } from "./Icon";
 import { Chip } from "./ui";
 
@@ -48,8 +48,14 @@ export function BoardCard({ board, compact }: { board: any; compact?: boolean })
             <Icon name="eye" size={11} />
             {board.has_links ? board.views_count : "—"}
           </Chip>
-          <span style={{ marginLeft: "auto", color: "var(--faint)", fontSize: 11.5 }}>
-            {formatDate(board.updated_at, locale)}
+          {/* Кто и когда завёл — просьба владельца 05.09.2026. У досок до колонки
+              автора имени нет, и вместо него стоит «неизвестно кто». */}
+          <span
+            style={{ marginLeft: "auto", color: "var(--faint)", fontSize: 11.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}
+            title={t("createdBy") + " " + (board.created_by_name ?? t("unknownAuthor"))}
+          >
+            {board.created_by_name ?? t("unknownAuthor")} ·{" "}
+            {board.created_at ? formatDateTime(board.created_at, locale) : t("unknownTime")}
           </span>
         </div>
       </div>

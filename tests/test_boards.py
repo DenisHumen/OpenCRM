@@ -610,3 +610,32 @@ def test_imya_klienta_odinakovo_u_chteniya_i_pravki(manager_client):
     # И отвязка тоже отвечает одинаково: ключ на месте, значение пустое.
     otvyazka = manager_client.patch(f"{API}/boards/{doska['id']}", json={"client_id": None})
     assert otvyazka.json()["client_name"] is None
+
+
+def test_doska_znaet_kto_i_kogda_eyo_zavyol(manager_client):
+    """Кто завёл доску и когда — именем и временем, а не только датой.
+
+    Просьба владельца 05.09.2026. Колонка `created_by` есть с миграции досок,
+    но на экран не выходила; у досок старше колонки автора нет — ключ тогда
+    пустой, а не пропавший, и экран пишет «неизвестно кто».
+    """
+    from database.models import Board
+    from database.session import SessionLocal
+
+    me = manager_client.get(f"{API}/auth/me").json()
+    board = _board(manager_client, title="Кто завёл")
+    assert board["created_by_name"] == me["name"]
+    assert board["created_at"] and "T" in board["created_at"], "время, а не только дата"
+
+    kartochka = next(b for b in manager_client.get(f"{API}/boards").json()["items"] if b["id"] == board["id"])
+    assert kartochka["created_by_name"] == me["name"]
+    assert kartochka["created_at"] == board["created_at"]
+    podrobno = manager_client.get(f"{API}/boards/{board['id']}").json()
+    assert podrobno["created_by_name"] == me["name"]
+
+    # Доска из времён до колонки автора: имя пустое, ключ на месте.
+    with SessionLocal() as db:
+        db.get(Board, board["id"]).created_by = None
+        db.commit()
+    staraya = manager_client.get(f"{API}/boards/{board['id']}").json()
+    assert "created_by_name" in staraya and staraya["created_by_name"] is None

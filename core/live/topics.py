@@ -16,6 +16,7 @@ from typing import Callable
 
 from database.models import (
     ApiKey,
+    ApiKeyHit,
     ApiKeyScope,
     Board,
     Client,
@@ -185,6 +186,10 @@ TOPICS: dict[type, Topic | Callable | None] = {
     # Игра.
     SnakeScore: None,
     ApiKey: T_API_KEYS,
+    # Счётчик обращений намекает сам, не чаще раза в две секунды на ключ
+    # (`api_stats_service`): намёк на каждый запрос сайта гнал бы экран
+    # ключей на перечитку сводки по два раза в секунду.
+    ApiKeyHit: None,
     ApiKeyScope: T_API_KEY_SCOPES,
 }
 
