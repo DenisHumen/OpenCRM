@@ -1054,6 +1054,58 @@ def waybill_out(waybill, lines: list | None = None, amounts: bool = True) -> dic
     }
 
 
+def return_out(
+    vozvrat,
+    lines: list | None = None,
+    amounts: bool = True,
+    client_name: str | None = None,
+    order_number: str | None = None,
+) -> dict:
+    """Возврат вместе со строками. Отдельно от `order_out` по тому же доводу,
+    что и акт с накладной: свои поля — заказ-основание, сумма к возврату,
+    описание, статья денег; чужих (сборка, бронь) нет."""
+    from core.services import document_service
+    from database.models.document import STATUS_DRAFT
+
+    rows = lines or []
+    payload = _payload_of(vozvrat)
+    return {
+        "id": vozvrat.id,
+        "number": vozvrat.number,
+        "kind": vozvrat.kind,
+        "status": vozvrat.status,
+        "client_id": vozvrat.client_id,
+        "client_name": client_name,
+        "deal_id": vozvrat.deal_id,
+        "order_id": vozvrat.basis_id,
+        "order_number": order_number,
+        "warehouse_id": vozvrat.warehouse_id,
+        "note": payload.get("note") or "",
+        "category_id": payload.get("category_id"),
+        "refund": vozvrat.refund_minor if amounts else None,
+        "pravitsya": vozvrat.status == STATUS_DRAFT,
+        "lines": [order_line_out(line, amounts=amounts) for line in rows],
+        "total": document_service.total_minor(rows) if amounts else None,
+        "created_at": _iso(vozvrat.created_at),
+        "updated_at": _iso(vozvrat.updated_at),
+    }
+
+
+def document_file_out(file) -> dict:
+    """Вложение бумаги. Ссылка на скачивание — через возвраты: сегодня
+    вложения бывают только у них."""
+    return {
+        "id": file.id,
+        "document_id": file.document_id,
+        "uploaded_by": file.uploaded_by,
+        "original_name": file.original_name,
+        "mime": file.mime,
+        "size_bytes": file.size_bytes,
+        "created_at": _iso(file.created_at),
+        "download_url": f"/api/v1/returns/{file.document_id}/files/{file.id}/download",
+    }
+
+
 def order_out(order, lines: list | None = None, amounts: bool = True, client_name: str | None = None) -> dict:
     """Заказ вместе со строками.
 

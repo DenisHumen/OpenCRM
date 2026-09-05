@@ -28,6 +28,7 @@ from database.models import (
     DealStageChange,
     Document,
     DocumentEvent,
+    DocumentFile,
     DocumentLine,
     FinanceBudget,
     FinanceCategory,
@@ -60,7 +61,7 @@ from database.models import (
 )
 from database.models.audit import AuditEvent
 from database.models.notification import Notification
-from database.models.document import ORDER_KINDS, WAYBILL_KINDS
+from database.models.document import KIND_RETURN, ORDER_KINDS, WAYBILL_KINDS
 
 EVERYONE = "everyone"
 #: По ответственному: `permissions_service.deals_scope` — `None` (все) или свой id.
@@ -122,7 +123,8 @@ T_API_KEY_SCOPES = Topic("api_keys", None, "settings", id_attr="api_key_id")
 
 def _po_vidu_blanka(document) -> Topic:
     """Заказ, накладная и квитанция лежат в одной таблице, а смотрят их разными правами."""
-    if document.kind in ORDER_KINDS:
+    # Возврат — действие по заказу: смотрят его те же люди и с той же карточки.
+    if document.kind in ORDER_KINDS or document.kind == KIND_RETURN:
         return T_ORDERS
     if document.kind in WAYBILL_KINDS:
         return T_WAYBILLS
@@ -150,6 +152,7 @@ TOPICS: dict[type, Topic | Callable | None] = {
     # уже в сессии — слушатель берёт его из карты объектов без запроса.
     DocumentLine: "document",
     DocumentEvent: "document",
+    DocumentFile: "document",
     Task: T_TASKS,
     MessageTemplate: T_TEMPLATES,
     MailAccount: T_MAIL,
@@ -215,7 +218,7 @@ EVENT_TOPICS: dict[str, str | None] = {
     "order.cancelled": "orders",
     "order.lines_changed": "orders",
     "document.deleted": "documents",
-    "order.reverted": "orders",
+    "return.posted": "orders",
     "act.completed": "documents",
     "lead.received": "deals",
     "stock.written_off": "warehouse",

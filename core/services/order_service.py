@@ -59,7 +59,7 @@ from database.models.document import (
     STATUS_ISSUED,
     STATUS_READY,
 )
-from database.models.warehouse import MOVE_IN, MOVE_OUT, MOVE_RETURN, MOVE_WRITEOFF
+from database.models.warehouse import MOVE_IN, MOVE_OUT
 from database.repositories import clients as clients_repo
 from database.repositories import deal_lines as lines_repo
 from database.repositories import deals as deals_repo
@@ -85,15 +85,6 @@ MAX_LINE_NAME = 200
 #:   состоявшейся, отказ участника уже ничего не отменит.
 ORDER_CLOSED = "order.closed"
 
-#: Проведение отменено обратными движениями склада.
-#:
-#: Подробности: `order`, `from_status`.
-#:
-#: Место то же и по тем же доводам: после `take_status(closed → cancelled)` и
-#: после обратных движений, до записи в историю бумаги. От двойной отмены
-#: защищает та же условная смена статуса — второй нажавший до подписчиков не
-#: дойдёт.
-ORDER_REVERTED = "order.reverted"
 #: Строки заказа изменились (добавили, поправили, убрали). Слушает блок накладных:
 #: черновик по заказу обязан повторять заказ, пока не проведён.
 ORDER_LINES_CHANGED = "order.lines_changed"
@@ -860,122 +851,6 @@ def close(
         entity_label=order.number,
         before=previous,
         after=STATUS_CLOSED,
-    )
-    return order
-
-
-def revert(db: Session, document_id: int, author: User) -> Document:
-    """Отменить проведение — обратными движениями, а не стиранием прежних.
-
-    Склад обязан помнить, что уходило и что вернулось: сотри мы движения, и
-    остаток сойдётся, а вопрос «куда делись пять матриц» останется без ответа —
-    то есть ошибка станет невидимой.
-
-    Заказ после отмены становится отменённым, а не снова открытым: «отгрузили,
-    вернули, отгрузили опять» — это два разных события в истории, и склеивать
-    их в одно значит терять первое.
-    """
-    order = get(db, document_id)
-    if order.status != STATUS_CLOSED:
-        raise errors.ValidationError(
-            "Only a processed order can be reverted", code="order_not_closed"
-        )
-
-    if not documents_repo.take_status(db, order, expected=STATUS_CLOSED, status=STATUS_CANCELLED):
-        raise errors.ConflictError(
-            "The order has already been changed by someone else",
-            code="document_status_changed",
-        )
-
-    sklad_vklyuchen = modules_service.is_enabled(db, "warehouse")
-
-    # Возврат оформляется БУМАГОЙ, если отгрузка была оформлена бумагой.
-    #
-    # После переезда закрытия на накладную движения склада принадлежат ей, а
-    # не заказу. Перебирай мы по-прежнему движения заказа — не нашлось бы ни
-    # одного, и отмена перестала бы возвращать товар МОЛЧА, отчитавшись
-    # успехом. Это и есть тот случай, ради которого шаг переезда откладывался.
-    #
-    # Сторно, а не голые обратные движения: товар физически вернулся, и у
-    # этого события обязана быть бумага — ровно по тому же доводу, по которому
-    # проведённая накладная не правится, а исправляется обратной. Механизм
-    # берётся готовый (`waybill_service.stornirovat`), а не пишется второй раз.
-    #
-    # Проводится сразу, а не оставляется черновиком: человек нажал «отменить
-    # проведение», и товар обязан вернуться этим же нажатием. Черновик
-    # превратил бы отмену в два действия, второе из которых легко забыть — и
-    # остаток остался бы неверным до тех пор, пока кто-нибудь не вспомнит.
-    #
-    # `confirm_negative=True` сохраняет прежнее поведение: обратные движения и
-    # раньше писались без проверки нехватки. Возврат приёмки, товар из которой
-    # уже продали, уводит остаток в минус — но отказать здесь значило бы
-    # запереть человека с заказом, который нельзя ни отменить, ни исправить.
-    otgruzheno = otgruzheno_nakladnymi(db, order.id)
-    for nakladnaya in otgruzheno:
-        storno = waybill_service.stornirovat(db, nakladnaya.id, author)
-        waybill_service.provesti(db, storno.id, author, confirm_negative=True)
-
-    # Заказы, закрытые ДО переезда, накладных не имеют: их движения лежат на
-    # самом заказе. Задним числом бумага им не выписывается — накладная с
-    # сегодняшним номером и вчерашней датой это подделка, — поэтому старый путь
-    # остаётся ровно для них. Он же работает, когда блок накладных выключен.
-    #
-    # Выключенный склад закрывает и его: писать обратные движения в блок,
-    # которого нет, значит нарушать то же правило, что и при закрытии.
-    # Сторно выше от этого не отказывается — бумага принадлежит накладным, а
-    # движений `provesti` при выключенном складе не пишет тоже.
-    starye = []
-    if sklad_vklyuchen and not otgruzheno:
-        starye = warehouse_repo.moves_of_document(db, order.id)
-    for move in starye:
-        if move.kind not in (MOVE_IN, MOVE_OUT):
-            continue
-        warehouse_service.add_move(
-            db,
-            {
-                "product_id": move.product_id,
-                # Возврат на склад — `return`, снятие с него — `writeoff`:
-                # обратное движение обязано называться тем, чем оно является,
-                # иначе журнал склада перестаёт читаться словами.
-                "kind": MOVE_RETURN if move.quantity_milli < 0 else MOVE_WRITEOFF,
-                "quantity": _as_text(abs(move.quantity_milli)),
-                "warehouse_id": move.warehouse_id,
-                "deal_id": move.deal_id,
-                "cost": move.cost_minor,
-                "comment": f"reversed for order {order.number}",
-                "document_id": order.id,
-            },
-            author,
-        )
-
-    # Как и у закрытия: после захвата статуса и после обратных движений склада,
-    # до того как операция признана состоявшейся.
-    event_bus.emit(
-        ORDER_REVERTED,
-        db=db,
-        actor=author,
-        reason=f"order {order.number} reverted",
-        source=SOURCE_MANUAL,
-        source_ref=order.number,
-        order=order,
-        from_status=STATUS_CLOSED,
-    )
-
-    primechanie = "processing reversed"
-    if not sklad_vklyuchen:
-        # Иначе отмена, ничего не вернувшая, выглядит в истории обычной.
-        primechanie = "warehouse module off, no stock moves"
-    _record(db, order, STATUS_CLOSED, STATUS_CANCELLED, author, primechanie)
-    audit_service.record(
-        db,
-        action=audit_service.ACTION_ORDER_REVERTED,
-        actor=author,
-        source=SOURCE_MANUAL,
-        entity_type=audit_service.ENTITY_DOCUMENT,
-        entity_id=order.id,
-        entity_label=order.number,
-        before=STATUS_CLOSED,
-        after=STATUS_CANCELLED,
     )
     return order
 

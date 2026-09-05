@@ -24,6 +24,7 @@ export const DOC_KINDS = [
   "act",
   "waybill_out",
   "waybill_in",
+  "return",
 ] as const;
 
 export type DocKind = (typeof DOC_KINDS)[number];
@@ -41,6 +42,7 @@ const KIND_LABELS: Record<DocKind, TranslationKey> = {
   act: "kindAct",
   waybill_out: "kindWaybillOut",
   waybill_in: "kindWaybillIn",
+  return: "kindReturn",
 };
 
 export function kindLabel(t: TFunc, kind: string): string {
@@ -127,6 +129,11 @@ export function statusLabel(t: TFunc, status: string, kind?: string): string {
     return t(WAYBILL_STATUS_LABEL[status as keyof typeof WAYBILL_STATUS_LABEL] ?? "wbDraft");
   }
   if (kind && ORDER_KINDS.includes(kind)) return orderStatusLabel(t, status, kind);
+  if (kind === "return") {
+    if (status === "closed") return t("returnDone");
+    if (status === "cancelled") return t("returnCancelled");
+    return t("returnDraft");
+  }
   if (kind === "act") {
     if (status === "issued") return t("actOpen");
     if (status === "closed") return t("actDone");
@@ -139,6 +146,7 @@ export function statusLabel(t: TFunc, status: string, kind?: string): string {
 export function paperLink(doc: { id: number; kind: string }): string {
   if (ORDER_KINDS.includes(doc.kind)) return `/orders/${doc.id}`;
   if (WAYBILL_KINDS.includes(doc.kind)) return `/waybills/${doc.id}`;
+  if (doc.kind === "return") return `/returns/${doc.id}`;
   return `/documents/${doc.id}`;
 }
 
@@ -149,6 +157,12 @@ export function paperLink(doc: { id: number; kind: string }): string {
  *  словом. Накладная: отгружена — сделано (success), получена клиентом —
  *  бренд; черновик — без цвета. */
 export function statusVariant(status: string, kind?: string): "success" | "warning" | "accent" | "brand" | "danger" | undefined {
+  // Возврат: черновик серый, проведён — сделано, отменён — красный.
+  if (kind === "return") {
+    if (status === "closed") return "success";
+    if (status === "cancelled") return "danger";
+    return undefined;
+  }
   if (kind && WAYBILL_KINDS.includes(kind)) {
     if (status === "issued") return "success";
     if (status === "closed") return "brand";

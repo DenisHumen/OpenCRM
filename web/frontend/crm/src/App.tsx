@@ -54,6 +54,8 @@ import {
 } from "./screens/Settings";
 import { SettingsModules } from "./screens/SettingsModules";
 import { OrderCard } from "./screens/OrderCard";
+import { ReturnCard } from "./screens/ReturnCard";
+import { Returns } from "./screens/Returns";
 import { WaybillCard } from "./screens/WaybillCard";
 import { Orders } from "./screens/Orders";
 import { Waybills } from "./screens/Waybills";
@@ -306,6 +308,8 @@ export default function App() {
             <Route element={<ModuleRoute module="orders" />}>
               <Route path="/orders" element={<Orders />} />
               <Route path="/orders/:id" element={<ById><OrderCard /></ById>} />
+              <Route path="/returns" element={<Returns />} />
+              <Route path="/returns/:id" element={<ById><ReturnCard /></ById>} />
             </Route>
             <Route element={<ModuleRoute module="waybills" />}>
               <Route path="/waybills" element={<Waybills />} />

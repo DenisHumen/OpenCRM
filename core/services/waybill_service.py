@@ -18,7 +18,7 @@
    пять» чинится не изменением шестёрки на пятёрку, а обратной накладной на
    одну штуку. Довод не бухгалтерский, а складской: правка стёрла бы факт, что
    шесть штук физически покидали склад, и вопрос «куда делась одна» остался бы
-   без ответа. Тот же довод записан у `order_service.revert`.
+   без ответа. Тот же довод — у возврата покупателя (`return_service`).
 
 3. *К остатку ведёт ровно один путь.* Заказ двигает склад при закрытии,
    накладная — при проведении. Если по одному заказу пройдут оба, товар уедет
@@ -50,13 +50,14 @@ from core.services import (
 from database.models import Document, DocumentEvent, DocumentLine, User
 from database.models.audit import SOURCE_MANUAL
 from database.models.document import (
+    KIND_RETURN,
     KIND_SALES_ORDER,
-    ORDER_KINDS,
     KIND_WAYBILL_IN,
     KIND_WAYBILL_OUT,
+    OPEN_ORDER_STATUSES,
+    ORDER_KINDS,
     STATUS_CANCELLED,
     STATUS_CLOSED,
-    OPEN_ORDER_STATUSES,
     STATUS_DRAFT,
     STATUS_ISSUED,
     WAYBILL_KINDS,
@@ -677,7 +678,7 @@ def stornirovat(db: Session, document_id: int, author: User) -> Document:
     **Почему не правка.** Правка стёрла бы факт: шесть штук физически покидали
     склад, и вопрос «куда делась одна» остался бы без ответа. Склад обязан
     помнить, что уходило и что вернулось; сотри мы движение — остаток сойдётся,
-    а ошибка станет невидимой. Тот же довод записан у `order_service.revert`.
+    а ошибка станет невидимой. Тот же довод — у возврата покупателя.
 
     Сторнирующая накладная рождается ЧЕРНОВИКОМ, а не проведённой сразу. Это
     намеренно: возврат тоже бывает частичным («вернули четыре из шести»), и
@@ -781,8 +782,8 @@ def _vid_dvizheniya(db: Session, waybill: Document, ishodyashchaya: bool) -> str
     склада перестаёт читаться словами: «приход» у сторнированной отгрузки
     выглядит как новая поставка, а это возврат.
 
-    Правило записано у прежней отмены заказа (`order_service.revert`), и при
-    переезде закрытия на накладную оно чуть не потерялось: сторно писало бы
+    Правило записано у прежней отмены заказа (её больше нет — есть возврат,
+    docs/22), и при переезде закрытия на накладную оно чуть не потерялось: сторно писало бы
     голые `in`/`out`, и различить в журнале поставку от возврата стало бы
     нечем. Поймано CI — старая проверка отмены искала в движениях `return`.
 
@@ -792,7 +793,12 @@ def _vid_dvizheniya(db: Session, waybill: Document, ishodyashchaya: bool) -> str
     if waybill.basis_id is None:
         return MOVE_OUT if ishodyashchaya else MOVE_IN
     osnovanie = documents_repo.get(db, waybill.basis_id)
-    if osnovanie is None or osnovanie.kind not in WAYBILL_KINDS:
+    if osnovanie is None:
+        return MOVE_OUT if ishodyashchaya else MOVE_IN
+    # Приходная по возврату покупателя — тоже возврат, а не поставка.
+    if osnovanie.kind == KIND_RETURN:
+        return MOVE_RETURN
+    if osnovanie.kind not in WAYBILL_KINDS:
         return MOVE_OUT if ishodyashchaya else MOVE_IN
     # Возврат на склад — `return`, снятие с него — `writeoff`.
     return MOVE_WRITEOFF if ishodyashchaya else MOVE_RETURN

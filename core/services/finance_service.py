@@ -44,7 +44,6 @@ from database.models.finance import (
     BASE_INCOME_PERCENT,
     BASES,
     CORRECTION_ADJUSTMENT,
-    CORRECTION_REVERSAL,
     DIRECTION_INCOME,
     DIRECTIONS,
     MAX_AMOUNT_MINOR,
@@ -71,6 +70,8 @@ ACTION_BUDGET_SET = "finance.budget_set"
 #: спрашивают об этом иначе — «когда с нас взяли» и «когда мы отдали», — и
 #: искать это в общей куче операций пришлось бы по комментарию.
 ACTION_PAYMENT_RECEIVED = "finance.payment_received"
+#: Деньги вернули клиенту по возврату: доходная операция с минусом.
+ACTION_REFUND_MADE = "finance.refund_made"
 #: Правило заведено, поправлено или закрыто. Ставка налога — то, из-за чего
 #: через год спорят с бухгалтером; менять её молча нельзя.
 ACTION_RULE_CHANGED = "finance.rule_changed"
@@ -862,8 +863,8 @@ def accrue_order_costs(
                 amount_minor=amount,
                 happened_at=now_utc(),
                 comment=f"{rule.name} for order {order.number}",
-                # Порождено ЗАКРЫТИЕМ ЗАКАЗА — и снимется его отменой. Ровно по
-                # этой отметке `reverse_order_money` и отбирает своё.
+                # Порождено ЗАКРЫТИЕМ ЗАКАЗА: отметка различает упаковку от
+                # налога с платежа во врезке денег и в поправках.
                 origin=ORIGIN_ORDER_CLOSED,
                 deal_id=order.deal_id,
                 client_id=order.client_id,
@@ -875,88 +876,57 @@ def accrue_order_costs(
     return made
 
 
-def reverse_order_money(
+def refund_for_return(
     db: Session,
+    vozvrat,
     order,
+    category_id,
     actor: User,
     *,
     source: str = SOURCE_MANUAL,
     source_ref: str = "",
-) -> list[FinanceOperation]:
-    """Отмена проведения заказа сторнирует НАЧИСЛЕННОЕ ЗАКРЫТИЕМ — обратной операцией.
+) -> FinanceOperation | None:
+    """Проведённый возврат отдаёт деньги клиенту — минусом по доходной статье.
 
-    Существующие операции не правятся и не удаляются. Образец — тот же заказ со
-    складом: «сотри мы движения, и остаток сойдётся, а вопрос „куда делись пять
-    матриц“ останется без ответа».
+    Тот же путь, что у возврата оплаты руками (`take_payment` с отрицательной
+    суммой): налог с оборота сторнируется сам, правилом, ровно один раз.
+    Начисления закрытия заказа (упаковка, доставка) НЕ снимаются: коробку и
+    курьера оплатили, и возврат товара этих денег не возвращает.
 
-    **Сторнируется только то, что породило само закрытие** (`origin =
-    order_closed`), а не всё, что висит на бланке. Разница не теоретическая:
-    налог с оборота начислен ПЛАТЕЖОМ и на бланке оказался лишь потому, что
-    платёж назвал бланк. Сняв его здесь, мы получили бы оборот 100 000 при налоге
-    ноль — а следом человек делает возврат денег отдельным действием, правило
-    снимает налог второй раз, уже с отрицательной базы, и прибыль растёт из
-    воздуха.
+    Операция висит на ВОЗВРАТЕ, а не на заказе: на заказе она уменьшила бы
+    «получено», и карточка показала бы долг клиента там, где клиенту только
+    что вернули деньги.
 
-    Отбор идёт по СНИМКУ на операции, а не по виду живого правила: вид правила
-    правится (`base` меняют на экране), и вчерашнее начисление после такой правки
-    попало бы не в ту корзину. По той же причине новый вид начисления ничего
-    здесь не сломает — он проставит свой `origin`, а этот отбор его не тронет.
-
-    **Платежи не отменяются.** Операции без правила — это полученные деньги, и
-    отмена проведения заказа их не отменяет: товар вернули, а деньги ещё нет.
-    Возврат клиенту — отдельное осознанное действие человека.
-
-    Сторнируется ИТОГ ЦЕПОЧКИ, а не первая записанная сумма: упаковку могли
-    поправить с 80 на 140, и вернуть надо 140. Сама сторнирующая операция входит
-    в ту же цепочку, поэтому её итог становится нулём — и второй раз отменить то
-    же начисление уже нечего (а `reversal_of` не даст и попробовать).
-
-    `happened_at` — **день отмены**, а не день исходного начисления. Прямое
-    следствие правила блока: правка задним числом означала бы, что прибыль за
-    прошлый квартал зависит от того, когда её спросили. Побочное следствие
-    названо вслух: закрытый месяц остаётся с оборотом, отменённым в следующем.
+    Статью называет человек при проведении: возврат без статьи при включённых
+    деньгах — отказ, а не молчаливая операция «куда-нибудь».
     """
-    made: list[FinanceOperation] = []
-    for head in finance_repo.accruals_of_document(db, order.id, origin=ORIGIN_ORDER_CLOSED):
-        if finance_repo.reversal_of(db, head.id) is not None:
-            continue
-        total = finance_repo.accrual_total(db, head.id)
-        if total == 0:
-            continue
-        operation = finance_repo.add_operation(
-            db,
-            FinanceOperation(
-                category_id=head.category_id,
-                amount_minor=-total,
-                comment=f"reversed for order {order.number}",
-                happened_at=now_utc(),
-                deal_id=head.deal_id,
-                client_id=head.client_id,
-                company_id=head.company_id,
-                document_id=head.document_id,
-                rule_id=head.rule_id,
-                # Отметка «чем вызвано» едет от головы: цепочка целиком
-                # принадлежит одному событию, и отмена — её часть, а не своё
-                # отдельное явление.
-                origin=head.origin,
-                corrects_id=head.id,
-                correction=CORRECTION_REVERSAL,
-                author_id=actor.id if actor else None,
-            ),
+    summa = vozvrat.refund_minor or 0
+    if summa == 0:
+        return None
+    if not category_id:
+        raise errors.ValidationError(
+            "Pick an income category for the refund", code="refund_needs_category"
         )
-        audit_service.record(
-            db,
-            action=ACTION_OPERATION_ADDED,
-            actor=actor,
-            source=source,
-            source_ref=source_ref,
-            entity_type=ENTITY_OPERATION,
-            entity_id=operation.id,
-            entity_label=f"{order.number}",
-            after=audit_service.money_text(operation.amount_minor),
+    category = get_category(db, category_id)
+    if category.direction != DIRECTION_INCOME:
+        raise errors.ValidationError(
+            "A refund goes back through an income category", code="refund_needs_income"
         )
-        made.append(operation)
-    return made
+    return create_operation(
+        db,
+        {
+            "category_id": category.id,
+            "amount": -summa,
+            "comment": f"refund by return {vozvrat.number} for order {order.number}",
+            "document_id": vozvrat.id,
+            "deal_id": vozvrat.deal_id,
+            "client_id": vozvrat.client_id,
+        },
+        actor,
+        source=source,
+        source_ref=source_ref,
+        action=ACTION_REFUND_MADE,
+    )
 
 
 def adjust_accrual(

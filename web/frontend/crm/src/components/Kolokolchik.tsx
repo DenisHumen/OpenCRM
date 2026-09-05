@@ -26,6 +26,7 @@ type Perevod = ReturnType<typeof useApp>["t"];
 const ZNACHOK: Record<string, string> = {
   order_closed: "receipt",
   order_reverted: "receipt",
+  return_posted: "arrowIn",
   order_cancelled: "receipt",
   waybill_posted: "clipboard",
   auto_waybill: "clipboard",
@@ -56,6 +57,7 @@ export function podpis(t: Perevod, n: Uvedomlenie): string {
   const klyuchi: Record<string, string> = {
     order_closed: "ntfOrderClosed",
     order_reverted: "ntfOrderReverted",
+    return_posted: "ntfReturnPosted",
     order_cancelled: "ntfOrderCancelled",
     waybill_posted: "ntfWaybillPosted",
     act_completed: "ntfActCompleted",

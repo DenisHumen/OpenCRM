@@ -67,8 +67,9 @@ def test_nakladnaya_provedyonnaya_rukami_zakryvaet_zakaz(root_client):
     zapisi = [e for e in posle["events"] if e["to_status"] == "closed"]
     assert zapisi and f"shipped by waybill {wb['number']}" in zapisi[-1]["note"]
 
-    # Закрытый накладной заказ откатывается как обычный: сторно проводится, товар возвращается.
-    assert root_client.post(f"{ORDERS}/{order['id']}/revert", json={}).status_code == 200
+    # Назад — только возвратом: он выписывает приходную и возвращает товар.
+    vozvrat = root_client.post(f"{ORDERS}/{order['id']}/returns").json()
+    assert root_client.post(f"{API}/returns/{vozvrat['id']}/post", json={}).status_code == 200
     assert ostatok(root_client, item["id"]) == 10000
 
 
@@ -88,7 +89,7 @@ def test_otmena_zakaza_s_uekhavshim_tovarom_otkaz(root_client):
 
 
 def test_provedyonnoe_storno_snimaet_otgruzheno(root_client):
-    """Д7. После проведённого сторно заказ больше не «отгружен»: откат проходит без второго сторно."""
+    """Д7. После проведённого сторно возвращать по заказу нечего: возврат не заводится."""
     item = tovar(root_client)
     order = zakaz_s_tovarom(root_client, item)
     assert root_client.post(f"{ORDERS}/{order['id']}/close", json={}).status_code == 200
@@ -97,9 +98,8 @@ def test_provedyonnoe_storno_snimaet_otgruzheno(root_client):
     assert root_client.post(f"{WB}/{storno['id']}/post", json={}).status_code == 200
     assert ostatok(root_client, item["id"]) == 10000, "товар вернулся сторно"
 
-    rv = root_client.post(f"{ORDERS}/{order['id']}/revert", json={})
-    assert rv.status_code == 200, rv.text
-    assert rv.json()["status"] == "cancelled"
+    otkaz = root_client.post(f"{ORDERS}/{order['id']}/returns")
+    assert otkaz.status_code == 422 and otkaz.json()["error"]["code"] == "nothing_to_return", otkaz.text
     assert ostatok(root_client, item["id"]) == 10000, "второго возврата нет"
 
 
