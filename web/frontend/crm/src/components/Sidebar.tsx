@@ -305,7 +305,19 @@ export function Sidebar({
   } = useApp();
   const navigate = useNavigate();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [sozdatOpen, setSozdatOpen] = useState(false);
   const [pendingCount, setPendingCount] = useState(0);
+
+  // Одна кнопка «Создать» на всё: клиента, заявку, бланк, заказ, напоминание.
+  // До неё первый шаг искали по разделам — а спрашивают «где завести», а не
+  // «в каком разделе кнопка». Показывается только то, на что есть право.
+  const sozdat = allowed<NavItem>(user, modules, [
+    { perm: "clients.create", to: "/clients?new=1", label: t("newClient"), icon: "userPlus" },
+    { perm: "deals.create", to: "/deals?new=1", label: term(workspace.deal_term, locale, "new"), icon: "deals" },
+    { module: "documents", perm: "documents.create", to: "/documents?new=1", label: t("newDocument"), icon: "receipt" },
+    { module: "orders", perm: "orders.create", to: "/orders", label: t("quickOrder"), icon: "clipboard" },
+    { module: "tasks", perm: "tasks.create", to: "/tasks", label: t("quickTask"), icon: "clock" },
+  ]);
 
 
   // Счётчик заявок на регистрацию нужен только тому, кто их разбирает.
@@ -552,6 +564,35 @@ export function Sidebar({
             {brandName}
           </div>
         </div>
+        )}
+        {sozdat.length > 0 && (
+          <div className="side-create-wrap">
+            <button
+              type="button"
+              className="side-create"
+              aria-expanded={sozdatOpen}
+              onClick={() => setSozdatOpen((bylo) => !bylo)}
+            >
+              <Icon name="plus" size={14} stroke={2} />
+              <span>{t("create")}</span>
+            </button>
+            {sozdatOpen && (
+              <div className="side-create-menu" role="menu">
+                {sozdat.map((item) => (
+                  <NavLink
+                    key={item.to}
+                    to={item.to}
+                    className="side-create-item"
+                    role="menuitem"
+                    onClick={() => setSozdatOpen(false)}
+                  >
+                    <Icon name={item.icon} size={14} />
+                    {item.label}
+                  </NavLink>
+                ))}
+              </div>
+            )}
+          </div>
         )}
         <button type="button" className="side-search" onClick={onOpenSearch}>
           <Icon name="search" size={14} />
