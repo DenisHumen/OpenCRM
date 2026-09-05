@@ -3,7 +3,8 @@ import { Link, useNavigate } from "react-router-dom";
 
 import { ContextMenu, punktyDlyaZapisi, useContextMenu } from "../components/ContextMenu";
 import { Icon } from "../components/Icon";
-import { Chip, Dochitat, EmptyState, ScreenLoading } from "../components/ui";
+import { Chip, Dochitat, EmptyState, Modal, ScreenLoading } from "../components/ui";
+import { VyborKlienta } from "../components/VyborKlienta";
 import { api } from "../lib/api";
 import type { HistoryEvent } from "../components/History";
 import { useApp } from "../lib/app";
@@ -41,6 +42,7 @@ export interface Order {
   status: string;
   assembled: boolean;
   client_id: number | null;
+  client_name: string | null;
   deal_id: number | null;
   lines: OrderLine[];
   total: number | null;
@@ -100,6 +102,10 @@ export function Orders() {
   const { failure, fail, clear } = useFailure();
 
   const [poryadok, setPoryadok] = useState("new");
+  // Окно «новый заказ»: вид и, по желанию, клиент — кому отгружаем. Заказ без
+  // клиента законен; с клиентом отгрузка копится в его истории.
+  const [novyy, setNovyy] = useState<Order["kind"] | null>(null);
+  const [klient, setKlient] = useState<{ id: number | null; imya: string | null }>({ id: null, imya: null });
 
   const search = useDebounced(query);
 
@@ -176,7 +182,7 @@ export function Orders() {
     // человек уходил в один, а второй оставался висеть без строк.
     if (!guard.take()) return;
     try {
-      const order = await api.post<Order>("/orders", { kind: which });
+      const order = await api.post<Order>("/orders", { kind: which, client_id: klient.id });
       navigate(`/orders/${order.id}`);
     } catch (e) {
       // Отказ здесь был не пойман вовсе: нажатие просто ничего не делало.
@@ -192,6 +198,29 @@ export function Orders() {
   return (
     <div className="page page-wide">
       <ContextMenu menu={kontekst.menu} zakryt={kontekst.zakryt} />
+      {novyy !== null && (
+        <Modal title={novyy === "sales_order" ? t("newSalesOrder") : t("newPurchaseOrder")} onClose={() => setNovyy(null)}>
+          <div className="field">
+            <label className="label">{t("client")}</label>
+            <VyborKlienta
+              value={klient.id}
+              imya={klient.imya}
+              onPick={(id, imya) => setKlient({ id, imya })}
+              pustoy
+              pustoyPodpis={t("noClient")}
+            />
+            <div className="field-desc">{t("orderClientHint")}</div>
+          </div>
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 14 }}>
+            <button type="button" className="btn btn-secondary" onClick={() => setNovyy(null)}>
+              {t("cancel")}
+            </button>
+            <button type="button" className="btn btn-primary" disabled={guard.busy} onClick={() => void create(novyy)}>
+              {t("create")}
+            </button>
+          </div>
+        </Modal>
+      )}
       <div className="page-head">
         <div>
           <h1 className="page-title">{nazvanieZakazov(t, term(workspace.deal_term, locale, "many"))}</h1>
@@ -201,7 +230,7 @@ export function Orders() {
           <button
             className="btn btn-primary"
             disabled={guard.busy}
-            onClick={() => void create("sales_order")}
+            onClick={() => setNovyy("sales_order")}
           >
             <Icon name="plus" stroke={2} />
             {t("newSalesOrder")}
@@ -209,7 +238,7 @@ export function Orders() {
           <button
             className="btn btn-secondary"
             disabled={guard.busy}
-            onClick={() => void create("purchase_order")}
+            onClick={() => setNovyy("purchase_order")}
           >
             {t("newPurchaseOrder")}
           </button>
@@ -293,6 +322,9 @@ export function Orders() {
             </span>
             <span style={{ width: 110 }}>
               <Chip>{order.kind === "sales_order" ? t("orderKindSales") : t("orderKindPurchase")}</Chip>
+            </span>
+            <span className="truncate" style={{ width: 150, color: "var(--muted)", fontSize: 12.5 }}>
+              {order.client_name ?? ""}
             </span>
             <span style={{ flex: 1, minWidth: 0, color: "var(--muted)", fontSize: 12.5 }}>
               {order.lines.length
