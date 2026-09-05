@@ -5,6 +5,7 @@ import { History } from "../components/History";
 import { Icon } from "../components/Icon";
 import { useLabelsOn } from "../components/ProductBarcodes";
 import { Chip, ConfirmModal, LoadFailed, Modal, ScreenLoading } from "../components/ui";
+import { VyborKlienta } from "../components/VyborKlienta";
 import { WarehousePicker, useWarehouses } from "../components/Warehouses";
 import { api, ApiError } from "../lib/api";
 import { useApp } from "../lib/app";
@@ -39,6 +40,10 @@ export function OrderCard() {
   const [confirm, setConfirm] = useState<"cancel" | "revert" | "delete" | null>(null);
   const places = useWarehouses();
   const [place, setPlace] = useState<number | null>(null);
+  // Окно «кому отгружаем»: открыто только у открытого заказа — проведённый
+  // записан, и для кого он был, не меняется (владелец, 05.09.2026).
+  const [klientOkno, setKlientOkno] = useState(false);
+  const [vybor, setVybor] = useState<{ id: number | null; imya: string | null }>({ id: null, imya: null });
   const { failure, fail, clear } = useFailure();
 
   useLiveTopic("orders", (s) => {
@@ -112,6 +117,29 @@ export function OrderCard() {
             <Chip variant={order.status === "closed" ? "success" : undefined}>
               {t(ORDER_STATUS_LABEL[order.status as keyof typeof ORDER_STATUS_LABEL] ?? "docIssued")}
             </Chip>
+            {order.client_id ? (
+              <Link
+                to={`/clients/${order.client_id}`}
+                title={open ? undefined : t("orderClientLocked")}
+                style={{ color: "var(--muted)", fontSize: 12.5, textDecoration: "underline", textUnderlineOffset: 2 }}
+              >
+                {order.client_name ?? t("client")}
+              </Link>
+            ) : (
+              <span style={{ color: "var(--faint)", fontSize: 12.5 }}>{t("noClient")}</span>
+            )}
+            {open && can(user, "orders.edit") && (
+              <button
+                type="button"
+                className="text-link"
+                onClick={() => {
+                  setVybor({ id: order.client_id, imya: order.client_name });
+                  setKlientOkno(true);
+                }}
+              >
+                {order.client_id ? t("orderChangeClient") : t("orderAttachClient")}
+              </button>
+            )}
             {order.site_ref && <span style={{ color: "var(--faint)", fontSize: 12.5 }}>{t("orderFromSite", { ref: order.site_ref })}</span>}
             {order.reserved_until && (
               order.reserve_expired ? (
@@ -274,6 +302,47 @@ export function OrderCard() {
       {/* Деньги по заказу — врезка блока `finance`, а не часть заказа.
           Выключен блок или нет права смотреть деньги — заказ работает целиком,
           и это не половина экрана, а правда о системе без финансов. */}
+      {klientOkno && (
+        <Modal title={order.client_id ? t("orderChangeClient") : t("orderAttachClient")} onClose={() => setKlientOkno(false)}>
+          <div className="field">
+            <label className="label">{t("client")}</label>
+            <VyborKlienta
+              value={vybor.id}
+              imya={vybor.imya}
+              onPick={(id, imya) => setVybor({ id, imya })}
+              pustoy
+              pustoyPodpis={t("noClient")}
+            />
+            <div className="field-desc">{t("orderClientHint")}</div>
+          </div>
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 14 }}>
+            <button type="button" className="btn btn-secondary" onClick={() => setKlientOkno(false)}>
+              {t("cancel")}
+            </button>
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={guard.busy}
+              onClick={async () => {
+                if (!guard.take()) return;
+                try {
+                  // Ответ ручки — заказ без истории и бумаг; карточка перечитывается
+                  // целиком, как после «готов» и «отгрузить».
+                  await api.post<Order>(`/orders/${order.id}/client`, { client_id: vybor.id });
+                  setKlientOkno(false);
+                  await load();
+                } catch (err) {
+                  toastError(err);
+                } finally {
+                  guard.free();
+                }
+              }}
+            >
+              {t("save")}
+            </button>
+          </div>
+        </Modal>
+      )}
       {moduleOn(modules, "finance") && can(user, "finance.view") && <OrderMoney order={order} />}
 
       {order.status === "closed" && (

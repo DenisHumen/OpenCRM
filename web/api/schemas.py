@@ -1054,7 +1054,7 @@ def waybill_out(waybill, lines: list | None = None, amounts: bool = True) -> dic
     }
 
 
-def order_out(order, lines: list | None = None, amounts: bool = True) -> dict:
+def order_out(order, lines: list | None = None, amounts: bool = True, client_name: str | None = None) -> dict:
     """Заказ вместе со строками.
 
     Строки приходят готовыми, а не догружаются здесь: список показывает их
@@ -1071,6 +1071,8 @@ def order_out(order, lines: list | None = None, amounts: bool = True) -> dict:
         "kind": order.kind,
         "status": order.status,
         "client_id": order.client_id,
+        # Кому отгружаем — именем; ключ есть всегда, и без клиента он пустой.
+        "client_name": client_name,
         "deal_id": order.deal_id,
         "locale": order.locale,
         "lines": [order_line_out(line, amounts=amounts) for line in rows],

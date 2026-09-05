@@ -952,3 +952,36 @@ def test_istoriya_zakaza_prihodit_na_kartochku(root_client, client_row):
     assert all("author_name" in e and "created_at" in e for e in events), (
         "у записи нет автора или времени: спор о сроках такой историей не решить"
     )
+
+
+def test_klient_u_zakaza_privyazyvaetsya_poka_zakaz_otkryt(root_client, client_row):
+    """Клиент у заказа необязателен и меняется только пока заказ открыт.
+
+    Просьба владельца 05.09.2026: у стойки клиента часто негде взять, но когда
+    он есть, отгрузки должны копиться в его истории — на будущую статистику.
+    Проведённый заказ записан, и для кого он был, уже не меняется.
+    """
+    item = product(root_client, stock="10")
+    created = root_client.post(ORDERS, json={"kind": "sales_order"})
+    assert created.status_code == 201, created.text
+    order = created.json()
+    assert order["client_id"] is None and order["client_name"] is None
+
+    privyazan = root_client.post(f"{ORDERS}/{order['id']}/client", json={"client_id": client_row["id"]})
+    assert privyazan.status_code == 200, privyazan.text
+    assert privyazan.json()["client_id"] == client_row["id"]
+    assert privyazan.json()["client_name"] == client_row["name"], "имя приходит вместе с номером"
+
+    v_spiske = root_client.get(ORDERS, params={"client_id": client_row["id"], "per_page": 200}).json()["items"]
+    assert next(o for o in v_spiske if o["id"] == order["id"])["client_name"] == client_row["name"]
+    assert root_client.get(f"{ORDERS}/{order['id']}").json()["client_name"] == client_row["name"]
+
+    assert root_client.post(f"{ORDERS}/{order['id']}/client", json={"client_id": 999999}).status_code == 404
+    assert root_client.post(f"{ORDERS}/{order['id']}/client", json={"client_id": None}).json()["client_id"] is None
+    root_client.post(f"{ORDERS}/{order['id']}/client", json={"client_id": client_row["id"]})
+
+    root_client.post(f"{ORDERS}/{order['id']}/lines", json={"product_id": item["id"], "quantity": "1"})
+    assert root_client.post(f"{ORDERS}/{order['id']}/close", json={}).status_code == 200
+    otkaz = root_client.post(f"{ORDERS}/{order['id']}/client", json={"client_id": None})
+    assert otkaz.status_code == 422 and otkaz.json()["error"]["code"] == "order_finished"
+    assert root_client.get(f"{ORDERS}/{order['id']}").json()["client_id"] == client_row["id"], "записанное не переписалось"

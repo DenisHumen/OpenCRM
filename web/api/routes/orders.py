@@ -31,6 +31,7 @@ from database.models.document import (
     ORDER_KINDS,
     WAYBILL_KINDS,
 )
+from database.repositories import clients as clients_repo
 from database.repositories import documents as documents_repo
 from database.repositories import users as users_repo
 from web.api import schemas
@@ -99,6 +100,14 @@ class CloseIn(BaseModel):
     confirm_negative: bool = False
 
 
+def _imya_klienta(db: Session, order) -> str | None:
+    """Имя клиента заказа для ответа — одно и то же у чтения и у правок."""
+    if not order.client_id:
+        return None
+    client = clients_repo.get(db, order.client_id, include_deleted=True)
+    return client.name if client else None
+
+
 @router.get("")
 def list_orders(
     search: str | None = Query(default=None, max_length=MAX_SEARCH),
@@ -142,8 +151,14 @@ def list_orders(
     # сумма заказа складывается из них, и без них список молчит о деньгах.
     rows = documents_repo.lines_by_documents(db, [item.id for item in items])
     amounts = permissions_service.sees_amounts(db, user, "orders")
+    imena = clients_repo.names_by_ids(db, [item.client_id for item in items if item.client_id])
     otvet = schemas.paginated(
-        [schemas.order_out(item, rows.get(item.id, []), amounts=amounts) for item in items],
+        [
+            schemas.order_out(
+                item, rows.get(item.id, []), amounts=amounts, client_name=imena.get(item.client_id)
+            )
+            for item in items
+        ],
         total, page, per_page,
     )
     # Счёт по состояниям — БЕЗ отбора по состоянию: иначе, свернув «закрытые»,
@@ -164,7 +179,10 @@ def create_order(
     # «Заведён новый клиент» — часть ответа, а не догадка экрана по тому, был ли
     # `client_id` в запросе: карточку могли и найти по номеру.
     return {
-        **schemas.order_out(order, [], amounts=permissions_service.sees_amounts(db, user, "orders")),
+        **schemas.order_out(
+            order, [], amounts=permissions_service.sees_amounts(db, user, "orders"),
+            client_name=_imya_klienta(db, order),
+        ),
         "client_created": client_created,
     }
 
@@ -180,6 +198,7 @@ def get_order(
         order,
         order_service.lines(db, order.id),
         amounts=permissions_service.sees_amounts(db, user, "orders"),
+        client_name=_imya_klienta(db, order),
     )
     # Бумаги, выписанные по этому заказу. Закрытие теперь выписывает
     # накладную, и человек обязан видеть КАКУЮ — иначе бумага есть, а найти
@@ -270,6 +289,29 @@ class DealLinkIn(BaseModel):
     deal_id: int | None = None
 
 
+class ClientLinkIn(BaseModel):
+    client_id: int | None = None
+
+
+@router.post("/{order_id}/client")
+def link_client(
+    order_id: int,
+    payload: ClientLinkIn,
+    user: User = Depends(require_perm("orders", "edit")),
+    db: Session = Depends(get_db),
+):
+    """Кому отгружаем — привязать или отвязать, пока заказ открыт. Отдельной
+    ручкой, как связь с заявкой: у заказа правится только эта связь.
+    `422 order_finished` у проведённого, `404 client_not_found`."""
+    order = order_service.privyazat_klienta(db, order_id, payload.client_id)
+    return schemas.order_out(
+        order,
+        order_service.lines(db, order.id),
+        amounts=permissions_service.sees_amounts(db, user, "orders"),
+        client_name=_imya_klienta(db, order),
+    )
+
+
 @router.post("/{order_id}/deal")
 def link_deal(
     order_id: int,
@@ -289,6 +331,7 @@ def link_deal(
         order,
         order_service.lines(db, order.id),
         amounts=permissions_service.sees_amounts(db, user, "orders"),
+        client_name=_imya_klienta(db, order),
     )
 
 
@@ -316,7 +359,8 @@ def mark_ready(
 ):
     order = order_service.mark_ready(db, order_id, user)
     return schemas.order_out(
-        order, order_service.lines(db, order.id), amounts=permissions_service.sees_amounts(db, user, "deals")
+        order, order_service.lines(db, order.id), amounts=permissions_service.sees_amounts(db, user, "deals"),
+        client_name=_imya_klienta(db, order),
     )
 
 
@@ -338,7 +382,8 @@ def close_order(
         confirm_negative=payload.confirm_negative,
     )
     return schemas.order_out(
-        order, order_service.lines(db, order.id), amounts=permissions_service.sees_amounts(db, user, "orders")
+        order, order_service.lines(db, order.id), amounts=permissions_service.sees_amounts(db, user, "orders"),
+        client_name=_imya_klienta(db, order),
     )
 
 
@@ -351,7 +396,8 @@ def revert_order(
     """Отменить проведение обратными движениями. Прежние остаются на месте."""
     order = order_service.revert(db, order_id, user)
     return schemas.order_out(
-        order, order_service.lines(db, order.id), amounts=permissions_service.sees_amounts(db, user, "orders")
+        order, order_service.lines(db, order.id), amounts=permissions_service.sees_amounts(db, user, "orders"),
+        client_name=_imya_klienta(db, order),
     )
 
 
@@ -374,7 +420,8 @@ def cancel_order(
     """Отменить непроведённый заказ. Резерв снимется сам — он не хранится."""
     order = order_service.cancel(db, order_id, user)
     return schemas.order_out(
-        order, order_service.lines(db, order.id), amounts=permissions_service.sees_amounts(db, user, "orders")
+        order, order_service.lines(db, order.id), amounts=permissions_service.sees_amounts(db, user, "orders"),
+        client_name=_imya_klienta(db, order),
     )
 
 

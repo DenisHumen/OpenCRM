@@ -232,6 +232,22 @@ def prikrepit_k_zayavke(
     return zakaz
 
 
+def privyazat_klienta(db: Session, document_id: int, client_id: int | None) -> Document:
+    """Привязать заказ к клиенту или отвязать (`client_id=None`) — пока открыт.
+
+    Клиент у заказа необязателен: у стойки его часто негде взять. Но проведённый
+    заказ записан — строки списаны, накладная выписана, — и менять, для кого
+    это было, значит переписывать историю (владелец, 05.09.2026).
+    """
+    zakaz = get(db, document_id)
+    _assert_open(zakaz)
+    if client_id is not None and clients_repo.get(db, client_id) is None:
+        raise errors.NotFoundError("Client not found", code="client_not_found")
+    zakaz.client_id = client_id
+    db.flush()
+    return zakaz
+
+
 def sobran_po_strokam(stroki) -> bool:
     """Собран ли заказ целиком: по каждой строке отмечено не меньше заказанного.
 
