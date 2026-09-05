@@ -355,6 +355,13 @@ def is_low(product: Product, stock_milli: int | None) -> bool:
     return stock_milli <= product.min_stock_milli
 
 
+def is_out(product: Product, stock_milli: int | None) -> bool:
+    """Ноль — «закончился», а не «заканчивается», и порог тут ни при чём:
+    с порогом 0 ноль подписывался «мало», без порога — никак (владелец,
+    05.09.2026). У услуги остатка нет, значит и кончиться нечему."""
+    return stock_milli is not None and stock_milli <= 0
+
+
 def add_move(
     db: Session,
     data: dict,
