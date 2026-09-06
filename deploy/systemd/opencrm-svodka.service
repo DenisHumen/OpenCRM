@@ -1,6 +1,6 @@
 [Unit]
 Description=OpenCRM: утренняя сводка в телеграм
-Documentation=https://github.com/DenisHumen/OpenCRM/blob/main/docs/13-telegram-messenger.md
+Documentation=https://github.com/DenisHumen/OpenCRM/blob/main/docs/ustroystvo/13-telegram-v-crm.md
 # Сводка считается изнутри контейнера приложения теми же репозиториями, что
 # отвечают экранам. Второй счёт «снаружи» означал бы два места, где считается
 # одно и то же, и разошлись бы они молча.

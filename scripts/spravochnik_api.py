@@ -1,4 +1,4 @@
-"""Справочник ручек API сайта для экрана документации — из `docs/04-api.md`.
+"""Справочник ручек API сайта для экрана документации — из `docs/osnovy/04-api.md`.
 
 На экран идёт ТОЛЬКО то, что зовёт чужая программа по ключу: раздел «API сайта
 магазина» справочника, ручки под ключом и снимок товара. Остальные ручки зовёт
@@ -9,7 +9,7 @@
 документом на первой же новой. Свежесть порождённого файла стережёт
 `tests/test_spravochnik_api.py`, полноту справочника — `test_api_dokumentirovan`.
 
-Запуск после правки `docs/04-api.md`:
+Запуск после правки `docs/osnovy/04-api.md`:
 
     python scripts/spravochnik_api.py
 """
@@ -22,7 +22,7 @@ import re
 import sys
 
 KOREN = pathlib.Path(__file__).resolve().parent.parent
-SPRAVOCHNIK = KOREN / "docs" / "04-api.md"
+SPRAVOCHNIK = KOREN / "docs" / "osnovy" / "04-api.md"
 VYKHOD = KOREN / "web" / "frontend" / "crm" / "src" / "lib" / "spravochnik_api.ts"
 
 STROKA = re.compile(r"^\| (GET|POST|PATCH|PUT|DELETE) \| `([^`]+)` \|(.*)\|\s*$")
@@ -111,7 +111,7 @@ def porodit(tekst: str) -> str:
     """Текст файла для экрана. Порождённый — руками не правится."""
     dannye = json.dumps(dlya_sayta(razobrat(tekst)), ensure_ascii=False, indent=2)
     return (
-        "// Порождено скриптом scripts/spravochnik_api.py из раздела «API сайта магазина» docs/04-api.md.\n"
+        "// Порождено скриптом scripts/spravochnik_api.py из раздела «API сайта магазина» docs/osnovy/04-api.md.\n"
         "// Руками не править: правится справочник, потом запускается скрипт.\n"
         "\n"
         "export type VidDostupa = \"otkryto\" | \"sotrudnik\" | \"pravo\" | \"klyuch\" | \"inoe\";\n"

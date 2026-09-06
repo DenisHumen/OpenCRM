@@ -9,7 +9,7 @@
 # пути отсутствует, там только его идентификатор, и разобрать «это nginx, а это
 # приложение» по такому пути нельзя. Ценой служит сокет docker, примонтированный
 # на чтение: доступ к нему равносилен root на машине, и это осознанный размен,
-# названный в docs/08-deployment.md.
+# названный в docs/ekspluatatsiya/08-razvyortyvanie.md.
 
 server:
   http_listen_port: 9080
@@ -45,7 +45,7 @@ scrape_configs:
         refresh_interval: 30s
         # Отбор делает демон, а не `keep` ниже: `keep` отбрасывает уже
         # заведённую цель, и promtail успевает открыть поток и завести курсор
-        # каждому контейнеру машины. Замеры — в docs/08-deployment.md.
+        # каждому контейнеру машины. Замеры — в docs/ekspluatatsiya/08-razvyortyvanie.md.
         filters:
           - name: label
             values:

@@ -482,7 +482,7 @@ export function SettingsReturnButton() {
   );
 }
 
-/** Связь блоков: что заводится само (docs/21-svyaz-blokov.md). */
+/** Связь блоков: что заводится само (docs/bloki/21-svyaz-blokov.md). */
 export function SettingsAutomation() {
   const { t, modules } = useApp();
   const { switcher } = useSettings();

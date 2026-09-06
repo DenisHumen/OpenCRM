@@ -35,7 +35,7 @@ export type Kusok =
   | { vid: "svyortka"; zagolovok: Dvuyazychno; kuski: Kusok[] }
   | { vid: "tablitsa"; shapka: Dvuyazychno[]; ryady: Dvuyazychno[][] }
   | { vid: "ekran"; put: string; podpis: Dvuyazychno }
-  // Ручки API сайта одним списком; сами данные порождены из docs/04-api.md.
+  // Ручки API сайта одним списком; сами данные порождены из docs/osnovy/04-api.md.
   | { vid: "spravochnik" }
   | {
       vid: "ruchka";

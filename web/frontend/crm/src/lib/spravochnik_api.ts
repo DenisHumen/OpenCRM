@@ -1,4 +1,4 @@
-// Порождено скриптом scripts/spravochnik_api.py из раздела «API сайта магазина» docs/04-api.md.
+// Порождено скриптом scripts/spravochnik_api.py из раздела «API сайта магазина» docs/osnovy/04-api.md.
 // Руками не править: правится справочник, потом запускается скрипт.
 
 export type VidDostupa = "otkryto" | "sotrudnik" | "pravo" | "klyuch" | "inoe";

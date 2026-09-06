@@ -28,7 +28,7 @@ SOURCE_TELEPHONY_WEBHOOK = "telephony_webhook"
 #: Забор почты по расписанию. Человека нет — письмо пришло само.
 SOURCE_MAIL_SYNC = "mail_sync"
 
-#: Запрос по ключу сайта (`docs/16-api-sayta.md`). Человека нет — за ключом
+#: Запрос по ключу сайта (`docs/ustroystvo/16-api-sayta.md`). Человека нет — за ключом
 #: стоит чужая программа.
 SOURCE_SITE_API = "site_api"
 

@@ -369,7 +369,7 @@ def add_to_deal_feed(
 # --- строки заявки -----------------------------------------------------------
 #
 # Раздел закрыт блоком `warehouse` целиком: без склада заявка снова описывается
-# одной суммой (`docs/11-modules.md`).
+# одной суммой (`docs/osnovy/11-bloki-i-svyaznost.md`).
 
 
 @router.get("/{deal_id}/lines", dependencies=[Depends(require_module("warehouse"))])

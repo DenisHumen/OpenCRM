@@ -383,7 +383,7 @@ def product_photo(filename: str, db: Session = Depends(get_db)):
     Стоит ВЫШЕ `/media/{work_uid}/{filename}`: иначе `product` читался бы как
     опознаватель работы. Три проверки те же, что у файла работы: блок склада
     выключен — 404, путь собирает сервис, неопубликованный товар — 404, а не
-    «есть, но не покажем» (docs/16-api-sayta.md §3).
+    «есть, но не покажем» (docs/ustroystvo/16-api-sayta.md §3).
     """
     otkaz = JSONResponse({"error": {"code": "not_found", "message": "Not found"}}, status_code=404)
     if not modules_service.is_enabled(db, "warehouse"):

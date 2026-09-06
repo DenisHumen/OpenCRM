@@ -1,6 +1,6 @@
 [Unit]
 Description=OpenCRM: уборка старой переписки телеграма
-Documentation=https://github.com/DenisHumen/OpenCRM/blob/main/docs/13-telegram-messenger.md
+Documentation=https://github.com/DenisHumen/OpenCRM/blob/main/docs/ustroystvo/13-telegram-v-crm.md
 # Задание ничего не делает, пока владелец не назвал срок хранения: умолчание —
 # хранить вечно. Включённое, оно удаляет пачками и в отпущенное время, потому
 # что telegram_messages — самая большая таблица системы.

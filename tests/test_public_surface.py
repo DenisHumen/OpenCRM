@@ -118,7 +118,7 @@ PUBLIC_ROUTES = {
     # Та же по природе защита, что `deny all` у /metrics, только в приложении
     ("POST", f"{API}/alerts/webhook"),
     # API сайта магазина: ключ с областями в `X-OpenCRM-Api-Key` вместо сессии,
-    # ограничитель на ключ и на адрес (docs/16-api-sayta.md §8–§9)
+    # ограничитель на ключ и на адрес (docs/ustroystvo/16-api-sayta.md §8–§9)
     ("GET", f"{API}/site/catalog"),
     ("GET", f"{API}/site/catalog/{{product_id}}"),
     ("GET", f"{API}/site/changes"),
@@ -465,7 +465,7 @@ def test_otkaz_ogranichitelya_eto_429_a_ne_503():
 def test_klyuch_ogranichitelya_ne_prikhodit_ot_klienta():
     """`$http_x_forwarded_for` в качестве ключа обходится одной строкой.
 
-    Тот же довод, что у `client_ip` в приложении (`docs/07-security.md`): всё,
+    Тот же довод, что у `client_ip` в приложении (`docs/ekspluatatsiya/07-bezopasnost.md`): всё,
     что клиент пишет сам, ключом ограничителя быть не может — ротация заголовка
     даёт новый отсек на каждый запрос и снимает защиту целиком.
     """
@@ -601,7 +601,7 @@ def test_cookie_propuska_po_pin_pomechena_kak_polozheno(manager_client, monkeypa
 
     Secure проверяется через настройку, а не через ответ: набор гоняется на
     `http://testserver`, и там флаг не ставится намеренно — иначе документированный
-    сценарий «сервер в локальной сети» ломался бы вчистую (`docs/07-security.md`).
+    сценарий «сервер в локальной сети» ломался бы вчистую (`docs/ekspluatatsiya/07-bezopasnost.md`).
     Проверяем оба: что за HTTPS флаг появляется и что остальные два стоят всегда.
     """
     from fastapi.testclient import TestClient
@@ -676,7 +676,7 @@ def test_publichnye_puti_perechisleny_vmeste_s_ikh_blokom():
     """Каждый публичный путь обязан знать, каким блоком системы он закрывается.
 
     Выключенный блок исчезает целиком — меню, API, настройки, отчёты
-    (`CLAUDE.md`, `docs/11-modules.md`). Публичные пути про это правило забывают
+    (`CLAUDE.md`, `docs/osnovy/11-bloki-i-svyaznost.md`). Публичные пути про это правило забывают
     чаще всех: они лежат не в `web/api/routes/`, где закрытие блоком стоит
     зависимостью на роутере, а в `web/public/`, где закрывать надо руками. Тогда
     «выключено» означает лишь «не видно в меню», а старая ссылка продолжает

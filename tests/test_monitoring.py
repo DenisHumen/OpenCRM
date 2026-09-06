@@ -610,7 +610,7 @@ def test_pereklyuchenie_protokola_ne_uehalo_v_obshchiy_fayl():
     `proxy-headers.inc` подключён в шесть мест: корень сайта, медиа витрины, два
     входа в CRM, панель и её страница входа. WebSocket нужен ровно панели —
     живой поток самой CRM сделан на SSE именно затем, чтобы обойтись без правки
-    nginx (`docs/12-realtime.md`, раздел 3).
+    nginx (`docs/ustroystvo/12-zhivye-obnovleniya.md`, раздел 3).
 
     Строка, которая ничего не делает в пяти местах из шести, однажды будет
     прочитана как «здесь тоже WebSocket» — и следующий разбор пойдёт не туда.

@@ -1,6 +1,6 @@
 [Unit]
 Description=OpenCRM: резервная копия базы и файлов
-Documentation=https://github.com/DenisHumen/OpenCRM/blob/main/docs/08-deployment.md
+Documentation=https://github.com/DenisHumen/OpenCRM/blob/main/docs/ekspluatatsiya/08-razvyortyvanie.md
 # Копия снимается изнутри работающего контейнера (sqlite .backup на горячую),
 # поэтому без docker смысла запускаться нет.
 After=docker.service

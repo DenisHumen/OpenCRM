@@ -184,7 +184,7 @@ class TelegramMessage(Base):
         # Лента одного диалога: страница за страницей, свежие сверху.
         Index("ix_telegram_messages_chat_time", "chat_id", "happened_at"),
         # Счёт непрочитанного по всей странице списка: условия ложатся на индекс
-        # диапазонами, проход выходит ПОКРЫВАЮЩИМ (замер — docs/03-database.md,
+        # диапазонами, проход выходит ПОКРЫВАЮЩИМ (замер — docs/osnovy/03-baza-dannyh.md,
         # «Счёт непрочитанного»). `id` в хвосте назван явно: так он попадает в
         # определение, и `alembic` с проверкой схемы видят то же, что база.
         Index("ix_telegram_messages_napravlenie", "direction", "chat_id", "id"),

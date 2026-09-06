@@ -1,6 +1,6 @@
 [Unit]
 Description=OpenCRM: автообновление сайта из ветки на GitHub
-Documentation=https://github.com/DenisHumen/OpenCRM/blob/main/docs/08-deployment.md
+Documentation=https://github.com/DenisHumen/OpenCRM/blob/main/docs/ekspluatatsiya/08-razvyortyvanie.md
 # Демон пересобирает контейнеры, значит должен подниматься после самого docker
 After=network-online.target docker.service
 Wants=network-online.target

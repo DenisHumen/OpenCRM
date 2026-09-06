@@ -1661,7 +1661,7 @@ def test_snyatyy_emodzi_propadaet_i_u_nas(root_client, bot_nastroen, monkeypatch
 def test_vyklyuchennyy_blok_zakryt_na_vseh_svoih_urovnyah(root_client, bot_nastroen):
     """Выключенный блок исчезает целиком, а не «в основном».
 
-    `docs/11-modules.md` называет семь уровней, и пропущенный делает выключение
+    `docs/osnovy/11-bloki-i-svyaznost.md` называет семь уровней, и пропущенный делает выключение
     косметическим: пункт спрятан, а адрес работает; экран убран, а настройки
     открыты. Здесь проверяются те уровни, которые проверяемы с сервера, — по
     одному запросу на каждый. Уровни интерфейса (меню, маршруты SPA) держатся

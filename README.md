@@ -369,22 +369,22 @@ this file is the English way into the project, not a translation of all of it.
 
 | Document | Contents |
 |---|---|
-| [01 — Overview](docs/01-overview.md) | What the system does, roles, scenarios |
-| [02 — Architecture](docs/02-architecture.md) | Stack, directory layout, modules, media pipeline |
-| [03 — Database](docs/03-database.md) | Schema, tables, migrations, indexes |
-| [04 — API](docs/04-api.md) | REST API specification |
-| [05 — CRM design](docs/05-crm-design.md) | Design notes for the interface |
-| [06 — Showcase design](docs/06-showcase-design.md) | Public showcase, animation, controls |
-| [07 — Security](docs/07-security.md) | Authentication, roles, public links, file protection |
-| [08 — Deployment](docs/08-deployment.md) | Docker, VPS, backups, auto-update |
-| [09 — Roadmap](docs/09-roadmap.md) | Delivery stages |
-| [11 — Modules](docs/11-modules.md) | Module registry, dependencies, permissions |
-| [12 — Live updates](docs/12-realtime.md) | Presence and the event bus over Redis: how an edit shows up for everyone |
-| [13 — Telegram inside the CRM](docs/13-telegram-messenger.md) | Company bot, dialogues, linking to clients |
-| [15 — Backups from the settings](docs/15-backup-encryption.md) | Encrypted copy of the database and files, restore from the screen |
-| [16 — Shop-site API](docs/16-api-sayta.md) | Keys and scopes, catalog, availability, reservations: the reasoning |
-| [17 — Waybills](docs/17-nakladnye.md) | Paper, stock moves, immutability |
-| [19 — Order assembly](docs/19-sborka-zakaza.md) | Picking an order from one place |
-| [20 — Usability and in-app guide](docs/20-udobstvo-i-spravka.md) | Live dashboard, sorting, the documentation screen |
-| [21 — Module links](docs/21-svyaz-blokov.md) | Papers issued by themselves, deleting papers created by mistake, notifications |
-| [10 — Security audit](docs/10-security-audit.md), [14 — Rust](docs/14-rust.md), [18 — Third-party components](docs/18-chuzhie-komponenty.md) | One-off reviews and decisions |
+| [01 — Overview](docs/osnovy/01-obzor.md) | What the system does, roles, scenarios |
+| [02 — Architecture](docs/osnovy/02-arhitektura.md) | Stack, directory layout, modules, media pipeline |
+| [03 — Database](docs/osnovy/03-baza-dannyh.md) | Schema, tables, migrations, indexes |
+| [04 — API](docs/osnovy/04-api.md) | REST API specification |
+| [05 — CRM design](docs/dizayn/05-dizayn-crm.md) | Design notes for the interface |
+| [06 — Showcase design](docs/dizayn/06-dizayn-vitriny.md) | Public showcase, animation, controls |
+| [07 — Security](docs/ekspluatatsiya/07-bezopasnost.md) | Authentication, roles, public links, file protection |
+| [08 — Deployment](docs/ekspluatatsiya/08-razvyortyvanie.md) | Docker, VPS, backups, auto-update |
+| [09 — Roadmap](docs/osnovy/09-sostoyanie-i-resheniya.md) | Delivery stages |
+| [11 — Modules](docs/osnovy/11-bloki-i-svyaznost.md) | Module registry, dependencies, permissions |
+| [12 — Live updates](docs/ustroystvo/12-zhivye-obnovleniya.md) | Presence and the event bus over Redis: how an edit shows up for everyone |
+| [13 — Telegram inside the CRM](docs/ustroystvo/13-telegram-v-crm.md) | Company bot, dialogues, linking to clients |
+| [15 — Backups from the settings](docs/ekspluatatsiya/15-kopii-s-shifrovaniem.md) | Encrypted copy of the database and files, restore from the screen |
+| [16 — Shop-site API](docs/ustroystvo/16-api-sayta.md) | Keys and scopes, catalog, availability, reservations: the reasoning |
+| [17 — Waybills](docs/bloki/17-nakladnye.md) | Paper, stock moves, immutability |
+| [19 — Order assembly](docs/bloki/19-sborka-zakaza.md) | Picking an order from one place |
+| [20 — Usability and in-app guide](docs/dizayn/20-udobstvo-i-spravka.md) | Live dashboard, sorting, the documentation screen |
+| [21 — Module links](docs/bloki/21-svyaz-blokov.md) | Papers issued by themselves, deleting papers created by mistake, notifications |
+| [10 — Security audit](docs/ekspluatatsiya/24-audit-bezopasnosti.md), [14 — Rust](docs/ustroystvo/14-rust.md), [18 — Third-party components](docs/dizayn/18-chuzhie-komponenty.md) | One-off reviews and decisions |

@@ -1,6 +1,6 @@
 name: lighthouse
 
-# Формальный прогон Lighthouse на боевом домене (ZADACHI 3.2 → docs/08-deployment.md,
+# Формальный прогон Lighthouse на боевом домене (ZADACHI 3.2 → docs/ekspluatatsiya/08-razvyortyvanie.md,
 # «Замер Lighthouse»). Порог — LCP < 1,5 с на mobile; архитектурно он заложен
 # (SSR витрины, blurhash, WebP, immutable-кэш), но замера ни разу не было.
 #
