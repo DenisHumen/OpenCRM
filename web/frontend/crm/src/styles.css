@@ -94,6 +94,9 @@
   --globus-ramka: rgba(212, 175, 55, 0.15);
   --globus-ramka-yarko: rgba(212, 175, 55, 0.40);
   --globus-podsvet: rgba(212, 175, 55, 0.08);
+  --globus-ulica: #3c4a6e;   /* улица под сильным приближением */
+  --globus-dom: #1c2438;     /* заливка макета здания */
+  --globus-dom-kray: #38456a;
   --globus-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
 
   /* --- Рамка срочного напоминания: цитата ultracode -----------------------

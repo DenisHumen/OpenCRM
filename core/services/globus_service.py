@@ -217,7 +217,9 @@ def sloi(db: Session) -> list[str]:
         itog.extend(("orders", "overdue"))
     if modules_service.is_enabled(db, "boards") and globus_repo.dosok_s_geo(db) > 0:
         itog.append("visitors")
-    itog.extend(("links", "grid", "labels", "night"))
+    # Улицы — слой без блока: они не про наши данные, а про подложку, и
+    # рисуются только под сильным приближением и только если скачаны.
+    itog.extend(("roads", "links", "grid", "labels", "night"))
     return itog
 
 

@@ -1902,6 +1902,7 @@ curl -sS -X POST https://crm.example.com/api/v1/site/orders \
 | POST | `/globe/detail` | `settings.manage` | Включить докачку и попробовать сейчас |
 | DELETE | `/globe/detail` | `settings.manage` | Выключить докачку и убрать скачанное |
 | GET | `/globe/map` | `globe.view` | Скачанные очертания. Пустой список — их нет, экран рисует вшитые |
+| GET | `/globe/streets` | `globe.view` | Улицы и дома одной плитки (`?x=&y=`, уровень 16). Плитки, которой нет, — не отказ: `gotovo: false`, и запрос наружу уходит только при включённой докачке |
 | PATCH | `/clients/{id}/geo` | `clients.edit` | Поставить точку клиента руками или снять её (`lat`, `lon`; пусто — снять) |
 
 Разбор блока — [25-globus.md](../bloki/25-globus.md).
