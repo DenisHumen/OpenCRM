@@ -1304,9 +1304,12 @@ summary:focus-visible,
 .funnel-name { position: relative; flex: 1; min-width: 0; font-size: 13px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* полоса под текстом, а не рядом: так длина читается, не отнимая места у названия */
 .funnel-bar { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 4px; background: var(--chart-brand); }
+.funnel-sum { position: relative; flex-shrink: 0; color: var(--faint); font-size: 12px; font-variant-numeric: tabular-nums; }
 .funnel-step.kind-won .funnel-bar { background: var(--tint-success); }
 .funnel-step.kind-lost .funnel-bar { background: var(--tint-danger); }
 
+/* Отметка свежести сводки — в углу шапки, рядом с кнопками. */
+.dash-svezhest { color: var(--faint); font-size: 12px; white-space: nowrap; }
 /* Мои задачи на сегодня */
 .dash-tasks { display: flex; flex-direction: column; gap: 1px; }
 .dash-task { display: flex; align-items: center; gap: 9px; padding: 7px 10px; border-radius: 4px; font-size: 13px; color: var(--text); text-decoration: none; }

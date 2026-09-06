@@ -294,14 +294,17 @@ def money_summary(db: Session, since, only_manager_id: int | None = None) -> dic
     }
 
 
-def stage_counts(db: Session, only_manager_id: int | None = None) -> dict[str, int]:
-    """Сколько заявок в каждом этапе. Сужается тем же правом, что и суммы:
-    воронка из чужих карточек — это тоже сведения о чужой работе."""
-    stmt = select(Deal.stage, func.count()).where(Deal.deleted_at.is_(None))
+def stage_counts(db: Session, only_manager_id: int | None = None) -> dict[str, tuple[int, int]]:
+    """Сколько заявок в каждом этапе и на какую сумму: {этап: (число, сумма)}.
+    Сужается тем же правом, что и суммы: воронка из чужих карточек — это тоже
+    сведения о чужой работе."""
+    stmt = select(Deal.stage, func.count(), func.coalesce(func.sum(Deal.amount), 0)).where(
+        Deal.deleted_at.is_(None)
+    )
     if only_manager_id is not None:
         stmt = stmt.where(Deal.manager_id == only_manager_id)
     rows = db.execute(stmt.group_by(Deal.stage)).all()
-    return {stage: count for stage, count in rows}
+    return {stage: (int(count), int(summa or 0)) for stage, count, summa in rows}
 
 
 def next_sort_order(db: Session, stage: str) -> int:

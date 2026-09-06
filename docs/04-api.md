@@ -158,8 +158,8 @@
 
 Ключи ответа `/dashboard`: `currency`, `money_in_work`, `money_won_this_month`,
 `money_received_this_month`, `money_basis`, `avg_check`, `won_count_this_month`,
-`deals_by_stage`, `my_tasks`,
-`clients_total`, `clients_this_month`, `boards_total`, `boards_published`,
+`deals_by_stage` (у этапа `count` и `amount` — сумма заявок этапа, пусто без `deals.view_amounts`), `my_tasks`,
+`clients_total`, `clients_this_month`, `clients_this_week`, `clients_without_deals` (ни одной заявки), `boards_total`, `boards_published`,
 `views_7d`, `views_prev_7d`, `unique_viewers_7d`, `views_by_day`, `last_view_at`,
 `recent_boards`, `recent_clients`; с 06.09.2026 — `money_due` (цена открытых
 заявок минус предоплата, только с правом на суммы), `orders_week`

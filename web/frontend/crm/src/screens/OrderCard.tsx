@@ -395,7 +395,7 @@ export function OrderCard() {
 
       {confirm && (
         <ConfirmModal
-          text={confirm === "cancel" ? t("orderCancelConfirm") : t("paperDeleteConfirm", { number: order.number })}
+          text={confirm === "cancel" ? t("orderCancelConfirm", { number: order.number }) : t("paperDeleteConfirm", { number: order.number })}
           confirmLabel={confirm === "cancel" ? t("orderCancel") : t("paperDelete")}
           danger
           onConfirm={async () => {

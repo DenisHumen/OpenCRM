@@ -291,7 +291,7 @@ export function Mailboxes() {
 
       {confirmDelete && (
         <ConfirmModal
-          text={t("deleteMailboxConfirm")}
+          text={t("deleteMailboxConfirm", { name: confirmDelete.title || confirmDelete.address })}
           confirmLabel={t("delete")}
           danger
           onConfirm={async () => {

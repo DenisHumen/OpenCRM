@@ -123,7 +123,7 @@ export function SettingsWarehouses() {
 
       {closing && (
         <ConfirmModal
-          text={t("warehouseCloseConfirm")}
+          text={t("warehouseCloseConfirm", { name: closing.name })}
           confirmLabel={t("warehouseClose")}
           danger
           onConfirm={async () => {

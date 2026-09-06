@@ -272,4 +272,25 @@ def test_bez_prava_na_summy_dolg_pust(root_client, manager_client):
         root_client.post(f"{API}/roles/assign/{me['id']}", json={"role_id": bez_summ.json()["id"]})
         data = smotryashchiy.get(f"{API}/dashboard").json()
         assert data["money_due"] is None
+        assert all(s["amount"] is None for s in data["deals_by_stage"]), "сумма этапа — тоже сумма"
     assert isinstance(roli, list)
+
+
+def test_voronka_znaet_summy_etapov_i_klientov_bez_zayavok(root_client):
+    """Плитка клиентов: новых за неделю и без заявок; воронка: сумма этапа
+    рядом с числом (владелец, 06.09.2026, план А-08/А-09)."""
+    bez = root_client.post(f"{API}/clients", json={"name": "Сводка: без заявки"}).json()
+    s_zayavkoy = root_client.post(f"{API}/clients", json={"name": "Сводка: с заявкой"}).json()
+    deal = root_client.post(
+        f"{API}/deals", json={"title": "Сумма этапа", "client_id": s_zayavkoy["id"], "amount": 7_000}
+    ).json()
+    try:
+        data = root_client.get(f"{API}/dashboard").json()
+        assert data["clients_this_week"] >= 2
+        assert data["clients_without_deals"] >= 1
+        [etap] = [s for s in data["deals_by_stage"] if s["key"] == deal["stage"]]
+        assert etap["count"] >= 1 and etap["amount"] >= 7_000
+    finally:
+        root_client.delete(f"{API}/deals/{deal['id']}")
+        root_client.delete(f"{API}/clients/{bez['id']}")
+        root_client.delete(f"{API}/clients/{s_zayavkoy['id']}")

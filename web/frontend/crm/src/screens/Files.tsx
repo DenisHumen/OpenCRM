@@ -178,7 +178,7 @@ export function Files() {
 
       {confirmId !== null && (
         <ConfirmModal
-          text={t("deleteFileConfirm")}
+          text={t("deleteFileConfirm", { name: items?.find((f) => f.id === confirmId)?.original_name ?? "" })}
           confirmLabel={t("delete")}
           danger
           onConfirm={() => void remove(confirmId)}

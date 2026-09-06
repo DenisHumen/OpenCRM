@@ -249,7 +249,7 @@ export function DocumentCard() {
 
       {confirmCancel && (
         <ConfirmModal
-          text={t("docCancelConfirm")}
+          text={t("docCancelConfirm", { number: doc.number })}
           confirmLabel={t("confirm")}
           danger
           onConfirm={() => void move("cancelled")}
@@ -483,7 +483,7 @@ function ActCard({ act, reload }: { act: any; reload: () => Promise<void> }) {
       )}
       {confirm && (
         <ConfirmModal
-          text={t("actCancelConfirm")}
+          text={t("actCancelConfirm", { number: act.number })}
           confirmLabel={t("actCancel")}
           danger
           onConfirm={async () => {

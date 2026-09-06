@@ -6,15 +6,21 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from core.utils import now_utc
-from database.models import Board, Client, ShareLink, ShareView
+from database.models import Board, Client, Deal, ShareLink, ShareView
 
 
-def clients_totals(db: Session) -> tuple[int, int]:
+def clients_totals(db: Session) -> tuple[int, int, int, int]:
+    """Всего, за месяц, за неделю и без единой заявки. Последнее — «с кем ещё
+    не работали»: плитка с одним числом отвечала только «сколько есть»."""
     base = select(func.count()).select_from(Client).where(Client.deleted_at.is_(None))
     total = db.scalar(base) or 0
-    month_start = now_utc().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    now = now_utc()
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     this_month = db.scalar(base.where(Client.created_at >= month_start)) or 0
-    return total, this_month
+    this_week = db.scalar(base.where(Client.created_at >= now - timedelta(days=7))) or 0
+    est_zayavka = select(Deal.id).where(Deal.client_id == Client.id, Deal.deleted_at.is_(None))
+    without_deals = db.scalar(base.where(~est_zayavka.exists())) or 0
+    return total, this_month, this_week, without_deals
 
 
 def boards_totals(db: Session) -> tuple[int, int]:
