@@ -399,3 +399,19 @@ def test_fayly_iz_kopii_lozhatsya_poverkh_nyneshnikh(root_client, sayt):
     assert job["status"] == "done" and job["files"] == 1, job
     assert (storage / "media" / "iz_kopii.webp").read_bytes() == b"from the copy"
     assert (storage / "svoy.txt").exists()
+
+
+def test_itog_raboty_oznachaet_svobodnyy_zamok(sayt):
+    """«done»/«failed» видны снаружи только когда замок уже отпущен: иначе
+    следующая работа, заведённая сразу после ожидания итога, ловит
+    `backup_busy` (плавало в CI 06.09.2026)."""
+    job = backup_service._novaya("db", SimpleNamespace(name="root", email="root@example.test"))
+    zamok = backup_service.katalog() / backup_service.ZANYATO
+    assert zamok.exists(), "замок не взят"
+    try:
+        backup_service._zavershit(job, "failed", "для проверки")
+        assert not zamok.exists(), "итог записан, а замок ещё держится"
+        assert backup_service.rabota(job["id"])["status"] == "failed"
+    finally:
+        backup_service._osvobodit()
+        backup_service._put_raboty(job["id"]).unlink(missing_ok=True)

@@ -1177,3 +1177,13 @@ def test_sekret_trevog_odin_na_oba_kontejnera():
         "установщик не заводит секрет — свежая установка останется с открытым "
         "приёмом, о котором никто не узнает"
     )
+
+
+def test_doctor_otlichaet_perevody_strok_ot_pravok():
+    """Диагностика не пугает «автообновление остановится» там, где правки —
+    только переводы строк: обновлятор такое дерево терпит (deploy/updater.py),
+    и строка «переводы строк» называет число смешанных файлов и лекарство."""
+    text = source()
+    section = text[text.index("cmd_doctor() {") : text.index("why_down() {")]
+    assert "--ignore-cr-at-eol" in section, "doctor не отличает переводы строк от правок"
+    assert "ls-files --eol" in section and "i/mixed" in section, "нет строки про смешанные переводы строк"

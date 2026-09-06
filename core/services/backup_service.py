@@ -247,6 +247,10 @@ def _novaya(kind: str, actor: User) -> dict:
 
 
 def _zavershit(job: dict, status: str, error: str | None = None) -> None:
+    """Итог работы. Замок отпускается ДО записи итога: тот, кто дождался
+    «done»/«failed» и тут же завёл следующую работу, получал `backup_busy` —
+    замок ещё держал `finally` потока (CI, 06.09.2026)."""
+    _osvobodit()
     job["status"] = status
     job["error"] = error
     job["finished_at"] = _seychas()

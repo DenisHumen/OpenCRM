@@ -3362,12 +3362,24 @@ except Exception:
         _dirty=$(git_repo status --porcelain 2>/dev/null) || _dirty=""
         if [ -z "$_dirty" ]; then
             probe "$(tr_ "репозиторий" "repository")" 1 "$(tr_ "чистый" "clean")"
+        elif [ -z "$(printf '%s\n' "$_dirty" | grep -v '^ M')" ] && git_repo diff --quiet --ignore-cr-at-eol 2>/dev/null; then
+            # Та же терпимость, что у обновлятора: блоб со смешанными CRLF/LF
+            # на Linux «грязный» сразу после чекаута, содержимого в правке нет.
+            probe "$(tr_ "репозиторий" "repository")" 1 "$(tr_ "правки только в переводах строк — обновление идёт" "line-ending-only changes — updates proceed")"
         else
             # Лекарство названо прямо здесь. Отказ, который сообщает только о
             # беде, заставляет искать команду на стороне — а ищут её в тот час,
             # когда сайт не обновляется и разбираться некогда. `git clean` не
             # предлагаем: он снёс бы и то, чего в репозитории нет.
             probe "$(tr_ "репозиторий" "repository")" 0 "$(tr_ "есть несохранённые правки — автообновление остановится; стереть их: git -C $REPO_DIR checkout -- ." "uncommitted changes — auto-update will stop; discard them: git -C $REPO_DIR checkout -- .")"
+        fi
+        # Смешанные переводы строк внутри одного файла (`i/mixed`) — источник
+        # «грязного» дерева выше; лечится перезаписью файла с LF и коммитом.
+        _mixed=$(git_repo ls-files --eol 2>/dev/null | grep -c 'i/mixed') || _mixed=0
+        if [ "${_mixed:-0}" -eq 0 ]; then
+            probe "$(tr_ "переводы строк" "line endings")" 1 "$(tr_ "без смешанных" "no mixed files")"
+        else
+            probe "$(tr_ "переводы строк" "line endings")" 0 "$(tr_ "смешанные CRLF/LF в файлах: $_mixed — перезаписать с LF и закоммитить" "mixed CRLF/LF in $_mixed files — rewrite with LF and commit")"
         fi
     fi
 
