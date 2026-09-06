@@ -912,10 +912,10 @@ CRM нет, — человек нажмёт «отправить» снова, �
 
 | Метод | Путь | Права | Описание |
 |---|---|---|---|
-| GET | `/waybills` | 🔑 `waybills.view` | Список: `?search=`, `?kind=`, `?status=`, `?client_id=`, `?deal_id=`, `?basis_id=`, пагинация |
+| GET | `/waybills` | 🔑 `waybills.view` | Список: `?search=`, `?kind=`, `?status=`, `?client_id=`, `?deal_id=`, `?basis_id=`, пагинация. В строках — `basis_number`, `basis_kind` (основание словами, одним запросом на страницу) |
 | POST | `/waybills` | 🔑 `waybills.create` | Черновик: `kind` обязателен, дальше `client_id`, `deal_id`, `basis_id`, `warehouse_id`, `locale`, `note` |
-| POST | `/waybills/from-order/{order_id}` | 🔑 `waybills.create` | Черновик, заполненный позициями заказа |
-| GET | `/waybills/{id}` | 🔑 `waybills.view` | Накладная с позициями |
+| POST | `/waybills/from-order/{order_id}` | 🔑 `waybills.create` | Черновик, заполненный позициями заказа. Живой черновик по заказу уже есть (зеркало, [21](21-svyaz-blokov.md) §1) — отдаёт его с `200`, новый заводит только без него (`201`) |
+| GET | `/waybills/{id}` | 🔑 `waybills.view` | Накладная с позициями; `basis_number`, `basis_kind` — заказ, возврат или накладная, по которой выписана (пусто у ручной) |
 | GET | `/waybills/{id}/reversals` | 🔑 `waybills.view` | Что выписано на основании этой: сторно |
 | POST | `/waybills/{id}/lines` | 🔑 `waybills.edit` | Добавить позицию: `product_id` либо `name`, `quantity`, `price` |
 | PATCH | `/waybills/{id}/lines/{line_id}` | 🔑 `waybills.edit` | Количество, цена; название — только у строки без товара |
@@ -1199,7 +1199,7 @@ SVG только `width` и `height`; пока картинку показыва
 | DELETE | `/finance/rules/{id}` | 🔑 `finance.manage` | Убрать правило |
 | POST | `/finance/payments` | 🔑 `finance.create` | Принять оплату или вернуть её — решает знак суммы |
 | PATCH | `/finance/accruals/{operation_id}` | 🔑 `finance.create` | Поправить сумму начисления: было 80, стало 140 |
-| GET | `/finance/documents/{id}/money` | 🔑 `finance.view` | Деньги по бланку: получено, остаток, состояние, начисления |
+| GET | `/finance/documents/{id}/money` | 🔑 `finance.view` | Деньги по бланку: получено, остаток, состояние, начисления; `refunded` — отдано обратно по возвратам заказа («получено» не уменьшает). У возврата `total` — сумма к возврату, `refunded` — сколько отдано, `paid` — рассчитан |
 | GET | `/finance/deals/{id}/money` | 🔑 `finance.view` | Сколько получено по заявке |
 | GET | `/finance/profit` | 🔑 `finance.view` | Доход минус расход за период, с разбивкой по статьям |
 | GET | `/finance/budgets` | 🔑 `finance.view` | Планы и факт по ним |

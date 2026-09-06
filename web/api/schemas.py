@@ -1019,7 +1019,7 @@ def act_out(act, lines: list | None = None, amounts: bool = True) -> dict:
     }
 
 
-def waybill_out(waybill, lines: list | None = None, amounts: bool = True) -> dict:
+def waybill_out(waybill, lines: list | None = None, amounts: bool = True, basis=None) -> dict:
     """Накладная вместе со строками.
 
     Отдельно от `order_out`, хотя половина полей совпадает, — по тому же доводу,
@@ -1044,6 +1044,10 @@ def waybill_out(waybill, lines: list | None = None, amounts: bool = True) -> dic
         "client_id": waybill.client_id,
         "deal_id": waybill.deal_id,
         "basis_id": waybill.basis_id,
+        # Основание словами: номер и вид, чтобы экран вёл к заказу или возврату,
+        # не спрашивая бумагу отдельным запросом.
+        "basis_number": basis.number if basis is not None else None,
+        "basis_kind": basis.kind if basis is not None else None,
         "warehouse_id": waybill.warehouse_id,
         "locale": waybill.locale,
         "pravitsya": waybill.status == waybill_service.STATUS_DRAFT,

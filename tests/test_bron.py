@@ -198,7 +198,7 @@ def test_chastichnaya_otgruzka_ne_syedaet_bron_zayavki(root_client, tovar, zayav
     # отгруженное считается через бумагу, а у движения мимо бумаги её нет.
     assert root_client.post(f"{API}/modules/waybills", json={"enabled": True}).status_code == 200
     nakladnaya = root_client.post(f"{API}/waybills/from-order/{zakaz_id}")
-    assert nakladnaya.status_code == 201, nakladnaya.text
+    assert nakladnaya.status_code in (200, 201), nakladnaya.text
     provedena = root_client.post(f"{API}/waybills/{nakladnaya.json()['id']}/post", json={})
     assert provedena.status_code == 200, provedena.text
 

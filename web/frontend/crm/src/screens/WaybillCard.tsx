@@ -9,10 +9,10 @@ import { useApp } from "../lib/app";
 import { useFailure } from "../lib/failure";
 import { useGuard } from "../lib/guard";
 import { formatDate, formatMoney, formatQuantity, toMinorUnits } from "../lib/format";
-import { statusLabel, statusVariant } from "../lib/documents";
+import { paperLink, statusLabel, statusVariant } from "../lib/documents";
 import { can } from "../lib/permissions";
 import { useLiveTopic } from "../lib/live";
-import { type Waybill } from "./Waybills";
+import { osnovanieKey, type Waybill } from "./Waybills";
 
 /** Карточка накладной: позиции, проведение, сторнирование.
  *
@@ -151,6 +151,11 @@ export function WaybillCard() {
             <Chip>{outgoing ? t("waybillKindOut") : t("waybillKindIn")}</Chip>
             <Chip variant={statusVariant(waybill.status, waybill.kind)}>{statusLabel(t, waybill.status, waybill.kind)}</Chip>
             {waybill.created_at && <span>{formatDate(waybill.created_at, locale)}</span>}
+            {waybill.basis_id !== null && waybill.basis_kind && (
+              <Link to={paperLink({ id: waybill.basis_id, kind: waybill.basis_kind })} style={{ color: "var(--brand)" }}>
+                {t(osnovanieKey(waybill.basis_kind), { n: waybill.basis_number ?? "" })}
+              </Link>
+            )}
           </div>
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>

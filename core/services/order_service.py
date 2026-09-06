@@ -56,6 +56,7 @@ from database.models.document import (
     ORDER_KINDS,
     STATUS_CANCELLED,
     STATUS_CLOSED,
+    STATUS_DRAFT,
     STATUS_ISSUED,
     STATUS_READY,
 )
@@ -943,6 +944,12 @@ def zakryt_po_nakladnoy(db: Session, order: Document, waybill: Document, author:
             "The order has already been processed by someone else",
             code="document_status_changed",
         )
+    # Свой черновик зеркала после чужой накладной — бумага ни о чём: заказ
+    # уехал другой, а она висела бы в списке накладных «к отгрузке» навсегда.
+    # Заведённый руками черновик остаётся человеку, как и при отмене заказа.
+    for chernovik in documents_repo.po_osnovaniyu(db, order.id):
+        if chernovik.status == STATUS_DRAFT and waybill_service.avto(chernovik):
+            documents_repo.drop(db, chernovik)
     if modules_service.is_enabled(db, "warehouse"):
         for row in rows:
             if row.product_id is not None and not _is_service(db, row):

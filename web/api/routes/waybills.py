@@ -10,7 +10,7 @@
 квитанцией приёма, без единой позиции на листе.
 """
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Response
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -87,6 +87,14 @@ def _amounts(db: Session, user: User) -> bool:
     return permissions_service.sees_amounts(db, user, "waybills")
 
 
+def _karta(db: Session, user: User, waybill) -> dict:
+    """Накладная со строками и основанием — один ответ у всех ручек карточки."""
+    osnovanie = documents_repo.get(db, waybill.basis_id) if waybill.basis_id else None
+    return schemas.waybill_out(
+        waybill, waybill_service.lines(db, waybill.id), amounts=_amounts(db, user), basis=osnovanie
+    )
+
+
 @router.get("")
 def list_waybills(
     search: str | None = Query(default=None, max_length=MAX_SEARCH),
@@ -108,9 +116,14 @@ def list_waybills(
     # Строки — одним запросом на страницу, а не запросом на строку списка: сумма
     # накладной складывается из них, и без них список молчит о деньгах.
     rows = documents_repo.lines_by_documents(db, [item.id for item in items])
+    # Основания — одним запросом на страницу: колонка «по заказу N» в списке.
+    osnovaniya = {d.id: d for d in documents_repo.po_ids(db, {item.basis_id for item in items})}
     amounts = _amounts(db, user)
     return schemas.paginated(
-        [schemas.waybill_out(item, rows.get(item.id, []), amounts=amounts) for item in items],
+        [
+            schemas.waybill_out(item, rows.get(item.id, []), amounts=amounts, basis=osnovaniya.get(item.basis_id))
+            for item in items
+        ],
         total, page, per_page,
     )
 
@@ -122,12 +135,13 @@ def create_waybill(
     db: Session = Depends(get_db),
 ):
     waybill = waybill_service.create(db, payload.model_dump(), user)
-    return schemas.waybill_out(waybill, [], amounts=_amounts(db, user))
+    return _karta(db, user, waybill)
 
 
 @router.post("/from-order/{order_id}", status_code=201)
 def create_from_order(
     order_id: int,
+    response: Response,
     user: User = Depends(require_perm("waybills", "create")),
     db: Session = Depends(get_db),
 ):
@@ -137,10 +151,15 @@ def create_from_order(
     действие, а не другой аргумент того же. Флаг заставил бы обе половины ручки
     объяснять, какие поля она сегодня читает.
     """
-    waybill = waybill_service.po_zakazu(db, order_id, user)
-    return schemas.waybill_out(
-        waybill, waybill_service.lines(db, waybill.id), amounts=_amounts(db, user)
-    )
+    # Живой черновик по заказу уже есть (зеркало заводит его само) — отдаём его,
+    # а не второй: две накладные по одному заказу — это две отгрузки, и та, что
+    # осталась, висела бы черновиком после закрытия заказа.
+    waybill = waybill_service.chernovik_po_zakazu(db, order_id)
+    if waybill is not None:
+        response.status_code = 200
+    else:
+        waybill = waybill_service.po_zakazu(db, order_id, user)
+    return _karta(db, user, waybill)
 
 
 @router.get("/{waybill_id}")
@@ -150,9 +169,7 @@ def get_waybill(
     db: Session = Depends(get_db),
 ):
     waybill = waybill_service.get(db, waybill_id)
-    return schemas.waybill_out(
-        waybill, waybill_service.lines(db, waybill.id), amounts=_amounts(db, user)
-    )
+    return _karta(db, user, waybill)
 
 
 @router.get("/{waybill_id}/reversals")
@@ -228,9 +245,7 @@ def provesti(
     waybill = waybill_service.provesti(
         db, waybill_id, user, confirm_negative=payload.confirm_negative
     )
-    return schemas.waybill_out(
-        waybill, waybill_service.lines(db, waybill.id), amounts=_amounts(db, user)
-    )
+    return _karta(db, user, waybill)
 
 
 @router.post("/{waybill_id}/confirm")
@@ -247,9 +262,7 @@ def podtverdit(
     ради отметки о том, что бумагу подписали.
     """
     waybill = waybill_service.podtverdit(db, waybill_id, user, payload.note)
-    return schemas.waybill_out(
-        waybill, waybill_service.lines(db, waybill.id), amounts=_amounts(db, user)
-    )
+    return _karta(db, user, waybill)
 
 
 @router.delete("/{waybill_id}")
@@ -271,9 +284,7 @@ def otmenit(
 ):
     """Отменить черновик. Проведённую — нельзя, для неё сторнирование."""
     waybill = waybill_service.otmenit(db, waybill_id, user, payload.note)
-    return schemas.waybill_out(
-        waybill, waybill_service.lines(db, waybill.id), amounts=_amounts(db, user)
-    )
+    return _karta(db, user, waybill)
 
 
 @router.post("/{waybill_id}/reverse", status_code=201)
@@ -289,9 +300,7 @@ def stornirovat(
     решение принимается здесь.
     """
     storno = waybill_service.stornirovat(db, waybill_id, user)
-    return schemas.waybill_out(
-        storno, waybill_service.lines(db, storno.id), amounts=_amounts(db, user)
-    )
+    return _karta(db, user, storno)
 
 
 #: Словарь бумаги, отдельный от интерфейса и отдельный от акта.

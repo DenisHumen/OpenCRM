@@ -397,7 +397,10 @@ def reverted_heads(db: Session, operation_ids) -> set[int]:
 
 
 def received_of(
-    db: Session, document_id: int | None = None, deal_id: int | None = None
+    db: Session,
+    document_id: int | None = None,
+    deal_id: int | None = None,
+    document_ids=None,
 ) -> int:
     """Сколько денег получено по бланку или по заявке, в минорных единицах.
 
@@ -412,8 +415,13 @@ def received_of(
     переплаченного налога — законная такая статья). Деньги в кассу от этого не
     приходили.
     """
-    if document_id is None and deal_id is None:
+    if document_id is None and deal_id is None and document_ids is None:
         return 0
+    if document_ids is not None:
+        # По нескольким бумагам разом — возвраты одного заказа.
+        document_ids = [int(i) for i in document_ids if i]
+        if not document_ids:
+            return 0
     stmt = (
         select(func.coalesce(func.sum(FinanceOperation.amount_minor), 0))
         .join(FinanceCategory, FinanceCategory.id == FinanceOperation.category_id)
@@ -421,6 +429,8 @@ def received_of(
     )
     if document_id is not None:
         stmt = stmt.where(FinanceOperation.document_id == document_id)
+    if document_ids is not None:
+        stmt = stmt.where(FinanceOperation.document_id.in_(document_ids))
     if deal_id is not None:
         stmt = stmt.where(FinanceOperation.deal_id == deal_id)
     return int(db.scalar(stmt) or 0)

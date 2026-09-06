@@ -473,3 +473,28 @@ def test_zhurnal_i_zapis_v_karte_tem(root_client):
 
     with SessionLocal() as db:
         assert topics._po_vidu_blanka(db.get(Document, v["id"])) is topics.T_ORDERS
+
+
+def test_dengi_zakaza_i_vozvrata_znayut_vozvrashchennoe(root_client):
+    """Карточка заказа: «получено» не трогается, возвращённое — отдельным числом.
+    У самого возврата бумага — сумма к возврату, и он «рассчитан», когда деньги
+    отданы; прежде ручка денег показывала по возврату долг клиента вдвое."""
+    statya = s_finansami(root_client)
+    try:
+        item = tovar(root_client)
+        order = otgruzhennyy_zakaz(root_client, item, quantity="2")
+        root_client.post(
+            f"{FINANCE}/payments", json={"category_id": statya["id"], "amount": 1000, "document_id": order["id"]}
+        )
+        v = vozvrat(root_client, order)
+        root_client.patch(f"{RETURNS}/{v['id']}", json={"refund": 700, "category_id": statya["id"]})
+        assert provesti(root_client, v["id"]).status_code == 200
+
+        po_zakazu = root_client.get(f"{FINANCE}/documents/{order['id']}/money").json()
+        assert po_zakazu["received"] == 1000 and po_zakazu["refunded"] == 700
+        assert po_zakazu["paid"] is True
+        po_vozvratu = root_client.get(f"{FINANCE}/documents/{v['id']}/money").json()
+        assert po_vozvratu["total"] == 700 and po_vozvratu["refunded"] == 700
+        assert po_vozvratu["due"] == 0 and po_vozvratu["paid"] is True
+    finally:
+        bez_finansov(root_client)

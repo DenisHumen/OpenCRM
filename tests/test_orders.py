@@ -872,7 +872,7 @@ def test_chastichnaya_otgruzka_snimaet_rezerv_na_otgruzhennoe(root_client, clien
 
     # Отгружаем половину заказа накладной, заказ при этом НЕ закрываем.
     nakladnaya = root_client.post(f"{API}/waybills/from-order/{order['id']}")
-    assert nakladnaya.status_code == 201, nakladnaya.text
+    assert nakladnaya.status_code in (200, 201), nakladnaya.text
     bumaga = nakladnaya.json()
     stroki = root_client.get(f"{API}/waybills/{bumaga['id']}").json()["lines"]
     assert stroki, "накладная по заказу вышла пустой"

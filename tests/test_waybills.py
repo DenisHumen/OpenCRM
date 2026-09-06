@@ -564,7 +564,7 @@ def test_perenos_pozitsiy_iz_zakaza_otbrasyvaet_uslugi(root_client, client_row):
     root_client.post(f"{ORDERS}/{zakaz['id']}/lines", json={"product_id": usluga["id"], "quantity": "1"})
 
     nakladnaya = root_client.post(f"{WAYBILLS}/from-order/{zakaz['id']}")
-    assert nakladnaya.status_code == 201, nakladnaya.text
+    assert nakladnaya.status_code in (200, 201), nakladnaya.text
     stroki = nakladnaya.json()["lines"]
     assert len(stroki) == 1, f"услуга уехала в накладную: {stroki}"
     assert stroki[0]["product_id"] == tovar["id"]
@@ -680,7 +680,7 @@ def test_iz_zakaza_postavshchiku_vykhodit_prikhodnaya(root_client, client_row):
     )
 
     nakladnaya = root_client.post(f"{WAYBILLS}/from-order/{zakaz['id']}")
-    assert nakladnaya.status_code == 201, nakladnaya.text
+    assert nakladnaya.status_code in (200, 201), nakladnaya.text
     assert nakladnaya.json()["kind"] == "waybill_in", (
         "из заказа поставщику вышла расходная накладная"
     )
@@ -743,3 +743,18 @@ def test_bumaga_bez_sklada_ne_dvigaet_ostatok_ni_pri_kakom_bloke(root_client, cl
         "сторно бумаги, которая склада не касалась, вернуло товар на полку — "
         "остаток вырос из ничего"
     )
+
+
+def test_nakladnaya_znaet_osnovanie_nomerom_i_vidom(root_client, client_row):
+    """Карточка и список ведут к основанию словами: «по заказу N» (владелец
+    06.09.2026, план З-04/Д-03) — без второго запроса за бумагой."""
+    item = product(root_client, stock="10")
+    zakaz = root_client.post(ORDERS, json={"kind": "sales_order", "client_id": client_row["id"]}).json()
+    root_client.post(f"{ORDERS}/{zakaz['id']}/lines", json={"product_id": item["id"], "quantity": "1"})
+    nakladnaya = root_client.post(f"{WAYBILLS}/from-order/{zakaz['id']}").json()
+    karta = root_client.get(f"{WAYBILLS}/{nakladnaya['id']}").json()
+    assert karta["basis_number"] == zakaz["number"] and karta["basis_kind"] == "sales_order"
+    [stroka] = root_client.get(WAYBILLS, params={"basis_id": zakaz["id"]}).json()["items"]
+    assert stroka["basis_number"] == zakaz["number"]
+    ruchnaya = root_client.post(WAYBILLS, json={"kind": "waybill_out", "client_id": client_row["id"]}).json()
+    assert ruchnaya["basis_number"] is None and ruchnaya["basis_kind"] is None
