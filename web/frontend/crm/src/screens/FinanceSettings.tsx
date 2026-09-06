@@ -360,6 +360,14 @@ export function FinanceSettings() {
               <div style={{ color: "var(--faint)", fontSize: 12 }}>
                 {row.period_start} — {row.period_end}
               </div>
+              {/* Полоса выполнения: «сколько от плана уже потрачено» читается
+                  раньше двух чисел рядом; перерасход — красным. */}
+              <div className="byudzhet-polosa" aria-hidden="true">
+                <div
+                  className={row.left < 0 ? "beda" : undefined}
+                  style={{ width: `${Math.min(100, Math.round((Math.abs(row.fact) * 100) / Math.max(1, row.planned)))}%` }}
+                />
+              </div>
             </div>
             <span style={{ color: "var(--muted)", fontSize: 13, whiteSpace: "nowrap" }}>
               {t("finPlanned")}: {money(row.planned)}

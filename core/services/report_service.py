@@ -469,6 +469,10 @@ CSV_HEADERS = {
             "Потеряно", "Сумма потерь", "Средний чек", "Получено",
         ],
     },
+    "operations": {
+        "en": ["Date", "Category", "Direction", "Amount", "Comment", "Author"],
+        "ru": ["Дата", "Статья", "Направление", "Сумма", "Комментарий", "Автор"],
+    },
     "sources": {
         # Последний столбец называется так же, как на экране: это доля
         # выигранных среди ЗАКРЫТЫХ за период, а не доля от всего пришедшего.
@@ -586,3 +590,30 @@ def sources_csv(data: dict, locale: str) -> bytes:
         for row in data["items"]
     ]
     return to_csv(rows, CSV_HEADERS["sources"][lang])
+
+
+NAPRAVLENIYA = {
+    "en": {"income": "income", "expense": "expense"},
+    "ru": {"income": "доход", "expense": "расход"},
+}
+
+
+def operations_csv(rows: list[dict], locale: str) -> bytes:
+    """Журнал операций в таблицу: строки — как их отдаёт `GET /finance/operations`
+    (сумма в терминах статьи, минус — возврат)."""
+    lang = "ru" if locale == "ru" else "en"
+    slova = NAPRAVLENIYA[lang]
+    return to_csv(
+        [
+            [
+                (row.get("happened_at") or "")[:10],
+                row.get("category_name") or "",
+                slova.get(row.get("direction") or "", ""),
+                money_cell(row.get("amount")),
+                row.get("comment") or "",
+                row.get("author_name") or "",
+            ]
+            for row in rows
+        ],
+        CSV_HEADERS["operations"][lang],
+    )

@@ -1192,6 +1192,7 @@ SVG только `width` и `height`; пока картинку показыва
 | PATCH | `/finance/categories/{id}` | 🔑 `finance.manage` | Изменить (направление при правке не принимается) |
 | DELETE | `/finance/categories/{id}` | 🔑 `finance.manage` | Убрать статью |
 | GET | `/finance/operations` | 🔑 `finance.view` | Операции за период |
+| GET | `/finance/operations.csv` | 🔑 `finance.view` | Тот же отбор файлом целиком (страницами по 200, до 50 страниц): дата, статья, направление, сумма, комментарий, автор; BOM и имя файла по периоду — как у выгрузок отчётов |
 | POST | `/finance/operations` | 🔑 `finance.create` | Записать операцию |
 | GET | `/finance/rules` | 🔑 `finance.view` | Правила разнесения |
 | POST | `/finance/rules` | 🔑 `finance.manage` | Завести правило |

@@ -282,7 +282,14 @@ export function Finance() {
       <div className="card card-pad report-card">
         <div className="section-head" style={{ marginBottom: 14 }}>
           <div className="metric-title">{t("finOperations")}</div>
-          <span className="field-desc">{t("finNoEdit")}</span>
+          <span className="field-desc" style={{ display: "flex", gap: 12, alignItems: "center" }}>
+            {t("finNoEdit")}
+            {/* Файл качает браузер по обычной ссылке — как выгрузки отчётов. */}
+            <a className="section-link report-export" href={`/api/v1/finance/operations.csv?${query}`}>
+              <Icon name="download" size={13} />
+              {t("exportCsv")}
+            </a>
+          </span>
         </div>
 
         {operations.length === 0 ? (

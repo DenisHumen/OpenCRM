@@ -813,3 +813,21 @@ def test_statyu_pravyat_po_odnomu_polyu(root_client, money):
     )
     assert perevernut.status_code == 422, perevernut.text
     assert perevernut.json()["error"]["code"] == "direction_is_fixed"
+
+
+def test_vygruzka_operatsiy_csv_otdayot_ves_zhurnal(root_client, money):
+    """`GET /finance/operations.csv` — тот же отбор, что у списка, но целиком,
+    с BOM для Excel и именем файла по периоду (план И-04)."""
+    income, expense = money
+    add(root_client, income["id"], 12_345, comment="Выгрузка строка дохода")
+    add(root_client, expense["id"], 700, comment="Выгрузка строка расхода")
+    otvet = root_client.get(
+        f"{API}/finance/operations.csv", params={"from": "2031-03-01", "to": "2031-03-31"}
+    )
+    assert otvet.status_code == 200, otvet.text
+    assert otvet.headers["content-type"].startswith("text/csv")
+    assert "operations-" in otvet.headers["content-disposition"]
+    assert otvet.content.startswith(b"\xef\xbb\xbf"), "без BOM Excel покажет кракозябры"
+    text = otvet.content.decode("utf-8-sig")
+    assert "Выгрузка строка дохода" in text and "Выгрузка строка расхода" in text
+    assert "123,45" in text, "сумма в минорных единицах не переведена в рубли-копейки"
