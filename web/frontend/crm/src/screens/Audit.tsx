@@ -266,7 +266,9 @@ export function Audit() {
         <div className="field-desc" style={{ marginTop: 0 }}>{t("auditHint")}</div>
       </div>
 
-      <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 16 }}>
+      {/* Переносится по строкам: на телефоне поиск, два выбора и две даты в
+          одну строку не помещаются и утаскивали страницу вбок. */}
+      <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 16, flexWrap: "wrap" }}>
         <input
           className="input"
           style={{ maxWidth: 320 }}

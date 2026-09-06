@@ -113,7 +113,7 @@ export function OrderCard() {
           <h1 className="page-title" style={{ fontSize: 22 }}>
             {order.number}
           </h1>
-          <div className="page-sub" style={{ marginTop: 5, display: "flex", gap: 8, alignItems: "center" }}>
+          <div className="page-sub" style={{ marginTop: 5, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
             <Chip>{outgoing ? t("orderKindSales") : t("orderKindPurchase")}</Chip>
             <Chip variant={order.status === "closed" ? "success" : undefined}>
               {orderStatusLabel(t, order.status, order.kind)}

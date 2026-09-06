@@ -86,7 +86,7 @@
   /* Рамка — решительная линия карточки, окна, поля; тень — плотная плашка со
      сдвигом без размытия. Строгий стиль по образцу odd-fish-37 (docs/05):
      ни градиентов, ни размытых теней. */
-  --frame: #5b574f;
+  --frame: #6f6b62;         /* 3.0:1 на карточке — граница различима; было #5b574f, 2.3:1 */
   --hard: 4px 4px 0 var(--frame);
   --line: #242320;          /* разделители строк списков */
   --well: #141313;          /* фон полей ввода — темнее карточки */
@@ -1314,6 +1314,10 @@ summary:focus-visible,
 .dash-tasks { display: flex; flex-direction: column; gap: 1px; }
 .dash-task { display: flex; align-items: center; gap: 9px; padding: 7px 10px; border-radius: 4px; font-size: 13px; color: var(--text); text-decoration: none; }
 .dash-task:hover { background: var(--surface); }
+/* На телефоне строка свежего заказа (номер, клиент, сумма, чип) переносится,
+   а не растягивает карточку вбок вместе со всей сводкой. */
+@media (max-width: 560px) { .dash-task { flex-wrap: wrap; } }
+.dash-cols > * { min-width: 0; }
 .dash-task > span:first-of-type { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dash-task-due { font-size: 12px; color: var(--faint); flex-shrink: 0; }
 .metric-title { display: flex; align-items: center; gap: 5px; color: var(--faint); font-size: 10.5px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; }
