@@ -44,6 +44,38 @@ function toLocalInput(iso: string | null): string {
   return shifted.toISOString().slice(0, 16);
 }
 
+/** Полосы списка по местному дню: в одной ленте «сегодня» терялось между
+ *  вчерашним и следующей неделей (владелец, 06.09.2026). */
+type Polosa = "overdue" | "today" | "tomorrow" | "later" | "nodue";
+const POLOSY: Polosa[] = ["overdue", "today", "tomorrow", "later", "nodue"];
+const POLOSA_LABEL = {
+  overdue: "tasksOverdue",
+  today: "tasksToday",
+  tomorrow: "tasksTomorrow",
+  later: "tasksLater",
+  nodue: "tasksNoDue",
+} as const;
+
+function polosa(task: { due_at: string | null }, now: number): Polosa {
+  const at = parseDate(task.due_at);
+  if (!at) return "nodue";
+  const moment = at.getTime();
+  if (moment < now) return "overdue";
+  const konetsDnya = new Date(now);
+  konetsDnya.setHours(23, 59, 59, 999);
+  if (moment <= konetsDnya.getTime()) return "today";
+  if (moment <= konetsDnya.getTime() + 86_400_000) return "tomorrow";
+  return "later";
+}
+
+/** Перенос одним нажатием: «завтра» и «через неделю» — в 10:00 по местному. */
+function sdvig(dney: number): string {
+  const moment = new Date();
+  moment.setDate(moment.getDate() + dney);
+  moment.setHours(10, 0, 0, 0);
+  return moment.toISOString();
+}
+
 export function Tasks() {
   const { t, locale, refreshTasks, toastError } = useApp();
   const [scope, setScope] = useState<(typeof SCOPES)[number]>("open");
@@ -122,10 +154,28 @@ export function Tasks() {
     }
   };
 
-  const now = Date.now();
+  const perenesti = async (task: any, dney: number) => {
+    try {
+      await api.patch(`/tasks/${task.id}`, { due_at: sdvig(dney) });
+      reload();
+    } catch (e) {
+      toastError(e);
+    }
+  };
 
+  const now = Date.now();
+  // Сделанное полосами не режется: там спрашивают «что сделали», а не «когда».
+  const gruppy: Array<[Polosa | "", any[]]> =
+    scope === "done"
+      ? [["", items]]
+      : POLOSY.map((p): [Polosa, any[]] => [p, items.filter((task) => polosa(task, now) === p)]).filter(
+          ([, chast]) => chast.length > 0,
+        );
+  const sPolosami = gruppy.length > 1;
+
+  // Список в одну колонку на 1800px читался как пустой: ширина обычной страницы.
   return (
-    <div className="page page-wide">
+    <div className="page">
       <div className="page-head">
         <div>
           <h1 className="page-title">{t("tasks")}</h1>
@@ -181,7 +231,14 @@ export function Tasks() {
         <EmptyState icon="clock" title={t("tasksNone")} sub={t("tasksNoneHint")} />
       ) : (
         <div className="list-card">
-          {items.map((task) => {
+          {gruppy.map(([imya, chast]) => (
+            <div key={imya || "all"}>
+              {sPolosami && imya && (
+                <div className={"spisok-polosa" + (imya === "overdue" ? " beda" : "")}>
+                  {t(POLOSA_LABEL[imya])} · {chast.length}
+                </div>
+              )}
+              {chast.map((task) => {
             const at = parseDate(task.due_at);
             const late = at && !task.is_done && at.getTime() < now;
             return (
@@ -204,6 +261,16 @@ export function Tasks() {
                         {formatDateTime(task.due_at, locale)}
                       </span>
                     )}
+                    {!task.is_done && (
+                      <>
+                        <button type="button" className="task-shift" onClick={() => void perenesti(task, 1)}>
+                          {t("tasksShiftTomorrow")}
+                        </button>
+                        <button type="button" className="task-shift" onClick={() => void perenesti(task, 7)}>
+                          {t("tasksShiftWeek")}
+                        </button>
+                      </>
+                    )}
                     {task.assignee_name && <span>{task.assignee_name}</span>}
                     {task.deal_id && (
                       <Link to={`/deals/${task.deal_id}`} className="text-link">
@@ -223,6 +290,8 @@ export function Tasks() {
               </div>
             );
           })}
+            </div>
+          ))}
         </div>
       )}
     </div>

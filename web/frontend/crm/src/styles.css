@@ -1554,6 +1554,18 @@ summary:focus-visible,
 .task-title.done { color: var(--faint); text-decoration: line-through; }
 .task-meta { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 3px; color: var(--faint); font-size: 11.5px; }
 .task-late { color: var(--danger); font-weight: 500; }
+/* Полосы списка напоминаний: просрочено / сегодня / завтра / позже / без срока. */
+.spisok-polosa {
+  padding: 10px 16px 4px; font-size: 10.5px; font-weight: 700; letter-spacing: 0.12em;
+  text-transform: uppercase; color: var(--faint); border-bottom: 1px solid var(--line);
+}
+.spisok-polosa.beda { color: var(--danger); }
+/* Перенос срока одним нажатием — подчёркнуто пунктиром, как действие, а не ссылка. */
+.task-shift {
+  background: none; border: 0; padding: 0; cursor: pointer; color: var(--faint);
+  font-size: 11.5px; font-family: inherit; text-decoration: underline dotted;
+}
+.task-shift:hover { color: var(--brand); }
 
 /* Число просроченных рядом с пунктом меню. Красное, потому что это долг, а не
    статистика: серое число рядом с названием читается как «всего». */
