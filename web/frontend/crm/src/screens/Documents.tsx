@@ -13,7 +13,7 @@ import { useFailure } from "../lib/failure";
 import { useGuard } from "../lib/guard";
 import { formatDate, formatMoney } from "../lib/format";
 import { SpisokPoKategoriyam } from "../components/SpisokPoKategoriyam";
-import { DOC_KINDS, DOC_SORTS, DOC_STATUSES, kindLabel, nazvanieBumagi, paperLink, sortLabel, statusLabel, statusVariant } from "../lib/documents";
+import { DOC_KINDS, DOC_SORTS, DOC_STATUSES, kindLabel, klientBumagi, nazvanieBumagi, paperLink, sortLabel, statusLabel, statusVariant } from "../lib/documents";
 
 /** По скольку бланков дочитывается список. */
 const NA_STRANITSE = 100;
@@ -281,7 +281,7 @@ export function Documents() {
                   {nazvanieBumagi(t, doc)}
                 </div>
                 <div className="truncate" style={{ color: "var(--faint)", fontSize: 12 }}>
-                  {doc.payload?.client?.name || "—"}
+                  {klientBumagi(doc) ?? t("noClient")}
                 </div>
               </div>
               {/* Сумма по строкам — у заказа, акта, накладной, возврата; у
