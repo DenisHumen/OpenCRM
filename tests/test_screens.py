@@ -1761,3 +1761,30 @@ def test_zhurnal_podpisyvaet_kazhdoe_deystvie_servera():
     assert bez == [], f"действия сервера без подписи в журнале: {bez}"
     bez = sorted(o for o in obekty if f"  {o}: " not in audit)
     assert bez == [], f"объекты сервера без подписи в журнале: {bez}"
+
+
+def _blok_naborov(text: str) -> str:
+    """Тело `PRESETS = {…}` до закрывающей скобки в первом столбце."""
+    nachalo = text.index("PRESETS: dict[str, dict] = {")
+    konets = text.index("\n}\n", nachalo)
+    return text[nachalo:konets]
+
+
+def test_umolchaniya_naborov_podpisany_slovami_interfeysa():
+    """Названия этапов из наборов воронки и роли-пресеты сервер пишет по-английски
+    (`test_zasev_yazyk`), а экран подписывает умолчания словом интерфейса. Имя
+    без подписи показало бы русскому экрану «New order» (проба 06.09.2026)."""
+    etapy = set(re.findall(r'\("\w+", "([^"]+)", KIND_\w+\)',
+                           _blok_naborov((KOREN / "core/services/pipeline_service.py").read_text(encoding="utf-8"))))
+    assert len(etapy) > 20, "наборы воронки не прочитались"
+    karta = (SCREENS / "lib" / "etapy.ts").read_text(encoding="utf-8")
+    bez = sorted(n for n in etapy if f'"{n}":' not in karta)
+    assert bez == [], f"этапы наборов без подписи на экране: {bez}"
+
+    roli = _blok_naborov((KOREN / "core/services/permissions_service.py").read_text(encoding="utf-8"))
+    imena = set(re.findall(r'^        "name": "([^"]+)",', roli, re.M))
+    klyuchi = set(re.findall(r'^    "(\w+)": \{', roli, re.M))
+    assert imena and klyuchi == {"manager", "accountant", "project_manager", "director", "viewer"} | klyuchi
+    karta = (SCREENS / "lib" / "roli.ts").read_text(encoding="utf-8")
+    bez = sorted(n for n in imena if f'"{n}":' not in karta) + sorted(k for k in klyuchi if f'"{k}":' not in karta)
+    assert bez == [], f"роли-пресеты без подписи на экране: {bez}"

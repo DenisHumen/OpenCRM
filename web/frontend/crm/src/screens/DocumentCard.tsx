@@ -17,6 +17,7 @@ import { can } from "../lib/permissions";
 import { isFinished, nextStatuses, statusLabel, statusVariant } from "../lib/documents";
 import { formatDateTime, formatMoney, formatQuantity } from "../lib/format";
 import { useReference } from "../lib/reference";
+import { nazvanieEtapa } from "../lib/etapy";
 import type { Product } from "./Warehouse";
 
 const ROWS = [
@@ -412,7 +413,7 @@ function ActCard({ act, reload }: { act: any; reload: () => Promise<void> }) {
             <select className="select select-inline" value={stage} onChange={(e) => setStage(e.target.value)}>
               <option value="">{t("actNextStageAuto")}</option>
               {(stages.items ?? []).map((s) => (
-                <option key={s.key} value={s.key}>{s.name}</option>
+                <option key={s.key} value={s.key}>{nazvanieEtapa(t, s.name)}</option>
               ))}
             </select>
             <button

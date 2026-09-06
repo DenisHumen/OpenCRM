@@ -15,6 +15,7 @@ import { useFailure } from "../lib/failure";
 import { useGuard } from "../lib/guard";
 import type { TranslationKey } from "../lib/i18n";
 import { moduleOn } from "../lib/modules";
+import { nazvanieRoli, podskazkaRoli } from "../lib/roli";
 
 /** Подписи столбцов. Ключи действий приходят с сервера (core/permissions.py). */
 const ACTION_LABEL: Record<string, TranslationKey> = {
@@ -117,7 +118,7 @@ export function SettingsRoles() {
     setCreating(true);
     setOpenId(null);
     setDraft({
-      name: preset ? preset.name : "",
+      name: preset ? nazvanieRoli(t, preset.name) : "",
       codes: new Set(preset ? preset.permissions : []),
     });
   };
@@ -219,8 +220,8 @@ export function SettingsRoles() {
           <div className="preset-row">
             {matrix.presets.map((preset) => (
               <button key={preset.key} className="preset-card" onClick={() => startNew(preset)}>
-                <span className="preset-name">{preset.name}</span>
-                <span className="preset-hint">{preset.hint}</span>
+                <span className="preset-name">{nazvanieRoli(t, preset.name)}</span>
+                <span className="preset-hint">{podskazkaRoli(t, preset)}</span>
               </button>
             ))}
           </div>
@@ -328,7 +329,7 @@ export function SettingsRoles() {
               </span>
               <span className="module-text">
                 <span className="module-name">
-                  {role.name}
+                  {nazvanieRoli(t, role.name)}
                   {role.is_default && <span className="module-tag">{t("roleDefault")}</span>}
                 </span>
                 <span className="module-about">

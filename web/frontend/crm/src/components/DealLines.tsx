@@ -7,6 +7,7 @@ import { formatMoney, formatQuantity } from "../lib/format";
 import { useGuard } from "../lib/guard";
 import { moduleOn } from "../lib/modules";
 import { can } from "../lib/permissions";
+import { nazvanieEtapa } from "../lib/etapy";
 import { Icon } from "./Icon";
 import { WarehousePicker, useWarehouses } from "./Warehouses";
 
@@ -246,7 +247,7 @@ export function DealLines({
         {stroki.map((s) => (
           <div key={s.id} className="doc-mini">
             <span className="truncate" style={{ flex: 1, minWidth: 0 }}>
-              {s.name}
+              {nazvanieEtapa(t, s.name)}
             </span>
             {/* Своя трата подписана: иначе «упаковка» в перечне выглядит как
                 товар, которого на складе нет, и его начинают там искать. */}

@@ -12,6 +12,7 @@ import { formatMoney } from "../lib/format";
 import { moduleOn } from "../lib/modules";
 import { can } from "../lib/permissions";
 import { sourceLabel } from "../lib/sources";
+import { nazvanieEtapa } from "../lib/etapy";
 
 /**
  * Дата в вид, который понимает `<input type="date">` и сервер.
@@ -202,7 +203,7 @@ export function Reports() {
                 className={"funnel-step kind-" + stage.kind}
               >
                 <span className="funnel-count">{stage.entered}</span>
-                <span className="funnel-name">{stage.name}</span>
+                <span className="funnel-name">{nazvanieEtapa(t, stage.name)}</span>
                 {/* Конверсия к предыдущему шагу — то самое число, которое
                     показывает, ГДЕ теряют, а не сколько потеряли всего. */}
                 <span className="funnel-step-share">

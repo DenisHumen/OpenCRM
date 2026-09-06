@@ -252,7 +252,13 @@ export function Finance() {
       <div className="card card-pad report-card">
         <div className="report-grid">
           <Figure title={t("finIncome")} value={money(profit.income)} sub={proshlyy ? kProshlomu(profit.income, proshlyy.income) : undefined} />
-          <Figure title={t("finExpense")} value={money(profit.expense)} sub={proshlyy ? kProshlomu(profit.expense, proshlyy.expense) : undefined} />
+          {/* Возвраты по расходным статьям могут увести расход в минус: «−9 672 $»
+              читается как сбой, поэтому модуль и подпись, что вернули больше, чем потратили. */}
+          <Figure
+            title={t("finExpense")}
+            value={money(Math.abs(profit.expense))}
+            sub={profit.expense < 0 ? t("finRefundsExceed") : proshlyy ? kProshlomu(profit.expense, proshlyy.expense) : undefined}
+          />
           <Figure
             title={t("finProfit")}
             value={money(profit.profit)}

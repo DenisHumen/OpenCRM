@@ -14,6 +14,7 @@ import { useFailure } from "../lib/failure";
 import { formatDateTime, formatMoney, formatQuantity, initials, parseDate, relativeDay } from "../lib/format";
 import { moduleOn } from "../lib/modules";
 import { can } from "../lib/permissions";
+import { nazvanieEtapa } from "../lib/etapy";
 
 /** Через сколько сводка перечитывается сама, пока вкладка на переднем плане.
  *
@@ -300,7 +301,7 @@ export function Dashboard() {
                   className={"funnel-step kind-" + stage.kind}
                 >
                   <span className="funnel-count">{stage.count}</span>
-                  <span className="funnel-name">{stage.name}</span>
+                  <span className="funnel-name">{nazvanieEtapa(t, stage.name)}</span>
                   {/* Сумма этапа — с правом на суммы; ноль не пишем: «на ноль» читается как беда. */}
                   {typeof stage.amount === "number" && stage.amount > 0 && (
                     <span className="funnel-sum">{sum(stage.amount)}</span>

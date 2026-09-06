@@ -8,6 +8,7 @@ import { useLiveTopic } from "../lib/live";
 import { moduleOn } from "../lib/modules";
 import { allowed, can, type Guarded } from "../lib/permissions";
 import { nazvanieZakazov, term } from "../lib/terms";
+import { nazvanieRoli } from "../lib/roli";
 import { Icon } from "./Icon";
 import { Kolokolchik } from "./Kolokolchik";
 import { Avatar } from "./ui";
@@ -758,7 +759,7 @@ export function Sidebar({
                   завели, и подпись обязана называть ту, что у человека на
                   самом деле. */}
               <div style={{ color: "var(--faint)", fontSize: 11 }}>
-                {user?.role === "root" ? t("root") : user?.role_name || t("noRole")}
+                {user?.role === "root" ? t("root") : nazvanieRoli(t, user?.role_name) || t("noRole")}
               </div>
             </div>
             <Icon name="chevronsUpDown" size={14} />
