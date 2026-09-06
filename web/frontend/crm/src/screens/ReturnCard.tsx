@@ -262,7 +262,7 @@ export function ReturnCard() {
 
       {confirm && (
         <ConfirmModal
-          text={confirm === "cancel" ? t("returnCancelAsk") : t("paperDeleteConfirm", { number: vozvrat.number })}
+          text={confirm === "cancel" ? t("returnCancelAsk", { number: vozvrat.number }) : t("paperDeleteConfirm", { number: vozvrat.number })}
           confirmLabel={confirm === "cancel" ? t("returnCancel") : t("paperDelete")}
           danger={confirm === "delete"}
           onConfirm={() => {

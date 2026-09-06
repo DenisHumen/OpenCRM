@@ -779,7 +779,7 @@ export function BoardEditor() {
       )}
       {confirm === "deleteBoard" && (
         <ConfirmModal
-          text={t("deleteBoardConfirm")}
+          text={t("deleteBoardConfirm", { name: board?.title ?? "" })}
           confirmLabel={t("delete")}
           danger
           onConfirm={async () => {
@@ -795,7 +795,7 @@ export function BoardEditor() {
       )}
       {typeof confirm === "number" && (
         <ConfirmModal
-          text={t("deleteWorkConfirm")}
+          text={t("deleteWorkConfirm", { name: board?.works?.find((w: any) => w.id === confirm)?.title || `#${confirm}` })}
           confirmLabel={t("delete")}
           danger
           onConfirm={() => void deleteWork(confirm)}

@@ -665,7 +665,7 @@ export function ClientCard() {
 
       {confirmDelete && (
         <ConfirmModal
-          text={t("deleteClientConfirm")}
+          text={t("deleteClientConfirm", { name: client.name })}
           confirmLabel={t("delete")}
           danger
           onConfirm={async () => {

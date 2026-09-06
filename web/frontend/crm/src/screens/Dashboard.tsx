@@ -148,21 +148,22 @@ export function Dashboard() {
           <h1 className="page-title">
             {greeting}, {user?.name}
           </h1>
+        </div>
+        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
           {/* Отметка свежести. Обещать «в реальном времени» и молчать о том,
               когда числа взяты, значит обещать больше, чем есть: обновление
-              идёт раз в две минуты, и человек вправе это видеть. */}
+              идёт раз в две минуты, и человек вправе это видеть. В углу, а не
+              строкой под заголовком: та строка отнимала место у приветствия. */}
           {obnovleno && (
-            <div className="page-sub">
+            <span className="dash-svezhest">
               {t("updatedAt", {
                 time: obnovleno.toLocaleTimeString(locale === "ru" ? "ru-RU" : "en-US", {
                   hour: "2-digit",
                   minute: "2-digit",
                 }),
               })}
-            </div>
+            </span>
           )}
-        </div>
-        <div style={{ display: "flex", gap: 10 }}>
           <Link to="/clients?new=1" className="btn btn-secondary">
             <Icon name="userPlus" />
             {t("newClient")}
@@ -255,7 +256,10 @@ export function Dashboard() {
             {t("metricClients")}
           </div>
           <div className="metric-value">{data.clients_total}</div>
-          <div className="metric-sub">{t("addedThisMonth", { n: data.clients_this_month })}</div>
+          <div className="metric-sub">
+            {t("addedThisMonth", { n: data.clients_this_month })} · {t("dashClientsWeek", { n: data.clients_this_week })}
+            {data.clients_without_deals > 0 && ` · ${t("dashClientsNoDeals", { n: data.clients_without_deals })}`}
+          </div>
         </div>
         {data.calls_24h && (
           <div className="card card-pad">
@@ -297,6 +301,10 @@ export function Dashboard() {
                 >
                   <span className="funnel-count">{stage.count}</span>
                   <span className="funnel-name">{stage.name}</span>
+                  {/* Сумма этапа — с правом на суммы; ноль не пишем: «на ноль» читается как беда. */}
+                  {typeof stage.amount === "number" && stage.amount > 0 && (
+                    <span className="funnel-sum">{sum(stage.amount)}</span>
+                  )}
                   <span
                     className="funnel-bar"
                     style={{ width: `${Math.round((stage.count / maxStage) * 100)}%` }}

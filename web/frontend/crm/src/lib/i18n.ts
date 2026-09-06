@@ -120,7 +120,7 @@ const en = {
   stageHistory: "Stage history",
   createdAt: "Created {t}",
   closedAt: "closed {t}",
-  deleteDealConfirm: "Delete this deal? The client and their boards stay.",
+  deleteDealConfirm: "Delete deal «{name}»? The client and their boards stay.",
   deleted: "Deleted",
   // свои юрлица
   companies: "Companies",
@@ -160,8 +160,7 @@ const en = {
   companyNote: "Note",
   companyNoteHint: "For your own eyes: what this company is for, who deals with the accountant.",
   companyReadOnly: "Only root can change company details — an error here ends up on paper.",
-  deleteCompanyConfirm:
-    "Delete this company? Deals keep working and issued forms keep the details they were printed with.",
+  deleteCompanyConfirm: "Delete company «{name}»? Deals keep working and issued forms keep the details they were printed with.",
   companyOfDeal: "On behalf of",
   companyOfDealDefault: "Default company",
   modCompaniesAbout:
@@ -427,7 +426,7 @@ const en = {
   docClientLinkHint: "This is what the QR code on the paper opens: the status, without a login.",
   docSnapshotHint: "Printed on {date} — kept as issued, even if the client's details change later.",
   docOfDeal: "Forms",
-  docCancelConfirm: "Cancel this form? It stays in the list and keeps its number.",
+  docCancelConfirm: "Cancel form {number}? It stays in the list and keeps its number.",
   paperDelete: "Delete",
   paperDeleteConfirm: "Delete {number} for good? Only a paper that has done nothing can go: no stock moves, no money, not carried out. The log keeps the number.",
   paperDeleted: "Deleted",
@@ -539,6 +538,8 @@ const en = {
   ofTotal: "of {n} total",
   drafts: "drafts",
   addedThisMonth: "+{n} this month",
+  dashClientsWeek: "+{n} this week",
+  dashClientsNoDeals: "without deals: {n}",
   showcaseViews: "Showcase views",
   last7days: "Last 7 days",
   vsPrevWeek: "vs previous week",
@@ -614,7 +615,7 @@ const en = {
   browse: "browse",
   filesInternal: "— internal only, never shown on showcases",
   deleteClient: "Delete client",
-  deleteClientConfirm: "Delete this client? Boards stay, the card can be restored by root.",
+  deleteClientConfirm: "Delete client «{name}»? Boards stay, the card can be restored by root.",
   // boards
   boardsSub: plural("total", {
     one: "{total} board · {published} published",
@@ -696,9 +697,9 @@ const en = {
   uploadLeft: "{time} left",
   uploadCancel: "Cancel upload",
   cover: "Cover",
-  deleteWorkConfirm: "Delete this work? Files are removed from the server.",
+  deleteWorkConfirm: "Delete work «{name}»? Files are removed from the server.",
   deleteBoard: "Delete board",
-  deleteBoardConfirm: "Delete this board? All share links will stop working.",
+  deleteBoardConfirm: "Delete board «{name}»? All share links will stop working.",
   viewsCount: plural("n", { one: "{n} view", other: "{n} views" }),
   uniqueVisitors: plural("n", { one: "{n} unique visitor", other: "{n} unique visitors" }),
   noViewsYet: "No views yet",
@@ -888,8 +889,7 @@ const en = {
   colLastViewed: "Last viewed",
   neverViewed: "Never",
   filesEmpty: "No media files yet",
-  deleteFileConfirm:
-    "Delete this file? The work is removed from its board and the files are erased from disk. This cannot be undone.",
+  deleteFileConfirm: "Delete «{name}»? The work is removed from its board and the files are erased from disk. This cannot be undone.",
   signupRequests: "Signup requests",
   approve: "Approve",
   reject: "Reject",
@@ -1087,8 +1087,7 @@ const en = {
   syncResult: "Fetched {fetched} · new {stored} · linked to clients {linked}",
   lastSync: "Last sync",
   neverSynced: "never",
-  deleteMailboxConfirm:
-    "Delete this mailbox? Its mirrored letters go with it. The client feed keeps the history — it does not depend on the mailbox.",
+  deleteMailboxConfirm: "Delete mailbox «{name}»? Its mirrored letters go with it. The client feed keeps the history — it does not depend on the mailbox.",
   noMailboxesYet: "No mailboxes yet",
   mailModuleOffHint: "The mail module is switched off — switch it on in Settings → Modules.",
   // заказы
@@ -1141,7 +1140,7 @@ const en = {
   returnPost: "Carry out the return",
   returnPosted: "Return carried out: the goods are back in stock",
   returnCancel: "Cancel return",
-  returnCancelAsk: "Cancel this return? The draft stays in the list as cancelled.",
+  returnCancelAsk: "Cancel return {number}? The draft stays in the list as cancelled.",
   returnFinal: "The return is carried out and cannot be changed: the goods are in stock, the money is with the client.",
   returnLines: "What comes back",
   returnMax: "of {n}",
@@ -1174,7 +1173,7 @@ const en = {
   orderStatusShipped: "Shipped",
   orderStatusReceived: "Received",
   orderStatusCancelled: "Cancelled",
-  orderCancelConfirm: "Cancel this order? The reserve is released, the stock is untouched.",
+  orderCancelConfirm: "Cancel order {number}? The reserve is released, the stock is untouched.",
   orderShipForce: "Ship anyway",
   // акт выполненных работ
   actNew: "Act of works",
@@ -1188,8 +1187,7 @@ const en = {
     "One action: the parts are written off, the works are recorded and the request moves on. Either all of it happens or none of it does.",
   actCompleteForce: "Carry out anyway",
   actCancel: "Cancel act",
-  actCancelConfirm:
-    "Cancel this act? Nothing has happened yet — the stock and the request stay as they are.",
+  actCancelConfirm: "Cancel act {number}? Nothing has happened yet — the stock and the request stay as they are.",
   actNextStage: "Move the request to",
   actNextStageAuto: "the next stage",
   actMovedTo: "The request was moved to “{stage}”",
@@ -1259,8 +1257,7 @@ const en = {
   productNoMinStock: "no reorder threshold",
   noProductsYet: "Nothing in the warehouse yet — add the first item",
   deleteProduct: "Delete item",
-  deleteProductConfirm:
-    "Delete this item? Its move history stays — otherwise past deals would silently get cheaper.",
+  deleteProductConfirm: "Delete «{name}»? Its move history stays — otherwise past deals would silently get cheaper.",
   writtenOff: "Written off from stock",
   writtenOffCost: "Cost: {sum}",
   // наклейки и штрихкоды
@@ -1313,8 +1310,7 @@ const en = {
   warehouseDefault: "Default",
   warehouseMakeDefault: "Make default",
   warehouseClose: "Close warehouse",
-  warehouseCloseConfirm:
-    "Close this warehouse? Its move history stays — otherwise the past would be rewritten. Goods must be moved out first.",
+  warehouseCloseConfirm: "Close warehouse «{name}»? Its move history stays — otherwise the past would be rewritten. Goods must be moved out first.",
   warehouseAll: "All warehouses",
   warehousePick: "Warehouse",
   // перемещение
@@ -1626,7 +1622,7 @@ const en = {
   finFrom: "From",
   finTo: "To",
   finNoBudgets: "No budget touches this period",
-  finBudgetDeleteConfirm: "Delete this budget? Operations are untouched — a plan is an intention, not money.",
+  finBudgetDeleteConfirm: "Delete the budget for «{name}»? Operations are untouched — a plan is an intention, not money.",
   // Правила начисления. Слова подобраны так, чтобы читались без документации:
   // «Percent of every payment» вместо «income_percent», «Charged on» вместо
   // «base». Ключ правила остаётся в базе, человеку он не показывается ни разу.
@@ -1793,7 +1789,7 @@ const ru: typeof en = {
   stageHistory: "История этапов",
   createdAt: "Заведена {t}",
   closedAt: "закрыта {t}",
-  deleteDealConfirm: "Удалить эту сделку? Клиент и его доски останутся.",
+  deleteDealConfirm: "Удалить заявку «{name}»? Клиент и его доски останутся.",
   deleted: "Удалено",
   // свои юрлица
   companies: "Фирмы",
@@ -1833,8 +1829,7 @@ const ru: typeof en = {
   companyNote: "Заметка",
   companyNoteHint: "Для себя: зачем эта фирма, кто ведёт по ней бухгалтерию.",
   companyReadOnly: "Менять реквизиты может только root — ошибка здесь попадает на бумагу.",
-  deleteCompanyConfirm:
-    "Удалить фирму? Заявки продолжат работать, а выданные бланки сохранят те реквизиты, с которыми были напечатаны.",
+  deleteCompanyConfirm: "Удалить фирму «{name}»? Заявки продолжат работать, а выданные бланки сохранят те реквизиты, с которыми были напечатаны.",
   companyOfDeal: "От чьего имени",
   companyOfDealDefault: "Основная фирма",
   modCompaniesAbout:
@@ -2093,7 +2088,7 @@ const ru: typeof en = {
   docClientLinkHint: "Её открывает QR-код с бумаги: состояние заказа, без входа в систему.",
   docSnapshotHint: "Напечатано {date} — хранится в том виде, в каком выдано, даже если данные клиента потом изменятся.",
   docOfDeal: "Бланки",
-  docCancelConfirm: "Отменить бланк? Он останется в списке и сохранит свой номер.",
+  docCancelConfirm: "Отменить бланк {number}? Он останется в списке и сохранит свой номер.",
   paperDelete: "Удалить",
   paperDeleteConfirm: "Удалить {number} насовсем? Уходит только бумага, которая ничего не сделала: без движений склада, денег и проведения. Номер остаётся в журнале.",
   paperDeleted: "Удалено",
@@ -2197,6 +2192,8 @@ const ru: typeof en = {
   ofTotal: "из {n} всего",
   drafts: "черновика",
   addedThisMonth: "+{n} за месяц",
+  dashClientsWeek: "+{n} за неделю",
+  dashClientsNoDeals: "без заявок: {n}",
   showcaseViews: "Просмотры витрин",
   last7days: "Последние 7 дней",
   vsPrevWeek: "к прошлой неделе",
@@ -2274,7 +2271,7 @@ const ru: typeof en = {
   browse: "выберите",
   filesInternal: "— внутренние, на витрины не попадают",
   deleteClient: "Удалить клиента",
-  deleteClientConfirm: "Удалить клиента? Доски останутся, карточку сможет восстановить root.",
+  deleteClientConfirm: "Удалить клиента «{name}»? Доски останутся, карточку сможет восстановить root.",
   boardsSub: plural("total", {
     one: "{total} доска · {published} опубликовано",
     few: "{total} доски · {published} опубликовано",
@@ -2355,9 +2352,9 @@ const ru: typeof en = {
   uploadLeft: "осталось {time}",
   uploadCancel: "Отменить загрузку",
   cover: "Обложка",
-  deleteWorkConfirm: "Удалить работу? Файлы будут удалены с сервера.",
+  deleteWorkConfirm: "Удалить работу «{name}»? Файлы будут удалены с сервера.",
   deleteBoard: "Удалить доску",
-  deleteBoardConfirm: "Удалить доску? Все публичные ссылки перестанут работать.",
+  deleteBoardConfirm: "Удалить доску «{name}»? Все публичные ссылки перестанут работать.",
   viewsCount: plural("n", {
     one: "{n} просмотр",
     few: "{n} просмотра",
@@ -2551,8 +2548,7 @@ const ru: typeof en = {
   colLastViewed: "Последний просмотр",
   neverViewed: "Не смотрели",
   filesEmpty: "Медиафайлов пока нет",
-  deleteFileConfirm:
-    "Удалить этот файл? Работа исчезнет с доски, а файлы будут стёрты с диска. Отменить нельзя.",
+  deleteFileConfirm: "Удалить «{name}»? Работа исчезнет с доски, а файлы будут стёрты с диска. Отменить нельзя.",
   signupRequests: "Заявки на регистрацию",
   approve: "Одобрить",
   reject: "Отклонить",
@@ -2752,8 +2748,7 @@ const ru: typeof en = {
   syncResult: "Забрано {fetched} · новых {stored} · привязано к клиентам {linked}",
   lastSync: "Последняя синхронизация",
   neverSynced: "ни разу",
-  deleteMailboxConfirm:
-    "Удалить ящик? Зеркало его писем уедет вместе с ним. История общения в ленте клиента останется — она от ящика не зависит.",
+  deleteMailboxConfirm: "Удалить ящик «{name}»? Зеркало его писем уедет вместе с ним. История общения в ленте клиента останется — она от ящика не зависит.",
   noMailboxesYet: "Ящиков пока нет",
   mailModuleOffHint: "Блок «Почта» выключен — включите его в «Настройки → Модули».",
   // заказы
@@ -2810,7 +2805,7 @@ const ru: typeof en = {
   returnPost: "Провести возврат",
   returnPosted: "Возврат проведён: товар на складе",
   returnCancel: "Отменить возврат",
-  returnCancelAsk: "Отменить возврат? Черновик останется в списке отменённым.",
+  returnCancelAsk: "Отменить возврат {number}? Черновик останется в списке отменённым.",
   returnFinal: "Возврат проведён и не правится: товар на складе, деньги у клиента.",
   returnLines: "Что возвращают",
   returnMax: "из {n}",
@@ -2843,7 +2838,7 @@ const ru: typeof en = {
   orderStatusShipped: "Отгружен",
   orderStatusReceived: "Принят",
   orderStatusCancelled: "Отменён",
-  orderCancelConfirm: "Отменить заказ? Резерв снимется, склад не тронется.",
+  orderCancelConfirm: "Отменить заказ {number}? Резерв снимется, склад не тронется.",
   orderShipForce: "Всё равно отгрузить",
   // акт выполненных работ
   actNew: "Акт работ",
@@ -2857,8 +2852,7 @@ const ru: typeof en = {
     "Одним действием: материалы спишутся, работы зафиксируются, заявка переедет дальше. Либо всё сразу, либо ничего.",
   actCompleteForce: "Всё равно провести",
   actCancel: "Отменить акт",
-  actCancelConfirm:
-    "Отменить акт? Ничего ещё не произошло — склад и заявка останутся как есть.",
+  actCancelConfirm: "Отменить акт {number}? Ничего ещё не произошло — склад и заявка останутся как есть.",
   actNextStage: "Перевести заявку в",
   actNextStageAuto: "следующий этап",
   actMovedTo: "Заявка переведена в «{stage}»",
@@ -2928,8 +2922,7 @@ const ru: typeof en = {
   productNoMinStock: "порог закупки не задан",
   noProductsYet: "На складе пока пусто — добавьте первую позицию",
   deleteProduct: "Удалить позицию",
-  deleteProductConfirm:
-    "Удалить позицию? История её движений останется — иначе прошлые заявки бесшумно подешевели бы.",
+  deleteProductConfirm: "Удалить «{name}»? История движений останется — иначе прошлые заявки бесшумно подешевели бы.",
   writtenOff: "Списано со склада",
   writtenOffCost: "Себестоимость: {sum}",
   // наклейки и штрихкоды
@@ -2982,8 +2975,7 @@ const ru: typeof en = {
   warehouseDefault: "Основной",
   warehouseMakeDefault: "Сделать основным",
   warehouseClose: "Закрыть склад",
-  warehouseCloseConfirm:
-    "Закрыть склад? История его движений останется — иначе прошлое было бы переписано. Товар с него нужно сначала перевезти.",
+  warehouseCloseConfirm: "Закрыть склад «{name}»? История его движений останется — иначе прошлое было бы переписано. Товар с него нужно сначала перевезти.",
   warehouseAll: "Все склады",
   warehousePick: "Склад",
   // перемещение
@@ -3289,7 +3281,7 @@ const ru: typeof en = {
   finFrom: "С",
   finTo: "По",
   finNoBudgets: "На этот период планов нет",
-  finBudgetDeleteConfirm: "Удалить бюджет? Операций это не касается — план это намерение, а не деньги.",
+  finBudgetDeleteConfirm: "Удалить бюджет по статье «{name}»? Операций это не касается — план это намерение, а не деньги.",
   finRules: "Правила",
   finRulesSub: "Что начисляется само, когда двигаются деньги: налог с оборота, стандартные расходы на каждый закрытый заказ.",
   finNewRule: "Новое правило",

@@ -219,7 +219,7 @@ export function CompanyCard() {
 
       {confirmDelete && (
         <ConfirmModal
-          text={t("deleteCompanyConfirm")}
+          text={t("deleteCompanyConfirm", { name: company?.name ?? "" })}
           confirmLabel={t("delete")}
           danger
           onConfirm={() => {

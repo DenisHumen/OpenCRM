@@ -471,7 +471,7 @@ export function FinanceSettings() {
 
       {dropping && (
         <ConfirmModal
-          text={t("finBudgetDeleteConfirm")}
+          text={t("finBudgetDeleteConfirm", { name: dropping.category_name })}
           confirmLabel={t("delete")}
           danger
           onConfirm={async () => {

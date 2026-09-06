@@ -697,7 +697,7 @@ export function DealCard() {
 
       {confirmDelete && (
         <ConfirmModal
-          text={t("deleteDealConfirm")}
+          text={t("deleteDealConfirm", { name: deal.title })}
           confirmLabel={t("delete")}
           danger
           onConfirm={() => {

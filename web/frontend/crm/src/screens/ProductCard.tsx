@@ -308,7 +308,7 @@ export function ProductCard() {
 
       {confirmDelete && (
         <ConfirmModal
-          text={t("deleteProductConfirm")}
+          text={t("deleteProductConfirm", { name: product.name })}
           confirmLabel={t("delete")}
           danger
           onConfirm={async () => {

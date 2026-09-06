@@ -41,7 +41,7 @@ def dashboard(user: User = Depends(require_staff), db: Session = Depends(get_db)
     # календарную неделю со скользящей значило бы считать рост от разной длины.
     prev_start = views_start - timedelta(days=7)
 
-    clients_total, clients_this_month = stats_repo.clients_totals(db)
+    clients_total, clients_this_month, clients_this_week, clients_without_deals = stats_repo.clients_totals(db)
 
     # Сводка сужается вместе с блоками, а не отказывает: выключили доски — их
     # слагаемых в ответе нет, остальное считается как считалось. Пустые значения,
@@ -98,12 +98,16 @@ def dashboard(user: User = Depends(require_staff), db: Session = Depends(get_db)
     # Воронка целиком, включая пустые этапы: «в согласовании ноль» — тоже ответ,
     # а показывай только непустые — и провал в середине станет невидимым.
     counts = deals_repo.stage_counts(db, only_manager_id=mine_only)
+    # Сумма этапа рядом с числом — тем же правом, что плитки денег: без него
+    # `None`, а не ноль, чтобы пустое не читалось как «на ноль».
+    summy_vidny = permissions_service.sees_amounts(db, user)
     stages = [
         {
             "key": stage.key,
             "name": stage.name,
             "kind": stage.kind,
-            "count": counts.get(stage.key, 0),
+            "count": counts.get(stage.key, (0, 0))[0],
+            "amount": counts.get(stage.key, (0, 0))[1] if summy_vidny else None,
         }
         for stage in pipeline_service.list_stages(db)
     ]
@@ -192,6 +196,8 @@ def dashboard(user: User = Depends(require_staff), db: Session = Depends(get_db)
         "my_tasks": my_tasks,
         "clients_total": clients_total,
         "clients_this_month": clients_this_month,
+        "clients_this_week": clients_this_week,
+        "clients_without_deals": clients_without_deals,
         "boards_total": boards_total,
         "boards_published": boards_published,
         "views_7d": views_7d,
