@@ -185,8 +185,18 @@ def _zanyat(job_id: str) -> bool:
     return False
 
 
-def _osvobodit() -> None:
-    (katalog() / ZANYATO).unlink(missing_ok=True)
+def _osvobodit(job_id: str | None = None) -> None:
+    """Отпустить замок. С номером работы — только свой: `finally` потока
+    добегает уже после итога, и без сверки стирал бы замок следующей работы,
+    взятый в это окно (CI 06.09.2026). Без номера — безусловно, для уборки."""
+    zamok = katalog() / ZANYATO
+    if job_id is not None:
+        try:
+            if zamok.read_text(encoding="utf-8").strip() != job_id:
+                return
+        except FileNotFoundError:
+            return
+    zamok.unlink(missing_ok=True)
 
 
 def _ubrat_staroe() -> None:
@@ -250,7 +260,7 @@ def _zavershit(job: dict, status: str, error: str | None = None) -> None:
     """Итог работы. Замок отпускается ДО записи итога: тот, кто дождался
     «done»/«failed» и тут же завёл следующую работу, получал `backup_busy` —
     замок ещё держал `finally` потока (CI, 06.09.2026)."""
-    _osvobodit()
+    _osvobodit(job["id"])
     job["status"] = status
     job["error"] = error
     job["finished_at"] = _seychas()
@@ -345,7 +355,7 @@ def _snyatie(job: dict, actor_id: int) -> None:
         _zavershit(job, "failed", str(beda)[:500])
     finally:
         syroy.unlink(missing_ok=True)
-        _osvobodit()
+        _osvobodit(job["id"])
 
 
 # --- скачивание и проверка ---------------------------------------------------
@@ -499,7 +509,7 @@ def vosstanovit(db: Session, actor: User, kind: str, zagruzka: Path) -> dict:
         _zapisat(job)
     except Exception:
         syroy.unlink(missing_ok=True)
-        _osvobodit()
+        _osvobodit(job["id"])
         raise
     threading.Thread(
         target=_vosstanovlenie, args=(job, actor.id, syroy), daemon=True, name=f"restore-{job['id']}"
@@ -561,4 +571,4 @@ def _vosstanovlenie(job: dict, actor_id: int, syroy: Path) -> None:
         _zavershit(job, "failed", (str(beda)[:400] + podskazka))
     finally:
         syroy.unlink(missing_ok=True)
-        _osvobodit()
+        _osvobodit(job["id"])
