@@ -10,7 +10,7 @@ import { SourcePicker } from "../components/SourcePicker";
 import { Avatar, Chip, ConfirmModal, Dochitat, EmptyState, ItogSpiska, LoadFailed, Modal, ScreenLoading } from "../components/ui";
 import { api, ApiError } from "../lib/api";
 import { dropTarget } from "../lib/dnd";
-import { kindLabel, paperLink, statusLabel, statusVariant } from "../lib/documents";
+import { kindLabel, nazvanieBumagi, paperLink, statusLabel, statusVariant } from "../lib/documents";
 import { useApp } from "../lib/app";
 import { useLiveTopic, useNachatayaPravka } from "../lib/live";
 import { flagStrany, nazvanieStrany } from "../lib/strany";
@@ -653,9 +653,12 @@ export function ClientCard() {
                 <span className="doc-number">{doc.number}</span>
                 <div className="list-row-text">
                   <div className="truncate" style={{ color: "var(--text)", fontSize: 13.5, fontWeight: 500 }}>
-                    {doc.payload?.fields?.item || kindLabel(t, doc.kind)}
+                    {nazvanieBumagi(t, doc)}
                   </div>
-                  <div className="truncate" style={{ color: "var(--faint)", fontSize: 12 }}>{kindLabel(t, doc.kind)}</div>
+                  {/* Вид второй строкой — только когда первая назвала предмет: «Заказ покупателя / Заказ покупателя» читалось как сбой. */}
+                  {nazvanieBumagi(t, doc) !== kindLabel(t, doc.kind) && (
+                    <div className="truncate" style={{ color: "var(--faint)", fontSize: 12 }}>{kindLabel(t, doc.kind)}</div>
+                  )}
                 </div>
                 <span style={{ width: 90, textAlign: "right", color: "var(--faint)", fontSize: 12, flexShrink: 0 }}>
                   {formatDate(doc.created_at, locale)}
