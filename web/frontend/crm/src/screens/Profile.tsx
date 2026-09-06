@@ -2,7 +2,7 @@ import { useRef, useState, type FormEvent } from "react";
 
 import { Icon } from "../components/Icon";
 import { Avatar } from "../components/ui";
-import { api, ApiError, type User } from "../lib/api";
+import { api, type User } from "../lib/api";
 import { useApp } from "../lib/app";
 import {
   signaly_vklyucheny,
@@ -12,6 +12,7 @@ import {
 import { formatDate, initials } from "../lib/format";
 import { THEMES, type Theme } from "../lib/theme";
 import { nazvanieRoli } from "../lib/roli";
+import { podpisOshibki } from "../lib/oshibki";
 
 /** Подпись под каждым положением переключателя тем. */
 const THEME_LABEL: Record<Theme, "themeLight" | "themeDark" | "themeSystem"> = {
@@ -138,7 +139,7 @@ export function Profile() {
       setRepeat("");
       toast(t("saved"));
     } catch (err) {
-      setPasswordError(err instanceof ApiError ? err.message : t("error"));
+      setPasswordError(podpisOshibki(err, t));
     }
   };
 

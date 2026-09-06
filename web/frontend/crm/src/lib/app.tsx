@@ -11,7 +11,8 @@ import {
 import { useNavigate } from "react-router-dom";
 
 import type { StorageStatus } from "../components/StorageCard";
-import { api, ApiError, type User } from "./api";
+import { api, type User } from "./api";
+import { podpisOshibki } from "./oshibki";
 import { makeT, type Locale, type TFunc } from "./i18n";
 import { cachedModules, moduleOn, rememberModules } from "./modules";
 import { can } from "./permissions";
@@ -339,7 +340,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const toastError = useCallback(
     (e: unknown) => {
-      toast(e instanceof ApiError ? e.message : t("error"), true);
+      toast(podpisOshibki(e, t), true);
     },
     [toast, t],
   );
