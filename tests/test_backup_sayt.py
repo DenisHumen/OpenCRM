@@ -408,10 +408,20 @@ def test_itog_raboty_oznachaet_svobodnyy_zamok(sayt):
     job = backup_service._novaya("db", SimpleNamespace(name="root", email="root@example.test"))
     zamok = backup_service.katalog() / backup_service.ZANYATO
     assert zamok.exists(), "замок не взят"
+    noviy = None
     try:
         backup_service._zavershit(job, "failed", "для проверки")
         assert not zamok.exists(), "итог записан, а замок ещё держится"
         assert backup_service.rabota(job["id"])["status"] == "failed"
+        # Следующая работа взяла замок — опоздавший `finally` прошлой его не трогает.
+        noviy = backup_service._novaya("db", SimpleNamespace(name="root", email="root@example.test"))
+        assert zamok.exists(), "замок новой работы не взят"
+        backup_service._osvobodit(job["id"])
+        assert zamok.exists(), "чужой отпуск стёр замок новой работы"
+        backup_service._osvobodit(noviy["id"])
+        assert not zamok.exists(), "свой отпуск замок не снял"
     finally:
         backup_service._osvobodit()
         backup_service._put_raboty(job["id"]).unlink(missing_ok=True)
+        if noviy:
+            backup_service._put_raboty(noviy["id"]).unlink(missing_ok=True)
