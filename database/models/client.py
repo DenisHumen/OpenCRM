@@ -52,6 +52,11 @@ class Client(Base):
     # Индекс почтовый, а не число: в Канаде и Британии в нём буквы.
     zip_code: Mapped[str] = mapped_column(String(20), default="", server_default="")
     address: Mapped[str] = mapped_column(String(300), default="", server_default="")
+    # Точка на глобусе, поставленная человеком (1e-7 градуса). Пусто — место
+    # считается по стране и городу и в базе не лежит: производное не хранится
+    # (docs/bloki/25-globus.md §5).
+    lat_e7: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    lon_e7: Mapped[int | None] = mapped_column(Integer, nullable=True)
     tags: Mapped[str] = mapped_column(String(500), default="")  # comma-separated (MVP)
     # Источник — ключом, а не ссылкой на справочник (цена таблицы и почему не
     # наоборот — docs/osnovy/03-baza-dannyh.md, «clients»). NULL и "other" не сливать:

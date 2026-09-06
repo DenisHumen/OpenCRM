@@ -5,6 +5,7 @@ import { BoardCard } from "../components/BoardCard";
 import { Icon } from "../components/Icon";
 import { NewBoardButton } from "../components/NewBoardButton";
 import { StorageCard } from "../components/StorageCard";
+import { VidzhetKarty } from "../components/VidzhetKarty";
 import { VidzhetKlyucha, type KlyuchSayta } from "../components/VidzhetKlyucha";
 import { Avatar, Chip, EmptyState, LoadFailed, Modal, ScreenLoading } from "../components/ui";
 import { api } from "../lib/api";
@@ -68,7 +69,7 @@ interface Raskladka {
  *  воронка и задачи, заказы и склад, витрины, хранилище, доски и клиенты. */
 const PORYADOK_UMOLCHANIYA = [
   "money_in_work", "money_received", "money_won", "money_due", "avg_check", "clients", "calls",
-  "funnel", "my_tasks", "orders_week", "low_stock", "showcase_views", "storage", "recent_boards", "recent_clients",
+  "funnel", "my_tasks", "orders_week", "low_stock", "showcase_views", "globe_detail", "storage", "recent_boards", "recent_clients",
 ];
 
 const ZAGOLOVKI: Record<string, TranslationKey> = {
@@ -87,6 +88,7 @@ const ZAGOLOVKI: Record<string, TranslationKey> = {
   storage: "storage",
   recent_boards: "recentBoards",
   recent_clients: "recentClients",
+  globe_detail: "globeDetail",
   api_key: "dashApiKey",
 };
 
@@ -634,6 +636,8 @@ export function Dashboard() {
             </div>
           </div>
         );
+      case "globe_detail":
+        return <VidzhetKarty />;
       case "storage":
         return storage ? <StorageCard storage={storage} onPurged={() => void refreshStorage()} /> : null;
       case "recent_boards":

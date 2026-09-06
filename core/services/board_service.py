@@ -71,6 +71,8 @@ def update_board(db: Session, board_id: int, data: dict) -> Board:
         board.deal_id = data["deal_id"]
     if "is_published" in data and data["is_published"] is not None:
         board.is_published = bool(data["is_published"])
+    if "geo_enabled" in data and data["geo_enabled"] is not None:
+        board.geo_enabled = bool(data["geo_enabled"])
     if "cover_work_id" in data:
         cover_id = data["cover_work_id"]
         if cover_id is not None:

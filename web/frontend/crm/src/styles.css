@@ -70,6 +70,31 @@
      бы тёмно-коричневое на тёмно-коричневом. */
   --warn-bar: #d99a4e;
   --on-warn-bar: #1a1a19;
+
+  /* --- Глобус: вне тем, как и витрина -------------------------------------
+     Космос чёрный при любой теме, а «командный» вид взят у OSIRIS
+     (docs/bloki/25-globus.md §2). Приглушённый текст поднят до 5.7:1: у
+     образца он 2.9:1, а читать экран должны все. */
+  --globus-void: #05050c;
+  --globus-panel: rgba(8, 10, 20, 0.88);
+  --globus-more: #0d1526;
+  --globus-susha: #171d2e;
+  --globus-bereg: #2c3550;
+  --globus-setka: rgba(212, 175, 55, 0.10);
+  --globus-limb: rgba(212, 175, 55, 0.30);
+  --globus-noch: #04040a;
+  --globus-zoloto: #d4af37;
+  --globus-zoloto-svet: #f0d060;
+  --globus-cian: #00e5ff;
+  --globus-uspekh: #00e676;
+  --globus-trevoga: #ff9500;
+  --globus-beda: #ff3d3d;
+  --globus-tekst: #e8e6e0;
+  --globus-tusklo: #8b877d;
+  --globus-ramka: rgba(212, 175, 55, 0.15);
+  --globus-ramka-yarko: rgba(212, 175, 55, 0.40);
+  --globus-podsvet: rgba(212, 175, 55, 0.08);
+  --globus-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 /* --- Тёмная. Она же по умолчанию ---------------------------------------- */
@@ -3204,3 +3229,181 @@ html { scroll-behavior: smooth; }
 .klyuch-copy { position: absolute; bottom: 10px; right: 12px; }
 .klyuch-hint { margin-top: 10px; text-align: center; color: var(--faint); font-size: 12px; }
 @media (prefers-reduced-motion: reduce) { .klyuch-inner { transition: none; } }
+
+
+/* === Глобус ===============================================================
+   Командный экран: планета во всю площадь, поверх неё панели-стекло. Вид взят
+   у OSIRIS и переведён на наши правила (docs/bloki/25-globus.md §2): цвета
+   токенами, движение выключается, класс на каждое имя в разметке. */
+.globus {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  height: calc(100vh - 96px);
+  min-height: 520px;
+  padding: 16px 20px 14px;
+  background: var(--globus-void);
+  border: 1px solid var(--globus-ramka);
+  border-radius: 14px;
+  overflow: hidden;
+}
+.globus::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    0deg, transparent, transparent 3px, var(--globus-podsvet) 3px, var(--globus-podsvet) 4px
+  );
+  opacity: 0.18;
+}
+.globus-shapka { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.globus-marka { display: flex; flex-direction: column; gap: 3px; }
+.globus-imya {
+  font-family: var(--globus-mono);
+  font-size: 15px; font-weight: 700; letter-spacing: 0.42em; text-transform: uppercase;
+  color: var(--globus-tekst);
+}
+.globus-podzagolovok {
+  font-family: var(--globus-mono);
+  font-size: 8.5px; letter-spacing: 0.28em; text-transform: uppercase;
+  color: var(--globus-zoloto);
+}
+.globus-svodka { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.globus-metka {
+  font-family: var(--globus-mono);
+  font-size: 8px; letter-spacing: 0.2em; text-transform: uppercase;
+  color: var(--globus-tusklo);
+}
+.globus-znachenie {
+  font-family: var(--globus-mono);
+  font-size: 11px; font-weight: 600; color: var(--globus-zoloto);
+  font-variant-numeric: tabular-nums;
+}
+.globus-pole {
+  position: relative; flex: 1; min-height: 0;
+  display: grid; grid-template-columns: 232px minmax(0, 1fr) 268px; gap: 12px;
+}
+.globus-panel {
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 12px 12px 14px;
+  background: var(--globus-panel);
+  border: 1px solid var(--globus-ramka);
+  border-radius: 12px;
+  overflow-y: auto;
+  backdrop-filter: blur(18px);
+}
+.globus-panel::-webkit-scrollbar { width: 3px; }
+.globus-panel::-webkit-scrollbar-thumb { background: var(--globus-ramka-yarko); border-radius: 3px; }
+.globus-sleva { grid-column: 1; }
+.globus-sprava { grid-column: 3; }
+.globus-zagolovok {
+  font-family: var(--globus-mono);
+  font-size: 8px; letter-spacing: 0.24em; text-transform: uppercase;
+  color: var(--globus-tusklo);
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--globus-ramka);
+}
+.globus-sloi { display: flex; flex-direction: column; gap: 1px; }
+.globus-sloy {
+  display: flex; align-items: center; gap: 8px;
+  padding: 5px 6px;
+  background: none; border: none; border-radius: 5px;
+  cursor: pointer; text-align: left;
+  font-family: var(--globus-mono);
+  font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--globus-tusklo);
+}
+.globus-sloy:hover { background: var(--globus-podsvet); color: var(--globus-tekst); }
+.globus-sloy.vklyuchen { color: var(--globus-tekst); }
+.globus-tumbler {
+  position: relative; flex-shrink: 0;
+  width: 22px; height: 11px; border-radius: 6px;
+  background: var(--globus-podsvet);
+  border: 1px solid var(--globus-ramka);
+}
+.globus-tumbler::after {
+  content: ""; position: absolute; top: 1px; left: 1px;
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--globus-tusklo);
+  transition: left 0.2s ease, background 0.2s ease;
+}
+.globus-sloy.vklyuchen .globus-tumbler { border-color: var(--globus-zoloto); }
+.globus-sloy.vklyuchen .globus-tumbler::after { left: 12px; background: var(--globus-zoloto); }
+.globus-sloy-imya { flex: 1; min-width: 0; }
+.globus-sloy-schyot { font-variant-numeric: tabular-nums; color: var(--globus-zoloto); }
+.globus-strany { display: flex; flex-direction: column; gap: 4px; }
+.globus-strana {
+  position: relative; display: flex; align-items: center; gap: 8px;
+  padding: 4px 6px; border-radius: 4px; overflow: hidden;
+  font-family: var(--globus-mono); font-size: 10px; color: var(--globus-tusklo);
+}
+.globus-kod { color: var(--globus-zoloto); letter-spacing: 0.1em; }
+.globus-strana-imya { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.globus-polosa {
+  position: absolute; left: 0; bottom: 0; height: 2px;
+  background: var(--globus-zoloto); opacity: 0.45;
+}
+.globus-bez-mesta {
+  font-family: var(--globus-mono); font-size: 9px; letter-spacing: 0.1em;
+  color: var(--globus-tusklo); padding: 4px 6px;
+}
+.globus-holst { position: relative; grid-column: 2; min-width: 0; }
+.globus-canvas { display: block; width: 100%; height: 100%; cursor: grab; }
+.globus-canvas:active { cursor: grabbing; }
+.globus-ugol { position: absolute; width: 48px; height: 48px; pointer-events: none; opacity: 0.55; }
+.globus-ugol-lv { top: 0; left: 0; border-top: 1px solid var(--globus-zoloto); border-left: 1px solid var(--globus-zoloto); }
+.globus-ugol-pv { top: 0; right: 0; border-top: 1px solid var(--globus-zoloto); border-right: 1px solid var(--globus-zoloto); }
+.globus-ugol-ln { bottom: 0; left: 0; border-bottom: 1px solid var(--globus-zoloto); border-left: 1px solid var(--globus-zoloto); }
+.globus-ugol-pn { bottom: 0; right: 0; border-bottom: 1px solid var(--globus-zoloto); border-right: 1px solid var(--globus-zoloto); }
+.globus-kartochka { display: flex; flex-direction: column; gap: 6px; }
+.globus-kartochka-imya { font-family: var(--sans); font-size: 14px; font-weight: 600; color: var(--globus-tekst); }
+.globus-kartochka-podpis {
+  font-family: var(--globus-mono); font-size: 10px; letter-spacing: 0.12em;
+  text-transform: uppercase; color: var(--globus-cian);
+}
+.globus-para { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.globus-pusto {
+  font-family: var(--globus-mono); font-size: 9.5px; letter-spacing: 0.08em;
+  color: var(--globus-tusklo); line-height: 1.55;
+}
+.globus-podrobno { display: flex; flex-direction: column; gap: 8px; }
+.globus-hod { height: 4px; border-radius: 2px; background: var(--globus-podsvet); overflow: hidden; }
+.globus-hod-polosa { display: block; height: 100%; background: var(--globus-zoloto); transition: width 0.4s ease; }
+.globus-knopka {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  padding: 7px 12px; border-radius: 6px;
+  background: var(--globus-podsvet);
+  border: 1px solid var(--globus-ramka-yarko);
+  color: var(--globus-zoloto); cursor: pointer; text-decoration: none;
+  font-family: var(--globus-mono); font-size: 9.5px; letter-spacing: 0.16em; text-transform: uppercase;
+}
+.globus-knopka:hover { background: var(--globus-ramka); color: var(--globus-zoloto-svet); }
+.globus-knopka:disabled { opacity: 0.5; cursor: default; }
+/* Тумблер гостей в настройках доски: отбит от полей сверху линией, чтобы не
+   читался как продолжение адресных строк. */
+.doska-geo { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+.doska-geo-podskazka { color: var(--faint); font-size: 11.5px; margin-top: 8px; line-height: 1.5; }
+/* Полоса хода докачки в виджете сводки: та же, что на экране глобуса, но в
+   токенах обычной темы — виджет живёт среди светлых карточек. */
+.karta-hod { height: 4px; border-radius: 2px; background: var(--tint-neutral); overflow: hidden; margin: 8px 0; }
+.karta-hod-polosa { display: block; height: 100%; background: var(--accent); transition: width 0.4s ease; }
+.globus-planka {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 8px 12px;
+  background: var(--globus-panel);
+  border: 1px solid var(--globus-ramka);
+  border-radius: 10px;
+}
+@media (max-width: 1100px) {
+  .globus-pole { grid-template-columns: minmax(0, 1fr); grid-auto-rows: min-content; }
+  .globus-sleva, .globus-sprava, .globus-holst { grid-column: 1; }
+  .globus-holst { min-height: 420px; }
+  .globus { height: auto; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .globus-tumbler::after { transition: none; }
+  .globus-hod-polosa { transition: none; }
+  .karta-hod-polosa { transition: none; }
+}

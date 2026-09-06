@@ -5,7 +5,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from core import exceptions as errors
-from core.services import client_service, permissions_service, settings_service
+from core.services import client_service, globus_service, permissions_service, settings_service
 from database.models import User
 from database.repositories import clients as clients_repo
 from database.repositories import deals as deals_repo
@@ -149,6 +149,23 @@ def update_client(
 ):
     data = payload.model_dump(exclude_unset=True)
     return schemas.client_out(client_service.update_client(db, client_id, data))
+
+
+@router.patch("/{client_id}/geo")
+def set_client_geo(
+    client_id: int,
+    payload: schemas.ClientGeoIn,
+    _: User = Depends(require_perm("clients", "edit")),
+    db: Session = Depends(get_db),
+):
+    """Поставить точку клиента на глобусе руками или снять её.
+
+    Отдельной ручкой, а не полем правки: точку ставят перетаскиванием по
+    планете, и слать туда весь клиент целиком значило бы затирать соседние
+    поля чужой копией (docs/bloki/25-globus.md §5.1).
+    """
+    client = client_service.get_client(db, client_id)
+    return schemas.client_out(globus_service.postavit_tochku(db, client, payload.lat, payload.lon))
 
 
 @router.delete("/{client_id}")

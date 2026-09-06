@@ -41,6 +41,7 @@ import { ProductCard } from "./screens/ProductCard";
 import { Profile } from "./screens/Profile";
 import { Docs } from "./screens/Docs";
 import { Finance } from "./screens/Finance";
+import { Globus } from "./screens/Globus";
 import { FinanceSettings } from "./screens/FinanceSettings";
 import { Reports } from "./screens/Reports";
 import {
@@ -322,6 +323,11 @@ export default function App() {
           <Route element={<ModuleRoute module="finance" />}>
             <Route element={<PermRoute perm="finance.view" />}>
               <Route path="/finance" element={<Finance />} />
+            </Route>
+          </Route>
+          <Route element={<ModuleRoute module="globe" />}>
+            <Route element={<PermRoute perm="globe.view" />}>
+              <Route path="/globe" element={<Globus />} />
             </Route>
           </Route>
           <Route element={<ModuleRoute module="reports" />}>

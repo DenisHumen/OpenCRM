@@ -79,7 +79,7 @@ PRESETS: dict[str, dict] = {
         # доступ под видом совместимости.
         "permissions": (
             _crud("clients", "deals", "boards", "tasks", "documents", "warehouse")
-            + _view("companies", "reports", "mail", "telephony", "templates")
+            + _view("companies", "reports", "mail", "telephony", "templates", "globe")
             + [
                 "deals.move_stage",
                 "deals.view_others",

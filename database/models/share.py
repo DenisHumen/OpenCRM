@@ -41,3 +41,7 @@ class ShareView(Base):
     )
     ip_hash: Mapped[str] = mapped_column(String(64), default="")
     user_agent: Mapped[str] = mapped_column(String(300), default="")
+    # Часовой пояс браузера гостя — сырой признак места (`Europe/Kyiv`).
+    # Разрешения он не спрашивает и точнее города не бывает; координаты
+    # выводятся при чтении (docs/bloki/25-globus.md §5.2).
+    tz: Mapped[str] = mapped_column(String(64), default="", server_default="")

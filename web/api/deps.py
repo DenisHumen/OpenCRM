@@ -46,6 +46,13 @@ document_limiter = SlidingWindowLimiter(
     DOCUMENT_STATUS_MAX_LOOKUPS, DOCUMENT_STATUS_WINDOW_SECONDS, name="document"
 )
 
+#: Маячок часового пояса с витрины: один заход — одна отметка. Десять за час с
+#: адреса — с запасом на обновления страницы и на несколько человек за одним
+#: провайдером, но не даёт превратить ручку в дописывание чужих просмотров.
+GEO_MAX = 10
+GEO_WINDOW_SECONDS = 3600
+geo_limiter = SlidingWindowLimiter(GEO_MAX, GEO_WINDOW_SECONDS, name="geo")
+
 
 #: Потолок длины строки поиска.
 #:

@@ -12,6 +12,7 @@ import { useFailure } from "../lib/failure";
 import { useGuard } from "../lib/guard";
 import { copyText } from "../lib/clipboard";
 import { fileSize, formatDateTime, formatDuration } from "../lib/format";
+import { moduleOn } from "../lib/modules";
 import { useReference } from "../lib/reference";
 
 /**
@@ -47,7 +48,7 @@ interface Zaliv {
 
 export function BoardEditor() {
   const { id } = useParams();
-  const { t, locale, toast, toastError } = useApp();
+  const { t, locale, modules, toast, toastError } = useApp();
   const navigate = useNavigate();
   const [board, setBoard] = useState<any>(null);
   const [confirm, setConfirm] = useState<null | "regenerate" | "deleteBoard" | "deleteShare" | number>(null);
@@ -578,6 +579,19 @@ export function BoardEditor() {
               <LoadFailed error={clientDeals.failure} onRetry={clientDeals.reload} />
             )}
             <div style={{ color: "var(--faint)", fontSize: 11.5, marginTop: 10, lineHeight: 1.5 }}>{t("coverHint")}</div>
+            {/* Тумблер гостей на глобусе. Стоит здесь, а не в общих настройках:
+                доска доски рознь — портфолио показывают миру, смету одному
+                клиенту (docs/bloki/25-globus.md §10). */}
+            {moduleOn(modules, "globe") && (
+              <div className="doska-geo">
+                <Toggle
+                  on={board.geo_enabled !== false}
+                  onToggle={() => void patchBoard({ geo_enabled: !(board.geo_enabled !== false) })}
+                  label={t("globeGeo")}
+                />
+                <div className="doska-geo-podskazka">{t("globeGeoHint")}</div>
+              </div>
+            )}
           </div>
 
           <div className="rail-card">

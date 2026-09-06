@@ -84,6 +84,10 @@ MODULES: tuple[Module, ...] = (
     # двумя гигабайтами полный набор наблюдателей забирает заметную часть
     # памяти, а сайт живёт с неё же.
     Module(key="monitoring", default=False),
+    # Планета с точками клиентов. Выключен: студии с тремя местными клиентами
+    # карта не нужна, а магазину с доставкой по стране — нужна сразу. Стоит на
+    # клиентах: без них точке неоткуда взяться.
+    Module(key="globe", default=False, requires=("clients",)),
 )
 
 BY_KEY: dict[str, Module] = {module.key: module for module in MODULES}
@@ -189,7 +193,7 @@ PRESETS: tuple[Preset, ...] = (
         key="wholesale",
         modules=(
             "warehouse", "labels", "orders", "documents", "waybills",
-            "companies", "mail", "finance",
+            "companies", "mail", "finance", "globe",
         ),
         pipeline="shop",
         deal_term="order",

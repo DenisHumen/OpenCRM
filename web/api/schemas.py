@@ -197,8 +197,16 @@ class BoardIn(BaseModel):
     deal_id: int | None = None
 
 
+class ClientGeoIn(BaseModel):
+    """Точка клиента на глобусе. Пустые поля — снять точку."""
+
+    lat: float | None = None
+    lon: float | None = None
+
+
 class BoardPatchIn(BaseModel):
     title: str | None = None
+    geo_enabled: bool | None = None
     description: str | None = None
     client_id: int | None = None
     deal_id: int | None = None
@@ -374,6 +382,9 @@ def client_out(client: Client) -> dict:
         "messenger": client.messenger,
         "country": client.country,
         "city": client.city,
+        # Точка, поставленная рукой: пусто — глобус считает место по стране.
+        "lat": None if client.lat_e7 is None else client.lat_e7 / 1e7,
+        "lon": None if client.lon_e7 is None else client.lon_e7 / 1e7,
         "zip_code": client.zip_code,
         "address": client.address,
         "tags": [t for t in client.tags.split(",") if t],
@@ -653,6 +664,7 @@ def board_out(
         "client_name": client_name,
         "deal_id": board.deal_id,
         "cover_work_id": board.cover_work_id,
+        "geo_enabled": board.geo_enabled,
         "created_by": board.created_by,
         # Кто завёл — именем, как просил владелец 05.09.2026; у старых досок
         # автора нет (колонка появилась позже), и ключ тогда пустой, а не

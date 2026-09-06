@@ -71,13 +71,15 @@ def test_chislo_blokov_v_dokumentakh_sovpadaet_s_reestrom():
     vinovnye = []
     for imya in ("docs/osnovy/09-sostoyanie-i-resheniya.md", "docs/osnovy/01-obzor.md"):
         tekst = (KOREN / imya).read_text(encoding="utf-8")
+        # Граница слова обязательна: «восемнадцать» содержит в себе
+        # «семнадцать», и без неё верное числительное обвиняло само себя.
         chuzhie = [
             slovo
             for chislo, slovo in CHISLITELNYE.items()
-            if chislo != skolko and re.search(rf"{slovo} блок", tekst, re.I)
+            if chislo != skolko and re.search(rf"\b{slovo} блок", tekst, re.I)
         ]
         if chuzhie:
             vinovnye.append(f"{imya}: сказано «{', '.join(chuzhie)}», а блоков {skolko}")
-        elif not re.search(rf"{verno} блок", tekst, re.I):
+        elif not re.search(rf"\b{verno} блок", tekst, re.I):
             vinovnye.append(f"{imya}: число блоков не названо вовсе")
     assert vinovnye == [], "\n  ".join([""] + vinovnye)
