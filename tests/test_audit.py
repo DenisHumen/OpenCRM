@@ -501,6 +501,11 @@ def test_switching_a_module_records_both_states(root_client):
     assert (logged[1]["value_before"], logged[1]["value_after"]) == ("on", "off")
     assert (logged[0]["value_before"], logged[0]["value_after"]) == ("off", "on")
 
+    # Включение включённого — не перемена: записи нет, и «кто переключал»
+    # остаётся за тем, кто переключал на самом деле.
+    assert root_client.post(f"{API}/modules/tasks", json={"enabled": True}).status_code == 200
+    assert len([e for e in about_tasks() if e["id"] > posledniy]) == 2, "холостое включение попало в журнал"
+
 
 def test_granting_and_revoking_access_is_recorded(root_client):
     """Доступ — единственное, что сотрудник не может вернуть себе сам."""

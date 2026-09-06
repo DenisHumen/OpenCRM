@@ -505,6 +505,9 @@ def delete_note(db: Session, client_id: int, note_id: int, actor: User) -> None:
 # --- сводка карточки ---
 
 
+KONTAKTY = ("note", "call", "meeting", "email")
+
+
 def svodka(db: Session, client_id: int, user: User) -> dict:
     """Что справа от паспорта: заявки, деньги, последний контакт, бумаги, кто ведёт.
 
@@ -528,7 +531,9 @@ def svodka(db: Session, client_id: int, user: User) -> dict:
     if modules_service.is_enabled(db, "finance") and amounts and permissions_service.has(db, user, "finance", "view"):
         poluchen = finance_repo.received_of_client(db, client_id, since=now_utc() - timedelta(days=365))
 
-    notes, _vsego = clients_repo.list_notes(db, client_id, page=1, per_page=1)
+    # Только живые записи: сводка называет это «последним контактом», а системная
+    # строка про выданный бланк, будучи свежее звонка, занимала его место.
+    notes, _vsego = clients_repo.list_notes(db, client_id, page=1, per_page=1, kinds=KONTAKTY)
     posledniy = None
     if notes:
         zapis = notes[0]

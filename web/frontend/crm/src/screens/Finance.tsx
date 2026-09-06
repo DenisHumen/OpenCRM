@@ -12,6 +12,7 @@ import { useGuard } from "../lib/guard";
 import { formatDate, formatMoney } from "../lib/format";
 import { moduleOn } from "../lib/modules";
 import { can } from "../lib/permissions";
+import { podpisSistemnoy } from "../lib/sistemnye_zapisi";
 import { useReference } from "../lib/reference";
 
 /** Финансы: приход и расход, прибыль за период, разбивка по статьям.
@@ -339,7 +340,7 @@ export function Finance() {
                     {row.comment && (
                       <span style={{ color: "var(--faint)", fontWeight: 400 }}>
                         {" · "}
-                        {row.comment}
+                        {podpisSistemnoy(row.comment, t)}
                       </span>
                     )}
                   </div>

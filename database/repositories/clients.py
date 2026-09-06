@@ -222,6 +222,7 @@ def list_notes(
     per_page: int = 50,
     kind: str | None = None,
     deal_id: int | None = None,
+    kinds: tuple[str, ...] | None = None,
 ) -> tuple[list[ClientNote], int]:
     """Лента: заметки, звонки, встречи и письма одним потоком.
 
@@ -233,6 +234,8 @@ def list_notes(
         base = base.where(ClientNote.client_id == client_id)
     if kind:
         base = base.where(ClientNote.kind == kind)
+    if kinds:
+        base = base.where(ClientNote.kind.in_(kinds))
     if deal_id is not None:
         base = base.where(ClientNote.deal_id == deal_id)
     stmt = base.order_by(ClientNote.happened_at.desc(), ClientNote.id.desc())

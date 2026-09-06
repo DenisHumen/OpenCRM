@@ -19,6 +19,7 @@ import { useLiveTopic } from "../lib/live";
 import { useFailure } from "../lib/failure";
 import { useGuard } from "../lib/guard";
 import { formatDateTime, formatMoney, formatQuantity } from "../lib/format";
+import { podpisSistemnoy } from "../lib/sistemnye_zapisi";
 import { unitKey, type Product } from "./Warehouse";
 
 const MOVE_KINDS = ["in", "out", "writeoff", "adjust", "return"] as const;
@@ -283,7 +284,7 @@ export function ProductCard() {
               <div style={{ color: "var(--faint)", fontSize: 12.5 }}>
                 {move.cost !== null && <>{t("costPrice")}: {formatMoney(move.cost, currency, locale)}</>}
                 {move.author_name && <> · {move.author_name}</>}
-                {move.comment && <> · {move.comment}</>}
+                {move.comment && <> · {podpisSistemnoy(move.comment, t)}</>}
               </div>
             </div>
           </div>

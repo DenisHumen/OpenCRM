@@ -1731,6 +1731,10 @@ SISTEMNYE_SHABLONY = (
     "Order ", "Return ", "Waybill ", "Stage: ", "Document ", "Act ",
     "shipped by waybill", "received by waybill", "reservation extended", "due date cleared",
     "handed to the client", "moved on the board", "closed by waybill",
+    # второй заход 06.09.2026: операции денег, движения склада, история возврата, журнал
+    "the item was handed over", "refund by return", "return (\\S+) for order", "returned by",
+    "for order (\\S+)$", "for certificate", "written off on closing deal", "transfer (\\d+) reversed",
+    "reversed by", "adjustment:", "moved beyond the balance",
 )
 
 
@@ -1741,3 +1745,19 @@ def test_sistemnye_zapisi_podpisyvayutsya_slovami_interfeysa():
     text = (SCREENS / "lib" / "sistemnye_zapisi.ts").read_text(encoding="utf-8")
     bez_podpisi = [sh for sh in SISTEMNYE_SHABLONY if sh not in text]
     assert bez_podpisi == [], f"шаблоны сервера без подписи на экране: {bez_podpisi}"
+
+
+def test_zhurnal_podpisyvaet_kazhdoe_deystvie_servera():
+    """Ключ действия или объекта без подписи журнал показывает как есть
+    («finance.budget_set», «finance_rule») — на пробе 06.09.2026 так выглядели
+    все действия по деньгам. Удаление и восстановление подписаны по суффиксу."""
+    deystviya, obekty = set(), set()
+    for f in ("core/services/audit_service.py", "core/services/finance_service.py"):
+        text = (KOREN / f).read_text(encoding="utf-8")
+        deystviya |= set(re.findall(r'^ACTION_\w+ = "([a-z_]+\.[a-z_]+)"', text, re.M))
+        obekty |= set(re.findall(r'^ENTITY_\w+ = "([a-z_]+)"', text, re.M))
+    audit = (SCREENS / "screens" / "Audit.tsx").read_text(encoding="utf-8")
+    bez = sorted(d for d in deystviya if f'"{d}"' not in audit and not d.endswith((".deleted", ".restored")))
+    assert bez == [], f"действия сервера без подписи в журнале: {bez}"
+    bez = sorted(o for o in obekty if f"  {o}: " not in audit)
+    assert bez == [], f"объекты сервера без подписи в журнале: {bez}"
