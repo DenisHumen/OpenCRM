@@ -10,7 +10,7 @@ from database.models.deal import Deal, DealLine, DealStageChange
 from database.models.pipeline import PipelineStage
 from database.models.document import Document, DocumentEvent, DocumentFile, DocumentLine
 from database.models.module import ModuleState
-from database.models.task import Task
+from database.models.task import Task, TaskFile
 from database.models.template import MessageTemplate
 from database.models.mail import MailAccount, MailMessage
 from database.models.warehouse import (
@@ -58,6 +58,7 @@ __all__ = [
     "DocumentLine",
     "ModuleState",
     "Task",
+    "TaskFile",
     "MessageTemplate",
     "MailAccount",
     "MailMessage",

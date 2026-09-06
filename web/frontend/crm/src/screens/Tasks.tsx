@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { Icon } from "../components/Icon";
+import { KartochkaNapominaniya } from "../components/KartochkaNapominaniya";
 import { EmptyState, ScreenLoading } from "../components/ui";
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
@@ -9,6 +10,14 @@ import { useLiveTopic } from "../lib/live";
 import { useFailure } from "../lib/failure";
 import { useGuard } from "../lib/guard";
 import { formatDateTime, parseDate } from "../lib/format";
+import {
+  VAZHNOSTI,
+  VAZHNOST_LABEL,
+  VAZHNOST_PO_UMOLCHANIYU,
+  Vazhnost,
+  srochno,
+  vazhnost,
+} from "../lib/vazhnost";
 
 /** Списки, которыми пользуются каждый день. Порядок — от срочного к общему. */
 const SCOPES = ["overdue", "today", "week", "open", "done"] as const;
@@ -46,9 +55,10 @@ function toLocalInput(iso: string | null): string {
 
 /** Полосы списка по местному дню: в одной ленте «сегодня» терялось между
  *  вчерашним и следующей неделей (владелец, 06.09.2026). */
-type Polosa = "overdue" | "today" | "tomorrow" | "later" | "nodue";
-const POLOSY: Polosa[] = ["overdue", "today", "tomorrow", "later", "nodue"];
+type Polosa = "srochno" | "overdue" | "today" | "tomorrow" | "later" | "nodue";
+const POLOSY: Polosa[] = ["srochno", "overdue", "today", "tomorrow", "later", "nodue"];
 const POLOSA_LABEL = {
+  srochno: "vazhnostUrgent",
   overdue: "tasksOverdue",
   today: "tasksToday",
   tomorrow: "tasksTomorrow",
@@ -56,7 +66,10 @@ const POLOSA_LABEL = {
   nodue: "tasksNoDue",
 } as const;
 
-function polosa(task: { due_at: string | null }, now: number): Polosa {
+function polosa(task: { due_at: string | null; vazhnost?: string }, now: number): Polosa {
+  // Срочное собирается наверх мимо дней. Иначе «срочно, но без срока» падало в
+  // самый низ, под «позже», — а сервер как раз ставит важность выше срока.
+  if (srochno(task.vazhnost)) return "srochno";
   const at = parseDate(task.due_at);
   if (!at) return "nodue";
   const moment = at.getTime();
@@ -83,6 +96,8 @@ export function Tasks() {
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [title, setTitle] = useState("");
   const [due, setDue] = useState("");
+  const [novaya, setNovaya] = useState<Vazhnost>(VAZHNOST_PO_UMOLCHANIYU);
+  const [otkryto, setOtkryto] = useState<number | null>(null);
   const [attempt, setAttempt] = useState(0);
   useLiveTopic("tasks", () => setAttempt((a) => a + 1));
   const guard = useGuard();
@@ -92,6 +107,7 @@ export function Tasks() {
   // Повтор после отказа и обновление после правки идут одним путём: два разных
   // способа перезагрузить один список расходятся в поведении с первой правкой.
   const reload = useCallback(() => setAttempt((n) => n + 1), []);
+  const zakryt = useCallback(() => setOtkryto(null), []);
 
   useEffect(() => {
     // Списки переключают быстрее, чем отвечает сервер: без счётчика ответ по
@@ -125,9 +141,10 @@ export function Tasks() {
     // выяснялось это только когда оба напоминали.
     if (!text || !guard.take()) return;
     try {
-      await api.post("/tasks", { title: text, due_at: toInstant(due) });
+      await api.post("/tasks", { title: text, due_at: toInstant(due), vazhnost: novaya });
       setTitle("");
       setDue("");
+      setNovaya(VAZHNOST_PO_UMOLCHANIYU);
       reload();
     } catch (e) {
       toastError(e);
@@ -202,6 +219,20 @@ export function Tasks() {
           value={due}
           onChange={(e) => setDue(e.target.value)}
         />
+        {/* Важность выбирается здесь же: заведённое «на потом» напоминание
+            срочным уже не сделают — ради этого пришлось бы открывать карточку. */}
+        <select
+          className="input task-new-vazhnost"
+          value={novaya}
+          aria-label={t("vazhnost")}
+          onChange={(e) => setNovaya(vazhnost(e.target.value))}
+        >
+          {VAZHNOSTI.map((slovo) => (
+            <option key={slovo} value={slovo}>
+              {t(VAZHNOST_LABEL[slovo])}
+            </option>
+          ))}
+        </select>
         <button
           className="btn btn-primary"
           onClick={() => void add()}
@@ -234,15 +265,25 @@ export function Tasks() {
           {gruppy.map(([imya, chast]) => (
             <div key={imya || "all"}>
               {sPolosami && imya && (
-                <div className={"spisok-polosa" + (imya === "overdue" ? " beda" : "")}>
+                <div
+                  className={
+                    "spisok-polosa" +
+                    (imya === "overdue" ? " beda" : "") +
+                    (imya === "srochno" ? " srochnaya" : "")
+                  }
+                >
                   {t(POLOSA_LABEL[imya])} · {chast.length}
                 </div>
               )}
               {chast.map((task) => {
             const at = parseDate(task.due_at);
             const late = at && !task.is_done && at.getTime() < now;
+            const vazhnoe = vazhnost(task.vazhnost);
+            // Волна по краю — только у незакрытых: у сделанного срочность в
+            // прошлом, а движущаяся рамка тянет взгляд на то, что уже неважно.
+            const volna = srochno(vazhnoe) && !task.is_done;
             return (
-              <div key={task.id} className="task-row">
+              <div key={task.id} className={"task-row" + (volna ? " srochno" : "")}>
                 {/* Отметка одним нажатием: если закрытие задачи требует зайти
                     в карточку, её не закрывают, и список перестаёт отражать
                     действительность. */}
@@ -254,8 +295,30 @@ export function Tasks() {
                   {task.is_done && <Icon name="check" size={12} stroke={2.5} />}
                 </button>
                 <div className="task-text">
-                  <div className={"task-title" + (task.is_done ? " done" : "")}>{task.title}</div>
+                  {/* Заголовок — кнопка: карточку открывают с него, а не с
+                      отдельного значка, который ещё надо заметить. */}
+                  <button
+                    type="button"
+                    className={"task-title" + (task.is_done ? " done" : "")}
+                    onClick={() => setOtkryto(task.id)}
+                  >
+                    {task.title}
+                  </button>
                   <div className="task-meta">
+                    {vazhnoe !== "normal" && (
+                      <span className={"vazhnost-chip " + vazhnoe}>{t(VAZHNOST_LABEL[vazhnoe])}</span>
+                    )}
+                    {task.files_count > 0 && (
+                      <span className="task-vlozheno" title={t("tasksFiles")}>
+                        <Icon name="image" size={11} />
+                        {task.files_count}
+                      </span>
+                    )}
+                    {task.note_est && (
+                      <span className="task-vlozheno" title={t("tasksNote")}>
+                        <Icon name="note" size={11} />
+                      </span>
+                    )}
                     {at && (
                       <span className={late ? "task-late" : undefined}>
                         {formatDateTime(task.due_at, locale)}
@@ -293,6 +356,10 @@ export function Tasks() {
             </div>
           ))}
         </div>
+      )}
+
+      {otkryto !== null && (
+        <KartochkaNapominaniya taskId={otkryto} onClose={zakryt} onChanged={reload} />
       )}
     </div>
   );

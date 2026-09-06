@@ -95,6 +95,17 @@
   --globus-ramka-yarko: rgba(212, 175, 55, 0.40);
   --globus-podsvet: rgba(212, 175, 55, 0.08);
   --globus-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* --- Рамка срочного напоминания: цитата ultracode -----------------------
+     Вне тем по той же причине, что витрина и глобус: это цитата чужого
+     интерфейса, а не наш элемент, и фиолетовое с белой рябью одинаково
+     читается на светлом и на тёмном. Разбор — docs/dizayn/05-dizayn-crm.md,
+     «Важность напоминания и волна по краю». */
+  --ultra-nachalo: #4c3a8f;
+  --ultra-seredina: #6a4fae;
+  --ultra-konets: #7c5cbf;
+  --ultra-blesk: rgba(255, 255, 255, 0.46);
+  --ultra-blesk-slabyy: rgba(255, 255, 255, 0.12);
 }
 
 /* --- Тёмная. Она же по умолчанию ---------------------------------------- */
@@ -1609,8 +1620,10 @@ summary:focus-visible,
 /* Напоминания.
    Ввод сверху и всегда на виду: задачу заводят на ходу, между разговором и
    следующим клиентом. Спрячь это за кнопкой «создать» — и не заведут вовсе. */
-.task-new { display: flex; gap: 8px; margin-bottom: 16px; }
-.task-new .input:first-child { flex: 1; }
+/* Переносится: со сроком, важностью и кнопкой жёстких ширин набирается 444px,
+   и на телефоне ряд уводил бы страницу вбок. */
+.task-new { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+.task-new .input:first-child { flex: 1; min-width: 180px; }
 .task-new .input[type="datetime-local"] { width: 190px; flex: none; }
 
 .task-row {
@@ -1629,7 +1642,13 @@ summary:focus-visible,
 .task-check:hover { border-color: var(--muted); }
 .task-check.done { background: var(--success); border-color: var(--success); }
 .task-text { flex: 1; min-width: 0; }
-.task-title { color: var(--text); font-size: 13.5px; line-height: 1.4; }
+/* Заголовок — кнопка (с него открывают карточку), а выглядеть должен строкой. */
+.task-title {
+  display: block; width: 100%; text-align: left; padding: 0; border: 0;
+  background: none; font-family: inherit; cursor: pointer;
+  color: var(--text); font-size: 13.5px; line-height: 1.4;
+}
+.task-title:hover { text-decoration: underline; text-underline-offset: 2px; }
 .task-title.done { color: var(--faint); text-decoration: line-through; }
 .task-meta { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 3px; color: var(--faint); font-size: 11.5px; }
 .task-late { color: var(--danger); font-weight: 500; }
@@ -1639,12 +1658,142 @@ summary:focus-visible,
   text-transform: uppercase; color: var(--faint); border-bottom: 1px solid var(--line);
 }
 .spisok-polosa.beda { color: var(--danger); }
+/* Полоса «срочно» берёт цвет своей рамки, а не общий красный: красным в
+   списке уже помечен просроченный срок, и две красных полосы подряд
+   перестают различаться. */
+.spisok-polosa.srochnaya { color: var(--violet); }
 /* Перенос срока одним нажатием — подчёркнуто пунктиром, как действие, а не ссылка. */
 .task-shift {
   background: none; border: 0; padding: 0; cursor: pointer; color: var(--faint);
   font-size: 11.5px; font-family: inherit; text-decoration: underline dotted;
 }
 .task-shift:hover { color: var(--brand); }
+/* Скрепка и заметка в строке: значок вместо второй строки текста. */
+.task-vlozheno { display: inline-flex; align-items: center; gap: 3px; }
+.task-new-vazhnost { width: 130px; flex: none; }
+
+/* --- Важность напоминания --------------------------------------------------
+   Четыре ступени вместо флажка «важно»: «перезвонить, когда будет время» и
+   «клиент ждёт у двери» — разные вещи, и список обязан их различать.
+   Обычная важность чипа не рисует: она у большинства строк, и подпись у
+   каждой второй строки перестаёт что-либо значить. */
+.vazhnost-chip {
+  display: inline-flex; align-items: center; padding: 1px 7px; border-radius: 999px;
+  font-size: 10px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+}
+.vazhnost-chip.urgent { color: var(--danger); background: var(--tint-danger); }
+.vazhnost-chip.high { color: var(--warning); background: var(--tint-warning); }
+.vazhnost-chip.normal { color: var(--muted); background: var(--tint-neutral); }
+.vazhnost-chip.low { color: var(--muted); background: var(--tint-neutral); }
+
+/* Выбор важности в карточке — сегменты, а не список: четыре ступени видны все
+   сразу, и «повысить» делается одним нажатием, а не двумя. */
+/* Без `overflow: hidden`: кольцо фокуса лежит СНАРУЖИ кнопки, и срез оставлял
+   идущего табом без ответа на вопрос, где он стоит. Скругление — крайним. */
+.vazhnost-vybor { display: flex; gap: 0; border: 1px solid var(--border); border-radius: 6px; }
+.vazhnost-knopka {
+  padding: 6px 12px; border: 0; border-right: 1px solid var(--border); background: var(--well);
+  color: var(--faint); font-family: inherit; font-size: 11px; font-weight: 700;
+  letter-spacing: 0.06em; text-transform: uppercase; cursor: pointer;
+  transition: background 140ms, color 140ms;
+}
+.vazhnost-knopka:first-child { border-radius: 5px 0 0 5px; }
+.vazhnost-knopka:last-child { border-right: 0; border-radius: 0 5px 5px 0; }
+.vazhnost-knopka:hover { color: var(--text); background: var(--surface-2); }
+.vazhnost-knopka.active { color: var(--text); background: var(--surface-2); }
+.vazhnost-knopka.urgent.active { color: var(--danger); background: var(--tint-danger); }
+.vazhnost-knopka.high.active { color: var(--warning); background: var(--tint-warning); }
+
+/* --- Рябь по краю у максимальной важности ----------------------------------
+   Просьба владельца: «если важность максимальная, всегда вокруг блока анимация
+   как в claude при ultracode» — со снимком той самой полосы. Разобрано в
+   docs/dizayn/05-dizayn-crm.md; здесь коротко, почему устроено именно так.
+
+   Три слоя, и больше их взять неоткуда: у элемента ровно два псевдоэлемента.
+   Фон самого блока — фиолетовая заливка полосы; `::before` (z-index −2) —
+   едущая световая волна сквозь трафарет-шахматку, от неё вся рябь; `::after`
+   (−1) — заливка карточки, отступив на два пикселя, и в просвете остаётся
+   рамка. Отрицательный z-index кладёт оба слоя под текст, но над фоном.
+
+   Трафарет стоит, а едет подсветка — не наоборот: движущаяся шахматка
+   размывается сглаживанием в кашу, а неподвижная остаётся пиксельной, чего и
+   хотел владелец. Двойное `mask-composite: intersect` оставляет от двух
+   решёток четверть — редкие крупные точки, а не мелкое сито. */
+.task-row.srochno,
+.napominanie-karta.srochno {
+  position: relative; isolation: isolate; overflow: hidden;
+  border-radius: 8px;
+  background: linear-gradient(
+    100deg, var(--ultra-nachalo) 0%, var(--ultra-seredina) 55%, var(--ultra-konets) 100%
+  );
+}
+.task-row.srochno { border-bottom: 0; margin: 8px; padding: 13px 15px; }
+.task-row.srochno + .task-row { border-top: 1px solid var(--line); }
+/* Рамка карточки встаёт вплотную к краю окна: отступ окна (22px) снимается
+   отрицательным полем и возвращается своим — иначе рамок было бы две.
+   Радиус — внутренний радиус окна (6px минус пиксель рамки), иначе фиолетовое
+   легло бы поверх скругления по четырём углам. */
+.napominanie-karta.srochno { margin: -22px; padding: 22px; border-radius: 5px; }
+.task-row.srochno::before,
+.napominanie-karta.srochno::before {
+  content: ""; position: absolute; z-index: -2; inset: 0; width: 200%; left: -100%;
+  /* Плитка ровно в ширину строки (слой вдвое шире), и сдвиг за круг — ровно на
+     плитку: иначе блик, дойдя до правого края, прыгал бы к левому. */
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--ultra-blesk-slabyy) 30%,
+    var(--ultra-blesk) 50%,
+    var(--ultra-blesk-slabyy) 70%,
+    transparent 100%
+  );
+  background-size: 50% 100%;
+  background-repeat: repeat-x;
+  -webkit-mask-image:
+    conic-gradient(black 25%, transparent 0 50%, black 0 75%, transparent 0),
+    conic-gradient(black 25%, transparent 0 50%, black 0 75%, transparent 0);
+  mask-image:
+    conic-gradient(black 25%, transparent 0 50%, black 0 75%, transparent 0),
+    conic-gradient(black 25%, transparent 0 50%, black 0 75%, transparent 0);
+  -webkit-mask-size: 6px 6px, 10px 10px;
+  mask-size: 6px 6px, 10px 10px;
+  -webkit-mask-position: 0 0, 3px 2px;
+  mask-position: 0 0, 3px 2px;
+  -webkit-mask-composite: source-in;
+  mask-composite: intersect;
+  animation: ultra-hod 3.4s linear infinite;
+}
+.task-row.srochno::after,
+.napominanie-karta.srochno::after {
+  content: ""; position: absolute; z-index: -1; inset: 2px;
+  border-radius: 6px; background: var(--surface);
+}
+.napominanie-karta.srochno::after { border-radius: 3px; }
+@keyframes ultra-hod { to { transform: translate3d(50%, 0, 0); } }
+/* Кому движение мешает — тому ровная фиолетовая рамка: важность видна,
+   а взгляд не дёргается. */
+@media (prefers-reduced-motion: reduce) {
+  .task-row.srochno::before,
+  .napominanie-karta.srochno::before { animation: none; }
+}
+
+/* --- Углублённая карточка напоминания -------------------------------------- */
+/* Прокрутка внутри окна, а не страницы под ним: с двумя рядами вложений
+   карточка выше экрана ноутбука, а `.modal-backdrop` центрирует без прокрутки,
+   и достать уехавший край нечем. */
+.napominanie-karta-telo {
+  display: flex; flex-direction: column; gap: 14px;
+  max-height: min(72vh, 620px); overflow-y: auto;
+}
+.napominanie-zagolovok { font-size: 15px; font-weight: 600; }
+.napominanie-ryad { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.napominanie-svyazi {
+  display: flex; flex-wrap: wrap; gap: 12px; align-items: center;
+  color: var(--faint); font-size: 11.5px;
+}
+.napominanie-svyazi span { display: inline-flex; align-items: center; gap: 4px; }
+.napominanie-vlozheniya { border-top: 1px solid var(--line); padding-top: 14px; }
+.dropzone-vybor { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
 
 /* Число просроченных рядом с пунктом меню. Красное, потому что это долг, а не
    статистика: серое число рядом с названием читается как «всего». */

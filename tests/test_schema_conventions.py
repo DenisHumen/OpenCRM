@@ -335,6 +335,44 @@ def test_migratsiya_zapolnyaet_sklejku_tak_zhe_kak_prilozhenie(chistaya_baza):
     )
 
 
+def test_migratsiya_daet_naselyonnym_napominaniyam_umolchaniya(chistaya_baza):
+    """Обещание §1: населённая база доводится до нового вида сама.
+
+    Прогон миграций с пустой базы (а именно так гоняет `test_every_migration…`)
+    этого не проверяет вовсе: колонки создаются вместе с таблицей, и вопрос
+    «а что стало со СТАРЫМИ строками» не задаётся. Здесь он задаётся: заводим
+    напоминание до правки и смотрим, что оно получило после.
+    """
+    from alembic import command
+    from alembic.config import Config
+    from sqlalchemy import create_engine, text
+
+    url = chistaya_baza
+    config = Config("alembic.ini")
+    config.set_main_option("sqlalchemy.url", url)
+    config.attributes["configure_logger"] = False
+
+    command.upgrade(config, "a4d9c6e2f107")
+    engine = create_engine(url)
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO tasks (title, created_at, updated_at)"
+                " VALUES ('Старое напоминание', '2025-01-01', '2025-01-01')"
+            )
+        )
+
+    command.upgrade(config, "head")
+    with engine.connect() as connection:
+        stalo = connection.execute(
+            text("SELECT vazhnost, note FROM tasks WHERE title = 'Старое напоминание'")
+        ).one()
+    engine.dispose()
+
+    assert stalo[0] == "normal", f"важность населённой строки: {stalo[0]!r}"
+    assert stalo[1] == "", f"подробности населённой строки: {stalo[1]!r}"
+
+
 def test_running_migrations_does_not_silence_the_application_log(chistaya_baza):
     """Прогон миграций не выключает журнал приложения.
 

@@ -18,7 +18,7 @@
 from sqlalchemy import Select, func, select
 from sqlalchemy.orm import Session
 
-from database.models import Board, Client, ClientFile, Deal, PipelineStage, Work
+from database.models import Board, Client, ClientFile, Deal, PipelineStage, Task, TaskFile, Work
 from database.models.pipeline import KIND_WON
 
 
@@ -79,6 +79,21 @@ def deals_count_by_client(db: Session, cutoff) -> dict[int, int]:
         .group_by(Deal.client_id)
     ).all()
     return {client_id: count for client_id, count in rows}
+
+
+def task_files_of_doomed_clients(db: Session, cutoff) -> list[TaskFile]:
+    """Вложения напоминаний, которые уйдут каскадом вместе с клиентом.
+
+    Напоминание — первый владелец файлов, который сам исчезает каскадом:
+    `tasks.client_id` и `tasks.deal_id` стоят `CASCADE` (у бумаг там `SET
+    NULL`, поэтому их вложения так не пропадали). Строки унесёт база, а файлы
+    на диске остались бы навсегда и в отчёт «освобождено» не попали бы.
+    """
+    obrechennye = select(Task.id).where(
+        Task.client_id.in_(doomed_clients(cutoff))
+        | Task.deal_id.in_(select(Deal.id).where(Deal.client_id.in_(doomed_clients(cutoff))))
+    )
+    return list(db.scalars(select(TaskFile).where(TaskFile.task_id.in_(obrechennye))).all())
 
 
 def files_of_doomed_clients(db: Session, cutoff) -> dict[int, list[ClientFile]]:

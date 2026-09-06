@@ -52,6 +52,7 @@ from database.models import (
     StockMove,
     StockTransfer,
     Task,
+    TaskFile,
     TelegramChat,
     TelegramMessage,
     User,
@@ -105,6 +106,7 @@ T_DOCUMENTS = Topic("documents", "documents", "documents")
 T_ORDERS = Topic("orders", "orders", "orders")
 T_WAYBILLS = Topic("waybills", "waybills", "waybills")
 T_TASKS = Topic("tasks", "tasks", "tasks")
+T_TASK_FILES = Topic("tasks", "tasks", "tasks", id_attr="task_id")
 T_TEMPLATES = Topic("templates", "templates", "templates")
 T_MAIL = Topic("mail", "mail", "mail")
 T_WAREHOUSE = Topic("warehouse", "warehouse", "warehouse")
@@ -154,6 +156,7 @@ TOPICS: dict[type, Topic | Callable | None] = {
     DocumentEvent: "document",
     DocumentFile: "document",
     Task: T_TASKS,
+    TaskFile: T_TASK_FILES,
     MessageTemplate: T_TEMPLATES,
     MailAccount: T_MAIL,
     MailMessage: T_MAIL,
