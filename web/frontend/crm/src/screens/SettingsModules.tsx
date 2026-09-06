@@ -91,11 +91,17 @@ export function SettingsModules() {
 
   const { failure, fail, clear } = useFailure();
 
+  const [zapisi, setZapisi] = useState<Record<string, number>>({});
   const load = useCallback(async () => {
     clear();
     try {
       const data = await api.get<{ items: ModuleInfo[] }>("/modules");
       setItems(data.items);
+      // Счёт записей — отдельно и без отказа: подпись, а не условие показа.
+      api
+        .get<{ items: Record<string, number> }>("/modules/records")
+        .then((r) => setZapisi(r.items))
+        .catch(() => setZapisi({}));
     } catch (e) {
       fail(e);
     }
@@ -204,6 +210,9 @@ export function SettingsModules() {
                   <span className="module-why">
                     {t("moduleOnNeeds", { list: names(item.on_needs) })}
                   </span>
+                )}
+                {zapisi[item.key] > 0 && (
+                  <span className="module-why">{t("moduleRecords", { n: zapisi[item.key] })}</span>
                 )}
                 {item.updated_by_name && item.updated_at && (
                   <span className="module-why">

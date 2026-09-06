@@ -169,3 +169,50 @@ def board_share_flags(db: Session, board_id: int) -> dict:
         "has_active_link": len(active) > 0,
         "has_pin": any(l.pin_hash is not None for l in active),
     }
+
+
+def zapisey_po_blokam(db: Session) -> dict[str, int]:
+    """Сколько живых записей стоит за каждым блоком: {ключ блока: число}.
+
+    Нужно экрану блоков перед выключением: «выключить склад» с подписью
+    «454 товара» читается иначе, чем без неё. По запросу на блок — экран
+    настроек открывают редко, а один общий запрос по четырнадцати таблицам
+    был бы нечитаем.
+    """
+    from database.models import (
+        Company,
+        Document,
+        FinanceOperation,
+        MailMessage,
+        MessageTemplate,
+        PhoneCall,
+        Product,
+        ProductBarcode,
+        Task,
+        TelegramMessage,
+    )
+    from database.models.document import KIND_ACT, KIND_INTAKE, ORDER_KINDS, WAYBILL_KINDS
+
+    def schyot(model, *usloviya) -> int:
+        stmt = select(func.count()).select_from(model)
+        if hasattr(model, "deleted_at"):
+            stmt = stmt.where(model.deleted_at.is_(None))
+        return int(db.scalar(stmt.where(*usloviya)) or 0)
+
+    return {
+        "clients": schyot(Client),
+        "deals": schyot(Deal),
+        "companies": schyot(Company),
+        "documents": schyot(Document, Document.kind.in_((KIND_INTAKE, KIND_ACT))),
+        "tasks": schyot(Task),
+        "templates": schyot(MessageTemplate),
+        "boards": schyot(Board),
+        "warehouse": schyot(Product),
+        "labels": schyot(ProductBarcode),
+        "orders": schyot(Document, Document.kind.in_(tuple(ORDER_KINDS))),
+        "waybills": schyot(Document, Document.kind.in_(tuple(WAYBILL_KINDS))),
+        "mail": schyot(MailMessage),
+        "telephony": schyot(PhoneCall),
+        "telegram": schyot(TelegramMessage),
+        "finance": schyot(FinanceOperation),
+    }
