@@ -36,10 +36,14 @@ from datetime import date, datetime, timedelta
 from sqlalchemy.orm import Session
 
 from core import exceptions as errors
-from core.services import finance_service, pipeline_service
+from core.services import document_service, finance_service, pipeline_service
 from core.utils import divide_money, konets_dnya, now_utc
 from database.models.client import CLIENT_SOURCES
 from database.models.pipeline import KIND_LOST, KIND_OPEN, KIND_WON
+from database.models.document import KIND_ACT, KIND_SALES_ORDER
+from database.repositories import clients as clients_repo
+from database.repositories import documents as documents_repo
+from database.repositories import finance as finance_repo
 from database.repositories import reports as reports_repo
 
 # Дальше пяти лет период не пускаем. Это не про производительность запроса, а
@@ -473,6 +477,10 @@ CSV_HEADERS = {
         "en": ["Date", "Category", "Direction", "Amount", "Comment", "Author"],
         "ru": ["Дата", "Статья", "Направление", "Сумма", "Комментарий", "Автор"],
     },
+    "debts": {
+        "en": ["Number", "Kind", "Client", "Total", "Received", "Due"],
+        "ru": ["Номер", "Вид", "Клиент", "Сумма", "Получено", "Остаток"],
+    },
     "sources": {
         # Последний столбец называется так же, как на экране: это доля
         # выигранных среди ЗАКРЫТЫХ за период, а не доля от всего пришедшего.
@@ -617,3 +625,58 @@ def operations_csv(rows: list[dict], locale: str) -> bytes:
         ],
         CSV_HEADERS["operations"][lang],
     )
+
+
+#: Бумаги, по которым бывает долг: у них есть строки с ценой. Квитанция
+#: приёмки денег не выписывает, у накладной цена — снимок заказа.
+DOLGOVYE_VIDY = (KIND_SALES_ORDER, KIND_ACT)
+
+
+def dolgi(db: Session) -> dict:
+    """Долги клиентов: бумаги, по которым получено меньше выписанного.
+
+    Периода нет нарочно: прошлогодний неоплаченный заказ — всё ещё долг.
+    Кандидатов отбирает база в тысячных, итог каждой бумаги считает
+    `document_service.total_minor` — единственное место, где строки становятся
+    деньгами; двух ответов на «сколько выписали» быть не должно.
+    """
+    kandidaty = finance_repo.bumagi_s_dolgom(db, DOLGOVYE_VIDY)
+    stroki = documents_repo.lines_by_documents(db, [bumaga.id for bumaga, _ in kandidaty])
+    imena = clients_repo.names_by_ids(db, [bumaga.client_id for bumaga, _ in kandidaty if bumaga.client_id])
+    items = []
+    for bumaga, polucheno in kandidaty:
+        total = document_service.total_minor(stroki.get(bumaga.id, []))
+        due = total - polucheno
+        if due <= 0:
+            continue
+        items.append(
+            {
+                "document_id": bumaga.id,
+                "number": bumaga.number,
+                "kind": bumaga.kind,
+                "status": bumaga.status,
+                "client_id": bumaga.client_id,
+                "client_name": imena.get(bumaga.client_id),
+                "total": total,
+                "received": polucheno,
+                "due": due,
+                "created_at": bumaga.created_at.isoformat() if bumaga.created_at else None,
+            }
+        )
+    return {"items": items, "count": len(items), "total_due": sum(row["due"] for row in items)}
+
+
+def dolgi_csv(data: dict, locale: str) -> bytes:
+    lang = "ru" if locale == "ru" else "en"
+    rows = [
+        [
+            row["number"],
+            row["kind"],
+            row["client_name"] or "",
+            money_cell(row["total"]),
+            money_cell(row["received"]),
+            money_cell(row["due"]),
+        ]
+        for row in data["items"]
+    ]
+    return to_csv(rows, CSV_HEADERS["debts"][lang])
