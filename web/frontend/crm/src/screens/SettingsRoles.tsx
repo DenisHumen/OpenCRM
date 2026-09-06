@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 
 import { Icon } from "../components/Icon";
 import { ConfirmModal, EmptyState, ScreenLoading } from "../components/ui";
@@ -194,7 +195,10 @@ export function SettingsRoles() {
       <div className="page-head" style={{ alignItems: "flex-start", marginBottom: 22 }}>
         <div>
           <h1 className="page-title">{t("roles")}</h1>
-          <div className="page-sub">{t("rolesSub")}</div>
+          <div className="page-sub">
+            {t("rolesSub")}{" "}
+            <Link to="/docs?statya=prava" className="text-link">{t("rolesGuideLink")}</Link>
+          </div>
         </div>
         <button className="btn btn-primary" onClick={() => startNew()}>
           <Icon name="plus" size={15} />

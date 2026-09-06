@@ -4,7 +4,7 @@ import { CopyButton } from "../components/CopyButton";
 import { Icon } from "../components/Icon";
 import { SpravochnikApi } from "../components/SpravochnikApi";
 import { useApp } from "../lib/app";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 
 import { allowed } from "../lib/permissions";
 import { RUKOVODSTVO, type Kusok, type Razdel, type Yazyk } from "../lib/rukovodstvo";
@@ -31,7 +31,13 @@ export function Docs() {
     [user, modules],
   );
 
-  const [razdelId, setRazdelId] = useState(vidimo[0]?.id ?? "");
+  // `?statya=prava` открывает раздел с этой статьёй: на статью ссылаются
+  // экраны («что даёт каждое право — в руководстве»), а не только полка.
+  const [params] = useSearchParams();
+  const statyaIzAdresa = params.get("statya");
+  const [razdelId, setRazdelId] = useState(
+    () => vidimo.find((r) => r.statyi.some((s) => s.id === statyaIzAdresa))?.id ?? vidimo[0]?.id ?? "",
+  );
 
   const razdel = useMemo(
     () => vidimo.find((r) => r.id === razdelId) ?? vidimo[0],

@@ -1,9 +1,11 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
 import { formatBytes, initials } from "../lib/format";
+import { useLiveTopic } from "../lib/live";
+import { moduleOn } from "../lib/modules";
 import { allowed, can, type Guarded } from "../lib/permissions";
 import { nazvanieZakazov, term } from "../lib/terms";
 import { Icon } from "./Icon";
@@ -320,6 +322,21 @@ export function Sidebar({
   ]);
 
 
+  // Непрочитанные письма — числом на пункте «Почта»: без него в раздел заходят
+  // «на всякий случай», а письмо клиента ждёт до вечера. Пересчёт по намёку
+  // блока почты, а не по таймеру.
+  const [neprochitannykh, setNeprochitannykh] = useState(0);
+  const seesMail = moduleOn(modules, "mail") && can(user, "mail.view");
+  const schitatPochtu = useCallback(() => {
+    if (!seesMail) return;
+    api
+      .get<{ count: number }>("/mail/unread")
+      .then((data) => setNeprochitannykh(data.count))
+      .catch(() => undefined);
+  }, [seesMail]);
+  useEffect(schitatPochtu, [schitatPochtu]);
+  useLiveTopic("mail", schitatPochtu);
+
   // Счётчик заявок на регистрацию нужен только тому, кто их разбирает.
   // Спрашивать его без права — стучаться в закрытую дверь на каждой загрузке.
   const seesStaff = can(user, "staff.view");
@@ -391,7 +408,15 @@ export function Sidebar({
       icon: "deals",
     },
     { module: "documents", perm: "documents.view", to: "/documents", label: t("documents"), icon: "receipt" },
-    { module: "mail", perm: "mail.view", to: "/mail", label: t("mail"), icon: "email" },
+    {
+      module: "mail",
+      perm: "mail.view",
+      to: "/mail",
+      label: t("mail"),
+      icon: "email",
+      badge: neprochitannykh,
+      badgeTitle: t("mailUnread"),
+    },
     // Шаблоны — рядом с почтой: за ними приходят в тот момент, когда пишут
     // клиенту, а не отдельным делом.
     { module: "templates", perm: "templates.view", to: "/templates", label: t("templates"), icon: "note" },
