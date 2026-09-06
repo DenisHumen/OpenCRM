@@ -514,6 +514,8 @@ def provesti(
         # отгрузку снялся бы молча.
         _proverit_dvoynuyu_otgruzku(db, waybill)
 
+    _proverit_storno_protiv_vozvrata(db, waybill, rows)
+
     ishodyashchaya = waybill.kind == KIND_WAYBILL_OUT
     sklad_vklyuchen = modules_service.is_enabled(db, "warehouse")
     goods = [row for row in rows if row.product_id is not None]
@@ -746,6 +748,36 @@ def stornirovat(db: Session, document_id: int, author: User) -> Document:
 
 
 # --- внутреннее ---------------------------------------------------------------
+
+
+def _proverit_storno_protiv_vozvrata(db: Session, waybill: Document, rows: list) -> None:
+    """Сторно накладной заказа и возврат покупателя возвращают один и тот же
+    товар двумя бумагами. Без замка на заказ двое, проводящие их разом, вернули
+    бы на склад больше, чем уезжало (дуэль в `test_odin_iz_mnogih`)."""
+    if waybill.basis_id is None:
+        return
+    ishodnaya = documents_repo.get(db, waybill.basis_id)
+    if ishodnaya is None or ishodnaya.kind not in WAYBILL_KINDS or ishodnaya.basis_id is None:
+        return
+    zakaz = documents_repo.get(db, ishodnaya.basis_id)
+    if zakaz is None or zakaz.kind not in ORDER_KINDS:
+        return
+    documents_repo.zapert_bumagu(db, zakaz.id)
+    vernulos = documents_repo.vozvrashcheno_po_zakazu(db, zakaz.id)
+    uekhalo: dict[int, int] = {}
+    for row in documents_repo.lines_of(db, ishodnaya.id):
+        if row.product_id is not None:
+            uekhalo[row.product_id] = uekhalo.get(row.product_id, 0) + row.quantity_milli
+    for row in rows:
+        if row.product_id is None:
+            continue
+        mozhno = uekhalo.get(row.product_id, 0) - vernulos.get(row.product_id, 0)
+        if row.quantity_milli > mozhno:
+            raise errors.ValidationError(
+                f"{row.name_snapshot}: only {warehouse_service.format_quantity(max(0, mozhno))} "
+                f"can still be reversed — the rest already came back by a return",
+                code="reversal_exceeds_shipped",
+            )
 
 
 def _tolko_chernovik(waybill: Document, deystvie: str = "изменить") -> None:
