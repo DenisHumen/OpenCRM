@@ -9,6 +9,7 @@ import {
   type RolePreset,
 } from "../lib/api";
 import { useApp } from "../lib/app";
+import { useLiveTopic } from "../lib/live";
 import { useFailure } from "../lib/failure";
 import { useGuard } from "../lib/guard";
 import type { TranslationKey } from "../lib/i18n";
@@ -94,6 +95,7 @@ export function SettingsRoles() {
   useEffect(() => {
     void load();
   }, [load]);
+  useLiveTopic("roles", () => void load());
 
   // Всего прав в системе — для подписи «12 из 51». Считается по матрице, а не
   // константой: появился блок — число выросло само.

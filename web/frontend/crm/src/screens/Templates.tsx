@@ -12,6 +12,7 @@ import {
 } from "../components/ui";
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
+import { useLiveTopic } from "../lib/live";
 import { useFailure } from "../lib/failure";
 import { formatDate } from "../lib/format";
 import { useGuard } from "../lib/guard";
@@ -112,6 +113,8 @@ export function Templates() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useLiveTopic("templates", () => void load());
 
   if (!items) return <ScreenLoading error={failure} onRetry={() => void load()} />;
 

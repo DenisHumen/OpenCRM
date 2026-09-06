@@ -1700,3 +1700,26 @@ def test_dochitka_otbrasyvaet_opozdavshiy_otvet():
         "дочитка допишет в список ответ на прошлый отбор:\n  "
         + "\n  ".join(bezzashchitnye)
     )
+
+
+#: Экраны, обязанные перечитываться по намёкам живого слоя (docs/12 §9).
+#: Список, а не «все экраны»: у настроек сайта и профиля живого нет по делу.
+ZHIVYE_EKRANY = (
+    "Dashboard.tsx", "Clients.tsx", "ClientCard.tsx", "Deals.tsx", "DealCard.tsx", "Tasks.tsx",
+    "Companies.tsx", "Documents.tsx", "DocumentCard.tsx", "Boards.tsx", "Warehouse.tsx",
+    "ProductCard.tsx", "Orders.tsx", "OrderCard.tsx", "Returns.tsx", "ReturnCard.tsx",
+    "Waybills.tsx", "WaybillCard.tsx", "Finance.tsx", "FinanceSettings.tsx", "Reports.tsx",
+    "Staff.tsx", "Templates.tsx", "Mailboxes.tsx", "SettingsWarehouses.tsx", "SettingsRoles.tsx",
+    "Calls.tsx",
+)
+
+
+def test_ekrany_slushayut_zhivoy_sloy():
+    """Экран со списком или карточкой обязан перечитываться по намёкам: иначе
+    сосед закрыл заявку, а отчёт на экране остался вчерашним (06.09.2026)."""
+    glukhie = [
+        ekran
+        for ekran in ZHIVYE_EKRANY
+        if "useLiveTopic(" not in (SCREENS / "screens" / ekran).read_text(encoding="utf-8")
+    ]
+    assert glukhie == [], f"нет подписки на живой слой (useLiveTopic): {glukhie}"

@@ -7,6 +7,7 @@ import { NewBoardButton } from "../components/NewBoardButton";
 import { Dochitat, EmptyState, ScreenLoading } from "../components/ui";
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
+import { useLiveTopic } from "../lib/live";
 import { useFailure } from "../lib/failure";
 
 type Filter = "all" | "published" | "drafts" | "revoked";
@@ -48,6 +49,7 @@ export function Boards() {
   }, [fail, clear]);
 
   useEffect(load, [load]);
+  useLiveTopic("boards", load);
 
   /** Дочитать список.
    *

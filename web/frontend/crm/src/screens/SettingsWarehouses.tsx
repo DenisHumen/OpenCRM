@@ -5,6 +5,7 @@ import { Chip, ConfirmModal, EmptyState, Modal, ScreenLoading } from "../compone
 import type { Warehouse } from "../components/Warehouses";
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
+import { useLiveTopic } from "../lib/live";
 import { useFailure } from "../lib/failure";
 import { useGuard } from "../lib/guard";
 import type { TranslationKey } from "../lib/i18n";
@@ -33,6 +34,7 @@ export function SettingsWarehouses() {
   }, [fail, clear]);
 
   useEffect(load, [load]);
+  useLiveTopic("warehouses", load);
 
   if (!items) return <ScreenLoading error={failure} onRetry={load} />;
 

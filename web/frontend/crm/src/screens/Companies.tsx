@@ -6,6 +6,7 @@ import { Icon } from "../components/Icon";
 import { Chip, EmptyState, Modal, ScreenLoading } from "../components/ui";
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
+import { useLiveTopic } from "../lib/live";
 import { can } from "../lib/permissions";
 import { useFailure } from "../lib/failure";
 import { useGuard } from "../lib/guard";
@@ -61,6 +62,8 @@ export function Companies() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useLiveTopic("companies", () => void load());
 
   if (!items) return <ScreenLoading error={failure} onRetry={() => void load()} />;
 

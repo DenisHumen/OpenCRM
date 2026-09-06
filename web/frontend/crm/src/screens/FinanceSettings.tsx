@@ -11,6 +11,7 @@ import { Icon } from "../components/Icon";
 import { Chip, ConfirmModal, EmptyState, Modal, ScreenLoading, Toggle } from "../components/ui";
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
+import { useLiveTopic } from "../lib/live";
 import { useFailure } from "../lib/failure";
 import { useGuard } from "../lib/guard";
 import { formatMoney, formatRate, toMinorUnits } from "../lib/format";
@@ -144,6 +145,8 @@ export function FinanceSettings() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useLiveTopic("finance", () => void load());
 
   if (!categories || !budgets || !rules) {
     return <ScreenLoading error={failure} onRetry={() => void load()} />;
