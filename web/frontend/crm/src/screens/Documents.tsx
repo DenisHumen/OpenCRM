@@ -13,16 +13,7 @@ import { useFailure } from "../lib/failure";
 import { useGuard } from "../lib/guard";
 import { formatDate, formatMoney } from "../lib/format";
 import { SpisokPoKategoriyam } from "../components/SpisokPoKategoriyam";
-import {
-  DOC_KINDS,
-  DOC_SORTS,
-  DOC_STATUSES,
-  kindLabel,
-  paperLink,
-  sortLabel,
-  statusLabel,
-  statusVariant,
-} from "../lib/documents";
+import { DOC_KINDS, DOC_SORTS, DOC_STATUSES, kindLabel, nazvanieBumagi, paperLink, sortLabel, statusLabel, statusVariant } from "../lib/documents";
 
 /** По скольку бланков дочитывается список. */
 const NA_STRANITSE = 100;
@@ -287,7 +278,7 @@ export function Documents() {
               <span className="doc-number">{doc.number}</span>
               <div className="list-row-text">
                 <div className="truncate" style={{ color: "var(--text)", fontSize: 13.5, fontWeight: 500 }}>
-                  {doc.payload?.fields?.item || kindLabel(t, doc.kind)}
+                  {nazvanieBumagi(t, doc)}
                 </div>
                 <div className="truncate" style={{ color: "var(--faint)", fontSize: 12 }}>
                   {doc.payload?.client?.name || "—"}

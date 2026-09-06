@@ -49,6 +49,17 @@ export function kindLabel(t: TFunc, kind: string): string {
   return t(KIND_LABELS[kind as DocKind] ?? "kindIntake");
 }
 
+/** Заголовки, которые сервер подставляет сам, когда предмет бумаги не назван
+ *  (`order_service._title`, `act_service.DEFAULT_TITLE`). На экране такое
+ *  умолчание — не предмет, а вид, и показывается словом интерфейса. */
+const UMOLCHANIYA = new Set(["Sales order", "Purchase order", "Certificate of completed works"]);
+
+/** Чем бумагу называют вслух: предмет, если его назвали, иначе вид. */
+export function nazvanieBumagi(t: TFunc, doc: { kind: string; payload?: { fields?: { item?: string | null } | null } | null }): string {
+  const item = doc.payload?.fields?.item;
+  return item && !UMOLCHANIYA.has(item) ? item : kindLabel(t, doc.kind);
+}
+
 /** Порядки списка бумаг — те же ключи, что у сервера (`documents_repo.PORYADKI`). */
 export const DOC_SORTS = ["new", "old", "number", "status"] as const;
 

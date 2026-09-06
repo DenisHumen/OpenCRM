@@ -13,7 +13,7 @@ import { useApp } from "../lib/app";
 import { useLiveTopic, useNachatayaPravka } from "../lib/live";
 import { useFailure } from "../lib/failure";
 import { useGuard } from "../lib/guard";
-import { kindLabel, paperLink, statusLabel, statusVariant } from "../lib/documents";
+import { nazvanieBumagi, paperLink, statusLabel, statusVariant } from "../lib/documents";
 import { formatDate, formatDateTime, formatMoney, formatSpan, parseDate } from "../lib/format";
 import { moduleOn } from "../lib/modules";
 import { can } from "../lib/permissions";
@@ -621,7 +621,7 @@ export function DealCard() {
               <Link key={doc.id} to={paperLink(doc)} className="doc-mini">
                 <span className="doc-number">{doc.number}</span>
                 <span className="truncate" style={{ flex: 1, minWidth: 0 }}>
-                  {doc.payload?.fields?.item || kindLabel(t, doc.kind)}
+                  {nazvanieBumagi(t, doc)}
                 </span>
                 <Chip variant={statusVariant(doc.status, doc.kind)}>{statusLabel(t, doc.status, doc.kind)}</Chip>
               </Link>
