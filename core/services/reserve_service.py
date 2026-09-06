@@ -112,7 +112,9 @@ def availability(
     }
 
 
-def derzhat(db: Session, product_id: int, tolko_manager: int | None = None) -> list[dict]:
+def derzhat(
+    db: Session, product_id: int, tolko_manager: int | None = None, s_summami: bool = True
+) -> list[dict]:
     """Кто держит товар в брони: заявки и заказы, каждый со своим количеством.
 
     Ради этого списка бронь и заводилась видимой: «доступно 2 из 5» без ответа
@@ -159,25 +161,34 @@ def derzhat(db: Session, product_id: int, tolko_manager: int | None = None) -> l
         if tolko_manager is not None and zayavka.manager_id != tolko_manager:
             chuzhogo += ostatki[zayavka.id]
             continue
+        # Сумма и срок — рядом с количеством: «кто держит» спрашивают, чтобы
+        # решить, кому отдать первому, а решают это по сумме и по сроку.
         derzhateli.append(
             {
                 "kind": "deal",
                 "id": zayavka.id,
                 "title": zayavka.title,
                 "quantity_milli": ostatki[zayavka.id],
+                "amount": zayavka.amount if s_summami else None,
+                "at": zayavka.created_at.isoformat() if zayavka.created_at else None,
+                "due_at": zayavka.due_at.isoformat() if zayavka.due_at else None,
             }
         )
     if chuzhogo:
         derzhateli.append(
-            {"kind": "deal", "id": None, "title": None, "quantity_milli": chuzhogo}
+            {"kind": "deal", "id": None, "title": None, "quantity_milli": chuzhogo, "amount": None, "at": None, "due_at": None}
         )
 
     if zakazy_est:
         # То же число, что участвует в «доступно»: сырое количество строк
         # заказа показывало бы «заказ держит 10» рядом с «в брони 6».
-        for zakaz, skolko in documents_repo.otkrytye_s_tovarom(
-            db, KIND_SALES_ORDER, OPEN_ORDER_STATUSES, product_id
-        ):
+        # Ввоз внутри: бланки тянут склад, склад — бронь, и на верхнем уровне
+        # круг замкнулся бы на импорте.
+        from core.services import document_service
+
+        zakazy = documents_repo.otkrytye_s_tovarom(db, KIND_SALES_ORDER, OPEN_ORDER_STATUSES, product_id)
+        stroki = documents_repo.lines_by_documents(db, [zakaz.id for zakaz, _ in zakazy]) if s_summami else {}
+        for zakaz, skolko in zakazy:
             if skolko > 0:
                 derzhateli.append(
                     {
@@ -185,6 +196,9 @@ def derzhat(db: Session, product_id: int, tolko_manager: int | None = None) -> l
                         "id": zakaz.id,
                         "title": zakaz.number,
                         "quantity_milli": skolko,
+                        "amount": document_service.total_minor(stroki.get(zakaz.id, [])) if s_summami else None,
+                        "at": zakaz.created_at.isoformat() if zakaz.created_at else None,
+                        "due_at": zakaz.due_at.isoformat() if zakaz.due_at else None,
                     }
                 )
     return derzhateli

@@ -97,14 +97,19 @@ def list_products(
     include_services: bool = True,
     # Остаток одного склада вместо суммы по всем: «а на точке-то оно есть?».
     warehouse_id: int | None = None,
+    sort: str | None = None,
     page: int = Query(default=1, ge=1),
     per_page: int = Query(default=50, ge=1, le=200),
     user: User = Depends(require_perm("warehouse", "view")),
     db: Session = Depends(get_db),
 ):
+    if sort and sort not in warehouse_repo.PRODUCT_SORTS:
+        raise errors.ValidationError(
+            f"Unknown sort: {sort}. Known: {', '.join(warehouse_repo.PRODUCT_SORTS)}", code="unknown_sort"
+        )
     amounts = permissions_service.sees_amounts(db, user, "warehouse")
     items, total = warehouse_repo.search_products(
-        db, q=search, include_services=include_services, page=page, per_page=per_page
+        db, q=search, include_services=include_services, page=page, per_page=per_page, sort=sort
     )
     goods = [p.id for p in items if not p.is_service]
     # Остатки — одним запросом на всю страницу списка, а не по одному на строку.
@@ -113,11 +118,20 @@ def list_products(
     # больше одного: при единственном складе она повторяла бы общий остаток.
     many = warehouse_service.warehouse_count(db) > 1
     spread = warehouse_repo.stock_by_warehouse(db, goods) if many else {}
+    # Продано за 30 дней — одним запросом на страницу и только с блоком заказов:
+    # «что берут» спрашивают у списка, а не у каждой карточки по очереди.
+    prodazhi = (
+        vozvraty_repo.prodazhi_po_tovaram(db, goods, now_utc() - timedelta(days=30))
+        if goods and modules_service.is_enabled(db, "orders")
+        else None
+    )
     rows = []
     for p in items:
         row = schemas.product_out(
             p, None if p.is_service else stock.get(p.id, 0), amounts=amounts
         )
+        if prodazhi is not None and not p.is_service:
+            row["sales_30d"] = prodazhi.get(p.id, {"quantity_milli": 0, "count": 0})
         if many and not p.is_service:
             row["by_warehouse"] = spread.get(p.id, {})
         rows.append(row)
@@ -246,7 +260,8 @@ def product_availability(
     return {
         **data,
         "holders": reserve_service.derzhat(
-            db, product.id, permissions_service.deals_scope(db, user)
+            db, product.id, permissions_service.deals_scope(db, user),
+            s_summami=permissions_service.sees_amounts(db, user, "warehouse"),
         ),
     }
 

@@ -984,10 +984,10 @@ CRM нет, — человек нажмёт «отправить» снова, �
 
 | Метод | Путь | Права | Описание |
 |---|---|---|---|
-| GET | `/warehouse/products` | 🔑 `warehouse.view` | Список с остатками. `search`, `low_only` (мало **или** кончилось), `include_services`, `warehouse_id`, пагинация. В карточке `low_stock` — остаток на пороге или ниже, `out_of_stock` — ноль или минус независимо от порога; у услуги оба `false` |
+| GET | `/warehouse/products` | 🔑 `warehouse.view` | Список с остатками. `search`, `low_only` (мало **или** кончилось), `include_services`, `warehouse_id`, `sort` (`name` по умолчанию, `stock` — мало сверху, `stock_desc` — много сверху; по сумме движений на всех складах; незнакомый — `422 unknown_sort`), пагинация. При включённых заказах у товара `sales_30d` — продано проведёнными заказами за 30 дней (одним запросом на страницу). В карточке `low_stock` — остаток на пороге или ниже, `out_of_stock` — ноль или минус независимо от порога; у услуги оба `false` |
 | POST | `/warehouse/products` | 🔑 `warehouse.create` | Создать позицию. `sku` уникален, но необязателен (пусто → `NULL`); `409 sku_taken` |
 | GET | `/warehouse/products/{id}` | 🔑 `warehouse.view` | Карточка с остатком; при включённых заказах — `reserved_milli`, `expected_milli`, `available_milli`, `sales_30d`/`sales_90d` (количество и заказов по проведённым заказам покупателя), `returns_90d` (по проведённым возвратам); без блока ключей нет |
-| GET | `/warehouse/products/{id}/availability` | 🔑 `warehouse.view` | Остаток, бронь, ожидается, доступно и `holders` — кто держит |
+| GET | `/warehouse/products/{id}/availability` | 🔑 `warehouse.view` | Остаток, бронь, ожидается, доступно и `holders` — кто держит: у каждого `amount` (сумма заявки / заказа; пусто без права на суммы и у чужих), `at` (заведён), `due_at` (срок) |
 | PATCH | `/warehouse/products/{id}` | 🔑 `warehouse.edit` | Изменить. Товар с остатком нельзя сделать услугой (`422 product_has_stock`) |
 | DELETE | `/warehouse/products/{id}` | 🔑 `warehouse.delete` | Мягкое удаление. Движения остаются |
 | POST | `/warehouse/products/{id}/restore` | 🔑 `warehouse.restore` | Вернуть из корзины |
