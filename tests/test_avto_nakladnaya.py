@@ -160,3 +160,40 @@ def test_bez_bloka_nakladnykh_chernovika_net(root_client, client_row):
     finally:
         root_client.post(f"{API}/modules/waybills", json={"enabled": True})
     assert chernoviki(root_client, z["id"]) == []
+
+
+def test_from_order_otdayot_zhivoy_chernovik_a_ne_vtoroy(root_client, client_row):
+    """Зеркало уже завело черновик — `from-order` отдаёт его (200), а не второй:
+    две накладные по одному заказу — две отгрузки, и вторая после закрытия
+    заказа висела бы черновиком «к отгрузке» навсегда (найдено засевом 06.09.2026)."""
+    item = product(root_client)
+    z = order(root_client, client_row)
+    root_client.post(f"{ORDERS}/{z['id']}/lines", json={"product_id": item["id"], "quantity": "2"})
+    [wb] = chernoviki(root_client, z["id"])
+    r = root_client.post(f"{WAYBILLS}/from-order/{z['id']}")
+    assert r.status_code == 200 and r.json()["id"] == wb["id"], r.text
+    assert len(chernoviki(root_client, z["id"])) == 1
+    # без живого черновика ручка по-прежнему заводит новый
+    assert root_client.post(f"{WAYBILLS}/{wb['id']}/cancel", json={}).status_code == 200
+    r = root_client.post(f"{WAYBILLS}/from-order/{z['id']}")
+    assert r.status_code == 201 and r.json()["id"] != wb["id"], r.text
+
+
+def test_chuzhaya_nakladnaya_zakryla_zakaz_avtochernovik_ukhodit(root_client, client_row):
+    """Заказ отгружен накладной, заведённой руками: свой черновик зеркала
+    уходит вместе с закрытием, ручной черновик остаётся человеку."""
+    item = product(root_client, stock="10")
+    z = order(root_client, client_row)
+    root_client.post(f"{ORDERS}/{z['id']}/lines", json={"product_id": item["id"], "quantity": "3"})
+    [avto] = chernoviki(root_client, z["id"])
+    ruchnaya = root_client.post(
+        f"{WAYBILLS}", json={"kind": "waybill_out", "basis_id": z["id"], "client_id": client_row["id"]}
+    ).json()
+    root_client.post(f"{WAYBILLS}/{ruchnaya['id']}/lines", json={"product_id": item["id"], "quantity": "3"})
+    eshchyo = root_client.post(
+        f"{WAYBILLS}", json={"kind": "waybill_out", "basis_id": z["id"], "client_id": client_row["id"]}
+    ).json()
+    assert root_client.post(f"{WAYBILLS}/{ruchnaya['id']}/post", json={}).status_code == 200
+    assert root_client.get(f"{ORDERS}/{z['id']}").json()["status"] == "closed"
+    assert root_client.get(f"{WAYBILLS}/{avto['id']}").status_code == 404, "черновик зеркала ушёл"
+    assert root_client.get(f"{WAYBILLS}/{eshchyo['id']}").json()["status"] == "draft", "ручной остался"

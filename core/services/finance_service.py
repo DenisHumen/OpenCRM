@@ -32,6 +32,7 @@ from core import uniqueness
 from core.services import audit_service, company_service, modules_service
 from core.utils import konets_dnya, now_utc, to_utc_naive
 from database.models import (
+    Document,
     FinanceBudget,
     FinanceCategory,
     FinanceOperation,
@@ -39,7 +40,7 @@ from database.models import (
     User,
 )
 from database.models.audit import SOURCE_MANUAL
-from database.models.document import KIND_SALES_ORDER, STATUS_CANCELLED
+from database.models.document import KIND_RETURN, KIND_SALES_ORDER, STATUS_CANCELLED
 from database.models.finance import (
     BASE_INCOME_PERCENT,
     BASES,
@@ -56,6 +57,7 @@ from database.models.finance import (
     PURPOSES,
     RATE_SCALE,
 )
+from database.repositories import documents as documents_repo
 from database.repositories import finance as finance_repo
 
 #: Что записывается в журнал действий.
@@ -1082,9 +1084,31 @@ def money_of_document(db: Session, document_id: int) -> dict:
         )
 
     bumaga = _document_total(db, document_id)
-    total, status = (None, None) if bumaga is None else bumaga
+    total, document = (None, None) if bumaga is None else bumaga
+    status = document.status if document is not None else None
     otmenen = status == STATUS_CANCELLED
     schitaem = total is not None and not otmenen
+    # Возвращённое — отдельным числом, «получено» не трогает (docs/22 §5). У
+    # возврата бумага — это сумма к возврату, а операции по нему отрицательные:
+    # без этой ветки карточка возврата показывала бы долг клиента вдвое.
+    refunded = 0
+    if document is not None and document.kind == KIND_RETURN:
+        total = int(document.refund_minor or 0)
+        refunded = -received
+        return {
+            "document_id": document_id,
+            "total": total,
+            "status": status,
+            "received": received,
+            "refunded": refunded,
+            "due": (total - refunded) if schitaem else None,
+            "paid": (total - refunded <= 0) if schitaem else None,
+            "accruals": accruals,
+        }
+    if document is not None:
+        vozvraty = [v.id for v in documents_repo.vozvraty_po_zakazu(db, document.id)]
+        if vozvraty:
+            refunded = -finance_repo.received_of(db, document_ids=vozvraty)
     return {
         "document_id": document_id,
         "total": total,
@@ -1092,6 +1116,7 @@ def money_of_document(db: Session, document_id: int) -> dict:
         # вовсе и бланк отменён. Разбор — в докстроке.
         "status": status,
         "received": received,
+        "refunded": refunded,
         "due": (total - received) if schitaem else None,
         "paid": (total - received <= 0) if schitaem else None,
         "accruals": accruals,
@@ -1114,8 +1139,8 @@ def money_of_deal(db: Session, deal_id: int) -> dict:
     return {"deal_id": deal_id, "received": finance_repo.received_of(db, deal_id=deal_id)}
 
 
-def _document_total(db: Session, document_id: int) -> tuple[int, str] | None:
-    """Сумма бланка по его строкам и его состояние. None — бланки выключены.
+def _document_total(db: Session, document_id: int) -> tuple[int, Document] | None:
+    """Сумма бланка по его строкам и сама бумага. None — бланки выключены.
 
     Сумму считает `document_service.total_minor` — та самая единственная точка,
     где по строкам считаются деньги. Своего счёта здесь нет намеренно: второй
@@ -1130,7 +1155,7 @@ def _document_total(db: Session, document_id: int) -> tuple[int, str] | None:
     from core.services import document_service
 
     document = document_service.get(db, document_id)
-    return document_service.total_minor(document_service.lines(db, document.id)), document.status
+    return document_service.total_minor(document_service.lines(db, document.id)), document
 
 
 # --- чем меряем выручку -------------------------------------------------------

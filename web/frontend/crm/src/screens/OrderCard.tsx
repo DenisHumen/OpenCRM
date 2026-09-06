@@ -444,6 +444,8 @@ interface OrderMoneyData {
   /** Состояние бланка. Пусто — бланки выключены. Различает два «остатка нет». */
   status: string | null;
   received: number;
+  /** Отдано обратно по возвратам этого заказа. «Получено» оно не уменьшает. */
+  refunded: number;
   /** Пусто у отменённого и при выключенных бланках: вопрос «сколько взять» не задан. */
   due: number | null;
   paid: boolean | null;
@@ -548,6 +550,9 @@ function OrderMoney({ order }: { order: Order }) {
           <div className="metric-value money-value" style={{ fontSize: 22 }}>
             {sum(money.received)}
           </div>
+          {money.refunded > 0 && (
+            <div className="svodka-sub">{t("orderRefundedByReturns", { sum: sum(money.refunded) })}</div>
+          )}
         </div>
         {/*
           Отменённый бланк разводится на два случая, и это главное здесь.

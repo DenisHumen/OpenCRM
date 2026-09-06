@@ -40,6 +40,9 @@ export interface Waybill {
   client_id: number | null;
   deal_id: number | null;
   basis_id: number | null;
+  /** Основание словами — номер и вид бумаги, по которой выписана. */
+  basis_number: string | null;
+  basis_kind: string | null;
   warehouse_id: number | null;
   /** Язык бумаги. Сервер отдавал его и раньше, а описание про него не знало. */
   locale: string;
@@ -62,6 +65,13 @@ export { WAYBILL_STATUS_LABEL } from "../lib/documents";
 
 /** По скольку накладных дочитывается список. */
 const NA_STRANITSE = 100;
+
+/** Подпись основания по виду бумаги: заказ, возврат или накладная (сторно). */
+export function osnovanieKey(kind: string): "wbBasisOrder" | "wbBasisReturn" | "wbBasisReversal" {
+  if (kind === "return") return "wbBasisReturn";
+  if (kind.startsWith("waybill")) return "wbBasisReversal";
+  return "wbBasisOrder";
+}
 
 export function Waybills() {
   const { t, locale, workspace, toastError } = useApp();
@@ -248,6 +258,13 @@ export function Waybills() {
               <Chip>
                 {waybill.kind === "waybill_out" ? t("waybillKindOut") : t("waybillKindIn")}
               </Chip>
+            </span>
+            <span
+              className="truncate"
+              title={waybill.basis_kind ? t(osnovanieKey(waybill.basis_kind), { n: waybill.basis_number ?? "" }) : undefined}
+              style={{ width: 118, color: "var(--faint)", fontSize: 12.5, fontFamily: "ui-monospace, monospace" }}
+            >
+              {waybill.basis_number ?? ""}
             </span>
             <span style={{ flex: 1, minWidth: 0, color: "var(--muted)", fontSize: 12.5 }}>
               {waybill.lines.length
