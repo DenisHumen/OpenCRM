@@ -1681,6 +1681,10 @@ summary:focus-visible,
 .src-name { position: relative; flex: 1; min-width: 0; }
 .src-num { position: relative; width: 76px; text-align: right; flex: none; color: var(--muted); font-variant-numeric: tabular-nums; }
 .src-money { position: relative; width: 120px; text-align: right; flex: none; font-variant-numeric: tabular-nums; }
+/* Полоса бюджета: доля факта от плана, перерасход — красным. */
+.byudzhet-polosa { height: 4px; border-radius: 2px; background: var(--surface-2); margin-top: 6px; overflow: hidden; max-width: 320px; }
+.byudzhet-polosa > div { height: 100%; background: var(--chart-brand); border-radius: 2px; }
+.byudzhet-polosa > div.beda { background: var(--danger); }
 
 /* Разбор суммы: пример расчёта в настройках правил и деньги по заказу.
 

@@ -25,6 +25,7 @@ from database.models import User
 from database.models.finance import DIRECTIONS
 from database.repositories import finance as finance_repo
 from database.repositories import users as users_repo
+from web.api.routes.reports import csv_response
 from web.api import schemas
 from web.api.deps import get_db, require_module, require_perm
 
@@ -388,6 +389,37 @@ def list_operations(
     data = schemas.paginated(_decorate(db, items), total, page, per_page)
     data.update(period.envelope(db))
     return data
+
+
+@router.get("/operations.csv")
+def export_operations(
+    period: Period = Depends(),
+    category_id: int | None = None,
+    direction: str | None = None,
+    deal_id: int | None = None,
+    client_id: int | None = None,
+    company_id: int | None = None,
+    user: User = Depends(require_perm("finance", "view")),
+    db: Session = Depends(get_db),
+):
+    """Журнал за период файлом — тем же отбором, что список, но целиком:
+    бухгалтеру нужны все строки, а не первая сотня (план И-04)."""
+    if direction is not None and direction not in DIRECTIONS:
+        direction = None
+    stroki: list = []
+    # Страницами по двести, не больше полусотни страниц: журнал за год — это
+    # тысячи строк, а один запрос «всё сразу» без предела однажды съест память.
+    for page in range(1, 51):
+        items, _total = finance_service.list_operations(
+            db,
+            category_id=category_id, direction=direction, deal_id=deal_id,
+            client_id=client_id, company_id=company_id,
+            start=period.start, end=period.end, page=page, per_page=200,
+        )
+        stroki.extend(_decorate(db, items))
+        if len(items) < 200:
+            break
+    return csv_response(report_service.operations_csv(stroki, user.locale), "operations", period)
 
 
 @router.post("/operations", status_code=201)

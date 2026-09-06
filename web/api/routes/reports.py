@@ -69,7 +69,7 @@ def _scope(db: Session, user: User) -> int | None:
     return permissions_service.deals_scope(db, user)
 
 
-def _csv_response(content: bytes, name: str, period: Period) -> Response:
+def csv_response(content: bytes, name: str, period: Period) -> Response:
     # Имя файла с периодом: в папке «Загрузки» через месяц лежит пять выгрузок,
     # и «reports.csv (3)» не отвечает, какая из них за июль.
     filename = f"{name}-{period.start_day.isoformat()}_{period.end_day.isoformat()}.csv"
@@ -101,7 +101,7 @@ def funnel_export(
     db: Session = Depends(get_db),
 ):
     data = report_service.funnel(db, period.start, period.end, _scope(db, user))
-    return _csv_response(report_service.funnel_csv(data, user.locale), "funnel", period)
+    return csv_response(report_service.funnel_csv(data, user.locale), "funnel", period)
 
 
 # Отчёт по выручке — это деньги целиком, а не отчёт, в котором среди прочего
@@ -128,7 +128,7 @@ def revenue_export(
     data = report_service.revenue(
         db, period.start_day, period.end_day, period.tz_offset, _scope(db, user)
     )
-    return _csv_response(report_service.revenue_csv(data, user.locale), "revenue", period)
+    return csv_response(report_service.revenue_csv(data, user.locale), "revenue", period)
 
 
 def _without_money(data: dict) -> dict:
@@ -181,4 +181,4 @@ def sources_export(
         # Выгрузка обязана совпадать с экраном: иначе право обходится кнопкой
         # «скачать», и это самый вероятный обход из всех.
         data = _without_money(data)
-    return _csv_response(report_service.sources_csv(data, user.locale), "sources", period)
+    return csv_response(report_service.sources_csv(data, user.locale), "sources", period)

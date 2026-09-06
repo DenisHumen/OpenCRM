@@ -7,6 +7,8 @@ import { api } from "../lib/api";
 import { useApp } from "../lib/app";
 import { useFailure } from "../lib/failure";
 import { formatMoney } from "../lib/format";
+import { moduleOn } from "../lib/modules";
+import { can } from "../lib/permissions";
 import { sourceLabel } from "../lib/sources";
 
 /**
@@ -45,12 +47,15 @@ function percent(value: number | null, locale: string): string {
 }
 
 export function Reports() {
-  const { t, locale } = useApp();
+  const { t, locale, user, modules } = useApp();
+  // Возвраты — при включённых заказах и праве на них: статистика живёт в
+  // разделе возвратов, здесь — три числа за тот же период и ход к ней.
+  const vozvratyOn = moduleOn(modules, "orders") && can(user, "orders.view");
   const today = useMemo(() => new Date(), []);
   const quick = useMemo(() => presets(today), [today]);
   const [from, setFrom] = useState(quick[0].from);
   const [to, setTo] = useState(quick[0].to);
-  const [data, setData] = useState<{ funnel: any; revenue: any; sources: any } | null>(null);
+  const [data, setData] = useState<{ funnel: any; revenue: any; sources: any; vozvraty: any | null } | null>(null);
 
   // Смещение зоны браузера едет вместе с датами: «за июль» человек понимает по
   // своему календарю, а в базе время в UTC. Без этого 31 июля терял бы вечер, а
@@ -77,9 +82,10 @@ export function Reports() {
       api.get(`/reports/funnel?${query}`),
       api.get(`/reports/revenue?${query}`),
       api.get(`/reports/sources?${query}`),
+      vozvratyOn ? api.get(`/returns/stats?${query}`) : Promise.resolve(null),
     ])
-      .then(([funnel, revenue, sources]) => {
-        if (current) setData({ funnel, revenue, sources });
+      .then(([funnel, revenue, sources, vozvraty]) => {
+        if (current) setData({ funnel, revenue, sources, vozvraty });
       })
       .catch((e) => {
         if (current) fail(e);
@@ -87,13 +93,13 @@ export function Reports() {
     return () => {
       current = false;
     };
-  }, [query, attempt, fail, clear]);
+  }, [query, attempt, vozvratyOn, fail, clear]);
 
   if (!data) {
     return <ScreenLoading error={failure} onRetry={() => setAttempt((n) => n + 1)} />;
   }
 
-  const { funnel, revenue, sources } = data;
+  const { funnel, revenue, sources, vozvraty } = data;
   const currency = revenue.currency ?? "USD";
   const money = (value: number | null) => formatMoney(value, currency, locale);
 
@@ -326,6 +332,27 @@ export function Reports() {
           ))}
         </div>
       </div>
+
+      {/* --- возвраты --- */}
+      {vozvraty && (
+        <div className="card card-pad report-card">
+          <div className="section-head" style={{ marginBottom: 14 }}>
+            <div className="metric-title">{t("returnStats")}</div>
+            <Link to="/returns" className="section-link">
+              {t("viewAll")}
+            </Link>
+          </div>
+          {vozvraty.count === 0 ? (
+            <EmptyState icon="receipt" title={t("returnStatsEmpty")} />
+          ) : (
+            <div className="report-grid">
+              <Figure title={t("returnStatsCount")} value={String(vozvraty.count)} sub={t("returnStatsShipped", { n: vozvraty.shipped_count })} />
+              <Figure title={t("returnStatsRefund")} value={formatMoney(vozvraty.refund_amount, vozvraty.currency ?? currency, locale)} />
+              <Figure title={t("returnStatsShare")} value={vozvraty.share === null ? "—" : `${Math.round(vozvraty.share)}%`} />
+            </div>
+          )}
+        </div>
+      )}
 
       {/* --- источники --- */}
       <div className="card card-pad report-card">
