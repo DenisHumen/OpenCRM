@@ -166,7 +166,7 @@ export function SettingsBrand() {
   };
 
   return (
-    <div className="card" style={{ padding: "20px 22px" }}>
+    <div className="card card-pad">
       <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>{t("brand")}</div>
       <div style={{ color: "var(--faint)", fontSize: 12.5, marginBottom: 18 }}>{t("brandSub")}</div>
       <div style={{ display: "flex", gap: 20, alignItems: "flex-start" }}>
@@ -283,7 +283,7 @@ export function SettingsContacts() {
   const { input } = useSettings();
 
   return (
-    <div className="card" style={{ padding: "20px 22px" }}>
+    <div className="card card-pad">
       <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>{t("contacts")}</div>
       <div style={{ color: "var(--faint)", fontSize: 12.5, marginBottom: 6 }}>{t("contactsSub")}</div>
       <div style={{ color: "var(--faint)", fontSize: 12.5, marginBottom: 18, lineHeight: 1.5 }}>{t("contactsWhere")}</div>
@@ -326,7 +326,7 @@ export function SettingsShowcase() {
   };
 
   return (
-    <div className="card" style={{ padding: "20px 22px" }}>
+    <div className="card card-pad">
       <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>{t("showcase")}</div>
       <div style={{ color: "var(--faint)", fontSize: 12.5, marginBottom: 18 }}>{t("showcaseSub")}</div>
       {/* Языка публичных страниц здесь БОЛЬШЕ НЕТ — он переехал в «Бренд».
@@ -411,7 +411,7 @@ export function SettingsReturnButton() {
   };
 
   return (
-    <div className="card" style={{ padding: "20px 22px" }}>
+    <div className="card card-pad">
       <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>{t("returnButton")}</div>
       <div style={{ color: "var(--faint)", fontSize: 12.5, marginBottom: 18 }}>{t("returnButtonSub")}</div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 220px", gap: "14px 20px", alignItems: "start" }}>
@@ -487,7 +487,7 @@ export function SettingsAutomation() {
   const { t, modules } = useApp();
   const { switcher } = useSettings();
   return (
-    <div className="card" style={{ padding: "20px 22px" }}>
+    <div className="card card-pad">
       <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>{t("automation")}</div>
       <div style={{ color: "var(--faint)", fontSize: 12.5, marginBottom: 18, lineHeight: 1.5 }}>{t("automationSub")}</div>
       <div style={{ display: "grid", gap: 16 }}>
@@ -537,7 +537,7 @@ export function SettingsMaintenance() {
 
   return (
     <>
-      <div className="card" style={{ padding: "20px 22px", marginBottom: 20 }}>
+      <div className="card card-pad" style={{ marginBottom: 20 }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, marginBottom: 4 }}>
           <div style={{ fontSize: 14, fontWeight: 600 }}>{t("liveUpdates")}</div>
           <Toggle
@@ -549,7 +549,7 @@ export function SettingsMaintenance() {
         <div style={{ color: "var(--faint)", fontSize: 12.5, lineHeight: 1.5 }}>{t("liveUpdatesSub")}</div>
       </div>
 
-      <div className="card" style={{ padding: "20px 22px", marginBottom: 20 }}>
+      <div className="card card-pad" style={{ marginBottom: 20 }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, marginBottom: 4 }}>
           <div style={{ fontSize: 14, fontWeight: 600 }}>{t("closedMode")}</div>
           <Toggle
@@ -578,7 +578,7 @@ export function SettingsMaintenance() {
         )}
       </div>
 
-      <div className="card" style={{ padding: "20px 22px" }}>
+      <div className="card card-pad">
         <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>{t("diskAndTrash")}</div>
         <div style={{ color: "var(--faint)", fontSize: 12.5, marginBottom: 6 }}>{t("maintenanceSub")}</div>
         <div style={{ color: "var(--faint)", fontSize: 12.5, marginBottom: 18, lineHeight: 1.5 }}>{t("maintenanceWhere")}</div>

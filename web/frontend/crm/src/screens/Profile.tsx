@@ -190,7 +190,7 @@ export function Profile() {
         <Propusk user={user} brand={workspace.brand_name} />
       </div>
 
-      <div className="card" style={{ padding: "20px 22px", marginBottom: 16 }}>
+      <div className="card card-pad" style={{ marginBottom: 16 }}>
         <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 16 }}>{t("account")}</div>
         <div className="field">
           <label className="label">{t("displayName")}</label>
@@ -207,7 +207,7 @@ export function Profile() {
         </button>
       </div>
 
-      <div className="card" style={{ padding: "20px 22px", marginBottom: 16 }}>
+      <div className="card card-pad" style={{ marginBottom: 16 }}>
         <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 16 }}>{t("interfaceLanguage")}</div>
         <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
           {[
@@ -235,7 +235,7 @@ export function Profile() {
           настоящая радиогруппа обязана водить стрелками и держать один Tab-стоп
           на всю группу, и объявить её, не сделав этого, хуже, чем не объявлять.
           Проверка — tests/test_screens.py. */}
-      <div className="card" style={{ padding: "20px 22px", marginBottom: 16 }}>
+      <div className="card card-pad" style={{ marginBottom: 16 }}>
         <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 16 }}>{t("interfaceTheme")}</div>
         <div className="theme-pick" role="group" aria-label={t("interfaceTheme")} style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap" }}>
           {THEMES.map((id) => (
@@ -262,7 +262,7 @@ export function Profile() {
           Разрешение спрашивается ПО НАЖАТИЮ, и это не придирка к порядку:
           спрошенное при загрузке страницы люди отклоняют не глядя, а
           отклонённое браузер помнит навсегда — второго раза не будет. */}
-      <div className="card" style={{ padding: "20px 22px", marginBottom: 16 }}>
+      <div className="card card-pad" style={{ marginBottom: 16 }}>
         <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 16 }}>{t("tgSignals")}</div>
         <div style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap" }}>
           <button
@@ -288,7 +288,7 @@ export function Profile() {
         <div style={{ color: "var(--faint)", fontSize: 11.5 }}>{t("tgSignalsHint")}</div>
       </div>
 
-      <form className="card" style={{ padding: "20px 22px" }} onSubmit={changePassword}>
+      <form className="card card-pad" onSubmit={changePassword}>
         <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 16 }}>{t("changePassword")}</div>
         <div className="field">
           <label className="label">{t("currentPassword")}</label>
