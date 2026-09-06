@@ -109,7 +109,7 @@ export function SettingsLabels() {
   );
 
   return (
-    <div className="card" style={{ padding: "20px 22px" }}>
+    <div className="card card-pad">
       <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>{t("labelSettings")}</div>
       <div style={{ color: "var(--faint)", fontSize: 12.5, marginBottom: 18 }}>{t("labelSettingsSub")}</div>
 
