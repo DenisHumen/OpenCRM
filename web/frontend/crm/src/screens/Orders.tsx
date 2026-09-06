@@ -31,6 +31,8 @@ export interface OrderLine {
   name: string;
   quantity_milli: number;
   picked_milli: number;
+  /** Уехало накладными по открытому заказу; у закрытого и без накладных ключа нет. */
+  shipped_milli?: number;
   price: number | null;
   cost: number | null;
 }

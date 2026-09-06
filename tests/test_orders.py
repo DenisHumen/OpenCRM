@@ -884,6 +884,9 @@ def test_chastichnaya_otgruzka_snimaet_rezerv_na_otgruzhennoe(root_client, clien
     assert proveli.status_code == 200, proveli.text
 
     assert stock_of(root_client, item["id"]) == 9000, "накладная не списала товар"
+    # Строка заказа знает, сколько уехало: «отгружено 1 из 4» (план З-07).
+    [stroka] = root_client.get(f"{API}/orders/{order['id']}").json()["lines"]
+    assert stroka["shipped_milli"] == 1000 and stroka["quantity_milli"] == 4000
     posle = promises(root_client, item["id"])
     assert posle["reserved_milli"] == 3000, (
         f"резерв не уменьшился на отгруженное: {posle['reserved_milli']} вместо 3000"
