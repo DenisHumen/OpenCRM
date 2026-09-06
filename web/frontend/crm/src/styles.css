@@ -287,6 +287,31 @@ button { font-family: var(--sans); }
 .dash-cols-one { grid-template-columns: 1fr; }
 .dash-cols > .card { margin-bottom: 0; }
 @media (max-width: 900px) { .dash-cols { grid-template-columns: 1fr; } }
+
+/* Сводка из виджетов: сетка в четыре колонки, плитка — одна, блок — две,
+   полоса — четыре. На планшете колонок две, на телефоне одна; ширины
+   складываются, а не обрезаются. */
+.svodka-setka { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 12px; align-items: start; }
+.vidzhet { min-width: 0; }
+.vidzhet > .card { margin-bottom: 0; }
+.vidzhet-w1 { grid-column: span 1; }
+.vidzhet-w2 { grid-column: span 2; }
+.vidzhet-w4 { grid-column: span 4; }
+.vidzhet-nastroyka { border: 1px dashed var(--frame); border-radius: 12px; padding: 4px; cursor: grab; }
+.vidzhet-nastroyka:active { cursor: grabbing; }
+.vidzhet-taskaem { opacity: 0.45; }
+.vidzhet-tsel { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft, transparent); }
+.vidzhet-shapka { display: flex; align-items: center; gap: 6px; padding: 2px 6px 6px; color: var(--muted); font-size: 12px; }
+.vidzhet-imya { flex: 1; min-width: 0; }
+.vidzhet-knopki { display: flex; gap: 2px; }
+@media (max-width: 1100px) {
+  .svodka-setka { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .vidzhet-w4 { grid-column: span 2; }
+}
+@media (max-width: 640px) {
+  .svodka-setka { grid-template-columns: minmax(0, 1fr); }
+  .vidzhet-w2, .vidzhet-w4 { grid-column: span 1; }
+}
 .board-grid-2 { grid-template-columns: repeat(2, 1fr); }
 .page-docs { max-width: 1360px; }
 .page-narrow { max-width: 760px; }
