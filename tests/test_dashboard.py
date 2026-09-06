@@ -294,3 +294,67 @@ def test_voronka_znaet_summy_etapov_i_klientov_bez_zayavok(root_client):
         root_client.delete(f"{API}/deals/{deal['id']}")
         root_client.delete(f"{API}/clients/{bez['id']}")
         root_client.delete(f"{API}/clients/{s_zayavkoy['id']}")
+
+
+def test_raskladka_svodki_hranitsya_u_sotrudnika(root_client, manager_client):
+    """Владелец 06.09.2026: блоки сводки добавляются, убираются и переставляются.
+    Раскладка — у сотрудника, а не у фирмы; пусто — умолчание экрана."""
+    assert root_client.get(f"{API}/dashboard/layout").json()["layout"] is None
+    r = root_client.put(f"{API}/dashboard/layout", json={"widgets": [{"kind": "funnel", "w": 4}, {"kind": "clients"}]})
+    assert r.status_code == 200, r.text
+    assert r.json()["layout"]["widgets"] == [
+        {"kind": "funnel", "w": 4, "params": {}},
+        {"kind": "clients", "w": 1, "params": {}},
+    ]
+    assert r.json()["kinds"]["api_key"]["odin"] is False
+    assert root_client.get(f"{API}/dashboard/layout").json()["layout"]["widgets"][0]["kind"] == "funnel"
+    assert manager_client.get(f"{API}/dashboard/layout").json()["layout"] is None, "раскладка своя у каждого"
+    assert root_client.delete(f"{API}/dashboard/layout").status_code == 200
+    assert root_client.get(f"{API}/dashboard/layout").json()["layout"] is None
+
+
+def test_raskladka_otvergaet_chuzhoe_s_kodom(root_client, manager_client):
+    """Неизвестный виджет, второй такой же, чужая ширина, выключенный блок,
+    чужое право — отказ с кодом: экран показывает причину, а не теряет виджет."""
+    put = lambda client, widgets: client.put(f"{API}/dashboard/layout", json={"widgets": widgets})
+    otkaz = put(root_client, [{"kind": "pogoda"}])
+    assert otkaz.status_code == 422 and otkaz.json()["error"]["code"] == "unknown_widget"
+    otkaz = put(root_client, [{"kind": "funnel"}, {"kind": "funnel"}])
+    assert otkaz.json()["error"]["code"] == "widget_duplicate"
+    otkaz = put(root_client, [{"kind": "funnel", "w": 1}])
+    assert otkaz.json()["error"]["code"] == "bad_widget_width"
+    otkaz = put(root_client, [{"kind": "api_key"}])
+    assert otkaz.json()["error"]["code"] == "widget_needs_key"
+    otkaz = put(root_client, [{"kind": "api_key", "params": {"key_id": 999_999}}])
+    assert otkaz.status_code == 404 and otkaz.json()["error"]["code"] == "api_key_not_found"
+    otkaz = put(manager_client, [{"kind": "api_key", "params": {"key_id": 1}}])
+    assert otkaz.status_code == 403 and otkaz.json()["error"]["code"] == "permission_denied"
+    _blok(root_client, "tasks", False)
+    try:
+        otkaz = put(root_client, [{"kind": "my_tasks"}])
+        assert otkaz.json()["error"]["code"] == "module_disabled"
+    finally:
+        _blok(root_client, "tasks", True)
+    assert root_client.get(f"{API}/dashboard/layout").json()["layout"] is None, "отказ ничего не записал"
+
+
+def test_vidzhet_klyucha_sayta_po_odnomu_na_klyuch(root_client):
+    """Наблюдение за ключом сайта — виджет на каждый ключ; тот же ключ дважды —
+    отказ. Без ключа виджет не заводится (проверка выше)."""
+    keys = f"{API}/settings/api-keys"
+    k1 = root_client.post(keys, json={"name": "магазин", "scopes": ["catalog.read"]}).json()
+    k2 = root_client.post(keys, json={"name": "маркетплейс", "scopes": ["catalog.read"]}).json()
+    widgets = [
+        {"kind": "api_key", "params": {"key_id": k1["id"]}},
+        {"kind": "api_key", "params": {"key_id": k2["id"], "lishnee": 1}, "w": 4},
+    ]
+    r = root_client.put(f"{API}/dashboard/layout", json={"widgets": widgets})
+    assert r.status_code == 200, r.text
+    assert [w["params"] for w in r.json()["layout"]["widgets"]] == [{"key_id": k1["id"]}, {"key_id": k2["id"]}]
+    assert r.json()["layout"]["widgets"][1]["w"] == 4
+    dvazhdy = root_client.put(
+        f"{API}/dashboard/layout",
+        json={"widgets": [{"kind": "api_key", "params": {"key_id": k1["id"]}}] * 2},
+    )
+    assert dvazhdy.json()["error"]["code"] == "widget_duplicate"
+    root_client.delete(f"{API}/dashboard/layout")

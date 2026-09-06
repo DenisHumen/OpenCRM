@@ -1,6 +1,7 @@
 from datetime import timedelta
 
 from fastapi import APIRouter, Depends
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from core.services import (
@@ -11,6 +12,7 @@ from core.services import (
     pipeline_service,
     settings_service,
     task_service,
+    vidzhety_service,
 )
 from core.utils import now_utc
 from database.models import User
@@ -210,3 +212,48 @@ def dashboard(user: User = Depends(require_staff), db: Session = Depends(get_db)
         "recent_boards": boards_payload,
         "recent_clients": [schemas.client_out(c) for c in recent_clients],
     }
+
+
+class WidgetIn(BaseModel):
+    """Виджет раскладки: вид, ширина (пусто — по реестру), параметры — у ключа сайта."""
+
+    kind: str = Field(max_length=40)
+    w: int | None = None
+    params: dict = Field(default_factory=dict)
+
+
+class LayoutIn(BaseModel):
+    widgets: list[WidgetIn] = Field(default_factory=list, max_length=vidzhety_service.POTOLOK + 1)
+
+
+def _reestr() -> dict:
+    """Реестр виджетов для экрана: ширины, блок и право. Одна карта на обоих —
+    вторая копия на фронтенде разошлась бы с этой молча."""
+    return {
+        kind: {"w": opis["w"], "shiriny": list(opis["shiriny"]), "odin": opis["odin"],
+               "module": opis["module"], "perm": opis["perm"]}
+        for kind, opis in vidzhety_service.REESTR.items()
+    }
+
+
+@router.get("/layout")
+def dashboard_layout(user: User = Depends(require_staff)):
+    """Раскладка сводки того, кто спрашивает; `null` — умолчание экрана."""
+    return {"layout": vidzhety_service.chitat(user), "kinds": _reestr()}
+
+
+@router.put("/layout")
+def save_dashboard_layout(
+    payload: LayoutIn, user: User = Depends(require_staff), db: Session = Depends(get_db)
+):
+    """Сохранить раскладку. Неизвестный виджет, чужой блок или право, второй
+    такой же, ключ сайта без ключа — отказ с кодом, а не молчаливая потеря."""
+    raskladka = vidzhety_service.sohranit(db, user, [w.model_dump() for w in payload.widgets])
+    return {"layout": raskladka, "kinds": _reestr()}
+
+
+@router.delete("/layout")
+def reset_dashboard_layout(user: User = Depends(require_staff), db: Session = Depends(get_db)):
+    """Вернуть умолчание экрана."""
+    vidzhety_service.sbrosit(db, user)
+    return {"layout": None, "kinds": _reestr()}

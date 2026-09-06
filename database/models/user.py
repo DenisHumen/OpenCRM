@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, String, Boolean
+from sqlalchemy import DateTime, ForeignKey, String, Boolean, Text
 
 from database.types import ExactString
 from sqlalchemy.orm import Mapped, mapped_column
@@ -40,6 +40,11 @@ class User(Base):
     locale: Mapped[str] = mapped_column(String(8), default="en")
     must_change_password: Mapped[bool] = mapped_column(Boolean, default=False)
     avatar_path: Mapped[str] = mapped_column(String(255), default="")
+    # Раскладка сводки — JSON списком виджетов (`core/services/vidzhety_service`).
+    # У человека, а не у фирмы: бухгалтеру нужны деньги, кладовщику — склад.
+    # Пусто — умолчание экрана; в отдельную таблицу не выносится: одна строка
+    # на сотрудника без своих запросов.
+    dashboard_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     # присутствие: обновляется на активность (throttle в auth_service), переживает logout
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
