@@ -758,3 +758,26 @@ def test_nakladnaya_znaet_osnovanie_nomerom_i_vidom(root_client, client_row):
     assert stroka["basis_number"] == zakaz["number"]
     ruchnaya = root_client.post(WAYBILLS, json={"kind": "waybill_out", "client_id": client_row["id"]}).json()
     assert ruchnaya["basis_number"] is None and ruchnaya["basis_kind"] is None
+
+
+def test_storno_ne_vozvrashchaet_uzhe_vernuvsheesya_vozvratom(root_client, client_row):
+    """После проведённого возврата покупателя сторно накладной берёт только
+    остаток: иначе на склад вернулось бы больше, чем уезжало."""
+    item = product(root_client, stock="3")
+    zakaz = root_client.post(ORDERS, json={"kind": "sales_order", "client_id": client_row["id"]}).json()
+    root_client.post(f"{ORDERS}/{zakaz['id']}/lines", json={"product_id": item["id"], "quantity": "3"})
+    nakladnaya = root_client.post(f"{WAYBILLS}/from-order/{zakaz['id']}").json()
+    assert root_client.post(f"{WAYBILLS}/{nakladnaya['id']}/post", json={}).status_code == 200
+    v = root_client.post(f"{ORDERS}/{zakaz['id']}/returns").json()
+    [stroka] = v["lines"]
+    root_client.patch(f"{API}/returns/{v['id']}/lines/{stroka['id']}", json={"quantity": "2"})
+    assert root_client.post(f"{API}/returns/{v['id']}/post", json={}).status_code == 200
+    assert ostatok(root_client, item) == 2_000
+
+    storno = root_client.post(f"{WAYBILLS}/{nakladnaya['id']}/reverse").json()
+    otkaz = root_client.post(f"{WAYBILLS}/{storno['id']}/post", json={})
+    assert otkaz.status_code == 422 and otkaz.json()["error"]["code"] == "reversal_exceeds_shipped", otkaz.text
+    [st] = root_client.get(f"{WAYBILLS}/{storno['id']}").json()["lines"]
+    root_client.patch(f"{WAYBILLS}/{storno['id']}/lines/{st['id']}", json={"quantity": "1"})
+    assert root_client.post(f"{WAYBILLS}/{storno['id']}/post", json={}).status_code == 200
+    assert ostatok(root_client, item) == 3_000, "вернулось ровно отгруженное"

@@ -524,6 +524,12 @@ POTOLKI = {
     "/finance/operations?per_page=50": 7,
     "/reports/revenue": 7,
     "/audit?per_page=50": 5,
+    # Возвраты и накладные (06.09.2026). Замерено на пустых списках: возвраты 4,
+    # статистика 6, накладные 3. Населённая страница платит ещё по запросу за
+    # строки и (у накладных) за основания — потолок это учитывает плюс единица.
+    "/returns?per_page=50": 6,
+    "/returns/stats": 8,
+    "/waybills?per_page=50": 6,
 }
 
 #: `/dashboard` и `/search` в таблице НЕ стоят, и это не забывчивость.
@@ -547,7 +553,7 @@ def uniq_metka() -> str:
 
 #: Блоки, которые нужны замерам: без них часть ручек отвечает отказом, и потолок
 #: мерил бы стоимость отказа, а не работы.
-NUZHNYE_BLOKI = ("documents", "warehouse", "orders", "finance", "boards", "labels")
+NUZHNYE_BLOKI = ("documents", "warehouse", "orders", "waybills", "finance", "boards", "labels")
 
 
 @pytest.fixture(scope="module")

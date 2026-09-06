@@ -677,3 +677,49 @@ def test_dvoe_snimayut_posledneye_pravo_na_roli_razom(root_client):
             root_client.delete(f"{STAFF}/{user_id}")
         for rol in (pervaya, vtoraya):
             root_client.delete(f"{ROLES}/{rol['id']}")
+
+
+def test_vozvrat_i_storno_nakladnoy_razom(root_client):
+    """Возврат покупателя и сторно накладной возвращают один и тот же товар.
+
+    Отгружено три накладной; черновик возврата на два и сторно на три законны
+    каждый по отдельности; проведённые разом без замка они вернули бы на
+    склад пять. Замок — та же строка заказа (`documents_repo.zapert_bumagu`),
+    сторно сверяется с уже вернувшимся (`_proverit_storno_protiv_vozvrata`).
+    """
+    from tests.test_orders import ORDERS, order_with, product, stock_of
+
+    for key in ("documents", "warehouse", "orders", "waybills"):
+        root_client.post(f"{API}/modules/{key}", json={"enabled": True})
+    try:
+        tovar = product(root_client, stock="3")
+        pokupatel = root_client.post(f"{API}/clients", json={"name": "Дуэль сторно"}).json()
+        order = order_with(root_client, pokupatel, tovar, quantity="3")
+        nakladnaya = root_client.post(f"{API}/waybills/from-order/{order['id']}")
+        assert nakladnaya.status_code in (200, 201), nakladnaya.text
+        assert root_client.post(f"{API}/waybills/{nakladnaya.json()['id']}/post", json={}).status_code == 200
+        assert root_client.get(f"{ORDERS}/{order['id']}").json()["status"] == "closed"
+        assert stock_of(root_client, tovar["id"]) == 0
+
+        v = root_client.post(f"{ORDERS}/{order['id']}/returns").json()
+        [stroka] = v["lines"]
+        assert root_client.patch(
+            f"{API}/returns/{v['id']}/lines/{stroka['id']}", json={"quantity": "2"}
+        ).status_code == 200
+        storno = root_client.post(f"{API}/waybills/{nakladnaya.json()['id']}/reverse")
+        assert storno.status_code == 201, storno.text
+
+        codes = duel(
+            lambda put: root_client.post(put, json={}).status_code,
+            f"{API}/returns/{v['id']}/post",
+            f"{API}/waybills/{storno.json()['id']}/post",
+        )
+        assert set(codes) == {"first", "second"}, f"об ударе не отчитались: {codes}"
+
+        vernulos = stock_of(root_client, tovar["id"])
+        assert vernulos <= 3000, (
+            f"вернули больше, чем отгрузили: на складе {vernulos} тысячных при трёх "
+            f"отгруженных, ответы {codes}"
+        )
+    finally:
+        root_client.post(f"{API}/modules/waybills", json={"enabled": False})
