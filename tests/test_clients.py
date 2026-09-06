@@ -512,6 +512,21 @@ def test_svodka_klienta_v_kartochke(root_client):
     assert svodka["received_12m"] is None, "деньги выключены — плитки нет"
 
 
+def test_posledniy_kontakt_ne_sistemnaya_zapis(root_client):
+    """Системная строка ленты («Stage: …», «Document … issued») свежее звонка
+    занимала место последнего контакта (проба 06.09.2026)."""
+    klient = root_client.post(f"{API}/clients", json={"name": "Контакт, не система"}).json()
+    root_client.post(f"{API}/clients/{klient['id']}/notes", json={"kind": "call", "body": "Договорились о встрече"})
+    zayavka = root_client.post(f"{API}/deals", json={"title": "После звонка", "client_id": klient["id"]}).json()
+    stages = {s["kind"]: s["key"] for s in root_client.get(f"{API}/pipeline/stages").json()["items"]}
+    assert root_client.post(f"{API}/deals/{zayavka['id']}/move", json={"stage": stages["won"]}).status_code == 200
+    lenta = root_client.get(f"{API}/clients/{klient['id']}/notes").json()["items"]
+    assert lenta[0]["kind"] == "stage", "перенос по доске пишет системную запись, и она свежее звонка"
+
+    svodka = root_client.get(f"{API}/clients/{klient['id']}").json()["svodka"]
+    assert svodka["last_contact"]["kind"] == "call" and "о встрече" in svodka["last_contact"]["body"]
+
+
 def test_spisok_klientov_znaet_zayavki_i_posledniy_kontakt(root_client):
     """Колонки списка (владелец, 06.09.2026): заявок и на сколько, последний
     контакт — по два запроса на страницу, не на строку."""

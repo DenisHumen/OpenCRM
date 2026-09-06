@@ -52,7 +52,7 @@ export function kindLabel(t: TFunc, kind: string): string {
 /** Заголовки, которые сервер подставляет сам, когда предмет бумаги не назван
  *  (`order_service._title`, `act_service.DEFAULT_TITLE`). На экране такое
  *  умолчание — не предмет, а вид, и показывается словом интерфейса. */
-const UMOLCHANIYA = new Set(["Sales order", "Purchase order", "Certificate of completed works"]);
+export const UMOLCHANIYA = new Set(["Sales order", "Purchase order", "Certificate of completed works"]);
 
 /** Клиент бумаги из снимка. Заказ без клиента хранит в снимке тот же
  *  заголовок-умолчание (`order_service.create`): это не имя, и показывать

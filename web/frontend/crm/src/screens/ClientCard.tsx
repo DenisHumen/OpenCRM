@@ -888,7 +888,10 @@ function KlientSvodka({ svodka, currency }: { svodka: Svodka; currency: string }
         <div className="svodka-l">{t("clientSummaryLastContact")}</div>
         <div className="svodka-v">{kontaktAt ? relativeDay(kontaktAt, locale) : "—"}</div>
         <div className="svodka-sub" title={kontakt?.body}>
-          {kontakt ? kontakt.body || t(VID_ZAPISI[kontakt.kind] ?? "feedNote") : t("clientSummaryNoContact")}
+          {kontakt
+            ? (SYSTEM_NOTE_KINDS.has(kontakt.kind) ? podpisSistemnoy(kontakt.body, t) : kontakt.body) ||
+              t(VID_ZAPISI[kontakt.kind] ?? "feedNote")
+            : t("clientSummaryNoContact")}
         </div>
       </div>
       {svodka.papers !== null && (

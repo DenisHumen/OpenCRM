@@ -6,9 +6,13 @@ import { api, type AuditEvent } from "../lib/api";
 import { useApp } from "../lib/app";
 import { useDebounced } from "../lib/debounce";
 import { useFailure } from "../lib/failure";
+import { kindLabel, ORDER_STATUS_LABEL, statusLabel, WAYBILL_STATUS_LABEL } from "../lib/documents";
 import { formatDateTime, formatMoney } from "../lib/format";
 import type { TranslationKey } from "../lib/i18n";
+import { podpisSistemnoy } from "../lib/sistemnye_zapisi";
 import { term } from "../lib/terms";
+import { LABEL as MODULE_LABEL } from "./SettingsModules";
+import { KIND_LABEL as WAREHOUSE_KIND } from "./SettingsWarehouses";
 
 // Ширины общие для шапки и строк, иначе колонки разъезжаются.
 const COL = {
@@ -63,6 +67,21 @@ const ACTION: Record<string, TranslationKey> = {
   "apikey.updated": "auditActApikeyUpdated",
   "warehouse.kind_changed": "auditActWarehouseKind",
   "customer.registered": "auditActCustomerRegistered",
+  "finance.operation_added": "auditActOperationAdded",
+  "finance.budget_set": "auditActBudgetSet",
+  "finance.payment_received": "auditActPaymentReceived",
+  "finance.rule_changed": "auditActRuleChanged",
+  "finance.accrual_adjusted": "auditActAccrualAdjusted",
+};
+
+/** Действия, у которых «было → стало» — состояние бумаги. Вид бумаги журнал не
+ *  хранит, поэтому слова нейтральные: «проведён», а не «отгружен»/«принят». */
+const STATUS_OF: Record<string, "order" | "waybill" | "return"> = {
+  "order.closed": "order",
+  "order.reverted": "order",
+  "waybill.posted": "waybill",
+  "waybill.reversed": "waybill",
+  "return.posted": "return",
 };
 
 /** Куда ведёт запись журнала. Пусто — у объекта нет своей карточки. */
@@ -103,6 +122,10 @@ const ENTITY: Record<string, TranslationKey> = {
   document: "auditEntDocument",
   backup: "auditEntBackup",
   apikey: "auditEntApikey",
+  finance_category: "auditEntFinanceCategory",
+  finance_operation: "auditEntFinanceOperation",
+  finance_budget: "auditEntFinanceBudget",
+  finance_rule: "auditEntFinanceRule",
 };
 
 const SOURCE: Record<string, TranslationKey> = {
@@ -117,7 +140,10 @@ const SOURCE: Record<string, TranslationKey> = {
  * В базе они лежат целыми и без валюты (форматирование зависит от локали
  * читающего и от настройки, а обе могут смениться), но на экране «было 500000»
  * заставляет делить в уме — а делят как раз тогда, когда торопятся. */
-const MONEY_ACTIONS = new Set(["deal.amount_changed", "deal.prepaid_changed"]);
+const MONEY_ACTIONS = new Set([
+  "deal.amount_changed", "deal.prepaid_changed",
+  "finance.operation_added", "finance.payment_received", "finance.refund_made", "finance.accrual_adjusted", "finance.budget_set",
+]);
 
 /** По скольку записей журнала дочитывается список. */
 const NA_STRANITSE = 100;
@@ -247,11 +273,29 @@ export function Audit() {
   // Этапы показываются ключами (`in_progress`), а не названиями воронки, и это
   // не недоделка: этап могли с тех пор переименовать или заархивировать, и
   // подстановка сегодняшнего названия показала бы не то, что было в тот день.
+  //
+  // Состояния и виды бумаг, вид склада, ключ блока — коды, а не имена: их не
+  // переименовывают, и им к лицу слово интерфейса вместо «draft → issued».
   const value = (entry: AuditEvent, raw: string | null) => {
     if (raw === null) return "—";
-    if (!MONEY_ACTIONS.has(entry.action)) return raw || "—";
-    return formatMoney(Number(raw), workspace.currency || "USD", locale);
+    if (MONEY_ACTIONS.has(entry.action)) return formatMoney(Number(raw), workspace.currency || "USD", locale);
+    if (!raw) return "—";
+    if (entry.action === "document.deleted") return raw === "deleted" ? t("sysDeleted") : kindLabel(t, raw);
+    if (entry.action === "module.switched") return t(raw === "on" ? "moduleOn" : "moduleOff");
+    if (entry.action === "warehouse.kind_changed" && WAREHOUSE_KIND[raw]) return t(WAREHOUSE_KIND[raw]);
+    const chego = STATUS_OF[entry.action];
+    if (!chego) return raw;
+    if (!/^[a-z_]+$/.test(raw)) return podpisSistemnoy(raw, t);
+    if (chego === "order") return t(ORDER_STATUS_LABEL[raw as keyof typeof ORDER_STATUS_LABEL] ?? "orderStatusNew");
+    if (chego === "waybill") return t(WAYBILL_STATUS_LABEL[raw as keyof typeof WAYBILL_STATUS_LABEL] ?? "wbDraft");
+    return statusLabel(t, raw, "return");
   };
+
+  // Блок записан ключом реестра («tasks»); слово — то же, что в меню и настройках.
+  const objectLabel = (entry: AuditEvent) =>
+    entry.entity_type === "module" && MODULE_LABEL[entry.entity_label]
+      ? t(MODULE_LABEL[entry.entity_label])
+      : entry.entity_label;
 
   return (
     <div className="page page-wide">
@@ -336,10 +380,10 @@ export function Audit() {
                     смотреть, что с ним стало, а не искать его по названию. */}
                 {putKObektu(entry) ? (
                   <Link to={putKObektu(entry)!} className="text-link" style={{ color: "var(--text)" }}>
-                    {entry.entity_label}
+                    {objectLabel(entry)}
                   </Link>
                 ) : (
-                  <span style={{ color: "var(--text)" }}>{entry.entity_label}</span>
+                  <span style={{ color: "var(--text)" }}>{objectLabel(entry)}</span>
                 )}
               </span>
               <span className="wrap-anywhere" style={{ ...COL.wide, fontSize: 12.5, color: "var(--text)" }}>

@@ -147,7 +147,7 @@ export function SettingsWarehouses() {
   );
 }
 
-const KIND_LABEL: Record<string, TranslationKey> = {
+export const KIND_LABEL: Record<string, TranslationKey> = {
   stock: "warehouseKindStock",
   shop: "warehouseKindShop",
   transit: "warehouseKindTransit",
