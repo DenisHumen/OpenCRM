@@ -1811,3 +1811,19 @@ def test_otkazy_servera_podpisany_slovami_interfeysa():
     assert myortvye == [], f"в карте отказов коды, которых сервер не знает: {myortvye}"
     bez = sorted(k for k in OBYAZATELNYE_KODY if k not in kody)
     assert bez == [], f"обязательные коды без подписи: {bez}"
+
+
+def test_vidzhety_svodki_nazvany_na_ekrane():
+    """Реестр виджетов живёт на сервере (`vidzhety_service.REESTR`), а подписи и
+    порядок умолчания — на экране. Вид без подписи экран покажет чужим словом
+    («Воронка» вместо своего): карта `ZAGOLOVKI` берётся по ключу, и промах по
+    ключу здесь ничем не краснеет (06.09.2026)."""
+    servernye = set(re.findall(r'^    "(\w+)": \{"module"', (KOREN / "core/services/vidzhety_service.py").read_text(encoding="utf-8"), re.M))
+    assert len(servernye) > 10, "реестр виджетов не прочитался"
+    ekran = (SCREENS / "screens" / "Dashboard.tsx").read_text(encoding="utf-8")
+    zagolovki = set(re.findall(r"^  (\w+): \"\w+\",", ekran[ekran.index("const ZAGOLOVKI"):], re.M))
+    bez = sorted(servernye - zagolovki)
+    assert bez == [], f"виды виджетов без подписи на экране: {bez}"
+    umolchanie = set(re.findall(r'"(\w+)"', ekran[ekran.index("const PORYADOK_UMOLCHANIYA"):ekran.index("const ZAGOLOVKI")]))
+    lishnie = sorted(umolchanie - servernye)
+    assert lishnie == [], f"в порядке умолчания виды, которых сервер не знает: {lishnie}"
