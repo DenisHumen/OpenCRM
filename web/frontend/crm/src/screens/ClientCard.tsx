@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { OrdersOfCard } from "../components/OrdersOfCard";
@@ -7,7 +7,7 @@ import { CallButton, CallsPanel } from "../components/CallsPanel";
 import { Icon } from "../components/Icon";
 import { NewBoardButton } from "../components/NewBoardButton";
 import { SourcePicker } from "../components/SourcePicker";
-import { Avatar, Chip, ConfirmModal, Dochitat, EmptyState, LoadFailed, ScreenLoading } from "../components/ui";
+import { Avatar, Chip, ConfirmModal, Dochitat, EmptyState, ItogSpiska, LoadFailed, Modal, ScreenLoading } from "../components/ui";
 import { api, ApiError } from "../lib/api";
 import { dropTarget } from "../lib/dnd";
 import { kindLabel, paperLink, statusLabel, statusVariant } from "../lib/documents";
@@ -31,6 +31,7 @@ import { can } from "../lib/permissions";
 import { useReference } from "../lib/reference";
 import { term } from "../lib/terms";
 import { MailCompose, type MailSender } from "./Mail";
+import { QuickTask } from "./Tasks";
 
 /** Виды записей, которые ставит система, а не человек.
  *
@@ -116,7 +117,12 @@ export function ClientCard() {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [composing, setComposing] = useState(false);
+  // Один вид записей ленты: «когда мы ему звонили» ищут среди сотни заметок.
+  const [vidZapisey, setVidZapisey] = useState("");
+  const [napominanie, setNapominanie] = useState(false);
   const guard = useGuard();
+  const hasTasks = moduleOn(modules, "tasks") && can(user, "tasks.create");
+  const hasOrders = moduleOn(modules, "orders") && can(user, "orders.create");
   const fileInput = useRef<HTMLInputElement>(null);
   const hasMail = moduleOn(modules, "mail") && can(user, "mail.create");
   const hasBoards = moduleOn(modules, "boards") && can(user, "boards.view");
@@ -161,7 +167,7 @@ export function ClientCard() {
       setClient(data);
       setFiles(data.files);
       const notesData = await api.get<{ items: any[]; total: number }>(
-        `/clients/${id}/notes?page=1&per_page=${ZAMETOK_NA_STRANITSE}`,
+        `/clients/${id}/notes?page=1&per_page=${ZAMETOK_NA_STRANITSE}${vidZapisey ? `&kind=${vidZapisey}` : ""}`,
       );
       setNotes(notesData.items);
       setVsegoZametok(notesData.total);
@@ -180,7 +186,7 @@ export function ClientCard() {
       // строке верный, и повторить имеет смысл именно его, а не список.
       fail(e);
     }
-  }, [id, toastError, navigate, fail, clear]);
+  }, [id, vidZapisey, toastError, navigate, fail, clear]);
 
   /** Дочитать заметки. Дописывает страницу, а не перезагружает карточку:
    * от дочитки меняется только лента внизу.
@@ -191,7 +197,7 @@ export function ClientCard() {
     setDochityvaem(true);
     try {
       const dalshe = await api.get<{ items: any[]; total: number }>(
-        `/clients/${id}/notes?page=${stranitsaZametok + 1}&per_page=${ZAMETOK_NA_STRANITSE}`,
+        `/clients/${id}/notes?page=${stranitsaZametok + 1}&per_page=${ZAMETOK_NA_STRANITSE}${vidZapisey ? `&kind=${vidZapisey}` : ""}`,
       );
       // Отбор сменился, пока страница ехала, — ответ чужой.
       if (otbor_spiska.current !== sprosheno) return;
@@ -338,6 +344,9 @@ export function ClientCard() {
             <div className="pasport-bio">
               {client.company && <>{client.company} · </>}
               {t("added")} {formatDate(client.created_at, locale)}
+              {client.updated_at && formatDate(client.updated_at, locale) !== formatDate(client.created_at, locale) && (
+                <> · {t("clientEdited", { date: formatDate(client.updated_at, locale) })}</>
+              )}
               {client.tags.length > 1 && (
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 6 }}>
                   {client.tags.slice(1).map((tag: string) => (
@@ -374,6 +383,35 @@ export function ClientCard() {
             </button>
           )}
           <CallButton number={client.phone} />
+          {/* Напоминание и заказ — отсюда же: после разговора первое, что
+              делают, — «перезвонить в четверг» и «выписать заказ», а не
+              переход в раздел ради одной строки (владелец, 06.09.2026). */}
+          {hasTasks && (
+            <button className="btn btn-secondary" onClick={() => setNapominanie(true)}>
+              <Icon name="clock" size={14} />
+              {t("clientNewReminder")}
+            </button>
+          )}
+          {hasOrders && (
+            <button
+              className="btn btn-secondary"
+              disabled={guard.busy}
+              onClick={async () => {
+                if (!guard.take()) return;
+                try {
+                  const order = await api.post<{ id: number }>("/orders", { kind: "sales_order", client_id: client.id });
+                  navigate(`/orders/${order.id}`);
+                } catch (e) {
+                  toastError(e);
+                } finally {
+                  guard.free();
+                }
+              }}
+            >
+              <Icon name="receipt" size={14} />
+              {t("newSalesOrder")}
+            </button>
+          )}
           {/* Кнопка уходит вместе с блоком: предлагать создать доску там, где
               раздела досок нет, — обещание, ведущее в отказ сервера. */}
           {hasBoards && <NewBoardButton clientId={client.id} />}
@@ -481,9 +519,27 @@ export function ClientCard() {
               </button>
             </div>
           </div>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
+            {(["", "note", "call", "meeting", "email"] as const).map((vid) => (
+              <button
+                key={vid || "all"}
+                type="button"
+                className={"filter-chip" + (vidZapisey === vid ? " active" : "")}
+                onClick={() => setVidZapisey(vid)}
+              >
+                {t(vid ? VID_ZAPISI[vid] : "feedAll")}
+              </button>
+            ))}
+          </div>
           <div>
-            {notes.map((note) => (
-              <div className="feed-item" key={note.id}>
+            {/* Полосы по дням, как в напоминаниях: «сегодня», «вчера», дата —
+                в сплошной ленте день терялся между отметками времени. */}
+            {notes.map((note, i) => (
+              <Fragment key={note.id}>
+                {(i === 0 || relativeDay(notes[i - 1].happened_at, locale) !== relativeDay(note.happened_at, locale)) && (
+                  <div className="spisok-polosa">{relativeDay(note.happened_at, locale)}</div>
+                )}
+              <div className="feed-item">
                 <div className="feed-icon">
                   <Icon name={noteIcon(note)} size={14} />
                 </div>
@@ -513,6 +569,7 @@ export function ClientCard() {
                   <div style={{ color: "var(--text)", fontSize: 13.5, lineHeight: 1.55 }}>{note.body}</div>
                 </div>
               </div>
+              </Fragment>
             ))}
             <Dochitat
               pokazano={notes.length}
@@ -604,6 +661,12 @@ export function ClientCard() {
                 </span>
               </Link>
             ))}
+            <ItogSpiska
+              pokazano={bumagi.length}
+              vsego={bumagi.length}
+              summa={bumagi.reduce((s: number, d: any) => s + (d.total ?? 0), 0)}
+              currency={workspace.currency}
+            />
           </div>
         )
       )}
@@ -627,6 +690,13 @@ export function ClientCard() {
         </div>
       )}
 
+      {activeTab === "deals" && client.svodka && deals.length > 0 && (
+        <div className="field-desc" style={{ marginTop: 0, marginBottom: 10 }}>
+          {t("clientDealsTotals", { open: client.svodka.open_count, won: client.svodka.won_count })}
+          {client.svodka.open_amount !== null &&
+            ` · ${t("clientDealsOpenSum", { sum: formatMoney(client.svodka.open_amount, client.currency, locale) })}`}
+        </div>
+      )}
       {activeTab === "deals" && (
         <div className="list-card">
           {deals.map((deal) => (
@@ -661,6 +731,18 @@ export function ClientCard() {
           onClose={() => setComposing(false)}
           onSent={() => void load()}
         />
+      )}
+
+      {napominanie && (
+        <Modal title={t("clientNewReminder")} onClose={() => setNapominanie(false)}>
+          <QuickTask
+            clientId={client.id}
+            onCreated={() => {
+              setNapominanie(false);
+              toast(t("feedTaskCreated"));
+            }}
+          />
+        </Modal>
       )}
 
       {confirmDelete && (
@@ -699,6 +781,7 @@ function EditableContact({
   display?: string;
   onSave: (field: string, value: string) => void;
 }) {
+  const { t } = useApp();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value);
 
@@ -730,7 +813,11 @@ function EditableContact({
           }}
         />
       ) : (
-        <div className="contact-value">{display || value || "—"}</div>
+        <div className="contact-value">
+          {/* Пустое поле зовёт дописать, а не молчит прочерком: прочерк
+              читается как «нет и не надо». */}
+          {display || value || <span className="contact-add">+ {t("contactAdd")}</span>}
+        </div>
       )}
     </div>
   );

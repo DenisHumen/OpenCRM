@@ -1478,6 +1478,8 @@ summary:focus-visible,
 .contact-label { color: var(--faint); font-size: 11px; font-weight: 500; letter-spacing: 0.04em; text-transform: uppercase; margin-bottom: 5px; }
 .contact-value { color: var(--text); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .contact-input { width: 100%; background: none; border: none; outline: none; color: var(--text); font-size: 13px; font-family: var(--sans); padding: 0; }
+.contact-add { color: var(--faint); }
+.contact-cell:hover .contact-add { color: var(--brand); }
 
 /* Лента читается как хронология: линия между значками связывает записи в
    одну историю, а не в стопку карточек. */
