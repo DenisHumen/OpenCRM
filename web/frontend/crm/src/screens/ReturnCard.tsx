@@ -162,6 +162,14 @@ export function ReturnCard() {
               {t("returnCancel")}
             </button>
           )}
+          {/* Печать — обычная ссылка в новую вкладку, как у накладной. Только у
+              проведённого: черновик правится, а подписанная бумага — нет. */}
+          {vozvrat.status === "closed" && (
+            <a className="btn btn-secondary" href={`/api/v1/returns/${vozvrat.id}/print`} target="_blank" rel="noreferrer">
+              <Icon name="printer" size={14} />
+              {t("returnPrint")}
+            </a>
+          )}
           {(draft || vozvrat.status === "cancelled") && can(user, "orders.edit") && (
             <button className="text-link danger" disabled={guard.busy} onClick={() => setConfirm("delete")}>
               {t("paperDelete")}
