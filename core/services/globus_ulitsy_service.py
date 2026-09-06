@@ -18,54 +18,56 @@ import math
 import threading
 import time
 import urllib.error
-import urllib.parse
 import urllib.request
 
 from config.settings import get_settings
+from core.geo import mvt
 
-#: Откуда берём. Overpass отдаёт сырой OSM выборкой по прямоугольнику: свой
-#: тайловый сервер поднимать не под что, а растровые плитки — картинки, тогда
-#: как владелец просил ОБРИСОВКУ, то есть линии.
-ISTOCHNIK = "https://overpass-api.de/api/interpreter"
+#: Откуда берём. Векторные плитки самого OpenStreetMap (схема `shortbread`):
+#: открыто, без ключа, отдаётся за доли секунды. Overpass пробовали первым и
+#: отказались: на людной плитке он думает секунды, а на занятом сервере
+#: отвечает `504` — то есть половину заходов улиц просто не было бы.
+ISTOCHNIK = "https://vector.openstreetmap.org/shortbread_v1/{z}/{x}/{y}.mvt"
 
-#: Уровень плитки. 16-й — примерно 600 метров по экватору: столько же, сколько
-#: видно на экране под тем приближением, с которого улицы вообще включаются.
-#: Крупнее — ответ в мегабайты и минуту ожидания, мельче — вчетверо больше
-#: запросов на тот же вид.
-PLITKA_Z = 16
+#: Уровень плитки. 14-й — около 2,4 км по экватору, и это не наш выбор: дома в
+#: `shortbread` появляются именно с четырнадцатого, ниже их в плитке нет.
+PLITKA_Z = 14
 
-#: Точность — стотысячная градуса, около метра. Дом занимает десятки метров,
-#: полметра его очертанию не добавят, а вес удваивают.
+#: Точность упаковки — стотысячная градуса, около метра. Дом занимает десятки
+#: метров, полметра его очертанию не добавят, а вес удваивают.
 TOCHNOST = 100_000
 
-#: Сколько ждём ответ. Overpass на людной плитке думает секунды, а не мгновения.
-SROK_SEKUND = 45
-#: Пауза между запросами наружу. Overpass — общий бесплатный сервер, и
-#: очередь из десятка плиток подряд с него прилетает отказом, а не данными.
-PAUZA_SEKUND = 2.0
-#: Отдых после отказа: сеть пропала или нас притормозили — в обоих случаях
-#: долбить дальше бессмысленно.
-OTDYH_SEKUND = 60.0
-#: Больше этого ответ не бывает: защита от подменённого адреса и от диска.
-POTOLOK_BAYT = 12 * 1024 * 1024
-#: Сколько плиток ждут очереди. Экран просит только видимые; больше десятка
-#: разом — значит человек возит планету, и старые запросы уже не нужны.
-POTOLOK_OCHEREDI = 16
-#: Сколько плиток храним. 800 штук — примерно 30 МБ и полтора года разъездов
-#: по одному городу; дальше самые старые уходят.
-POTOLOK_PLITOK = 800
+#: Слои плитки, которые разбираем. Их в `shortbread` четырнадцать; остальные —
+#: вода, метки, границы — на нашем виде не нужны.
+SLOI = {"streets", "buildings"}
 
 #: Вид дороги числом: 3 — магистраль, 2 — главная, 1 — улица, 0 — проезд.
 #: Числом, а не словом: экран по нему выбирает толщину линии, и разбирать в
 #: цикле отрисовки строки было бы дороже самой отрисовки.
 VIDY_DOROG = {
-    "motorway": 3, "motorway_link": 3, "trunk": 3, "trunk_link": 3,
-    "primary": 3, "primary_link": 3,
-    "secondary": 2, "secondary_link": 2, "tertiary": 2, "tertiary_link": 2,
+    "motorway": 3, "trunk": 3, "primary": 3,
+    "secondary": 2, "tertiary": 2,
     "residential": 1, "unclassified": 1, "living_street": 1, "pedestrian": 1,
+    "service": 0, "track": 0, "path": 0, "footway": 0, "cycleway": 0, "steps": 0,
 }
-#: Чего не рисуем вовсе: недостроенное и задуманное дорогой не является.
-MIMO_DOROG = {"proposed", "construction", "raceway", "bus_guideway"}
+
+#: Сколько ждём ответ. Плитка приходит за доли секунды; полминуты — это уже
+#: не «медленно», а «не отвечает».
+SROK_SEKUND = 20
+#: Пауза между запросами наружу: чужой сервер, и очередь из дюжины плиток
+#: подряд без передышки — это не вежливо.
+PAUZA_SEKUND = 0.25
+#: Отдых после отказа: сеть пропала или нас притормозили — в обоих случаях
+#: долбить дальше бессмысленно.
+OTDYH_SEKUND = 60.0
+#: Больше этого плитка не бывает: защита от подменённого адреса и от диска.
+POTOLOK_BAYT = 4 * 1024 * 1024
+#: Сколько плиток ждут очереди. Экран просит только видимые; больше двух
+#: десятков разом — значит человек возит планету, и старые уже не нужны.
+POTOLOK_OCHEREDI = 24
+#: Сколько плиток храним. 800 штук — это весь город с запасом; дальше самые
+#: давние уходят.
+POTOLOK_PLITOK = 800
 
 _ZAMOK = threading.Lock()
 #: Очередь плиток и общий отдых. В памяти, а не в базе: переживать перезапуск
@@ -107,34 +109,61 @@ def nomer(lon: float, lat: float, z: int = PLITKA_Z) -> tuple[int, int, int]:
     return z, x, max(0, min(n - 1, y))
 
 
-def _upakovat(tochki: list[dict]) -> list[int]:
+def _v_gradusy(z: int, x: int, y: int, ekstent: int):
+    """Замыкание «точка плитки → долгота и широта».
+
+    Плитка живёт в своих координатах 0…ekstent, и переводит их не формула, а
+    сам порядок Меркатора: по долготе — ровно, по широте — через гиперболу.
+    """
+    n = 2**z
+
+    def perevesti(px: int, py: int) -> tuple[float, float]:
+        lon = (x + px / ekstent) / n * 360.0 - 180.0
+        ugol = math.pi * (1 - 2 * (y + py / ekstent) / n)
+        lat = math.degrees(math.atan(math.sinh(ugol)))
+        return lon, lat
+
+    return perevesti
+
+
+def _upakovat(tochki, perevesti) -> list[int]:
     """Точки в разности целых: у соседних узлов улицы совпадают четыре знака."""
     itog: list[int] = []
     plon = plat = 0
-    for tochka in tochki:
-        lon = round(tochka["lon"] * TOCHNOST)
-        lat = round(tochka["lat"] * TOCHNOST)
-        itog.append(lon - plon)
-        itog.append(lat - plat)
-        plon, plat = lon, lat
+    for px, py in tochki:
+        lon, lat = perevesti(px, py)
+        clon = round(lon * TOCHNOST)
+        clat = round(lat * TOCHNOST)
+        itog.append(clon - plon)
+        itog.append(clat - plat)
+        plon, plat = clon, clat
     return itog
 
 
-def _razobrat(otvet: dict) -> dict:
+def _razobrat(syroe: bytes, z: int, x: int, y: int) -> dict:
+    """Плитка в наши линии. Чужие слои и виды не доходят до упаковки."""
+    razobrano = mvt.sloi(syroe, SLOI, {"kind"})
+    perevesti = _v_gradusy(z, x, y, int(razobrano.get("_ekstent") or 4096))
+
     dorogi: list[list[int]] = []
+    for figura in razobrano.get("streets", []):
+        vid = VIDY_DOROG.get(figura.metki.get("kind", ""))
+        # Рельсы, метро и трамвай дорогами не являются: просили обрисовку
+        # дорог, а не всей подложки.
+        if vid is None:
+            continue
+        for kolco in figura.kolca:
+            if len(kolco) > 1:
+                dorogi.append([vid] + _upakovat(kolco, perevesti))
+
     doma: list[list[int]] = []
-    for element in otvet.get("elements", []):
-        tochki = element.get("geometry")
-        if not tochki or len(tochki) < 2:
-            continue
-        metki = element.get("tags") or {}
-        if metki.get("building"):
-            doma.append(_upakovat(tochki))
-            continue
-        vid = metki.get("highway")
-        if not vid or vid in MIMO_DOROG:
-            continue
-        dorogi.append([VIDY_DOROG.get(vid, 0)] + _upakovat(tochki))
+    for figura in razobrano.get("buildings", []):
+        # Дома приходят одной фигурой на плитку, а домов в ней сотни: кольца
+        # у неё — это и есть отдельные здания.
+        for kolco in figura.kolca:
+            if len(kolco) > 2:
+                doma.append(_upakovat(kolco, perevesti))
+
     return {"dorogi": dorogi, "doma": doma}
 
 
@@ -226,25 +255,17 @@ def _rabotat() -> None:
 
 
 def _vzyat(z: int, x: int, y: int) -> dict:
-    yug, zapad, sever, vostok = granicy(z, x, y)
-    ramka = f"{yug:.6f},{zapad:.6f},{sever:.6f},{vostok:.6f}"
-    vopros = (
-        "[out:json][timeout:25];"
-        f'(way["highway"]({ramka});way["building"]({ramka}););'
-        "out geom;"
-    )
     zapros = urllib.request.Request(
-        ISTOCHNIK,
-        data=urllib.parse.urlencode({"data": vopros}).encode("utf-8"),
-        # Overpass просит называться: безымянных он режет первыми, когда
-        # сервер загружен, и «нет сети» оказалось бы враньём.
+        ISTOCHNIK.format(z=z, x=x, y=y),
+        # Называться обязательно: безымянных чужой сервер режет первыми, когда
+        # загружен, и «нет сети» оказалось бы враньём.
         headers={"User-Agent": "OpenCRM globe (https://github.com/DenisHumen/OpenCRM)"},
     )
     with urllib.request.urlopen(zapros, timeout=SROK_SEKUND) as otvet:
         syroe = otvet.read(POTOLOK_BAYT + 1)
     if len(syroe) > POTOLOK_BAYT:
-        raise ValueError("ответ больше потолка")
-    return _razobrat(json.loads(syroe.decode("utf-8")))
+        raise ValueError("плитка больше потолка")
+    return _razobrat(syroe, z, x, y)
 
 
 def zabyt() -> None:

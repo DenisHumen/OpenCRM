@@ -229,35 +229,106 @@ def test_ekran_i_server_schitayut_plitki_odinakovo():
     assert chislo("TOCHNOST") == ulicy.TOCHNOST, "точность упаковки разошлась"
 
 
-def test_razbor_overpass_delit_dorogi_i_doma():
-    """Из сырого OSM берём только линии и только нужных видов."""
+def _plitka_mvt(figury) -> bytes:
+    """Собрать векторную плитку из фигур — чтобы читалку было на чём проверить.
+
+    Пишем формат руками: своя запись рядом со своим чтением — единственный
+    способ убедиться, что читалка разбирает именно то, что описано в
+    спецификации, а не то, что случайно совпало на одной живой плитке.
+    """
+
+    def varint(n: int) -> bytes:
+        itog = bytearray()
+        while True:
+            bayt = n & 0x7F
+            n >>= 7
+            itog.append(bayt | (0x80 if n else 0))
+            if not n:
+                return bytes(itog)
+
+    def pole(nomer: int, telo: bytes) -> bytes:
+        return varint((nomer << 3) | 2) + varint(len(telo)) + telo
+
+    def chislo(nomer: int, znachenie: int) -> bytes:
+        return varint(nomer << 3) + varint(znachenie)
+
+    def zigzag(n: int) -> int:
+        return (n << 1) ^ (n >> 31)
+
+    sloi = bytearray()
+    for imya, klyuchi, znacheniya, fichi in figury:
+        telo = bytearray(pole(1, imya.encode()) + chislo(15, 2) + chislo(5, 4096))
+        for k in klyuchi:
+            telo += pole(3, k.encode())
+        for v in znacheniya:
+            telo += pole(4, pole(1, v.encode()))
+        for vid, metki, tochki in fichi:
+            geom = bytearray()
+            geom += varint((1 << 3) | 1)  # MoveTo, одна точка
+            x0, y0 = tochki[0]
+            geom += varint(zigzag(x0)) + varint(zigzag(y0))
+            if len(tochki) > 1:
+                geom += varint(((len(tochki) - 1) << 3) | 2)  # LineTo
+                px, py = x0, y0
+                for x, y in tochki[1:]:
+                    geom += varint(zigzag(x - px)) + varint(zigzag(y - py))
+                    px, py = x, y
+            pary = bytearray()
+            for k, v in metki:
+                pary += varint(k) + varint(v)
+            fich = bytearray(chislo(3, vid))
+            if pary:
+                fich += pole(2, bytes(pary))
+            fich += pole(4, bytes(geom))
+            telo += pole(2, bytes(fich))
+        sloi += pole(3, bytes(telo))
+    return bytes(sloi)
+
+
+def test_chitalka_plitki_beryot_liniyu_i_koltso():
+    """Читалка векторной плитки разбирает то, что описано в спецификации."""
+    from core.geo import mvt
+
+    syroe = _plitka_mvt([
+        ("streets", ["kind"], ["primary", "rail"],
+         [(2, [(0, 0)], [(10, 20), (30, 40)]), (2, [(0, 1)], [(0, 0), (5, 5)])]),
+        ("buildings", [], [], [(3, [], [(1, 1), (9, 1), (9, 9)])]),
+        # Чужой слой не должен даже разбираться.
+        ("water_polygons", [], [], [(3, [], [(0, 0), (4096, 4096)])]),
+    ])
+    razobrano = mvt.sloi(syroe, {"streets", "buildings"}, {"kind"})
+
+    assert "water_polygons" not in razobrano
+    ulicy = razobrano["streets"]
+    assert [f.metki.get("kind") for f in ulicy] == ["primary", "rail"]
+    assert ulicy[0].kolca == [[(10, 20), (30, 40)]], "разности точек прочитаны неверно"
+    assert razobrano["buildings"][0].vid == mvt.MNOGOUGOLNIK
+    assert razobrano["_ekstent"] == 4096
+
+
+def test_razbor_plitki_delit_dorogi_i_doma():
+    """Из плитки берём только дороги нужных видов и кольца домов."""
     from core.services import globus_ulitsy_service as ulicy
 
-    syroe = {
-        "elements": [
-            {"tags": {"highway": "primary"}, "geometry": [
-                {"lon": 30.52000, "lat": 50.44700}, {"lon": 30.52100, "lat": 50.44750}]},
-            {"tags": {"highway": "service"}, "geometry": [
-                {"lon": 30.52000, "lat": 50.44700}, {"lon": 30.52010, "lat": 50.44710}]},
-            {"tags": {"building": "yes"}, "geometry": [
-                {"lon": 30.52200, "lat": 50.44800}, {"lon": 30.52210, "lat": 50.44800},
-                {"lon": 30.52210, "lat": 50.44810}]},
-            # Задуманное дорогой не является.
-            {"tags": {"highway": "proposed"}, "geometry": [
-                {"lon": 30.5, "lat": 50.4}, {"lon": 30.6, "lat": 50.5}]},
-            # Точка без линии рисовать нечего.
-            {"tags": {"highway": "primary"}, "geometry": [{"lon": 30.5, "lat": 50.4}]},
-        ]
-    }
-    razobrano = ulicy._razobrat(syroe)
-    assert len(razobrano["dorogi"]) == 2
+    syroe = _plitka_mvt([
+        ("streets", ["kind"], ["primary", "service", "rail"],
+         [(2, [(0, 0)], [(0, 0), (100, 100)]),
+          (2, [(0, 1)], [(0, 0), (10, 10)]),
+          # Рельсы дорогой не являются.
+          (2, [(0, 2)], [(0, 0), (500, 500)])]),
+        ("buildings", [], [], [(3, [], [(1, 1), (50, 1), (50, 50)])]),
+    ])
+    z, x, y = ulicy.nomer(30.5234, 50.4501)
+    razobrano = ulicy._razobrat(syroe, z, x, y)
+
+    assert [d[0] for d in razobrano["dorogi"]] == [3, 0], "рельсы попали в дороги"
     assert len(razobrano["doma"]) == 1
-    # Первое число дороги — её вид: магистраль толще проезда.
-    assert razobrano["dorogi"][0][0] == 3
-    assert razobrano["dorogi"][1][0] == 0
-    # Точки — разностями: у соседних узлов совпадают старшие знаки.
-    assert razobrano["dorogi"][0][1:3] == [3052000, 5044700]
-    assert razobrano["dorogi"][0][3:5] == [100, 50]
+
+    # Точка плитки переведена в градусы и лежит внутри её же прямоугольника.
+    yug, zapad, sever, vostok = ulicy.granicy(z, x, y)
+    lon = razobrano["dorogi"][0][1] / ulicy.TOCHNOST
+    lat = razobrano["dorogi"][0][2] / ulicy.TOCHNOST
+    assert zapad <= lon <= vostok and yug <= lat <= sever, (lon, lat)
 
 
 def test_bez_zhelaniya_nikuda_ne_hodim(tmp_path, monkeypatch):
