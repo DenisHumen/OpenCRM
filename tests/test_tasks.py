@@ -9,7 +9,8 @@ CRM, которая не напоминает перезвонить, — зап
 
 from datetime import datetime, timedelta, timezone
 
-from tests.conftest import API
+from database.session import SessionLocal
+from tests.conftest import API, png_bytes
 from tests.test_deals import DEALS, make_client
 
 TASKS = f"{API}/tasks"
@@ -184,3 +185,274 @@ def test_tasks_disappear_with_their_module(root_client, manager_client):
         assert manager_client.get(f"{API}/clients").status_code == 200
     finally:
         root_client.post(f"{API}/modules/tasks", json={"enabled": True})
+
+
+# --- важность -----------------------------------------------------------------
+
+
+def test_vazhnost_po_umolchaniyu_obychnaya(manager_client):
+    """Заведённое на бегу напоминание не должно кричать само по себе."""
+    task = manager_client.post(TASKS, json={"title": "Без важности"}).json()
+    assert task["vazhnost"] == "normal"
+    assert task["note_est"] is False
+    assert task["files_count"] == 0
+
+
+def test_neizvestnaya_vazhnost_otvergaetsya(manager_client):
+    """Молча съеденное «срочно» — это напоминание, которое не заметят."""
+    otkaz = manager_client.post(TASKS, json={"title": "Ну очень", "vazhnost": "kritichno"})
+    assert otkaz.status_code == 422, otkaz.text
+    assert otkaz.json()["error"]["code"] == "vazhnost_unknown"
+
+
+def test_vazhnost_vyshe_sroka(manager_client):
+    """Важность выше срока — иначе метка «срочно» ничего не меняет.
+
+    Список берётся по своему клиенту: база у набора одна, соседние файлы
+    заводят сотни напоминаний, и «моя запись выше» в общем списке — это
+    утверждение про соседей, а не про сортировку.
+    """
+    now = datetime.now(timezone.utc)
+    client = make_client(manager_client, "Клиент порядка важности")
+    obychnoe = manager_client.post(
+        TASKS,
+        json={
+            "title": "Обычное на завтра",
+            "client_id": client["id"],
+            "due_at": iso(now + timedelta(days=1)),
+        },
+    ).json()
+    srochnoe = manager_client.post(
+        TASKS, json={"title": "Срочное без срока", "client_id": client["id"], "vazhnost": "urgent"}
+    ).json()
+
+    poryadok = [
+        t["id"] for t in manager_client.get(f"{TASKS}?client_id={client['id']}").json()["items"]
+    ]
+    assert poryadok.index(srochnoe["id"]) < poryadok.index(obychnoe["id"]), (
+        "срочное бессрочное оказалось ниже обычного со сроком"
+    )
+
+
+def test_prosrochennoe_vyshe_srochnogo(manager_client):
+    """А просроченное — выше всего, и это не про красоту.
+
+    У списка потолок в двести строк. Поставь важность первым ключом — и две
+    сотни бессрочных «срочно» вытеснят из выдачи ВСЁ просроченное, то есть
+    обещания, которые уже нарушены. Внутри просроченных важность работает.
+    """
+    now = datetime.now(timezone.utc)
+    client = make_client(manager_client, "Клиент просрочки")
+    srochnoe = manager_client.post(
+        TASKS, json={"title": "Срочное без срока", "client_id": client["id"], "vazhnost": "urgent"}
+    ).json()
+    prosrochennoe = manager_client.post(
+        TASKS,
+        json={
+            "title": "Обычное просроченное",
+            "client_id": client["id"],
+            "due_at": iso(now - timedelta(days=2)),
+        },
+    ).json()
+
+    poryadok = [
+        t["id"] for t in manager_client.get(f"{TASKS}?client_id={client['id']}").json()["items"]
+    ]
+    assert poryadok.index(prosrochennoe["id"]) < poryadok.index(srochnoe["id"]), (
+        "просроченное оказалось ниже срочного бессрочного — потолок списка съест просрочку"
+    )
+
+
+def test_vazhnost_menyaetsya_v_kartochke(manager_client):
+    task = manager_client.post(TASKS, json={"title": "Поднимем важность"}).json()
+    povyshennoe = manager_client.patch(f"{TASKS}/{task['id']}", json={"vazhnost": "urgent"})
+    assert povyshennoe.status_code == 200, povyshennoe.text
+    assert povyshennoe.json()["vazhnost"] == "urgent"
+    assert manager_client.get(f"{TASKS}/{task['id']}").json()["vazhnost"] == "urgent"
+
+    otkaz = manager_client.patch(f"{TASKS}/{task['id']}", json={"vazhnost": "ochen"})
+    assert otkaz.status_code == 422 and otkaz.json()["error"]["code"] == "vazhnost_unknown"
+    assert manager_client.get(f"{TASKS}/{task['id']}").json()["vazhnost"] == "urgent"
+
+
+# --- углублённая карточка -----------------------------------------------------
+
+
+def test_kartochka_hranit_podrobnosti_i_vlozheniya(manager_client):
+    """Строки списка хватает на «перезвонить», но не на «вот фото шильдика»."""
+    from core.services import task_service
+
+    task = manager_client.post(TASKS, json={"title": "Разобраться с шумом"}).json()
+    manager_client.patch(f"{TASKS}/{task['id']}", json={"note": "Гудит на холодную, звонить после 10"})
+
+    foto = manager_client.post(
+        f"{TASKS}/{task['id']}/files", files={"file": ("shildik.png", png_bytes(), "image/png")}
+    )
+    assert foto.status_code == 201, foto.text
+    zapis = foto.json()
+    assert zapis["mime"] == "image/png" and zapis["task_id"] == task["id"]
+
+    skachat = manager_client.get(zapis["download_url"])
+    assert skachat.status_code == 200 and skachat.headers["content-type"].startswith("image/png")
+    assert skachat.headers["content-disposition"].startswith("inline")
+
+    kartochka = manager_client.get(f"{TASKS}/{task['id']}").json()
+    assert kartochka["note"].startswith("Гудит на холодную")
+    assert [f["id"] for f in kartochka["files"]] == [zapis["id"]]
+
+    # Список отвечает «есть ли», не таская ни файлы, ни сам разбор: двести
+    # строк по двадцать тысяч знаков — это мегабайты на один заход в раздел.
+    v_spiske = next(
+        t for t in manager_client.get(f"{TASKS}?scope=open").json()["items"] if t["id"] == task["id"]
+    )
+    assert v_spiske["files_count"] == 1 and "files" not in v_spiske
+    assert v_spiske["note_est"] is True and "note" not in v_spiske
+
+    with SessionLocal() as db:
+        put = task_service.file_path_on_disk(task_service.get_file(db, task["id"], zapis["id"]))
+    assert put.exists()
+    assert manager_client.delete(f"{TASKS}/{task['id']}/files/{zapis['id']}").status_code == 200
+    assert not put.exists(), "файл остался на диске после удаления"
+
+
+def test_v_napominanie_kladut_foto_i_video_a_dogovor_net(manager_client):
+    task = manager_client.post(TASKS, json={"title": "Приёмка вложений"}).json()
+
+    dogovor = manager_client.post(
+        f"{TASKS}/{task['id']}/files", files={"file": ("dogovor.pdf", b"%PDF-1.4 x", "application/pdf")}
+    )
+    assert dogovor.status_code == 422 and dogovor.json()["error"]["code"] == "file_type_not_allowed"
+
+    podmena = manager_client.post(
+        f"{TASKS}/{task['id']}/files", files={"file": ("hack.png", b"MZ not a picture", "image/png")}
+    )
+    assert podmena.status_code == 422 and podmena.json()["error"]["code"] == "file_content_mismatch"
+
+
+def test_vlozheniya_uhodyat_vmeste_s_napominaniem(manager_client):
+    """Снятое напоминание не должно оставлять снимки на диске навсегда."""
+    from core.services import task_service
+
+    task = manager_client.post(TASKS, json={"title": "Снесём вместе с фото"}).json()
+    zapis = manager_client.post(
+        f"{TASKS}/{task['id']}/files", files={"file": ("foto.png", png_bytes(), "image/png")}
+    ).json()
+    with SessionLocal() as db:
+        put = task_service.file_path_on_disk(task_service.get_file(db, task["id"], zapis["id"]))
+    assert put.exists()
+
+    assert manager_client.delete(f"{TASKS}/{task['id']}").status_code == 200
+    assert manager_client.get(f"{TASKS}/{task['id']}").status_code == 404
+    assert not put.exists(), "снимок пережил напоминание"
+
+
+def test_vlozhenie_chuzhogo_napominaniya_ne_otdayotsya(manager_client):
+    """Номер файла угадать легко; принадлежность обязан сверять сервер."""
+    svoyo = manager_client.post(TASKS, json={"title": "Своё"}).json()
+    chuzhoe = manager_client.post(TASKS, json={"title": "Чужое"}).json()
+    zapis = manager_client.post(
+        f"{TASKS}/{svoyo['id']}/files", files={"file": ("foto.png", png_bytes(), "image/png")}
+    ).json()
+
+    mimo = manager_client.get(f"{TASKS}/{chuzhoe['id']}/files/{zapis['id']}/download")
+    assert mimo.status_code == 404 and mimo.json()["error"]["code"] == "file_not_found"
+
+
+def test_podrobnosti_s_potolkom_otvergayutsya_a_ne_rezhutsya(manager_client):
+    """Молча обрезанный разбор хуже отвергнутого: человек уйдёт уверенным."""
+    from core.services.task_service import MAX_NOTE
+
+    task = manager_client.post(TASKS, json={"title": "Длинный разбор"}).json()
+    otkaz = manager_client.patch(f"{TASKS}/{task['id']}", json={"note": "я" * (MAX_NOTE + 1)})
+    assert otkaz.status_code == 422, otkaz.text
+    assert otkaz.json()["error"]["code"] == "note_too_long"
+    assert manager_client.get(f"{TASKS}/{task['id']}").json()["note"] == ""
+
+    # Ровно по потолку — принимается, в том числе четырёхбайтными знаками:
+    # колонка `MEDIUMTEXT`, а не `TEXT`, и 65 535 БАЙТ ей не предел.
+    v_prityk = manager_client.patch(f"{TASKS}/{task['id']}", json={"note": "🙂" * MAX_NOTE})
+    assert v_prityk.status_code == 200, v_prityk.text
+    assert len(manager_client.get(f"{TASKS}/{task['id']}").json()["note"]) == MAX_NOTE
+
+
+def test_pustaya_vazhnost_ne_ponizhaet_srochnoe(manager_client):
+    """`{"vazhnost": ""}` — тоже чужое слово, а не «оставить как было»."""
+    task = manager_client.post(TASKS, json={"title": "Срочное", "vazhnost": "urgent"}).json()
+    otkaz = manager_client.patch(f"{TASKS}/{task['id']}", json={"vazhnost": ""})
+    assert otkaz.status_code == 422 and otkaz.json()["error"]["code"] == "vazhnost_unknown"
+    assert manager_client.get(f"{TASKS}/{task['id']}").json()["vazhnost"] == "urgent"
+
+
+def test_vlozhenie_otdayotsya_s_nosniff_i_tipom_po_imeni(manager_client):
+    """Заголовок ответа не должен зависеть ни от загружающего, ни от строки.
+
+    Вложение отдаётся `inline` — то есть браузер его РИСУЕТ. Значит тип обязан
+    считаться из имени (уже сверенного с содержимым), а не браться из
+    присланного `Content-Type`, и `nosniff` обязан стоять.
+    """
+    task = manager_client.post(TASKS, json={"title": "Отдача вложения"}).json()
+    zapis = manager_client.post(
+        f"{TASKS}/{task['id']}/files",
+        # Присланный тип — чужой и нарочно опасный: если он доедет до
+        # заголовка ответа, картинка станет страницей в сессии сотрудника.
+        files={"file": ("shildik.png", png_bytes(), "text/html")},
+    ).json()
+    assert zapis["mime"] == "image/png", "тип взят у загружающего"
+
+    otvet = manager_client.get(zapis["download_url"])
+    assert otvet.headers["content-type"].startswith("image/png")
+    assert otvet.headers.get("x-content-type-options") == "nosniff"
+
+
+def test_v_inline_ne_popadayut_risuemye_brauzerom(manager_client):
+    """Перечень вложений не должен пересекаться с тем, что браузер исполняет.
+
+    Вложение отдаётся `inline`, и единственное, что стоит между `<img src>` на
+    странице сотрудника и чужим скриптом, — состав перечня. Приписать туда
+    `svg` — одно слово, и оно выглядит безобидно: у файлов клиента `svg`
+    разрешён. Поэтому правило записано проверкой, а не памятью.
+    """
+    from core.services.task_service import VLOZHENIYA
+
+    risuemye = {"svg", "html", "htm", "xhtml", "xml", "pdf"}
+    assert not VLOZHENIYA & risuemye, (
+        f"в перечень вложений напоминания попало исполняемое браузером: {VLOZHENIYA & risuemye}"
+    )
+
+
+def test_chuzhoe_vlozhenie_nelzya_i_snyat(manager_client):
+    """Принадлежность сверяется и на разрушительном пути, а не только на чтении."""
+    svoyo = manager_client.post(TASKS, json={"title": "Своё"}).json()
+    chuzhoe = manager_client.post(TASKS, json={"title": "Чужое"}).json()
+    zapis = manager_client.post(
+        f"{TASKS}/{svoyo['id']}/files", files={"file": ("foto.png", png_bytes(), "image/png")}
+    ).json()
+
+    mimo = manager_client.delete(f"{TASKS}/{chuzhoe['id']}/files/{zapis['id']}")
+    assert mimo.status_code == 404 and mimo.json()["error"]["code"] == "file_not_found"
+    assert manager_client.get(zapis["download_url"]).status_code == 200, "файл снесли мимо владельца"
+
+
+def test_stroki_vlozheniy_uhodyat_kaskadom(manager_client):
+    """Файлы с диска снимает служба, а строки — база. Проверяем именно базу.
+
+    Без этого проверка «файла на диске нет» оставалась бы зелёной и при
+    неработающем `ON DELETE CASCADE`: строки в `task_files` осиротели бы, и
+    никто бы об этом не сказал.
+    """
+    from sqlalchemy import func, select
+
+    from database.models import TaskFile
+
+    task = manager_client.post(TASKS, json={"title": "Каскад"}).json()
+    manager_client.post(
+        f"{TASKS}/{task['id']}/files", files={"file": ("foto.png", png_bytes(), "image/png")}
+    )
+    with SessionLocal() as svoya:
+        bylo = svoya.scalar(select(func.count(TaskFile.id)).where(TaskFile.task_id == task["id"]))
+    assert bylo == 1
+
+    assert manager_client.delete(f"{TASKS}/{task['id']}").status_code == 200
+    with SessionLocal() as svoya:
+        stalo = svoya.scalar(select(func.count(TaskFile.id)).where(TaskFile.task_id == task["id"]))
+    assert stalo == 0, "строки вложений пережили напоминание"

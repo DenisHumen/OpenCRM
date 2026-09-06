@@ -21,7 +21,7 @@ from datetime import timedelta
 
 from sqlalchemy.orm import Session
 
-from core.services import client_service, media_service, storage_service
+from core.services import client_service, media_service, storage_service, task_service
 from core.utils import now_utc
 from database.repositories import purge as purge_repo
 from database.repositories import users as users_repo
@@ -38,6 +38,7 @@ def purge_soft_deleted(db: Session, older_than_days: int = 0, dry_run: bool = Fa
     removed_works = 0
     removed_clients = 0
     removed_files = 0
+    removed_task_files = 0
     removed_deals = 0
     kept_with_revenue = 0
 
@@ -63,6 +64,10 @@ def purge_soft_deleted(db: Session, older_than_days: int = 0, dry_run: bool = Fa
     with_revenue = purge_repo.clients_with_revenue(db, cutoff)
     deals_of = purge_repo.deals_count_by_client(db, cutoff)
     files_of = purge_repo.files_of_doomed_clients(db, cutoff)
+    # Вложения напоминаний уходят каскадом от клиента и от заявки, а файлы на
+    # диске — ни от чего: снимаем их здесь, до `db.delete(client)`, пока по
+    # ним ещё можно спросить базу.
+    vlozheniya_zadach = purge_repo.task_files_of_doomed_clients(db, cutoff)
 
     for client in clients:
         if client.id in with_revenue:
@@ -81,6 +86,14 @@ def purge_soft_deleted(db: Session, older_than_days: int = 0, dry_run: bool = Fa
         if not dry_run:
             db.delete(client)  # notes и files уходят каскадом
 
+    for vlozhenie in vlozheniya_zadach:
+        path = task_service.file_path_on_disk(vlozhenie)
+        if path.exists():
+            freed_bytes += path.stat().st_size
+        removed_task_files += 1
+        if not dry_run:
+            path.unlink(missing_ok=True)
+
     if not dry_run:
         users_repo.purge_expired_sessions(db)
         db.flush()
@@ -92,6 +105,7 @@ def purge_soft_deleted(db: Session, older_than_days: int = 0, dry_run: bool = Fa
         "works": removed_works,
         "clients": removed_clients,
         "client_files": removed_files,
+        "task_files": removed_task_files,
         "deals": removed_deals,
         "clients_kept_with_revenue": kept_with_revenue,
         "dry_run": dry_run,

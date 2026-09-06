@@ -254,9 +254,13 @@ def test_otbor_tri_prichiny_otkaza_po_otdelnosti(root_client, manager_client):
 
     with SessionLocal() as db:
         root = users_repo.get_root(db)
-        manager = users_repo.get_by_email(db, manager_client.headers.get("x-test-email", "") or "manager@example.com")
-        if manager is None:
-            manager = next(u for u in users_repo.list_staff(db) if u.role != "root")
+        # По почте фикстуры, а не «первый не-root в штате»: почта была чужая
+        # (`manager@example.com`, такого пользователя не существует), отбор
+        # молча уходил в запасной путь и брал того, кого завёл соседний файл.
+        # Заведи тот менеджера с урезанной должностью — и проверка краснела на
+        # ровном месте, в зависимости от порядка файлов в наборе.
+        manager = users_repo.get_by_email(db, "manager@test.local")
+        assert manager is not None, "менеджер фикстуры не найден по почте"
         svoya = Hint(topic="deals", action="updated", id=1, scope_key=manager.id)
         chuzhaya = Hint(topic="deals", action="updated", id=2, scope_key=root.id)
         bez_otvetstvennogo = Hint(topic="deals", action="updated", id=3, scope_key=None)

@@ -457,10 +457,20 @@ def task_out(
     assignee_name: str | None = None,
     client_name: str | None = None,
     deal_title: str | None = None,
+    files_count: int = 0,
+    note_est: bool = False,
 ) -> dict:
+    """Строка списка. Подробностей здесь нет — только «есть ли они»: на двухстах
+    строках полный разбор у каждой это мегабайты ответа на вопрос, которого
+    никто не задавал. Сами подробности отдаёт карточка."""
     return {
         "id": task.id,
         "title": task.title,
+        "vazhnost": task.vazhnost,
+        "note_est": note_est,
+        # Число вложений — в списке: значок скрепки без него пришлось бы либо
+        # рисовать всегда, либо тянуть карточку каждого напоминания.
+        "files_count": files_count,
         # Время уходит в ISO с явным Z: без него браузер разберёт его как
         # местное, и срок уедет на величину смещения.
         "due_at": _iso(task.due_at),
@@ -473,6 +483,20 @@ def task_out(
         "is_done": task.done_at is not None,
         "done_at": _iso(task.done_at),
         "created_at": _iso(task.created_at),
+    }
+
+
+def task_file_out(file) -> dict:
+    """Снимок или видео, приложенные к напоминанию."""
+    return {
+        "id": file.id,
+        "task_id": file.task_id,
+        "uploaded_by": file.uploaded_by,
+        "original_name": file.original_name,
+        "mime": file.mime,
+        "size_bytes": file.size_bytes,
+        "created_at": _iso(file.created_at),
+        "download_url": f"/api/v1/tasks/{file.task_id}/files/{file.id}/download",
     }
 
 
