@@ -142,6 +142,7 @@ export function OrderCard() {
               </button>
             )}
             {order.site_ref && <span style={{ color: "var(--faint)", fontSize: 12.5 }}>{t("orderFromSite", { ref: order.site_ref })}</span>}
+            <SrokZakaza order={order} canEdit={open && can(user, "orders.edit")} onSaved={() => void load()} />
             {order.reserved_until && (
               order.reserve_expired ? (
                 <Chip variant="warning">{t("orderReserveExpired")}</Chip>
@@ -1154,5 +1155,75 @@ function PickScanner({ orderId, onPicked }: { orderId: number; onPicked: () => P
         autoComplete="off"
       />
     </form>
+  );
+}
+
+
+/** Срок заказа в шапке: «срок 8 сент., 18:00», просроченный — красным; у
+ *  открытого правится на месте, как контакты клиента. Момент уходит на сервер
+ *  в UTC — поле `datetime-local` отдаёт местное время без зоны. */
+function SrokZakaza({ order, canEdit, onSaved }: { order: Order; canEdit: boolean; onSaved: () => void }) {
+  const { t, locale, toastError } = useApp();
+  const [pravim, setPravim] = useState(false);
+  const [znachenie, setZnachenie] = useState("");
+  const sohranit = async (due_at: string | null) => {
+    try {
+      await api.patch(`/orders/${order.id}`, { due_at });
+      setPravim(false);
+      onSaved();
+    } catch (e) {
+      toastError(e);
+    }
+  };
+  if (pravim) {
+    return (
+      <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
+        <input
+          className="input"
+          type="datetime-local"
+          style={{ height: 28, fontSize: 12.5 }}
+          value={znachenie}
+          autoFocus
+          onChange={(e) => setZnachenie(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") setPravim(false);
+            if (e.key === "Enter" && znachenie) void sohranit(new Date(znachenie).toISOString());
+          }}
+        />
+        <button type="button" className="btn btn-secondary btn-sm" disabled={!znachenie} onClick={() => void sohranit(new Date(znachenie).toISOString())}>
+          {t("save")}
+        </button>
+        {order.due_at && (
+          <button type="button" className="text-link" onClick={() => void sohranit(null)}>
+            {t("orderDueClear")}
+          </button>
+        )}
+      </span>
+    );
+  }
+  return (
+    <span style={{ display: "inline-flex", gap: 6, alignItems: "center", fontSize: 12.5 }}>
+      {order.due_at ? (
+        <span className={order.overdue ? "task-late" : undefined} style={order.overdue ? undefined : { color: "var(--faint)" }}>
+          {t(order.overdue ? "orderOverdueAt" : "orderDueAt", { t: formatDateTime(order.due_at, locale) })}
+        </span>
+      ) : (
+        canEdit && <span style={{ color: "var(--faint)" }}>{t("orderNoDue")}</span>
+      )}
+      {canEdit && (
+        <button
+          type="button"
+          className="text-link"
+          onClick={() => {
+            const bylo = order.due_at ? new Date(order.due_at) : new Date(Date.now() + 86_400_000);
+            const mestnoe = new Date(bylo.getTime() - bylo.getTimezoneOffset() * 60_000);
+            setZnachenie(mestnoe.toISOString().slice(0, 16));
+            setPravim(true);
+          }}
+        >
+          {order.due_at ? t("orderDueChange") : t("orderDueSet")}
+        </button>
+      )}
+    </span>
   );
 }

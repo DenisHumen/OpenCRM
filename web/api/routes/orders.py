@@ -8,6 +8,8 @@
 `documents`; здесь только то, чего у квитанции нет.
 """
 
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
@@ -24,6 +26,7 @@ from core.services import (
 )
 from core.services import settings_service
 from core.utils import money_for_print
+from core.utils import now_utc
 from database.models import User
 from database.models.document import (
     DOCUMENT_LOCALES,
@@ -69,6 +72,14 @@ class OrderIn(BaseModel):
     client_create_new: bool = False
     locale: str | None = None
     note: str | None = None
+    #: Срок выдачи или поставки — абсолютный момент со смещением, как у напоминаний.
+    due_at: datetime | None = None
+
+
+class SrokIn(BaseModel):
+    """Срок открытого заказа. `null` — снять."""
+
+    due_at: datetime | None = None
 
 
 class LineIn(BaseModel):
@@ -118,12 +129,16 @@ def list_orders(
     client_id: int | None = None,
     deal_id: int | None = None,
     reserve: str | None = None,
+    overdue: bool = False,
     page: int = Query(default=1, ge=1),
     per_page: int = Query(default=50, ge=1, le=200),
     user: User = Depends(require_perm("orders", "view")),
     db: Session = Depends(get_db),
 ):
     """Список заказов. Категория здесь — СОСТОЯНИЕ, а не вид.
+
+    `overdue=1` — открытые заказы со сроком раньше «сейчас»: их разбирают в
+    первую очередь, и искать их глазами по датам в списке нельзя.
 
     `reserve=expired` — открытые заказы с сайта, чья бронь истекла: товар они
     уже не держат, а из списка не ушли. Это очередь на разбор, а не мусор.
@@ -146,7 +161,9 @@ def list_orders(
     else:
         items, total = documents_repo.search(
             db, q=search, status=status, client_id=client_id, deal_id=deal_id,
-            kinds=kinds, sort=sort, page=page, per_page=per_page,
+            kinds=kinds, sort=sort or ("due" if overdue else None), page=page, per_page=per_page,
+            statuses=OPEN_ORDER_STATUSES if overdue else None,
+            due_before=now_utc() if overdue else None,
         )
     # Строки — одним запросом на страницу, а не запросом на строку списка:
     # сумма заказа складывается из них, и без них список молчит о деньгах.
@@ -263,6 +280,22 @@ def get_order(
         for e in events
     ]
     return data
+
+
+@router.patch("/{order_id}")
+def update_order(
+    order_id: int,
+    payload: SrokIn,
+    user: User = Depends(require_perm("orders", "edit")),
+    db: Session = Depends(get_db),
+):
+    """Срок заказа. Единственное правимое поле самого заказа: позиции, клиент и
+    заявка меняются своими ручками, номер и вид не меняются вовсе."""
+    order = order_service.pravit_srok(db, order_id, payload.due_at, user)
+    return schemas.order_out(
+        order, order_service.lines(db, order.id), amounts=permissions_service.sees_amounts(db, user, "orders"),
+        client_name=_imya_klienta(db, order),
+    )
 
 
 @router.post("/{order_id}/lines", status_code=201)

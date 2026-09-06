@@ -46,7 +46,7 @@ from core.services import (
     warehouse_service,
     waybill_service,
 )
-from core.utils import normalize_phone, now_utc
+from core.utils import normalize_phone, now_utc, to_utc_naive
 from database.models import Document, DocumentEvent, DocumentLine, User
 from database.models.audit import SOURCE_MANUAL
 from database.models.document import (
@@ -139,7 +139,11 @@ def create(db: Session, data: dict, author: User) -> tuple[Document, bool]:
     # такой запрос.
     if not fields.get("client_id"):
         fields["client_name"] = (data.get("client_name") or "").strip() or _title(kind)
-    return document_service.create(db, fields, author), created_client
+    order = document_service.create(db, fields, author)
+    if data.get("due_at"):
+        order.due_at = to_utc_naive(data["due_at"])
+        db.flush()
+    return order, created_client
 
 
 def sozdat_iz_zayavki(db: Session, deal, author: User) -> Document:
@@ -986,6 +990,27 @@ def zakryt_po_nakladnoy(db: Session, order: Document, waybill: Document, author:
         before=previous,
         after=STATUS_CLOSED,
     )
+
+
+def pravit_srok(db: Session, document_id: int, due_at, author: User) -> Document:
+    """Назначить или снять срок открытого заказа. Переход в историю — той же
+    строкой состояния: «когда обещали» спрашивают вместе с «кто обещал»."""
+    order = get(db, document_id)
+    _assert_open(order)
+    order.due_at = to_utc_naive(due_at) if due_at else None
+    db.flush()
+    documents_repo.add_event(
+        db,
+        DocumentEvent(
+            document_id=order.id,
+            from_status=order.status,
+            to_status=order.status,
+            note=f"due {order.due_at.isoformat(timespec='minutes')}" if order.due_at else "due date cleared",
+            author_id=author.id,
+            author_name=(author.name or "")[:120],
+        ),
+    )
+    return order
 
 
 def _assert_open(order: Document) -> None:

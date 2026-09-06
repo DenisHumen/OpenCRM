@@ -310,10 +310,13 @@ def _zakazy(client: httpx.Client, sklad_id: int, klienty: dict[str, dict],
             tovary: dict[str, dict], stati: dict[str, dict]) -> None:
     """Заказы во всех состояниях, накладная по заказу, возврат по отгруженному,
     оплаты по проведённым — связки блоков видны на экранах, а не в docs/21."""
-    def zakaz(kind: str, imya: str | None, stroki: list[tuple[str, int]], note: str) -> dict:
+    def zakaz(kind: str, imya: str | None, stroki: list[tuple[str, int]], note: str, srok: int | None = None) -> dict:
         order = client.post(
             "/orders",
-            json={"kind": kind, "client_id": klienty[imya]["id"] if imya else None, "note": note},
+            json={
+                "kind": kind, "client_id": klienty[imya]["id"] if imya else None, "note": note,
+                "due_at": _kogda(-srok, 18) if srok is not None else None,
+            },
         ).json()
         for sku, skolko in stroki:
             client.post(
@@ -369,10 +372,11 @@ def _zakazy(client: httpx.Client, sklad_id: int, klienty: dict[str, dict],
     client.post(f"/returns/{vozvrat['id']}/post", json={"warehouse_id": sklad_id}).raise_for_status()
 
     # открытые: собран и ждёт выдачи, только что выписан
-    o4 = zakaz("sales_order", "Анна Кречет", [("LOGO-PACK", 1), ("CARD-VIS", 2)], "Демо: логотип и визитки")
+    # сроки: собранный ждут завтра, футболки через три дня, вывеска просрочена
+    o4 = zakaz("sales_order", "Анна Кречет", [("LOGO-PACK", 1), ("CARD-VIS", 2)], "Демо: логотип и визитки", srok=1)
     client.post(f"/orders/{o4['id']}/ready").raise_for_status()
-    zakaz("sales_order", "Пётр Смолин", [("TEE-BLK", 30)], "Демо: футболки на мероприятие")
-    zakaz("sales_order", "Сергей Громов", [("SIGN-LED", 1)], "Демо: вывеска")
+    zakaz("sales_order", "Пётр Смолин", [("TEE-BLK", 30)], "Демо: футболки на мероприятие", srok=3)
+    zakaz("sales_order", "Сергей Громов", [("SIGN-LED", 1)], "Демо: вывеска", srok=-2)
     print("заказы: 7, накладная: 1, возврат: 1, оплаты: 3")
 
 

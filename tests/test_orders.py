@@ -968,3 +968,34 @@ def test_klient_u_zakaza_privyazyvaetsya_poka_zakaz_otkryt(root_client, client_r
     otkaz = root_client.post(f"{ORDERS}/{order['id']}/client", json={"client_id": None})
     assert otkaz.status_code == 422 and otkaz.json()["error"]["code"] == "order_finished"
     assert root_client.get(f"{ORDERS}/{order['id']}").json()["client_id"] == client_row["id"], "записанное не переписалось"
+
+
+def test_srok_zakaza_i_prosrochka(root_client, client_row):
+    """Срок заказа (план З-05): назначается при заведении и правкой, просрочка
+    считается сервером у открытого, отбор `overdue=1` и число на сводке."""
+    vchera = "2026-01-01T10:00:00Z"
+    zavtra = "2099-01-01T10:00:00Z"
+    item = product(root_client)
+    order = root_client.post(
+        ORDERS, json={"kind": "sales_order", "client_id": client_row["id"], "due_at": vchera}
+    ).json()
+    root_client.post(f"{ORDERS}/{order['id']}/lines", json={"product_id": item["id"], "quantity": "1"})
+    karta = root_client.get(f"{ORDERS}/{order['id']}").json()
+    assert karta["due_at"] and karta["overdue"] is True
+
+    prosrochennye = root_client.get(ORDERS, params={"overdue": 1, "per_page": 200}).json()["items"]
+    assert any(o["id"] == order["id"] for o in prosrochennye)
+    svodka = root_client.get(f"{API}/dashboard").json()
+    assert svodka["orders_week"]["overdue_count"] >= 1
+
+    pravka = root_client.patch(f"{ORDERS}/{order['id']}", json={"due_at": zavtra})
+    assert pravka.status_code == 200, pravka.text
+    assert pravka.json()["overdue"] is False
+    assert not any(o["id"] == order["id"] for o in root_client.get(ORDERS, params={"overdue": 1, "per_page": 200}).json()["items"])
+    assert root_client.patch(f"{ORDERS}/{order['id']}", json={"due_at": None}).json()["due_at"] is None
+    istoriya = root_client.get(f"{ORDERS}/{order['id']}").json()["events"]
+    assert any("due" in (e["note"] or "") for e in istoriya), "перенос срока не попал в историю"
+
+    assert root_client.post(f"{ORDERS}/{order['id']}/close", json={}).status_code == 200
+    otkaz = root_client.patch(f"{ORDERS}/{order['id']}", json={"due_at": zavtra})
+    assert otkaz.status_code == 422 and otkaz.json()["error"]["code"] == "order_finished"

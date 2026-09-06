@@ -381,6 +381,12 @@ export function Dashboard() {
                 {data.orders_week.refund_amount !== null && data.orders_week.returns_count > 0 && (
                   <Chip>{t("dashRefunded", { sum: sum(data.orders_week.refund_amount) })}</Chip>
                 )}
+                {/* Просроченные — красным и ссылкой на отбор: их разбирают первыми. */}
+                {data.orders_week.overdue_count > 0 && (
+                  <Link to="/orders?overdue=1" style={{ textDecoration: "none" }}>
+                    <Chip variant="danger">{t("dashOrdersOverdue", { n: data.orders_week.overdue_count })}</Chip>
+                  </Link>
+                )}
               </div>
               {data.recent_orders.length === 0 ? (
                 <div className="field-desc" style={{ marginTop: 0 }}>{t("dashNoOrders")}</div>

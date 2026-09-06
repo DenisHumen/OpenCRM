@@ -162,7 +162,7 @@
 `clients_total`, `clients_this_month`, `clients_this_week`, `clients_without_deals` (ни одной заявки), `boards_total`, `boards_published`,
 `views_7d`, `views_prev_7d`, `unique_viewers_7d`, `views_by_day`, `last_view_at`,
 `recent_boards`, `recent_clients`; с 06.09.2026 — `money_due` (цена открытых
-заявок минус предоплата, только с правом на суммы), `orders_week`
+заявок минус предоплата, только с правом на суммы), `orders_week` (с `overdue_count` — открытые заказы с прошедшим сроком)
 (`shipped_count`, `returns_count`, `refund_amount` за 7 дней; `null` без блока
 заказов), `recent_orders` (пять свежих: номер, вид, состояние, клиент, сумма),
 `low_stock` и `low_stock_total` (товары с остатком не выше порога или нулём;
@@ -787,8 +787,9 @@ CRM нет, — человек нажмёт «отправить» снова, �
 
 | Метод | Путь | Права | Описание |
 |---|---|---|---|
-| GET | `/orders` | 🔑 `orders.view` | Список заказов: `search`, `kind`, `status`, `sort`, `client_id`, `deal_id`, пагинация. В ответе `counts` — сколько заказов в каждом состоянии |
-| POST | `/orders` | 🔑 `orders.create` | Завести: `kind`, по желанию `client_id` (или `client_name`/`client_phone`/`client_email` — поиск карточки, разбор в docs/19). В ответе всегда `client_name` — имя или `null` |
+| GET | `/orders` | 🔑 `orders.view` | Список заказов: `search`, `kind`, `status`, `sort` (в том числе `due` — ближайшие сверху), `client_id`, `deal_id`, `overdue=1` (открытые со сроком раньше «сейчас»), пагинация. В ответе `counts` — сколько заказов в каждом состоянии; у заказа `due_at` и `overdue` (считает сервер) |
+| POST | `/orders` | 🔑 `orders.create` | Завести: `kind`, по желанию `client_id` (или `client_name`/`client_phone`/`client_email` — поиск карточки, разбор в docs/19), `due_at` — срок. В ответе всегда `client_name` — имя или `null` |
+| PATCH | `/orders/{id}` | 🔑 `orders.edit` | Срок открытого заказа: `{"due_at": …}`, `null` — снять; переход в историю. Закрытый — `422 order_finished` |
 | POST | `/orders/{order_id}/cancel` | 🔑 `orders.edit` | Отменить открытый заказ. `422 already_shipped_by_waybill` — товар уже уехал накладной, путь назад — сторно (05.09.2026) |
 | POST | `/orders/{order_id}/client` | 🔑 `orders.edit` | Кому отгружаем: `client_id` или `null` — привязать или отвязать, пока заказ открыт. `422 order_finished` у проведённого и отменённого (записанное не переписывается), `404 client_not_found` |
 | GET | `/orders/{id}` | 🔑 `orders.view` | Заказ с позициями, выписанными по нему накладными (`waybills`, ключа нет вовсе при выключенном блоке) и историей переходов (`events`). У открытого заказа при включённых накладных в строках — `shipped_milli`: сколько уехало проведёнными накладными (`order_service.otgruzheno_po_tovaram`, та же формула, что у закрытия по накладной) |
