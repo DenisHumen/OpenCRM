@@ -791,7 +791,7 @@ CRM нет, — человек нажмёт «отправить» снова, �
 | POST | `/orders` | 🔑 `orders.create` | Завести: `kind`, по желанию `client_id` (или `client_name`/`client_phone`/`client_email` — поиск карточки, разбор в docs/19). В ответе всегда `client_name` — имя или `null` |
 | POST | `/orders/{order_id}/cancel` | 🔑 `orders.edit` | Отменить открытый заказ. `422 already_shipped_by_waybill` — товар уже уехал накладной, путь назад — сторно (05.09.2026) |
 | POST | `/orders/{order_id}/client` | 🔑 `orders.edit` | Кому отгружаем: `client_id` или `null` — привязать или отвязать, пока заказ открыт. `422 order_finished` у проведённого и отменённого (записанное не переписывается), `404 client_not_found` |
-| GET | `/orders/{id}` | 🔑 `orders.view` | Заказ с позициями, выписанными по нему накладными (`waybills`, ключа нет вовсе при выключенном блоке) и историей переходов (`events`) |
+| GET | `/orders/{id}` | 🔑 `orders.view` | Заказ с позициями, выписанными по нему накладными (`waybills`, ключа нет вовсе при выключенном блоке) и историей переходов (`events`). У открытого заказа при включённых накладных в строках — `shipped_milli`: сколько уехало проведёнными накладными (`order_service.otgruzheno_po_tovaram`, та же формула, что у закрытия по накладной) |
 | POST | `/orders/{id}/lines` | 🔑 `orders.edit` | Добавить позицию |
 | PATCH | `/orders/{id}/lines/{line_id}` | 🔑 `orders.edit` | Изменить позицию |
 | DELETE | `/orders/{id}/lines/{line_id}` | 🔑 `orders.edit` | Убрать позицию |

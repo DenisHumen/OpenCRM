@@ -25,7 +25,7 @@ import { unitKey } from "../screens/Warehouse";
 /** По скольку списаний дочитывается врезка. */
 const NA_STRANITSE = 100;
 
-export function DealStock({ dealId }: { dealId: number }) {
+export function DealStock({ dealId, amount }: { dealId: number; amount?: number | null }) {
   const { t, locale, user, modules, workspace, toastError } = useApp();
   const [data, setData] = useState<{
     items: StockMove[];
@@ -114,6 +114,16 @@ export function DealStock({ dealId }: { dealId: number }) {
         <div className="metric-title">{t("writtenOff")}</div>
         <div style={{ color: "var(--muted)", fontSize: 12.5 }}>
           {t("writtenOffCost", { sum: formatMoney(data.cost, currency, locale) })}
+          {/* Наценка — подпись из суммы заявки и себестоимости: «заработали
+              ли» без калькулятора. Считается здесь: это подпись, а не деньги. */}
+          {typeof amount === "number" && amount > 0 && (
+            <span style={{ marginLeft: 8, color: amount - data.cost < 0 ? "var(--danger)" : "var(--success)" }}>
+              {t("dealMargin", {
+                sum: formatMoney(amount - data.cost, currency, locale),
+                p: Math.round(((amount - data.cost) * 100) / amount),
+              })}
+            </span>
+          )}
         </div>
       </div>
       <div className="doc-mini-list">

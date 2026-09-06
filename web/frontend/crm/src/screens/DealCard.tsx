@@ -524,7 +524,7 @@ export function DealCard() {
           if (deal && deal.amount !== itog) void load();
         }}
       />
-      <DealStock dealId={deal.id} />
+      <DealStock dealId={deal.id} amount={deal.amount ?? null} />
 
       {/* Доски, сделанные по этой заявке. Раньше доска знала только клиента,
           и у клиента с пятью заказами за год все они лежали одной кучей.
@@ -556,7 +556,21 @@ export function DealCard() {
       {hasDocuments && (
       <div className="card card-pad" style={{ marginBottom: 20 }}>
         <div className="page-head" style={{ marginBottom: 12 }}>
-          <div className="metric-title">{t("docOfDeal")}</div>
+          <div className="metric-title">
+            {t("docOfDeal")}
+            {/* На сколько выписали: суммы бланков приходят списком (`total`). */}
+            {(docs.items ?? []).some((d: any) => typeof d.total === "number") && (
+              <span style={{ color: "var(--faint)", fontWeight: 400, marginLeft: 8 }}>
+                {t("docOfDealTotal", {
+                  sum: formatMoney(
+                    (docs.items ?? []).reduce((acc: number, d: any) => acc + (d.total ?? 0), 0),
+                    workspace.currency,
+                    locale,
+                  ),
+                })}
+              </span>
+            )}
+          </div>
           <div style={{ display: "flex", gap: 8 }}>
             {/* Акт заводится отсюда, а не из общего списка бланков: он закрывает
                 РАБОТУ, и без заявки ему нечего закрывать и некуда переводить.

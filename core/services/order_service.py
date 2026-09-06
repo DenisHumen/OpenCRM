@@ -912,6 +912,17 @@ def otgruzheno_nakladnymi(db: Session, order_id: int) -> list[Document]:
     return itog
 
 
+def otgruzheno_po_tovaram(db: Session, order_id: int) -> dict[int, int]:
+    """Сколько каждого товара уже уехало по заказу накладными: {товар: тысячные}.
+    Одна формула для закрытия по накладной и для строки «отгружено N из M»."""
+    uekhalo: dict[int, int] = {}
+    for nakladnaya in otgruzheno_nakladnymi(db, order_id):
+        for row in documents_repo.lines_of(db, nakladnaya.id):
+            if row.product_id is not None:
+                uekhalo[row.product_id] = uekhalo.get(row.product_id, 0) + row.quantity_milli
+    return uekhalo
+
+
 def zakryt_po_nakladnoy(db: Session, order: Document, waybill: Document, author: User) -> None:
     """Проведённая руками накладная закрывает заказ.
 
@@ -931,11 +942,7 @@ def zakryt_po_nakladnoy(db: Session, order: Document, waybill: Document, author:
     for row in rows:
         if row.product_id is not None and not _is_service(db, row):
             nuzhno[row.product_id] = nuzhno.get(row.product_id, 0) + row.quantity_milli
-    uekhalo: dict[int, int] = {}
-    for nakladnaya in otgruzheno_nakladnymi(db, order.id):
-        for row in documents_repo.lines_of(db, nakladnaya.id):
-            if row.product_id is not None:
-                uekhalo[row.product_id] = uekhalo.get(row.product_id, 0) + row.quantity_milli
+    uekhalo = otgruzheno_po_tovaram(db, order.id)
     if any(uekhalo.get(product_id, 0) < skolko for product_id, skolko in nuzhno.items()):
         return
     previous = order.status

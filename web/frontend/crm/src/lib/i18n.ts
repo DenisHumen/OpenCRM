@@ -1130,6 +1130,9 @@ const en = {
   orderAddLine: "Add",
   orderTotal: "Total",
   orderPicked: "picked {done} of {all}",
+  orderShippedOf: "shipped {done} of {all}",
+  orderShippedAll: "shipped",
+  orderRepeat: "Repeat order",
   orderShip: "Ship",
   orderReceive: "Receive",
   orderCancel: "Cancel order",
@@ -1265,6 +1268,8 @@ const en = {
   deleteProductConfirm: "Delete «{name}»? Its move history stays — otherwise past deals would silently get cheaper.",
   writtenOff: "Written off from stock",
   writtenOffCost: "Cost: {sum}",
+  dealMargin: "margin {sum} ({p}%)",
+  docOfDealTotal: "total {sum}",
   // наклейки и штрихкоды
   barcodes: "Barcodes",
   barcodesAbout:
@@ -2800,6 +2805,9 @@ const ru: typeof en = {
   orderAddLine: "Добавить",
   orderTotal: "Итого",
   orderPicked: "собрано {done} из {all}",
+  orderShippedOf: "отгружено {done} из {all}",
+  orderShippedAll: "отгружено",
+  orderRepeat: "Повторить заказ",
   orderShip: "Отгрузить",
   orderReceive: "Принять",
   orderCancel: "Отменить заказ",
@@ -2935,6 +2943,8 @@ const ru: typeof en = {
   deleteProductConfirm: "Удалить «{name}»? История движений останется — иначе прошлые заявки бесшумно подешевели бы.",
   writtenOff: "Списано со склада",
   writtenOffCost: "Себестоимость: {sum}",
+  dealMargin: "наценка {sum} ({p}%)",
+  docOfDealTotal: "на сумму {sum}",
   // наклейки и штрихкоды
   barcodes: "Штрихкоды",
   barcodesAbout:

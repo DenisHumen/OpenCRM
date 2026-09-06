@@ -225,6 +225,13 @@ def get_order(
             }
             for w in bumagi
         ]
+        # Частичная отгрузка построчно: «привезли половину» видно на строке,
+        # а не по сумме накладных в уме. Только у открытого: закрытый уехал весь.
+        if order.status in OPEN_ORDER_STATUSES:
+            uekhalo = order_service.otgruzheno_po_tovaram(db, order.id)
+            for stroka in data["lines"]:
+                if stroka["product_id"] is not None:
+                    stroka["shipped_milli"] = uekhalo.get(stroka["product_id"], 0)
 
     # Возвраты по заказу — только у заказа покупателя: у заказа поставщику
     # возврата нет (docs/22). Ключа нет вовсе у тех, кому он не положен.

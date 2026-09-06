@@ -167,6 +167,42 @@ export function OrderCard() {
               {t("orderReady")}
             </button>
           )}
+          {/* Повторить: тот же клиент и те же позиции новым заказом — постоянный
+              покупатель берёт одно и то же, и набирать его заново из справочника
+              каждый месяц незачем. Только у закрытого/отменённого: у открытого
+              «повтор» — это две одинаковые бумаги в работе. */}
+          {!open && can(user, "orders.create") && order.lines.length > 0 && (
+            <button
+              className="btn btn-secondary btn-sm"
+              disabled={guard.busy}
+              onClick={async () => {
+                if (!guard.take()) return;
+                try {
+                  const noviy = await api.post<{ id: number }>("/orders", {
+                    kind: order.kind,
+                    client_id: order.client_id,
+                    deal_id: order.deal_id,
+                  });
+                  for (const line of order.lines) {
+                    await api.post(`/orders/${noviy.id}/lines`, {
+                      product_id: line.product_id,
+                      name: line.product_id === null ? line.name : null,
+                      quantity: String(line.quantity_milli / 1000),
+                      price: line.price,
+                    });
+                  }
+                  navigate(`/orders/${noviy.id}`);
+                } catch (err) {
+                  toastError(err);
+                } finally {
+                  guard.free();
+                }
+              }}
+            >
+              <Icon name="refresh" size={14} />
+              {t("orderRepeat")}
+            </button>
+          )}
           {/* Печать — обычная ссылка в новую вкладку: это window.print() на
               настоящей странице со своим @page, и выборкой её не получить. */}
           <a
@@ -236,6 +272,18 @@ export function OrderCard() {
                     })}
                   </span>
                 ))}
+              {/* Частичная отгрузка накладными: «отгружено 1 из 4» — иначе
+                  открытый заказ с уехавшей половиной выглядит нетронутым. */}
+              {typeof line.shipped_milli === "number" && line.shipped_milli > 0 && (
+                <span style={{ color: "var(--accent)", fontSize: 12, marginLeft: 6 }}>
+                  {line.shipped_milli >= line.quantity_milli
+                    ? `✓ ${t("orderShippedAll")}`
+                    : t("orderShippedOf", {
+                        done: formatQuantity(line.shipped_milli),
+                        all: formatQuantity(line.quantity_milli),
+                      })}
+                </span>
+              )}
             </span>
             <span style={{ width: 110, textAlign: "right", color: "var(--muted)", fontSize: 12.5 }}>
               {formatMoney(line.price, workspace.currency, locale)}
