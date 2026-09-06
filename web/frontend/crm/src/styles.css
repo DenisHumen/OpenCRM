@@ -208,6 +208,15 @@
   --chart-success: rgba(88, 180, 124, 0.42);
   --chart-success-dim: rgba(88, 180, 124, 0.28);
   --chart-danger: rgba(229, 105, 94, 0.32);
+
+  /* Миниатюра карты в карточке клиента (`lib/minikarta.ts` берёт их числами).
+     Точка на ней — `--brand`, и суша с морем подобраны так, чтобы она читалась
+     на обеих: 3.6:1 на суше, 6.5:1 на море. Это единственная обязательная
+     фигура — остальное фон, и суша с морем расходятся на 1.8:1. */
+  --karta-more: #0e1217;
+  --karta-susha: #454037;
+  --karta-bereg: #928e85;    /* 3.15:1 на суше, 5.81:1 на море */
+  --karta-setka: rgba(236, 234, 228, 0.07);
 }
 
 /* --- Светлая -------------------------------------------------------------
@@ -293,6 +302,17 @@
   --chart-success: rgba(27, 110, 62, 0.34);
   --chart-success-dim: rgba(27, 110, 62, 0.20);
   --chart-danger: rgba(179, 45, 35, 0.26);
+
+  /* Та же карта на бумаге. Море взято глубже, чем просится: светлее — и точка
+     `--brand` на нём падает ниже 3:1, то есть теряется ровно там, где адрес у
+     побережья. Сейчас 3.4:1 на море и 5.0:1 на суше. */
+  --karta-more: #b5cbda;
+  --karta-susha: #f5f1e7;
+  /* Тёмный, а не в тон суше: береговая линия лежит НА границе, половина
+     штриха на воде. Прежний #8b8478 давал на море 2.21:1 — ниже порога
+     ровно для той единственной линии, которую надо разглядеть. */
+  --karta-bereg: #6b6459;    /* 5.12:1 на суше, 3.48:1 на море */
+  --karta-setka: rgba(38, 36, 31, 0.09);
 }
 
 * { box-sizing: border-box; }
@@ -1568,6 +1588,52 @@ summary:focus-visible,
 .contact-input { width: 100%; background: none; border: none; outline: none; color: var(--text); font-size: 13px; font-family: var(--sans); padding: 0; }
 .contact-add { color: var(--faint); }
 .contact-cell:hover .contact-add { color: var(--brand); }
+
+/* Адрес отправки: страна, город и индекс в ряд, улица во всю ширину под ними —
+   ей нужно место и на длинное значение, и на список подсказок под полем.
+   Справа миниатюра карты; без координат её нет, и поля занимают всю карточку. */
+.adres-ryad { display: flex; align-items: flex-start; gap: 16px; padding: 16px 18px; }
+.adres-ryad .contact-grid { flex: 1; min-width: 0; padding: 0; }
+.adres-polya { grid-template-columns: repeat(3, 1fr); gap: 14px 20px; }
+.adres-polya > .adres-pole { grid-column: 1 / -1; }
+.adres-pole { position: relative; }
+.adres-spisok {
+  position: absolute; top: 100%; left: 0; right: 0; z-index: 20;
+  margin: 4px 0 0; padding: 0; list-style: none;
+  max-height: 264px; overflow-y: auto;
+}
+.adres-variant { padding: 8px 12px; cursor: pointer; border-bottom: 1px solid var(--line); }
+.adres-variant:last-child { border-bottom: none; }
+.adres-variant:hover, .adres-variant.active { background: var(--surface-2); }
+.adres-variant-stroka { display: block; color: var(--text); font-size: 13px; }
+.adres-variant-mesto { display: block; color: var(--faint); font-size: 11.5px; margin-top: 2px; }
+
+/* Миниатюра карты: нажимается целиком и уводит в гугловы карты. Рисуется на
+   холсте своими силами (`lib/minikarta.ts`) — установка без интернета обязана
+   показывать карточку клиента целиком, а не дыру с крестиком. */
+.karta-mini {
+  flex: none; width: 232px; max-width: 100%;
+  border: 1px solid var(--border); border-radius: 8px; overflow: hidden;
+  text-decoration: none;
+}
+.karta-mini:hover { border-color: var(--border-hover); }
+.karta-mini-holst { display: block; width: 100%; height: 142px; }
+.karta-mini-podpis {
+  display: flex; align-items: center; gap: 6px;
+  padding: 7px 10px; border-top: 1px solid var(--border);
+  background: var(--surface); color: var(--muted); font-size: 11.5px;
+}
+.karta-mini:hover .karta-mini-podpis { color: var(--text); }
+/* Порог по окну, а карточка живёт в колонке шириной «окно минус меню»: на
+   900–1050px контейнеру остаётся 580–730px, миниатюра забирает 248, и на три
+   поля адреса приходится по сотне пикселей при подписи капителью. До 720px
+   окно доходит уже без меню, и там места снова хватает — то есть прежний
+   порог не срабатывал никогда. */
+@media (max-width: 1080px) {
+  .adres-ryad { flex-wrap: wrap; }
+  .adres-polya { grid-template-columns: repeat(2, 1fr); }
+  .karta-mini { width: 100%; }
+}
 
 /* Лента читается как хронология: линия между значками связывает записи в
    одну историю, а не в стопку карточек. */

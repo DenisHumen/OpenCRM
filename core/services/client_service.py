@@ -294,9 +294,15 @@ def update_client(db: Session, client_id: int, data: dict) -> Client:
     if "manager_id" in data:
         client.manager_id = data["manager_id"]
     # Адрес правится по частям: прислали один город — меняется только он.
+    bylo_mesto = (client.country, client.city)
     for imya, limit, label, code in POLYA_ADRESA:
         if imya in data:
             setattr(client, imya, _chistoe_pole(data[imya], limit, label=label, code=code))
+    if (client.country, client.city) != bylo_mesto:
+        # Переехал город или страна — прежняя точка врёт. Оставь её, и карточка
+        # покажет «Варшава» на киевских координатах, а ссылка в карты уведёт не
+        # туда. Улица и дом точку не трогают: город от них не меняется.
+        client.lat_e7 = client.lon_e7 = None
     if client.phone_norm != bylo_norm and _mezhdunarodnyy(db, client.phone):
         # Страна едет за номером, но только если в карточке стоит ровно то, что
         # говорил ПРЕЖНИЙ номер: значит её никто не правил руками. Иначе правка

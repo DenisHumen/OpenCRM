@@ -204,6 +204,30 @@ class ClientGeoIn(BaseModel):
     lon: float | None = None
 
 
+class AddressSuggestIn(BaseModel):
+    """Что набрали и чей это адрес. Телом, а не строкой запроса: разбор — в
+    `docs/bloki/26-adresa.md` §5."""
+
+    q: str = ""
+    client_id: int | None = None
+
+
+class AddressPickIn(BaseModel):
+    """Выбранная подсказка адреса — ровно то, что отдала подсказка.
+
+    Имена почтовые (`postcode`, `street`), а колонки карточки прежние
+    (`zip_code`, `address`): переименовывать колонки ради подсказки значило бы
+    миграцию на живой базе ради слова. Перекладывает `adresa_service`.
+    """
+
+    country_code: str = ""
+    city: str = ""
+    postcode: str = ""
+    street: str = ""
+    lat: float | None = None
+    lon: float | None = None
+
+
 class BoardPatchIn(BaseModel):
     title: str | None = None
     geo_enabled: bool | None = None

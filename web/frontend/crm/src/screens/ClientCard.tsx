@@ -5,9 +5,12 @@ import { OrdersOfCard } from "../components/OrdersOfCard";
 import { BoardCard } from "../components/BoardCard";
 import { CallButton, CallsPanel } from "../components/CallsPanel";
 import { Icon } from "../components/Icon";
+import { KartaMesta } from "../components/KartaMesta";
 import { NewBoardButton } from "../components/NewBoardButton";
+import { PoleAdresa } from "../components/PoleAdresa";
 import { SourcePicker } from "../components/SourcePicker";
 import { Avatar, Chip, ConfirmModal, Dochitat, EmptyState, ItogSpiska, LoadFailed, Modal, ScreenLoading } from "../components/ui";
+import type { VariantAdresa } from "../lib/adres";
 import { api, ApiError } from "../lib/api";
 import { dropTarget } from "../lib/dnd";
 import { kindLabel, nazvanieBumagi, paperLink, statusLabel, statusVariant } from "../lib/documents";
@@ -266,6 +269,27 @@ export function ClientCard() {
     }
   };
 
+  /** Выбранная подсказка: четыре поля адреса и точка одним запросом.
+   *
+   *  Своей ручкой, а не правкой полей по одной: порознь между ними есть
+   *  мгновение с новым адресом и старой точкой (docs/bloki/26-adresa.md §6). */
+  const prinyat_adres = async (variant: VariantAdresa) => {
+    try {
+      const obnovlyonnyy = await api.patch(`/clients/${id}/address`, {
+        country_code: variant.country_code,
+        city: variant.city,
+        postcode: variant.postcode,
+        street: variant.street,
+        lat: variant.lat,
+        lon: variant.lon,
+      });
+      setClient((prev: any) => ({ ...prev, ...obnovlyonnyy }));
+    } catch (e) {
+      toastError(e);
+      void load();
+    }
+  };
+
   const contacts = [
     { field: "phone", label: t("phone"), value: client.phone },
     { field: "email", label: t("email"), value: client.email },
@@ -288,8 +312,19 @@ export function ClientCard() {
     },
     { field: "city", label: t("city"), value: client.city },
     { field: "zip_code", label: t("zipCode"), value: client.zip_code },
-    { field: "address", label: t("streetAddress"), value: client.address },
   ];
+
+  // Подпись миниатюры — то же, что стоит в полях, одной строкой. Пусто бывает
+  // у точки, поставленной на глобусе рукой: тогда называем сами координаты.
+  const podpis_mesta =
+    [
+      client.address,
+      client.zip_code,
+      client.city,
+      client.country ? nazvanieStrany(client.country, locale) : "",
+    ]
+      .filter(Boolean)
+      .join(", ") || `${client.lat}, ${client.lon}`;
 
   // Вкладки — списком, тем же правилом, что и меню: вкладка выключенного блока
   // исчезает целиком, а не остаётся заголовком над пустотой.
@@ -467,10 +502,25 @@ export function ClientCard() {
         <div className="metric-title" style={{ padding: "16px 18px 0" }}>
           {t("shippingAddress")}
         </div>
-        <div className="contact-grid">
-          {adres.map((pole) => (
-            <EditableContact key={pole.field} {...pole} onSave={saveContact} />
-          ))}
+        <div className="adres-ryad">
+          <div className="contact-grid adres-polya">
+            {adres.map((pole) => (
+              <EditableContact key={pole.field} {...pole} onSave={saveContact} />
+            ))}
+            {/* Улица — с подсказкой: выбранный вариант раскладывается по всем
+                четырём полям сразу и ставит точку на карте. */}
+            <PoleAdresa
+              label={t("streetAddress")}
+              value={client.address}
+              clientId={client.id}
+              onSave={(next) => saveContact("address", next)}
+              onPick={(variant) => void prinyat_adres(variant)}
+            />
+          </div>
+          {/* Без координат миниатюры нет вовсе — разбор в lib/minikarta.ts. */}
+          {typeof client.lat === "number" && typeof client.lon === "number" && (
+            <KartaMesta lat={client.lat} lon={client.lon} podpis={podpis_mesta} />
+          )}
         </div>
       </div>
 

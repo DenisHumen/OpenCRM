@@ -494,9 +494,10 @@ export function SettingsAutomation() {
         {/* Выключенный блок исчезает целиком — вместе со своим выключателем. */}
         {moduleOn(modules, "waybills") && switcher("auto_waybill", t("autoWaybill"), t("autoWaybillHint"))}
         {moduleOn(modules, "documents") && switcher("auto_act", t("autoAct"), t("autoActHint"))}
-        {!moduleOn(modules, "waybills") && !moduleOn(modules, "documents") && (
-          <div className="field-desc">{t("automationNothing")}</div>
-        )}
+        {/* Блока у подсказок нет: они часть карточки клиента, а клиенты —
+            основа системы и не выключаются. Выключателя не было вовсе, и
+            настройка со значением «0» по умолчанию оставалась бы мёртвой. */}
+        {switcher("address_hints", t("addressHints"), t("addressHintsHint"))}
       </div>
     </div>
   );
