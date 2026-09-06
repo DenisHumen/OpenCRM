@@ -413,7 +413,7 @@ def test_svoy_artikul_unikalen(root_client):
 
 
 def test_artikul_vydayotsya_sam(root_client):
-    """Не назвали артикул — выдаём. Разбор: docs/19-sborka-zakaza.md §Р1."""
+    """Не назвали артикул — выдаём. Разбор: docs/bloki/19-sborka-zakaza.md §Р1."""
     pervyy = new_product(root_client, name="Без артикула 1", sku=None)
     vtoroy = new_product(root_client, name="Без артикула 2", sku="   ")
 

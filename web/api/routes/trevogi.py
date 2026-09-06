@@ -33,7 +33,7 @@
 Общий секрет был бы надёжнее: он закрыл бы и соседа по сети compose. Завести
 его сейчас нечем — переменную окружения надо раздать двум контейнерам сразу
 (`docker/docker-compose.yml` и `docker/.env`), а это отдельное решение
-владельца. Разбор — в `docs/13-telegram-messenger.md`.
+владельца. Разбор — в `docs/ustroystvo/13-telegram-v-crm.md`.
 """
 
 import hmac

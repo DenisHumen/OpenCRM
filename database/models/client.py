@@ -46,7 +46,7 @@ class Client(Base):
     messenger: Mapped[str] = mapped_column(String(255), default="")
     # Четыре колонки, а не строка: индекс, город и страна нужны по отдельности.
     # Пустая строка, а не NULL, — иначе вечное `IS NULL OR = ""` в запросах.
-    # Разбор — docs/19-sborka-zakaza.md §Р7.
+    # Разбор — docs/bloki/19-sborka-zakaza.md §Р7.
     country: Mapped[str] = mapped_column(String(2), default="", server_default="")
     city: Mapped[str] = mapped_column(String(120), default="", server_default="")
     # Индекс почтовый, а не число: в Канаде и Британии в нём буквы.
@@ -54,7 +54,7 @@ class Client(Base):
     address: Mapped[str] = mapped_column(String(300), default="", server_default="")
     tags: Mapped[str] = mapped_column(String(500), default="")  # comma-separated (MVP)
     # Источник — ключом, а не ссылкой на справочник (цена таблицы и почему не
-    # наоборот — docs/03-database.md, «clients»). NULL и "other" не сливать:
+    # наоборот — docs/osnovy/03-baza-dannyh.md, «clients»). NULL и "other" не сливать:
     # «не спросили» — дыра, «другое» — ответ клиента.
     source: Mapped[str | None] = mapped_column(
         String(MAX_SOURCE), nullable=True, index=True
@@ -79,7 +79,7 @@ class Client(Base):
 
     # «Живые, свежее сверху» — открытие и листание списка клиентов: без пары
     # 196 000 живых карточек шли в сортировку (269 и 314 мс, с парой 29 и 33),
-    # а отказ в f9b41c7e2d08 мерили на SQLite. Разбор — docs/03-database.md.
+    # а отказ в f9b41c7e2d08 мерили на SQLite. Разбор — docs/osnovy/03-baza-dannyh.md.
     __table_args__ = (Index("ix_clients_alive_updated", "deleted_at", "updated_at"),)
 
 

@@ -1,4 +1,4 @@
-"""Каждая ручка API описана в `docs/04-api.md`.
+"""Каждая ручка API описана в `docs/osnovy/04-api.md`.
 
 **Зачем сторож.** По этому документу пишут внешние: магазин ходит в наши ручки,
 и «разобраться должен любой» — требование владельца, а не пожелание. Документ
@@ -20,7 +20,7 @@ import re
 
 KOREN = pathlib.Path(__file__).resolve().parent.parent
 MARSHRUTY = KOREN / "web" / "api" / "routes"
-SPRAVOCHNIK = KOREN / "docs" / "04-api.md"
+SPRAVOCHNIK = KOREN / "docs" / "osnovy" / "04-api.md"
 
 #: Имя параметра пути в документе и в коде не совпадает нарочно: код пишет
 #: `{client_id}`, документ — `{id}`. Сравниваем по форме, а не по имени.
@@ -77,5 +77,5 @@ def test_kazhdaya_ruchka_nazvana_v_spravochnike():
          if _obshchiy_vid(put) not in v_dokumente}
     )
     assert not net, (
-        "не описаны в docs/04-api.md:\n  " + "\n  ".join(net)
+        "не описаны в docs/osnovy/04-api.md:\n  " + "\n  ".join(net)
     )

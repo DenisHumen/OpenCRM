@@ -59,7 +59,7 @@ services:
       OPENCRM_STORAGE_DIR: /app/storage
       # За приложением стоит один nginx: реальный IP клиента — последний элемент
       # X-Forwarded-For, добавленный им. Без этого лимит подбора PIN обходится
-      # подменой заголовка (см. docs/07-security.md).
+      # подменой заголовка (см. docs/ekspluatatsiya/07-bezopasnost.md).
       #
       # Значение берётся из docker/.env, потому что «сколько прокси впереди» —
       # свойство обвязки, как и домен. Задавать его в config/.env бесполезно:
@@ -83,7 +83,7 @@ services:
       # числа прокси.
       OPENCRM_WORKERS: "${OPENCRM_WORKERS:-1}"
       # Секрет приёма тревог. Пусто — приём закрыт только границей сети, как
-      # было до 02.09.2026; разбор — docs/13-telegram-messenger.md, 12.6.
+      # было до 02.09.2026; разбор — docs/ustroystvo/13-telegram-v-crm.md, 12.6.
       OPENCRM_ALERTS_SECRET: ${OPENCRM_ALERTS_SECRET:-}
       # Где лежит журнал обновлений — его читает /api/v1/metrics, чтобы сказать
       # мониторингу, чем кончился последний деплой. Значение совпадает с точкой
@@ -378,7 +378,7 @@ services:
   #
   # Выключить второй — потерять поиск по логам и правило про долю 5xx, сохранив
   # всё остальное. Замеры, из-за которых деление появилось, — в
-  # docs/08-deployment.md.
+  # docs/ekspluatatsiya/08-razvyortyvanie.md.
   #
   # **Наружу — только через nginx.** Grafana доступна по пути /monitoring/ и под
   # паролем; остальные службы разговаривают исключительно внутри сети compose.
@@ -527,7 +527,7 @@ services:
     volumes:
       - ./monitoring/containers/exporter.py:/opencrm/exporter.py:ro
       # Только на чтение. Доступ к сокету всё равно равносилен root на машине —
-      # размен назван в docs/08-deployment.md, — но лишнего права писать у
+      # размен назван в docs/ekspluatatsiya/08-razvyortyvanie.md, — но лишнего права писать у
       # сборщика метрик быть не должно.
       - /var/run/docker.sock:/var/run/docker.sock:ro
     expose: ["9110"]
@@ -668,7 +668,7 @@ services:
     #
     # Откат образа назад НЕ работает: схема своей базы у Grafana едет только
     # вперёд. Он и не нужен — в каталоге состояния нет ничего незаменимого
-    # (дашборды и источники приходят файлами), разбор — в docs/08-deployment.md.
+    # (дашборды и источники приходят файлами), разбор — в docs/ekspluatatsiya/08-razvyortyvanie.md.
     image: grafana/grafana:12.4.8
     environment:
       # Пароль генерирует `./opencrm.sh` и кладёт в docker/.env (права 600) —
@@ -770,7 +770,7 @@ services:
       GF_LOG_LEVEL: warn
     # Своим UID: каталог данных на томе хоста должен читаться владельцем сайта.
     # Ценой — строка «could not get current OS user» на старте, она остаётся
-    # намеренно (разбор в docs/08-deployment.md).
+    # намеренно (разбор в docs/ekspluatatsiya/08-razvyortyvanie.md).
     user: "${OPENCRM_UID:-1000}:${OPENCRM_GID:-1000}"
     volumes:
       - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro

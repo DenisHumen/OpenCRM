@@ -397,7 +397,7 @@ def test_tsena_i_nazvanie_fiksiruyutsya_snimkom(root_client, deal):
 #
 # Сторож «строки проведённой бумаги не правят» стоит на строках НАКЛАДНЫХ, а щель
 # в нём открыта из-за акта: себестоимость ему пишет подписчик склада уже после
-# захвата статуса, и переставлять там нечего. Разбор — docs/17-nakladnye.md §4.3.
+# захвата статуса, и переставлять там нечего. Разбор — docs/bloki/17-nakladnye.md §4.3.
 
 
 def _stroka_provedennoy_nakladnoy(db) -> DocumentLine:

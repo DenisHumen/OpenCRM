@@ -681,7 +681,7 @@ setup_firewall() {
     # случайно опубликованного порта соседнего контейнера: он не поможет.
     warn "$(tr_ "Docker публикует порты мимо ufw: 80 и 443 будут открыты, даже если их запретить." "Docker publishes ports around ufw: 80 and 443 will be open even if a rule forbids them.")"
     say "$(tr_ "        Для сайта это и нужно. Но и любой другой контейнер с \`ports:\` окажется" "        For the site that is what you want. But any other container with \`ports:\` ends up")"
-    say "$(tr_ "        снаружи вопреки правилам — публикуйте только на 127.0.0.1 (docs/07-security.md)." "        exposed against the rules too — publish on 127.0.0.1 only (docs/07-security.md).")"
+    say "$(tr_ "        снаружи вопреки правилам — публикуйте только на 127.0.0.1 (docs/ekspluatatsiya/07-bezopasnost.md)." "        exposed against the rules too — publish on 127.0.0.1 only (docs/ekspluatatsiya/07-bezopasnost.md).")"
 }
 
 # Резолвится ли имя из НОВОГО контейнера — то есть по тому же пути, каким ходит

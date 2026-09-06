@@ -1,4 +1,4 @@
 # Каталог Grafana ищет безусловно, а файл в нём обязан иметь принимаемое
 # расширение: без каталога — две ошибки, с `.gitkeep` — предупреждение.
-# Замеры в docs/08-deployment.md.
+# Замеры в docs/ekspluatatsiya/08-razvyortyvanie.md.
 apiVersion: 1

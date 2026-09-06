@@ -20,11 +20,11 @@ import re
 KOREN = pathlib.Path(__file__).resolve().parent.parent
 
 #: Где обязан быть назван каждый блок ПОИМЁННО — там, где документ и берётся
-#: перечислить их все. Соседи сюда не входят намеренно: `01-overview.md`
-#: рассказывает, зачем блоки, а `11-modules.md` — как устроен реестр; ни тот,
+#: перечислить их все. Соседи сюда не входят намеренно: `01-obzor.md`
+#: рассказывает, зачем блоки, а `11-bloki-i-svyaznost.md` — как устроен реестр; ни тот,
 #: ни другой списком не притворяется, и требовать от них полноты значило бы
 #: заставить переписывать таблицу в трёх местах.
-DOKUMENTY = ("docs/09-roadmap.md",)
+DOKUMENTY = ("docs/osnovy/09-sostoyanie-i-resheniya.md",)
 
 #: Числительные, которыми документы называют размер реестра. Слово, а не цифра:
 #: так они и написаны, и «шестнадцать» на семнадцати блоках — та самая молчащая
@@ -69,7 +69,7 @@ def test_chislo_blokov_v_dokumentakh_sovpadaet_s_reestrom():
     assert verno, f"блоков {skolko} — допишите числительное в CHISLITELNYE"
 
     vinovnye = []
-    for imya in ("docs/09-roadmap.md", "docs/01-overview.md"):
+    for imya in ("docs/osnovy/09-sostoyanie-i-resheniya.md", "docs/osnovy/01-obzor.md"):
         tekst = (KOREN / imya).read_text(encoding="utf-8")
         chuzhie = [
             slovo

@@ -1,4 +1,4 @@
-"""Каждая таблица названа в `docs/03-database.md`.
+"""Каждая таблица названа в `docs/osnovy/03-baza-dannyh.md`.
 
 **Зачем сторож.** Документ сам обещает полноту: «перечень, выглядящий полным и
 таковым не являющийся, хуже короткого». Обещание держится руками, а таблицы
@@ -19,7 +19,7 @@ import database.models  # noqa: F401 — импорт регистрирует �
 from database.session import Base
 
 KOREN = pathlib.Path(__file__).resolve().parent.parent
-SHEMA = KOREN / "docs" / "03-database.md"
+SHEMA = KOREN / "docs" / "osnovy" / "03-baza-dannyh.md"
 
 
 def test_perebor_tablits_ne_pustoy():
@@ -34,7 +34,7 @@ def test_kazhdaya_tablitsa_nazvana_v_sheme():
     tekst = SHEMA.read_text(encoding="utf-8")
     bezymyannye = sorted(imya for imya in Base.metadata.tables if imya not in tekst)
     assert not bezymyannye, (
-        "не названы в docs/03-database.md: "
+        "не названы в docs/osnovy/03-baza-dannyh.md: "
         + ", ".join(bezymyannye)
         + ". Таблице либо место в перечне «Таблицы, у которых своей схемы здесь нет», "
         "либо свой раздел в «Пояснениях к решениям», если в ней есть что объяснять"

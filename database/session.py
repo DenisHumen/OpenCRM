@@ -29,7 +29,7 @@ def razmer_pula(workers: int) -> tuple[int, int]:
     """`pool_size` и `max_overflow` на ОДИН рабочий процесс.
 
     Считаем от бюджета и числа воркеров, а не берём числом: числом оно уже стояло —
-    и вразрез с одновременностью (что стояло и насколько мимо — docs/03-database.md).
+    и вразрез с одновременностью (что стояло и насколько мимо — docs/osnovy/03-baza-dannyh.md).
     Делим пополам: за постоянно открытое соединение база платит памятью.
     """
     workers = max(1, int(workers or 1))
@@ -56,11 +56,11 @@ def _make_engine():
     if url.startswith("mysql"):
         # Соединений не меньше, чем одновременных обработчиков: сорок ручек в потоках
         # anyio на пул в десять дали 24.08.2026 `QueuePool limit` и пятисотые. Держит
-        # `web.main`, сверяет `tests/test_pool_sizing.py`, разбор — docs/03-database.md.
+        # `web.main`, сверяет `tests/test_pool_sizing.py`, разбор — docs/osnovy/03-baza-dannyh.md.
         kwargs["pool_size"], kwargs["max_overflow"] = razmer_pula(settings.workers)
         # READ COMMITTED — условие правильности, а не настройка. Приём «вставили, получили
         # отказ, перечитали» (core/uniqueness.py) обязан увидеть чужую фиксацию: под
-        # REPEATABLE READ не видит и бьёт пятисоткой. Поймано делом — docs/03-database.md.
+        # REPEATABLE READ не видит и бьёт пятисоткой. Поймано делом — docs/osnovy/03-baza-dannyh.md.
         kwargs["isolation_level"] = "READ COMMITTED"
     engine = create_engine(url, **kwargs)
 

@@ -61,7 +61,7 @@ class ClientIn(BaseModel):
     messenger: str | None = None
     tags: str | list[str] | None = None
     # Адрес для отправки. `country` — код ISO 3166-1 alpha-2 (`UA`, `PL`),
-    # регистр приводится сервисом. Разбор — docs/19-sborka-zakaza.md §Р7.
+    # регистр приводится сервисом. Разбор — docs/bloki/19-sborka-zakaza.md §Р7.
     country: str | None = None
     city: str | None = None
     zip_code: str | None = None
@@ -170,7 +170,7 @@ class ClientPatchIn(BaseModel):
     messenger: str | None = None
     tags: str | list[str] | None = None
     # Адрес для отправки. `country` — код ISO 3166-1 alpha-2 (`UA`, `PL`),
-    # регистр приводится сервисом. Разбор — docs/19-sborka-zakaza.md §Р7.
+    # регистр приводится сервисом. Разбор — docs/bloki/19-sborka-zakaza.md §Р7.
     country: str | None = None
     city: str | None = None
     zip_code: str | None = None

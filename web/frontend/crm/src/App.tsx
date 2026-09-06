@@ -146,7 +146,7 @@ function Protected() {
  *
  * Постоянная, а не тост: тост исчезает через четыре секунды, а состояние
  * длится сколько длится. Выключенная настройкой живость полосы не даёт — это
- * выбор владельца, не авария (docs/12-realtime.md §11). */
+ * выбор владельца, не авария (docs/ustroystvo/12-zhivye-obnovleniya.md §11). */
 function LiveBar() {
   const { t } = useApp();
   const sostoyanie = useLive();

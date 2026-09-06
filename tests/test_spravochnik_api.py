@@ -1,4 +1,4 @@
-"""Справочник ручек API сайта на экране документации свеж относительно `docs/04-api.md`.
+"""Справочник ручек API сайта на экране документации свеж относительно `docs/osnovy/04-api.md`.
 
 Экран показывает ручки API сайта одним списком, и список этот порождён скриптом
 `scripts/spravochnik_api.py` из справочника. Порождённое живёт в репозитории,
@@ -18,11 +18,11 @@ from scripts import spravochnik_api  # noqa: E402
 
 
 def test_porozhdyonnyy_fayl_sovpadaet_so_spravochnikom():
-    """Правка docs/04-api.md без перезапуска скрипта — красный тест, а не тихая старость."""
+    """Правка docs/osnovy/04-api.md без перезапуска скрипта — красный тест, а не тихая старость."""
     ozhidaetsya = spravochnik_api.porodit(spravochnik_api.SPRAVOCHNIK.read_text(encoding="utf-8"))
     est = spravochnik_api.VYKHOD.read_text(encoding="utf-8")
     assert est == ozhidaetsya, (
-        "справочник на экране отстал от docs/04-api.md — запусти "
+        "справочник на экране отстал от docs/osnovy/04-api.md — запусти "
         "`python scripts/spravochnik_api.py`"
     )
 

@@ -33,7 +33,7 @@ class Role(Base):
     preset: Mapped[str] = mapped_column(String(32), default="")
     #: Роль, которую получает новый сотрудник при регистрации. Ровно одна;
     #: следит за этим сервис, а не база — частичный уникальный индекс
-    #: (`UNIQUE ... WHERE is_default`) запрещён принципами docs/03-database.md
+    #: (`UNIQUE ... WHERE is_default`) запрещён принципами docs/osnovy/03-baza-dannyh.md
     #: — в MySQL их нет вовсе, — а обычный `UNIQUE` запретил бы двум ролям
     #: одновременно *не* быть основной.
     is_default: Mapped[bool] = mapped_column(Boolean, default=False)

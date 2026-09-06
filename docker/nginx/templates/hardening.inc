@@ -137,7 +137,7 @@ map $scheme $opencrm_hsts {
 # ровно то же, что было.
 #
 # Приложения это не касается: живой поток CRM сделан на SSE именно для того,
-# чтобы не править nginx (разбор — `docs/12-realtime.md`, раздел 3), и в
+# чтобы не править nginx (разбор — `docs/ustroystvo/12-zhivye-obnovleniya.md`, раздел 3), и в
 # `proxy-headers.inc` эти строки не добавляются.
 map $http_upgrade $opencrm_connection_upgrade {
     default upgrade;

@@ -1,6 +1,6 @@
 """`GET /api/v1/live` — поток намёков для вкладки сотрудника.
 
-Устройство — `docs/12-realtime.md` §3, §6, §7. Коротко: SSE без правки nginx
+Устройство — `docs/ustroystvo/12-zhivye-obnovleniya.md` §3, §6, §7. Коротко: SSE без правки nginx
 (`X-Accel-Buffering: no`, пульс чаще `proxy_read_timeout`), номер записи
 потока в `id:` — он же `Last-Event-ID` при переподключении, три исхода на
 переподключении названы явно (догнали / `resync` / `mode: off`), права и

@@ -427,7 +427,7 @@ def _nikakih_massovyh_pravok_strok(state) -> None:
     базу мимо мэппера и мимо всех трёх. Вид бумаги не разбирается: у массового
     запроса объекта нет, а разбирать `WHERE` значило бы гадать.
 
-    Почему сплошной — docs/03-database.md, «Массовые правки `document_lines`».
+    Почему сплошной — docs/osnovy/03-baza-dannyh.md, «Массовые правки `document_lines`».
     """
     if not (state.is_update or state.is_delete):
         return

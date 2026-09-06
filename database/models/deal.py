@@ -155,7 +155,7 @@ class DealLine(Base):
     `is_service` — услуга из прайса, денег добавляет, склада не трогает;
     заполнен у обычного товара — бронирует и списывается.
 
-    Разбор целиком — `docs/19-sborka-zakaza.md` §Р2.
+    Разбор целиком — `docs/bloki/19-sborka-zakaza.md` §Р2.
     """
 
     __tablename__ = "deal_lines"
