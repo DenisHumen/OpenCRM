@@ -25,6 +25,7 @@ import {
   type Svyaz,
   type Tochka,
 } from "../lib/globus/risovanie";
+import { klyuch as klyuch_plitki, pora, vidimye, type Plitka } from "../lib/globus/ulitsy";
 import { useGuard } from "../lib/guard";
 import type { TranslationKey } from "../lib/i18n";
 import { useLiveTopic } from "../lib/live";
@@ -53,6 +54,7 @@ interface Podrobno {
 /** Слои и их подписи. Порядок — тот же, что на панели у образца. */
 const SLOI: { key: string; label: TranslationKey }[] = [
   { key: "clients", label: "globeLayerClients" },
+  { key: "roads", label: "globeLayerRoads" },
   { key: "deals", label: "globeLayerDeals" },
   { key: "orders", label: "globeLayerOrders" },
   { key: "overdue", label: "globeLayerOverdue" },
@@ -74,6 +76,18 @@ const PAMYAT = "opencrm_globus_sloi";
 const OPROS_MS = 4000;
 /** Медленное вращение, градусов в секунду: планета живая, но не мельтешит. */
 const VRASHCHENIE = 2;
+/** Как часто сверяем, какие плитки улиц видны. Чаще незачем: плитка — квартал. */
+const ULICY_MS = 1200;
+/** Через сколько повторяем запрос по плитке, которой ещё нет. */
+const POVTOR_MS = 8000;
+/** Сколько плиток держим в памяти вкладки. Дальше уходят самые давние. */
+const PAMYAT_PLITOK = 240;
+/**
+ * Насколько близко пускаем. Прежний потолок в шесть крат — это сотни
+ * километров в поле зрения, и улицы туда не помещались вовсе; двенадцать
+ * тысяч дают около метра на пиксель.
+ */
+const PREDEL_MASSHTABA = 12_000;
 
 function pamyat_sloev(dostupnye: string[]): Set<string> {
   try {
@@ -102,6 +116,9 @@ function cveta_temy(): Cveta {
     beda: vzyat("--globus-beda"),
     tekst: vzyat("--globus-tekst"),
     tusklo: vzyat("--globus-tusklo"),
+    ulica: vzyat("--globus-ulica"),
+    dom: vzyat("--globus-dom"),
+    dom_kray: vzyat("--globus-dom-kray"),
   };
 }
 
@@ -227,9 +244,69 @@ export function Globus() {
     };
   }, []);
 
+  // Плитки улиц живут в ссылках, как и всё остальное состояние планеты: цикл
+  // отрисовки читает их каждый кадр, а перерисовывать ради них панели незачем.
+  const vidnye_plitki = useRef<Plitka[]>([]);
+  const sklad_plitok = useRef(new Map<string, Plitka>());
+  const sprosheno = useRef(new Map<string, number>());
+
   // Один цикл отрисовки на весь экран: состояние планеты живёт в ссылках, а не
   // в состоянии React, — иначе каждый кадр перерисовывал бы панели.
   const est_dannye = dannye !== null;
+
+  useEffect(() => {
+    if (!est_dannye) return;
+    let zhivo = true;
+    const shag = async () => {
+      // Свёрнутую вкладку не закрывают — её забывают: спрашивать за неё
+      // чужой сервер круглосуточно нельзя (правило то же, что у сводки).
+      if (!zhivo || document.visibilityState !== "visible") return;
+      const korobka = korob.current;
+      const nabor = sloi_ref.current;
+      if (!korobka || !nabor?.has("roads") || !pora(vid.current)) {
+        vidnye_plitki.current = [];
+        return;
+      }
+      const nuzhny = vidimye(vid.current, korobka.clientWidth, korobka.clientHeight);
+      vidnye_plitki.current = nuzhny
+        .map((p) => sklad_plitok.current.get(klyuch_plitki(p)))
+        .filter((p): p is Plitka => p !== undefined);
+
+      const teper = Date.now();
+      let poprosili = 0;
+      for (const p of nuzhny) {
+        const k = klyuch_plitki(p);
+        // Не больше двух запросов за подход: очередь на сервере всё равно
+        // одна, а планету за это время успевают увезти.
+        if (sklad_plitok.current.has(k) || poprosili >= 2) continue;
+        if (teper - (sprosheno.current.get(k) ?? 0) < POVTOR_MS) continue;
+        sprosheno.current.set(k, teper);
+        poprosili += 1;
+        try {
+          const otvet = await api.get<Plitka>(`/globe/streets?x=${p.x}&y=${p.y}`);
+          if (!zhivo) return;
+          if (otvet.gotovo) {
+            if (sklad_plitok.current.size >= PAMYAT_PLITOK) {
+              const staraya = sklad_plitok.current.keys().next().value;
+              if (staraya) sklad_plitok.current.delete(staraya);
+            }
+            sklad_plitok.current.set(k, otvet);
+          }
+        } catch {
+          // Блок выключили или сеть пропала — планета рисуется без улиц.
+        }
+      }
+    };
+    void shag();
+    const chasy = window.setInterval(() => void shag(), ULICY_MS);
+    const vernulis = () => void shag();
+    document.addEventListener("visibilitychange", vernulis);
+    return () => {
+      zhivo = false;
+      window.clearInterval(chasy);
+      document.removeEventListener("visibilitychange", vernulis);
+    };
+  }, [est_dannye]);
   useEffect(() => {
     const canvas = holst.current;
     const korobka = korob.current;
@@ -292,6 +369,7 @@ export function Globus() {
         poyavlenie: dvizhenie ? Math.max(0, Math.min(1, vozrast)) : 1,
         kogda: new Date(),
         puls: dvizhenie && vybrano_ref.current ? (teper / 2400) % 1 : 0,
+        ulicy: vidnye_plitki.current,
       });
       window.requestAnimationFrame(shag);
     };
@@ -342,6 +420,7 @@ export function Globus() {
     poyavlenie: 1,
     kogda: new Date(),
     puls: 0,
+    ulicy: vidnye_plitki.current,
     vid: vid.current,
     sloi: sloi_ref.current,
   });
@@ -365,7 +444,13 @@ export function Globus() {
 
   const koleso = (sobytie: WheelEvent<HTMLCanvasElement>) => {
     const bylo = vid.current.masshtab ?? 1;
-    const stalo = Math.max(0.6, Math.min(6, bylo * (sobytie.deltaY < 0 ? 1.12 : 0.89)));
+    // Шаг растёт вместе с приближением: от единицы до двенадцати тысяч
+    // постоянным шагом в 12% пришлось бы крутить колесо восемьдесят раз.
+    const shag = bylo > 40 ? 1.4 : bylo > 4 ? 1.25 : 1.12;
+    const stalo = Math.max(
+      0.6,
+      Math.min(PREDEL_MASSHTABA, bylo * (sobytie.deltaY < 0 ? shag : 1 / shag)),
+    );
     vid.current.masshtab = stalo;
     vid.current.r = (vid.current.bazovyy ?? vid.current.r) * stalo;
   };

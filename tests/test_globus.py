@@ -187,3 +187,100 @@ def test_gorod_uznayotsya_po_raznym_napisaniyam():
     klyuchi = {globus_service._klyuch_goroda(x) for x in ("Киев", "Kyiv", "Kiev", " kyiv ")}
     assert klyuchi == {"kyiv"}
     assert globus_service._klyuch_goroda("Warszawa") == "warsaw"
+
+
+# --- улицы и дома -------------------------------------------------------------
+
+
+def test_plitka_i_ee_granicy_shodyatsya():
+    """Номер плитки и её прямоугольник — обратные действия.
+
+    Разойдись они — запрос уходил бы за один квартал, а рисовалось бы в
+    другом, и это не отказ, а тихо неверная карта.
+    """
+    from core.services import globus_ulitsy_service as ulicy
+
+    for lon, lat in ((30.5234, 50.4501), (-74.006, 40.7128), (151.2093, -33.8688), (0.0, 0.0)):
+        z, x, y = ulicy.nomer(lon, lat)
+        yug, zapad, sever, vostok = ulicy.granicy(z, x, y)
+        assert zapad <= lon <= vostok, (lon, zapad, vostok)
+        assert yug <= lat <= sever, (lat, yug, sever)
+
+
+def test_ekran_i_server_schitayut_plitki_odinakovo():
+    """Арифметика плиток повторена на двух языках — числа обязаны совпадать.
+
+    Держать её в одном месте нельзя: номер нужен и серверу (чтобы спросить
+    Overpass), и экрану (чтобы знать, что просить). Значит остаётся сверять.
+    """
+    import re
+    from pathlib import Path
+
+    from core.services import globus_ulitsy_service as ulicy
+
+    tekst = Path("web/frontend/crm/src/lib/globus/ulitsy.ts").read_text(encoding="utf-8")
+
+    def chislo(imya: str) -> int:
+        najdeno = re.search(rf"export const {imya} = ([0-9_]+)", tekst)
+        assert najdeno, f"в ulitsy.ts не найдено {imya}"
+        return int(najdeno.group(1).replace("_", ""))
+
+    assert chislo("PLITKA_Z") == ulicy.PLITKA_Z, "уровень плитки разошёлся"
+    assert chislo("TOCHNOST") == ulicy.TOCHNOST, "точность упаковки разошлась"
+
+
+def test_razbor_overpass_delit_dorogi_i_doma():
+    """Из сырого OSM берём только линии и только нужных видов."""
+    from core.services import globus_ulitsy_service as ulicy
+
+    syroe = {
+        "elements": [
+            {"tags": {"highway": "primary"}, "geometry": [
+                {"lon": 30.52000, "lat": 50.44700}, {"lon": 30.52100, "lat": 50.44750}]},
+            {"tags": {"highway": "service"}, "geometry": [
+                {"lon": 30.52000, "lat": 50.44700}, {"lon": 30.52010, "lat": 50.44710}]},
+            {"tags": {"building": "yes"}, "geometry": [
+                {"lon": 30.52200, "lat": 50.44800}, {"lon": 30.52210, "lat": 50.44800},
+                {"lon": 30.52210, "lat": 50.44810}]},
+            # Задуманное дорогой не является.
+            {"tags": {"highway": "proposed"}, "geometry": [
+                {"lon": 30.5, "lat": 50.4}, {"lon": 30.6, "lat": 50.5}]},
+            # Точка без линии рисовать нечего.
+            {"tags": {"highway": "primary"}, "geometry": [{"lon": 30.5, "lat": 50.4}]},
+        ]
+    }
+    razobrano = ulicy._razobrat(syroe)
+    assert len(razobrano["dorogi"]) == 2
+    assert len(razobrano["doma"]) == 1
+    # Первое число дороги — её вид: магистраль толще проезда.
+    assert razobrano["dorogi"][0][0] == 3
+    assert razobrano["dorogi"][1][0] == 0
+    # Точки — разностями: у соседних узлов совпадают старшие знаки.
+    assert razobrano["dorogi"][0][1:3] == [3052000, 5044700]
+    assert razobrano["dorogi"][0][3:5] == [100, 50]
+
+
+def test_bez_zhelaniya_nikuda_ne_hodim(tmp_path, monkeypatch):
+    """Пока докачка выключена, наружу не уходит ни одного запроса.
+
+    Это не про экономию: система без интернета обязана работать молча, и
+    «выключил докачку, а он всё равно ходит» — это не выключил.
+    """
+    from core.services import globus_ulitsy_service as ulicy
+
+    monkeypatch.setattr(ulicy, "_katalog", lambda: tmp_path)
+
+    def ne_hodim(*args, **kwargs):
+        raise AssertionError("ушёл запрос наружу при выключенной докачке")
+
+    monkeypatch.setattr(ulicy, "_vzyat", ne_hodim)
+    otvet = ulicy.plitka(ulicy.PLITKA_Z, 38324, 22098, hotim=False)
+    assert otvet["gotovo"] is False and otvet["idet"] is False
+
+
+def test_chuzhoy_uroven_plitki_ne_prinimaetsya():
+    """Уровень задан сервером: чужой номер — это чужая арифметика."""
+    from core.services import globus_ulitsy_service as ulicy
+
+    otvet = ulicy.plitka(12, 1, 1, hotim=True)
+    assert otvet["gotovo"] is False and otvet["oshibka"] == "tile_out_of_range"

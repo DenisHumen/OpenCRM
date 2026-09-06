@@ -14,6 +14,12 @@ import {
   terminator,
   type Vid,
 } from "./proekciya";
+import {
+  metrov_na_piksel,
+  pora,
+  razvernut as razvernut_ulicu,
+  type Plitka,
+} from "./ulitsy";
 
 export interface Tochka {
   vid: "client" | "visitor";
@@ -58,6 +64,9 @@ export interface Cveta {
   beda: string;
   tekst: string;
   tusklo: string;
+  ulica: string;
+  dom: string;
+  dom_kray: string;
 }
 
 export interface Kadr {
@@ -76,7 +85,12 @@ export interface Kadr {
   kogda: Date;
   /** Пульс выбранной точки, 0…1 по кругу. */
   puls: number;
+  /** Скачанные плитки улиц. Пусто — приближение не то или сети не было. */
+  ulicy: Plitka[];
 }
+
+/** Ширина дороги в метрах по её виду: магистраль шире проезда, и это видно. */
+const SHIRINA_DOROGI = [5, 9, 14, 22];
 
 const RAD = Math.PI / 180;
 
@@ -111,6 +125,7 @@ export function narisovat(ctx: CanvasRenderingContext2D, kadr: Kadr): void {
   ctx.clip();
 
   susha(ctx, kadr);
+  if (kadr.sloi.has("roads")) ulicy(ctx, kadr);
   if (kadr.sloi.has("grid")) setka(ctx, vid, cveta);
   if (kadr.sloi.has("night")) noch(ctx, kadr);
   ctx.restore();
@@ -192,6 +207,65 @@ function susha(ctx: CanvasRenderingContext2D, kadr: Kadr): void {
       ctx.stroke(put);
     }
   }
+}
+
+/**
+ * Улицы и дома под сильным приближением.
+ *
+ * Рисуются поверх суши и под сеткой: сетка — разметка планеты, и прятать её за
+ * кварталом незачем. Толщина линии считается из метров на пиксель, а не задана
+ * числом: иначе при отъезде город слипается в чёрное пятно, а при наезде
+ * магистраль становится волосом.
+ */
+function ulicy(ctx: CanvasRenderingContext2D, kadr: Kadr): void {
+  const { vid, cveta } = kadr;
+  if (!kadr.ulicy.length || !pora(vid)) return;
+  const metrov = metrov_na_piksel(vid);
+
+  ctx.fillStyle = cveta.dom;
+  ctx.strokeStyle = cveta.dom_kray;
+  ctx.lineWidth = Math.max(0.4, Math.min(1.2, 3 / metrov));
+  for (const plitka of kadr.ulicy) {
+    for (const dom of plitka.doma ?? []) {
+      const put = obvod(razvernut_ulicu(dom), vid);
+      if (!put) continue;
+      put.closePath();
+      ctx.fill(put);
+      ctx.stroke(put);
+    }
+  }
+
+  ctx.strokeStyle = cveta.ulica;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  for (const plitka of kadr.ulicy) {
+    for (const doroga of plitka.dorogi ?? []) {
+      const put = obvod(razvernut_ulicu(doroga, 1), vid);
+      if (!put) continue;
+      ctx.lineWidth = Math.max(0.5, SHIRINA_DOROGI[doroga[0]] / metrov);
+      ctx.stroke(put);
+    }
+  }
+  ctx.lineCap = "butt";
+  ctx.lineJoin = "miter";
+}
+
+/** Ломаная из пар «долгота, широта». `null` — вся она за краем шара. */
+function obvod(pary: number[], vid: Vid): Path2D | null {
+  let put: Path2D | null = null;
+  let veli = false;
+  for (let i = 0; i < pary.length; i += 2) {
+    const t = proekciya(pary[i], pary[i + 1], vid);
+    if (!t.vidno) {
+      veli = false;
+      continue;
+    }
+    if (!put) put = new Path2D();
+    if (veli) put.lineTo(t.x, t.y);
+    else put.moveTo(t.x, t.y);
+    veli = true;
+  }
+  return put;
 }
 
 function setka(ctx: CanvasRenderingContext2D, vid: Vid, cveta: Cveta): void {
