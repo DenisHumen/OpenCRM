@@ -119,7 +119,7 @@ export function ReturnCard() {
   };
 
   return (
-    <div className="page">
+    <div className="page page-kartochka">
       <div className="page-head">
         <div>
           <Link to="/returns" className="btn btn-secondary btn-sm">
@@ -198,9 +198,13 @@ export function ReturnCard() {
         </div>
       )}
 
-      <ReturnLines vozvrat={vozvrat} canEdit={canEdit} onChanged={() => void load()} />
+      <div className="kart-kolonki">
+      <div className="kart-osnova">
+      <div className="kart-blok" style={{ order: 1 }}>
+        <ReturnLines vozvrat={vozvrat} canEdit={canEdit} onChanged={() => void load()} />
+      </div>
 
-      <div className="card card-pad" style={{ marginTop: 16 }}>
+      <div className="card card-pad" style={{ marginTop: 16, order: 2 }}>
         <div className="metric-title" style={{ marginBottom: 12 }}>{t("returnDetails")}</div>
         <div className="field">
           <label className="label">{t("returnNote")}</label>
@@ -262,10 +266,17 @@ export function ReturnCard() {
         </div>
       </div>
 
-      <ReturnMedia vozvrat={vozvrat} canEdit={canEdit} onChanged={() => void load()} />
+      </div>
+      <div className="kart-bok">
+      <div className="kart-blok" style={{ order: 3 }}>
+        <ReturnMedia vozvrat={vozvrat} canEdit={canEdit} onChanged={() => void load()} />
+      </div>
 
-      <div style={{ marginTop: 20 }}>
+      <div style={{ marginTop: 20, order: 4 }}>
         <History events={vozvrat.events} label={(status) => statusLabel(t, status, "return")} />
+      </div>
+
+      </div>
       </div>
 
       {confirm && (
