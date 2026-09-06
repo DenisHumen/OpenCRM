@@ -63,6 +63,14 @@ def update(db: Session, changes: dict[str, str]) -> dict[str, str]:
         except ValueError as exc:
             raise errors.ValidationError(str(exc), code="bad_site_url") from exc
     settings_repo.write_many(db, {key: (value or "").strip() for key, value in changes.items()})
+    if "address_hints" in changes or "address_source" in changes:
+        # Выключили подсказки или сменили сервер — чужие адреса из памяти этого
+        # процесса уходят сразу. Лениво, «при следующем вопросе», не годится:
+        # выключенную службу никто не спросит, и они пролежали бы до
+        # перезапуска (docs/bloki/26-adresa.md §4).
+        from core.services import adresa_service
+
+        adresa_service.zabyt()
     return get_all(db)
 
 

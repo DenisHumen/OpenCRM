@@ -5,7 +5,13 @@ from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from core import exceptions as errors
-from core.services import client_service, globus_service, permissions_service, settings_service
+from core.services import (
+    adresa_service,
+    client_service,
+    globus_service,
+    permissions_service,
+    settings_service,
+)
 from database.models import User
 from database.repositories import clients as clients_repo
 from database.repositories import deals as deals_repo
@@ -98,6 +104,22 @@ def export_clients(
     )
 
 
+@router.post("/address/suggest")
+def suggest_address(
+    payload: schemas.AddressSuggestIn,
+    _: User = Depends(require_perm("clients", "edit")),
+    db: Session = Depends(get_db),
+):
+    """Варианты адреса по набранному. Пустой список — не отказ.
+
+    `POST`, хотя ничего не меняет: в строке запроса набранное уехало бы в
+    журнал доступа контейнера, а оттуда в хранилище логов на неделю — то есть
+    чужой адрес пережил бы и запрос, и того, кто его послал. Права — на
+    правку, а не на просмотр (разбор обоих решений — docs/bloki/26-adresa.md §5).
+    """
+    return adresa_service.podskazki(db, payload.q[:MAX_SEARCH], client_id=payload.client_id)
+
+
 @router.post("", status_code=201)
 def create_client(
     payload: schemas.ClientIn,
@@ -149,6 +171,23 @@ def update_client(
 ):
     data = payload.model_dump(exclude_unset=True)
     return schemas.client_out(client_service.update_client(db, client_id, data))
+
+
+@router.patch("/{client_id}/address")
+def set_client_address(
+    client_id: int,
+    payload: schemas.AddressPickIn,
+    _: User = Depends(require_perm("clients", "edit")),
+    db: Session = Depends(get_db),
+):
+    """Записать выбранную подсказку: поля адреса и точку разом.
+
+    Разом, потому что порознь между ними есть мгновение с новым адресом и
+    старой точкой — и на планете клиент стоит там, откуда уехал.
+    """
+    return schemas.client_out(
+        adresa_service.zapisat_vybor(db, client_id, payload.model_dump())
+    )
 
 
 @router.patch("/{client_id}/geo")

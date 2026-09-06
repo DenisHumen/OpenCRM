@@ -103,6 +103,14 @@ def test_every_search_box_waits_for_a_pause_in_typing():
         if typed.search(text) and "useDebounced" not in text:
             hasty.append(path.name)
 
+    # Подсказки адреса уходят телом, а не строкой запроса (адрес не должен
+    # попадать в журнал доступа), и по строке запроса их не увидеть. Правило то
+    # же: набранное уходит после паузы.
+    for path in sorted(SCREENS.rglob("*.tsx")):
+        text = path.read_text(encoding="utf-8")
+        if "podskazki_adresa" in text and "useDebounced" not in text:
+            hasty.append(path.name)
+
     assert not hasty, "экраны шлют запрос на каждую букву: " + ", ".join(hasty)
 
 
@@ -1381,9 +1389,27 @@ PARY_KONTRASTA = [
     ("--btn-text", "--btn-bg", None, "главная кнопка экрана"),
 ]
 
+#: (фигура, заливка, подложка, где) — не текст, а линии и знаки. Порог другой,
+#: и пары другие: точка на миниатюре карты обязана читаться и на суше, и на
+#: море, а береговая линия лежит НА их границе, то есть меряется об обе.
+#:
+#: Заведено 06.09.2026 по разбору ревизии: пять цветов миниатюры были посчитаны
+#: руками один раз и больше никем. `--brand` уже двигали однажды, и запас у
+#: светлой пары «точка на море» — 0.39 до порога: следующая правка палитры
+#: сломала бы карту молча.
+PARY_FIGUR = [
+    ("--brand", "--karta-susha", None, "точка клиента на суше"),
+    ("--brand", "--karta-more", None, "точка клиента на море"),
+    ("--karta-bereg", "--karta-susha", None, "береговая линия со стороны суши"),
+    ("--karta-bereg", "--karta-more", None, "береговая линия со стороны моря"),
+]
+
 #: AA для обычного текста. Крупного в этих парах нет: всё перечисленное — 10–14
 #: пунктов, то есть послабление 3:1 сюда не относится ни к одной строке.
 AA = 4.5
+
+#: Порог для графики: линия и знак читаются с меньшим запасом, чем буква.
+AA_FIGURY = 3.0
 
 
 def _palitra(selektor: str) -> dict:
@@ -1423,6 +1449,32 @@ def test_obe_temy_prohodyat_aa():
             + "\n\nЛестница «muted → sub → faint» двигается ЦЕЛИКОМ: подняв одну "
             "ступень до порога, соседнюю обгонишь, и три оттенка серого станут "
             "неразличимы. Числа для документа — docs/dizayn/05-dizayn-crm.md."
+        )
+
+
+def test_figury_na_karte_chitayutsya():
+    """Точка клиента и берег на миниатюре — не меньше 3:1 в обеих темах."""
+    for selektor, imya in (
+        (':root,\n:root[data-theme="dark"]', "тёмная"),
+        (':root[data-theme="light"]', "светлая"),
+    ):
+        palitra = {**_palitra(':root,\n:root[data-theme="dark"]'), **_palitra(selektor)}
+        ploho = []
+        for figura, fon, podlozhka, gde in PARY_FIGUR:
+            assert figura in palitra, f"{imya}: нет токена {figura}"
+            assert fon in palitra, f"{imya}: нет токена {fon}"
+            tsvet_fona = _tsvet(palitra[fon])
+            if tsvet_fona[3] < 1:
+                tsvet_fona = _poverh(tsvet_fona, _tsvet(palitra[podlozhka]))
+            otnoshenie = _kontrast(_tsvet(palitra[figura]), tsvet_fona)
+            if otnoshenie < AA_FIGURY:
+                ploho.append(f"{imya}: {figura} на {fon} — {otnoshenie:.2f}:1 ({gde})")
+
+        assert not ploho, (
+            "графика на миниатюре карты не читается:\n  "
+            + "\n  ".join(ploho)
+            + "\n\nТочка обязана читаться и на суше, и на море, а берег лежит "
+            "на их границе. Числа — docs/dizayn/05-dizayn-crm.md."
         )
 
 
