@@ -3362,7 +3362,7 @@ except Exception:
         _dirty=$(git_repo status --porcelain 2>/dev/null) || _dirty=""
         if [ -z "$_dirty" ]; then
             probe "$(tr_ "репозиторий" "repository")" 1 "$(tr_ "чистый" "clean")"
-        elif [ -z "$(printf '%s\n' "$_dirty" | grep -v '^ M')" ] && git_repo diff --quiet --ignore-cr-at-eol 2>/dev/null; then
+        elif ! printf '%s\n' "$_dirty" | grep -qv '^ M' && git_repo diff --quiet --ignore-cr-at-eol 2>/dev/null; then
             # Та же терпимость, что у обновлятора: блоб со смешанными CRLF/LF
             # на Linux «грязный» сразу после чекаута, содержимого в правке нет.
             probe "$(tr_ "репозиторий" "repository")" 1 "$(tr_ "правки только в переводах строк — обновление идёт" "line-ending-only changes — updates proceed")"

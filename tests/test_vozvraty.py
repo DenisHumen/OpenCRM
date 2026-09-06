@@ -498,3 +498,24 @@ def test_dengi_zakaza_i_vozvrata_znayut_vozvrashchennoe(root_client):
         assert po_vozvratu["due"] == 0 and po_vozvratu["paid"] is True
     finally:
         bez_finansov(root_client)
+
+
+def test_provedyonnyy_vozvrat_pechataetsya(root_client):
+    """Акт возврата (план З-01): черновик не печатается, проведённый — лист с
+    номером, позицией, покупателем и возвращённой суммой; язык — параметром."""
+    klient = root_client.post(f"{API}/clients", json={"name": "Печать возврата"}).json()
+    item = tovar(root_client)
+    order = otgruzhennyy_zakaz(root_client, item, quantity="2", client=klient)
+    v = vozvrat(root_client, order)
+    root_client.patch(f"{RETURNS}/{v['id']}", json={"refund": 700, "note": "Царапина на корпусе"})
+    chernovik = root_client.get(f"{RETURNS}/{v['id']}/print")
+    assert chernovik.status_code == 422 and chernovik.json()["error"]["code"] == "return_not_posted"
+    assert provesti(root_client, v["id"]).status_code == 200
+
+    list_ru = root_client.get(f"{RETURNS}/{v['id']}/print", params={"locale": "ru"})
+    assert list_ru.status_code == 200, list_ru.text
+    html = list_ru.text
+    assert v["number"] in html and item["name"] in html and "Печать возврата" in html
+    assert "Акт возврата" in html and "Царапина на корпусе" in html
+    assert "7,00" in html or "7.00" in html, "на бумаге нет возвращённой суммы"
+    assert "Return act" in root_client.get(f"{RETURNS}/{v['id']}/print", params={"locale": "en"}).text

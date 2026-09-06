@@ -26,6 +26,16 @@ from database.repositories import clients as clients_repo
 from database.repositories import documents as documents_repo
 from database.repositories import users as users_repo
 from database.repositories import vozvraty as vozvraty_repo
+from fastapi.responses import HTMLResponse
+from core.services.barcode_service import UNIT_NAMES
+from core.utils import money_for_print
+from database.repositories import warehouse as warehouse_repo
+from web.public import routes as public_routes
+from core.services import codes
+from core.services import document_service
+from core.services import warehouse_service
+from database.models.document import STATUS_CLOSED
+from database.models.document import DOCUMENT_LOCALES
 from web.api import schemas
 from web.api.deps import MAX_SEARCH, get_db, require_module, require_perm
 
@@ -305,6 +315,101 @@ def delete_file(
 ):
     return_service.delete_file(db, return_id, file_id, user)
     return {"message": "File deleted"}
+
+
+RETURN_PRINT_STRINGS = {
+    "ru": {
+        "title": "Акт возврата", "number": "№", "date": "Дата", "party": "Покупатель",
+        "basis": "По заказу", "warehouse": "Склад", "item": "Наименование", "unit": "Ед.",
+        "qty": "Кол-во", "price": "Цена", "sum": "Сумма", "total": "Итого по позициям",
+        "refund": "Возвращено деньгами", "note": "Описание", "taxId": "Налоговый номер",
+        "gave": "Сдал", "took": "Принял", "print": "Печать",
+    },
+    "en": {
+        "title": "Return act", "number": "No.", "date": "Date", "party": "Customer",
+        "basis": "Order", "warehouse": "Warehouse", "item": "Item", "unit": "Unit",
+        "qty": "Qty", "price": "Price", "sum": "Amount", "total": "Items total",
+        "refund": "Refunded", "note": "Description", "taxId": "Tax ID",
+        "gave": "Returned by", "took": "Received by", "print": "Print",
+    },
+    "uk": {
+        "title": "Акт повернення", "number": "№", "date": "Дата", "party": "Покупець",
+        "basis": "За замовленням", "warehouse": "Склад", "item": "Найменування", "unit": "Од.",
+        "qty": "К-сть", "price": "Ціна", "sum": "Сума", "total": "Разом за позиціями",
+        "refund": "Повернуто грошима", "note": "Опис", "taxId": "Податковий номер",
+        "gave": "Здав", "took": "Прийняв", "print": "Друк",
+    },
+}
+
+
+@router.get("/{return_id}/print", response_class=HTMLResponse)
+def print_return(
+    return_id: int,
+    locale: str | None = None,
+    user: User = Depends(require_perm("orders", "view")),
+    db: Session = Depends(get_db),
+):
+    """Акт возврата: перечень, итог по позициям, возвращённые деньги, подписи.
+
+    Черновик не печатается — по той же причине, что у накладной: подписанная
+    бумага не правится, а черновик правится целиком. Цены — только тому, кому
+    они видны на экране; без права столбцы исчезают, а не пустеют.
+    """
+    vozvrat = return_service.get(db, return_id)
+    if vozvrat.status != STATUS_CLOSED:
+        raise errors.ValidationError("Only a posted return can be printed", code="return_not_posted")
+    lang = locale if locale in DOCUMENT_LOCALES else vozvrat.locale
+    t = RETURN_PRINT_STRINGS.get(lang, RETURN_PRINT_STRINGS["ru"])
+    rows = return_service.lines(db, vozvrat.id)
+    payload = return_service.payload_of(vozvrat)
+    money = _amounts(db, user)
+    currency = settings_service.get_all(db).get("currency", "USD")
+    tovary = warehouse_repo.products_by_ids(
+        db, {line.product_id for line in rows if line.product_id}, include_deleted=True
+    )
+    edinicy = {p.id: p.unit for p in tovary}
+    nazvaniya = UNIT_NAMES.get(lang, UNIT_NAMES["ru"])
+    warehouse = None
+    if vozvrat.warehouse_id:
+        warehouse = warehouse_service.get_warehouse(db, vozvrat.warehouse_id, include_deleted=True).name
+    zakaz = return_service.zakaz(db, vozvrat)
+    # Кто принял — из события проведения: имя снимком, как у накладной.
+    prinyal = ""
+    for sobytie in return_service.events(db, vozvrat.id):
+        if sobytie.to_status == STATUS_CLOSED:
+            prinyal = sobytie.author_name or ""
+    klient = (payload.get("client") or {}).get("name") or _imya_klienta(db, vozvrat)
+    html = public_routes.templates.get_template("return_print.html").render(
+        doc=vozvrat,
+        locale=lang,
+        t=t,
+        title=t["title"],
+        party_label=t["party"],
+        company=payload.get("company") or {},
+        client=klient,
+        deal=None,
+        note=payload.get("note"),
+        basis=zakaz.number if zakaz else None,
+        warehouse=warehouse,
+        created=vozvrat.updated_at.strftime("%d.%m.%Y %H:%M") if vozvrat.updated_at else "",
+        released_by=klient or "",
+        received_by=prinyal,
+        money=money,
+        lines=[
+            {
+                "name": line.name_snapshot,
+                "unit": nazvaniya.get(edinicy.get(line.product_id, ""), ""),
+                "quantity": warehouse_service.format_quantity(line.quantity_milli),
+                "price": money_for_print(line.price_minor, currency),
+                "sum": money_for_print(summa, currency),
+            }
+            for line, summa in zip(rows, document_service.line_totals(rows))
+        ],
+        total=money_for_print(document_service.total_minor(rows), currency),
+        refund=money_for_print(vozvrat.refund_minor or 0, currency),
+        barcode=codes.barcode_svg(vozvrat.number),
+    )
+    return HTMLResponse(html)
 
 
 @router.post("/{return_id}/post")
