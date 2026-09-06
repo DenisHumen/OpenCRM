@@ -315,6 +315,18 @@ button { font-family: var(--sans); }
 .board-grid-2 { grid-template-columns: repeat(2, 1fr); }
 .page-docs { max-width: 1360px; }
 .page-narrow { max-width: 760px; }
+/* Карточка в две колонки на широком экране: слева поля и состав, справа лента,
+   задачи и история — на 1440px карточка в 760px оставляла треть экрана пустой
+   и одиннадцать блоков столбиком (владелец, 06.09.2026). Ниже 1100px —
+   один столбик, и порядок чтения прежний: обёртки растворяются
+   (`display: contents`), блоки встают по `order`. */
+.page-kartochka { max-width: 1240px; }
+.kart-kolonki { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: 0 20px; align-items: start; }
+.kart-osnova, .kart-bok, .kart-blok { min-width: 0; }
+@media (max-width: 1100px) {
+  .page-kartochka { display: flex; flex-direction: column; }
+  .kart-kolonki, .kart-osnova, .kart-bok { display: contents; }
+}
 .page-tight { max-width: 640px; }
 /* Доска сделок — единственный экран, который выходит из общей колонки.
    Остальные страницы читают, а доску обозревают: её польза прямо пропорциональна

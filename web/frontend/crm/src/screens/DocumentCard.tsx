@@ -107,7 +107,7 @@ export function DocumentCard() {
   };
 
   return (
-    <div className="page page-narrow">
+    <div className="page page-kartochka">
       <Link to="/documents" className="back-link">
         <Icon name="arrowLeft" size={14} />
         {t("documents")}
@@ -126,7 +126,9 @@ export function DocumentCard() {
         <PrintLangs base={`/api/v1/documents/${doc.id}/print`} current={doc.locale} />
       </div>
 
-      <div className="card card-pad" style={{ marginBottom: 20 }}>
+      <div className="kart-kolonki">
+      <div className="kart-osnova">
+      <div className="card card-pad" style={{ marginBottom: 20, order: 1 }}>
         <div className="metric-title" style={{ marginBottom: 12 }}>{t("docWhatNext")}</div>
         {finished ? (
           <div className="field-desc" style={{ marginTop: 0 }}>{t("docFinished")}</div>
@@ -152,7 +154,7 @@ export function DocumentCard() {
         )}
       </div>
 
-      <div className="card card-pad" style={{ marginBottom: 20 }}>
+      <div className="card card-pad" style={{ marginBottom: 20, order: 2 }}>
         <table className="doc-table">
           <tbody>
             <tr>
@@ -195,7 +197,9 @@ export function DocumentCard() {
         </div>
       </div>
 
-      <div className="card card-pad" style={{ marginBottom: 20 }}>
+      </div>
+      <div className="kart-bok">
+      <div className="card card-pad" style={{ marginBottom: 20, order: 3 }}>
         <div className="metric-title" style={{ marginBottom: 10 }}>{t("docClientLink")}</div>
         <div className="share-action-row">
           <input className="input" readOnly value={publicUrl} onFocus={(e) => e.target.select()} />
@@ -213,18 +217,23 @@ export function DocumentCard() {
         <div className="field-desc">{t("docClientLinkHint")}</div>
       </div>
 
-      <History events={doc.events} label={(x) => statusLabel(t, x)} />
+      <div className="kart-blok" style={{ order: 4 }}>
+        <History events={doc.events} label={(x) => statusLabel(t, x)} />
+      </div>
 
       {/* Удаление — не отмена: отменённая остаётся в списке, а заведённую по
           ошибке и нетронутую незачем хранить. Сервер сам откажет бумаге, которая
           что-то сделала. */}
       {doc.status !== "closed" && can(user, "documents.edit") && (
-        <div style={{ marginTop: 12 }}>
+        <div style={{ marginTop: 12, order: 5 }}>
           <button className="text-link danger" disabled={guard.busy} onClick={() => setConfirmDelete(true)}>
             {t("paperDelete")}
           </button>
         </div>
       )}
+
+      </div>
+      </div>
 
       {confirmDelete && (
         <ConfirmModal
