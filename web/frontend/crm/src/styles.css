@@ -336,7 +336,6 @@ button { font-family: var(--sans); }
   .page-kartochka { display: flex; flex-direction: column; }
   .kart-kolonki, .kart-osnova, .kart-bok { display: contents; }
 }
-.page-tight { max-width: 640px; }
 /* Доска сделок — единственный экран, который выходит из общей колонки.
    Остальные страницы читают, а доску обозревают: её польза прямо пропорциональна
    числу видимых этапов, и 1120px на мониторе в 2560px означали бы три видимых
