@@ -323,6 +323,11 @@ button { font-family: var(--sans); }
 .page-kartochka { max-width: 1240px; }
 .kart-kolonki { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: 0 20px; align-items: start; }
 .kart-osnova, .kart-bok, .kart-blok { min-width: 0; }
+/* Колонку задаёт стиль, а не порядок в разметке: `order` в сетке двигает и
+   сами колонки, и правая уезжала налево. Здесь же разметка свободна —
+   на телефоне колонки растворяются, и порядок чтения берётся из неё. */
+.kart-kolonki > .kart-osnova { grid-column: 1; }
+.kart-kolonki > .kart-bok { grid-column: 2; }
 /* Карточки-разделы, у которых нет старшинства: реквизиты фирмы стояли
    столбиком в 1611px при пустой трети экрана. Сетка сама решает, сколько
    колонок влезет, — списка колонок в разметке нет и разъезжаться нечему. */

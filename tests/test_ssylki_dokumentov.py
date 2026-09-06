@@ -38,9 +38,14 @@ def _md_fayly() -> list[pathlib.Path]:
     return sorted(DOCS.rglob("*.md")) + [p for p in korennye if p.exists()]
 
 
-#: Каталоги, которых нет в репозитории и которые весят больше него: обход по
-#: дереву без них идёт секунду, а с ними — минуты.
-MIMO = {".git", "node_modules", "dist", ".venv", "__pycache__", ".pytest_cache", "storage", "data"}
+#: Что обход пропускает: чужое (зависимости), порождённое (сборка, кэши) и
+#: рабочее (хранилище, база). `build/` — след `pip install .` в образе гейта:
+#: там лежит КОПИЯ исходников, включая выгруженные миграции с прежними
+#: именами документов, и сторож краснел на копии, а не на репозитории.
+MIMO = {
+    ".git", "node_modules", "dist", ".venv", "__pycache__", ".pytest_cache",
+    "storage", "data", "build", ".mypy_cache", ".ruff_cache",
+}
 
 
 def _otslezhivaemye() -> list[pathlib.Path]:
@@ -55,7 +60,8 @@ def _otslezhivaemye() -> list[pathlib.Path]:
         return [KOREN / f for f in vyvod.split("\0") if f]
     najdeno = []
     for put in KOREN.rglob("*"):
-        if put.is_file() and not (MIMO & set(put.relative_to(KOREN).parts)):
+        chasti = set(put.relative_to(KOREN).parts)
+        if put.is_file() and not (MIMO & chasti) and not any(c.endswith(".egg-info") for c in chasti):
             najdeno.append(put)
     return najdeno
 
