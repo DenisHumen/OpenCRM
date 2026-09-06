@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 
 import { Dochitat, EmptyState, ScreenLoading } from "../components/ui";
 import { api, type AuditEvent } from "../lib/api";
@@ -64,6 +65,27 @@ const ACTION: Record<string, TranslationKey> = {
   "customer.registered": "auditActCustomerRegistered",
 };
 
+/** Куда ведёт запись журнала. Пусто — у объекта нет своей карточки. */
+function putKObektu(entry: AuditEvent): string | null {
+  if (!entry.entity_id) return null;
+  switch (entry.entity_type) {
+    case "client":
+      return `/clients/${entry.entity_id}`;
+    case "deal":
+      return `/deals/${entry.entity_id}`;
+    case "product":
+      return `/warehouse/${entry.entity_id}`;
+    case "document":
+      return `/documents/${entry.entity_id}`;
+    case "board":
+      return `/boards/${entry.entity_id}`;
+    case "company":
+      return `/companies/${entry.entity_id}`;
+    default:
+      return null;
+  }
+}
+
 const ENTITY: Record<string, TranslationKey> = {
   role: "auditEntRole",
   company: "auditEntCompany",
@@ -106,6 +128,11 @@ export function Audit() {
   const [total, setTotal] = useState(0);
   const [search, setSearch] = useState("");
   const [source, setSource] = useState("");
+  // Отбор по объекту и по датам: журнал за месяц читают по вопросу «что
+  // делали с этим клиентом», а не подряд.
+  const [entity, setEntity] = useState("");
+  const [ot, setOt] = useState("");
+  const [po, setPo] = useState("");
 
   // До какой страницы дочитан журнал. Прежде экран просил сотню записей и на
   // этом заканчивался — а рядом честно писал «всего 4000». Сам сообщал, что
@@ -130,8 +157,11 @@ export function Audit() {
     const params = new URLSearchParams({ per_page: String(NA_STRANITSE) });
     if (typed.trim()) params.set("search", typed.trim());
     if (source) params.set("source", source);
+    if (entity) params.set("entity_type", entity);
+    if (ot) params.set("since", new Date(ot + "T00:00:00").toISOString());
+    if (po) params.set("until", new Date(po + "T23:59:59.999").toISOString());
     return `/audit?${params}`;
-  }, [typed, source]);
+  }, [typed, source, entity, ot, po]);
 
   useEffect(() => {
     // Источник переключают быстрее, чем отвечает сервер: без счётчика записи
@@ -257,6 +287,17 @@ export function Audit() {
             </option>
           ))}
         </select>
+        <select className="input" style={{ maxWidth: 180 }} value={entity} onChange={(e) => setEntity(e.target.value)}>
+          <option value="">{t("auditAnyEntity")}</option>
+          {Object.keys(ENTITY).map((key) => (
+            <option key={key} value={key}>
+              {entityLabel(key)}
+            </option>
+          ))}
+        </select>
+        <input className="input report-date" type="date" value={ot} max={po || undefined} onChange={(e) => setOt(e.target.value)} aria-label={t("auditFrom")} />
+        <span style={{ color: "var(--faint)" }}>—</span>
+        <input className="input report-date" type="date" value={po} min={ot || undefined} onChange={(e) => setPo(e.target.value)} aria-label={t("auditTo")} />
       </div>
 
       {items.length === 0 ? (
@@ -289,7 +330,15 @@ export function Audit() {
               </span>
               <span className="wrap-anywhere" style={{ ...COL.wide, fontSize: 12.5 }}>
                 <span style={{ color: "var(--faint)" }}>{entityLabel(entry.entity_type)}</span>{" "}
-                <span style={{ color: "var(--text)" }}>{entry.entity_label}</span>
+                {/* Ссылка на объект, когда у него есть карточка: из журнала идут
+                    смотреть, что с ним стало, а не искать его по названию. */}
+                {putKObektu(entry) ? (
+                  <Link to={putKObektu(entry)!} className="text-link" style={{ color: "var(--text)" }}>
+                    {entry.entity_label}
+                  </Link>
+                ) : (
+                  <span style={{ color: "var(--text)" }}>{entry.entity_label}</span>
+                )}
               </span>
               <span className="wrap-anywhere" style={{ ...COL.wide, fontSize: 12.5, color: "var(--text)" }}>
                 {/* Старое значение рядом с новым: «сумма изменена» без «было

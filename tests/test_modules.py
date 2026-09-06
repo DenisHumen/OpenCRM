@@ -803,3 +803,14 @@ def test_search_drops_the_results_of_a_switched_off_module(root_client, manager_
     # блоков, и клиенту не нужно знать, какие ключи сегодня бывают.
     assert without.json()["boards"] == {"items": [], "total": 0, "has_more": False}
     assert without.json()["clients"]["items"], "клиенты — несущий блок, они обязаны находиться"
+
+
+def test_zapisi_po_blokam_schitayutsya_dlya_vyklyuchatelya(root_client):
+    """Перед выключателем блока — сколько записей за ним стоит (план М-05):
+    «выключить склад» с подписью «454 товара» читается иначе, чем без неё."""
+    root_client.post(f"{API}/clients", json={"name": "Запись для счёта блоков"})
+    otvet = root_client.get(f"{MODULES}/records")
+    assert otvet.status_code == 200, otvet.text
+    schyot = otvet.json()["items"]
+    assert set(schyot) <= set(modules.KEYS), "счёт называет блок, которого нет в реестре"
+    assert schyot["clients"] >= 1 and isinstance(schyot["warehouse"], int)

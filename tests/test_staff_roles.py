@@ -100,3 +100,16 @@ def test_delete_disabled_user(root_client):
     # деактивированного тоже можно удалить окончательно
     assert root_client.delete(f"{API}/staff/{vid}").status_code == 200
     assert vid not in [u["id"] for u in root_client.get(f"{API}/staff").json()["items"]]
+
+
+def test_shtat_znaet_otkrytye_zayavki_sotrudnika(root_client):
+    """У сотрудника в штате — число открытых заявок (план М-02): «кто перегружен»
+    спрашивают у штата, а не у канбана по одному человеку."""
+    me = root_client.get(f"{API}/auth/me").json()
+    klient = root_client.post(f"{API}/clients", json={"name": "Клиент для счёта штата"}).json()
+    deal = root_client.post(
+        f"{API}/deals", json={"title": "Заявка для счёта штата", "client_id": klient["id"], "manager_id": me["id"]}
+    )
+    assert deal.status_code == 201, deal.text
+    [ya] = [u for u in root_client.get(f"{API}/staff").json()["items"] if u["id"] == me["id"]]
+    assert ya["deals_open"] >= 1

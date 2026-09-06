@@ -515,3 +515,17 @@ def svodka_po_klientam(db: Session, client_ids, only_manager_id: int | None = No
             yacheyka["open_count"] += int(skolko or 0)
             yacheyka["open_amount"] += int(summa or 0)
     return itog
+
+
+def otkrytye_po_menedzheram(db: Session) -> dict[int, int]:
+    """Сколько открытых заявок у каждого ответственного — одним запросом на штат."""
+    kinds = pipeline_repo.kinds_by_key(db)
+    otkrytye = [key for key, kind in kinds.items() if kind == KIND_OPEN]
+    if not otkrytye:
+        return {}
+    ryady = db.execute(
+        select(Deal.manager_id, func.count())
+        .where(Deal.deleted_at.is_(None), Deal.manager_id.is_not(None), Deal.stage.in_(otkrytye))
+        .group_by(Deal.manager_id)
+    ).all()
+    return {int(manager_id): int(skolko) for manager_id, skolko in ryady}

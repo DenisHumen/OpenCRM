@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from core import modules
 from core.services import modules_service, pipeline_service, settings_service
 from database.models import User
+from database.repositories import stats as stats_repo
 from database.repositories import users as users_repo
 from web.api.deps import get_db, require_perm, require_staff
 
@@ -50,6 +51,17 @@ class PresetIn(BaseModel):
     #: отвечает на вопрос «чем вы занимаетесь» целиком, а не на его треть.
     apply_pipeline: bool = True
     apply_deal_term: bool = True
+
+
+@router.get("/records")
+def module_records(
+    _: User = Depends(require_perm("settings", "manage")),
+    db: Session = Depends(get_db),
+):
+    """Сколько записей стоит за каждым блоком. Отдельной ручкой, а не в
+    `GET /modules`: тот спрашивает каждый экран, а счёт по таблицам нужен
+    только перед выключателем."""
+    return {"items": stats_repo.zapisey_po_blokam(db)}
 
 
 @router.get("/presets")

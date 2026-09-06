@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from core.services import auth_service, permissions_service
 from database.models import User
+from database.repositories import deals as deals_repo
 from database.repositories import users as users_repo
 from web.api import schemas
 from web.api.deps import get_db, require_perm
@@ -24,8 +25,14 @@ def list_staff(
 ):
     users = users_repo.list_staff(db, status=status)
     roles = {role.id: role for role in permissions_service.list_roles(db)}
+    # Открытые заявки у каждого — одним запросом: «кто перегружен» спрашивают у
+    # штата, а не у канбана по одному человеку.
+    zayavki = deals_repo.otkrytye_po_menedzheram(db)
     return {
-        "items": [schemas.user_out(u, role=roles.get(u.role_id)) for u in users]
+        "items": [
+            {**schemas.user_out(u, role=roles.get(u.role_id)), "deals_open": zayavki.get(u.id, 0)}
+            for u in users
+        ]
     }
 
 
