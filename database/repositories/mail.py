@@ -146,3 +146,15 @@ def find_client_by_email(db: Session, address: str) -> Client | None:
         .order_by(Client.id)
         .limit(1)
     )
+
+
+def count_unread(db: Session) -> int:
+    """Непрочитанные входящие — число на пункт меню."""
+    return int(
+        db.scalar(
+            select(func.count())
+            .select_from(MailMessage)
+            .where(MailMessage.direction == "in", MailMessage.is_read.is_(False))
+        )
+        or 0
+    )

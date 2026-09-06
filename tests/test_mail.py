@@ -1334,3 +1334,21 @@ def test_pismo_bez_zagolovkov_tsepochki_razbiraetsya():
     pismo = parse_raw_message(syroe, uid=8)
     assert pismo.in_reply_to == ""
     assert pismo.references == ""
+
+
+def test_neprochitannye_schitayutsya_dlya_menyu(root_client, mail_on):
+    """Число непрочитанных входящих — на пункт меню (план К-02): растёт с
+    синхронизацией, падает с отметкой «прочитано»."""
+    account = make_account(root_client, "unread@studio.test")
+    make_client(root_client, "Непрочитанное", "unread@remote.test")
+    bylo = root_client.get(f"{MAIL}/unread").json()["count"]
+    FakeTransport.inbox = [
+        incoming(31, "<unread-1@remote.test>", "unread@remote.test", datetime(2026, 7, 30, 9, 0)),
+        incoming(32, "<unread-2@remote.test>", "unread@remote.test", datetime(2026, 7, 30, 9, 5)),
+    ]
+    assert root_client.post(f"{MAIL}/accounts/{account['id']}/sync").json()["stored"] == 2
+    assert root_client.get(f"{MAIL}/unread").json()["count"] == bylo + 2
+
+    pismo = root_client.get(f"{MAIL}/messages", params={"account_id": account["id"], "unread": True}).json()["items"][0]
+    assert root_client.post(f"{MAIL}/messages/{pismo['id']}/read", json={"is_read": True}).status_code == 200
+    assert root_client.get(f"{MAIL}/unread").json()["count"] == bylo + 1

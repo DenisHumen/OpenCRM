@@ -166,6 +166,15 @@ def list_senders(
     }
 
 
+@router.get("/unread")
+def unread_count(
+    _: User = Depends(require_perm("mail", "view")),
+    db: Session = Depends(get_db),
+):
+    """Сколько входящих не прочитано — число на пункт меню (план К-02)."""
+    return {"count": mail_repo.count_unread(db)}
+
+
 @router.get("/messages")
 def list_messages(
     account_id: int | None = None,

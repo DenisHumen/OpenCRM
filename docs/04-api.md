@@ -559,6 +559,7 @@
 | POST | `/mail/accounts/{id}/check` | 🔑 `settings.manage` | Проверка входа по IMAP и SMTP. Ответ `{ok, error}` — ошибка текстом, без пароля |
 | GET | `/mail/senders` | 🔑 `mail.create` | Ящики, из которых можно писать: только `id`, `title`, `address`, только включённые |
 | POST | `/mail/accounts/{id}/sync` | 🔑 `mail.view` | Ручная синхронизация. Своего права не требует: это чтение почты фирмы, а не правка настроек — ждать управляющего ради свежих писем незачем |
+| GET | `/mail/unread` | 🔑 `mail.view` | Сколько входящих не прочитано — число на пункт меню; пересчитывается по намёку блока почты |
 | GET | `/mail/messages` | 🔑 `mail.view` | Список: `account_id`, `client_id`, `deal_id`, `direction=in\|out`, `unread`, `search`. Тела писем в списке не отдаются |
 | GET | `/mail/messages/{id}` | 🔑 `mail.view` | Письмо целиком, включая `body_text`/`body_html` |
 | POST | `/mail/messages/{id}/read` | 🔑 `mail.view` | `{"is_read": true\|false}` |
