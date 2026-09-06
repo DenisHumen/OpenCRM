@@ -1,4 +1,5 @@
 import { useApp } from "../lib/app";
+import { podpisSistemnoy } from "../lib/sistemnye_zapisi";
 import { formatDateTime } from "../lib/format";
 
 export interface HistoryEvent {
@@ -35,7 +36,7 @@ export function History({
               {event.from_status
                 ? `${label(event.from_status)} → ${label(event.to_status)}`
                 : label(event.to_status)}
-              {event.note && <span style={{ color: "var(--faint)" }}> · {event.note}</span>}
+              {event.note && <span style={{ color: "var(--faint)" }}> · {podpisSistemnoy(event.note, t)}</span>}
             </span>
             <span className="stage-log-who">{event.author_name || "—"}</span>
           </li>
