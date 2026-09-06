@@ -6,6 +6,7 @@ import { EmptyState, ScreenLoading } from "../components/ui";
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
 import { useFailure } from "../lib/failure";
+import { kindLabel, paperLink } from "../lib/documents";
 import { formatMoney } from "../lib/format";
 import { moduleOn } from "../lib/modules";
 import { can } from "../lib/permissions";
@@ -51,11 +52,13 @@ export function Reports() {
   // Возвраты — при включённых заказах и праве на них: статистика живёт в
   // разделе возвратов, здесь — три числа за тот же период и ход к ней.
   const vozvratyOn = moduleOn(modules, "orders") && can(user, "orders.view");
+  // Долги — деньги: при включённых финансах и бланках, тем же правом, что суммы.
+  const dolgiOn = moduleOn(modules, "finance") && moduleOn(modules, "documents") && can(user, "reports.view_amounts");
   const today = useMemo(() => new Date(), []);
   const quick = useMemo(() => presets(today), [today]);
   const [from, setFrom] = useState(quick[0].from);
   const [to, setTo] = useState(quick[0].to);
-  const [data, setData] = useState<{ funnel: any; revenue: any; sources: any; vozvraty: any | null } | null>(null);
+  const [data, setData] = useState<{ funnel: any; revenue: any; sources: any; vozvraty: any | null; dolgi: any | null } | null>(null);
 
   // Смещение зоны браузера едет вместе с датами: «за июль» человек понимает по
   // своему календарю, а в базе время в UTC. Без этого 31 июля терял бы вечер, а
@@ -83,9 +86,10 @@ export function Reports() {
       api.get(`/reports/revenue?${query}`),
       api.get(`/reports/sources?${query}`),
       vozvratyOn ? api.get(`/returns/stats?${query}`) : Promise.resolve(null),
+      dolgiOn ? api.get(`/reports/debts`) : Promise.resolve(null),
     ])
-      .then(([funnel, revenue, sources, vozvraty]) => {
-        if (current) setData({ funnel, revenue, sources, vozvraty });
+      .then(([funnel, revenue, sources, vozvraty, dolgi]) => {
+        if (current) setData({ funnel, revenue, sources, vozvraty, dolgi });
       })
       .catch((e) => {
         if (current) fail(e);
@@ -93,13 +97,13 @@ export function Reports() {
     return () => {
       current = false;
     };
-  }, [query, attempt, vozvratyOn, fail, clear]);
+  }, [query, attempt, vozvratyOn, dolgiOn, fail, clear]);
 
   if (!data) {
     return <ScreenLoading error={failure} onRetry={() => setAttempt((n) => n + 1)} />;
   }
 
-  const { funnel, revenue, sources, vozvraty } = data;
+  const { funnel, revenue, sources, vozvraty, dolgi } = data;
   const currency = revenue.currency ?? "USD";
   const money = (value: number | null) => formatMoney(value, currency, locale);
 
@@ -349,6 +353,39 @@ export function Reports() {
               <Figure title={t("returnStatsCount")} value={String(vozvraty.count)} sub={t("returnStatsShipped", { n: vozvraty.shipped_count })} />
               <Figure title={t("returnStatsRefund")} value={formatMoney(vozvraty.refund_amount, vozvraty.currency ?? currency, locale)} />
               <Figure title={t("returnStatsShare")} value={vozvraty.share === null ? "—" : `${Math.round(vozvraty.share)}%`} />
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* --- долги клиентов --- */}
+      {dolgi && (
+        <div className="card card-pad report-card">
+          <div className="section-head" style={{ marginBottom: 6 }}>
+            <div className="metric-title">{t("repDebts")}</div>
+            <ExportLink name="debts" query={query} label={t("exportCsv")} />
+          </div>
+          <div className="field-desc" style={{ marginBottom: 12 }}>{t("repDebtsHint")}</div>
+          {dolgi.items.length === 0 ? (
+            <EmptyState icon="analytics" title={t("repNoDebts")} />
+          ) : (
+            <div className="list-card">
+              {dolgi.items.map((row: any) => (
+                <Link key={row.document_id} to={paperLink({ id: row.document_id, kind: row.kind })} className="list-row hoverable">
+                  <span style={{ width: 110, color: "var(--faint)", fontSize: 12.5, fontFamily: "ui-monospace, monospace" }}>{row.number}</span>
+                  <span style={{ width: 120, color: "var(--faint)", fontSize: 12.5 }}>{kindLabel(t, row.kind)}</span>
+                  <span className="truncate" style={{ flex: 1, minWidth: 0, color: "var(--text)", fontSize: 13 }}>
+                    {row.client_name ?? t("noClient")}
+                  </span>
+                  <span style={{ width: 120, textAlign: "right", color: "var(--faint)", fontSize: 12.5 }}>
+                    {formatMoney(row.received, dolgi.currency ?? currency, locale)} / {formatMoney(row.total, dolgi.currency ?? currency, locale)}
+                  </span>
+                  <span style={{ width: 110, textAlign: "right", color: "var(--danger)", fontSize: 13, fontVariantNumeric: "tabular-nums" }}>
+                    {formatMoney(row.due, dolgi.currency ?? currency, locale)}
+                  </span>
+                </Link>
+              ))}
+              <div className="itog-spiska">{t("repDebtsTotal", { sum: formatMoney(dolgi.total_due, dolgi.currency ?? currency, locale), n: dolgi.count })}</div>
             </div>
           )}
         </div>

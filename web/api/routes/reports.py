@@ -85,6 +85,34 @@ def csv_response(content: bytes, name: str, period: Period) -> Response:
     )
 
 
+@router.get(
+    "/debts",
+    dependencies=[Depends(require_module("finance")), Depends(require_module("documents"))],
+)
+def debts_report(
+    _: User = Depends(require_perm("reports", "view_amounts")),
+    db: Session = Depends(get_db),
+):
+    """Долги клиентов: бумаги, по которым получено меньше выписанного. Без
+    периода — прошлогодний неоплаченный заказ всё ещё долг (план И-03)."""
+    return {
+        **report_service.dolgi(db),
+        "currency": settings_service.get_all(db).get("currency", "USD"),
+    }
+
+
+@router.get(
+    "/debts.csv",
+    dependencies=[Depends(require_module("finance")), Depends(require_module("documents"))],
+)
+def debts_export(
+    period: Period = Depends(),
+    user: User = Depends(require_perm("reports", "view_amounts")),
+    db: Session = Depends(get_db),
+):
+    return csv_response(report_service.dolgi_csv(report_service.dolgi(db), user.locale), "debts", period)
+
+
 @router.get("/funnel")
 def funnel_report(
     period: Period = Depends(),

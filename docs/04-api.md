@@ -1260,6 +1260,8 @@ SVG только `width` и `height`; пока картинку показыва
 | GET | `/reports/revenue` | 🔑 `reports.view_amounts` | Деньги за период: `received_*` (пришло в кассу) и `won_*` (сумма выигранных заявок), плюс `basis` — чем меряем |
 | GET | `/reports/revenue.csv` | 🔑 `reports.view_amounts` | Она же выгрузкой |
 | GET | `/reports/sources` | 🔑 `reports.view` | Откуда пришли клиенты. Деньги в нём прячет `reports.view_amounts` |
+| GET | `/reports/debts` | 🔑 `reports.view_amounts` | Долги клиентов: бумаги (заказы покупателя, акты), по которым получено меньше выписанного — `items` (номер, вид, клиент, сумма, получено, остаток), `total_due`, `count`; без периода. Нужны блоки `finance` и `documents` |
+| GET | `/reports/debts.csv` | 🔑 `reports.view_amounts` | Он же выгрузкой |
 | GET | `/reports/sources.csv` | 🔑 `reports.view` | Он же выгрузкой |
 
 Период у всех отчётов общий и приходит зависимостью `Period`: `from`, `to`

@@ -172,10 +172,44 @@ export function Finance() {
     };
   }, [query, attempt, fail, clear]);
 
+  // Прошлый период той же длины — для «к прошлому периоду: +12%» под
+  // плитками. Отдельным запросом после основного: границы периода отдаёт
+  // сервер, и считать их здесь второй раз значило бы завести второй календарь.
+  const [proshlyy, setProshlyy] = useState<Profit | null>(null);
+  const granitsy = data ? `${data.profit.from}|${data.profit.to}` : "";
+  useEffect(() => {
+    if (!granitsy) return;
+    let alive = true;
+    const [ot, po] = granitsy.split("|");
+    const a = new Date(ot + "T00:00:00");
+    const b = new Date(po + "T00:00:00");
+    const dney = Math.round((b.getTime() - a.getTime()) / 86_400_000) + 1;
+    const konets = new Date(a.getTime() - 86_400_000);
+    const nachalo = new Date(konets.getTime() - (dney - 1) * 86_400_000);
+    const den = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    api
+      .get<Profit>(`/finance/profit?from=${den(nachalo)}&to=${den(konets)}&tz_offset=${new Date().getTimezoneOffset()}`)
+      .then((p) => {
+        if (alive) setProshlyy(p);
+      })
+      .catch(() => {
+        if (alive) setProshlyy(null);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [granitsy, attempt]);
+
   if (!data) return <ScreenLoading error={failure} onRetry={() => setAttempt((n) => n + 1)} />;
 
   const { profit, operations, total } = data;
   const money = (value: number | null) => formatMoney(value, profit.currency, locale);
+  // Сдвиг к прошлому периоду в процентах; прошлого нуля — прочерк, а не бесконечность.
+  const kProshlomu = (seychas: number, bylo: number | undefined) => {
+    if (bylo === undefined || bylo === 0) return t("finVsPrev", { d: "—" });
+    const p = Math.round(((seychas - bylo) * 100) / Math.abs(bylo));
+    return t("finVsPrev", { d: `${p > 0 ? "+" : ""}${p}%` });
+  };
   // Самая крупная статья задаёт длину полосы: доли от общего итога дали бы
   // десять одинаково коротких полос, по которым ничего не видно.
   const biggest = Math.max(1, ...profit.items.map((row) => Math.abs(row.amount)));
@@ -216,12 +250,12 @@ export function Finance() {
 
       <div className="card card-pad report-card">
         <div className="report-grid">
-          <Figure title={t("finIncome")} value={money(profit.income)} />
-          <Figure title={t("finExpense")} value={money(profit.expense)} />
+          <Figure title={t("finIncome")} value={money(profit.income)} sub={proshlyy ? kProshlomu(profit.income, proshlyy.income) : undefined} />
+          <Figure title={t("finExpense")} value={money(profit.expense)} sub={proshlyy ? kProshlomu(profit.expense, proshlyy.expense) : undefined} />
           <Figure
             title={t("finProfit")}
             value={money(profit.profit)}
-            sub={t("finProfitHint")}
+            sub={proshlyy ? `${t("finProfitHint")} · ${kProshlomu(profit.profit, proshlyy.profit)}` : t("finProfitHint")}
             tone={profit.profit < 0 ? "bad" : "good"}
           />
           {/* Налоги и зарплата — первое, что спрашивают у расходов. Ради этого

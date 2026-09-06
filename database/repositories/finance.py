@@ -22,11 +22,14 @@ from sqlalchemy.orm import Session
 from database.models import (
     Client,
     Deal,
+    Document,
+    DocumentLine,
     FinanceBudget,
     FinanceCategory,
     FinanceOperation,
     FinanceRule,
 )
+from database.models.document import STATUS_CANCELLED
 from database.models.finance import (
     BASE_INCOME_PERCENT,
     BASE_PER_ORDER,
@@ -688,3 +691,42 @@ def add_budget(db: Session, row: FinanceBudget) -> FinanceBudget:
 def drop_budget(db: Session, row: FinanceBudget) -> None:
     db.delete(row)
     db.flush()
+
+
+def bumagi_s_dolgom(db: Session, kinds, limit: int = 200) -> list[tuple[Document, int]]:
+    """Бумаги, по которым получено меньше, чем выписано: (бумага, получено).
+
+    Сравнение в базе — в ТЫСЯЧНЫХ минорных (сумма строк без деления против
+    полученного, умноженного на тысячу), чтобы не заводить второго счёта денег:
+    точный итог бумаги считает `document_service.total_minor`, здесь только
+    отбор кандидатов. Порядок — по остатку, крупные долги сверху.
+    """
+    stroki = (
+        select(
+            DocumentLine.document_id.label("did"),
+            func.sum(DocumentLine.quantity_milli * func.coalesce(DocumentLine.price_minor, 0)).label("raw"),
+        )
+        .group_by(DocumentLine.document_id)
+        .subquery()
+    )
+    polucheno = (
+        select(FinanceOperation.document_id.label("did"), func.sum(FinanceOperation.amount_minor).label("got"))
+        .join(FinanceCategory, FinanceCategory.id == FinanceOperation.category_id)
+        .where(*_postupleniya(), FinanceOperation.document_id.is_not(None))
+        .group_by(FinanceOperation.document_id)
+        .subquery()
+    )
+    got = func.coalesce(polucheno.c.got, 0)
+    stmt = (
+        select(Document, got)
+        .join(stroki, stroki.c.did == Document.id)
+        .outerjoin(polucheno, polucheno.c.did == Document.id)
+        .where(
+            Document.kind.in_(tuple(kinds)),
+            Document.status != STATUS_CANCELLED,
+            stroki.c.raw > got * 1000,
+        )
+        .order_by((stroki.c.raw - got * 1000).desc(), Document.id.desc())
+        .limit(limit)
+    )
+    return [(bumaga, int(polucheno_minor or 0)) for bumaga, polucheno_minor in db.execute(stmt).all()]

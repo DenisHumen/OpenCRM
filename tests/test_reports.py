@@ -1123,3 +1123,43 @@ def test_okna_otchyotov_lezhat_v_proshlom():
     segodnya = datetime.now()
     for imya, moment in (("at", at(1)), ("sep", sep(1)), ("dec", dec(1))):
         assert moment < segodnya, f"окно {imya}() лежит в будущем — оно однажды наступит"
+
+
+def test_dolgi_klientov_schitayut_ostatok_k_oplate(root_client):
+    """Долги (план И-03): заказ на 1000, получено 300 — в отчёте остаток 700;
+    доплата 700 — из отчёта уходит. Выгрузка — как у соседей."""
+    bylo = {m["key"]: m["enabled"] for m in root_client.get(f"{MODULES}").json()["items"]}
+    for key in ("documents", "warehouse", "orders", "finance"):
+        root_client.post(f"{MODULES}/{key}", json={"enabled": True})
+    try:
+        statya = root_client.post(
+            f"{API}/finance/categories", json={"name": "Долги: продажи", "direction": "income"}
+        ).json()
+        klient = root_client.post(f"{API}/clients", json={"name": "Должник отчёта"}).json()
+        tovar = root_client.post(
+            f"{API}/warehouse/products", json={"name": "Товар долга", "price": 500, "cost": 100}
+        ).json()
+        order = root_client.post(f"{API}/orders", json={"kind": "sales_order", "client_id": klient["id"]}).json()
+        root_client.post(f"{API}/orders/{order['id']}/lines", json={"product_id": tovar["id"], "quantity": "2"})
+        root_client.post(
+            f"{API}/finance/payments",
+            json={"category_id": statya["id"], "amount": 300, "document_id": order["id"], "client_id": klient["id"]},
+        )
+        otchyot = root_client.get(f"{REPORTS}/debts").json()
+        [stroka] = [r for r in otchyot["items"] if r["document_id"] == order["id"]]
+        assert stroka["total"] == 1000 and stroka["received"] == 300 and stroka["due"] == 700
+        assert stroka["client_name"] == "Должник отчёта"
+        assert otchyot["total_due"] >= 700
+
+        csv = root_client.get(f"{REPORTS}/debts.csv", params=WINDOW)
+        assert csv.status_code == 200 and csv.content.startswith(b"\xef\xbb\xbf")
+        assert order["number"] in csv.content.decode("utf-8-sig")
+
+        root_client.post(
+            f"{API}/finance/payments",
+            json={"category_id": statya["id"], "amount": 700, "document_id": order["id"], "client_id": klient["id"]},
+        )
+        assert not [r for r in root_client.get(f"{REPORTS}/debts").json()["items"] if r["document_id"] == order["id"]]
+    finally:
+        for key in ("finance", "orders", "warehouse", "documents"):
+            root_client.post(f"{MODULES}/{key}", json={"enabled": bylo.get(key, False)})
