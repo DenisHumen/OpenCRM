@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
-import { formatQuantity } from "../lib/format";
+import { formatDate, formatMoney, formatQuantity } from "../lib/format";
 import { moduleOn } from "../lib/modules";
 
 type Derzhatel = {
@@ -12,6 +12,10 @@ type Derzhatel = {
   id: number | null;
   title: string | null;
   quantity_milli: number;
+  /** Сумма заявки или заказа; пусто без права на суммы и у чужих. */
+  amount: number | null;
+  at: string | null;
+  due_at: string | null;
 };
 
 type Nalichie = {
@@ -33,7 +37,7 @@ type Nalichie = {
  * занимает место и ничего не сообщает.
  */
 export function ProductHolders({ productId }: { productId: number }) {
-  const { t, modules, toastError } = useApp();
+  const { t, locale, workspace, modules, toastError } = useApp();
   const [data, setData] = useState<Nalichie | null>(null);
   const vklyuchen = moduleOn(modules, "warehouse");
 
@@ -76,6 +80,14 @@ export function ProductHolders({ productId }: { productId: number }) {
               </span>
               <span style={{ color: "var(--faint)", fontSize: 12 }}>
                 {t(d.kind === "deal" ? "deal" : "order")}
+              </span>
+              {/* Срок, если назван, иначе дата заведения: кому отдать первому,
+                  решают по сроку; сумма — по ней же. */}
+              <span style={{ color: "var(--faint)", fontSize: 12, width: 84, textAlign: "right" }}>
+                {d.due_at ? t("holderDue", { d: formatDate(d.due_at, locale) }) : d.at ? formatDate(d.at, locale) : ""}
+              </span>
+              <span style={{ color: "var(--muted)", fontSize: 12.5, width: 96, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
+                {d.amount !== null ? formatMoney(d.amount, workspace.currency, locale) : ""}
               </span>
               <span style={{ color: "var(--muted)", width: 80, textAlign: "right" }}>
                 {formatQuantity(d.quantity_milli)}

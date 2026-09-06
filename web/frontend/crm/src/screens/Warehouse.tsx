@@ -93,11 +93,15 @@ export function Warehouse() {
   const search = useDebounced(query);
 
   const NA_STRANITSE = 100;
+  // Порядок: по названию или по остатку (мало сверху / много сверху) — «что
+  // закупать» и «что залежалось» ищут одним переключателем.
+  const [poryadok, setPoryadok] = useState("name");
   // Отбор без номера страницы: смена отбора обязана начинать список заново,
   // а не дописывать чужое к своему.
   const otbor =
     `/warehouse/products?search=${encodeURIComponent(search)}&low_only=${lowOnly}` +
-    (place ? `&warehouse_id=${place}` : "");
+    (place ? `&warehouse_id=${place}` : "") +
+    (poryadok !== "name" ? `&sort=${poryadok}` : "");
 
   useEffect(() => {
     // Склад и «только мало» переключают быстрее, чем отвечает сервер: без
@@ -215,6 +219,16 @@ export function Warehouse() {
           <Icon name="alert" size={13} />
           {t("onlyLow")}
         </button>
+        <select
+          className="input sort-select"
+          value={poryadok}
+          onChange={(e) => setPoryadok(e.target.value)}
+          aria-label={t("sortLabel")}
+        >
+          <option value="name">{t("whSortName")}</option>
+          <option value="stock">{t("whSortStockLow")}</option>
+          <option value="stock_desc">{t("whSortStockHigh")}</option>
+        </select>
       </div>
 
       <div className="list-card">
@@ -223,6 +237,10 @@ export function Warehouse() {
           <span style={{ flex: 1 }}>{t("product")}</span>
           <span style={{ width: 110, textAlign: "right" }}>{t("costPrice")}</span>
           <span style={{ width: 110, textAlign: "right" }}>{t("sellPrice")}</span>
+          {/* Колонка «продано за 30 дней» — только когда сервер её отдал (блок заказов). */}
+          {data.items.some((p) => p.sales_30d !== undefined) && (
+            <span style={{ width: 100, textAlign: "right" }}>{t("whSold30")}</span>
+          )}
           <span style={{ width: 150, textAlign: "right" }}>{t("stock")}</span>
         </div>
         {data.items.map((product) => (
@@ -244,6 +262,11 @@ export function Warehouse() {
             <span style={{ width: 110, textAlign: "right", color: "var(--muted)", fontSize: 12.5 }}>
               {formatMoney(product.price, currency, locale)}
             </span>
+            {data.items.some((p) => p.sales_30d !== undefined) && (
+              <span style={{ width: 100, textAlign: "right", color: product.sales_30d?.quantity_milli ? "var(--muted)" : "var(--faint)", fontSize: 12.5 }}>
+                {product.sales_30d ? formatQuantity(product.sales_30d.quantity_milli) : ""}
+              </span>
+            )}
             <span style={{ width: 150, textAlign: "right", flexShrink: 0 }}>
               <StockValue product={product} />
             </span>

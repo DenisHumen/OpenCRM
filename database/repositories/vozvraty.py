@@ -143,3 +143,27 @@ def vozvraty_tovara(db: Session, product_id: int, start: datetime) -> dict:
         )
     ).one()
     return {"quantity_milli": as_int(stroka[0]), "count": int(stroka[1] or 0)}
+
+
+def prodazhi_po_tovaram(db: Session, product_ids, start: datetime) -> dict[int, dict]:
+    """То же, что `prodazhi_tovara`, но на страницу списка одним запросом:
+    {товар: {quantity_milli, count}}."""
+    ids = [int(i) for i in set(product_ids) if i]
+    if not ids:
+        return {}
+    ryady = db.execute(
+        select(
+            DocumentLine.product_id,
+            func.coalesce(func.sum(DocumentLine.quantity_milli), 0),
+            func.count(func.distinct(DocumentLine.document_id)),
+        )
+        .join(Document, Document.id == DocumentLine.document_id)
+        .where(
+            Document.kind == KIND_SALES_ORDER,
+            Document.status == STATUS_CLOSED,
+            Document.updated_at >= start,
+            DocumentLine.product_id.in_(ids),
+        )
+        .group_by(DocumentLine.product_id)
+    ).all()
+    return {int(pid): {"quantity_milli": as_int(skolko), "count": int(zakazov or 0)} for pid, skolko, zakazov in ryady}

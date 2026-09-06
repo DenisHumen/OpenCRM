@@ -118,12 +118,18 @@ def max_vydannogo_sku(db: Session, prefix: str, digits: int) -> int:
     return int(nash[len(prefix):]) if nash else 0
 
 
+#: Порядки списка товаров. По остатку — по сумме движений на всех складах:
+#: остаток не хранится, и сортировать по нему можно только той же суммой.
+PRODUCT_SORTS = ("name", "stock", "stock_desc")
+
+
 def search_products(
     db: Session,
     q: str | None = None,
     include_services: bool = True,
     page: int = 1,
     per_page: int = 50,
+    sort: str | None = None,
 ) -> tuple[list[Product], int]:
     stmt = select(Product).where(Product.deleted_at.is_(None))
     if q:
@@ -131,7 +137,20 @@ def search_products(
         stmt = stmt.where(or_(contains(Product.name, needle), contains(Product.sku, needle)))
     if not include_services:
         stmt = stmt.where(Product.is_service.is_(False))
-    stmt = stmt.order_by(Product.name)
+    if sort in ("stock", "stock_desc"):
+        ostatok = (
+            select(StockMove.product_id.label("pid"), func.sum(StockMove.quantity_milli).label("summa"))
+            .group_by(StockMove.product_id)
+            .subquery()
+        )
+        velichina = func.coalesce(ostatok.c.summa, 0)
+        stmt = stmt.outerjoin(ostatok, ostatok.c.pid == Product.id)
+        if sort == "stock":
+            stmt = stmt.order_by(velichina.asc(), Product.id.asc())
+        else:
+            stmt = stmt.order_by(velichina.desc(), Product.id.desc())
+    else:
+        stmt = stmt.order_by(Product.name.asc(), Product.id.asc())
     return page_of(db, stmt, page=page, per_page=per_page)
 
 

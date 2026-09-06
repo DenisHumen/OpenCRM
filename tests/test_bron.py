@@ -95,6 +95,8 @@ def test_vidno_kakaya_zayavka_derzhit(root_client, tovar, zayavka):
     assert derzhateli[0]["id"] == zayavka["id"]
     assert derzhateli[0]["title"] == "Заявка с бронью"
     assert derzhateli[0]["quantity_milli"] == 3000
+    # Сумма и дата рядом с количеством (план Г-02): решают, кому отдать первому.
+    assert derzhateli[0]["at"] and "amount" in derzhateli[0] and "due_at" in derzhateli[0]
 
 
 def test_zakaz_iz_zayavki_ne_udvaivaet_bron(root_client, tovar, zayavka):

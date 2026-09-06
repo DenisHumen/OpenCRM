@@ -873,3 +873,36 @@ def test_kartochka_tovara_znaet_prodazhi_vozvraty_i_bron(root_client):
 
     bez = root_client.get(f"{WH}/products/{item['id']}").json()
     assert "sales_30d" not in bez and "available_milli" not in bez, "блок заказов выключен — ключей нет"
+
+
+def test_spisok_sortiruetsya_po_ostatku_i_znaet_prodazhi(root_client):
+    """Список склада (план Д-06): порядок по остатку в обе стороны, незнакомый —
+    отказ; «продано за 30 дней» — с блоком заказов, одним запросом на страницу."""
+    import secrets
+
+    metka = f"Сорт {secrets.token_hex(3)}"
+    malo = root_client.post(f"{WH}/products", json={"name": f"{metka} мало", "price": 100}).json()
+    mnogo = root_client.post(f"{WH}/products", json={"name": f"{metka} много", "price": 100}).json()
+    root_client.post(f"{WH}/moves", json={"product_id": malo["id"], "kind": "in", "quantity": "1"})
+    root_client.post(f"{WH}/moves", json={"product_id": mnogo["id"], "kind": "in", "quantity": "9"})
+
+    po_vozrastaniyu = [p["id"] for p in root_client.get(f"{WH}/products", params={"search": metka, "sort": "stock"}).json()["items"]]
+    assert po_vozrastaniyu == [malo["id"], mnogo["id"]]
+    po_ubyvaniyu = [p["id"] for p in root_client.get(f"{WH}/products", params={"search": metka, "sort": "stock_desc"}).json()["items"]]
+    assert po_ubyvaniyu == [mnogo["id"], malo["id"]]
+    otkaz = root_client.get(f"{WH}/products", params={"sort": "price"})
+    assert otkaz.status_code == 422 and otkaz.json()["error"]["code"] == "unknown_sort"
+
+    bylo = {m["key"]: m["enabled"] for m in root_client.get(f"{API}/modules").json()["items"]}
+    for key in ("documents", "orders"):
+        root_client.post(f"{API}/modules/{key}", json={"enabled": True})
+    try:
+        order = root_client.post(f"{API}/orders", json={"kind": "sales_order"}).json()
+        root_client.post(f"{API}/orders/{order['id']}/lines", json={"product_id": mnogo["id"], "quantity": "4"})
+        assert root_client.post(f"{API}/orders/{order['id']}/close", json={}).status_code == 200
+        stroki = {p["id"]: p for p in root_client.get(f"{WH}/products", params={"search": metka}).json()["items"]}
+        assert stroki[mnogo["id"]]["sales_30d"] == {"quantity_milli": 4000, "count": 1}
+        assert stroki[malo["id"]]["sales_30d"] == {"quantity_milli": 0, "count": 0}
+    finally:
+        for key in ("orders", "documents"):
+            root_client.post(f"{API}/modules/{key}", json={"enabled": bylo.get(key, False)})
