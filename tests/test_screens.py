@@ -1788,3 +1788,26 @@ def test_umolchaniya_naborov_podpisany_slovami_interfeysa():
     karta = (SCREENS / "lib" / "roli.ts").read_text(encoding="utf-8")
     bez = sorted(n for n in imena if f'"{n}":' not in karta) + sorted(k for k in klyuchi if f'"{k}":' not in karta)
     assert bez == [], f"роли-пресеты без подписи на экране: {bez}"
+
+
+# Коды, которые человек получает с экрана каждый день: без подписи плашка
+# говорит по-английски на русском экране (проба 06.09.2026).
+OBYAZATELNYE_KODY = (
+    "invalid_credentials", "account_pending", "account_disabled", "login_rate_limited",
+    "wrong_password", "weak_password", "email_taken", "not_enough_stock", "document_finished",
+    "order_finished", "deal_closed", "backup_busy", "module_disabled", "permission_denied",
+    "session_invalid", "rate_limited",
+)
+
+
+def test_otkazy_servera_podpisany_slovami_interfeysa():
+    """Карта отказов знает только живые коды сервера (мёртвый код в карте — ложное
+    обещание), а обязательные коды — все в карте."""
+    karta = (SCREENS / "lib" / "oshibki.ts").read_text(encoding="utf-8")
+    kody = set(re.findall(r"^  (\w+): \"err\w+\",", karta, re.M))
+    assert len(kody) > 50
+    server = "".join(p.read_text(encoding="utf-8") for d in ("core", "web") for p in (KOREN / d).rglob("*.py"))
+    myortvye = sorted(k for k in kody if f'code="{k}"' not in server)
+    assert myortvye == [], f"в карте отказов коды, которых сервер не знает: {myortvye}"
+    bez = sorted(k for k in OBYAZATELNYE_KODY if k not in kody)
+    assert bez == [], f"обязательные коды без подписи: {bez}"

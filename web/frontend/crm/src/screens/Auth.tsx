@@ -1,8 +1,9 @@
 import { useState, type FormEvent } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 
-import { api, ApiError, type User } from "../lib/api";
+import { api, type User } from "../lib/api";
 import { useApp } from "../lib/app";
+import { podpisOshibki } from "../lib/oshibki";
 
 type View = "login" | "register" | "pending";
 
@@ -72,7 +73,7 @@ export function AuthScreen() {
       setUser(me);
       navigate(me.must_change_password ? "/" : ((location.state as any)?.from?.pathname ?? "/"), { replace: true });
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : t("error"));
+      setError(podpisOshibki(err, t));
     } finally {
       setBusy(false);
     }
@@ -86,7 +87,7 @@ export function AuthScreen() {
       await api.post("/auth/register", { name, email, password });
       setView("pending");
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : t("error"));
+      setError(podpisOshibki(err, t));
     } finally {
       setBusy(false);
     }
@@ -258,8 +259,7 @@ export function ForcePasswordChange() {
       const me = await api.get<User>("/auth/me");
       setUser(me);
     } catch (err) {
-      if (err instanceof ApiError) setError(err.message);
-      else toastError(err);
+      setError(podpisOshibki(err, t));
     } finally {
       setBusy(false);
     }
