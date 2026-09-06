@@ -276,9 +276,9 @@ export function Globus() {
       let poprosili = 0;
       for (const p of nuzhny) {
         const k = klyuch_plitki(p);
-        // Не больше двух запросов за подход: очередь на сервере всё равно
-        // одна, а планету за это время успевают увезти.
-        if (sklad_plitok.current.has(k) || poprosili >= 2) continue;
+        // Не больше четырёх за подход: плитка приходит за доли секунды, но
+        // планету всё это время могут увозить, и старые запросы пропадут.
+        if (sklad_plitok.current.has(k) || poprosili >= 4) continue;
         if (teper - (sprosheno.current.get(k) ?? 0) < POVTOR_MS) continue;
         sprosheno.current.set(k, teper);
         poprosili += 1;

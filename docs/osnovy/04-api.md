@@ -249,9 +249,11 @@
 |---|---|---|---|
 | GET | `/clients` | 🔑 `clients.view` | Список: `?search=`, `?tag=`, `?manager_id=`, пагинация, сортировка по обновлению. В строках — `deals_open`, `deals_open_amount` (пусто без права на суммы), `deals_won`, `last_contact_at`: по два запроса на страницу, чужие заявки не в счёт |
 | GET | `/clients/export.csv` | 🔑 `clients.view` | Тот же отбор файлом, целиком и без страниц. Больше 10 000 строк — отказ `export_too_large`, а не молчаливое обрезание. Право то же, что на просмотр: выгрузка отдаёт ровно то, что человек и так видит |
+| GET | `/clients/address/suggest?q=` | 🔑 `clients.edit` | Подсказки адреса при наборе: `label`, `country_code`, `city`, `postcode`, `street`, `lat`, `lon`. Пустой список — не отказ, а обычное состояние (выключено в настройках, короткий запрос, нет сети). Право на правку, а не на просмотр: каждый вопрос уходит на чужой сервер |
 | POST | `/clients` | 🔑 `clients.create` | Создать карточку |
 | GET | `/clients/{id}` | 🔑 `clients.view` | Карточка целиком: контакты, последние заметки, файлы, заявки, `svodka` — заявки по виду этапа (`open_count`/`open_amount`, `won_count`/`won_amount`, `lost_count`), `received_12m` (касса за год; блок денег и право на суммы), `last_contact` (последняя запись ленты), `last_call_at`, `papers` по видам, `manager_name`. Чужие заявки в счёт не идут, суммы пустеют без права |
 | PATCH | `/clients/{id}` | 🔑 `clients.edit` | Обновить поля |
+| PATCH | `/clients/{id}/address` | 🔑 `clients.edit` | Записать выбранную подсказку: страна, город, индекс, улица и точка — одним запросом. Адрес заменяется целиком, пустыми полями тоже. Разбор — [26-adresa.md](../bloki/26-adresa.md) |
 | DELETE | `/clients/{id}` | 🔑 `clients.delete` | Мягкое удаление |
 | POST | `/clients/{id}/restore` | 🔑 `clients.restore` | Вернуть из корзины |
 | GET | `/clients/{id}/notes` | 🔑 `clients.view` | Лента истории (пагинация). Фильтры `kind` и `deal_id` |
@@ -1902,7 +1904,7 @@ curl -sS -X POST https://crm.example.com/api/v1/site/orders \
 | POST | `/globe/detail` | `settings.manage` | Включить докачку и попробовать сейчас |
 | DELETE | `/globe/detail` | `settings.manage` | Выключить докачку и убрать скачанное |
 | GET | `/globe/map` | `globe.view` | Скачанные очертания. Пустой список — их нет, экран рисует вшитые |
-| GET | `/globe/streets` | `globe.view` | Улицы и дома одной плитки (`?x=&y=`, уровень 16). Плитки, которой нет, — не отказ: `gotovo: false`, и запрос наружу уходит только при включённой докачке |
+| GET | `/globe/streets` | `globe.view` | Улицы и дома одной плитки (`?x=&y=`, уровень 14). Плитки, которой нет, — не отказ: `gotovo: false`, и запрос наружу уходит только при включённой докачке |
 | PATCH | `/clients/{id}/geo` | `clients.edit` | Поставить точку клиента руками или снять её (`lat`, `lon`; пусто — снять) |
 
 Разбор блока — [25-globus.md](../bloki/25-globus.md).
