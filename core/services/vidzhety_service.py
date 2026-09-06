@@ -44,6 +44,12 @@ REESTR: dict[str, dict] = {
     "storage": {"module": None, "perm": None, "w": 4, "shiriny": (2, 4), "odin": True},
     "recent_boards": {"module": "boards", "perm": None, "w": 2, "shiriny": (2, 4), "odin": True},
     "recent_clients": {"module": None, "perm": "clients.view", "w": 2, "shiriny": (2, 4), "odin": True},
+    # Ход докачки подробных очертаний планеты. Появляется только с блоком
+    # глобуса — у кого его нет, тому и качать нечего.
+    "globe_detail": {"module": "globe", "perm": None, "w": 1, "shiriny": (1, 2), "odin": True},
+    # Ход докачки подробных очертаний планеты. Появляется только с блоком
+    # глобуса — у кого его нет, тому и качать нечего.
+    "globe_detail": {"module": "globe", "perm": None, "w": 1, "shiriny": (1, 2), "odin": True},
     # Ключ сайта: по одному виджету на ключ, ключ обязан существовать.
     "api_key": {"module": None, "perm": "settings.manage", "w": 2, "shiriny": (2, 4), "odin": False},
 }

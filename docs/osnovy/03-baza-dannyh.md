@@ -71,6 +71,8 @@ erDiagram
         string email
         string messenger "telegram/whatsapp @..."
         string tags "comma-separated"
+        int lat_e7 "точка на глобусе, 1e-7 градуса; NULL — считаем по стране"
+        int lon_e7
         int manager_id FK
         datetime created_at
         datetime updated_at
@@ -112,6 +114,7 @@ erDiagram
         datetime created_at
         datetime updated_at
         datetime deleted_at
+            bool geo_enabled "отмечать ли гостей этой доски на глобусе"
     }
 
     works {
@@ -153,6 +156,7 @@ erDiagram
         datetime viewed_at
         string ip_hash
         string user_agent
+            string tz "часовой пояс браузера гостя; пусто — не собирали"
     }
 
     site_settings {
@@ -1238,6 +1242,12 @@ docker compose -p opencrm-tests -f docker/docker-compose.tests.yml up --build   
 Отдельной таблицы нет: одна строка на человека, своих запросов нет, а
 проверка содержимого живёт в `core/services/vidzhety_service` — разбор в
 [05](../dizayn/05-dizayn-crm.md), «Сводка из виджетов».
+
+**Точка клиента, пояс гостя и тумблер доски** (06.09.2026, блок `globe`):
+хранится только источник — поставленная рукой точка (`clients.lat_e7`) и сырой
+часовой пояс браузера гостя (`share_views.tz`). Центр страны и город пояса
+производны и считаются при чтении: правило «производное не хранится» тут то же,
+что у остатка склада. Разбор — [25-globus.md](../bloki/25-globus.md) §5.
 
 **Аватар и «когда его спрашивали» — две разные колонки** (`avatar_path` и
 `avatar_checked_at`), и вторая не служебная. Аватар не приходит с сообщением, за

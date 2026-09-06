@@ -1133,6 +1133,58 @@ export const RUKOVODSTVO: Razdel[] = [
     nazvanie: { ru: "Деньги и отчёты", en: "Money and reports" },
     statyi: [
       {
+        id: "globus",
+        perm: "globe.view",
+        module: "globe",
+        nazvanie: { ru: "Глобус", en: "Globe" },
+        kratko: {
+          ru: "Клиенты, связи и гости витрин точками на планете.",
+          en: "Clients, links and showcase visitors as points on a planet.",
+        },
+        kuski: [
+          {
+            vid: "abzats",
+            tekst: {
+              ru: "Экран отвечает на «где» и «с кем связано»: точки клиентов, линии от базы фирмы к тем, у кого есть открытая работа, и гости, смотревшие витрины.",
+              en: "The screen answers where and with whom: client points, lines from your base to everyone with open work, and visitors who opened the showcases.",
+            },
+          },
+          {
+            vid: "vnimanie",
+            tekst: {
+              ru: "Точность грубая по построению. Ореол вокруг точки тем больше, чем хуже известно место: точка поставлена рукой, город узнан или известна только страна.",
+              en: "Precision is coarse by design. The halo around a point grows as the place gets vaguer: an exact point, a recognised city, or only a country.",
+            },
+          },
+          {
+            vid: "spisok",
+            punkty: [
+              {
+                ru: "Слои слева включаются по одному: клиенты, заявки, заказы, просрочка, гости, связи, сетка, подписи, день и ночь.",
+                en: "Layers on the left switch one by one: clients, deals, orders, overdue, visitors, links, grid, labels, day and night.",
+              },
+              {
+                ru: "Нажатие на точку доворачивает планету к ней и открывает карточку; связи этой точки разгораются, остальные гаснут.",
+                en: "Clicking a point turns the planet to it and opens a card; that point's links light up while the rest dim.",
+              },
+              {
+                ru: "Гостей витрин видно, только когда у доски включён тумблер «Отмечать гостей на глобусе». Разрешения у клиента страница не спрашивает.",
+                en: "Showcase visitors appear only for boards with the globe toggle on. The page never asks the visitor for permission.",
+              },
+              {
+                ru: "Планета работает без интернета. При сети можно подтянуть подробные очертания берегов — кнопкой справа.",
+                en: "The planet works offline. With the internet you can pull finer coastlines with the button on the right.",
+              },
+            ],
+          },
+          {
+            vid: "ekran",
+            put: "/globe",
+            podpis: { ru: "Открыть глобус", en: "Open the globe" },
+          },
+        ],
+      },
+      {
         id: "finansy",
         perm: "finance.view",
         module: "finance",

@@ -927,4 +927,20 @@
     touchX = null;
   }, { passive: true });
 </script>
+{% if geo_on %}
+<script>
+  // Часовой пояс браузера — единственный признак места, который не спрашивает
+  // разрешения и не тревожит клиента. Один заход — одна отметка; отказ сервера
+  // (тумблер доски выключили) молча заканчивает попытки.
+  (function () {
+    try {
+      var poyas = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      if (!poyas) return;
+      fetch("/b/{{ board_token }}/geo?tz=" + encodeURIComponent(poyas), {
+        method: "POST", keepalive: true, credentials: "same-origin",
+      }).catch(function () {});
+    } catch (e) {}
+  })();
+</script>
+{% endif %}
 {% endblock %}

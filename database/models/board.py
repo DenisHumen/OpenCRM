@@ -39,6 +39,10 @@ class Board(Base):
         ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
     is_published: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Отмечать ли гостей этой доски на глобусе. Включено, но собирать начнёт
+    # только при включённом блоке `globe`: тумблер гасит сбор целиком, чтобы
+    # клиента не тревожить (docs/bloki/25-globus.md §10).
+    geo_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()

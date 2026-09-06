@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, Form, Request
+from fastapi import APIRouter, Depends, Form, Request, Response
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
@@ -11,6 +11,7 @@ from core import exceptions as errors
 from core.security import tokens
 from core.services import (
     board_service,
+    globus_service,
     media_service,
     modules_service,
     settings_service,
@@ -21,7 +22,7 @@ from core.services import site_service
 from database.models.document import KIND_ACT, KIND_INTAKE
 from database.repositories import boards as boards_repo
 from web.api import schemas
-from web.api.deps import client_ip, document_limiter, get_db, pin_limiter
+from web.api.deps import client_ip, document_limiter, geo_limiter, get_db, pin_limiter
 from web.public import layout
 
 router = APIRouter(tags=["public"])
@@ -234,6 +235,10 @@ def showcase(token: str, request: Request, db: Session = Depends(get_db)):
             "cropped_on_phone": layout.phone_cropped_indexes(works_payload),
             "og_image": og_image,
             "page_url": f"{base_url}/b/{token}",
+            # Маячок часового пояса ставится только при обоих включённых:
+            # блок глобуса и тумблер доски. Выключено — скрипта на странице нет.
+            "geo_on": bool(board.geo_enabled) and modules_service.is_enabled(db, "globe"),
+            "board_token": token,
         },
     )
 
@@ -242,6 +247,37 @@ def _og_default_url(site: dict) -> str | None:
     if not site.get("og_default_image"):
         return None
     return f"{get_settings().base_url.rstrip('/')}{site['og_default_image']}"
+
+
+@router.post("/b/{token}/geo", status_code=204)
+def showcase_geo(token: str, request: Request, db: Session = Depends(get_db)):
+    """Гость называет свой часовой пояс — по нему глобус ставит точку.
+
+    Пояс берётся из браузера без единого разрешения (`Intl`), и точнее города
+    он не бывает: окно «сайт хочет знать ваше местоположение» на витрине —
+    верный способ потерять клиента (docs/bloki/25-globus.md §5.2).
+    """
+    if not modules_service.is_enabled(db, "boards"):
+        return Response(status_code=204)
+    resolved = share_service.resolve_public(db, token)
+    if resolved is None:
+        return Response(status_code=204)
+    link, board = resolved
+    # Выключенный тумблер доски — отказ, а не тишина: страница не должна
+    # гадать, дошло ли, и при отказе больше не пробует.
+    if not board.geo_enabled or not modules_service.is_enabled(db, "globe"):
+        raise errors.ForbiddenError("Visitor geo is off for this board", code="geo_off")
+
+    ip = client_ip(request)
+    try:
+        geo_limiter.proverit_i_zanyat(f"{link.id}:{tokens.hash_ip(ip)}")
+    except errors.RateLimitedError:
+        return Response(status_code=204)
+
+    poyas = (request.query_params.get("tz") or "")[:64]
+    if globus_service.znakomyy_poyas(poyas):
+        globus_service.zapisat_poyas(db, link.id, tokens.hash_ip(ip), poyas)
+    return Response(status_code=204)
 
 
 @router.post("/b/{token}/pin")
