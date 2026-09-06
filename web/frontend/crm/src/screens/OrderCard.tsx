@@ -99,7 +99,7 @@ export function OrderCard() {
   };
 
   return (
-    <div className="page">
+    <div className="page page-kartochka">
       <Link
         to="/orders"
         style={{ display: "inline-flex", alignItems: "center", gap: 6, color: "var(--muted)", fontSize: 13, marginBottom: 20 }}
@@ -240,29 +240,9 @@ export function OrderCard() {
         </div>
       </div>
 
-      {/* Бумаги, выписанные по этому заказу. Закрытие выписывает накладную, и
-          не показать КАКУЮ значит оставить человека искать её глазами по
-          всему списку накладных.
-
-          Ключа нет вовсе, когда блок накладных выключен, — тогда и строки
-          нет: выключенный блок исчезает целиком, включая упоминания о себе.
-          Пустой массив у заказа, закрытого до переезда, — тоже молчание:
-          обещать бумагу, которой нет, хуже, чем не обещать. */}
-      {order.waybills && order.waybills.length > 0 && (
-        <div className="card" style={{ padding: "10px 14px", marginBottom: 16 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-            <Icon name="receipt" size={14} />
-            <span className="page-sub" style={{ marginTop: 0 }}>{t("orderWaybills")}</span>
-            {order.waybills.map((w) => (
-              <Link key={w.id} className="chip" to={`/waybills/${w.id}`}>
-                {w.number} · {statusLabel(t, w.status, w.kind)}
-              </Link>
-            ))}
-          </div>
-        </div>
-      )}
-
-      <div className="card" style={{ overflow: "hidden", marginBottom: 16 }}>
+      <div className="kart-kolonki">
+      <div className="kart-osnova">
+      <div className="card" style={{ overflow: "hidden", marginBottom: 16, order: 2 }}>
         <div className="list-header">
           <span style={{ flex: 1 }}>{t("orderLineName")}</span>
           <span style={{ width: 130, textAlign: "right" }}>{t("quantity")}</span>
@@ -337,11 +317,15 @@ export function OrderCard() {
         </div>
       </div>
 
-      {open && <AddLine orderId={order.id} onAdded={load} />}
-      {open && <PickScanner orderId={order.id} onPicked={load} />}
+      {open && (
+        <div className="kart-blok" style={{ order: 3 }}>
+          <AddLine orderId={order.id} onAdded={load} />
+          <PickScanner orderId={order.id} onPicked={load} />
+        </div>
+      )}
 
       {open && (
-        <div className="card card-pad" style={{ marginTop: 16, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+        <div className="card card-pad" style={{ order: 4, marginTop: 16, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
           {/* Склад выбирается явно: молчаливое списание с основного однажды
               снимет деталь не оттуда, где её взяли. */}
           <WarehousePicker places={places} value={place ?? places?.items[0]?.id ?? null} onChange={setPlace} inline />
@@ -415,13 +399,40 @@ export function OrderCard() {
           </div>
         </Modal>
       )}
-      {moduleOn(modules, "finance") && can(user, "finance.view") && <OrderMoney order={order} />}
+      </div>
+      <div className="kart-bok">
+      {/* Бумаги, выписанные по этому заказу. Закрытие выписывает накладную, и
+          не показать КАКУЮ значит оставить человека искать её глазами по
+          всему списку накладных.
+
+          Ключа нет вовсе, когда блок накладных выключен, — тогда и строки
+          нет: выключенный блок исчезает целиком, включая упоминания о себе.
+          Пустой массив у заказа, закрытого до переезда, — тоже молчание:
+          обещать бумагу, которой нет, хуже, чем не обещать. */}
+      {order.waybills && order.waybills.length > 0 && (
+        <div className="card" style={{ padding: "10px 14px", marginBottom: 16, order: 5 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <Icon name="receipt" size={14} />
+            <span className="page-sub" style={{ marginTop: 0 }}>{t("orderWaybills")}</span>
+            {order.waybills.map((w) => (
+              <Link key={w.id} className="chip" to={`/waybills/${w.id}`}>
+                {w.number} · {statusLabel(t, w.status, w.kind)}
+              </Link>
+            ))}
+          </div>
+        </div>
+      )}
+      {moduleOn(modules, "finance") && can(user, "finance.view") && (
+        <div className="kart-blok" style={{ order: 6 }}>
+          <OrderMoney order={order} />
+        </div>
+      )}
 
       {/* Назад по проведённому заказу дорога одна — возврат (владелец,
           05.09.2026): отмены проведения нет, бумага о свершившемся не
           переписывается. Заводится черновиком и открывается сразу. */}
       {order.returns && (
-        <div className="card" style={{ padding: "10px 14px", marginBottom: 16 }}>
+        <div className="card" style={{ padding: "10px 14px", marginBottom: 16, order: 7 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
             <Icon name="arrowIn" size={14} />
             <span className="page-sub" style={{ marginTop: 0 }}>{t("returnsOfOrder")}</span>
@@ -457,11 +468,14 @@ export function OrderCard() {
       {/* История заказа. Заведена по беде: закрытие при выключенном складе
           пишет в примечание «движений нет», и показать это было негде —
           человек не отличал «списали» от «не списали». */}
-      <div style={{ marginTop: 20 }}>
+      <div style={{ marginTop: 20, order: 8 }}>
         <History
           events={order.events}
           label={(status) => orderStatusLabel(t, status, order.kind)}
         />
+      </div>
+
+      </div>
       </div>
 
       {confirm && (

@@ -126,7 +126,7 @@ export function CompanyCard() {
   };
 
   return (
-    <div className="page page-narrow">
+    <div className="page page-kartochka">
       <Link to="/companies" className="back-link">
         <Icon name="arrowLeft" size={14} />
         {t("companies")}
@@ -171,6 +171,7 @@ export function CompanyCard() {
         </div>
       </div>
 
+      <div className="kart-setka">
       {SECTIONS.map((section) => (
         <div key={section.title} className="card card-pad" style={{ marginBottom: 20 }}>
           <div className="metric-title" style={{ marginBottom: 12 }}>
@@ -200,6 +201,7 @@ export function CompanyCard() {
           </div>
         </div>
       ))}
+      </div>
 
       <div className="card card-pad">
         <div className="field">
