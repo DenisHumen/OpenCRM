@@ -29,6 +29,7 @@ import {
 import { type Gated, moduleOn, shown } from "../lib/modules";
 import { can } from "../lib/permissions";
 import { useReference } from "../lib/reference";
+import { podpisSistemnoy } from "../lib/sistemnye_zapisi";
 import { term } from "../lib/terms";
 import { MailCompose, type MailSender } from "./Mail";
 import { QuickTask } from "./Tasks";
@@ -566,7 +567,10 @@ export function ClientCard() {
                         </button>
                       )}
                   </div>
-                  <div style={{ color: "var(--text)", fontSize: 13.5, lineHeight: 1.55 }}>{note.body}</div>
+                  <div style={{ color: "var(--text)", fontSize: 13.5, lineHeight: 1.55 }}>
+                    {/* Системные записи хранятся по-английски — на экране их подписываем словами интерфейса. */}
+                    {SYSTEM_NOTE_KINDS.has(note.kind) ? podpisSistemnoy(note.body, t) : note.body}
+                  </div>
                 </div>
               </div>
               </Fragment>

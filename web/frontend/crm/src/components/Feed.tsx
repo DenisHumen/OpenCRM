@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
+import { podpisSistemnoy } from "../lib/sistemnye_zapisi";
 import { useGuard } from "../lib/guard";
 import { formatDateTime } from "../lib/format";
 import { moduleOn } from "../lib/modules";
@@ -234,7 +235,7 @@ export function Feed({ dealId, clientId }: { dealId: number; clientId: number })
                 <Icon name={KIND_ICON[entry.kind] ?? "note"} size={14} />
               </span>
               <div className="feed-text">
-                <div>{entry.body}</div>
+                <div>{podpisSistemnoy(entry.body, t)}</div>
                 <div className="feed-meta">
                   <span>{formatDateTime(entry.happened_at, locale)}</span>
                   {/* Кто — половина смысла ленты. У письма и звонка, пришедших

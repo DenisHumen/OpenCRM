@@ -1723,3 +1723,21 @@ def test_ekrany_slushayut_zhivoy_sloy():
         if "useLiveTopic(" not in (SCREENS / "screens" / ekran).read_text(encoding="utf-8")
     ]
     assert glukhie == [], f"нет подписки на живой слой (useLiveTopic): {glukhie}"
+
+
+#: Начала системных записей, которые пишет сервер (`core/subscriptions.py`,
+#: `order_service`, `return_service`). Появился новый шаблон — подпиши его.
+SISTEMNYE_SHABLONY = (
+    "Order ", "Return ", "Waybill ", "Stage: ", "Document ", "Act ",
+    "shipped by waybill", "received by waybill", "reservation extended", "due date cleared",
+    "handed to the client", "moved on the board", "closed by waybill",
+)
+
+
+def test_sistemnye_zapisi_podpisyvayutsya_slovami_interfeysa():
+    """Лента и история хранят системные записи по-английски; экран подписывает
+    их словами интерфейса по шаблонам сервера. Шаблон без подписи показал бы
+    русскому экрану английскую строку (06.09.2026)."""
+    text = (SCREENS / "lib" / "sistemnye_zapisi.ts").read_text(encoding="utf-8")
+    bez_podpisi = [sh for sh in SISTEMNYE_SHABLONY if sh not in text]
+    assert bez_podpisi == [], f"шаблоны сервера без подписи на экране: {bez_podpisi}"
