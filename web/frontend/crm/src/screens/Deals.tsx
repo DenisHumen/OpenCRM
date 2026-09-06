@@ -13,6 +13,7 @@ import { useGuard } from "../lib/guard";
 import { formatDate, formatMoney, initials } from "../lib/format";
 import { useReference } from "../lib/reference";
 import { term } from "../lib/terms";
+import { nazvanieEtapa } from "../lib/etapy";
 
 /** Ширина, ниже которой доска перестаёт быть доской.
  *
@@ -429,7 +430,7 @@ export function Deals() {
                   <option value="all">{t("allStages")}</option>
                   {columns.map((c) => (
                     <option key={c.key} value={c.key}>
-                      {c.name} · {c.count}
+                      {nazvanieEtapa(t, c.name)} · {c.count}
                     </option>
                   ))}
                 </select>
@@ -438,9 +439,9 @@ export function Deals() {
                 {listed.map((column) => (
                   <div key={column.key} className={"deal-group kanban-" + column.kind}>
                     <div className="kanban-head deal-group-head">
-                      {/* Название пришло из воронки этого бизнеса — как есть */}
+                      {/* Умолчание набора — словом интерфейса, своё название — как есть */}
                       <span style={column.color ? { color: column.color } : undefined}>
-                        {column.name}
+                        {nazvanieEtapa(t, column.name)}
                       </span>
                       <span className="kanban-count">{column.count}</span>
                       {/* Сумма по этапу остаётся на виду и в списке: на
@@ -476,7 +477,7 @@ export function Deals() {
                         >
                           {columns.map((c) => (
                             <option key={c.key} value={c.key}>
-                              {c.name}
+                              {nazvanieEtapa(t, c.name)}
                             </option>
                           ))}
                         </select>
@@ -503,7 +504,7 @@ export function Deals() {
                     {t("allStages")}
                   </button>
                   <span className="filter-chip active">
-                    {columns.find((c) => c.key === stageFilter)?.name}
+                    {nazvanieEtapa(t, columns.find((c) => c.key === stageFilter)?.name)}
                   </span>
                 </div>
               )}
@@ -525,9 +526,9 @@ export function Deals() {
                   onDrop={() => drop(column.key)}
                 >
                   <div className="kanban-head">
-                    {/* Название пришло из воронки этого бизнеса — как есть */}
+                    {/* Умолчание набора — словом интерфейса, своё название — как есть */}
                     <span style={column.color ? { color: column.color } : undefined}>
-                      {column.name}
+                      {nazvanieEtapa(t, column.name)}
                     </span>
                     <span className="kanban-count">{column.count}</span>
                   </div>

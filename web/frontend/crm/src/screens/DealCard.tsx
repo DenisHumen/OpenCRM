@@ -19,6 +19,7 @@ import { moduleOn } from "../lib/modules";
 import { can } from "../lib/permissions";
 import { useReference } from "../lib/reference";
 import { term } from "../lib/terms";
+import { nazvanieEtapa } from "../lib/etapy";
 import { OrdersOfCard } from "../components/OrdersOfCard";
 import { NewDocumentModal } from "./Documents";
 import { MailCompose, type MailSender } from "./Mail";
@@ -229,7 +230,7 @@ export function DealCard() {
             </Link>
             {stage && (
               <Chip variant={stage.kind === "won" ? "success" : stage.kind === "lost" ? "warning" : undefined}>
-                {stage.name}
+                {nazvanieEtapa(t, stage.name)}
               </Chip>
             )}
           </div>
@@ -290,7 +291,7 @@ export function DealCard() {
                     {gde === "proyden" ? <Icon name="check" size={14} stroke={2} /> : i + 1}
                   </span>
                   <span className="shag-telo">
-                    <span className="shag-nazvanie">{s.name}</span>
+                    <span className="shag-nazvanie">{nazvanieEtapa(t, s.name)}</span>
                     <span className="shag-metka">
                       {t(gde === "proyden" ? "stagePassed" : gde === "seychas" ? "stageNow" : "stageAhead")}
                     </span>
@@ -312,7 +313,7 @@ export function DealCard() {
               onClick={() => void moveTo(s.key)}
             >
               {s.kind === "won" && <Icon name="check" size={13} stroke={2} />}
-              {s.name}
+              {nazvanieEtapa(t, s.name)}
             </button>
           ))}
         </div>
@@ -646,7 +647,7 @@ export function DealCard() {
               <li key={h.id}>
                 <span className="stage-log-when">{formatDateTime(h.changed_at, locale)}</span>
                 <span className="stage-log-what">
-                  {h.from_name ? `${h.from_name} → ${h.to_name}` : h.to_name}
+                  {h.from_name ? `${nazvanieEtapa(t, h.from_name)} → ${nazvanieEtapa(t, h.to_name)}` : nazvanieEtapa(t, h.to_name)}
                 </span>
                 <span className="stage-log-span" title={span ? t("stageSpanHint") : undefined}>{span}</span>
                 <span className="stage-log-who">{h.author_name || "—"}</span>

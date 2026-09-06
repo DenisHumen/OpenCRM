@@ -226,6 +226,9 @@ deleted`, `draft → issued`, «Блок tasks». Теперь действия 
 `test_screens.py::test_zhurnal_podpisyvaet_kazhdoe_deystvie_servera`: каждый
 `ACTION_*`/`ENTITY_*` сервера обязан иметь подпись в журнале.
 
+Имена этапов внутри «Stage: A → B» — те же умолчания наборов воронки, что и
+на досках: подписываются через `lib/etapy.ts` (см. [05](05-crm-design.md)).
+
 - отгрузка и приёмка заказа пишут в ленту клиента строку «Order N shipped
   (…)» / «received»; возврат — «Return N for order M: …» (отката больше нет,
   [22](22-vozvraty.md)). Раньше лента знала только отмену;

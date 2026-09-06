@@ -16,6 +16,7 @@ import { useReference } from "../lib/reference";
 import { podpisatsya } from "../lib/tgpotok";
 import { otmetit_otkrytyy_chat } from "../lib/signaly";
 import { formatDateTime, formatMoney, initials } from "../lib/format";
+import { nazvanieEtapa } from "../lib/etapy";
 
 /**
  * Мессенджер: переписка с клиентами через бота фирмы.
@@ -1777,7 +1778,7 @@ export function Telegram() {
                       <Link to={`/deals/${zayavka.id}`}>{zayavka.title}</Link>
                       <div className="tg-delo-line">
                         <span>
-                          {(stages.items ?? []).find((s: any) => s.key === zayavka.stage)?.name ||
+                          {nazvanieEtapa(t, (stages.items ?? []).find((s: any) => s.key === zayavka.stage)?.name) ||
                             zayavka.stage}
                         </span>
                         {/*

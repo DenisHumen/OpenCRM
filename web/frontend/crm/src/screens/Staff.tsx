@@ -18,6 +18,7 @@ import { useGuard } from "../lib/guard";
 import { formatDateTime, initials } from "../lib/format";
 import { can } from "../lib/permissions";
 import { useReference } from "../lib/reference";
+import { nazvanieRoli } from "../lib/roli";
 
 export function Staff() {
   const { t, locale, user, toast, toastError } = useApp();
@@ -229,13 +230,13 @@ export function Staff() {
                   <option value="">{t("noRole")}</option>
                   {roles.items.map((role) => (
                     <option key={role.id} value={role.id}>
-                      {role.name}
+                      {nazvanieRoli(t, role.name)}
                     </option>
                   ))}
                 </select>
               ) : (
                 <Chip title={isSelf ? t("cannotChangeOwnRole") : undefined}>
-                  {person.role_name || t("noRole")}
+                  {nazvanieRoli(t, person.role_name) || t("noRole")}
                 </Chip>
               )}
               {isSelf ? (

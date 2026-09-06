@@ -11,6 +11,7 @@ import {
 } from "../lib/signaly";
 import { formatDate, initials } from "../lib/format";
 import { THEMES, type Theme } from "../lib/theme";
+import { nazvanieRoli } from "../lib/roli";
 
 /** Подпись под каждым положением переключателя тем. */
 const THEME_LABEL: Record<Theme, "themeLight" | "themeDark" | "themeSystem"> = {
@@ -34,7 +35,7 @@ function Propusk({ user, brand }: { user: User; brand: string }) {
       <div className="propusk">
         <div className="propusk-logo">OpenCRM</div>
         <div className="propusk-rol">
-          <span>{user.role === "root" ? t("root") : user.role_name || t("noRole")}</span>
+          <span>{user.role === "root" ? t("root") : nazvanieRoli(t, user.role_name) || t("noRole")}</span>
           <Icon name="check" size={18} stroke={2} />
         </div>
         <div className="propusk-info">
@@ -171,7 +172,7 @@ export function Profile() {
           <div className="page-sub" style={{ marginTop: 4 }}>
             {user.email} ·{" "}
             <span style={{ color: user.role === "root" ? "var(--brand)" : "var(--muted)" }}>
-              {user.role === "root" ? t("root") : user.role_name || t("noRole")}
+              {user.role === "root" ? t("root") : nazvanieRoli(t, user.role_name) || t("noRole")}
             </span>{" "}
             · {t("joined")} {formatDate(user.created_at, locale)}
           </div>

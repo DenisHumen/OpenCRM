@@ -1,4 +1,5 @@
 import { UMOLCHANIYA } from "./documents";
+import { nazvanieEtapa } from "./etapy";
 import type { TranslationKey } from "./i18n";
 
 type T = (key: TranslationKey, params?: Record<string, string | number>) => string;
@@ -25,10 +26,10 @@ export function podpisSistemnoy(text: string | null | undefined, t: T): string {
     return `${t("sysWaybillPosted", { n: m[1], k: m[2] })} (${prichina(m[3], t)})`;
   }
   if ((m = text.match(/^Stage: (.*?) → (.*?) \((.*)\)$/))) {
-    return `${t("sysStage", { a: m[1], b: m[2] })} (${prichina(m[3], t)})`;
+    return `${t("sysStage", { a: nazvanieEtapa(t, m[1]), b: nazvanieEtapa(t, m[2]) })} (${prichina(m[3], t)})`;
   }
   if ((m = text.match(/^Stage: (.*?) \((.*)\)$/))) {
-    return `${t("sysStageOne", { b: m[1] })} (${prichina(m[2], t)})`;
+    return `${t("sysStageOne", { b: nazvanieEtapa(t, m[1]) })} (${prichina(m[2], t)})`;
   }
   if ((m = text.match(/^Document (\S+) (issued|closed|cancelled|ready|in progress)(?:: (.*?))? \((.*)\)$/))) {
     const chto = {
