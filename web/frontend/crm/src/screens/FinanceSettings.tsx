@@ -715,7 +715,7 @@ function RuleModal({
   };
 
   return (
-    <Modal title={rule ? rule.name : t("finNewRule")} onClose={onClose}>
+    <Modal title={rule ? rule.name : t("finNewRule")} onClose={onClose} wide>
       <form onSubmit={submit}>
         <div className="field">
           <label className="label">{t("finRuleName")}</label>

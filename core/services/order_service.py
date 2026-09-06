@@ -46,6 +46,8 @@ from core.services import (
     warehouse_service,
     waybill_service,
 )
+from datetime import timedelta
+
 from core.utils import normalize_phone, now_utc, to_utc_naive
 from database.models import Document, DocumentEvent, DocumentLine, User
 from database.models.audit import SOURCE_MANUAL
@@ -1006,6 +1008,30 @@ def pravit_srok(db: Session, document_id: int, due_at, author: User) -> Document
             from_status=order.status,
             to_status=order.status,
             note=f"due {order.due_at.isoformat(timespec='minutes')}" if order.due_at else "due date cleared",
+            author_id=author.id,
+            author_name=(author.name or "")[:120],
+        ),
+    )
+    return order
+
+
+def prodlit_bron(db: Session, document_id: int, days: int, author: User) -> Document:
+    """Продлить бронь заказа с сайта на `days` дней от «сейчас». Истёкшая
+    бронь товар не держит, а заказ открыт — продление возвращает ему товар
+    без отмены и нового заказа (план З-06)."""
+    order = get(db, document_id)
+    _assert_open(order)
+    if order.reserved_until is None:
+        raise errors.ValidationError("This order has no reservation", code="no_reservation")
+    order.reserved_until = now_utc().replace(tzinfo=None) + timedelta(days=days)
+    db.flush()
+    documents_repo.add_event(
+        db,
+        DocumentEvent(
+            document_id=order.id,
+            from_status=order.status,
+            to_status=order.status,
+            note=f"reservation extended to {order.reserved_until.isoformat(timespec='minutes')}",
             author_id=author.id,
             author_name=(author.name or "")[:120],
         ),

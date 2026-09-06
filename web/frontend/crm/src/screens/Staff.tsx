@@ -193,7 +193,11 @@ export function Staff() {
               <Avatar text={initials(person.name)} src={person.avatar_url} online={person.is_online} />
               <div className="list-row-text">
                 <div className="truncate" style={{ color: "var(--text)", fontSize: 13.5, fontWeight: 500 }}>{person.name}</div>
-                <div className="wrap-anywhere" style={{ color: "var(--faint)", fontSize: 12 }}>{person.email}</div>
+                <div className="wrap-anywhere" style={{ color: "var(--faint)", fontSize: 12 }}>
+                  {person.email}
+                  {/* Открытые заявки — «кто перегружен» видно по штату. */}
+                  {person.deals_open > 0 && ` · ${t("staffDealsOpen", { n: person.deals_open })}`}
+                </div>
               </div>
               <div
                 style={{
@@ -305,11 +309,7 @@ export function Staff() {
                 <Avatar text={initials(person.name)} src={person.avatar_url} />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div className="truncate" style={{ color: "var(--muted)", fontSize: 13.5, fontWeight: 500 }}>{person.name}</div>
-                  <div className="wrap-anywhere" style={{ color: "var(--faint)", fontSize: 12 }}>
-                  {person.email}
-                  {/* Открытые заявки — «кто перегружен» видно по штату. */}
-                  {person.deals_open > 0 && ` · ${t("staffDealsOpen", { n: person.deals_open })}`}
-                </div>
+                  <div className="wrap-anywhere" style={{ color: "var(--faint)", fontSize: 12 }}>{person.email}</div>
                 </div>
                 {managesStaff && (
                   <div style={{ display: "flex", gap: 12 }}>

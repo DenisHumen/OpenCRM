@@ -292,7 +292,7 @@ function NewClientModal({ onClose, onCreated }: { onClose: () => void; onCreated
   };
 
   return (
-    <Modal title={t("newClient")} onClose={onClose}>
+    <Modal title={t("newClient")} onClose={onClose} wide>
       <form onSubmit={submit}>
         <div className="field">
           <label className="label">{t("name")}</label>
