@@ -11,7 +11,7 @@ import { DOC_SORTS, sortLabel, statusLabel, statusVariant } from "../lib/documen
 import { useLiveTopic } from "../lib/live";
 import { useDebounced } from "../lib/debounce";
 import { useFailure } from "../lib/failure";
-import { formatMoney, formatQuantity } from "../lib/format";
+import { formatDate, formatMoney, formatQuantity } from "../lib/format";
 import type { HistoryEvent } from "../components/History";
 import type { OrderLine } from "./Orders";
 
@@ -197,9 +197,14 @@ export function Returns() {
                 {v.lines.length
                   ? v.lines.map((line) => `${line.name} × ${formatQuantity(line.quantity_milli)}`).join(" · ")
                   : t("orderLines")}
+                {/* Причина — первыми словами описания: в списке ищут «тот, что с браком». */}
+                {v.note && <span style={{ color: "var(--faint)" }}>{` — ${v.note}`}</span>}
               </span>
               <span style={{ width: 120, textAlign: "right", color: "var(--text)", fontSize: 13 }}>
                 {formatMoney(v.refund, workspace.currency, locale)}
+              </span>
+              <span style={{ width: 80, textAlign: "right", color: "var(--faint)", fontSize: 12 }}>
+                {formatDate(v.created_at, locale)}
               </span>
               <span style={{ width: 130, textAlign: "right" }}>
                 <Chip variant={statusVariant(v.status, "return")}>{statusLabel(t, v.status, "return")}</Chip>
@@ -329,7 +334,9 @@ function ReturnStats({ attempt }: { attempt: number }) {
                       <span className="src-name">
                         <Link to={`/warehouse/${p.product_id}`}>{p.name}</Link>
                       </span>
-                      <span className="src-num">{formatQuantity(p.quantity_milli)} · {p.returns}</span>
+                      <span className="src-num">
+                        {formatQuantity(p.quantity_milli)} · {t("returnStatsTimes", { n: p.returns })}
+                      </span>
                     </div>
                   ))}
                 </div>

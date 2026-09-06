@@ -327,8 +327,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const toast = useCallback((text: string, error = false) => {
     const id = toastSeq++;
-    setToasts((prev) => [...prev, { id, text, error }]);
-    setTimeout(() => setToasts((prev) => prev.filter((item) => item.id !== id)), 4000);
+    // Одинаковые подряд не копятся: три нажатия по кнопке с отказом давали
+    // три одинаковые плашки столбиком. Ошибка висит вдвое дольше — её читают,
+    // а «сохранено» и так понятно; в очереди не больше четырёх.
+    setToasts((prev) => {
+      if (prev.some((item) => item.text === text && item.error === error)) return prev;
+      return [...prev, { id, text, error }].slice(-4);
+    });
+    setTimeout(() => setToasts((prev) => prev.filter((item) => item.id !== id)), error ? 8000 : 4000);
   }, []);
 
   const toastError = useCallback(
