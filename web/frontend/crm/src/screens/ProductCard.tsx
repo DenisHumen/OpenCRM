@@ -154,7 +154,7 @@ export function ProductCard() {
   const negative = product.stock_milli !== null && product.stock_milli < 0;
 
   return (
-    <div className="page">
+    <div className="page page-kartochka">
       <Link
         to="/warehouse"
         style={{ display: "inline-flex", alignItems: "center", gap: 6, color: "var(--muted)", fontSize: 13, marginBottom: 20 }}
@@ -182,8 +182,12 @@ export function ProductCard() {
       {/* Плитки — то, что спрашивают, открыв товар: остаток, доступно с бронью,
           цена с наценкой, продажи и возвраты (владелец, 06.09.2026). Продажи и
           возвраты приходят только с блоком заказов — без него и плиток нет. */}
-      <TovarPlitki product={product} currency={currency} />
-      <div className="card card-pad" style={{ marginBottom: 20 }}>
+      <div className="kart-kolonki">
+      <div className="kart-osnova">
+      <div className="kart-blok" style={{ order: 1 }}>
+        <TovarPlitki product={product} currency={currency} />
+      </div>
+      <div className="card card-pad" style={{ marginBottom: 20, order: 2 }}>
         {/* Где лежит. Раскладка по местам появляется вместе со вторым складом:
             пока склад один, она повторяла бы общий остаток. */}
         <WarehouseSpread places={places} spread={spread} unit={t(unitKey(product.unit))} />
@@ -197,19 +201,25 @@ export function ProductCard() {
         )}
       </div>
 
-      <ProductTexts product={product} onSaved={() => void load()} />
-      <ProductHolders productId={product.id} />
+      <div className="kart-blok" style={{ order: 3 }}>
+        <ProductTexts product={product} onSaved={() => void load()} />
+      </div>
+      <div className="kart-blok" style={{ order: 4 }}>
+        <ProductHolders productId={product.id} />
+      </div>
 
 
       {!product.is_service && (
-        <MoveForm product={product} places={places} onSaved={() => void load()} />
+        <div className="kart-blok" style={{ order: 5 }}>
+          <MoveForm product={product} places={places} onSaved={() => void load()} />
+        </div>
       )}
 
       {/* Переезд — отдельное действие, а не «расход тут, приход там»: товар не
           появился и не пропал, и в истории это одно событие. Кнопка появляется
           вместе со вторым складом: перевозить внутри одного места нечего. */}
       {!product.is_service && places?.many && (
-        <>
+        <div className="kart-blok" style={{ order: 6 }}>
           <div className="section-head" style={{ marginTop: 28 }}>
             <h2 className="section-title">{t("transfers")}</h2>
             <button
@@ -222,18 +232,27 @@ export function ProductCard() {
             </button>
           </div>
           <TransferLog productId={product.id} productNames={{ [product.id]: product.name }} />
-        </>
+        </div>
       )}
 
       {/* Раздел сам решает, показываться ли: выключен блок или нет права —
           возвращает null. Услуге штрихкод не нужен, её не сканируют с полки. */}
-      {!product.is_service && <ProductBarcodes productId={product.id} />}
+      </div>
+      <div className="kart-bok">
+      {!product.is_service && (
+        <div className="kart-blok" style={{ order: 7 }}>
+          <ProductBarcodes productId={product.id} />
+        </div>
+      )}
 
       {/* Снимки — и услуге тоже. «Выезд мастера» на полке не лежит, но
           фотография у услуги осмысленна: так выглядит результат работы, и
           показать её клиенту проще, чем описать. */}
-      <ProductPhotos productId={product.id} />
+      <div className="kart-blok" style={{ order: 8 }}>
+        <ProductPhotos productId={product.id} />
+      </div>
 
+      <div className="kart-blok" style={{ order: 9 }}>
       <div className="section-head" style={{ marginTop: 28 }}>
         <h2 className="section-title">{t("moves")}</h2>
         <span className="page-sub">{total}</span>
@@ -296,6 +315,9 @@ export function ProductCard() {
           zanyat={dochityvaem}
           onClick={() => void dochitat_dvizheniya()}
         />
+      </div>
+      </div>
+      </div>
       </div>
 
       {showTransfer && places && (

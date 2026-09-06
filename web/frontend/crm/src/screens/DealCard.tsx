@@ -197,7 +197,7 @@ export function DealCard() {
   const closers = (stages.items ?? []).filter((s) => s.kind !== "open");
 
   return (
-    <div className="page page-narrow" ref={koren}>
+    <div className="page page-kartochka" ref={koren}>
       {ustarelo && (
         <div className="maintenance-bar" style={{ marginBottom: 12 }}>
           <span className="dot" />
@@ -329,7 +329,9 @@ export function DealCard() {
         )}
       </div>
 
-      <div className="card card-pad" style={{ marginBottom: 20 }}>
+      <div className="kart-kolonki">
+      <div className="kart-osnova">
+      <div className="card card-pad" style={{ marginBottom: 20, order: 1 }}>
         <div className="deal-fields">
           <div className="field">
             <label className="label">{t("responsible")}</label>
@@ -473,44 +475,10 @@ export function DealCard() {
         </div>
       </div>
 
-      {/* Лента: звонки, письма, встречи и заметки одним потоком. Стоит
-          сразу после полей — это то, что читают, открыв заявку. */}
-      <Feed dealId={deal.id} clientId={deal.client_id} />
-
-      {/* Звонки по этой заявке. Сам разговор уже стоит в ленте выше — здесь
-          то, что в строку ленты не влезает: длительность, итог, запись. */}
-      {moduleOn(modules, "telephony") && can(user, "telephony.view") && (
-        <div className="card card-pad" style={{ marginBottom: 20 }}>
-          <div className="metric-title" style={{ marginBottom: 12 }}>{t("calls")}</div>
-          <CallsPanel dealId={deal.id} />
-        </div>
-      )}
-
-      {/* Напоминание прямо отсюда: «перезвонить в четверг» придумывается во
-          время разговора о заявке, а не потом на отдельном экране. */}
-      {hasTasks && (
-        <div className="card card-pad" style={{ marginBottom: 20 }}>
-          <div className="metric-title" style={{ marginBottom: 12 }}>{t("tasks")}</div>
-          {(tasks.items ?? []).map((task: any) => (
-            <div key={task.id} className="doc-mini">
-              <span className="truncate" style={{ flex: 1, minWidth: 0 }}>{task.title}</span>
-              {task.due_at && (
-                <span style={{ color: "var(--faint)", fontSize: 12 }}>
-                  {formatDateTime(task.due_at, locale)}
-                </span>
-              )}
-            </div>
-          ))}
-          {tasks.failure !== null && (
-            <LoadFailed error={tasks.failure} onRetry={tasks.reload} />
-          )}
-          <QuickTask dealId={deal.id} clientId={deal.client_id} onCreated={tasks.reload} />
-        </div>
-      )}
-
       {/* Что ушло со склада под эту заявку и во сколько это обошлось. Стоит
           рядом с суммой не случайно: выручка без себестоимости не отвечает на
           вопрос, заработали мы на этой работе или нет. */}
+      <div className="kart-blok" style={{ order: 5 }}>
       <DealLines
         dealId={deal.id}
         closed={deal.closed_at !== null}
@@ -525,7 +493,10 @@ export function DealCard() {
           if (deal && deal.amount !== itog) void load();
         }}
       />
-      <DealStock dealId={deal.id} amount={deal.amount ?? null} />
+      </div>
+      <div className="kart-blok" style={{ order: 6 }}>
+        <DealStock dealId={deal.id} amount={deal.amount ?? null} />
+      </div>
 
       {/* Доски, сделанные по этой заявке. Раньше доска знала только клиента,
           и у клиента с пятью заказами за год все они лежали одной кучей.
@@ -533,7 +504,7 @@ export function DealCard() {
           класть доски в ответ сразу, а уже загруженная карточка держит их в
           состоянии до следующего запроса. */}
       {moduleOn(modules, "boards") && can(user, "boards.view") && (deal.boards ?? []).length > 0 && (
-        <div className="card card-pad" style={{ marginBottom: 20 }}>
+        <div className="card card-pad" style={{ marginBottom: 20, order: 7 }}>
           <div className="metric-title" style={{ marginBottom: 12 }}>{t("boards")}</div>
           <div className="doc-mini-list">
             {(deal.boards ?? []).map((board: any) => (
@@ -550,12 +521,14 @@ export function DealCard() {
 
       {/* Заказы этой заявки. Заказ может принадлежать заявке, но не заменяет
           её: заявка — это работа, заказ — перечень позиций. */}
-      <OrdersOfCard dealId={Number(id)} />
+      <div className="kart-blok" style={{ order: 8 }}>
+        <OrdersOfCard dealId={Number(id)} />
+      </div>
 
       {/* Бланки этой сделки. Приняли вещь — выдали бумагу; искать её потом в
           общем списке значит потерять связь с работой, ради которой её выдали. */}
       {hasDocuments && (
-      <div className="card card-pad" style={{ marginBottom: 20 }}>
+      <div className="card card-pad" style={{ marginBottom: 20, order: 9 }}>
         <div className="page-head" style={{ marginBottom: 12 }}>
           <div className="metric-title">
             {t("docOfDeal")}
@@ -632,7 +605,46 @@ export function DealCard() {
       </div>
       )}
 
-      <div className="card card-pad">
+      </div>
+      <div className="kart-bok">
+      {/* Лента: звонки, письма, встречи и заметки одним потоком. Стоит
+          сразу после полей — это то, что читают, открыв заявку. */}
+      <div className="kart-blok" style={{ order: 2 }}>
+        <Feed dealId={deal.id} clientId={deal.client_id} />
+      </div>
+
+      {/* Звонки по этой заявке. Сам разговор уже стоит в ленте выше — здесь
+          то, что в строку ленты не влезает: длительность, итог, запись. */}
+      {moduleOn(modules, "telephony") && can(user, "telephony.view") && (
+          <div className="card card-pad" style={{ marginBottom: 20, order: 3 }}>
+          <div className="metric-title" style={{ marginBottom: 12 }}>{t("calls")}</div>
+          <CallsPanel dealId={deal.id} />
+        </div>
+      )}
+
+      {/* Напоминание прямо отсюда: «перезвонить в четверг» придумывается во
+          время разговора о заявке, а не потом на отдельном экране. */}
+      {hasTasks && (
+          <div className="card card-pad" style={{ marginBottom: 20, order: 4 }}>
+          <div className="metric-title" style={{ marginBottom: 12 }}>{t("tasks")}</div>
+          {(tasks.items ?? []).map((task: any) => (
+            <div key={task.id} className="doc-mini">
+              <span className="truncate" style={{ flex: 1, minWidth: 0 }}>{task.title}</span>
+              {task.due_at && (
+                <span style={{ color: "var(--faint)", fontSize: 12 }}>
+                  {formatDateTime(task.due_at, locale)}
+                </span>
+              )}
+            </div>
+          ))}
+          {tasks.failure !== null && (
+            <LoadFailed error={tasks.failure} onRetry={tasks.reload} />
+          )}
+          <QuickTask dealId={deal.id} clientId={deal.client_id} onCreated={tasks.reload} />
+        </div>
+      )}
+
+      <div className="card card-pad" style={{ order: 10 }}>
         <div className="metric-title" style={{ marginBottom: 12 }}>{t("stageHistory")}</div>
         {/* `?? []` — не перестраховка: неполный ответ уже отправлял этот экран
             в белое. Пустая история читается, отсутствующий экран — нет. */}
@@ -659,6 +671,8 @@ export function DealCard() {
           {t("createdAt", { t: formatDate(deal.created_at, locale) })}
           {deal.closed_at && ` · ${t("closedAt", { t: formatDate(deal.closed_at, locale) })}`}
         </div>
+      </div>
+      </div>
       </div>
 
       {/* Причина отказа — это ввод, а не подтверждение, поэтому обычное окно.

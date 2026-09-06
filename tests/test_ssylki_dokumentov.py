@@ -6,10 +6,11 @@
 уехавшая от файла, не падает ничем: страница открывается, комментарий читается,
 а путь в нём ведёт в пустоту, и узнаёт об этом тот, кто пошёл читать разбор.
 
-Три проверки: относительные ссылки внутри md-файлов; упоминания `docs/…md` в
-любом отслеживаемом файле; указатель `docs/README.md` знает каждый документ.
-Четвёртая — заголовок документа начинается с его номера: по номерам задан
-порядок чтения, и файл без номера в заголовке выпадает из него.
+Проверки: относительные ссылки внутри md-файлов; упоминания `docs/…md` в
+любом файле репозитория; указатель `docs/README.md` знает каждый документ;
+заголовок документа начинается с его номера (по номерам задан порядок
+чтения); корневые документы лежат рядом — на них ссылаются из `docs/`, и в
+образе гейта их пришлось копировать отдельно (`docker/Dockerfile`).
 """
 import pathlib
 import re
@@ -37,15 +38,38 @@ def _md_fayly() -> list[pathlib.Path]:
     return sorted(DOCS.rglob("*.md")) + [p for p in korennye if p.exists()]
 
 
+#: Каталоги, которых нет в репозитории и которые весят больше него: обход по
+#: дереву без них идёт секунду, а с ними — минуты.
+MIMO = {".git", "node_modules", "dist", ".venv", "__pycache__", ".pytest_cache", "storage", "data"}
+
+
 def _otslezhivaemye() -> list[pathlib.Path]:
-    vyvod = subprocess.run(
-        ["git", "ls-files", "-z"], cwd=KOREN, capture_output=True, check=True
-    ).stdout.decode("utf-8")
-    return [KOREN / f for f in vyvod.split("\0") if f]
+    """Файлы репозитория. В образе гейта истории git нет (`docker/Dockerfile`
+    копирует дерево без `.git`), и `git ls-files` там падает — обходим дерево
+    сами. Пропускать проверку нельзя: молчаливо зелёный сторож хуже
+    отсутствующего, а из образа ссылки видно ровно так же."""
+    if (KOREN / ".git").exists():
+        vyvod = subprocess.run(
+            ["git", "ls-files", "-z"], cwd=KOREN, capture_output=True, check=True
+        ).stdout.decode("utf-8")
+        return [KOREN / f for f in vyvod.split("\0") if f]
+    najdeno = []
+    for put in KOREN.rglob("*"):
+        if put.is_file() and not (MIMO & set(put.relative_to(KOREN).parts)):
+            najdeno.append(put)
+    return najdeno
 
 
 def test_perebor_dokumentov_ne_pustoy():
     assert len(_dokumenty()) >= 20, "документы не нашлись — сторож смотрит не туда"
+
+
+def test_kornevye_dokumenty_ryadom():
+    """Из docs/ ссылаются на CLAUDE.md и README.md. Если их нет рядом (образ
+    гейта копирует дерево выборочно), сторож ссылок краснеет непонятной строкой
+    «ссылка в пустоту» — эта проверка называет беду её именем."""
+    net = [imya for imya in ("CLAUDE.md", "README.md", "README.ru.md") if not (KOREN / imya).exists()]
+    assert net == [], f"корневых документов нет рядом: {net} — их копирует этап `tests` docker/Dockerfile"
 
 
 def test_otnositelnye_ssylki_vedut_v_sushchestvuyushchie_fayly():
