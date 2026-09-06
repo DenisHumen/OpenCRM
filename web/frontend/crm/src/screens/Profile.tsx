@@ -154,7 +154,7 @@ export function Profile() {
   };
 
   return (
-    <div className="page page-tight">
+    <div className="page page-kartochka">
       <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 16, marginBottom: 26 }}>
         <div onClick={() => avatarInput.current?.click()} title={t("changePhoto")} style={{ cursor: "pointer" }}>
           <Avatar text={initials(user.name)} large src={user.avatar_url} online />
@@ -192,6 +192,7 @@ export function Profile() {
         <Propusk user={user} brand={workspace.brand_name} />
       </div>
 
+      <div className="kart-setka">
       <div className="card card-pad" style={{ marginBottom: 16 }}>
         <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 16 }}>{t("account")}</div>
         <div className="field">
@@ -311,6 +312,7 @@ export function Profile() {
         </button>
         {passwordError && <div className="form-error">{passwordError}</div>}
       </form>
+      </div>
     </div>
   );
 }
