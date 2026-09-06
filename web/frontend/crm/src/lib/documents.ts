@@ -54,6 +54,14 @@ export function kindLabel(t: TFunc, kind: string): string {
  *  умолчание — не предмет, а вид, и показывается словом интерфейса. */
 const UMOLCHANIYA = new Set(["Sales order", "Purchase order", "Certificate of completed works"]);
 
+/** Клиент бумаги из снимка. Заказ без клиента хранит в снимке тот же
+ *  заголовок-умолчание (`order_service.create`): это не имя, и показывать
+ *  его вторым «Sales order» под первым — тот самый сбой, что ловил владелец. */
+export function klientBumagi(doc: { payload?: { client?: { name?: string | null } | null } | null }): string | null {
+  const name = doc.payload?.client?.name;
+  return name && !UMOLCHANIYA.has(name) ? name : null;
+}
+
 /** Чем бумагу называют вслух: предмет, если его назвали, иначе вид. */
 export function nazvanieBumagi(t: TFunc, doc: { kind: string; payload?: { fields?: { item?: string | null } | null } | null }): string {
   const item = doc.payload?.fields?.item;
