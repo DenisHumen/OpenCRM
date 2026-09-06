@@ -205,6 +205,10 @@ class Document(Base):
     # пока открыт. Срок истекает ЛЕНИВО, условием в `documents_repo.promised`:
     # верность остатка не должна зависеть от того, отработал ли таймер (docs/16 §4).
     reserved_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # Срок заказа: к какому моменту покупатель ждёт выдачу или придёт поставка.
+    # Пусто — срока не называли; у бумаг, кроме заказов, пусто всегда. Индекс —
+    # под «просроченные открытые» на сводке и в отборе списка.
+    due_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
     # Номер заказа в чужой системе. Уникальный индекс — и есть идемпотентность:
     # повтор доставки возвращает заказ победителя. Побайтно: «A1» и «a1» — разные.
     site_ref: Mapped[str | None] = mapped_column(

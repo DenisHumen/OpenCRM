@@ -143,6 +143,8 @@ PORYADKI: dict[str, tuple] = {
     "old": (Document.created_at.asc(), Document.id.asc()),
     "number": (Document.number.desc(), Document.id.desc()),
     "status": (Document.status.asc(), Document.created_at.desc(), Document.id.desc()),
+    # По сроку: ближайшие сверху, без срока — в конце.
+    "due": (Document.due_at.is_(None), Document.due_at.asc(), Document.id.asc()),
 }
 PORYADOK_PO_UMOLCHANIYU = "new"
 
@@ -202,10 +204,32 @@ def search(
     sort: str | None = None,
     page: int = 1,
     per_page: int = 50,
+    statuses=None,
+    due_before=None,
 ) -> tuple[list[Document], int]:
     stmt = select(Document).where(*_usloviya(q, status, client_id, deal_id, basis_id, kinds))
+    # Просроченные: открытые со сроком раньше «сейчас» — отбор поверх обычного.
+    if statuses:
+        stmt = stmt.where(Document.status.in_(tuple(statuses)))
+    if due_before is not None:
+        stmt = stmt.where(Document.due_at.is_not(None), Document.due_at < due_before)
     stmt = stmt.order_by(*PORYADKI.get(sort or "", PORYADKI[PORYADOK_PO_UMOLCHANIYU]))
     return page_of(db, stmt, page=page, per_page=per_page)
+
+
+def prosrocheno_zakazov(db: Session, kinds, statuses, now) -> int:
+    """Сколько открытых заказов со сроком раньше «сейчас» — число на сводку."""
+    return int(
+        db.scalar(
+            select(func.count(Document.id)).where(
+                Document.kind.in_(tuple(kinds)),
+                Document.status.in_(tuple(statuses)),
+                Document.due_at.is_not(None),
+                Document.due_at < now,
+            )
+        )
+        or 0
+    )
 
 
 def schyot_po_vidam(

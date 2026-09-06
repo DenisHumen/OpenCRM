@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 
 import { ContextMenu, punktyDlyaZapisi, useContextMenu } from "../components/ContextMenu";
 import { Icon } from "../components/Icon";
@@ -55,6 +55,9 @@ export interface Order {
   reserve_expired?: boolean;
   created_at: string | null;
   updated_at?: string | null;
+  /** Срок выдачи или поставки; `overdue` считает сервер у открытого. */
+  due_at?: string | null;
+  overdue?: boolean;
   /** Накладные, выписанные по этому заказу.
    *
    * Ключа НЕТ вовсе, когда блок накладных выключен, — не пустой массив, а
@@ -85,6 +88,9 @@ export function Orders() {
   // «Бронь истекла» — отдельный отбор, а не состояние: заказ открыт, товар
   // уже не держит, и его надо разобрать руками.
   const [reserve, setReserve] = useState<string>("");
+  // «Просроченные» — отбор поверх состояния; со сводки приходят с `?overdue=1`.
+  const [searchParams] = useSearchParams();
+  const [overdue, setOverdue] = useState(searchParams.get("overdue") === "1");
   const [data, setData] = useState<{ items: Order[]; total: number } | null>(null);
   // До какой страницы дочитан список. Прежде экран просил сотню заказов и на
   // этом заканчивался — а в подзаголовке честно писал «всего N». Сам сообщал,
@@ -118,9 +124,10 @@ export function Orders() {
     if (search) params.set("search", search);
     if (kind) params.set("kind", kind);
     if (reserve) params.set("reserve", reserve);
+    if (overdue) params.set("overdue", "1");
     if (poryadok !== "new") params.set("sort", poryadok);
     return `/orders?${params}`;
-  }, [search, kind, poryadok, reserve]);
+  }, [search, kind, poryadok, reserve, overdue]);
 
   useEffect(() => {
     // Вид заказа переключают быстрее, чем отвечает сервер: без счётчика ответ
@@ -284,6 +291,12 @@ export function Orders() {
         >
           {t("ordersReserveExpiredFilter")}
         </button>
+        <button
+          className={"filter-chip" + (overdue ? " active" : "")}
+          onClick={() => setOverdue((bylo) => !bylo)}
+        >
+          {t("ordersOverdueFilter")}
+        </button>
         {/* Порядок — тот же закрытый перечень, что у бланков: список один и
             тот же (`documents`), и два разных набора ключей на одну таблицу
             разошлись бы при первой же правке. */}
@@ -335,9 +348,17 @@ export function Orders() {
             <span style={{ width: 120, textAlign: "right", color: "var(--text)", fontSize: 13 }}>
               {formatMoney(order.total, workspace.currency, locale)}
             </span>
-            {/* Дата: у проведённого — когда провели, у открытого — когда завели. */}
-            <span style={{ width: 92, textAlign: "right", color: "var(--faint)", fontSize: 12 }}>
-              {formatDate(order.status === "closed" ? order.updated_at ?? order.created_at : order.created_at, locale)}
+            {/* Дата: у проведённого — когда провели, у открытого со сроком — срок
+                (просроченный — красным), иначе — когда завели. */}
+            <span
+              className={order.overdue ? "task-late" : undefined}
+              style={{ width: 92, textAlign: "right", color: order.overdue ? undefined : "var(--faint)", fontSize: 12 }}
+            >
+              {order.status === "closed"
+                ? formatDate(order.updated_at ?? order.created_at, locale)
+                : order.due_at
+                  ? t("orderDueShort", { d: formatDate(order.due_at, locale) })
+                  : formatDate(order.created_at, locale)}
             </span>
             <span style={{ width: 110, textAlign: "right" }}>
               {order.reserve_expired && <Chip variant="warning">{t("orderReserveExpired")}</Chip>}{" "}

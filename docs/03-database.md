@@ -461,7 +461,8 @@ erDiagram
 `role_permissions`. Рядом три следа в чужих таблицах: `warehouses.kind`
 (закрытый набор, `stock` по умолчанию — обновление не открывает витрину),
 `products.site_description`, у `documents` — `reserved_until` (бронь истекает
-лениво, условием в `promised`), `site_ref` (`ExactString`, уникальный — это и есть
+лениво, условием в `promised`), `due_at` (срок заказа, `e5f2b7c1d9a4`, индекс
+под «просроченные открытые»), `site_ref` (`ExactString`, уникальный — это и есть
 идемпотентность заказа) и `api_key_id` (`SET NULL`). Индексы под ленту изменений:
 `ix_products_updated_at` и `ix_stock_moves_wh_created` по дате ЗАПИСИ движения.
 Разбор — [16-api-sayta.md](16-api-sayta.md) §10.

@@ -14,7 +14,7 @@ from core.services import (
 )
 from core.utils import now_utc
 from database.models import User
-from database.models.document import ORDER_KINDS
+from database.models.document import OPEN_ORDER_STATUSES, ORDER_KINDS
 from database.repositories import boards as boards_repo
 from database.repositories import clients as clients_repo
 from database.repositories import deals as deals_repo
@@ -134,6 +134,8 @@ def dashboard(user: User = Depends(require_staff), db: Session = Depends(get_db)
             "shipped_count": nedelya["shipped_count"],
             "returns_count": nedelya["count"],
             "refund_amount": nedelya["refund"] if order_amounts else None,
+            # Просроченные открытые — красным: их разбирают первыми.
+            "overdue_count": documents_repo.prosrocheno_zakazov(db, ORDER_KINDS, OPEN_ORDER_STATUSES, now),
         }
         svezhie, _vsego = documents_repo.search(db, kinds=ORDER_KINDS, page=1, per_page=5)
         rows = documents_repo.lines_by_documents(db, [o.id for o in svezhie])

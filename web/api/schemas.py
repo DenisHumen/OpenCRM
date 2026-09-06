@@ -1143,6 +1143,14 @@ def order_out(order, lines: list | None = None, amounts: bool = True, client_nam
             and order.reserved_until <= now_utc().replace(tzinfo=None)
             and order.status in ("issued", "ready")
         ),
+        # Срок и просрочка: считается здесь, а не на экране, — экранов два
+        # (список и карточка), и «сейчас» у них должно быть одно.
+        "due_at": _iso(order.due_at),
+        "overdue": bool(
+            order.due_at
+            and order.due_at <= now_utc().replace(tzinfo=None)
+            and order.status in ("issued", "ready")
+        ),
         "created_at": _iso(order.created_at),
         "updated_at": _iso(order.updated_at),
     }
