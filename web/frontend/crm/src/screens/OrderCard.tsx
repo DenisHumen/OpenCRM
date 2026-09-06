@@ -150,6 +150,28 @@ export function OrderCard() {
                 <span style={{ color: "var(--faint)", fontSize: 12.5 }}>{t("orderReserveUntil", { t: formatDateTime(order.reserved_until, locale) })}</span>
               )
             )}
+            {/* Продлить бронь — прямо у отметки: истёкшая бронь товар не держит,
+                а разбор чаще всего кончается «подержим ещё три дня». */}
+            {order.reserved_until && open && can(user, "orders.edit") && (
+              <button
+                type="button"
+                className="text-link"
+                disabled={guard.busy}
+                onClick={async () => {
+                  if (!guard.take()) return;
+                  try {
+                    await api.post(`/orders/${order.id}/reserve`, { days: 3 });
+                    await load();
+                  } catch (err) {
+                    toastError(err);
+                  } finally {
+                    guard.free();
+                  }
+                }}
+              >
+                {t("orderReserveExtend", { n: 3 })}
+              </button>
+            )}
           </div>
         </div>
         <div style={{ display: "flex", gap: 8 }}>

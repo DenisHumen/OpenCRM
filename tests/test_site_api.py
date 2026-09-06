@@ -502,3 +502,36 @@ def test_konsol_vydayot_i_otzyvaet_klyuch(root_client, shop, capsys):
     assert root_client.get(f"{SITE}/catalog", headers={H: raw}).status_code == 401
     assert apikey.main(["new", "--name", "x", "--scopes", "stock.read"]) == 1
     assert "warehouse_required" in capsys.readouterr().err
+
+
+def test_istekshuyu_bron_mozhno_prodlit(root_client, shop):
+    """Истёкшая бронь — очередь на разбор; разбор бывает и таким: «продлить на
+    три дня» (план З-06). Без брони продлевать нечего."""
+    item = product(root_client, shop["id"], stock="6")
+    key = make_key(root_client, ALL, shop["id"], stock_mode="exact")["key"]
+    ref = f"web-{_uniq()}"
+    zakaz = _zakaz(root_client, key, ref, [{"sku": item["sku"], "quantity": "2"}], reserve_minutes=30).json()
+    with SessionLocal() as db:
+        from datetime import timedelta
+
+        from core.utils import now_utc
+        from database.repositories import documents as documents_repo
+
+        row = documents_repo.get_by_site_ref(db, ref)
+        row.reserved_until = now_utc().replace(tzinfo=None) - timedelta(minutes=1)
+        db.commit()
+    vnutri = root_client.get(f"{API}/orders", params={"search": zakaz["number"]}).json()["items"][0]
+    assert vnutri["reserve_expired"] is True
+
+    prodlen = root_client.post(f"{API}/orders/{vnutri['id']}/reserve", json={"days": 2})
+    assert prodlen.status_code == 200, prodlen.text
+    assert prodlen.json()["reserve_expired"] is False and prodlen.json()["reserved_until"]
+    istekshie = root_client.get(f"{API}/orders", params={"reserve": "expired"}).json()["items"]
+    assert not any(o["id"] == vnutri["id"] for o in istekshie)
+    assert root_client.get(f"{SITE}/stock?id={item['id']}", headers={H: key}).json()["items"][0]["available_milli"] == 4000
+    istoriya = root_client.get(f"{API}/orders/{vnutri['id']}").json()["events"]
+    assert any("reservation extended" in (e["note"] or "") for e in istoriya)
+
+    bez_broni = root_client.post(f"{API}/orders", json={"kind": "sales_order"}).json()
+    otkaz = root_client.post(f"{API}/orders/{bez_broni['id']}/reserve", json={"days": 2})
+    assert otkaz.status_code == 422 and otkaz.json()["error"]["code"] == "no_reservation"

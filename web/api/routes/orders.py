@@ -96,6 +96,13 @@ class LinePatchIn(BaseModel):
     price: int | None = None
 
 
+class BronIn(BaseModel):
+    """На сколько дней продлить бронь от «сейчас». Потолок — чтобы опечатка
+    «300» не заняла товар на год."""
+
+    days: int = Field(default=3, ge=1, le=90)
+
+
 class PickIn(BaseModel):
     code: str = Field(min_length=1, max_length=64)
     # Сколько добавить за один писк. Обычно одна штука; коробка со своим кодом
@@ -380,6 +387,21 @@ def link_deal(
         order,
         order_service.lines(db, order.id),
         amounts=permissions_service.sees_amounts(db, user, "orders"),
+        client_name=_imya_klienta(db, order),
+    )
+
+
+@router.post("/{order_id}/reserve")
+def extend_reservation(
+    order_id: int,
+    payload: BronIn,
+    user: User = Depends(require_perm("orders", "edit")),
+    db: Session = Depends(get_db),
+):
+    """Продлить бронь заказа с сайта. Без брони — `422 no_reservation`."""
+    order = order_service.prodlit_bron(db, order_id, payload.days, user)
+    return schemas.order_out(
+        order, order_service.lines(db, order.id), amounts=permissions_service.sees_amounts(db, user, "orders"),
         client_name=_imya_klienta(db, order),
     )
 

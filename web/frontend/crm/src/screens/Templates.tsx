@@ -267,7 +267,7 @@ function TemplateModal({
   };
 
   return (
-    <Modal title={template ? template.name : t("newTemplate")} onClose={onClose}>
+    <Modal title={template ? template.name : t("newTemplate")} onClose={onClose} wide>
       <form onSubmit={submit}>
         <div className="field">
           <label className="label">{t("templateName")}</label>

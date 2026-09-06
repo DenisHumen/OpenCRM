@@ -744,7 +744,7 @@ def test_kazhdyy_vyzov_peredayot_schitaemoe_chislo():
 #: сочинённая пометка приписывается к введённой строке через `·`.
 PISHUT_V_BAZU: dict[str, set[str]] = {
     "core/services/finance_service.py": {"accrue_order_costs", "adjust_accrual", "refund_for_return"},
-    "core/services/order_service.py": {"close", "pravit_srok"},
+    "core/services/order_service.py": {"close", "pravit_srok", "prodlit_bron"},
     "core/services/return_service.py": {"sozdat", "provesti"},
     "core/services/warehouse_service.py": {"revert_transfer", "shortages", "transfer"},
     "core/subscriptions.py": {"write_off_act_materials", "return_into_feed"},
