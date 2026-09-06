@@ -4,6 +4,7 @@ import { Icon } from "../components/Icon";
 import { ConfirmModal, EmptyState, Modal, ScreenLoading, Toggle } from "../components/ui";
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
+import { useLiveTopic } from "../lib/live";
 import { useFailure } from "../lib/failure";
 import { useGuard } from "../lib/guard";
 import { formatDateTime } from "../lib/format";
@@ -80,6 +81,9 @@ export function Mailboxes() {
     if (enabled) void load();
     else setAccounts([]);
   }, [enabled, load]);
+  useLiveTopic("mail", () => {
+    if (enabled) void load();
+  });
 
   const save = async () => {
     // Засов, а не флаг состояния: пока сервер проверяет подключение (а он

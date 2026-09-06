@@ -12,6 +12,7 @@ import {
 } from "../components/ui";
 import { api, type Role } from "../lib/api";
 import { useApp } from "../lib/app";
+import { useLiveTopic } from "../lib/live";
 import { useFailure } from "../lib/failure";
 import { useGuard } from "../lib/guard";
 import { formatDateTime, initials } from "../lib/format";
@@ -54,6 +55,8 @@ export function Staff() {
     clear();
     api.get("/staff").then((d) => setItems(d.items)).catch(fail);
   }, [fail, clear]);
+  // Новый сотрудник или смена должности — сразу, а не через минуту таймера.
+  useLiveTopic(["staff", "roles"], load);
 
   // Присутствие меняется со временем, и список освежается сам — но ТОЛЬКО в
   // видимой вкладке: пять запросов раз в минуту из свёрнутой это триста в час

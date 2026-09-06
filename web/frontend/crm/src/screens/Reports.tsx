@@ -5,6 +5,7 @@ import { Icon } from "../components/Icon";
 import { EmptyState, ScreenLoading } from "../components/ui";
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
+import { useLiveTopic } from "../lib/live";
 import { useFailure } from "../lib/failure";
 import { kindLabel, paperLink } from "../lib/documents";
 import { formatMoney } from "../lib/format";
@@ -77,6 +78,9 @@ export function Reports() {
   // Периоды переключают быстрее, чем отвечает сервер: без этого счётчика ответ
   // на прошлый период мог бы лечь поверх текущего и показать чужие числа.
   const [attempt, setAttempt] = useState(0);
+  // Отчёт на экране устаревал, пока сосед закрывал заявки: перечитываем по
+  // намёкам, как списки (план Ж-07).
+  useLiveTopic(["deals", "finance", "orders", "clients"], () => setAttempt((n) => n + 1));
 
   useEffect(() => {
     let current = true;
