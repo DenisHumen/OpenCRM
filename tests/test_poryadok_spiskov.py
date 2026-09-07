@@ -56,6 +56,15 @@ POLNYY_BEZ_KLYUCHA: dict[tuple[str, str], str] = {
         "vozvraty.py",
         "func.coalesce(func.sum(DocumentLine.quantity_milli), 0).desc(), DocumentLine.product_id.asc()",
     ): "сгруппировано по товару: строка — это группа, а товар уникален по построению GROUP BY",
+    (
+        "finance.py",
+        "func.coalesce(func.sum(FinanceOperation.amount_minor), 0).desc(), Client.city",
+    ): "города отчёта продаж: сгруппировано по городу, строка — это группа, "
+       "`id` у неё нет, а сам город уникален по построению GROUP BY",
+    (
+        "otchyot_prodazh.py",
+        "func.coalesce(func.sum(Deal.amount), 0).desc(), Client.city",
+    ): "то же и по выигранным заявкам: строка — группа по городу",
 }
 
 

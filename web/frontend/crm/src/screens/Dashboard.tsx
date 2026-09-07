@@ -5,6 +5,7 @@ import { BoardCard } from "../components/BoardCard";
 import { Icon } from "../components/Icon";
 import { NewBoardButton } from "../components/NewBoardButton";
 import { StorageCard } from "../components/StorageCard";
+import { OtchyotProdazh } from "../components/OtchyotProdazh";
 import { VidzhetKarty } from "../components/VidzhetKarty";
 import { VidzhetKlyucha, type KlyuchSayta } from "../components/VidzhetKlyucha";
 import { Avatar, Chip, EmptyState, LoadFailed, Modal, ScreenLoading } from "../components/ui";
@@ -89,6 +90,8 @@ const ZAGOLOVKI: Record<string, TranslationKey> = {
   recent_boards: "recentBoards",
   recent_clients: "recentClients",
   globe_detail: "globeDetail",
+  sales_grid: "salesReport",
+  sales_matrix: "salesReport",
   api_key: "dashApiKey",
 };
 
@@ -638,6 +641,13 @@ export function Dashboard() {
         );
       case "globe_detail":
         return <VidzhetKarty />;
+      // Отчёт продаж двумя видами. Свои данные берёт сам: считает он окно в
+      // год, и класть его в общий ответ сводки значило бы платить за него у
+      // всех, включая тех, у кого виджета нет.
+      case "sales_grid":
+        return <OtchyotProdazh vid="setka" />;
+      case "sales_matrix":
+        return <OtchyotProdazh vid="matritsa" />;
       case "storage":
         return storage ? <StorageCard storage={storage} onPurged={() => void refreshStorage()} /> : null;
       case "recent_boards":

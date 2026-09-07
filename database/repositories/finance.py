@@ -474,6 +474,74 @@ def _postupleniya():
     )
 
 
+def goroda_postupleniy(db: Session, ot: datetime, do: datetime, predel: int) -> list[tuple[str, int]]:
+    """[(город, сумма), …] по убыванию — для отчёта продаж на сводке.
+
+    Здесь, а не в своём файле отчёта: отбор «что считается пришедшими деньгами»
+    живёт в этом файле один на все счёты, и повторить его рядом значило бы
+    завести второй, который разойдётся на первом же правиле начисления.
+    """
+    rows = db.execute(
+        select(Client.city, func.coalesce(func.sum(FinanceOperation.amount_minor), 0).label("summa"))
+        .join(FinanceCategory, FinanceCategory.id == FinanceOperation.category_id)
+        .join(Client, Client.id == FinanceOperation.client_id)
+        .where(
+            *_postupleniya(),
+            FinanceOperation.happened_at >= ot,
+            FinanceOperation.happened_at < do,
+            Client.city != "",
+        )
+        .group_by(Client.city)
+        .order_by(func.coalesce(func.sum(FinanceOperation.amount_minor), 0).desc(), Client.city)
+        .limit(predel)
+    ).all()
+    return [(gorod, int(summa or 0)) for gorod, summa in rows]
+
+
+def pervye_postupleniya_dney(
+    db: Session, ot: datetime, do: datetime, predel_v_dne: int
+) -> dict[str, list[tuple[str, str, int]]]:
+    """{день: [(номер, подпись, сумма), …]} — первые поступления каждого дня.
+
+    Оконной функцией: за три месяца операций бывают тысячи, а показываем мы по
+    три на день. Достать всё и обрезать в Python значило бы прочитать кассу
+    целиком ради подсказки, которую видят по наведению.
+    """
+    nomer = (
+        func.row_number()
+        .over(
+            partition_by=func.date(FinanceOperation.happened_at),
+            order_by=(FinanceOperation.happened_at.desc(), FinanceOperation.id.desc()),
+        )
+        .label("nomer")
+    )
+    vnutri = (
+        select(
+            func.date(FinanceOperation.happened_at).label("den"),
+            FinanceOperation.id,
+            FinanceOperation.comment,
+            FinanceOperation.amount_minor.label("summa"),
+            nomer,
+        )
+        .join(FinanceCategory, FinanceCategory.id == FinanceOperation.category_id)
+        .where(
+            *_postupleniya(),
+            FinanceOperation.happened_at >= ot,
+            FinanceOperation.happened_at < do,
+        )
+        .subquery()
+    )
+    rows = db.execute(
+        select(vnutri.c.den, vnutri.c.id, vnutri.c.comment, vnutri.c.summa)
+        .where(vnutri.c.nomer <= predel_v_dne)
+        .order_by(vnutri.c.den, vnutri.c.nomer, vnutri.c.id)
+    ).all()
+    itog: dict[str, list[tuple[str, str, int]]] = {}
+    for den, nomer_operatsii, podpis, summa in rows:
+        itog.setdefault(str(den), []).append((f"#{nomer_operatsii}", podpis or "", int(summa or 0)))
+    return itog
+
+
 def _moi_dengi(only_manager_id: int | None):
     """Сужение кассы до своих денег — двумя ступенями, а не одной.
 

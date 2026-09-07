@@ -97,6 +97,56 @@
   --globus-ulica: #3c4a6e;   /* улица под сильным приближением */
   --globus-dom: #1c2438;     /* заливка макета здания */
   --globus-dom-kray: #38456a;
+
+  /* --- Отчёт продаж: цитата чужого интерфейса, вне тем -------------------
+     Чёрная плита, спектральная тепловая карта и зелёный фосфор матрицы — это
+     дизайн образца, а не тема CRM: тот же случай, что витрина и глобус. В
+     светлой теме плита остаётся чёрной, а текст на ней берётся из готовой
+     пары «поверх картинки». Тема меняет одно — рамку карточки.
+     Разбор — docs/dizayn/27-otchyot-prodazh.md. */
+  /* Моноширинный — цифрам. Своего токена в файле не было, только
+     `--globus-mono`; список тот же, лишнего шрифта виджет не грузит
+     (docs/18: «шрифты образцов не подключаются»). */
+  --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* Плита виджета, плита всплывающего поля и чернила на цветных клетках. */
+  --otchyot-plita: #0b0b0a;
+  --otchyot-chernila: #0d0d0c;
+
+  /* Спектр тепловой карты: холодный конец — фиолетовый, горячий — оранжевый.
+     Двенадцать ступеней, класс на ступень: доля дня от лучшего дня месяца
+     округляется до ступени в разметке, цвет живёт здесь. */
+  --otchyot-shkala-1: #180f42;
+  --otchyot-shkala-2: #251670;
+  --otchyot-shkala-3: #3a2ab4;
+  --otchyot-shkala-4: #4f43e2;
+  --otchyot-shkala-5: #5a6bf0;
+  --otchyot-shkala-6: #5f8cf0;
+  --otchyot-shkala-7: #63dc90;
+  --otchyot-shkala-8: #7ce97b;
+  --otchyot-shkala-9: #b8ef5c;
+  --otchyot-shkala-10: #e0ec48;
+  --otchyot-shkala-11: #f3cd3b;
+  --otchyot-shkala-12: #f59a26;
+
+  /* Точечная матрица: плита темнее карточки, свечение по центру, три яркости
+     точки и ореол у зажжённой. */
+  --otchyot-matritsa-plita: #050b07;
+  --otchyot-matritsa-svet: rgba(43, 255, 163, 0.14);
+  --otchyot-matritsa-svet-net: rgba(5, 11, 7, 0);
+  --otchyot-tochka: #123a28;
+  --otchyot-tochka-srednyaya: #1c7a53;
+  --otchyot-tochka-yarkaya: #2bffa3;
+  --otchyot-tochka-oreol: rgba(43, 255, 163, 0.85);
+
+  /* Метки двух показателей. Не `--success` и не `--star`: те зависят от темы,
+     а лежат они на чёрной плите — в светлой теме тёмно-зелёное на чёрном. */
+  --otchyot-rost: #58b47c;
+  --otchyot-god: #e8c14a;
+
+  /* Спад. У образца его нет — там только стрелка вверх; на настоящих данных
+     месяц ниже прошлого случается, и красить его зелёным нельзя. */
+  --otchyot-spad: #e7746a;
   --globus-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
 
   /* --- Рамка срочного напоминания: цитата ultracode -----------------------
@@ -3624,4 +3674,295 @@ html { scroll-behavior: smooth; }
   .globus-tumbler::after { transition: none; }
   .globus-hod-polosa { transition: none; }
   .karta-hod-polosa { transition: none; }
+}
+
+/* --- Карточка ----------------------------------------------------------- */
+.otchyot {
+  background: var(--otchyot-plita);
+  border: 1px solid var(--frame);
+  border-radius: 18px;
+  padding: 24px 24px 10px;
+  color: var(--on-media);
+}
+.otchyot-titul {
+  margin: 0 0 18px;
+  font-size: 27px;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -0.025em;
+  color: var(--on-media);
+}
+
+/* --- Тепловая карта: восемь клеток в ряд -------------------------------- */
+.otchyot-setka { display: flex; flex-direction: column; gap: 6px; }
+.otchyot-setka-ryad { display: grid; grid-template-columns: repeat(8, 1fr); gap: 6px; }
+.otchyot-kletka {
+  position: relative;          /* всплывающее поле держится за клетку */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 33px;
+  border-radius: 9px;
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  cursor: default;
+  outline-offset: 2px;
+  /* Заполнение по загрузке: клетка за клеткой. Задержка приезжает из
+     разметки как `--zaderzhka` — величина, а не цвет. */
+  animation: otchyot-vhod-kletka 340ms ease-out both;
+  animation-delay: var(--zaderzhka, 0ms);
+  /* Чернила светлые по умолчанию: холодный конец шкалы тёмный. У образца там
+     тёмное на тёмном — 2:1, ниже нашего порога; см. README пакета. */
+  color: var(--on-media);
+}
+.otchyot-kletka-1 { background: var(--otchyot-shkala-1); }
+.otchyot-kletka-2 { background: var(--otchyot-shkala-2); }
+.otchyot-kletka-3 { background: var(--otchyot-shkala-3); }
+.otchyot-kletka-4 { background: var(--otchyot-shkala-4); }
+.otchyot-kletka-5 { background: var(--otchyot-shkala-5); }
+.otchyot-kletka-6 { background: var(--otchyot-shkala-6); }
+.otchyot-kletka-7 { background: var(--otchyot-shkala-7); color: var(--otchyot-chernila); }
+.otchyot-kletka-8 { background: var(--otchyot-shkala-8); color: var(--otchyot-chernila); }
+.otchyot-kletka-9 { background: var(--otchyot-shkala-9); color: var(--otchyot-chernila); }
+.otchyot-kletka-10 { background: var(--otchyot-shkala-10); color: var(--otchyot-chernila); }
+.otchyot-kletka-11 { background: var(--otchyot-shkala-11); color: var(--otchyot-chernila); }
+.otchyot-kletka-12 { background: var(--otchyot-shkala-12); color: var(--otchyot-chernila); }
+/* Наведённая клетка поднимается над соседями: подсказка лежит внутри неё, а
+   соседние клетки рисуются позже и накрывали её собой. */
+.otchyot-kletka-navedena { z-index: 7; }
+
+/* --- Всплывающее поле дня ------------------------------------------------
+   В разметке живёт только у наведённой клетки: показ — состояние React, а не
+   `:hover` в вёрстке (docs/18, «чего в образцах брать не надо»). Поэтому
+   правил `:hover` здесь нет — поле видно, если оно есть.
+   Место: по умолчанию над клеткой и по центру; три поправки для краёв, иначе
+   поле уезжает за карточку. */
+.otchyot-vsplyv {
+  position: absolute;
+  z-index: 6;
+  left: 50%;
+  bottom: calc(100% + 8px);
+  transform: translateX(-50%);
+  min-width: 196px;
+  /* Потолок ширины обязателен: подпись события бывает длиной в предложение
+     («возврат по 2026-000029 к заказу 2026-000026»), и без него поле уезжало
+     за карточку на соседний экран. Длинное имя обрезается многоточием. */
+  max-width: 264px;
+  padding: 11px 12px 9px;
+  border-radius: 11px;
+  background: var(--media-chip-strong);
+  border: 1px solid var(--on-media-line);
+  box-shadow: 0 12px 28px var(--shade);
+  text-align: left;
+  pointer-events: none;        /* поле не должно ловить курсор у себя же */
+  animation: otchyot-vhod-vsplyv 130ms ease-out both;
+}
+.otchyot-vsplyv-vniz { top: calc(100% + 8px); bottom: auto; }
+.otchyot-vsplyv-vlevo { left: 0; transform: none; }
+.otchyot-vsplyv-vpravo { left: auto; right: 0; transform: none; }
+.otchyot-vsplyv-shapka {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--on-media-dim);
+}
+.otchyot-vsplyv-data { font-weight: 700; letter-spacing: 0.04em; }
+.otchyot-vsplyv-zakazy { display: flex; flex-direction: column; gap: 5px; }
+.otchyot-vsplyv-zakaz {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 14px;
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--on-media);
+}
+.otchyot-vsplyv-eshchyo { margin-top: 6px; font-size: 11.5px; color: var(--on-media-dim); }
+.otchyot-vsplyv-itogo {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 14px;
+  margin-top: 9px;
+  padding-top: 8px;
+  border-top: 1px solid var(--on-media-line);
+}
+.otchyot-vsplyv-itogo-imya {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--on-media-dim);
+}
+.otchyot-vsplyv-itogo-summa {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--on-media);
+}
+
+/* --- Точечная матрица по месяцам ---------------------------------------- */
+.otchyot-mesyatsy { display: flex; flex-direction: column; gap: 16px; }
+.otchyot-mesyats-shapka {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.otchyot-mesyats-imya {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--on-media);
+}
+.otchyot-mesyats-summa {
+  font-family: var(--mono);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--on-media);
+}
+.otchyot-matritsa {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 8px 9px;
+  border-radius: 7px;
+  background-color: var(--otchyot-matritsa-plita);
+  background-image: radial-gradient(
+    120% 200% at 50% 55%,
+    var(--otchyot-matritsa-svet),
+    var(--otchyot-matritsa-svet-net) 70%
+  );
+}
+/* Число столбцов = число дней в месяце; приезжает из разметки как
+   `style={{ "--stolbtsov": dni.length }}` — величина, а не цвет. */
+.otchyot-matritsa-ryad {
+  display: grid;
+  grid-template-columns: repeat(var(--stolbtsov, 31), 1fr);
+  gap: 4px;
+}
+.otchyot-tochka {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  justify-self: center;
+  background: var(--otchyot-tochka);
+  animation: otchyot-vhod-tochka 300ms ease-out both;
+  animation-delay: var(--zaderzhka, 0ms);
+}
+.otchyot-tochka-srednyaya { background: var(--otchyot-tochka-srednyaya); }
+.otchyot-tochka-yarkaya {
+  background: var(--otchyot-tochka-yarkaya);
+  box-shadow: 0 0 7px var(--otchyot-tochka-oreol);
+}
+
+/* --- Два показателя ------------------------------------------------------ */
+.otchyot-kpi {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 22px;
+  margin-top: 22px;
+  animation: otchyot-vhod-stroka 420ms ease-out both;
+  animation-delay: var(--zaderzhka, 0ms);
+}
+.otchyot-kpi-imya {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 9px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--on-media);
+}
+.otchyot-kpi-znachenie {
+  font-family: var(--mono);
+  font-size: 30px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  color: var(--on-media);
+  font-variant-numeric: tabular-nums;
+}
+.otchyot-kpi-podpis { display: flex; align-items: baseline; gap: 8px; margin-top: 9px; }
+.otchyot-rost {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--otchyot-rost);
+}
+.otchyot-bylo { font-size: 12.5px; color: var(--on-media-dim); }
+/* Спад. У образца его нет — там только стрелка вверх; на живых данных месяц
+   ниже прошлого случается, и красить его зелёным было бы враньём. */
+.otchyot-spad { color: var(--otchyot-spad); }
+/* Пока данных нет: место карточки занято, а не схлопнуто — иначе сводка
+   прыгает под курсором, пока отчёт считается. */
+.otchyot-zhdyom { display: flex; justify-content: center; padding: 48px 0; }
+
+/* --- Города ------------------------------------------------------------- */
+.otchyot-goroda { display: flex; flex-direction: column; margin-top: 20px; }
+.otchyot-gorod {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 13px 0;
+  border-bottom: 1px solid var(--on-media-line);
+  font-size: 14.5px;
+  color: var(--on-media);
+  animation: otchyot-vhod-stroka 420ms ease-out both;
+  animation-delay: var(--zaderzhka, 0ms);
+}
+.otchyot-gorod-summa {
+  font-family: var(--mono);
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--on-media);
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- Заполнение по загрузке ---------------------------------------------
+   Один проход при появлении виджета: клетки высыпаются по порядку, точки
+   зажигаются слева направо, показатели и города поднимаются следом. Ветка
+   выключенного движения обязательна (docs/18, шаг 5): без анимации всё
+   должно быть просто на месте, а не остаться прозрачным. */
+@keyframes otchyot-vhod-kletka {
+  from { opacity: 0; transform: scale(0.82); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes otchyot-vhod-tochka {
+  from { opacity: 0; transform: scale(0.4); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes otchyot-vhod-stroka {
+  from { opacity: 0; transform: translateY(7px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes otchyot-vhod-vsplyv {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .otchyot-kletka,
+  .otchyot-tochka,
+  .otchyot-kpi,
+  .otchyot-gorod,
+  .otchyot-vsplyv { animation: none; }
+}
+
+/* Узкая колонка на телефоне: клетки мельче, два показателя друг под другом. */
+@media (max-width: 420px) {
+  .otchyot { padding: 18px 18px 6px; }
+  .otchyot-titul { font-size: 23px; }
+  .otchyot-kletka { height: 29px; font-size: 12px; border-radius: 8px; }
+  .otchyot-kpi { grid-template-columns: 1fr; gap: 18px; }
+  .otchyot-vsplyv { min-width: 168px; }
 }
