@@ -379,7 +379,7 @@ nginx и уводит в Grafana. Переход внутри SPA работал
     Ящики             /settings/mailboxes     (блок mail)
     Телефония         /settings/telephony     (блок telephony)
     Telegram          /settings/telegram      (блок telegram)
-    Заявки с сайта    /settings/leads         — ключ приёма, ответственный, готовая команда
+    API сайта         /settings/api           — приём заявок и ключи доступа одним экраном
     Бренд             /settings/brand         — название, логотип, слоган, акцент
     Контакты          /settings/contacts      — почта, телефон, соцсети
     Витрина           /settings/showcase      — язык, OG-картинка, тумблеры

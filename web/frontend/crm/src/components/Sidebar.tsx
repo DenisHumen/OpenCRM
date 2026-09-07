@@ -530,9 +530,8 @@ export function Sidebar({
       { module: "warehouse", perm: "warehouse.manage", to: "/settings/warehouses", label: t("warehouses") },
       { module: "labels", perm: "settings.manage", to: "/settings/labels", label: t("labelSettings") },
     ]),
-    // Все способы, которыми клиент до нас достучится. Заявки с сайта — без
-    // блока: они держатся на несущих (клиент и работа), выключить которые
-    // нельзя, а выключателем служит сам ключ приёма.
+    // Каналы разговора с ЧЕЛОВЕКОМ: письмо, звонок, сообщение. Программный
+    // доступ уехал отсюда в свой раздел ниже.
     //
     // Настройки бота — на праве КАНАЛА, а не на общем `settings.manage`. Так
     // спрашивает сервер (`require_perm("telegram", "manage")`), и расхождение
@@ -543,8 +542,14 @@ export function Sidebar({
       { module: "mail", perm: "settings.manage", to: "/settings/mailboxes", label: t("mailboxes") },
       { module: "telephony", perm: "settings.manage", to: "/settings/telephony", label: t("telephony") },
       { module: "telegram", perm: "telegram.manage", to: "/settings/telegram", label: t("modTelegram") },
-      { perm: "settings.manage", to: "/settings/leads", label: t("leads") },
-      { perm: "settings.manage", to: "/settings/api-keys", label: t("apiKeys") },
+    ]),
+    // API — отдельным разделом, а не вместе с каналами. Почта, телефония и
+    // телеграм — это разговор с ЧЕЛОВЕКОМ, а здесь чужая программа стучится к
+    // нам по ключу; одно название на то и другое годилось бы, только пока в
+    // разделе один пункт. Приём заявок и ключи доступа при этом слиты в один
+    // экран: и то и другое настраивают за один заход.
+    kategoriya("api", t("catApi"), [
+      { perm: "settings.manage", to: "/settings/api", label: t("apiSite") },
     ]),
     // Статьи и планы: справочник, который заводят один раз и правят редко, а
     // последствия правки видны во всех прошлых отчётах.

@@ -883,7 +883,7 @@ export const RUKOVODSTVO: Razdel[] = [
               },
             ],
           },
-          { vid: "ekran", put: "/settings/leads", podpis: { ru: "Настроить приём заявок", en: "Set up request intake" } },
+          { vid: "ekran", put: "/settings/api", podpis: { ru: "Настроить приём заявок", en: "Set up request intake" } },
         ],
       },
       {
@@ -973,7 +973,7 @@ export const RUKOVODSTVO: Razdel[] = [
               en: "Every address the site can call, with scopes and refusals, is collected in the «Site API» section, article «Site API endpoints» — with a search by address and word. That is the section to hand to whoever builds the site.",
             },
           },
-          { vid: "ekran", put: "/settings/api-keys", podpis: { ru: "Открыть ключи API сайта", en: "Open site API keys" } },
+          { vid: "ekran", put: "/settings/api", podpis: { ru: "Открыть ключи API сайта", en: "Open site API keys" } },
         ],
       },
     ],

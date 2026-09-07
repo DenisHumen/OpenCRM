@@ -62,7 +62,7 @@ export function VidzhetKlyucha({ klyuch, keyId }: { klyuch: KlyuchSayta | undefi
             <Chip variant="warning">{t(klyuch.state === "revoked" ? "apiKeyStateRevoked" : "apiKeyStateExpired")}</Chip>
           )}
         </div>
-        <Link to="/settings/api-keys" className="section-link">
+        <Link to="/settings/api" className="section-link">
           {t("viewAll")}
         </Link>
       </div>
