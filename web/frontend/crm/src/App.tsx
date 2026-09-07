@@ -4,7 +4,7 @@ import { Link, Navigate, Outlet, Route, Routes, useLocation, useOutletContext, u
 import { CommandPalette } from "./components/CommandPalette";
 import { Icon } from "./components/Icon";
 import { Sidebar } from "./components/Sidebar";
-import { ScreenLoading, Toasts } from "./components/ui";
+import { NovayaSborka, ScreenLoading, Toasts } from "./components/ui";
 import { useApp } from "./lib/app";
 import { moduleOn } from "./lib/modules";
 import { useLive } from "./lib/live";
@@ -485,6 +485,7 @@ export default function App() {
         </Route>
       </Routes>
       <Toasts />
+      <NovayaSborka />
     </>
   );
 }
