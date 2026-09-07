@@ -326,8 +326,21 @@ export function Dashboard() {
   // Что можно добавить: виды «по одному», которых ещё нет, и ключи сайта,
   // на которые виджета ещё нет. Без единого живого ключа — ни одного пункта
   // про ключ: виджет без ключа заводить нельзя (владелец, 06.09.2026).
+  //
+  // **Список берётся из реестра сервера, а не из порядка умолчания.** Пока он
+  // строился по `PORYADOK_UMOLCHANIYA`, новый виджет было НЕЧЕМ добавить: в
+  // реестре он есть, подпись есть, рисуется — а в окне «Добавить блок» его
+  // нет. Так пропал «Отчёт продаж» (найдено владельцем на боевом 07.09.2026).
+  // Дописывать его в порядок умолчания было бы хуже: тот задаёт сводку по
+  // умолчанию ВСЕМ, а виджет ставят себе те, кому он нужен.
   const est = new Set(polnyy.map((v) => v.id));
-  const kandidaty = PORYADOK_UMOLCHANIYA.filter((kind) => pozvoleno(kind) && !est.has(kind));
+  const poryadok = (kind: string) => {
+    const mesto = PORYADOK_UMOLCHANIYA.indexOf(kind);
+    return mesto < 0 ? PORYADOK_UMOLCHANIYA.length : mesto;
+  };
+  const kandidaty = Object.keys(kinds)
+    .filter((kind) => kinds[kind].odin && pozvoleno(kind) && !est.has(kind))
+    .sort((a, b) => poryadok(a) - poryadok(b) || a.localeCompare(b));
   const klyuchiBezVidzheta = (klyuchi.items ?? []).filter((k) => k.state === "active" && !est.has(`api_key:${k.id}`));
 
   const soderzhimoe = (v: Vidzhet) => {

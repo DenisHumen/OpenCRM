@@ -1,3 +1,4 @@
+import pathlib
 from datetime import timedelta
 
 from fastapi.testclient import TestClient
@@ -9,6 +10,8 @@ from database.repositories import stats as stats_repo
 from database.session import SessionLocal
 from tests.conftest import API, png_bytes
 from web.main import app
+
+KOREN = pathlib.Path(__file__).resolve().parent.parent
 
 
 def test_dashboard_aggregates(root_client, manager_client):
@@ -358,3 +361,53 @@ def test_vidzhet_klyucha_sayta_po_odnomu_na_klyuch(root_client):
     )
     assert dvazhdy.json()["error"]["code"] == "widget_duplicate"
     root_client.delete(f"{API}/dashboard/layout")
+
+
+def test_kazhdyy_vidzhet_reestra_mozhno_polozhit_na_svodku():
+    """Виджет, которого нет в окне «Добавить блок», не существует для человека.
+
+    **Беда была, и нашёл её владелец на боевом сервере 07.09.2026.** Список
+    «что можно добавить» экран строил по `PORYADOK_UMOLCHANIYA` — по порядку
+    сводки ПО УМОЛЧАНИЮ, а не по реестру. Новый «Отчёт продаж» в реестре был, в
+    подписях был, рисовался — и добавить его было нечем: в окне его не
+    показывали. Дописать его в порядок умолчания значило бы поставить виджет
+    всем на сводку без спроса, поэтому список теперь берётся из реестра, а
+    сторож смотрит, что подпись есть у каждого вида.
+
+    Проверяется ПОДПИСЬ, потому что без неё пункт в окне будет пустой кнопкой:
+    сам список экран больше не переписывает руками — он приходит с сервера.
+    """
+    import re
+
+    from core.services import vidzhety_service
+
+    ekran = (KOREN / "web" / "frontend" / "crm" / "src" / "screens" / "Dashboard.tsx").read_text(
+        encoding="utf-8"
+    )
+    kusok = ekran[ekran.index("const ZAGOLOVKI") : ekran.index("function metka")]
+    nazvany = set(re.findall(r"^\s*([a-z_]+):", kusok, re.M))
+    propushcheny = sorted(set(vidzhety_service.REESTR) - nazvany)
+    assert propushcheny == [], (
+        "у этих видов нет подписи в Dashboard.tsx — в окне «Добавить блок» они "
+        f"будут пустыми кнопками: {propushcheny}"
+    )
+
+    # И обратное: подпись без вида в реестре — след удалённого виджета.
+    lishnie = sorted(nazvany - set(vidzhety_service.REESTR))
+    assert lishnie == [], f"подписи без вида в реестре: {lishnie}"
+
+
+def test_spisok_dobavleniya_ne_perepisan_rukami():
+    """Второй список видов на экране разошёлся бы с реестром молча.
+
+    Ровно это и случилось: `kandidaty` строился фильтром по
+    `PORYADOK_UMOLCHANIYA`, и новый виджет туда не попал. Сторож требует, чтобы
+    список кандидатов брался из того, что пришло с сервера (`kinds`).
+    """
+    ekran = (KOREN / "web" / "frontend" / "crm" / "src" / "screens" / "Dashboard.tsx").read_text(
+        encoding="utf-8"
+    )
+    stroka = next(s for s in ekran.splitlines() if "const kandidaty" in s)
+    assert "Object.keys(kinds)" in stroka, (
+        "список «что можно добавить» снова строится не по реестру сервера: " + stroka.strip()
+    )
