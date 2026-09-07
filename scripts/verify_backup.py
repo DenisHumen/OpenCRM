@@ -22,9 +22,12 @@
 3. **Данные на месте.** Пустая копия — самый коварный случай: файл есть, размер
    правдоподобный, а внутри одни пустые таблицы.
 4. **Архив storage читается** — `tar -tzf` по списку, без распаковки.
-5. **Ключ шифрования сохранён.** Без `OPENCRM_SECRET_KEY` пароли почтовых
-   ящиков в восстановленной базе не расшифровать НИКОГДА: ключ не выводится из
-   данных, и потеря его необратима.
+5. **Ключ шифрования сохранён — и не пустой.** Без `OPENCRM_SECRET_KEY` пароли
+   ящиков и секреты двухфакторок в восстановленной базе не расшифровать
+   НИКОГДА: ключ не выводится из данных, и потеря его необратима. Проверяется
+   ЗНАЧЕНИЕ, а не наличие строки: `backup.sh` пишет `OPENCRM_SECRET_KEY=` в
+   любом случае, и при пустой переменной (cron на хосте окружения не
+   наследует) сторож оставался зелёным над копией без ключа.
 6. **Зашифрованная копия вправду открывается данным ключом** — и внутри
    оказывается годный дамп, а не мусор нужного размера.
 
@@ -681,6 +684,42 @@ def _proverit_zashifrovannuyu(
     _proverit_dump(razbor, report, fail)
 
 
+#: Что обязано лежать в файле секретов копии и почему. Ни то, ни другое не
+#: выводится из данных ничем.
+SEKRETY_KOPII = {
+    "OPENCRM_SECRET_KEY": (
+        "без него шифротексты в базе — пароли ящиков, секреты двухфакторок — "
+        "не открыть ничем"
+    ),
+    "OPENCRM_IP_HASH_SALT": (
+        "без неё просмотры витрин после восстановления начнут считаться заново"
+    ),
+}
+
+
+def znacheniya_sekretov(tekst: str) -> dict[str, str]:
+    """`ИМЯ=значение` построчно. Комментарии и пустые строки — мимо."""
+    itog: dict[str, str] = {}
+    for stroka in tekst.splitlines():
+        stroka = stroka.strip()
+        if not stroka or stroka.startswith("#"):
+            continue
+        imya, znak, znachenie = stroka.partition("=")
+        if znak:
+            itog[imya.strip()] = znachenie.strip()
+    return itog
+
+
+def bedy_sekretov(tekst: str) -> list[str]:
+    """Чего не хватает в файле секретов. Пусто — файл годен."""
+    znacheniya = znacheniya_sekretov(tekst)
+    return [
+        f"в копии нет значения {imya}: {pochemu}"
+        for imya, pochemu in SEKRETY_KOPII.items()
+        if not znacheniya.get(imya)
+    ]
+
+
 def verify(
     db_path: Path,
     storage_path: Path | None,
@@ -747,8 +786,9 @@ def verify(
                 "в копии нет ключа шифрования — восстановить получится, "
                 "но пароли ящиков будут потеряны навсегда"
             )
-        elif "OPENCRM_SECRET_KEY=" not in secret_path.read_text(encoding="utf-8"):
-            fail("файл ключа есть, но самого ключа в нём нет")
+        else:
+            for beda in bedy_sekretov(secret_path.read_text(encoding="utf-8")):
+                fail(beda)
 
     return report
 

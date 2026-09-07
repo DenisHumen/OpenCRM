@@ -335,7 +335,63 @@ def test_pustoy_fayl_klyucha_zamechen(tmp_path):
     empty.write_text("# ключей не досталось\n", encoding="utf-8")
     report = verify_backup.verify(good_dump(tmp_path / "db.sql"), None, empty)
     assert not report["ok"]
-    assert any("ключа в нём нет" in p for p in report["problems"]), report["problems"]
+    assert any("OPENCRM_SECRET_KEY" in p for p in report["problems"]), report["problems"]
+
+
+@nuzhen_sh
+def test_klyuch_beryotsya_iz_env_fayla_kogda_okruzheniya_net(tmp_path):
+    """Cron на хосте окружения не наследует — а в шапке скрипта именно он.
+
+    Оттуда `${OPENCRM_SECRET_KEY:-}` разворачивался в пустоту: копия уезжала
+    без ключа, и проверка объявляла её годной, потому что смотрела на наличие
+    строки. Скрипт обязан достать значения из config/.env сам.
+    """
+    backups = tmp_path / "backups"
+    backups.mkdir()
+    hranilishche = tmp_path / "storage"
+    hranilishche.mkdir()
+    (hranilishche / "fayl.txt").write_text("файл витрины", encoding="utf-8")
+    good_dump(tmp_path / "incoming.sql", users=3)
+    env_fayl = tmp_path / ".env"
+    env_fayl.write_text(
+        "# настройки\nOPENCRM_SECRET_KEY=klyuch-iz-env-fayla\n"
+        "OPENCRM_IP_HASH_SALT=sol-iz-env-fayla\n",
+        encoding="utf-8",
+    )
+
+    okruzhenie = _okruzhenie(
+        OPENCRM_BACKUP_DIR=backups,
+        OPENCRM_STORAGE_DIR=hranilishche,
+        OPENCRM_DB_DUMP=tmp_path / "incoming.sql",
+        OPENCRM_ENV_FILE=env_fayl,
+    )
+    okruzhenie.pop("OPENCRM_SECRET_KEY", None)
+    okruzhenie.pop("OPENCRM_IP_HASH_SALT", None)
+
+    zapusk = subprocess.run(
+        ["sh", "scripts/backup.sh"],
+        capture_output=True, text=True, encoding="utf-8", timeout=180, env=okruzhenie,
+    )
+    assert zapusk.returncode == 0, zapusk.stdout + zapusk.stderr
+    sekrety = next((backups / "daily").glob("secret-*.env")).read_text(encoding="utf-8")
+    assert "OPENCRM_SECRET_KEY=klyuch-iz-env-fayla" in sekrety, sekrety
+    assert "OPENCRM_IP_HASH_SALT=sol-iz-env-fayla" in sekrety, sekrety
+
+
+def test_stroka_klyucha_s_pustym_znacheniem_ne_schitaetsya_klyuchom(tmp_path):
+    """Сторож смотрел на подстроку `OPENCRM_SECRET_KEY=`, а `backup.sh` писал её
+    ВСЕГДА — и при пустой переменной тоже.
+
+    То есть на копии без ключа проверка была зелёной, и узнали бы об этом в день
+    восстановления на другой машине. Строка есть, значения нет — это отсутствие
+    ключа, а не его наличие.
+    """
+    pustoy = tmp_path / "secret.env"
+    pustoy.write_text("OPENCRM_SECRET_KEY=\nOPENCRM_IP_HASH_SALT=\n", encoding="utf-8")
+    report = verify_backup.verify(good_dump(tmp_path / "db.sql"), None, pustoy)
+    assert not report["ok"], "копия без ключа объявлена годной"
+    assert any("OPENCRM_SECRET_KEY" in p for p in report["problems"]), report["problems"]
+    assert any("OPENCRM_IP_HASH_SALT" in p for p in report["problems"]), report["problems"]
 
 
 # --- отчёт --------------------------------------------------------------------

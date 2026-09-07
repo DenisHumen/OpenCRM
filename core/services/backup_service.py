@@ -10,10 +10,19 @@
 - состояние работы лежит файлом рядом с копией, чтобы его видел любой рабочий
   процесс, а не только тот, что работу начал;
 - одна работа за раз: замок — файл, созданный с `O_EXCL`.
+
+**Копия базы везёт в себе ключ шифрования, и это условие, а не удобство.** Без
+него копия, залитая на ДРУГУЮ машину, встаёт целиком — схема сходится,
+`/healthz` отвечает, — а всё зашифрованное в ней (пароли ящиков, секреты
+двухфакторок) молча превращается в мусор: `opencrm.sh` завёл на новой машине
+свой `OPENCRM_SECRET_KEY`. Ключ едет строкой-комментарием в самом дампе, внутри
+шифрования копии, и восстановление сразу после заливки перекладывает токены под
+нынешний ключ (`core/services/sekrety_service.py`).
 """
 
 from __future__ import annotations
 
+import base64
 import hmac
 import json
 import os
@@ -29,7 +38,7 @@ from sqlalchemy.orm import Session
 
 from config.settings import BASE_DIR, get_settings
 from core import exceptions as errors
-from core.services import audit_service, maintenance_mode, modules_service
+from core.services import audit_service, maintenance_mode, modules_service, sekrety_service
 from database import schema_check
 from database.models import User
 from database.models.audit import SOURCE_MANUAL
@@ -55,6 +64,11 @@ HRANIT_SNIMOK_SEKUND = 7 * 24 * 3600
 POKAZYVAT_RABOT = 10
 
 VIDY = ("db", "storage")
+
+#: Строка, которой копия базы везёт ключи. Комментарий SQL — MySQL его не
+#: заметит, а `snapshot_db.celaya` ищет свою метку в последних четырёх
+#: килобайтах, куда эта строка помещается с запасом.
+KLYUCHI_V_KOPII = "-- opencrm-klyuchi-v1: "
 
 _REVIZIYA = re.compile(r"^INSERT INTO `alembic_version` \(`version_num`\) VALUES\s*\('([0-9a-f]+)'\)", re.M)
 _SNYATO = re.compile(r"^-- база \S+, снято (\S+ \S+)$", re.M)
@@ -295,6 +309,66 @@ def snyat(actor: User, kind: str) -> dict:
     return job
 
 
+def _dopisat_klyuchi(damp: Path) -> None:
+    """Вписать ключи в хвост дампа, ПЕРЕД меткой конца.
+
+    Не после неё: годность копии проверяется по последней строке, и всё, что
+    встало за меткой, читается как «дамп оборвался». Base64 — чтобы разбор не
+    зависел от того, что внутри значения.
+    """
+    nastroyki = get_settings()
+    stroki = "\n".join(
+        (
+            f"OPENCRM_SECRET_KEY={nastroyki.secret_key}",
+            f"OPENCRM_IP_HASH_SALT={nastroyki.ip_hash_salt}",
+        )
+    )
+    stroka = (KLYUCHI_V_KOPII + base64.b64encode(stroki.encode("utf-8")).decode("ascii")).encode()
+    metka = snapshot_db.METKA.encode("ascii")
+    razmer = damp.stat().st_size
+    with damp.open("r+b") as f:
+        f.seek(max(0, razmer - 4096))
+        nachalo = f.tell()
+        hvost = f.read()
+        mesto = hvost.rfind(metka)
+        if mesto < 0:
+            raise RuntimeError("в дампе нет метки конца — ключи вписывать некуда")
+        f.seek(nachalo + mesto)
+        f.write(stroka + b"\n" + hvost[mesto:])
+        f.truncate()
+    # С этой секунды открытый дамп содержит ещё и ключ шифрования — то же, что
+    # лежит в config/.env под правами 600. Живёт он до строки `zashifrovat`,
+    # но и этого хватит, чтобы его прочитал сосед по машине.
+    os.chmod(damp, 0o600)
+
+
+def klyuchi_iz_dampa(damp: Path) -> dict[str, str]:
+    """Ключи, которые везёт копия. Пусто — копия снята до того, как их возили.
+
+    Читаем хвост, а не файл целиком: дамп бывает на гигабайты, а строка стоит
+    предпоследней, перед меткой конца.
+    """
+    razmer = damp.stat().st_size
+    with damp.open("rb") as f:
+        f.seek(max(0, razmer - 4096))
+        hvost = f.read().decode("utf-8", "replace")
+    for stroka in reversed(hvost.splitlines()):
+        if not stroka.startswith(KLYUCHI_V_KOPII):
+            continue
+        try:
+            raspakovka = base64.b64decode(stroka[len(KLYUCHI_V_KOPII) :].strip(), validate=True)
+            tekst = raspakovka.decode("utf-8")
+        except (ValueError, UnicodeDecodeError):
+            return {}
+        itog = {}
+        for para in tekst.splitlines():
+            imya, _, znachenie = para.partition("=")
+            if imya.strip():
+                itog[imya.strip()] = znachenie
+        return itog
+    return {}
+
+
 def _arhiv_storage(cel: Path) -> int:
     """Тот же архив, что снимает `scripts/backup.sh`: `tar -C storage .`."""
     storage = get_settings().storage_dir
@@ -335,6 +409,7 @@ def _snyatie(job: dict, actor_id: int) -> None:
         if job["kind"] == "db":
             job["tables"], job["rows"] = snapshot_db.snyat(engine, syroy)
             job["revision"] = snapshot_db.revizia(engine)
+            _dopisat_klyuchi(syroy)
             job["filename"] = f"opencrm-db-{_shtamp()}.sql.enc"
         else:
             job["files"] = _arhiv_storage(syroy)
@@ -497,6 +572,7 @@ def vosstanovit(db: Session, actor: User, kind: str, zagruzka: Path) -> dict:
                 )
             job["revision"] = _reviziya_dampa(syroy)
             _proverit_reviziyu(job["revision"])
+            job["has_secret_key"] = bool(klyuchi_iz_dampa(syroy).get("OPENCRM_SECRET_KEY"))
             job["copy_taken_at"] = _snyato(syroy)
             job["tables"], job["rows"] = _itog_dampa(syroy)
             maintenance_mode.set_mode(db, True, "Restoring a database copy", actor.name or actor.email)
@@ -545,6 +621,9 @@ def _vosstanovlenie(job: dict, actor_id: int, syroy: Path) -> None:
             snapshot_db.snyat(engine, snimok)
             job["snapshot"] = snimok.name
             url = engine.url.render_as_string(hide_password=False)
+            # Ключ читается ДО заливки: дальше файл удалят, а без него всё
+            # зашифрованное в залитой базе останется мусором.
+            klyuch_kopii = klyuchi_iz_dampa(syroy).get("OPENCRM_SECRET_KEY", "")
             with schema_check.zamok_shemy(engine):
                 backups_repo.zalit_damp(url, syroy)
                 _dognat_migratsii(url)
@@ -554,6 +633,9 @@ def _vosstanovlenie(job: dict, actor_id: int, syroy: Path) -> None:
             maintenance_mode.invalidate()
             modules_service.invalidate()
             with SessionLocal() as db:
+                # Перекладка — после миграций: колонка, переехавшая на новом
+                # коде, до них ещё зовётся по-старому.
+                job["secrets"] = sekrety_service.perelozhit(db, klyuch_kopii)
                 maintenance_mode.set_mode(db, False, "", "")
                 db.commit()
             itog = f"revision {job['revision']}, tables {job['tables']}, rows {job['rows']}"

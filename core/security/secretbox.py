@@ -37,9 +37,14 @@ HMAC-SHA256:
 заменить внутренности на AES-GCM, сохранив формат токена с меткой версии.
 
 *Чего конструкция не делает.* Не прячет длину секрета (шифротекст ровно длины
-исходного текста), не умеет ротацию ключа (смена `OPENCRM_SECRET_KEY` делает все
-токены нечитаемыми — пароли ящиков придётся ввести заново), не затирает ключ в
-памяти (в Python `bytes` неизменяемы, обнулить их нельзя).
+исходного текста), не умеет ротацию ключа на ходу (смена `OPENCRM_SECRET_KEY` у
+живой системы делает все токены нечитаемыми), не затирает ключ в памяти (в
+Python `bytes` неизменяемы, обнулить их нельзя).
+
+Единственное место, где токен переезжает с ключа на ключ, — восстановление
+копии базы, снятой на ДРУГОЙ машине: `decrypt(..., klyuch=...)` открывает его
+ключом из копии, и `core/services/sekrety_service.py` перекладывает под
+нынешний. Без этого восстановленная копия молча теряла бы всё зашифрованное.
 """
 
 import base64
@@ -72,8 +77,13 @@ def encrypt(plaintext: str, purpose: str = "default") -> str:
     return base64.urlsafe_b64encode(_VERSION + nonce + ciphertext + tag).decode("ascii")
 
 
-def decrypt(token: str, purpose: str = "default") -> str:
-    """Расшифровывает токен `encrypt`. Бросает `SecretBoxError`, если не сходится."""
+def decrypt(token: str, purpose: str = "default", *, klyuch: str | None = None) -> str:
+    """Расшифровывает токен `encrypt`. Бросает `SecretBoxError`, если не сходится.
+
+    `klyuch` — чужой `OPENCRM_SECRET_KEY` вместо нынешнего. Нужен ровно в одном
+    месте: восстановление копии, снятой на другой машине, где ключ был свой
+    (`core/services/sekrety_service.py`). Больше звать его неоткуда.
+    """
     try:
         raw = base64.urlsafe_b64decode(token.encode("ascii"))
     except Exception as exc:  # noqa: BLE001 — любая порча base64 это одна ситуация
@@ -87,7 +97,7 @@ def decrypt(token: str, purpose: str = "default") -> str:
     ciphertext = raw[head : len(raw) - _TAG_LEN]
     tag = raw[len(raw) - _TAG_LEN :]
 
-    enc_key, mac_key = _keys(get_settings().secret_key, purpose)
+    enc_key, mac_key = _keys(klyuch if klyuch is not None else get_settings().secret_key, purpose)
     # Сверяем MAC ДО расшифровки: расшифрованный, но неаутентичный текст — это
     # текст, который выбрал не тот, кто его записывал.
     if not hmac.compare_digest(tag, _tag(mac_key, nonce, ciphertext)):
