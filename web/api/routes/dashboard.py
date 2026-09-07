@@ -8,6 +8,7 @@ from core.services import (
     finance_service,
     modules_service,
     order_service,
+    otchyot_prodazh_service,
     permissions_service,
     pipeline_service,
     settings_service,
@@ -26,7 +27,7 @@ from database.repositories import svodka as svodka_repo
 from database.repositories import vozvraty as vozvraty_repo
 from database.repositories import warehouse as warehouse_repo
 from web.api import cards, schemas
-from web.api.deps import get_db, require_staff
+from web.api.deps import get_db, require_perm, require_staff
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
@@ -233,6 +234,23 @@ def _reestr() -> dict:
         kind: {"w": opis["w"], "shiriny": list(opis["shiriny"]), "odin": opis["odin"],
                "module": opis["module"], "perm": opis["perm"]}
         for kind, opis in vidzhety_service.REESTR.items()
+    }
+
+
+@router.get("/sales-report")
+def sales_report(
+    user: User = Depends(require_perm("deals", "view_amounts")),
+    db: Session = Depends(get_db),
+):
+    """Отчёт продаж: тепловая карта дней, матрица месяцев, показатели, города.
+
+    Отдельной ручкой, а не полем `/dashboard`: считает она восемь запросов по
+    окну в год, а виджет стоит не у всех. Право на суммы — тем же ключом, что
+    у остальных денежных плиток сводки (`vidzhety_service.REESTR`).
+    """
+    return {
+        "currency": settings_service.get_all(db).get("currency", "USD"),
+        **otchyot_prodazh_service.otchyot(db),
     }
 
 

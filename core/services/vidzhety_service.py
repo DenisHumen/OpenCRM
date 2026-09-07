@@ -47,9 +47,10 @@ REESTR: dict[str, dict] = {
     # Ход докачки подробных очертаний планеты. Появляется только с блоком
     # глобуса — у кого его нет, тому и качать нечего.
     "globe_detail": {"module": "globe", "perm": None, "w": 1, "shiriny": (1, 2), "odin": True},
-    # Ход докачки подробных очертаний планеты. Появляется только с блоком
-    # глобуса — у кого его нет, тому и качать нечего.
-    "globe_detail": {"module": "globe", "perm": None, "w": 1, "shiriny": (1, 2), "odin": True},
+    # Отчёт продаж двумя видами: тепловая карта дней и точечная матрица
+    # месяцев. Оба под правом на суммы — под ними стоят деньги за месяц и год.
+    "sales_grid": {"module": None, "perm": "deals.view_amounts", "w": 2, "shiriny": (2, 4), "odin": True},
+    "sales_matrix": {"module": None, "perm": "deals.view_amounts", "w": 2, "shiriny": (2, 4), "odin": True},
     # Ключ сайта: по одному виджету на ключ, ключ обязан существовать.
     "api_key": {"module": None, "perm": "settings.manage", "w": 2, "shiriny": (2, 4), "odin": False},
 }

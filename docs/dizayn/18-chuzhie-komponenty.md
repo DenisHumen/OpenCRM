@@ -67,6 +67,7 @@
 | `uiverse.io/PriyanshuGupta28/orange-newt-23` | путь сделки по воронке | `.shagi` |
 | `uiverse.io/Galahhad/kind-cheetah-52` | «скопировать» у блока кода | `.copy-btn` |
 | `uiverse.io/dexter-st/bright-lizard-8` | буквы по одной; кольцо переведено плоским (две дуги на рамке), перелив снят | `.zagruzka` — `ScreenLoading`, в том числе на весь экран при входе |
+| картинка владельца, 06.09.2026 | «Sales Report»: тепловая карта дней и точечная матрица месяцев; три отступления от образца названы в [27](27-otchyot-prodazh.md) | `.otchyot-*` — виджеты сводки `sales_grid` и `sales_matrix` |
 | `uiverse.io/seyed-mohsen-mousavi/heavy-cobra-18`, `wicked-chipmunk-81` | плашка исхода: значок на плитке, текст, крестик | `.toast` — все всплывающие сообщения; крестик закрывает раньше срока |
 | `uiverse.io/Manish-Tamang/weak-vampirebat-44` | строка уведомления: кружок с буквой и значком вида | `.bell-row` в колокольчике |
 | `uiverse.io/Cobp/dangerous-dolphin-47` | поле ответа: рамка-градиент, инструменты, глянцевая «отправить» | `.tg-compose` в переписке Telegram |
