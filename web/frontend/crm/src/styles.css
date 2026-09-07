@@ -4669,3 +4669,16 @@ html { scroll-behavior: smooth; }
   @keyframes sborka-vhod { from { opacity: 0; } to { opacity: 1; } }
 }
 
+/* ---- Разделы экрана «API сайта» --------------------------------------------
+   Два прежних экрана стали разделами одного. Заголовок раздела мельче
+   страничного и отбит линией сверху — иначе на странице оказывается два
+   одинаковых заголовка, и непонятно, который из них главный. */
+.razdel-api + .razdel-api {
+  margin-top: 30px; padding-top: 26px; border-top: 1px solid var(--line);
+}
+.razdel-api-shapka {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 16px; flex-wrap: wrap; margin-bottom: 18px;
+}
+.razdel-api-titul { margin: 0 0 4px; font-size: 17px; font-weight: 700; letter-spacing: -0.01em; }
+

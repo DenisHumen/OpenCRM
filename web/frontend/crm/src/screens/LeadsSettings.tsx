@@ -62,7 +62,7 @@ const KEY_PLACEHOLDER = "YOUR-INTAKE-KEY";
  * нельзя воспользоваться, всё равно что нет. Пустой ключ означает, что приёма
  * не существует вовсе, и свежая установка приходит именно в этом состоянии.
  */
-export function SettingsLeads() {
+export function PriyomZayavok() {
   const { t, toast, toastError } = useApp();
   const [config, setConfig] = useState<LeadConfig | null>(null);
   const [people, setPeople] = useState<Person[]>([]);
@@ -157,10 +157,10 @@ export function SettingsLeads() {
   const missing = config.chosen_id !== null && !people.some((p) => p.id === config.chosen_id);
 
   return (
-    <div className="page page-narrow">
-      <div className="page-head" style={{ alignItems: "flex-start", marginBottom: 22 }}>
+    <div className="razdel-api">
+      <div className="razdel-api-shapka">
         <div>
-          <h1 className="page-title">{t("leads")}</h1>
+          <h2 className="razdel-api-titul">{t("leads")}</h2>
           <div className="page-sub">{t("leadsSub")}</div>
         </div>
       </div>

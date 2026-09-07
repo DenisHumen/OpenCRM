@@ -68,7 +68,7 @@ const STATE_LABEL: Record<ApiKey["state"], TranslationKey> = {
   revoked: "apiKeyStateRevoked",
 };
 
-export function SettingsApiKeys() {
+export function KlyuchiSayta() {
   const { t, locale, toastError } = useApp();
   const [data, setData] = useState<Spisok | null>(null);
   const [sklady, setSklady] = useState<Sklad[]>([]);
@@ -123,10 +123,10 @@ export function SettingsApiKeys() {
   const skladName = (id: number | null) => sklady.find((s) => s.id === id)?.name ?? (id ? `#${id}` : "—");
 
   return (
-    <div className="page">
-      <div className="page-head">
+    <div className="razdel-api">
+      <div className="razdel-api-shapka">
         <div>
-          <h1 className="page-title">{t("apiKeys")}</h1>
+          <h2 className="razdel-api-titul">{t("apiKeys")}</h2>
           <div className="page-sub">{t("apiKeysSub")}</div>
         </div>
         <button className="btn btn-primary" onClick={() => setCreating(true)}>

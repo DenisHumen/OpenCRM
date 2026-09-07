@@ -32,7 +32,7 @@ import { DocumentCard } from "./screens/DocumentCard";
 import { Documents } from "./screens/Documents";
 import { Files } from "./screens/Files";
 import { SettingsLabels } from "./screens/LabelSettings";
-import { SettingsLeads } from "./screens/LeadsSettings";
+import { SettingsApi } from "./screens/SettingsApi";
 import { Mail } from "./screens/Mail";
 import { Monitoring } from "./screens/Monitoring";
 import { Templates } from "./screens/Templates";
@@ -61,7 +61,6 @@ import { Returns } from "./screens/Returns";
 import { WaybillCard } from "./screens/WaybillCard";
 import { Orders } from "./screens/Orders";
 import { Waybills } from "./screens/Waybills";
-import { SettingsApiKeys } from "./screens/SettingsApiKeys";
 import { SettingsBackups } from "./screens/SettingsBackups";
 import { SettingsRoles } from "./screens/SettingsRoles";
 import { Setup } from "./screens/Setup";
@@ -444,12 +443,15 @@ export default function App() {
                 несущие (`core/modules.py`) — выключить их нельзя, значит и
                 прятать экран не от чего. Выключателем служит сам ключ: пустой
                 означает, что приёма не существует. */}
-            <Route path="/settings/leads" element={<SettingsLeads />} />
+            <Route path="/settings/api" element={<SettingsApi />} />
+            {/* Прежние два адреса ведут на общий экран: они разосланы в
+                руководстве, в виджете ключа и в чужих закладках. */}
+            <Route path="/settings/leads" element={<Navigate to="/settings/api" replace />} />
+            <Route path="/settings/api-keys" element={<Navigate to="/settings/api" replace />} />
             {/* Ключи API сайта — тоже вне каркаса с общим «Сохранить»: ключ
                 выдаётся и отзывается своей кнопкой, а не сохранением формы.
                 Своего блока у них нет намеренно: «наружу открыто» решают живые
                 ключи, а не выключатель (docs/16 §8). */}
-            <Route path="/settings/api-keys" element={<SettingsApiKeys />} />
             {/* разделов настроек будет больше — каждый своим маршрутом,
                 чтобы на них можно было сослаться и открыть из сайдбара */}
             <Route path="/settings" element={<SettingsLayout />}>
