@@ -54,6 +54,7 @@ interface Spisok {
   mine: number;
   trash: number;
   bez_kategorii: number;
+  prosyat: number;
 }
 
 interface Razbor {
@@ -123,6 +124,8 @@ export function Klyuchi() {
   const [poisk, setPoisk] = useState("");
   const [kody, setKody] = useState<Record<number, Kod>>({});
   const [novyy, setNovyy] = useState(false);
+  const [novaya, setNovaya] = useState(false);
+  const [tolkoTrevozhnye, setTolkoTrevozhnye] = useState(false);
   const [prava, setPrava] = useState<{ klyuch: Klyuch; lyudi: Chelovek[] } | null>(null);
   const [zapasnye, setZapasnye] = useState<{ klyuch: Klyuch; items: Zapasnoy[] } | null>(null);
   const [perenos, setPerenos] = useState<{ klyuch: Klyuch; secret: string; qr: string } | null>(null);
@@ -200,6 +203,12 @@ export function Klyuchi() {
   }, [kody]);
 
   if (!dannye) return <ScreenLoading error={failure} onRetry={load} />;
+
+  // Отбор «просят обновления» делается здесь, а не запросом: полка уже
+  // пришла целиком, и лишний заход к серверу ради вычитания ничего не даст.
+  const prosrochen = (k: Klyuch) =>
+    !!k.task && !k.task.done && !!k.task.due_at && new Date(k.task.due_at) < new Date();
+  const pokazyvaem = tolkoTrevozhnye ? dannye.items.filter(prosrochen) : dannye.items;
 
   const mozhnoZavodit = can(user, "keys.create");
   const mozhnoUpravlyat = can(user, "keys.manage");
@@ -411,6 +420,17 @@ export function Klyuchi() {
             <span className="kl-svodka-chislo">
               {t("keysSummary", { n: dannye.total, k: dannye.categories.length })}
             </span>
+            {dannye.prosyat > 0 && (
+              <button
+                type="button"
+                className="kl-svodka-trevoga"
+                aria-pressed={tolkoTrevozhnye}
+                onClick={() => setTolkoTrevozhnye((b) => !b)}
+              >
+                <Icon name="alert" size={11} />
+                {t("keysNeedRotation", { n: dannye.prosyat })}
+              </button>
+            )}
           </div>
         </div>
         <div className="kl-shapka-knopki">
@@ -424,6 +444,12 @@ export function Klyuchi() {
               onChange={(e) => setPoisk(e.target.value)}
             />
           </div>
+          {mozhnoUpravlyat && (
+            <button className="btn" onClick={() => setNovaya(true)}>
+              <Icon name="plus" size={14} />
+              {t("keysCategory")}
+            </button>
+          )}
           {mozhnoZavodit && (
             <button className="btn btn-primary" onClick={() => setNovyy(true)}>
               <Icon name="plus" size={14} />
@@ -489,7 +515,7 @@ export function Klyuchi() {
         </nav>
 
         <div className="kl-setka">
-          {dannye.items.length === 0 ? (
+          {pokazyvaem.length === 0 ? (
             <div className="kl-pusto">
               <div className="kl-pusto-plita">
                 <Icon name="lock" size={26} />
@@ -504,7 +530,7 @@ export function Klyuchi() {
               )}
             </div>
           ) : (
-            dannye.items.map((klyuch, i) => (
+            pokazyvaem.map((klyuch, i) => (
               <article
                 key={klyuch.id}
                 className={`kl-kartochka ${klyuch.vazhnost === "urgent" ? "kl-srochnyy" : ""}`}
@@ -599,6 +625,16 @@ export function Klyuchi() {
           onClose={() => setNovyy(false)}
           onSaved={() => {
             setNovyy(false);
+            load();
+          }}
+        />
+      )}
+
+      {novaya && (
+        <OknoKategorii
+          onClose={() => setNovaya(false)}
+          onSaved={() => {
+            setNovaya(false);
             load();
           }}
         />
@@ -976,6 +1012,71 @@ function OknoNovogo({
         <button
           className="btn btn-primary"
           disabled={guard.busy || !razbor}
+          onClick={() => void sohranit()}
+        >
+          {t("save")}
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+/** Окно заведения категории. Закрытая — та, куда пускают только её создателя и
+ *  root: она видна всем по имени и числу ключей, но не по содержимому.
+ *  Спрячь её целиком — и рядом заведут вторую такую же. */
+function OknoKategorii({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
+  const { t, toastError } = useApp();
+  const guard = useGuard();
+  const [imya, setImya] = useState("");
+  const [zakrytaya, setZakrytaya] = useState(false);
+
+  const sohranit = async () => {
+    if (!guard.take()) return;
+    try {
+      await api.post("/keys/categories", { name: imya.trim(), zakrytaya });
+      onSaved();
+    } catch (e) {
+      toastError(e);
+    } finally {
+      guard.free();
+    }
+  };
+
+  return (
+    <Modal title={t("keysNewCategory")} onClose={onClose}>
+      <div className="kl-pole">
+        <label className="label" htmlFor="kl-kat-imya">{t("keysCategoryName")}</label>
+        <input
+          id="kl-kat-imya"
+          className="input"
+          autoFocus
+          value={imya}
+          onChange={(e) => setImya(e.target.value)}
+        />
+      </div>
+
+      <div className="kl-pole">
+        <span className="label">{t("keysCategoryWho")}</span>
+        <div className="kl-prava-stroka" style={{ borderBottom: 0, paddingLeft: 0 }}>
+          <span className="kl-prava-kto">
+            <span className="kl-prava-imya">{t("keysCategoryClosed")}</span>
+            <span className="kl-prava-rol">{t("keysCategoryClosedHint")}</span>
+          </span>
+          <button
+            type="button"
+            className={`toggle-track ${zakrytaya ? "on" : ""}`}
+            aria-pressed={zakrytaya}
+            aria-label={t("keysCategoryClosed")}
+            onClick={() => setZakrytaya((b) => !b)}
+          />
+        </div>
+      </div>
+
+      <div className="kl-deystviya">
+        <button className="btn btn-secondary" onClick={onClose}>{t("cancel")}</button>
+        <button
+          className="btn btn-primary"
+          disabled={guard.busy || !imya.trim()}
           onClick={() => void sohranit()}
         >
           {t("save")}

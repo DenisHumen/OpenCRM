@@ -36,6 +36,18 @@ def get(db: Session, task_id: int) -> Task | None:
     return db.get(Task, task_id)
 
 
+def po_nomeram(db: Session, task_ids) -> dict[int, Task]:
+    """{номер: напоминание} пачкой.
+
+    Список, у которого напоминание висит на каждой строке (ключи двухфакторки),
+    иначе добирал бы их по одному: двенадцать карточек — двенадцать запросов.
+    """
+    nomera = [int(x) for x in task_ids if x]
+    if not nomera:
+        return {}
+    return {t.id: t for t in db.scalars(select(Task).where(Task.id.in_(nomera)))}
+
+
 def zapert(db: Session, task_id: int) -> Task | None:
     """Напоминание под замком до конца транзакции.
 
