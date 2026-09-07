@@ -4104,6 +4104,22 @@ html { scroll-behavior: smooth; }
 .kl-papka.kl-zakryta { color: var(--faint); cursor: not-allowed; }
 .kl-papka.kl-zakryta:hover { background: var(--klyuch-zamok); color: var(--faint); }
 .kl-papka.kl-zakryta:hover .kl-papka-znak { color: var(--warning); opacity: 1; }
+/* Кнопка «убрать» стоит РЯДОМ с полкой, а не внутри неё: кнопка внутри
+   кнопки разметкой не бывает. Появляется по наведению и по табу — до тех пор
+   на её месте счётчик, а строка узкая и вторая постоянная кнопка съела бы
+   половину имени. */
+.kl-papka-ryad { position: relative; display: flex; align-items: center; }
+.kl-papka-ryad > .kl-papka { flex: 1; min-width: 0; }
+.kl-papka-ubrat {
+  position: absolute; right: 4px;
+  width: 22px; height: 22px; opacity: 0; color: var(--faint);
+  transition: opacity 140ms, color 140ms;
+}
+.kl-papka-ryad:hover .kl-papka-ubrat,
+.kl-papka-ubrat:focus-visible { opacity: 1; }
+.kl-papka-ubrat:hover { color: var(--danger); }
+.kl-papka-ryad:hover .kl-papka-schyot { opacity: 0; }
+
 .kl-papki-nizhe { margin-top: 7px; padding-top: 7px; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 1px; }
 
 /* --- карточка ключа ------------------------------------------------------ */
@@ -4526,6 +4542,7 @@ html { scroll-behavior: smooth; }
   .kl-shkala-polosa { animation-duration: 1ms; }
   .kl-papka, .kl-papka::before, .kl-kartochka, .kl-znak, .kl-koltso, .kl-kopiya::before,
   .kl-poisk, .kl-prava-stroka, .kl-zapasnoy, .kl-menyu, .kl-svyaz-znak, .kl-menyu-punkt,
+  .kl-papka-ubrat, .kl-papka-schyot,
   .kl-seyf-knopka, .kl-svodka-trevoga, .kl-zametka-krai { transition: none; }
   .kl-kartochka:hover, .kl-kartochka:focus-within, .kl-svodka-trevoga:hover { transform: none; }
   .kl-kartochka:hover .kl-znak { transform: none; }
@@ -4590,10 +4607,33 @@ html { scroll-behavior: smooth; }
 }
 .korzina:disabled { opacity: 0.45; cursor: default; }
 
+/* Пока корзинка разъехалась, соседние кнопки в той же строке гаснут.
+   Пилюля растёт влево и накрывала «Вернуть» ровно наполовину — а кнопка,
+   перерезанная пополам, читается не как «поверх», а как поломка вёрстки
+   (владелец, 07.09.2026).
+
+   `:has(> ...)` берёт РОДИТЕЛЯ корзинки и никого выше: без прямого потомка
+   правило поднялось бы по всему дереву и гасило бы полстраницы. Гаснут только
+   кнопки и ссылки — подписи и цифры в строке остаются на месте, иначе строка
+   моргала бы целиком. Браузер без `:has()` просто ничего не сделает: было так
+   же, как раньше. */
+*:has(> .korzina-mesto > .korzina:hover) > .btn,
+*:has(> .korzina-mesto > .korzina:hover) > .btn-icon,
+*:has(> .korzina-mesto > .korzina:hover) > a.btn,
+*:has(> .korzina-mesto > .korzina:focus-visible) > .btn,
+*:has(> .korzina-mesto > .korzina:focus-visible) > .btn-icon,
+*:has(> .korzina-mesto > .korzina:focus-visible) > a.btn {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 200ms;
+}
+
 /* Кому движение мешает — тому обычная круглая кнопка: она краснеет, но не
    разъезжается, и слово остаётся в `aria-label` и всплывающей подписи. */
 @media (prefers-reduced-motion: reduce) {
   .korzina, .korzina-znak, .korzina::before { transition: none; }
+  *:has(> .korzina-mesto > .korzina:hover) > .btn,
+  *:has(> .korzina-mesto > .korzina:hover) > .btn-icon { transition: none; }
   .korzina:not(:disabled):hover,
   .korzina:not(:disabled):focus-visible { width: 28px; border-radius: 50%; }
   .korzina:not(:disabled):hover .korzina-znak,
@@ -4601,3 +4641,31 @@ html { scroll-behavior: smooth; }
   .korzina:not(:disabled):hover::before,
   .korzina:not(:disabled):focus-visible::before { font-size: 2px; transform: none; }
 }
+
+/* ---- «Вышло обновление» ----------------------------------------------------
+   Полоса внизу по центру, над плашками исходов. Не исчезает сама: пока вкладку
+   не перезагрузили, экран работает вчерашним кодом (разбор — `web/sborka.py`).
+   Цвет — предупреждение, а не отказ: ничего не сломалось, но и оставлять как
+   есть нельзя. */
+.sborka-polosa {
+  position: fixed; left: 50%; bottom: 18px; z-index: 60;
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 11px 9px 13px; border-radius: 6px;
+  transform: translateX(-50%);
+  background: var(--surface); border: 1px solid var(--frame); box-shadow: var(--hard);
+  color: var(--warning); font-size: 12.5px;
+  animation: sborka-vhod 260ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.sborka-tekst { color: var(--text); }
+@keyframes sborka-vhod {
+  from { opacity: 0; transform: translateX(-50%) translateY(10px); }
+  to { opacity: 1; transform: translateX(-50%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sborka-polosa { animation: none; }
+}
+@media (max-width: 560px) {
+  .sborka-polosa { left: 12px; right: 12px; bottom: 12px; transform: none; }
+  @keyframes sborka-vhod { from { opacity: 0; } to { opacity: 1; } }
+}
+

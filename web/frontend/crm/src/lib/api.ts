@@ -15,6 +15,35 @@ function csrfToken(): string {
   return match ? decodeURIComponent(match[1]) : "";
 }
 
+/** Отметка сборки, с которой открылась эта вкладка. Пусто — ещё не видели. */
+let sborka = "";
+let zametil: (() => void) | null = null;
+
+/** Кому сказать, что сервер отвечает уже НОВОЙ сборкой.
+ *
+ * Беда, ради которой это заведено: боевой сервер обновляется сам, а вкладка,
+ * которую не перезагружали, продолжает работать вчерашним кодом. Иногда он
+ * просто отстаёт и показывает неправду, иногда сошлётся на файл, который
+ * обновление унесло, и встанет насмерть. И то и другое человек читает как
+ * «программа сломалась» (владелец, 07.09.2026).
+ */
+export function priNovoyeSborke(chto: () => void): void {
+  zametil = chto;
+}
+
+function sverit_sborku(response: Response): void {
+  const otmetka = response.headers.get("X-OpenCRM-Build");
+  if (!otmetka) return;
+  if (!sborka) {
+    sborka = otmetka;
+    return;
+  }
+  if (otmetka !== sborka) {
+    sborka = otmetka;
+    zametil?.();
+  }
+}
+
 async function request<T>(method: string, path: string, body?: unknown, form?: FormData): Promise<T> {
   const headers: Record<string, string> = {};
   if (method !== "GET") headers["X-CSRF-Token"] = csrfToken();
@@ -25,6 +54,7 @@ async function request<T>(method: string, path: string, body?: unknown, form?: F
     credentials: "same-origin",
     body: body !== undefined ? JSON.stringify(body) : form,
   });
+  sverit_sborku(response);
   if (response.status === 204) return undefined as T;
   let data: any = null;
   try {

@@ -447,3 +447,34 @@ def test_kategoriya_s_tem_zhe_imenem_ne_zavoditsya_dvazhdy(root_client):
     otkaz = root_client.post(f"{KLYUCHI}/categories", json=imya)
     assert otkaz.status_code == 409, otkaz.text
     assert otkaz.json()["error"]["code"] == "key_category_taken"
+
+
+def test_kategoriyu_ubirayut_a_klyuchi_ostayutsya(root_client):
+    """Категория — полка, а не коробка: убрали полку — ключи не пропали.
+
+    Иначе «убрать категорию» однажды унесло бы вместе с ней десяток секретов,
+    восстановить которые нечем.
+    """
+    kat = root_client.post(f"{KLYUCHI}/categories", json={"name": "Полка на снос"})
+    assert kat.status_code == 201, kat.text
+    klyuch = zavesti(root_client, title="Переживёт полку", category="Полка на снос")
+    assert klyuch["category_id"] == kat.json()["id"]
+
+    assert root_client.delete(f"{KLYUCHI}/categories/{kat.json()['id']}").status_code == 200
+
+    spisok = root_client.get(KLYUCHI).json()
+    nash = next((k for k in spisok["items"] if k["id"] == klyuch["id"]), None)
+    assert nash is not None, "ключ исчез вместе с категорией"
+    assert nash["category_id"] is None, "ключ остался в снесённой категории"
+    assert all(k["name"] != "Полка на снос" for k in spisok["categories"])
+
+
+def test_chuzhuyu_kategoriyu_ne_uberyot_kto_popalo(root_client, sotrudnik):
+    """Убрать полку может тот, кто её завёл, и root — больше никто."""
+    kat = root_client.post(f"{KLYUCHI}/categories", json={"name": "Не твоя полка"})
+    assert kat.status_code == 201, kat.text
+    chuzhoy, _ = sotrudnik("klyuchi.chuzhaya.kategoriya@test.local", ("keys.view", "keys.manage"))
+    otkaz = chuzhoy.delete(f"{KLYUCHI}/categories/{kat.json()['id']}")
+    assert otkaz.status_code == 403, otkaz.text
+    assert otkaz.json()["error"]["code"] == "key_category_not_owner"
+    root_client.delete(f"{KLYUCHI}/categories/{kat.json()['id']}")

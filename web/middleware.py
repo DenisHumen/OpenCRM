@@ -42,6 +42,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from core.services import auth_service, maintenance_mode, settings_service
 from database.models.user import ROLE_ROOT
 from database.session import SessionLocal
+from web import sborka
 from web.api.deps import CSRF_COOKIE, CSRF_HEADER, SESSION_COOKIE
 from web.public import routes as public_routes
 
@@ -266,6 +267,11 @@ class SecurityHeaders:
     def _decorate(self, headers: MutableHeaders, path: str) -> None:
         headers.setdefault("X-Content-Type-Options", "nosniff")
         headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+        if path.startswith("/api/"):
+            # Отметка сборки — заголовком, а не своей ручкой: экран и так
+            # ходит в API, и лишний опрос ради «не вышло ли обновление» стоил
+            # бы запроса с каждой открытой вкладки (`web/sborka.py`).
+            headers.setdefault("X-OpenCRM-Build", sborka.otmetka())
         if path.startswith("/static/"):
             # Шрифты витрины лежат под постоянными именами и не меняются: без
             # max-age браузер переспрашивал бы их на каждой загрузке страницы

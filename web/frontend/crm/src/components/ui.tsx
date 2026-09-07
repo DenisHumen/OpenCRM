@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
-import { ApiError } from "../lib/api";
+import { ApiError, priNovoyeSborke } from "../lib/api";
 import { useApp } from "../lib/app";
 import { formatMoney } from "../lib/format";
 import { Icon } from "./Icon";
@@ -491,6 +491,31 @@ export function ConfirmModal({
 /** Плашки исхода — перевод heavy-cobra-18 / wicked-chipmunk-81 (docs/18):
  *  значок на плитке, текст, крестик. Крестик нужен: четыре секунды — мало,
  *  чтобы дочитать длинный отказ, и много, чтобы плашка заслоняла кнопку. */
+/** Полоса «вышло обновление — перезагрузите страницу».
+ *
+ *  Не плашка исхода: та гаснет сама через четыре секунды, а это сообщение
+ *  обязано ждать, пока его прочтут. Пока вкладку не перезагрузили, экран
+ *  работает вчерашним кодом — и либо отстаёт от сервера, показывая неправду,
+ *  либо сошлётся на файл, который обновление уже унесло. Разбор — `web/sborka.py`.
+ */
+export function NovayaSborka() {
+  const { t } = useApp();
+  const [vyshlo, setVyshlo] = useState(false);
+
+  useEffect(() => priNovoyeSborke(() => setVyshlo(true)), []);
+
+  if (!vyshlo) return null;
+  return (
+    <div className="sborka-polosa" role="status">
+      <Icon name="refresh" size={14} />
+      <span className="sborka-tekst">{t("newBuild")}</span>
+      <button className="btn btn-sm btn-primary" onClick={() => window.location.reload()}>
+        {t("newBuildReload")}
+      </button>
+    </div>
+  );
+}
+
 export function Toasts() {
   const { t, toasts, toastDismiss } = useApp();
   if (toasts.length === 0) return null;

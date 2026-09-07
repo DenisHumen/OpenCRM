@@ -132,6 +132,7 @@ export function Klyuchi() {
   const [menyu, setMenyu] = useState<Klyuch | null>(null);
   const [udalenie, setUdalenie] = useState<Klyuch | null>(null);
   const [nasovsem, setNasovsem] = useState<Klyuch | null>(null);
+  const [ubratKat, setUbratKat] = useState<Kategoriya | null>(null);
   const [skopirovan, setSkopirovan] = useState<number | null>(null);
 
   // Плашка «скопировано» гаснет сама: держим отметку, а гасит её общий
@@ -345,6 +346,22 @@ export function Klyuchi() {
     }
   };
 
+  const ubratKategoriyu = async (kat: Kategoriya) => {
+    setUbratKat(null);
+    if (!guard.take()) return;
+    try {
+      await api.del(`/keys/categories/${kat.id}`);
+      // Полка под ногами: если смотрели именно её, возвращаемся ко всем.
+      if (polka.vid === "kategoriya" && polka.id === kat.id) setPolka({ vid: "vse" });
+      toast(t("keysCategoryRemoved"));
+      load();
+    } catch (e) {
+      toastError(e);
+    } finally {
+      guard.free();
+    }
+  };
+
   const polkaVybrana = (p: Polka) =>
     p.vid === polka.vid && (p.vid !== "kategoriya" || (polka.vid === "kategoriya" && p.id === polka.id));
 
@@ -485,20 +502,33 @@ export function Klyuchi() {
               <span className="kl-papka-schyot">{dannye.mine}</span>
             </button>
             {dannye.categories.map((kat) => (
-              <button
-                key={kat.id}
-                type="button"
-                className={`kl-papka ${kat.zakryta_dlya_menya ? "kl-zakryta" : ""} ${
-                  polkaVybrana({ vid: "kategoriya", id: kat.id }) ? "kl-vybrana" : ""
-                }`}
-                disabled={kat.zakryta_dlya_menya}
-                title={kat.zakryta_dlya_menya ? t("keysCategoryClosedHint") : undefined}
-                onClick={() => setPolka({ vid: "kategoriya", id: kat.id })}
-              >
-                <Icon name={kat.zakrytaya ? "lock" : "folder"} size={15} />
-                <span className="kl-papka-imya truncate">{kat.name}</span>
-                <span className="kl-papka-schyot">{kat.count}</span>
-              </button>
+              <div key={kat.id} className="kl-papka-ryad">
+                <button
+                  type="button"
+                  className={`kl-papka ${kat.zakryta_dlya_menya ? "kl-zakryta" : ""} ${
+                    polkaVybrana({ vid: "kategoriya", id: kat.id }) ? "kl-vybrana" : ""
+                  }`}
+                  disabled={kat.zakryta_dlya_menya}
+                  title={kat.zakryta_dlya_menya ? t("keysCategoryClosedHint") : undefined}
+                  onClick={() => setPolka({ vid: "kategoriya", id: kat.id })}
+                >
+                  <Icon name={kat.zakrytaya ? "lock" : "folder"} size={15} />
+                  <span className="kl-papka-imya truncate">{kat.name}</span>
+                  <span className="kl-papka-schyot">{kat.count}</span>
+                </button>
+                {(rootLi || kat.mine) && !kat.zakryta_dlya_menya && (
+                  <button
+                    type="button"
+                    className="btn-icon kl-papka-ubrat"
+                    title={t("keysCategoryRemove")}
+                    aria-label={t("keysCategoryRemove")}
+                    disabled={guard.busy}
+                    onClick={() => setUbratKat(kat)}
+                  >
+                    <Icon name="trash" size={13} />
+                  </button>
+                )}
+              </div>
             ))}
           </div>
           <div className="kl-papki-nizhe">
@@ -562,7 +592,12 @@ export function Klyuchi() {
                       {t("keysRestore")}
                     </button>
                     {klyuch.can_edit && (
-                      <KnopkaKorziny title={t("keysEraseTitle")} disabled={guard.busy} onClick={() => setNasovsem(klyuch)} />
+                      <KnopkaKorziny
+                        title={t("keysEraseTitle")}
+                        podpis={t("keysEraseShort")}
+                        disabled={guard.busy}
+                        onClick={() => setNasovsem(klyuch)}
+                      />
                     )}
                   </div>
                 ) : (
@@ -790,6 +825,16 @@ export function Klyuchi() {
           danger
           onConfirm={() => void udalit(udalenie)}
           onClose={() => setUdalenie(null)}
+        />
+      )}
+
+      {ubratKat && (
+        <ConfirmModal
+          text={t("keysCategoryRemoveConfirm", { name: ubratKat.name, n: ubratKat.count })}
+          confirmLabel={t("keysCategoryRemove")}
+          danger
+          onConfirm={() => void ubratKategoriyu(ubratKat)}
+          onClose={() => setUbratKat(null)}
         />
       )}
 
