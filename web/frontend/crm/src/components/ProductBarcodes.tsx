@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { Icon } from "./Icon";
-import { Chip } from "./ui";
+import { Chip, KnopkaKorziny } from "./ui";
 import { api, ApiError } from "../lib/api";
 import { useApp } from "../lib/app";
 import { useGuard } from "../lib/guard";
@@ -147,9 +147,7 @@ export function ProductBarcodes({ productId }: { productId: number }) {
                 )
               )}
               {remove && (
-                <button
-                  className="btn-icon"
-                  title={t("delete")}
+                <KnopkaKorziny
                   onClick={async () => {
                     try {
                       await api.del(`/labels/products/${productId}/barcodes/${item.id}`);
@@ -158,9 +156,7 @@ export function ProductBarcodes({ productId }: { productId: number }) {
                       toastError(e);
                     }
                   }}
-                >
-                  <Icon name="trash" size={14} />
-                </button>
+                />
               )}
             </span>
           </div>

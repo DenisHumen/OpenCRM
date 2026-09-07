@@ -126,6 +126,22 @@ ACTION_ROLE_CREATED = "role.created"
 ACTION_ROLE_PERMISSIONS_CHANGED = "role.permissions_changed"
 ACTION_ROLE_ASSIGNED = "role.assigned"
 
+#: Ключи двухфакторной авторизации. Открытие кода пишется тоже, и это не
+#: перебор: ключ от корневой учётки открывает чужой сервис, и вопрос «кто
+#: смотрел код перед тем, как оттуда ушли деньги» задают именно так. Пишется
+#: НАЖАТИЕ «показать», а не каждая пересборка кода раз в тридцать секунд —
+#: иначе один открытый экран за час дал бы сто двадцать записей.
+ACTION_KEY_CREATED = "key.created"
+ACTION_KEY_UPDATED = "key.updated"
+ACTION_KEY_DELETED = "key.deleted"
+ACTION_KEY_RESTORED = "key.restored"
+ACTION_KEY_SHOWN = "key.shown"
+#: Сам секрет, снятый на телефон: он живёт своей жизнью и после закрытия
+#: доступа в CRM, поэтому отдельное событие, а не то же, что показ кода.
+ACTION_KEY_SECRET_SHOWN = "key.secret_shown"
+ACTION_KEY_ACCESS_CHANGED = "key.access_changed"
+ACTION_KEY_CATEGORY_CHANGED = "key.category_changed"
+
 ACTION_STAFF_ROLE_CHANGED = "staff.role_changed"
 ACTION_STAFF_APPROVED = "staff.approved"
 ACTION_STAFF_REJECTED = "staff.rejected"
@@ -161,6 +177,11 @@ ENTITY_FILE = "file"
 ENTITY_BACKUP = "backup"
 #: Ключ доступа сайта; в `entity_label` — его имя.
 ENTITY_APIKEY = "apikey"
+#: Ключ двухфакторной авторизации; в `entity_label` — его название. Сам секрет
+#: в журнал не попадает никогда — только имя, время и что открывали.
+ENTITY_TWOFACTOR = "twofactor"
+#: Категория ключей: заведена, переименована, открыта кому-то.
+ENTITY_KEY_CATEGORY = "key_category"
 
 # --- длины строковых полей ---
 #

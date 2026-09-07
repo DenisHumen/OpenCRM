@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { Icon } from "./Icon";
-import { EmptyState, Modal, Spinner } from "./ui";
+import { EmptyState, KnopkaKorziny, Modal, Spinner } from "./ui";
 import { api, type Zalivka } from "../lib/api";
 import { useApp } from "../lib/app";
 import { dropTarget } from "../lib/dnd";
@@ -364,14 +364,7 @@ export function KartochkaNapominaniya({
                       <span className="truncate" title={file.original_name}>
                         {file.original_name}
                       </span>
-                      <button
-                        type="button"
-                        className="btn-icon"
-                        title={t("delete")}
-                        onClick={() => void snyat(file.id)}
-                      >
-                        <Icon name="trash" size={13} />
-                      </button>
+                      <KnopkaKorziny onClick={() => void snyat(file.id)} />
                     </figcaption>
                   </figure>
                 ))}

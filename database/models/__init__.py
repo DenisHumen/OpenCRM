@@ -30,6 +30,12 @@ from database.models.finance import (
     FinanceOperation,
     FinanceRule,
 )
+from database.models.klyuch import (
+    KeyCategory,
+    KeyCategoryAccess,
+    TwoFactorKey,
+    TwoFactorKeyAccess,
+)
 from database.models.audit import AuditEvent
 from database.models.notification import Notification
 
@@ -80,4 +86,8 @@ __all__ = [
     "FinanceRule",
     "AuditEvent",
     "Notification",
+    "KeyCategory",
+    "KeyCategoryAccess",
+    "TwoFactorKey",
+    "TwoFactorKeyAccess",
 ]

@@ -32,6 +32,7 @@ export const LABEL: Record<string, TranslationKey> = {
   telegram: "modTelegram",
   finance: "modFinance",
   globe: "modGlobe",
+  keys: "modKeys",
 };
 
 const ABOUT: Record<string, TranslationKey> = {
@@ -53,6 +54,7 @@ const ABOUT: Record<string, TranslationKey> = {
   telegram: "modTelegramAbout",
   finance: "modFinanceAbout",
   globe: "modGlobeAbout",
+  keys: "modKeysAbout",
 };
 
 const ICON: Record<string, string> = {
@@ -81,6 +83,7 @@ const ICON: Record<string, string> = {
   // Меню обязано взять тот же ключ: две карты значков уже расходились молча.
   finance: "receipt",
   globe: "globe",
+  keys: "lock",
 };
 
 export function SettingsModules() {

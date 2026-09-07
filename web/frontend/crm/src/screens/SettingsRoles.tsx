@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { Icon } from "../components/Icon";
-import { ConfirmModal, EmptyState, ScreenLoading } from "../components/ui";
+import { ConfirmModal, EmptyState, KnopkaKorziny, ScreenLoading } from "../components/ui";
 import {
   api,
   type PermissionArea,
@@ -52,6 +52,7 @@ const AREA_LABEL: Record<string, TranslationKey> = {
   telegram: "modTelegram",
   finance: "modFinance",
   globe: "modGlobe",
+  keys: "modKeys",
   staff: "areaStaff",
   roles: "areaRoles",
   settings: "areaSettings",
@@ -356,16 +357,15 @@ export function SettingsRoles() {
                   <Icon name="check" size={14} />
                 </button>
               )}
-              <button
-                className="btn btn-secondary btn-sm"
-                aria-label={t("delete")}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setRemoving(role);
-                }}
+              {/* Строка сама открывает должность на правку, поэтому нажатие
+                  гасим на обёртке: у корзинки события в руках нет, а без этого
+                  удаление заодно открывало бы редактор. */}
+              <span
+                style={{ display: "inline-flex", flex: "none" }}
+                onClick={(e) => e.stopPropagation()}
               >
-                <Icon name="trash" size={14} />
-              </button>
+                <KnopkaKorziny onClick={() => setRemoving(role)} />
+              </span>
             </div>
           ))}
         </div>

@@ -435,6 +435,9 @@ export function Sidebar({
     // «сколько заработали». Второй вопрос задают первым, когда сводят месяц.
     { module: "finance", perm: "finance.view", to: "/finance", label: t("modFinance"), icon: "receipt" },
     { module: "globe", perm: "globe.view", to: "/globe", label: t("modGlobe"), icon: "globe" },
+    // Ключи — рядом с глобусом, в конце «Работы»: за вторым фактором идут
+    // не каждый день, а когда входят куда-то, чего в CRM нет.
+    { module: "keys", perm: "keys.view", to: "/keys", label: t("modKeys"), icon: "lock" },
     // Отчёты последними в «Работе»: за ними приходят не каждый день, а когда
     // сводят месяц, — и они читают то, что накопили разделы выше.
     { module: "reports", perm: "reports.view", to: "/reports", label: t("reports"), icon: "analytics" },

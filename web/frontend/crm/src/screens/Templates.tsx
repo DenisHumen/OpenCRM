@@ -6,6 +6,7 @@ import {
   Chip,
   ConfirmModal,
   EmptyState,
+  KnopkaKorziny,
   LoadFailed,
   Modal,
   ScreenLoading,
@@ -178,12 +179,7 @@ export function Templates() {
                     {t("edit")}
                   </button>
                 )}
-                {mayEdit && (
-                  <button type="button" className="tpl-act tpl-act-del" onClick={() => setAsking(template)}>
-                    <Icon name="trash" size={15} />
-                    {t("delete")}
-                  </button>
-                )}
+                {mayEdit && <KnopkaKorziny onClick={() => setAsking(template)} />}
               </div>
             </div>
           ))}
@@ -342,15 +338,11 @@ function TemplateModal({
           <div className="field-desc">{t("templateFieldsHint")}</div>
         </div>
 
-        <div style={{ display: "flex", gap: 8, marginTop: 20 }}>
+        <div style={{ display: "flex", gap: 8, marginTop: 20, alignItems: "center" }}>
           <button className="btn btn-primary" style={{ flex: 1 }} disabled={guard.busy}>
             {template ? t("save") : t("create")}
           </button>
-          {onDelete && (
-            <button type="button" className="btn btn-secondary" onClick={onDelete}>
-              {t("delete")}
-            </button>
-          )}
+          {onDelete && <KnopkaKorziny onClick={onDelete} />}
         </div>
       </form>
     </Modal>

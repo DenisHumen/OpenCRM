@@ -15,6 +15,10 @@ from dataclasses import dataclass
 from typing import Callable
 
 from database.models import (
+    KeyCategory,
+    KeyCategoryAccess,
+    TwoFactorKey,
+    TwoFactorKeyAccess,
     ApiKey,
     ApiKeyHit,
     ApiKeyScope,
@@ -197,6 +201,15 @@ TOPICS: dict[type, Topic | Callable | None] = {
     # ключей на перечитку сводки по два раза в секунду.
     ApiKeyHit: None,
     ApiKeyScope: T_API_KEY_SCOPES,
+    # Ключи двухфакторки живого потока не получают, и это не пропуск. Тема
+    # раздаётся по блоку и области, а видимость ключа решается построчно
+    # (`database/repositories/klyuchi._vidno`): намёк «ключ №7 изменился»
+    # рассказал бы о чужом ключе всем, у кого есть `keys.view`, — ровно то,
+    # ради чего хранилище и заводят порознь.
+    TwoFactorKey: None,
+    TwoFactorKeyAccess: None,
+    KeyCategory: None,
+    KeyCategoryAccess: None,
 }
 
 #: Все темы по имени — для отбора по правам и для проверок.

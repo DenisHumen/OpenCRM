@@ -42,6 +42,7 @@ from web.api.routes import (
     documents,
     finance,
     globus,
+    klyuchi,
     labels,
     leads,
     live,
@@ -388,6 +389,7 @@ def create_app() -> FastAPI:
     app.include_router(documents.router, prefix=api_prefix)
     app.include_router(finance.router, prefix=api_prefix)
     app.include_router(globus.router, prefix=api_prefix)
+    app.include_router(klyuchi.router, prefix=api_prefix)
     app.include_router(reports.router, prefix=api_prefix)
     app.include_router(mail.router, prefix=api_prefix)
     app.include_router(labels.router, prefix=api_prefix)

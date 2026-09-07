@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 
 import { Icon } from "../components/Icon";
 import { KartochkaNapominaniya } from "../components/KartochkaNapominaniya";
-import { EmptyState, ScreenLoading } from "../components/ui";
+import { EmptyState, KnopkaKorziny, ScreenLoading } from "../components/ui";
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
 import { useLiveTopic } from "../lib/live";
@@ -347,9 +347,7 @@ export function Tasks() {
                     )}
                   </div>
                 </div>
-                <button className="btn-icon" onClick={() => void remove(task)} aria-label={t("delete")}>
-                  <Icon name="trash" size={13} />
-                </button>
+                <KnopkaKorziny onClick={() => void remove(task)} />
               </div>
             );
           })}

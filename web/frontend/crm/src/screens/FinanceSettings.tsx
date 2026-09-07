@@ -8,7 +8,15 @@ import {
 } from "react";
 
 import { Icon } from "../components/Icon";
-import { Chip, ConfirmModal, EmptyState, Modal, ScreenLoading, Toggle } from "../components/ui";
+import {
+  Chip,
+  ConfirmModal,
+  EmptyState,
+  KnopkaKorziny,
+  Modal,
+  ScreenLoading,
+  Toggle,
+} from "../components/ui";
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
 import { useLiveTopic } from "../lib/live";
@@ -204,13 +212,7 @@ export function FinanceSettings() {
                 >
                   <Icon name="note" size={14} />
                 </button>
-                <button
-                  className="btn-icon"
-                  title={t("finCloseCategory")}
-                  onClick={() => setClosing(row)}
-                >
-                  <Icon name="trash" size={14} />
-                </button>
+                <KnopkaKorziny title={t("finCloseCategory")} podpis={t("finClose")} onClick={() => setClosing(row)} />
               </>
             )}
           </div>
@@ -325,13 +327,7 @@ export function FinanceSettings() {
                     <button className="btn-icon" title={t("edit")} onClick={() => setRule(row)}>
                       <Icon name="note" size={14} />
                     </button>
-                    <button
-                      className="btn-icon"
-                      title={t("finCloseRule")}
-                      onClick={() => setClosingRule(row)}
-                    >
-                      <Icon name="trash" size={14} />
-                    </button>
+                    <KnopkaKorziny title={t("finCloseRule")} podpis={t("finClose")} onClick={() => setClosingRule(row)} />
                   </>
                 )}
               </div>
@@ -387,13 +383,7 @@ export function FinanceSettings() {
                 {t("finLeft")}: {money(row.left)}
               </span>
             )}
-            <button
-              className="btn-icon"
-              title={t("delete")}
-              onClick={() => setDropping(row)}
-            >
-              <Icon name="trash" size={14} />
-            </button>
+            <KnopkaKorziny onClick={() => setDropping(row)} />
           </div>
         ))}
         {budgets.length === 0 && <EmptyState icon="analytics" title={t("finNoBudgets")} />}

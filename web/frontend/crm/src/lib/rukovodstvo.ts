@@ -1185,6 +1185,76 @@ export const RUKOVODSTVO: Razdel[] = [
         ],
       },
       {
+        id: "klyuchi",
+        perm: "keys.view",
+        module: "keys",
+        nazvanie: { ru: "Ключи", en: "Keys" },
+        kratko: {
+          ru: "Коды двухфакторной авторизации к общим учёткам фирмы.",
+          en: "Two-factor codes for the company's shared accounts.",
+        },
+        kuski: [
+          {
+            vid: "abzats",
+            tekst: {
+              ru: "Сервис при включении двухфакторки показывает QR-код и строку под ним. Вставьте эту строку в «Добавить ключ» — и раздел начнёт показывать шестизначный код, который меняется каждые тридцать секунд, как в приложении-аутентификаторе.",
+              en: "When a service switches two-factor auth on, it shows a QR code and a line underneath. Paste that line into “Add a key” and the section starts showing a six-digit code that changes every thirty seconds, just like an authenticator app.",
+            },
+          },
+          {
+            vid: "vnimanie",
+            tekst: {
+              ru: "Право на раздел — это только вход в него. ЧТО именно видно, решает список у каждого ключа: свой ключ, ключ, открытый вам поимённо, и ключи категории, куда вас пустили. Чужой ключ не показывается и по прямой ссылке.",
+              en: "Access to the section is just the door. WHAT you see is decided key by key: your own keys, keys opened to you by name, and keys in a category you were let into. Someone else's key does not show up even by direct link.",
+            },
+          },
+          {
+            vid: "spisok",
+            punkty: [
+              {
+                ru: "Код закрыт, пока не нажали «Показать». Каждое открытие пишется в журнал действий — с именем и временем.",
+                en: "The code stays hidden until you press “Show”. Every reveal goes into the action log — with a name and a time.",
+              },
+              {
+                ru: "Название придумываете вы: «GitHub» у пяти учёток — это пять одинаковых строк через полгода.",
+                en: "You choose the name: “GitHub” for five accounts becomes five identical rows in six months.",
+              },
+              {
+                ru: "Категория заводится прямо в форме — впишите имя, которого ещё нет. Закрытая категория видна всем по имени, но внутрь пускают только того, кто её завёл.",
+                en: "A category is created right in the form — type a name that does not exist yet. A closed category is visible to everyone by name, but only its creator can look inside.",
+              },
+              {
+                ru: "Запасные коды сервиса храните здесь же. Потраченный вычёркивается, чтобы им не пробовали войти второй раз.",
+                en: "Keep the service's backup codes here too. A used one gets crossed out so nobody tries it twice.",
+              },
+              {
+                ru: "«Напомнить сменить через полгода» заводит обычное напоминание — оно придёт туда же, куда и все остальные.",
+                en: "“Remind me to change it in half a year” creates an ordinary reminder — it arrives where all the others do.",
+              },
+            ],
+          },
+          {
+            vid: "vnimanie",
+            tekst: {
+              ru: "Перенести ключ на телефон может только root, и это отдельная запись в журнале. Снятый код живёт своей жизнью: телефон, на который его перенесли, будет открывать сервис и после того, как доступ в CRM закроют.",
+              en: "Only root can move a key to a phone, and that is its own log entry. A secret taken off lives a life of its own: the phone it went to keeps opening the service even after CRM access is closed.",
+            },
+          },
+          {
+            vid: "abzats",
+            tekst: {
+              ru: "Отдельных копий у раздела нет: ключи лежат в базе и уезжают обычной копией базы из настроек. Восстановили копию — коды на месте, даже если восстанавливали на другой машине.",
+              en: "The section keeps no backups of its own: keys live in the database and travel in the ordinary database copy from settings. Restore that copy and the codes are there, even on a different machine.",
+            },
+          },
+          {
+            vid: "ekran",
+            put: "/keys",
+            podpis: { ru: "Открыть ключи", en: "Open keys" },
+          },
+        ],
+      },
+      {
         id: "finansy",
         perm: "finance.view",
         module: "finance",

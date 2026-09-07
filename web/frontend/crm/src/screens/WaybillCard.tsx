@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { Icon } from "../components/Icon";
 import { PrintLangs } from "../components/PrintLangs";
-import { Chip, ConfirmModal, ScreenLoading } from "../components/ui";
+import { Chip, ConfirmModal, KnopkaKorziny, ScreenLoading } from "../components/ui";
 import { api, ApiError } from "../lib/api";
 import { useApp } from "../lib/app";
 import { useFailure } from "../lib/failure";
@@ -184,9 +184,7 @@ export function WaybillCard() {
             </button>
           )}
           {(draft || waybill.status === "cancelled") && can(user, "waybills.edit") && (
-            <button className="text-link danger" disabled={guard.busy} onClick={() => setConfirm("delete")}>
-              {t("paperDelete")}
-            </button>
+            <KnopkaKorziny disabled={guard.busy} onClick={() => setConfirm("delete")} />
           )}
         </div>
       </div>
@@ -313,14 +311,7 @@ function WaybillLines({
             {formatMoney(line.price, workspace.currency, locale)}
           </span>
           {canEdit && (
-            <button
-              className="btn btn-secondary btn-sm"
-              disabled={guard.busy}
-              onClick={() => void remove(line.id)}
-              title={t("delete")}
-            >
-              <Icon name="trash" size={15} />
-            </button>
+            <KnopkaKorziny disabled={guard.busy} onClick={() => void remove(line.id)} />
           )}
         </div>
       ))}

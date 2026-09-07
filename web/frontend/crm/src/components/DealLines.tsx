@@ -9,6 +9,7 @@ import { moduleOn } from "../lib/modules";
 import { can } from "../lib/permissions";
 import { nazvanieEtapa } from "../lib/etapy";
 import { Icon } from "./Icon";
+import { KnopkaKorziny } from "./ui";
 import { WarehousePicker, useWarehouses } from "./Warehouses";
 
 type Stroka = {
@@ -266,14 +267,7 @@ export function DealLines({
               {s.total_minor === null ? "—" : formatMoney(s.total_minor, currency, locale)}
             </span>
             {!closed && (
-              <button
-                className="btn btn-secondary btn-sm"
-                aria-label={t("delete")}
-                disabled={guard.busy}
-                onClick={() => void ubrat(s.id)}
-              >
-                <Icon name="trash" size={14} />
-              </button>
+              <KnopkaKorziny disabled={guard.busy} onClick={() => void ubrat(s.id)} />
             )}
           </div>
         ))}
