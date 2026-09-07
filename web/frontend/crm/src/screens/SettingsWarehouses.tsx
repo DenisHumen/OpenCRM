@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 
 import { Icon } from "../components/Icon";
-import { Chip, ConfirmModal, EmptyState, Modal, ScreenLoading } from "../components/ui";
+import { Chip, ConfirmModal, EmptyState, KnopkaKorziny, Modal, ScreenLoading } from "../components/ui";
 import type { Warehouse } from "../components/Warehouses";
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
@@ -96,13 +96,7 @@ export function SettingsWarehouses() {
             <button className="btn-icon" title={t("warehouseName")} onClick={() => setEditing(warehouse)}>
               <Icon name="note" size={14} />
             </button>
-            <button
-              className="btn-icon"
-              title={t("warehouseClose")}
-              onClick={() => setClosing(warehouse)}
-            >
-              <Icon name="trash" size={14} />
-            </button>
+            <KnopkaKorziny title={t("warehouseClose")} onClick={() => setClosing(warehouse)} />
           </div>
         ))}
         {items.length === 0 && <EmptyState icon="warehouse" title={t("warehouses")} />}

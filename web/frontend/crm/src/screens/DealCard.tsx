@@ -7,7 +7,7 @@ import { CallButton, CallsPanel } from "../components/CallsPanel";
 import { Feed } from "../components/Feed";
 import { Icon } from "../components/Icon";
 import { VyborKlienta } from "../components/VyborKlienta";
-import { Chip, ConfirmModal, LoadFailed, Modal, ScreenLoading } from "../components/ui";
+import { Chip, ConfirmModal, KnopkaKorziny, LoadFailed, Modal, ScreenLoading } from "../components/ui";
 import { api, ApiError } from "../lib/api";
 import { useApp } from "../lib/app";
 import { useLiveTopic, useNachatayaPravka } from "../lib/live";
@@ -243,14 +243,11 @@ export function DealCard() {
             {t("compose")}
           </button>
         )}
-        <div style={{ display: "flex", gap: 10 }}>
+        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
           {/* Звонок из карточки уходит в эту же заявку: набравший и так знает,
               о чём разговор, — незачем потом привязывать звонок руками. */}
           <CallButton number={deal.client_phone ?? ""} dealId={deal.id} />
-          <button className="btn btn-secondary" onClick={() => setConfirmDelete(true)}>
-            <Icon name="trash" size={14} />
-            {t("delete")}
-          </button>
+          <KnopkaKorziny onClick={() => setConfirmDelete(true)} />
         </div>
       </div>
 

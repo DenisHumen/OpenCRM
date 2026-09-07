@@ -159,6 +159,20 @@
   --ultra-konets: #7c5cbf;
   --ultra-blesk: rgba(255, 255, 255, 0.46);
   --ultra-blesk-slabyy: rgba(255, 255, 255, 0.12);
+
+  /* --- Ключи: плита сейфа и кольцо отсчёта -------------------------------
+     Вне тем по тому же доводу, что плита «Отчёта продаж»: код лежит «в
+     глубине», и белые цифры на чёрной плите читаются одинаково в обеих темах.
+     Кольцо меняет цвет к концу тридцати секунд — спокойное, предупреждение,
+     «не успеешь». Разбор — docs/bloki/27-klyuchi.md §4. */
+  --klyuch-seyf: #0b0b0a;
+  --klyuch-seyf-kray: rgba(255, 255, 255, 0.07);
+  --klyuch-seyf-dno: rgba(0, 0, 0, 0.55);
+  --klyuch-tsifra: #ffffff;
+  --klyuch-qr-bumaga: #f5f4ef;
+  --klyuch-koltso: #58b47c;
+  --klyuch-koltso-skoro: #d99a4e;
+  --klyuch-koltso-konets: #e7746a;
 }
 
 /* --- Тёмная. Она же по умолчанию ---------------------------------------- */
@@ -252,6 +266,12 @@
      белым и чёрным, у нас — токенами, чтобы светлая тема не слепла. */
   --glow: rgba(255, 255, 255, 0.18);
   --shade: rgba(0, 0, 0, 0.45);
+
+  /* Точки закрытого кода, пустая часть кольца и подсветка закрытой
+     категории — единственное у ключей, что зависит от темы. */
+  --klyuch-tochka: #6b675f;
+  --klyuch-koltso-pusto: rgba(255, 255, 255, 0.10);
+  --klyuch-zamok: rgba(255, 255, 255, 0.04);
 
   /* Полосы диаграмм: заливка без текста поверх, поэтому доли крупнее. */
   --chart-brand: rgba(217, 119, 87, 0.13);
@@ -347,6 +367,12 @@
   --tint-teal: rgba(15, 125, 118, 0.12);
   --glow: rgba(255, 255, 255, 0.85);
   --shade: rgba(38, 36, 31, 0.16);
+
+  /* Серый #6b675f на светлой карточке тонет, а белым по белому не видно
+     пустую часть кольца. */
+  --klyuch-tochka: #9a958a;
+  --klyuch-koltso-pusto: rgba(38, 36, 31, 0.14);
+  --klyuch-zamok: rgba(38, 36, 31, 0.05);
 
   --chart-brand: rgba(169, 74, 38, 0.16);
   --chart-success: rgba(27, 110, 62, 0.34);
@@ -3965,4 +3991,608 @@ html { scroll-behavior: smooth; }
   .otchyot-kletka { height: 29px; font-size: 12px; border-radius: 8px; }
   .otchyot-kpi { grid-template-columns: 1fr; gap: 18px; }
   .otchyot-vsplyv { min-width: 168px; }
+}
+
+/* ============================================================================
+   Блок «Ключи»: хранилище кодов двухфакторной авторизации.
+
+   Перевод макета `shablony/klyuchi-2fa.html` (порядок перевода — docs/18).
+   Имена классов получили приставку `kl-`: в файле уже живут `.klyuch` (ключ
+   сайта банковской картой) и `.papka` (папка с листами), и одноимённые правила
+   молча сломали бы оба чужих экрана.
+
+   Что взято из готового, а не написано заново: кнопки, поля, подписи, чипы,
+   аватарки и тумблеры — системные (`.btn`, `.input`, `.label`, `.chip`,
+   `.avatar`, `.toggle-track`). Своё здесь только то, чего в системе нет:
+   плита сейфа, кольцо отсчёта, лента категорий и сетка запасных кодов.
+   Разбор — docs/bloki/27-klyuchi.md.
+   ========================================================================== */
+
+.kl-shapka {
+  display: flex; align-items: flex-end; gap: 20px; flex-wrap: wrap;
+  padding-bottom: 16px; margin-bottom: 20px;
+  border-bottom: 1px solid var(--line);
+}
+.kl-shapka-tekst { flex: 1 1 260px; min-width: 0; }
+.kl-titul { margin: 0; font-size: 26px; font-weight: 800; letter-spacing: -0.02em; line-height: 1.1; }
+
+/* Строка состояния — не серый текст, а разборные части: сколько всего и
+   сколько просит внимания. Второе — чип цвета предупреждения, потому что это
+   единственное в строке, по чему надо что-то сделать. Разделителя между
+   частями нет: точка отдельным элементом повисала в конце первой строки. */
+.kl-svodka { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+.kl-svodka-chislo { color: var(--muted); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.kl-svodka-trevoga {
+  display: inline-flex; align-items: center; gap: 5px; height: 21px; padding: 0 8px;
+  border: 0; border-radius: 3px; cursor: pointer;
+  background: var(--tint-warning); color: var(--warning);
+  font-family: var(--sans); font-size: 10.5px; font-weight: 700;
+  letter-spacing: 0.06em; text-transform: uppercase;
+  transition: transform 120ms, box-shadow 120ms;
+}
+.kl-svodka-trevoga:hover { transform: translate(-1px, -1px); box-shadow: 2px 2px 0 var(--warning); }
+
+.kl-shapka-knopki { display: flex; flex: 1 1 auto; justify-content: flex-end; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+/* Поиск: в спокойном виде колодец, при наборе рамка цвета ссылки. Ширина
+   растущая, а не зашитая: при жёстком числе подсказка обрезалась на последнем
+   слоге, и новое число пришлось бы угадывать при любой правке шрифта. */
+.kl-poisk {
+  display: flex; align-items: center; gap: 8px;
+  flex: 1 1 244px; max-width: 340px;
+  height: 34px; padding: 0 10px 0 11px;
+  background: var(--well); border: 1px solid var(--border); border-radius: 4px;
+  color: var(--faint); min-width: 0;
+  transition: border-color 150ms, background 150ms;
+}
+.kl-poisk:focus-within { border-color: var(--accent); background: var(--surface-2); }
+.kl-poisk input {
+  flex: 1; min-width: 0; border: 0; background: none; color: var(--text);
+  font: inherit; outline: none;
+}
+
+.kl-telo { display: grid; grid-template-columns: 224px minmax(0, 1fr); gap: 20px; align-items: start; }
+
+/* --- категории ----------------------------------------------------------- */
+
+.kl-papki {
+  position: sticky; top: 20px;
+  background: var(--surface); border: 1px solid var(--frame); border-radius: 6px;
+  padding: 7px;
+}
+.kl-papki-zagolovok {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 5px 8px 9px; color: var(--faint);
+  font-size: 10.5px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase;
+}
+.kl-papki-spisok { display: flex; flex-direction: column; gap: 1px; }
+
+/* Выбранная категория помечена не только фоном: слева выезжает засечка. Фон
+   surface-2 в тёмной теме отличается от карточки на два процента яркости —
+   одним им выбор не читается. */
+.kl-papka {
+  position: relative;
+  display: flex; align-items: center; gap: 9px; width: 100%;
+  padding: 8px 9px 8px 10px; border: 0; border-radius: 4px;
+  background: none; color: var(--muted); font-family: var(--sans); font-size: 13px;
+  text-align: left; cursor: pointer;
+  transition: background 140ms, color 140ms;
+}
+.kl-papka::before {
+  content: ""; position: absolute; left: 0; top: 7px; bottom: 7px; width: 2px;
+  border-radius: 0 2px 2px 0; background: var(--brand);
+  transform: scaleY(0); transform-origin: center;
+  transition: transform 180ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.kl-papka:hover { background: var(--surface-2); color: var(--text); }
+.kl-papka.kl-vybrana { background: var(--surface-2); color: var(--text); font-weight: 600; }
+.kl-papka.kl-vybrana::before { transform: scaleY(1); }
+.kl-papka-imya { flex: 1; min-width: 0; }
+.kl-papka-schyot {
+  flex: none; color: var(--faint); font-size: 11.5px; font-variant-numeric: tabular-nums;
+  transition: color 140ms;
+}
+.kl-papka:hover .kl-papka-schyot { color: var(--muted); }
+.kl-papka-znak { flex: none; opacity: 0.8; transition: opacity 140ms, color 140ms; }
+.kl-papka:hover .kl-papka-znak, .kl-papka.kl-vybrana .kl-papka-znak { opacity: 1; }
+
+/* Категория, куда доступа нет: видно, что она есть и сколько в ней ключей, —
+   но не что внутри. Спрятать её целиком значило бы, что человек попросит
+   завести второй такой же. Замок под курсором подсвечивается: это ответ на
+   вопрос «почему не открывается». */
+.kl-papka.kl-zakryta { color: var(--faint); cursor: not-allowed; }
+.kl-papka.kl-zakryta:hover { background: var(--klyuch-zamok); color: var(--faint); }
+.kl-papka.kl-zakryta:hover .kl-papka-znak { color: var(--warning); opacity: 1; }
+.kl-papki-nizhe { margin-top: 7px; padding-top: 7px; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 1px; }
+
+/* --- карточка ключа ------------------------------------------------------ */
+
+.kl-setka { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
+
+.kl-kartochka {
+  position: relative;
+  display: flex; flex-direction: column; gap: 11px;
+  padding: 14px 14px 12px;
+  background: var(--surface); border: 1px solid var(--frame); border-radius: 6px;
+  transition: box-shadow 150ms, transform 150ms;
+  animation: kl-vhod 320ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation-delay: calc(var(--n, 0) * 55ms);
+}
+.kl-kartochka:hover, .kl-kartochka:focus-within { box-shadow: var(--hard); transform: translate(-2px, -2px); }
+@keyframes kl-vhod {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: none; }
+}
+
+.kl-verh { display: flex; align-items: flex-start; gap: 11px; }
+
+/* Знак сервиса — плитка с рамкой, а не мягкое пятно: рамка ставит её в один
+   строй с карточкой и полем. Внутри либо фирменный значок из вшитого набора,
+   либо две буквы названия — набора на все сервисы мира не существует
+   (`core/services/znaki_service.py`). */
+.kl-znak {
+  flex: none; width: 36px; height: 36px; border-radius: 5px;
+  display: grid; place-items: center;
+  background: var(--tint-accent); color: var(--accent);
+  border: 1px solid currentColor;
+  font-size: 13.5px; font-weight: 800; letter-spacing: 0.02em;
+  transition: transform 200ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.kl-kartochka:hover .kl-znak { transform: rotate(-3deg) scale(1.06); }
+/* Значок красится МАСКОЙ, а не вставляется картинкой. Внутри `<img>` цвет
+   `currentColor` берётся от самой картинки, а не от плитки: фирменный чёрный
+   Notion стал бы дырой на тёмной плите, а белый — на светлой. Маска же красится
+   цветом плитки и потому верна в обеих темах. */
+.kl-znak-kartinka {
+  width: 19px; height: 19px; display: block; background: currentColor;
+  -webkit-mask: var(--znak) center / contain no-repeat;
+  mask: var(--znak) center / contain no-repeat;
+}
+.kl-znak-brand { background: var(--tint-brand); color: var(--brand); }
+.kl-znak-violet { background: var(--tint-violet); color: var(--violet); }
+.kl-znak-teal { background: var(--tint-teal); color: var(--teal); }
+.kl-znak-success { background: var(--tint-success); color: var(--success); }
+
+.kl-imena { flex: 1; min-width: 0; }
+.kl-imya { font-size: 14px; font-weight: 600; line-height: 1.25; letter-spacing: -0.005em; }
+.kl-uchyotka { margin-top: 3px; color: var(--faint); font-size: 11.5px; font-family: var(--mono); }
+
+/* Скрыто до наведения только ДЕЙСТВИЕ, никогда содержимое (docs/18). Пока
+   карточка спокойна, троеточие не спорит с названием; курсор или таб его
+   достают. */
+.kl-menyu {
+  flex: none; opacity: 0; color: var(--muted);
+  transition: opacity 150ms, color 150ms;
+}
+.kl-kartochka:hover .kl-menyu,
+.kl-kartochka:focus-within .kl-menyu,
+.kl-menyu:focus-visible { opacity: 1; }
+
+/* --- сейф с кодом --------------------------------------------------------
+   Углубление: тёмная плита, тень внутрь по низу, блик по верхней кромке. Два
+   состояния в одном месте — закрытый (точки и «показать») и открытый (цифры,
+   кольцо, «копировать»); высота одна, поэтому карточка не прыгает.
+   Без `overflow: hidden`: плашка «скопировано» стоит выше кнопки, и обрезка
+   съедала ей половину. */
+.kl-seyf {
+  position: relative;
+  display: flex; align-items: center; gap: 12px;
+  min-height: 64px; padding: 10px 11px;
+  border-radius: 5px; background: var(--klyuch-seyf);
+  box-shadow: inset 0 1px 0 var(--klyuch-seyf-kray), inset 0 -10px 18px -12px var(--klyuch-seyf-dno);
+}
+.kl-cifry {
+  flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 2px;
+  font-family: var(--mono); font-size: 27px; font-weight: 700; line-height: 1;
+  color: var(--klyuch-tsifra); font-variant-numeric: tabular-nums;
+}
+/* Цифры приезжают по одной — приём `.zagruzka`. Пробел после половины кода
+   отбивает триплеты: шесть цифр подряд читаются хуже. */
+.kl-cifra {
+  display: inline-block; min-width: 0.62em; text-align: center;
+  animation: kl-cifra-vhod 300ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation-delay: calc(var(--i, 0) * 45ms);
+}
+.kl-probel { display: inline-block; width: 0.42em; }
+@keyframes kl-cifra-vhod {
+  from { opacity: 0; filter: blur(6px); transform: translateY(4px); }
+  to { opacity: 1; filter: none; transform: none; }
+}
+.kl-tochki {
+  flex: 1; min-width: 0;
+  font-family: var(--mono); font-size: 27px; font-weight: 700; line-height: 1;
+  letter-spacing: 0.08em; color: var(--klyuch-tochka);
+  user-select: none;
+}
+
+/* Кольцо обратного отсчёта. Доля приезжает как `--dolya` — величина, а не
+   цвет; цвет ступенями меняют классы. Тонкая засечка сверху отмечает начало
+   круга, иначе на полном кольце не видно, откуда он идёт. */
+.kl-koltso {
+  position: relative; flex: none; width: 42px; height: 42px; border-radius: 50%;
+  background: conic-gradient(
+    var(--kl-koltso-tsvet, var(--klyuch-koltso)) calc(var(--dolya, 1) * 360deg),
+    var(--klyuch-koltso-pusto) 0
+  );
+  display: grid; place-items: center;
+  transition: background 400ms linear;
+}
+.kl-koltso::before {
+  content: ""; position: absolute; top: -1px; left: 50%; width: 1px; height: 5px;
+  margin-left: -0.5px; background: var(--klyuch-koltso-pusto);
+}
+.kl-koltso::after {
+  content: ""; position: absolute; inset: 3px; border-radius: 50%;
+  background: var(--klyuch-seyf);
+}
+.kl-koltso-chislo {
+  position: relative; z-index: 1;
+  font-family: var(--mono); font-size: 12.5px; font-weight: 700;
+  color: var(--kl-koltso-tsvet, var(--klyuch-koltso));
+  font-variant-numeric: tabular-nums;
+}
+.kl-koltso.kl-skoro { --kl-koltso-tsvet: var(--klyuch-koltso-skoro); }
+.kl-koltso.kl-konets { --kl-koltso-tsvet: var(--klyuch-koltso-konets); animation: kl-koltso-puls 1s ease-in-out infinite; }
+@keyframes kl-koltso-puls { 50% { transform: scale(1.07); } }
+
+/* Кнопка внутри сейфа: та же плита, светлеет по наведению. Обычная `.btn` с
+   её плашкой тени тут не годится — тень легла бы на чёрное и пропала. */
+.kl-seyf-knopka {
+  flex: none; display: inline-flex; align-items: center; gap: 6px;
+  height: 28px; padding: 0 10px; border-radius: 4px;
+  background: var(--tint-neutral); border: 1px solid transparent; color: var(--text);
+  font-family: var(--sans); font-size: 12px; font-weight: 600; cursor: pointer;
+  white-space: nowrap;
+  transition: background 150ms, border-color 150ms, color 150ms;
+}
+.kl-seyf-knopka:hover { background: var(--klyuch-koltso-pusto); border-color: var(--glow); }
+.kl-seyf-knopka:disabled { opacity: 0.6; cursor: default; }
+
+/* «Скопировано» — состояние с таймером, а не `:focus`: подсказка обязана
+   гаснуть сама. Текст приезжает из разметки (`data-podskazka`), а не зашит
+   сюда строкой: в CSS ему неоткуда взять перевод. */
+.kl-kopiya { position: relative; }
+.kl-kopiya::before {
+  content: attr(data-podskazka);
+  position: absolute; left: 50%; bottom: calc(100% + 8px);
+  padding: 3px 7px; border-radius: 4px;
+  background: var(--surface-2); border: 1px solid var(--frame);
+  color: var(--text); font-size: 10.5px; font-weight: 600; white-space: nowrap;
+  transform: translateX(-50%) translateY(4px);
+  opacity: 0; visibility: hidden; pointer-events: none;
+  transition: opacity 160ms, transform 160ms, visibility 160ms;
+}
+.kl-kopiya.kl-skopirovano::before { opacity: 1; visibility: visible; transform: translateX(-50%); }
+.kl-kopiya.kl-skopirovano { background: var(--tint-success); color: var(--success); }
+
+/* --- низ карточки -------------------------------------------------------- */
+
+.kl-niz { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+
+/* Заметка сворачивается родным `details`: две строки видны всегда, остальное
+   разворачивает подпись. Это не «текст до наведения» — заметка длинная, а
+   карточка в сетке не может расти на десять строк из-за одной из четырёх. */
+.kl-zametka { color: var(--muted); font-size: 12px; line-height: 1.45; }
+.kl-zametka-telo { padding-left: 10px; border-left: 2px solid var(--line); }
+.kl-zametka > .kl-zametka-telo { display: none; }
+.kl-zametka[open] > .kl-zametka-telo { display: block; animation: kl-zametka-vhod 200ms ease-out both; }
+@keyframes kl-zametka-vhod { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: none; } }
+.kl-zametka-krai {
+  padding-left: 10px; border-left: 2px solid var(--line);
+  cursor: pointer; list-style: none;
+  overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  transition: color 140ms, border-color 140ms;
+}
+.kl-zametka-krai::-webkit-details-marker { display: none; }
+.kl-zametka-krai:hover { color: var(--text); border-color: var(--border-hover); }
+.kl-zametka[open] > .kl-zametka-krai { display: none; }
+.kl-zametka-svernut {
+  display: inline-block; margin-top: 5px; margin-left: 10px;
+  color: var(--faint); font-size: 11.5px;
+  text-decoration: underline dotted; text-underline-offset: 2px; cursor: pointer;
+  background: none; border: 0; font-family: var(--sans); padding: 0;
+}
+.kl-zametka-svernut:hover { color: var(--brand); }
+
+.kl-stroka { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.kl-svyaz {
+  display: inline-flex; align-items: center; gap: 6px; min-width: 0;
+  color: var(--accent); font-size: 12px; text-decoration: none;
+  background: none; border: 0; padding: 0; cursor: pointer; font-family: var(--sans);
+}
+.kl-svyaz:hover { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+.kl-svyaz-znak { flex: none; transition: transform 180ms ease; }
+.kl-svyaz:hover .kl-svyaz-znak { transform: translateX(2px); }
+.kl-svyaz.kl-trevoga { color: var(--warning); }
+.kl-kogda { flex: none; color: var(--faint); font-size: 11.5px; }
+
+/* --- срочный ключ: та же рябь, что вокруг срочного напоминания ------------
+   Три слоя под содержимым: фон карточки — фиолетовая заливка полосы,
+   `::before` — едущая световая волна сквозь трафарет-шахматку, `::after` —
+   заливка карточки, отступив на два пикселя. Трафарет стоит, едет подсветка:
+   движущаяся шахматка размывается сглаживанием в кашу. Радиусы согласованы
+   (6 внутри 8), иначе фиолетовое проступает по четырём углам; подъём по
+   наведению снят — тень легла бы поверх ряби. */
+.kl-kartochka.kl-srochnyy {
+  isolation: isolate; overflow: hidden; border: 0; border-radius: 8px;
+  background: linear-gradient(100deg, var(--ultra-nachalo) 0%, var(--ultra-seredina) 55%, var(--ultra-konets) 100%);
+}
+.kl-kartochka.kl-srochnyy:hover, .kl-kartochka.kl-srochnyy:focus-within { box-shadow: none; transform: none; }
+.kl-kartochka.kl-srochnyy::before {
+  content: ""; position: absolute; z-index: -2; inset: 0; width: 200%; left: -100%;
+  background: linear-gradient(90deg, transparent 0%, var(--ultra-blesk-slabyy) 30%, var(--ultra-blesk) 50%, var(--ultra-blesk-slabyy) 70%, transparent 100%);
+  background-size: 50% 100%;
+  background-repeat: repeat-x;
+  -webkit-mask-image:
+    conic-gradient(black 25%, transparent 0 50%, black 0 75%, transparent 0),
+    conic-gradient(black 25%, transparent 0 50%, black 0 75%, transparent 0);
+  mask-image:
+    conic-gradient(black 25%, transparent 0 50%, black 0 75%, transparent 0),
+    conic-gradient(black 25%, transparent 0 50%, black 0 75%, transparent 0);
+  -webkit-mask-size: 6px 6px, 10px 10px;
+  mask-size: 6px 6px, 10px 10px;
+  -webkit-mask-position: 0 0, 3px 2px;
+  mask-position: 0 0, 3px 2px;
+  -webkit-mask-composite: source-in;
+  mask-composite: intersect;
+  animation: kl-ultra-hod 3.4s linear infinite;
+}
+.kl-kartochka.kl-srochnyy::after {
+  content: ""; position: absolute; z-index: -1; inset: 2px; border-radius: 6px;
+  background: var(--surface);
+}
+@keyframes kl-ultra-hod { to { transform: translate3d(50%, 0, 0); } }
+/* Внутри срочной карточки сейф получает фиолетовую кромку: важность видна и у
+   самого кода, а не только по краю карточки. */
+.kl-kartochka.kl-srochnyy .kl-seyf { box-shadow: inset 0 0 0 1px var(--tint-violet), inset 0 1px 0 var(--klyuch-seyf-kray); }
+
+/* --- пусто --------------------------------------------------------------- */
+
+.kl-pusto {
+  grid-column: 1 / -1;
+  display: flex; flex-direction: column; align-items: center; gap: 11px;
+  padding: 52px 24px; text-align: center;
+  background: var(--surface); border: 1px dashed var(--border-hover); border-radius: 6px;
+}
+.kl-pusto-plita {
+  width: 52px; height: 52px; border-radius: 6px; display: grid; place-items: center;
+  background: var(--well); border: 1px solid var(--line); color: var(--faint);
+  animation: kl-dyhanie 4s ease-in-out infinite;
+}
+@keyframes kl-dyhanie { 50% { transform: translateY(-3px); } }
+.kl-pusto-titul { font-size: 15px; font-weight: 700; }
+.kl-pusto-podpis { color: var(--faint); font-size: 12.5px; max-width: 400px; line-height: 1.5; }
+
+/* --- разбор вставленной строки ------------------------------------------
+   Что система поняла — показываем сразу: человек должен видеть, что вставил
+   не то, ДО сохранения. Последняя строка отбита линией: проверка кода — итог
+   разбора, а не ещё одно поле. */
+.kl-razbor {
+  display: grid; gap: 0; padding: 4px 12px;
+  border-radius: 4px; background: var(--well); border: 1px solid var(--line);
+}
+.kl-razbor-stroka {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 12px;
+  padding: 7px 0; font-size: 12px; border-bottom: 1px solid var(--line);
+}
+.kl-razbor-stroka:last-child { border-bottom: 0; }
+.kl-razbor-imya { color: var(--faint); flex: none; }
+.kl-razbor-znachenie { font-family: var(--mono); color: var(--text); text-align: right; min-width: 0; }
+.kl-razbor-horosho { color: var(--success); display: inline-flex; align-items: center; gap: 5px; }
+.kl-razbor-ploho { color: var(--danger); }
+.kl-razbor-itog { padding-top: 9px; margin-top: 2px; border-top: 1px solid var(--border); }
+
+/* --- кто видит ключ ------------------------------------------------------ */
+
+.kl-prava-spisok { display: flex; flex-direction: column; }
+.kl-prava-stroka {
+  display: flex; align-items: center; gap: 11px;
+  padding: 9px 6px; margin: 0 -6px; border-radius: 4px;
+  border-bottom: 1px solid var(--line);
+  transition: background 140ms;
+}
+.kl-prava-stroka:hover { background: var(--surface-2); }
+.kl-prava-stroka:last-child { border-bottom: 0; }
+.kl-prava-kto { flex: 1; min-width: 0; }
+.kl-prava-imya { font-size: 13px; }
+.kl-prava-rol { color: var(--faint); font-size: 11.5px; margin-top: 1px; }
+
+/* --- замечания ----------------------------------------------------------- */
+
+.kl-zamechanie {
+  display: flex; gap: 10px; padding: 11px 12px; border-radius: 4px;
+  background: var(--tint-warning); color: var(--warning);
+  font-size: 12px; line-height: 1.5;
+  margin-bottom: 16px;
+}
+.kl-zamechanie-znak { flex: none; margin-top: 1px; }
+.kl-zamechanie-opasno { background: var(--tint-danger); color: var(--danger); }
+
+/* --- запасные коды -------------------------------------------------------
+   Потраченный вычёркивается: список, где не видно потраченных, хуже
+   отсутствующего — по нему пробуют войти тем, что уже не работает. Ряд ровный
+   сеткой, а не переносом; порог дорожки по натуральной ширине кода, иначе код
+   рвётся по дефису на двух строках, и его так и набирают с ошибкой. */
+.kl-zapasnye { display: grid; grid-template-columns: repeat(auto-fill, minmax(88px, 1fr)); gap: 6px; }
+.kl-zapasnoy {
+  font-family: var(--mono); font-size: 11.5px; text-align: center;
+  padding: 5px 4px; border-radius: 4px; white-space: nowrap;
+  background: var(--well); border: 1px solid var(--line); color: var(--text);
+  cursor: pointer;
+  transition: border-color 140ms, color 140ms;
+}
+.kl-zapasnoy:not(.kl-potrachen):hover { border-color: var(--border-hover); }
+.kl-zapasnoy.kl-potrachen { color: var(--faint); text-decoration: line-through; background: var(--well-off); cursor: default; }
+
+/* Полоса остатка: «6 из 10» цифрой читается медленнее, чем видно долей. */
+.kl-zapasnye-itog { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
+.kl-shkala { flex: 1; min-width: 0; height: 4px; border-radius: 2px; background: var(--tint-neutral); overflow: hidden; }
+.kl-shkala-polosa {
+  display: block; height: 100%; border-radius: 2px; background: var(--success);
+  animation: kl-nabor 700ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+@keyframes kl-nabor { from { width: 0; } }
+.kl-shkala-polosa.kl-taet { background: var(--warning); }
+.kl-zapasnye-schyot { flex: none; color: var(--faint); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+
+/* --- перенос на телефон -------------------------------------------------- */
+
+.kl-qr-ryad { display: flex; gap: 16px; align-items: flex-start; flex-wrap: wrap; }
+/* Бумага под QR светлая всегда: считыватель телефона ждёт тёмное на светлом, и
+   в тёмной теме инверсия ломала бы чтение. */
+.kl-qr {
+  flex: none; width: 168px; height: 168px; padding: 9px;
+  border-radius: 6px; background: var(--klyuch-qr-bumaga);
+}
+.kl-qr svg { width: 100%; height: 100%; display: block; }
+.kl-qr-bok { flex: 1 1 200px; min-width: 0; }
+.kl-qr-stroka { display: flex; align-items: center; gap: 8px; }
+.kl-qr-kod {
+  flex: 1; min-width: 0; padding: 8px 10px; border-radius: 4px;
+  background: var(--well); border: 1px solid var(--line);
+  font-family: var(--mono); font-size: 12.5px; color: var(--text); user-select: all;
+}
+.kl-qr-taymer { display: flex; align-items: center; gap: 7px; margin-top: 12px; color: var(--faint); font-size: 11.5px; }
+
+/* --- поля и действия в окне ---------------------------------------------- */
+
+.kl-deystviya { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 16px; justify-content: flex-end; }
+.kl-pole { margin-bottom: 14px; }
+.kl-pole:last-child { margin-bottom: 0; }
+.kl-menyu-spisok { display: flex; flex-direction: column; gap: 2px; }
+.kl-menyu-punkt {
+  display: flex; align-items: center; gap: 9px; width: 100%;
+  padding: 9px 10px; border: 0; border-radius: 4px;
+  background: none; color: var(--text); font-family: var(--sans); font-size: 13px;
+  text-align: left; cursor: pointer;
+  transition: background 140ms, color 140ms;
+}
+.kl-menyu-punkt:hover { background: var(--surface-2); }
+.kl-menyu-punkt.kl-opasno { color: var(--danger); }
+
+/* --- узкий экран ---------------------------------------------------------
+   Категории на телефоне — не колонка сверху (она отодвигает ключи за первый
+   экран), а лента чипов в одну строку с горизонтальной прокруткой. */
+@media (max-width: 980px) {
+  .kl-telo { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+  .kl-papki { position: static; padding: 8px; }
+  .kl-papki-zagolovok { display: none; }
+  .kl-papki-spisok, .kl-papki-nizhe {
+    flex-direction: row; gap: 6px;
+    overflow-x: auto; scrollbar-width: none;
+    padding-bottom: 2px;
+  }
+  .kl-papki-spisok::-webkit-scrollbar, .kl-papki-nizhe::-webkit-scrollbar { display: none; }
+  .kl-papki-nizhe { margin-top: 6px; padding-top: 6px; }
+  .kl-papka { width: auto; flex: none; padding: 7px 11px; border: 1px solid var(--border); border-radius: 999px; }
+  .kl-papka::before { display: none; }
+  .kl-papka.kl-vybrana { border-color: var(--frame); }
+}
+
+@media (max-width: 720px) {
+  .kl-shapka { align-items: stretch; gap: 14px; }
+  .kl-shapka-tekst { flex: 1 1 100%; }
+  .kl-titul { font-size: 22px; }
+  .kl-shapka-knopki { width: 100%; }
+  .kl-poisk { flex: 1 1 100%; max-width: none; min-width: 0; order: -1; }
+  .kl-shapka-knopki .btn { flex: 1 1 auto; }
+  .kl-setka { grid-template-columns: minmax(0, 1fr); }
+}
+
+@media (max-width: 420px) {
+  .kl-seyf { flex-wrap: wrap; gap: 10px; min-height: 0; }
+  .kl-cifry, .kl-tochki { font-size: 24px; flex: 1 1 100%; }
+  .kl-koltso { width: 36px; height: 36px; }
+  .kl-seyf-knopka { flex: 1; justify-content: center; }
+  .kl-zapasnye { grid-template-columns: repeat(auto-fill, minmax(78px, 1fr)); }
+  .kl-qr { width: 100%; height: auto; aspect-ratio: 1; }
+}
+
+/* Кому движение мешает — тому неподвижная страница: важность, отсчёт и
+   состояния остаются видны цветом и положением. */
+@media (prefers-reduced-motion: reduce) {
+  .kl-kartochka,
+  .kl-kartochka.kl-srochnyy::before,
+  .kl-koltso.kl-konets,
+  .kl-cifra,
+  .kl-pusto-plita,
+  .kl-shkala-polosa,
+  .kl-zametka[open] > .kl-zametka-telo { animation: none; }
+  .kl-shkala-polosa { animation-duration: 1ms; }
+  .kl-papka, .kl-papka::before, .kl-kartochka, .kl-znak, .kl-koltso, .kl-kopiya::before,
+  .kl-poisk, .kl-prava-stroka, .kl-zapasnoy, .kl-menyu, .kl-svyaz-znak, .kl-menyu-punkt,
+  .kl-seyf-knopka, .kl-svodka-trevoga, .kl-zametka-krai { transition: none; }
+  .kl-kartochka:hover, .kl-kartochka:focus-within, .kl-svodka-trevoga:hover { transform: none; }
+  .kl-kartochka:hover .kl-znak { transform: none; }
+}
+
+/* ---- Кнопка удаления: корзинка, разъезжающаяся в пилюлю --------------------
+   vinodjangid07/smart-emu-83. Круглая кнопка со значком корзины; по наведению
+   разъезжается вправо в красную пилюлю, значок съезжает вниз, сверху выезжает
+   слово «Удалить». Владелец попросил её 07.09.2026 везде, где действие —
+   удаление: слово в ряду кнопок читается позже, чем узнаваемая корзинка, а
+   красная пилюля отвечает на вопрос «что будет, если нажму».
+
+   Отличия от образца, и оба вынужденные:
+
+   1. **Слово приходит из разметки** (`data-podpis`), а не зашито в `content`:
+      интерфейс двуязычный, а CSS перевода не знает.
+   2. **Кнопка разъезжается ПОВЕРХ соседей, а не раздвигает их.** У образца
+      ширина растёт с 50 до 140 пикселей, и в нашей строке действий это
+      сдвигало бы все соседние кнопки при каждом наведении. Место держит
+      обёртка, кнопка внутри абсолютная и растёт влево — строка стоит.
+
+   Цвета — токенами: спокойная кнопка не чёрная (в светлой теме это была бы
+   клякса), а обычная тихая кнопка системы; красный берётся `--danger-solid` —
+   тот же, которым система красит опасные действия. */
+
+.korzina-mesto {
+  position: relative; flex: none;
+  display: inline-block; width: 28px; height: 28px;
+  vertical-align: middle;
+}
+.korzina {
+  position: absolute; top: 0; right: 0;
+  width: 28px; height: 28px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid transparent; background: var(--surface-2); color: var(--muted);
+  cursor: pointer; overflow: hidden;
+  transition: width 300ms, border-radius 300ms, background 300ms, color 300ms;
+}
+.korzina-znak {
+  width: 11px; height: 11px; fill: currentColor;
+  transition: width 300ms, height 300ms, transform 300ms;
+}
+.korzina::before {
+  content: attr(data-podpis);
+  position: absolute; top: -14px; left: 0; right: 0;
+  color: var(--on-brand); font-size: 2px; font-weight: 600; text-align: center;
+  white-space: nowrap;
+  transition: font-size 300ms, transform 300ms;
+}
+.korzina:not(:disabled):hover,
+.korzina:not(:disabled):focus-visible {
+  width: 104px; border-radius: 14px;
+  background: var(--danger-solid); color: var(--on-brand);
+}
+.korzina:not(:disabled):hover .korzina-znak,
+.korzina:not(:disabled):focus-visible .korzina-znak {
+  width: 30px; height: 30px; transform: translateY(58%);
+}
+.korzina:not(:disabled):hover::before,
+.korzina:not(:disabled):focus-visible::before {
+  font-size: 12px; transform: translateY(18px);
+}
+.korzina:disabled { opacity: 0.45; cursor: default; }
+
+/* Кому движение мешает — тому обычная круглая кнопка: она краснеет, но не
+   разъезжается, и слово остаётся в `aria-label` и всплывающей подписи. */
+@media (prefers-reduced-motion: reduce) {
+  .korzina, .korzina-znak, .korzina::before { transition: none; }
+  .korzina:not(:disabled):hover,
+  .korzina:not(:disabled):focus-visible { width: 28px; border-radius: 50%; }
+  .korzina:not(:disabled):hover .korzina-znak,
+  .korzina:not(:disabled):focus-visible .korzina-znak { width: 11px; height: 11px; transform: none; }
+  .korzina:not(:disabled):hover::before,
+  .korzina:not(:disabled):focus-visible::before { font-size: 2px; transform: none; }
 }

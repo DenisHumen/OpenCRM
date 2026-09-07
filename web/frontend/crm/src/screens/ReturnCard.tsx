@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { History } from "../components/History";
 import { Icon } from "../components/Icon";
-import { Chip, ConfirmModal, EmptyState, LoadFailed, ScreenLoading } from "../components/ui";
+import { Chip, ConfirmModal, EmptyState, KnopkaKorziny, LoadFailed, ScreenLoading } from "../components/ui";
 import { VyborKlienta } from "../components/VyborKlienta";
 import { WarehousePicker, useWarehouses } from "../components/Warehouses";
 import { api, ApiError } from "../lib/api";
@@ -171,9 +171,7 @@ export function ReturnCard() {
             </a>
           )}
           {(draft || vozvrat.status === "cancelled") && can(user, "orders.edit") && (
-            <button className="text-link danger" disabled={guard.busy} onClick={() => setConfirm("delete")}>
-              {t("paperDelete")}
-            </button>
+            <KnopkaKorziny disabled={guard.busy} onClick={() => setConfirm("delete")} />
           )}
         </div>
       </div>
@@ -436,9 +434,7 @@ function ReturnLines({ vozvrat, canEdit, onChanged }: { vozvrat: Return; canEdit
             {formatMoney(line.price, workspace.currency, locale)}
           </span>
           {canEdit && (
-            <button className="btn-icon" title={t("delete")} disabled={guard.busy} onClick={() => void remove(line.id)}>
-              <Icon name="trash" size={14} />
-            </button>
+            <KnopkaKorziny disabled={guard.busy} onClick={() => void remove(line.id)} />
           )}
         </div>
       ))}
@@ -544,10 +540,7 @@ function ReturnMedia({ vozvrat, canEdit, onChanged }: { vozvrat: Return; canEdit
               <figcaption className="vlozhenie-podpis">
                 <span className="truncate" title={file.original_name}>{file.original_name}</span>
                 {canEdit && (
-                  <button
-                    type="button"
-                    className="btn-icon"
-                    title={t("delete")}
+                  <KnopkaKorziny
                     onClick={async () => {
                       try {
                         await api.del(`/returns/${vozvrat.id}/files/${file.id}`);
@@ -556,9 +549,7 @@ function ReturnMedia({ vozvrat, canEdit, onChanged }: { vozvrat: Return; canEdit
                         toastError(e);
                       }
                     }}
-                  >
-                    <Icon name="trash" size={13} />
-                  </button>
+                  />
                 )}
               </figcaption>
             </figure>

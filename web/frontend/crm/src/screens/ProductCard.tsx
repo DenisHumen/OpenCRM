@@ -11,7 +11,7 @@ import {
   WarehouseSpread,
   useWarehouses,
 } from "../components/Warehouses";
-import { ConfirmModal, Dochitat, EmptyState, ScreenLoading } from "../components/ui";
+import { ConfirmModal, Dochitat, EmptyState, KnopkaKorziny, ScreenLoading } from "../components/ui";
 import { api, ApiError } from "../lib/api";
 import { ProductHolders } from "../components/ProductHolders";
 import { useApp } from "../lib/app";
@@ -174,9 +174,7 @@ export function ProductCard() {
             {product.is_service && <> · {t("isService")}</>}
           </div>
         </div>
-        <button className="btn-icon" onClick={() => setConfirmDelete(true)} title={t("deleteProduct")}>
-          <Icon name="trash" />
-        </button>
+        <KnopkaKorziny onClick={() => setConfirmDelete(true)} title={t("deleteProduct")} />
       </div>
 
       {/* Плитки — то, что спрашивают, открыв товар: остаток, доступно с бронью,

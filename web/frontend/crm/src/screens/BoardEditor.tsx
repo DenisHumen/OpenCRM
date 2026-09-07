@@ -4,7 +4,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { Icon } from "../components/Icon";
 import { SkachatFayl } from "../components/SkachatFayl";
 import { VyborKlienta } from "../components/VyborKlienta";
-import { Chip, ConfirmModal, LoadFailed, Modal, ScreenLoading, Toggle } from "../components/ui";
+import { Chip, ConfirmModal, KnopkaKorziny, LoadFailed, Modal, ScreenLoading, Toggle } from "../components/ui";
 import { api, ApiError } from "../lib/api";
 import { dropTarget } from "../lib/dnd";
 import { useApp } from "../lib/app";
@@ -510,14 +510,7 @@ export function BoardEditor() {
                   >
                     <Icon name="link" size={13} />
                   </button>
-                  <button
-                    className="text-link"
-                    style={{ display: "flex", color: "var(--faint)" }}
-                    aria-label={t("delete")}
-                    onClick={() => setConfirm(work.id)}
-                  >
-                    <Icon name="trash" size={13} />
-                  </button>
+                  <KnopkaKorziny onClick={() => setConfirm(work.id)} />
                 </div>
               </div>
             ))}

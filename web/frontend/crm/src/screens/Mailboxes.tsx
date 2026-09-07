@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 
 import { Icon } from "../components/Icon";
-import { ConfirmModal, EmptyState, Modal, ScreenLoading, Toggle } from "../components/ui";
+import { ConfirmModal, EmptyState, KnopkaKorziny, Modal, ScreenLoading, Toggle } from "../components/ui";
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
 import { useLiveTopic } from "../lib/live";
@@ -185,13 +185,7 @@ export function Mailboxes() {
               >
                 <Icon name="note" size={14} />
               </button>
-              <button
-                className="btn-icon"
-                aria-label={t("delete")}
-                onClick={() => setConfirmDelete(account)}
-              >
-                <Icon name="trash" size={14} />
-              </button>
+              <KnopkaKorziny onClick={() => setConfirmDelete(account)} />
             </div>
           ))}
           {accounts.length === 0 && <EmptyState icon="email" title={t("noMailboxesYet")} />}

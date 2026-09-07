@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { Papka } from "../components/Papka";
-import { Chip, ConfirmModal, ScreenLoading } from "../components/ui";
+import { Chip, ConfirmModal, KnopkaKorziny, ScreenLoading } from "../components/ui";
 import { Icon } from "../components/Icon";
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
@@ -161,14 +161,7 @@ export function Files() {
                   {file.last_viewed_at ? formatDateTime(file.last_viewed_at, locale) : t("neverViewed")}
                 </span>
                 <span style={COL.actions}>
-                  <button
-                    className="btn-icon"
-                    style={{ width: 30, height: 30, border: "none", color: "var(--danger)" }}
-                    title={t("delete")}
-                    onClick={() => setConfirmId(file.id)}
-                  >
-                    <Icon name="trash" size={14} />
-                  </button>
+                  <KnopkaKorziny onClick={() => setConfirmId(file.id)} />
                 </span>
               </div>
             ))}

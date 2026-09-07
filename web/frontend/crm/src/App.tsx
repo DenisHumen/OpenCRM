@@ -42,6 +42,7 @@ import { Profile } from "./screens/Profile";
 import { Docs } from "./screens/Docs";
 import { Finance } from "./screens/Finance";
 import { Globus } from "./screens/Globus";
+import { Klyuchi } from "./screens/Klyuchi";
 import { FinanceSettings } from "./screens/FinanceSettings";
 import { Reports } from "./screens/Reports";
 import {
@@ -328,6 +329,11 @@ export default function App() {
           <Route element={<ModuleRoute module="globe" />}>
             <Route element={<PermRoute perm="globe.view" />}>
               <Route path="/globe" element={<Globus />} />
+            </Route>
+          </Route>
+          <Route element={<ModuleRoute module="keys" />}>
+            <Route element={<PermRoute perm="keys.view" />}>
+              <Route path="/keys" element={<Klyuchi />} />
             </Route>
           </Route>
           <Route element={<ModuleRoute module="reports" />}>

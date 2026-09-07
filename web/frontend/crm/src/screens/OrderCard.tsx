@@ -4,7 +4,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { History } from "../components/History";
 import { Icon } from "../components/Icon";
 import { useLabelsOn } from "../components/ProductBarcodes";
-import { Chip, ConfirmModal, LoadFailed, Modal, ScreenLoading } from "../components/ui";
+import { Chip, ConfirmModal, KnopkaKorziny, LoadFailed, Modal, ScreenLoading } from "../components/ui";
 import { VyborKlienta } from "../components/VyborKlienta";
 import { WarehousePicker, useWarehouses } from "../components/Warehouses";
 import { api, ApiError } from "../lib/api";
@@ -292,9 +292,7 @@ export function OrderCard() {
               {formatMoney(line.price, workspace.currency, locale)}
             </span>
             {open && (
-              <button
-                className="btn-icon"
-                title={t("delete")}
+              <KnopkaKorziny
                 onClick={async () => {
                   try {
                     await api.del(`/orders/${order.id}/lines/${line.id}`);
@@ -303,9 +301,7 @@ export function OrderCard() {
                     toastError(err);
                   }
                 }}
-              >
-                <Icon name="trash" size={14} />
-              </button>
+              />
             )}
           </div>
         ))}
@@ -340,9 +336,7 @@ export function OrderCard() {
             {t("orderCancel")}
           </button>
           {can(user, "orders.edit") && (
-            <button className="text-link danger" disabled={guard.busy} onClick={() => setConfirm("delete")}>
-              {t("paperDelete")}
-            </button>
+            <KnopkaKorziny disabled={guard.busy} onClick={() => setConfirm("delete")} />
           )}
           {shortage && (
             <div style={{ flexBasis: "100%" }}>

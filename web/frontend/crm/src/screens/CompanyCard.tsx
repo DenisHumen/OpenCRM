@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { Icon } from "../components/Icon";
-import { Chip, ConfirmModal, ScreenLoading } from "../components/ui";
+import { Chip, ConfirmModal, KnopkaKorziny, ScreenLoading } from "../components/ui";
 import { api, ApiError } from "../lib/api";
 import { useApp } from "../lib/app";
 import { can } from "../lib/permissions";
@@ -155,12 +155,7 @@ export function CompanyCard() {
             )}
           </div>
         </div>
-        {mayDelete && (
-          <button className="btn btn-secondary" onClick={() => setConfirmDelete(true)}>
-            <Icon name="trash" size={14} />
-            {t("delete")}
-          </button>
-        )}
+        {mayDelete && <KnopkaKorziny onClick={() => setConfirmDelete(true)} />}
       </div>
 
       {/* Менеджеру объясняем, почему поля не поддаются, — на месте, а не

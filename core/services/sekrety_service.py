@@ -22,13 +22,15 @@ from sqlalchemy.orm import Session
 
 from config.settings import get_settings
 from core.security import secretbox
-from core.services import mail_service
-from database.models import MailAccount
+from core.services import klyuchi_service, mail_service
+from database.models import MailAccount, TwoFactorKey
 from database.repositories import sekrety as sekrety_repo
 
 #: (модель, колонка, назначение) — все шифротексты системы.
 MESTA = (
     (MailAccount, MailAccount.password_encrypted, mail_service.SECRET_PURPOSE),
+    (TwoFactorKey, TwoFactorKey.secret_encrypted, klyuchi_service.SECRET_PURPOSE),
+    (TwoFactorKey, TwoFactorKey.backup_codes_encrypted, klyuchi_service.BACKUP_PURPOSE),
 )
 
 

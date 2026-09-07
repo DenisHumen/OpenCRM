@@ -4,7 +4,7 @@ import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
 import { Icon } from "../components/Icon";
 import { History } from "../components/History";
 import { PrintLangs } from "../components/PrintLangs";
-import { Chip, ConfirmModal, LoadFailed, ScreenLoading } from "../components/ui";
+import { Chip, ConfirmModal, KnopkaKorziny, LoadFailed, ScreenLoading } from "../components/ui";
 import { WarehousePicker, useWarehouses } from "../components/Warehouses";
 import { api, ApiError } from "../lib/api";
 import { useApp } from "../lib/app";
@@ -226,9 +226,7 @@ export function DocumentCard() {
           что-то сделала. */}
       {doc.status !== "closed" && can(user, "documents.edit") && (
         <div style={{ marginTop: 12, order: 5 }}>
-          <button className="text-link danger" disabled={guard.busy} onClick={() => setConfirmDelete(true)}>
-            {t("paperDelete")}
-          </button>
+          <KnopkaKorziny disabled={guard.busy} onClick={() => setConfirmDelete(true)} />
         </div>
       )}
 
@@ -373,9 +371,7 @@ function ActCard({ act, reload }: { act: any; reload: () => Promise<void> }) {
               {formatMoney(line.price, workspace.currency, locale)}
             </span>
             {open && (
-              <button
-                className="btn-icon"
-                title={t("delete")}
+              <KnopkaKorziny
                 onClick={async () => {
                   try {
                     await api.del(`/documents/acts/${act.id}/lines/${line.id}`);
@@ -384,9 +380,7 @@ function ActCard({ act, reload }: { act: any; reload: () => Promise<void> }) {
                     toastError(err);
                   }
                 }}
-              >
-                <Icon name="trash" size={14} />
-              </button>
+              />
             )}
           </div>
         ))}
@@ -437,9 +431,7 @@ function ActCard({ act, reload }: { act: any; reload: () => Promise<void> }) {
               {t("actCancel")}
             </button>
             {can(user, "documents.edit") && (
-              <button className="text-link danger" disabled={guard.busy} onClick={() => setDeleteAsk(true)}>
-                {t("paperDelete")}
-              </button>
+              <KnopkaKorziny disabled={guard.busy} onClick={() => setDeleteAsk(true)} />
             )}
           </div>
           {/* Без воронки выбор этапа пуст, и об этом надо сказать: молчаливо

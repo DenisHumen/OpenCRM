@@ -9,7 +9,7 @@ import { KartaMesta } from "../components/KartaMesta";
 import { NewBoardButton } from "../components/NewBoardButton";
 import { PoleAdresa } from "../components/PoleAdresa";
 import { SourcePicker } from "../components/SourcePicker";
-import { Avatar, Chip, ConfirmModal, Dochitat, EmptyState, ItogSpiska, LoadFailed, Modal, ScreenLoading } from "../components/ui";
+import { Avatar, Chip, ConfirmModal, Dochitat, EmptyState, ItogSpiska, KnopkaKorziny, LoadFailed, Modal, ScreenLoading } from "../components/ui";
 import type { VariantAdresa } from "../lib/adres";
 import { api, ApiError } from "../lib/api";
 import { dropTarget } from "../lib/dnd";
@@ -612,9 +612,11 @@ export function ClientCard() {
                         ошибся при вводе; смена этапа либо была, либо нет. */}
                     {!SYSTEM_NOTE_KINDS.has(note.kind) &&
                       (user?.role === "root" || note.author_id === user?.id) && (
-                        <button className="text-link" style={{ marginLeft: "auto", fontSize: 11.5 }} onClick={() => void deleteNote(note.id)}>
-                          {t("delete")}
-                        </button>
+                        // Ряд выровнен по базовой линии, и круглая кнопка встала бы
+                        // на неё нижним краем, торча над строкой, — держим по центру.
+                        <span style={{ marginLeft: "auto", alignSelf: "center" }}>
+                          <KnopkaKorziny onClick={() => void deleteNote(note.id)} />
+                        </span>
                       )}
                   </div>
                   <div style={{ color: "var(--text)", fontSize: 13.5, lineHeight: 1.55 }}>
@@ -669,10 +671,7 @@ export function ClientCard() {
                 >
                   <Icon name="download" />
                 </a>
-                <button
-                  className="text-link"
-                  style={{ display: "flex", color: "var(--faint)" }}
-                  aria-label={t("delete")}
+                <KnopkaKorziny
                   onClick={async () => {
                     try {
                       await api.del(`/clients/${id}/files/${file.id}`);
@@ -681,9 +680,7 @@ export function ClientCard() {
                       toastError(e);
                     }
                   }}
-                >
-                  <Icon name="trash" />
-                </button>
+                />
               </div>
             ))}
             {files.length === 0 && <EmptyState title={t("dropFiles") + " " + t("browse")} />}
