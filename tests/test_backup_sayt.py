@@ -358,6 +358,13 @@ def test_vosstanovlenie_vozvrashchaet_bazu_k_snyatomu(root_client, sayt):
     assert snapshot_db.celaya(snimok), "снимок живой базы перед заливкой обязан быть целым"
     assert "Появился после копии" in snimok.read_text(encoding="utf-8")
 
+    # Копия обязана везти ключ шифрования, а восстановление — прочитать его.
+    # Без этого залитая на другой машине копия молча теряет всё зашифрованное
+    # (docs/15 §11); здесь машина та же, поэтому перекладывать нечего.
+    assert job["has_secret_key"] is True, "копия уехала без ключа шифрования"
+    assert job["secrets"]["tot_zhe_klyuch"] is True, job["secrets"]
+    assert job["secrets"]["bez_klyucha"] is False
+
     assert root_client.get(f"{API}/clients/{client_id}").status_code == 404, "клиент, заведённый после копии, обязан пропасть"
     assert root_client.get(f"{API}/settings/maintenance").json()["enabled"] is False
     assert root_client.get(f"{API}/system/schema").json()["ok"] is True

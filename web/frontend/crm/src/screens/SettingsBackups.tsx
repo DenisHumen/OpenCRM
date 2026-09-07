@@ -39,6 +39,16 @@ interface Job {
   check?: Proverka;
   snapshot?: string;
   copy_taken_at?: string | null;
+  has_secret_key?: boolean;
+  secrets?: Sekrety;
+}
+
+/** Что стало с зашифрованным при восстановлении. Разбор — docs/15 §11. */
+interface Sekrety {
+  perelozheno: number;
+  ne_otkrylis: number;
+  tot_zhe_klyuch: boolean;
+  bez_klyucha: boolean;
 }
 
 interface Status {
@@ -308,6 +318,16 @@ export function SettingsBackups() {
                     )}
                     {job.files !== undefined && <span>{t("backupFiles", { count: job.files })}</span>}
                     {job.copy_taken_at && <span>{t("backupCopyTakenAt", { t: job.copy_taken_at })}</span>}
+                    {job.kind === "db" && job.status === "done" && <span>{t("backupKeyInCopy")}</span>}
+                    {job.has_secret_key === false && <span className="bad">{t("backupNoKeyInCopy")}</span>}
+                    {job.secrets?.bez_klyucha && <span className="bad">{t("backupSecretsLost")}</span>}
+                    {job.secrets?.tot_zhe_klyuch && <span>{t("backupSecretsSameKey")}</span>}
+                    {!!job.secrets?.perelozheno && (
+                      <span>{t("backupSecretsMoved", { count: job.secrets.perelozheno })}</span>
+                    )}
+                    {!!job.secrets?.ne_otkrylis && (
+                      <span className="bad">{t("backupSecretsStuck", { count: job.secrets.ne_otkrylis })}</span>
+                    )}
                     {job.snapshot && <span>{t("backupRestoreSnapshot", { name: job.snapshot })}</span>}
                     {job.downloaded_at && <span>{t("backupDownloadedAt", { t: formatDateTime(job.downloaded_at, locale) })}</span>}
                     {job.check && (
