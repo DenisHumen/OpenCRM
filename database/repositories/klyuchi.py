@@ -15,7 +15,7 @@ from datetime import datetime
 from sqlalchemy import Select, case, exists, func, or_, select
 from sqlalchemy.orm import Session, undefer
 
-from database.models import KeyCategory, KeyCategoryAccess, TwoFactorKey, TwoFactorKeyAccess
+from database.models import KeyCategory, KeyCategoryAccess, Task, TwoFactorKey, TwoFactorKeyAccess
 from database.models.task import VAZHNOSTI
 from database.query import contains
 
@@ -129,6 +129,22 @@ def skolko_vidyat(db: Session, key_ids) -> dict[int, int]:
         .group_by(TwoFactorKeyAccess.key_id)
     ).all()
     return {int(nomer): int(skolko_ih) for nomer, skolko_ih in rows}
+
+
+def prosyat_obnovleniya(db: Session, user_id: int | None, seychas: datetime) -> int:
+    """Сколько видимых ключей просрочили напоминание «сменить».
+
+    Счётом в базе, а не перебором показанного: в шапке стоит число по ВСЕМ
+    ключам, а на экране лежит одна полка. Считай мы по ней — число менялось бы
+    от выбранной категории, а тревога обязана быть одна на весь раздел.
+    """
+    zapros = (
+        _osnova(user_id, v_korzine=False)
+        .join(Task, Task.id == TwoFactorKey.task_id)
+        .where(Task.done_at.is_(None), Task.due_at.is_not(None), Task.due_at < seychas)
+        .with_only_columns(func.count(TwoFactorKey.id))
+    )
+    return int(db.scalar(zapros) or 0)
 
 
 def get(db: Session, key_id: int) -> TwoFactorKey | None:

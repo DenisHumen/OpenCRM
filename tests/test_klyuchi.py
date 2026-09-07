@@ -389,3 +389,61 @@ def test_sekret_lezhit_v_baze_zashifrovannym(root_client, db):
     assert (
         secretbox.decrypt(v_baze.secret_encrypted, klyuchi_service.SECRET_PURPOSE) == OBRAZTSOVYY
     )
+
+
+# --- тревога и категории -----------------------------------------------------
+
+
+def test_trevoga_schitaet_po_vsem_klyucham_a_ne_po_polke(root_client):
+    """Число в шапке — одно на весь раздел.
+
+    Считай его по показанной полке — оно менялось бы от выбранной категории и
+    читалось бы как «здесь просрочено столько», а тревога обязана быть общей.
+    """
+    klyuch = zavesti(root_client, title="Просит обновления", category="Полка тревоги")
+    zadacha = root_client.post(
+        f"{API}/tasks",
+        json={"title": "Сменить ключ: проба", "due_at": "2020-01-01T10:00:00Z"},
+    )
+    assert zadacha.status_code == 201, zadacha.text
+    assert root_client.patch(
+        f"{KLYUCHI}/{klyuch['id']}", json={"task_id": zadacha.json()["id"]}
+    ).status_code == 200
+
+    vsyo = root_client.get(KLYUCHI).json()
+    assert vsyo["prosyat"] >= 1, "просроченное напоминание не подняло тревогу"
+
+    # Другая полка — то же число: оно про раздел, а не про полку.
+    drugaya = root_client.get(KLYUCHI, params={"mine": True}).json()
+    assert drugaya["prosyat"] == vsyo["prosyat"]
+
+    root_client.delete(f"{API}/tasks/{zadacha.json()['id']}")
+
+
+def test_zakrytaya_kategoriya_zavoditsya_i_ne_pokazyvaet_soderzhimoe(root_client, sotrudnik):
+    """Ради этого категории и заводят: личные ключи сотрудника.
+
+    Категория видна всем по имени и числу — спрячь её целиком, и рядом заведут
+    вторую такую же; но содержимого чужому не видно.
+    """
+    kat = root_client.post(
+        f"{KLYUCHI}/categories", json={"name": "Личные root", "zakrytaya": True}
+    )
+    assert kat.status_code == 201, kat.text
+    assert kat.json()["zakrytaya"] is True
+    klyuch = zavesti(root_client, title="Личный ключ root", category="Личные root")
+
+    chuzhoy, _ = sotrudnik("klyuchi.zakrytaya.vidit@test.local")
+    vidno = chuzhoy.get(KLYUCHI).json()
+    nasha = next(k for k in vidno["categories"] if k["name"] == "Личные root")
+    assert nasha["zakryta_dlya_menya"] is True, "чужая закрытая категория объявлена открытой"
+    assert all(k["id"] != klyuch["id"] for k in vidno["items"]), "содержимое закрытой видно чужому"
+
+
+def test_kategoriya_s_tem_zhe_imenem_ne_zavoditsya_dvazhdy(root_client):
+    """Две «Бухгалтерии» — это две полки, на которых ищут одно и то же."""
+    imya = {"name": "Бухгалтерия дважды"}
+    assert root_client.post(f"{KLYUCHI}/categories", json=imya).status_code == 201
+    otkaz = root_client.post(f"{KLYUCHI}/categories", json=imya)
+    assert otkaz.status_code == 409, otkaz.text
+    assert otkaz.json()["error"]["code"] == "key_category_taken"

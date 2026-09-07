@@ -173,6 +173,11 @@
   --klyuch-koltso: #58b47c;
   --klyuch-koltso-skoro: #d99a4e;
   --klyuch-koltso-konets: #e7746a;
+  /* Всё, что лежит НА плите, светлое в обеих темах: плита чёрная всегда. */
+  --klyuch-koltso-pusto: rgba(255, 255, 255, 0.10);
+  --klyuch-tochka: #6b675f;
+  --klyuch-knopka: rgba(255, 255, 255, 0.08);
+  --klyuch-knopka-navedeno: rgba(255, 255, 255, 0.16);
 }
 
 /* --- Тёмная. Она же по умолчанию ---------------------------------------- */
@@ -267,11 +272,10 @@
   --glow: rgba(255, 255, 255, 0.18);
   --shade: rgba(0, 0, 0, 0.45);
 
-  /* Точки закрытого кода, пустая часть кольца и подсветка закрытой
-     категории — единственное у ключей, что зависит от темы. */
-  --klyuch-tochka: #6b675f;
-  --klyuch-koltso-pusto: rgba(255, 255, 255, 0.10);
+  /* Подсветка закрытой категории лежит на карточке, а не на чёрной плите,
+     и потому единственная у ключей зависит от темы. */
   --klyuch-zamok: rgba(255, 255, 255, 0.04);
+
 
   /* Полосы диаграмм: заливка без текста поверх, поэтому доли крупнее. */
   --chart-brand: rgba(217, 119, 87, 0.13);
@@ -368,11 +372,8 @@
   --glow: rgba(255, 255, 255, 0.85);
   --shade: rgba(38, 36, 31, 0.16);
 
-  /* Серый #6b675f на светлой карточке тонет, а белым по белому не видно
-     пустую часть кольца. */
-  --klyuch-tochka: #9a958a;
-  --klyuch-koltso-pusto: rgba(38, 36, 31, 0.14);
   --klyuch-zamok: rgba(38, 36, 31, 0.05);
+
 
   --chart-brand: rgba(169, 74, 38, 0.16);
   --chart-success: rgba(27, 110, 62, 0.34);
@@ -4237,15 +4238,19 @@ html { scroll-behavior: smooth; }
 
 /* Кнопка внутри сейфа: та же плита, светлеет по наведению. Обычная `.btn` с
    её плашкой тени тут не годится — тень легла бы на чёрное и пропала. */
+/* Цвета внутри сейфа — из пары «поверх картинки» (`--on-media`) и своих
+   светлых полупрозрачных, а НЕ из темовых. Плита чёрная в обеих темах, и
+   `--tint-neutral` со `--text` в светлой давали тёмное на чёрном: кнопка
+   «Показать» пропадала (найдено живым осмотром 07.09.2026). */
 .kl-seyf-knopka {
   flex: none; display: inline-flex; align-items: center; gap: 6px;
   height: 28px; padding: 0 10px; border-radius: 4px;
-  background: var(--tint-neutral); border: 1px solid transparent; color: var(--text);
+  background: var(--klyuch-knopka); border: 1px solid transparent; color: var(--on-media);
   font-family: var(--sans); font-size: 12px; font-weight: 600; cursor: pointer;
   white-space: nowrap;
   transition: background 150ms, border-color 150ms, color 150ms;
 }
-.kl-seyf-knopka:hover { background: var(--klyuch-koltso-pusto); border-color: var(--glow); }
+.kl-seyf-knopka:hover { background: var(--klyuch-knopka-navedeno); border-color: var(--on-media-line); }
 .kl-seyf-knopka:disabled { opacity: 0.6; cursor: default; }
 
 /* «Скопировано» — состояние с таймером, а не `:focus`: подсказка обязана

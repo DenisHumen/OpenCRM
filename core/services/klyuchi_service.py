@@ -166,10 +166,23 @@ def _zapasnye(klyuch: TwoFactorKey) -> list[dict]:
     return [x for x in spisok if isinstance(x, dict) and x.get("kod")]
 
 
-def kratko(db: Session, actor: User, klyuch: TwoFactorKey, vidyat: int = 0) -> dict:
-    """Карточка без кода и без секрета — то, что видно в списке."""
+def kratko(
+    db: Session,
+    actor: User,
+    klyuch: TwoFactorKey,
+    vidyat: int = 0,
+    zadachi: dict | None = None,
+) -> dict:
+    """Карточка без кода и без секрета — то, что видно в списке.
+
+    `zadachi` — уже собранные напоминания. Без них карточка добирает своё
+    запросом, и на списке это двенадцать запросов вместо одного.
+    """
     zapasnye = _zapasnye(klyuch)
-    zadacha = tasks_repo.get(db, klyuch.task_id) if klyuch.task_id else None
+    if zadachi is not None:
+        zadacha = zadachi.get(klyuch.task_id) if klyuch.task_id else None
+    else:
+        zadacha = tasks_repo.get(db, klyuch.task_id) if klyuch.task_id else None
     return {
         "note": klyuch.note or "",
         "seen_by": vidyat,
@@ -236,8 +249,12 @@ def spisok(
             }
         )
     vidyat = klyuchi_repo.skolko_vidyat(db, [k.id for k in klyuchi])
+    zadachi = tasks_repo.po_nomeram(db, [k.task_id for k in klyuchi])
     return {
-        "items": [kratko(db, actor, k, vidyat.get(k.id, 0)) for k in klyuchi],
+        "items": [kratko(db, actor, k, vidyat.get(k.id, 0), zadachi) for k in klyuchi],
+        # Тревога одна на весь раздел, а не по выбранной полке: число, меняющееся
+        # от выбора категории, читалось бы как «здесь просрочено столько».
+        "prosyat": klyuchi_repo.prosyat_obnovleniya(db, kto, now_utc().replace(tzinfo=None)),
         "categories": kategorii,
         "total": klyuchi_repo.skolko(db, kto),
         "mine": klyuchi_repo.svoih(db, actor.id),
