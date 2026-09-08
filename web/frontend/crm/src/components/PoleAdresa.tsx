@@ -103,7 +103,7 @@ export function PoleAdresa({
   return (
     <div
       ref={yacheyka}
-      className="contact-cell adres-pole"
+      className="contact-cell address-field"
       tabIndex={pravim ? -1 : 0}
       role={pravim ? undefined : "button"}
       onClick={() => !pravim && setPravim(true)}
@@ -164,7 +164,7 @@ export function PoleAdresa({
           />
           {varianty.length > 0 && (
             <ul
-              className="card vsplyvashka adres-spisok"
+              className="card popover-card address-list"
               id={spisok}
               role="listbox"
               aria-label={t("addressSuggestions")}
@@ -175,7 +175,7 @@ export function PoleAdresa({
                   id={`${spisok}-${i}`}
                   role="option"
                   aria-selected={i === podsvechen}
-                  className={"adres-variant" + (i === podsvechen ? " active" : "")}
+                  className={"address-variant" + (i === podsvechen ? " active" : "")}
                   // Нажатие мышью не должно уводить фокус из поля: иначе сперва
                   // сработает уход из поля и сохранит набранное, а выбор
                   // придёт вторым и второй же правкой.
@@ -183,9 +183,9 @@ export function PoleAdresa({
                   onMouseEnter={() => setPodsvechen(i)}
                   onClick={() => vybrat(variant)}
                 >
-                  <span className="adres-variant-stroka">{variant.label}</span>
+                  <span className="address-variant-row">{variant.label}</span>
                   {(variant.postcode || variant.city || variant.country_code) && (
-                    <span className="adres-variant-mesto">
+                    <span className="address-variant-place">
                       {[variant.postcode, variant.city, variant.country_code]
                         .filter(Boolean)
                         .join(" · ")}

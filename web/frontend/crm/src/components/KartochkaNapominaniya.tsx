@@ -201,10 +201,10 @@ export function KartochkaNapominaniya({
     <Modal title={t("tasksCard")} onClose={onClose} wide>
       {/* Рябь по краю окна — та же, что вокруг строки списка: если срочное
           напоминание открыли, оно и здесь обязано выглядеть срочным. */}
-      <div className={"napominanie-karta" + (srochno(tekushchaya) ? " srochno" : "")}>
-        <div className="napominanie-karta-telo">
+      <div className={"reminder-map" + (srochno(tekushchaya) ? " urgent" : "")}>
+        <div className="reminder-map-body">
           <input
-            className="input napominanie-zagolovok"
+            className="input reminder-heading"
             value={title}
             aria-label={t("tasksTitleLabel")}
             onChange={(e) => setTitle(e.target.value)}
@@ -218,14 +218,14 @@ export function KartochkaNapominaniya({
             }}
           />
 
-          <div className="napominanie-ryad">
-            <div className="vazhnost-vybor" role="radiogroup" aria-label={t("vazhnost")}>
+          <div className="reminder-row">
+            <div className="importance-choice" role="radiogroup" aria-label={t("vazhnost")}>
               {VAZHNOSTI.map((slovo) => (
                 <button
                   key={slovo}
                   type="button"
                   role="radio"
-                  className={"vazhnost-knopka " + slovo + (tekushchaya === slovo ? " active" : "")}
+                  className={"importance-btn " + slovo + (tekushchaya === slovo ? " active" : "")}
                   aria-checked={tekushchaya === slovo}
                   onClick={() => {
                     if (tekushchaya !== slovo) void pravit({ vazhnost: slovo });
@@ -269,7 +269,7 @@ export function KartochkaNapominaniya({
             />
           </div>
 
-          <div className="napominanie-svyazi">
+          <div className="reminder-links">
             {task.assignee_name && (
               <span>
                 <Icon name="user" size={12} /> {task.assignee_name}
@@ -288,7 +288,7 @@ export function KartochkaNapominaniya({
             <span>{formatDateTime(task.created_at, locale)}</span>
           </div>
 
-          <div className="napominanie-vlozheniya">
+          <div className="reminder-attachments">
             <div className="metric-title" style={{ marginBottom: 10 }}>
               <Icon name="image" size={13} />
               {t("tasksFiles")}
@@ -312,16 +312,16 @@ export function KartochkaNapominaniya({
               {hod ? (
                 <>
                   <div className="truncate">{hod.imya}</div>
-                  <div className="karta-hod">
+                  <div className="map-progress">
                     <span
-                      className="karta-hod-polosa"
+                      className="map-progress-bar"
                       style={{ width: `${Math.round(hod.dolya * 100)}%` }}
                     />
                   </div>
                 </>
               ) : (
                 <>
-                  {t("dropFiles")} <span className="dropzone-vybor">{t("browse")}</span>{" "}
+                  {t("dropFiles")} <span className="dropzone-choice">{t("browse")}</span>{" "}
                   {t("tasksFilesHint")}
                 </>
               )}
@@ -340,12 +340,12 @@ export function KartochkaNapominaniya({
             {files.length === 0 ? (
               <EmptyState icon="image" title={t("tasksFilesNone")} />
             ) : (
-              <div className="vlozheniya">
+              <div className="attachments">
                 {files.map((file) => (
-                  <figure key={file.id} className="vlozhenie">
+                  <figure key={file.id} className="attachment">
                     {file.mime.startsWith("video/") ? (
                       <video
-                        className="vlozhenie-media"
+                        className="attachment-media"
                         src={file.download_url}
                         controls
                         preload="metadata"
@@ -353,14 +353,14 @@ export function KartochkaNapominaniya({
                     ) : (
                       <a href={file.download_url} target="_blank" rel="noreferrer">
                         <img
-                          className="vlozhenie-media"
+                          className="attachment-media"
                           src={file.download_url}
                           alt={file.original_name}
                           loading="lazy"
                         />
                       </a>
                     )}
-                    <figcaption className="vlozhenie-podpis">
+                    <figcaption className="attachment-caption">
                       <span className="truncate" title={file.original_name}>
                         {file.original_name}
                       </span>

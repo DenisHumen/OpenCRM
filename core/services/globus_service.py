@@ -236,7 +236,6 @@ def kartina(db: Session, user: User) -> dict:
 
     zayavki = globus_repo.otkrytye_zayavki(db, ids) if "deals" in dostupnye else {}
     zakazy = globus_repo.otkrytye_zakazy(db, ids, seychas) if "orders" in dostupnye else {}
-    menedzhery = globus_repo.imena_menedzherov(db, sorted({k.manager_id for k in klienty if k.manager_id}))
     summy_vidny = permissions_service.has(db, user, "deals", "view_amounts")
 
     tochki: list[dict] = []
@@ -263,10 +262,10 @@ def kartina(db: Session, user: User) -> dict:
                 "lon": dolgota / 1e7,
                 "tochnost": tochnost,
                 "strana": strana,
-                "company": klient.company,
-                "phone": klient.phone,
-                "email": klient.email,
-                "manager": menedzhery.get(klient.manager_id or 0, ""),
+                # Ни телефона, ни почты, ни фирмы, ни менеджера. Экран их не
+                # рисует, а право на глобус — это не право на карточки клиентов:
+                # `globe.view` открывал справочник контактов всей базы тому, кому
+                # `GET /clients` отвечает отказом.
                 "deals_open": zayavok,
                 "orders_open": zakazov,
                 "overdue": prosrocheno,

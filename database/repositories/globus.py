@@ -10,7 +10,7 @@ from datetime import datetime
 from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
-from database.models import Board, Client, Deal, Document, ShareLink, ShareView, User
+from database.models import Board, Client, Deal, Document, ShareLink, ShareView
 from database.models.document import OPEN_ORDER_STATUSES, ORDER_KINDS
 from database.models.pipeline import CLOSED_KINDS, PipelineStage
 
@@ -79,13 +79,6 @@ def otkrytye_zakazy(db: Session, client_ids: list[int], seychas: datetime) -> di
         .group_by(Document.client_id)
     )
     return {row[0]: (int(row[1]), int(row[2] or 0)) for row in db.execute(stmt).all()}
-
-
-def imena_menedzherov(db: Session, ids: list[int]) -> dict[int, str]:
-    if not ids:
-        return {}
-    stmt = select(User.id, User.name).where(User.id.in_(ids))
-    return {row[0]: row[1] for row in db.execute(stmt).all()}
 
 
 def gosti(db: Session, predel: int) -> list[tuple[ShareView, int, str, int | None]]:

@@ -62,7 +62,7 @@
 | тот же приём | перелив по знаку продукта — снят тогда же, знак плотным весом | `.side-brand-name` |
 | `uiverse.io/catraco/fluffy-quail-74` | доворот плюса по наведению | `[data-icon="plus"]` |
 | `uiverse.io/EcheverriaJesus/kind-badger-70` | значок GitHub растёт по наведению | `[data-icon="github"]` |
-| `uiverse.io/liyaxu123/warm-eel-62` | подпись поля всплывает по буквам | `.pole-plav` |
+| `uiverse.io/liyaxu123/warm-eel-62` | подпись поля всплывает по буквам | `.field-float` |
 | `uiverse.io/nazar-gavrylyk/terrible-gecko-91` | меню по правой кнопке | `.ctx-menu` |
 | `uiverse.io/PriyanshuGupta28/orange-newt-23` | путь сделки по воронке | `.shagi` |
 | `uiverse.io/Galahhad/kind-cheetah-52` | «скопировать» у блока кода | `.copy-btn` |

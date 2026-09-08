@@ -64,6 +64,13 @@ def _osnova(user_id: int | None, *, v_korzine: bool) -> Select:
     return zapros if user_id is None else zapros.where(_vidno(user_id))
 
 
+def _prosrocheno(zapros: Select, seychas: datetime) -> Select:
+    """Только те, у кого напоминание «сменить» уже просрочено."""
+    return zapros.join(Task, Task.id == TwoFactorKey.task_id).where(
+        Task.done_at.is_(None), Task.due_at.is_not(None), Task.due_at < seychas
+    )
+
+
 def spisok(
     db: Session,
     user_id: int | None,
@@ -72,9 +79,18 @@ def spisok(
     tolko_svoi: bool = False,
     poisk: str = "",
     v_korzine: bool = False,
+    prosrocheno: datetime | None = None,
 ) -> list[TwoFactorKey]:
-    """Ключи, которые видит этот человек. Свежий сверху внутри одной важности."""
+    """Ключи, которые видит этот человек. Свежий сверху внутри одной важности.
+
+    `prosrocheno` — момент, от которого считается просрочка напоминания. Отбор
+    делается ЗДЕСЬ, а не вычитанием из показанного: тревога в шапке считается по
+    всему разделу, и отбор по одной полке давал бы пустой список под ненулевым
+    числом.
+    """
     zapros = _osnova(user_id, v_korzine=v_korzine)
+    if prosrocheno is not None:
+        zapros = _prosrocheno(zapros, prosrocheno)
     if category_id is not None:
         zapros = zapros.where(TwoFactorKey.category_id == category_id)
     if tolko_svoi and user_id is not None:
@@ -138,11 +154,8 @@ def prosyat_obnovleniya(db: Session, user_id: int | None, seychas: datetime) -> 
     ключам, а на экране лежит одна полка. Считай мы по ней — число менялось бы
     от выбранной категории, а тревога обязана быть одна на весь раздел.
     """
-    zapros = (
-        _osnova(user_id, v_korzine=False)
-        .join(Task, Task.id == TwoFactorKey.task_id)
-        .where(Task.done_at.is_(None), Task.due_at.is_not(None), Task.due_at < seychas)
-        .with_only_columns(func.count(TwoFactorKey.id))
+    zapros = _prosrocheno(_osnova(user_id, v_korzine=False), seychas).with_only_columns(
+        func.count(TwoFactorKey.id)
     )
     return int(db.scalar(zapros) or 0)
 
@@ -156,8 +169,17 @@ def zapert(db: Session, key_id: int) -> TwoFactorKey | None:
 
     Нужен там, где между «ключ ещё есть» и записью рядом с ним успевает пройти
     чужое удаление: доступ лёг бы на строку, которую уже унёс каскад.
+
+    `populate_existing` — не украшение: замок берётся ПОСЛЕ того, как ключ уже
+    прочитан проверкой видимости, и без него сессия вернула бы свою прежнюю
+    копию. Заперлись бы на строке, а переписали то, что прочли до замка.
     """
-    return db.scalar(select(TwoFactorKey).where(TwoFactorKey.id == key_id).with_for_update())
+    return db.scalar(
+        select(TwoFactorKey)
+        .where(TwoFactorKey.id == key_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
 
 
 def vidit_li(db: Session, user_id: int, key_id: int) -> bool:

@@ -215,6 +215,36 @@ def _granitsa_vygruzki() -> str:
     return ""
 
 
+def _v_vorotah() -> bool:
+    """Работаем ли внутри ворот CI.
+
+    Спрашиваем по СВОЕЙ переменной, а не по чужой (`GITHUB_ACTIONS`): чужой
+    признак держится ровно до дня, когда его переименуют, а свою ворота задают
+    всегда — за этим следит `test_vorota_nazyvayut_granitsu`.
+    """
+    return IMYA_GRANITSY in os.environ
+
+
+def _vsyo_vygruzheno() -> bool:
+    """Голова совпала с `origin/main` вне ворот: всё, что есть, уже уехало.
+
+    **Тогда правок ПОСЛЕ выгрузки нет ни у одной миграции — по определению.**
+    Судить в этом состоянии старым признаком нельзя, и это не рассуждение: он
+    краснел на трёх файлах, дописанных ДО первой выгрузки, то есть на всякой
+    машине сразу после `git push` или свежего клона. Сторож, красный на чистом
+    дереве, перестают читать — а вместе с ним и соседние.
+
+    В воротах эта ветка не берётся: там `origin/main` тоже равен голове, но
+    границу даёт событие, и подменить её равенством значило бы погасить сторожа
+    ровно в единственном месте, где он запускается сам.
+    """
+    if _v_vorotah():
+        return False
+    golova = _git("rev-parse", "HEAD").strip()
+    ee = _git("rev-parse", "origin/main").strip()
+    return bool(golova) and golova == ee
+
+
 def _byl_na(ssylka: str, imya: str) -> bool:
     """Существовал ли файл миграции на этом коммите."""
     return _kod_git("cat-file", "-e", f"{ssylka}:database/migrations/versions/{imya}") == 0
@@ -270,6 +300,8 @@ def _pravili_posle_vygruzki(imya: str) -> int:
     granitsa = _granitsa_vygruzki()
     if granitsa:
         return _trogali_posle(granitsa, imya) if _byl_na(granitsa, imya) else 0
+    if _vsyo_vygruzheno():
+        return 0
 
     v_okne = _skolko_raz_trogali(imya)
     if _byl_na_tochke(imya):
@@ -422,6 +454,25 @@ def test_vorota_ci_prosyat_istoriyu_tselikom():
             "(один коммит) — сторож правленых миграций на такой копии зеленеет "
             "впустую"
         )
+
+
+@bez_vorot
+def test_vorota_nazyvayut_granitsu():
+    """Ворота обязаны задавать `OPENCRM_VYGRUZHENO_DO` — пусть и пустой.
+
+    На ней держатся ДВЕ вещи. Первая: на выгрузке в `main` `origin/main` уже
+    равен голове, и границу видно только из события. Вторая: по наличию этой
+    переменной сторож отличает ворота от машины разработчика — а вне ворот
+    равенство головы и `origin/main` означает «всё уже уехало, судить нечего».
+    Пропади строка — и ворота пошли бы по второй ветке, то есть замолчали бы.
+    """
+    tekst = VOROTA.read_text(encoding="utf-8")
+    assert f"{IMYA_GRANITSY}:" in tekst, (
+        f"в воротах нет {IMYA_GRANITSY} — сторож правленых миграций там замолчит"
+    )
+    assert "github.event.before" in tekst, (
+        f"{IMYA_GRANITSY} в воротах заполняется не из события выгрузки"
+    )
 
 
 @bez_istorii

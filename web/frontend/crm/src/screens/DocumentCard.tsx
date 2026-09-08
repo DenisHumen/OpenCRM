@@ -107,7 +107,7 @@ export function DocumentCard() {
   };
 
   return (
-    <div className="page page-kartochka">
+    <div className="page page-card">
       <Link to="/documents" className="back-link">
         <Icon name="arrowLeft" size={14} />
         {t("documents")}
@@ -126,8 +126,8 @@ export function DocumentCard() {
         <PrintLangs base={`/api/v1/documents/${doc.id}/print`} current={doc.locale} />
       </div>
 
-      <div className="kart-kolonki">
-      <div className="kart-osnova">
+      <div className="cards-columns">
+      <div className="cards-osnova">
       <div className="card card-pad" style={{ marginBottom: 20, order: 1 }}>
         <div className="metric-title" style={{ marginBottom: 12 }}>{t("docWhatNext")}</div>
         {finished ? (
@@ -198,7 +198,7 @@ export function DocumentCard() {
       </div>
 
       </div>
-      <div className="kart-bok">
+      <div className="cards-side">
       <div className="card card-pad" style={{ marginBottom: 20, order: 3 }}>
         <div className="metric-title" style={{ marginBottom: 10 }}>{t("docClientLink")}</div>
         <div className="share-action-row">
@@ -217,7 +217,7 @@ export function DocumentCard() {
         <div className="field-desc">{t("docClientLinkHint")}</div>
       </div>
 
-      <div className="kart-blok" style={{ order: 4 }}>
+      <div className="cards-blok" style={{ order: 4 }}>
         <History events={doc.events} label={(x) => statusLabel(t, x)} />
       </div>
 
@@ -615,7 +615,7 @@ function ActLineForm({ actId, onAdded }: { actId: number; onAdded: () => Promise
           />
           {found.length > 0 && (
             <div
-              className="card vsplyvashka"
+              className="card popover-card"
               style={{ position: "absolute", top: "100%", left: 0, right: 0, zIndex: 20, marginTop: 4, overflow: "hidden" }}
             >
               {found.map((item) => (

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { BoardCard } from "../components/BoardCard";
@@ -13,33 +13,13 @@ import { api } from "../lib/api";
 import { useApp } from "../lib/app";
 import { orderStatusLabel, statusVariant } from "../lib/documents";
 import { nazvanieEtapa } from "../lib/etapy";
-import { useLive, useLiveTopic } from "../lib/live";
+import { useLiveTopic } from "../lib/live";
 import { useFailure } from "../lib/failure";
 import { formatDateTime, formatMoney, formatQuantity, initials, parseDate, relativeDay } from "../lib/format";
 import type { TranslationKey } from "../lib/i18n";
 import { moduleOn } from "../lib/modules";
 import { can } from "../lib/permissions";
 import { useReference } from "../lib/reference";
-
-/** Через сколько сводка перечитывается сама, пока вкладка на переднем плане.
- *
- * **Это запасной путь, когда живые обновления выключены** (`docs/ustroystvo/12-zhivye-obnovleniya.md`
- * §11): при включённых сводку перечитывает намёк живого слоя, а таймер молчит.
- * Записано здесь: механизмов обновления два, и второй обязан знать о первом.
- *
- * Две минуты, а не десять секунд, и не «по каждому изменению». **Замерено:
- * сводка стоит 23 запроса к базе** против четырёх у списка бумаг — один заход
- * собирает деньги, воронку целиком, задачи, клиентов и просмотры за неделю. Она
- * нарочно не стоит под потолком запросов (`tests/test_speed.py`, комментарий у
- * таблицы): её цена растёт с данными, и абсолютный потолок был бы мигающим
- * сторожем. Значит частоту здесь выбирают руками и с запасом: минута дала бы
- * 1380 запросов в час с одной вкладки.
- *
- * Столько же, сколько у проверки свободного места (`lib/app.tsx`), и это не
- * совпадение: обе — фоновые перезапросы, и разные интервалы у них означали бы
- * два числа, которые кто-то однажды начнёт сближать.
- */
-const SVODKA_POLL_MS = 120_000;
 
 type Shirina = 1 | 2 | 4;
 
@@ -99,7 +79,7 @@ function metka(v: { kind: string; params: { key_id?: number } }): string {
   return v.params.key_id ? `${v.kind}:${v.params.key_id}` : v.kind;
 }
 
-/** Сводка. Ширина своя (`page-svodka`, 1320px), а не списочная 1800px: на
+/** Сводка. Ширина своя (`page-summary`, 1320px), а не списочная 1800px: на
  *  обычном мониторе плитки и ленты растягивались во всю ширину и читались
  *  хуже, чем две колонки (владелец, 06.09.2026). С того же дня сводка собрана
  *  из виджетов: блоки добавляются, убираются, перетягиваются и меняют ширину,
@@ -125,6 +105,9 @@ export function Dashboard() {
   const { failure, fail, clear } = useFailure();
 
   const [obnovleno, setObnovleno] = useState<Date | null>(null);
+  //: Номер последней правки раскладки. Ответы приходят вразнобой, и без него
+  //: последним словом становился бы последний ОТВЕТ, а не последняя правка.
+  const pravok = useRef(0);
 
   /** Одна дорога за данными, два способа обойтись с отказом.
    *
@@ -167,34 +150,14 @@ export function Dashboard() {
     ["deals", "clients", "tasks", "finance", "documents", "orders", "boards", "warehouse", "telephony"],
     () => load(true),
   );
-  const zhivost = useLive();
-
-  // Перезапрос по расписанию — ТОЛЬКО пока вкладка на переднем плане и
-  // ТОЛЬКО пока живости нет: с открытым потоком таймер лишний (задача 8.7).
+  // Запасного перезапроса ЗДЕСЬ нет намеренно: его ведёт `useLiveTopic` — тем
+  // же периодом, тем же условием видимости и тем же молчанием при живом потоке.
   //
-  // Без этого десять забытых вкладок на фирму дают десять потоков перезапросов
-  // самой дорогой ручки круглосуточно. Опыт в проекте уже есть: команда,
-  // безобидная в руках человека, из цикла отрисовки дала 240 запросов в час и
-  // уронила боевое обновление.
-  //
-  // Возвращение на вкладку перечитывает сразу, не дожидаясь двух минут: человек
-  // вернулся именно затем, чтобы посмотреть, — и утренние числа под свежим
-  // заголовком были бы ровно той бедой, ради которой это писалось.
-  useEffect(() => {
-    if (zhivost === "on") return;
-    const vidno = () => document.visibilityState === "visible";
-    const timer = window.setInterval(() => {
-      if (vidno()) load(true);
-    }, SVODKA_POLL_MS);
-    const vernulis = () => {
-      if (vidno()) load(true);
-    };
-    document.addEventListener("visibilitychange", vernulis);
-    return () => {
-      window.clearInterval(timer);
-      document.removeEventListener("visibilitychange", vernulis);
-    };
-  }, [load, zhivost]);
+  // Свой такой же здесь стоял, и это была не подстраховка, а удвоение: при
+  // выключенной живости самая дорогая ручка дёргалась по два раза подряд каждые
+  // две минуты и ещё по два при каждом возврате на вкладку. Опыт в проекте уже
+  // есть: команда, безобидная в руках человека, из цикла отрисовки дала 240
+  // запросов в час и уронила боевое обновление.
 
   if (!data || !raskladka) return <ScreenLoading error={failure} onRetry={load} />;
 
@@ -273,12 +236,24 @@ export function Dashboard() {
   const sohranit = (novyy: Vidzhet[]) => {
     const chistyy = novyy.filter((v) => pozvoleno(v.kind));
     setRaskladka({ ...raskladka, layout: { version: 1, widgets: chistyy.map(({ kind, w, params }) => ({ kind, w, params })) } });
+    // Последним словом остаётся последняя ПРАВКА, а не последний ответ. Два
+    // крестика подряд шлют два PUT; приди ответ первого позже — он вернул бы на
+    // экран убранный виджет, которого на сервере уже нет, и убирать его
+    // пришлось бы второй раз.
+    const moya = (pravok.current += 1);
     api
       .put<Raskladka>("/dashboard/layout", { widgets: chistyy.map(({ kind, w, params }) => ({ kind, w, params })) })
-      .then(setRaskladka)
+      .then((otvet) => {
+        if (moya === pravok.current) setRaskladka(otvet);
+      })
       .catch((beda) => {
         toastError(beda);
-        api.get<Raskladka>("/dashboard/layout").then(setRaskladka).catch(() => undefined);
+        api
+          .get<Raskladka>("/dashboard/layout")
+          .then((otvet) => {
+            if (moya === pravok.current) setRaskladka(otvet);
+          })
+          .catch(() => undefined);
       });
   };
   const ubrat = (id: string) => sohranit(polnyy.filter((v) => v.id !== id));
@@ -727,6 +702,9 @@ export function Dashboard() {
           <VidzhetKlyucha
             keyId={v.params.key_id ?? 0}
             klyuch={(klyuchi.items ?? []).find((k) => k.id === v.params.key_id)}
+            spisokEdet={klyuchi.items === null && klyuchi.failure === null}
+            spisokUpal={klyuchi.failure}
+            povtorSpiska={klyuchi.reload}
           />
         );
       default:
@@ -735,7 +713,7 @@ export function Dashboard() {
   };
 
   return (
-    <div className="page page-svodka">
+    <div className="page page-summary">
       <div className="page-head" style={{ marginBottom: 22 }}>
         <div>
           <h1 className="page-title">
@@ -747,7 +725,7 @@ export function Dashboard() {
               когда числа взяты, значит обещать больше, чем есть: обновление
               идёт раз в две минуты, и человек вправе это видеть. */}
           {obnovleno && (
-            <span className="dash-svezhest">
+            <span className="dash-freshness">
               {t("updatedAt", {
                 time: obnovleno.toLocaleTimeString(locale === "ru" ? "ru-RU" : "en-US", {
                   hour: "2-digit",
@@ -788,15 +766,15 @@ export function Dashboard() {
 
       {nastroyka && <div className="field-desc" style={{ marginTop: 0, marginBottom: 12 }}>{t("dashCustomizeHint")}</div>}
 
-      <div className="svodka-setka">
+      <div className="summary-grid">
         {vidimye.map((v) => (
           <div
             key={v.id}
             className={
-              `vidzhet vidzhet-w${v.w}` +
-              (nastroyka ? " vidzhet-nastroyka" : "") +
-              (dragId === v.id ? " vidzhet-taskaem" : "") +
-              (nadId === v.id && dragId !== v.id ? " vidzhet-tsel" : "")
+              `widget widget-w${v.w}` +
+              (nastroyka ? " widget-setting" : "") +
+              (dragId === v.id ? " widget-dragging" : "") +
+              (nadId === v.id && dragId !== v.id ? " widget-target" : "")
             }
             draggable={nastroyka}
             onDragStart={() => setDragId(v.id)}
@@ -817,10 +795,10 @@ export function Dashboard() {
             }}
           >
             {nastroyka && (
-              <div className="vidzhet-shapka">
+              <div className="widget-header">
                 <Icon name="grip" size={13} />
-                <span className="vidzhet-imya truncate">{zagolovok(v)}</span>
-                <span className="vidzhet-knopki">
+                <span className="widget-name truncate">{zagolovok(v)}</span>
+                <span className="widget-btns">
                   <button type="button" className="btn-icon" aria-label={t("dashMoveLeft")} title={t("dashMoveLeft")} onClick={() => sdvinut(v.id, -1)}>
                     <Icon name="arrowLeft" size={13} />
                   </button>
@@ -848,7 +826,7 @@ export function Dashboard() {
           </div>
         ))}
         {vidimye.length === 0 && (
-          <div className="vidzhet vidzhet-w4">
+          <div className="widget widget-w4">
             <div className="card">
               <EmptyState
                 icon="dashboard"

@@ -297,20 +297,20 @@ function ReturnStats({ attempt }: { attempt: number }) {
           <LoadFailed error={failure} onRetry={() => setDney((n) => n)} />
         </div>
       ) : svodka === null ? (
-        <div className="stat-blok stat-tikho">{t("loading")}</div>
+        <div className="stat-blok stat-quiet">{t("loading")}</div>
       ) : (
         <div className="stat-blok" style={{ borderBottom: "none" }}>
-          <div className="metric-grid stat-plitki">
+          <div className="metric-grid stat-tiles">
             <Plitka title={t("returnStatsCount")} value={String(svodka.count)} sub={t("returnStatsShipped", { n: svodka.shipped_count })} />
             <Plitka title={t("returnStatsRefund")} value={sum(svodka.refund_amount)} />
             <Plitka title={t("returnStatsShare")} value={svodka.share === null ? "—" : `${Math.round(svodka.share)}%`} />
             <Plitka title={t("returnStatsAvg")} value={sum(svodka.avg_refund)} />
           </div>
           {svodka.count === 0 ? (
-            <div className="stat-tikho">{t("returnStatsEmpty")}</div>
+            <div className="stat-quiet">{t("returnStatsEmpty")}</div>
           ) : (
             <>
-              <div className="stat-ryad">
+              <div className="stat-row">
                 <div className="metric-title">{t("returnStatsByMonth")}</div>
                 <div className="bars stat-bars">
                   {svodka.months.map((m) => (
@@ -325,7 +325,7 @@ function ReturnStats({ attempt }: { attempt: number }) {
                   ))}
                 </div>
               </div>
-              <div className="stat-ryad">
+              <div className="stat-row">
                 <div className="metric-title">{t("returnStatsProducts")}</div>
                 <div className="src-table">
                   {svodka.products.map((p) => (

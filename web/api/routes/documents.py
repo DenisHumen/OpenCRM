@@ -7,9 +7,24 @@ from sqlalchemy.orm import Session
 
 from core import exceptions as errors
 from core.utils import money_for_print
-from core.services import act_service, codes, document_service, settings_service
+from core.services import (
+    act_service,
+    codes,
+    document_service,
+    modules_service,
+    permissions_service,
+    settings_service,
+)
 from database.models import User
-from database.models.document import DOCUMENT_KINDS, DOCUMENT_LOCALES, KIND_ACT, KIND_INTAKE
+from database.models.document import (
+    DOCUMENT_KINDS,
+    DOCUMENT_LOCALES,
+    KIND_ACT,
+    KIND_INTAKE,
+    KIND_RETURN,
+    ORDER_KINDS,
+    WAYBILL_KINDS,
+)
 from database.repositories import documents as documents_repo
 from database.repositories import users as users_repo
 from web.api import schemas
@@ -105,6 +120,48 @@ def _proverennye_vidy(kind: list[str] | None) -> tuple[str, ...] | None:
     return tuple(dict.fromkeys(kind))
 
 
+def _vidno_vidov(db: Session, user: User) -> tuple[str, ...]:
+    """Виды бумаг, которые этому человеку вообще можно показывать.
+
+    **Право `documents.view` — это квитанция и акт, а не все бумаги системы.**
+    Заказы, накладные и возвраты живут в тех же `documents` и в том же списке,
+    но принадлежат блокам `orders` и `waybills` — со своими выключателями и
+    своими правами. Отбор по ним не спрашивался вовсе: `?kind=sales_order` с
+    одним `documents.view` отдавал заказы фирмы вместе с суммами, а выключенный
+    блок их не прятал.
+
+    Разбивка по блокам — та же, что у живых обновлений (`live/topics`).
+    """
+    vidno = [KIND_INTAKE, KIND_ACT]
+    if modules_service.is_enabled(db, "orders") and permissions_service.has(
+        db, user, "orders", "view"
+    ):
+        vidno.extend([*ORDER_KINDS, KIND_RETURN])
+    if modules_service.is_enabled(db, "waybills") and permissions_service.has(
+        db, user, "waybills", "view"
+    ):
+        vidno.extend(WAYBILL_KINDS)
+    return tuple(vidno)
+
+
+def _tolko_vidimye(db: Session, user: User, kinds: tuple[str, ...] | None) -> tuple[str, ...]:
+    """Запрошенные виды, пересечённые с разрешёнными. Пусто — все разрешённые."""
+    vidno = _vidno_vidov(db, user)
+    if kinds is None:
+        return vidno
+    return tuple(v for v in kinds if v in vidno)
+
+
+def _svoy_vid(db: Session, user: User, document) -> None:
+    """Бумага чужого блока — «нет такой», а не «нельзя».
+
+    Отказ по правам сам рассказал бы, что заказ с таким номером существует, —
+    а вместе с ним и то, сколько заказов у фирмы, если перебрать номера.
+    """
+    if document.kind not in _vidno_vidov(db, user):
+        raise errors.NotFoundError("Document not found", code="document_not_found")
+
+
 def _proverit_poryadok(sort: str | None) -> None:
     """Порядок — только из перечня `documents_repo.PORYADKI`."""
     if sort and sort not in documents_repo.PORYADKI:
@@ -128,7 +185,7 @@ def list_documents(
     deal_id: int | None = None,
     page: int = Query(default=1, ge=1),
     per_page: int = Query(default=50, ge=1, le=200),
-    _: User = Depends(require_perm("documents", "view")),
+    user: User = Depends(require_perm("documents", "view")),
     db: Session = Depends(get_db),
 ):
     """Список бумаг: отбор по виду и состоянию, порядок из закрытого перечня.
@@ -136,8 +193,11 @@ def list_documents(
     Незнакомый вид или порядок — отказ, а не молчаливый пропуск. Пропуск
     выглядит как успех: человек просит «по номеру», получает список по дате и
     уверен, что так и должно быть.
+
+    Виды сужаются правами смотрящего (`_vidno_vidov`): заказы и накладные лежат
+    в этой же таблице, но принадлежат другим блокам.
     """
-    kinds = _proverennye_vidy(kind)
+    kinds = _tolko_vidimye(db, user, _proverennye_vidy(kind))
     _proverit_poryadok(sort)
     items, total = document_service.search(
         db,
@@ -163,7 +223,8 @@ def list_documents(
     # Счёт по видам считается БЕЗ отбора по виду: иначе, спрятав квитанции,
     # человек потерял бы и число рядом с ними — то есть способ вернуть их.
     otvet["counts"] = document_service.schyot_po_vidam(
-        db, q=search, status=status, client_id=client_id, deal_id=deal_id
+        db, q=search, status=status, client_id=client_id, deal_id=deal_id,
+        sredi=_vidno_vidov(db, user),
     )
     return otvet
 
@@ -181,20 +242,23 @@ def create_document(
 @router.get("/by-number/{number}")
 def find_by_number(
     number: str,
-    _: User = Depends(require_perm("documents", "view")),
+    user: User = Depends(require_perm("documents", "view")),
     db: Session = Depends(get_db),
 ):
     """Поиск сканом: сюда приходит то, что прочитал сканер штрихкода."""
-    return schemas.document_out(document_service.by_number(db, number))
+    document = document_service.by_number(db, number)
+    _svoy_vid(db, user, document)
+    return schemas.document_out(document)
 
 
 @router.get("/{document_id}")
 def get_document(
     document_id: int,
-    _: User = Depends(require_perm("documents", "view")),
+    user: User = Depends(require_perm("documents", "view")),
     db: Session = Depends(get_db),
 ):
     document = document_service.get(db, document_id)
+    _svoy_vid(db, user, document)
     events = document_service.events(db, document_id)
     authors = {
         u.id: u.name

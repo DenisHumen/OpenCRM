@@ -761,7 +761,9 @@ def drop_budget(db: Session, row: FinanceBudget) -> None:
     db.flush()
 
 
-def bumagi_s_dolgom(db: Session, kinds, limit: int = 200) -> list[tuple[Document, int]]:
+def bumagi_s_dolgom(
+    db: Session, kinds, limit: int = 200, only_manager_id: int | None = None
+) -> list[tuple[Document, int]]:
     """Бумаги, по которым получено меньше, чем выписано: (бумага, получено).
 
     Сравнение в базе — в ТЫСЯЧНЫХ минорных (сумма строк без деления против
@@ -794,7 +796,20 @@ def bumagi_s_dolgom(db: Session, kinds, limit: int = 200) -> list[tuple[Document
             Document.status != STATUS_CANCELLED,
             stroki.c.raw > got * 1000,
         )
-        .order_by((stroki.c.raw - got * 1000).desc(), Document.id.desc())
-        .limit(limit)
     )
+    if only_manager_id is not None:
+        # Те же две ступени, что и у кассы (`_moi_dengi`): своя заявка либо, если
+        # заявки у бумаги нет, свой клиент. Соединения ВНЕШНИЕ — бумага без
+        # заявки обязана дойти до условия, а не отсеяться самим соединением.
+        stmt = (
+            stmt.outerjoin(Deal, Deal.id == Document.deal_id)
+            .outerjoin(Client, Client.id == Document.client_id)
+            .where(
+                or_(
+                    Deal.manager_id == only_manager_id,
+                    and_(Document.deal_id.is_(None), Client.manager_id == only_manager_id),
+                )
+            )
+        )
+    stmt = stmt.order_by((stroki.c.raw - got * 1000).desc(), Document.id.desc()).limit(limit)
     return [(bumaga, int(polucheno_minor or 0)) for bumaga, polucheno_minor in db.execute(stmt).all()]

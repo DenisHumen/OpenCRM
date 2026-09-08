@@ -104,6 +104,65 @@ def test_kazhdyy_klass_razmetki_est_v_stilyakh():
     )
 
 
+#: Значение `className`, собранное выражением: строковый разбор его не видит.
+_ZNACHENIE_CLASSNAME = re.compile(r"className=(\{(?:[^{}]|\{[^{}]*\})*\}|\"[^\"]*\")", re.S)
+#: Кусок строки, похожий на имя класса: слова через дефис, возможно оборванное.
+_POHOZHE_NA_KLASS = re.compile(r"[a-z][a-z0-9]*(?:-[a-z0-9]+)*-?")
+
+
+def _sostavnye_iz_vyrazheniy() -> dict[str, set[str]]:
+    """Составные имена из ЛЮБЫХ строк внутри `className`, включая шаблонные.
+
+    Проверка выше разбирает только `className="..."` целой строкой. Имя, собранное
+    выражением, мимо неё проходит — и прошло: правило переименовали в
+    `keys-selected`, а `${… ? "kl-vybrana" : ""}` осталось прежним. Ни типы, ни
+    сборка, ни полсотни соседних проверок этого не заметили, потому что
+    единственный, кто читает эти строки, — браузер.
+
+    Берутся только СОСТАВНЫЕ имена (с дефисом): односложное слово в этих местах
+    чаще всего не класс, а значение для сравнения (`status === "closed"`), и
+    требовать для него правило значило бы завести мигающую проверку.
+    """
+    nayd: dict[str, set[str]] = {}
+    for put in sorted(ISTOCHNIK.rglob("*.tsx")):
+        tekst = put.read_text(encoding="utf-8")
+        for mesto in _ZNACHENIE_CLASSNAME.finditer(tekst):
+            telo = mesto.group(1)
+            for stroka in re.finditer(r'"([^"\\]*)"|`([^`\\]*)`', telo):
+                kusok = stroka.group(1) if stroka.group(1) is not None else stroka.group(2)
+                for slovo in kusok.split():
+                    if "-" in slovo and _POHOZHE_NA_KLASS.fullmatch(slovo):
+                        nayd.setdefault(slovo, set()).add(put.name)
+    return nayd
+
+
+def test_sostavnye_imena_iz_vyrazheniy_est_v_stilyakh():
+    """Класс, собранный выражением, тоже обязан иметь правило.
+
+    Разбор — у `_sostavnye_iz_vyrazheniy`. Имя засчитывается и как НАЧАЛО
+    класса: `chip-` в `` `chip-${vid}` `` — законная половина `.chip-accent`.
+    """
+    izvestnye = _izvestnye_klassy()
+    nayd = _sostavnye_iz_vyrazheniy()
+    assert len(nayd) > 30, f"собрано {len(nayd)} имён — проверка смотрит не туда"
+
+    def znakomoe(slovo: str) -> bool:
+        return slovo in izvestnye or any(imya.startswith(slovo) for imya in izvestnye)
+
+    bezdomnye = [
+        f"{imya} — {', '.join(sorted(fayly))}"
+        for imya, fayly in sorted(nayd.items())
+        if not znakomoe(imya) and imya not in BEZ_STILEY
+    ]
+    assert bezdomnye == [], (
+        "имя класса собрано выражением, а правила для него нет:\n  "
+        + "\n  ".join(bezdomnye)
+        + "\n\nТакое имя не видит ни одна другая проверка: типы его не знают, "
+        "сборка не жалуется, строковый разбор соседней проверки в шаблонную "
+        "строку не заходит. Узнают о нём от человека, который открыл экран."
+    )
+
+
 #: Свойства, без которых `<select>` остаётся стоковым — тем, что рисует браузер.
 #:
 #: `appearance` снимает системный вид целиком (без него не убрать ни системную

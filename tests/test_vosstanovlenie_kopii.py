@@ -387,3 +387,121 @@ def test_dvoichnoe_znachenie_damper_poka_ne_beryot(chistaya_baza, tmp_path):
         "двоичные колонки в моделях есть, а дампер их не записывает — копия "
         f"перед миграциями снята не будет вовсе: {', '.join(nashlis)}"
     )
+
+
+# --- заливка пачками ----------------------------------------------------------
+
+
+def test_razbor_dampa_ne_reshet_po_tochke_s_zapyatoy():
+    """Границу оператора ищет разбор, а не деление по `;`.
+
+    Точка с запятой живёт внутри заметок и адресов, апостроф — внутри имён
+    («O'Brien»), а `INSERT` нашего дампера занимает несколько строк файла.
+    Резак, не знающий об этом, рвёт оператор пополам — то есть ломает
+    восстановление ровно на тех данных, ради которых копию и снимают.
+    """
+    from database.repositories.backups import operatory
+
+    damp = [
+        "-- клиент O'Brien; и точка с запятой в пояснении\n",
+        "DROP TABLE IF EXISTS `a`;\n",
+        "CREATE TABLE `a` (\n",
+        "  id int,\n",
+        "  note text\n",
+        ");\n",
+        "INSERT INTO `a` (`id`,`note`) VALUES\n",
+        "(1,'точка с запятой; внутри значения'),\n",
+        "(2,'экранированная кавычка \\' и точка; тоже');\n",
+        "SET UNIQUE_CHECKS=1;\n",
+        "-- opencrm snapshot complete: таблиц 1, строк 2\n",
+    ]
+    razobrany = list(operatory(damp))
+    assert len(razobrany) == 4, f"операторов {len(razobrany)}, а не 4: {razobrany}"
+    assert razobrany[0] == "DROP TABLE IF EXISTS `a`;"
+    assert razobrany[1].startswith("CREATE TABLE") and razobrany[1].endswith(");")
+    assert "точка с запятой; внутри значения" in razobrany[2], "оператор разрезан по значению"
+    assert razobrany[2].endswith("тоже');"), "оператор оборван на экранированной кавычке"
+    assert razobrany[3] == "SET UNIQUE_CHECKS=1;"
+
+
+class _Podslushannyy:
+    """Обёртка, считающая длины разговоров с сервером. Ничего в них не меняет.
+
+    Без неё сторож зеленел бы на любой заливке: дамп в двести килобайт сервер
+    примет и одним разговором, а беда — именно в размере разговора. Считать его
+    можно только здесь, на границе с драйвером.
+    """
+
+    def __init__(self, nastoyashchiy, dliny: list[int]):
+        self._nast = nastoyashchiy
+        self._dliny = dliny
+
+    def __getattr__(self, imya):
+        return getattr(self._nast, imya)
+
+
+class _Kursor(_Podslushannyy):
+    def execute(self, sql, *args, **kwargs):
+        self._dliny.append(len(sql))
+        return self._nast.execute(sql, *args, **kwargs)
+
+
+class _Soedinenie(_Podslushannyy):
+    def cursor(self, *args, **kwargs):
+        return _Kursor(self._nast.cursor(*args, **kwargs), self._dliny)
+
+
+class _Dvizhok(_Podslushannyy):
+    def raw_connection(self, *args, **kwargs):
+        return _Soedinenie(self._nast.raw_connection(*args, **kwargs), self._dliny)
+
+
+def test_kopiya_uezzhaet_pachkami_a_ne_odnim_razgovorom(chistaya_baza, snyataya_kopiya):
+    """НАЙДЕНО РАЗБОРОМ: дамп уезжал на сервер ОДНИМ разговором.
+
+    Сервер сверяет разговор с `max_allowed_packet` (64 МБ по умолчанию), и копия
+    крупнее предела рвала соединение. Это единственный путь восстановления в
+    продукте, и отказывал он ровно на тех базах, ради которых копии и снимают.
+
+    Проверяется не «залилось», а **размер каждого разговора**: залиться-то оно
+    зальётся и одним куском, пока копия мала. Предел здесь занижен нарочно —
+    настоящий дамп в сотни мегабайт в наборе не снять, а беда воспроизводится
+    та же самая.
+    """
+    from database.repositories import backups as backups_repo
+
+    razmer = snyataya_kopiya.damp.stat().st_size
+    # Предел считаем от САМОГО ДЛИННОГО оператора: разрезать его нечем, и предел
+    # мельче него — это отказ, а не пачки. В жизни соотношение обратное с
+    # огромным запасом (`snapshot_db.RAZMER_PACHKI` против 64 МБ), здесь же
+    # копия маленькая, и запас приходится считать.
+    with snyataya_kopiya.damp.open("r", encoding="utf-8") as fayl:
+        samyy_dlinnyy = max(len(o) for o in backups_repo.operatory(fayl))
+    predel = samyy_dlinnyy + 1024
+    assert razmer > predel * 2, (
+        f"копия {razmer} байт при пределе {predel} — пачек выйдет меньше двух, "
+        "и проверка ничего не докажет"
+    )
+
+    dliny: list[int] = []
+    nastoyashchiy_engine = backups_repo.create_engine
+    backups_repo.create_engine = lambda *a, **kw: _Dvizhok(nastoyashchiy_engine(*a, **kw), dliny)
+    nastoyashchiy_predel = backups_repo._predel_paketa
+    backups_repo._predel_paketa = lambda kursor: predel
+    try:
+        backups_repo.zalit_damp(chistaya_baza, snyataya_kopiya.damp)
+    finally:
+        backups_repo.create_engine = nastoyashchiy_engine
+        backups_repo._predel_paketa = nastoyashchiy_predel
+
+    # Пачка закрывается ПЕРЕД тем, как перешагнуть предел, поэтому она не длиннее
+    # предела плюс один оператор.
+    krupnye = [d for d in dliny if d > predel + samyy_dlinnyy]
+    assert not krupnye, f"разговор длиннее предела: {krupnye[:3]} при пределе {predel}"
+    # Первый разговор — `SET SESSION lock_wait_timeout`, дальше пачки.
+    assert len(dliny) >= 3, f"разговоров всего {len(dliny)} — дамп уехал одним куском"
+
+    with _dvizhok(chistaya_baza) as dvizhok:
+        with dvizhok.connect() as soedinenie:
+            stalo = int(soedinenie.execute(text("SELECT COUNT(*) FROM clients")).scalar_one())
+    assert stalo >= KLIENTOV, f"после заливки пачками клиентов {stalo}, ждали {KLIENTOV}"

@@ -256,7 +256,7 @@ export function Documents() {
             }
           >
             {kindLabel(t, vid)}
-            <span className="chip-schyot">{data.counts?.[vid] ?? 0}</span>
+            <span className="chip-count">{data.counts?.[vid] ?? 0}</span>
           </button>
         ))}
       </div>

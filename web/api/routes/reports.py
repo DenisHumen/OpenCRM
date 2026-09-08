@@ -90,13 +90,18 @@ def csv_response(content: bytes, name: str, period: Period) -> Response:
     dependencies=[Depends(require_module("finance")), Depends(require_module("documents"))],
 )
 def debts_report(
-    _: User = Depends(require_perm("reports", "view_amounts")),
+    user: User = Depends(require_perm("reports", "view_amounts")),
     db: Session = Depends(get_db),
 ):
     """Долги клиентов: бумаги, по которым получено меньше выписанного. Без
-    периода — прошлогодний неоплаченный заказ всё ещё долг (план И-03)."""
+    периода — прошлогодний неоплаченный заказ всё ещё долг (план И-03).
+
+    Область видимости спрашивается, как у воронки и выручки. Не спрашивалась
+    только здесь — и менеджер, которому чужие заявки закрыты, читал долги всей
+    фирмы с именами клиентов и суммами.
+    """
     return {
-        **report_service.dolgi(db),
+        **report_service.dolgi(db, _scope(db, user)),
         "currency": settings_service.get_all(db).get("currency", "USD"),
     }
 
@@ -110,7 +115,11 @@ def debts_export(
     user: User = Depends(require_perm("reports", "view_amounts")),
     db: Session = Depends(get_db),
 ):
-    return csv_response(report_service.dolgi_csv(report_service.dolgi(db), user.locale), "debts", period)
+    return csv_response(
+        report_service.dolgi_csv(report_service.dolgi(db, _scope(db, user)), user.locale),
+        "debts",
+        period,
+    )
 
 
 @router.get("/funnel")

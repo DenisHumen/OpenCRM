@@ -418,7 +418,7 @@ button { font-family: var(--sans); }
 .page-wide { max-width: 1800px; }
 /* Сводка: 1800px на обычном мониторе растягивала плитки и ленты во всю ширину;
    две колонки в 1320px читаются лучше (владелец, 06.09.2026). */
-.page-svodka { max-width: 1320px; }
+.page-summary { max-width: 1320px; }
 .dash-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; align-items: start; }
 .dash-cols-one { grid-template-columns: 1fr; }
 .dash-cols > .card { margin-bottom: 0; }
@@ -427,26 +427,26 @@ button { font-family: var(--sans); }
 /* Сводка из виджетов: сетка в четыре колонки, плитка — одна, блок — две,
    полоса — четыре. На планшете колонок две, на телефоне одна; ширины
    складываются, а не обрезаются. */
-.svodka-setka { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 12px; align-items: start; }
-.vidzhet { min-width: 0; }
-.vidzhet > .card { margin-bottom: 0; }
-.vidzhet-w1 { grid-column: span 1; }
-.vidzhet-w2 { grid-column: span 2; }
-.vidzhet-w4 { grid-column: span 4; }
-.vidzhet-nastroyka { border: 1px dashed var(--frame); border-radius: 12px; padding: 4px; cursor: grab; }
-.vidzhet-nastroyka:active { cursor: grabbing; }
-.vidzhet-taskaem { opacity: 0.45; }
-.vidzhet-tsel { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft, transparent); }
-.vidzhet-shapka { display: flex; align-items: center; gap: 6px; padding: 2px 6px 6px; color: var(--muted); font-size: 12px; }
-.vidzhet-imya { flex: 1; min-width: 0; }
-.vidzhet-knopki { display: flex; gap: 2px; }
+.summary-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 12px; align-items: start; }
+.widget { min-width: 0; }
+.widget > .card { margin-bottom: 0; }
+.widget-w1 { grid-column: span 1; }
+.widget-w2 { grid-column: span 2; }
+.widget-w4 { grid-column: span 4; }
+.widget-setting { border: 1px dashed var(--frame); border-radius: 12px; padding: 4px; cursor: grab; }
+.widget-setting:active { cursor: grabbing; }
+.widget-dragging { opacity: 0.45; }
+.widget-target { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft, transparent); }
+.widget-header { display: flex; align-items: center; gap: 6px; padding: 2px 6px 6px; color: var(--muted); font-size: 12px; }
+.widget-name { flex: 1; min-width: 0; }
+.widget-btns { display: flex; gap: 2px; }
 @media (max-width: 1100px) {
-  .svodka-setka { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .vidzhet-w4 { grid-column: span 2; }
+  .summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .widget-w4 { grid-column: span 2; }
 }
 @media (max-width: 640px) {
-  .svodka-setka { grid-template-columns: minmax(0, 1fr); }
-  .vidzhet-w2, .vidzhet-w4 { grid-column: span 1; }
+  .summary-grid { grid-template-columns: minmax(0, 1fr); }
+  .widget-w2, .widget-w4 { grid-column: span 1; }
 }
 .board-grid-2 { grid-template-columns: repeat(2, 1fr); }
 .page-docs { max-width: 1360px; }
@@ -456,21 +456,21 @@ button { font-family: var(--sans); }
    и одиннадцать блоков столбиком (владелец, 06.09.2026). Ниже 1100px —
    один столбик, и порядок чтения прежний: обёртки растворяются
    (`display: contents`), блоки встают по `order`. */
-.page-kartochka { max-width: 1240px; }
-.kart-kolonki { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: 0 20px; align-items: start; }
-.kart-osnova, .kart-bok, .kart-blok { min-width: 0; }
+.page-card { max-width: 1240px; }
+.cards-columns { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: 0 20px; align-items: start; }
+.cards-osnova, .cards-side, .cards-blok { min-width: 0; }
 /* Колонку задаёт стиль, а не порядок в разметке: `order` в сетке двигает и
    сами колонки, и правая уезжала налево. Здесь же разметка свободна —
    на телефоне колонки растворяются, и порядок чтения берётся из неё. */
-.kart-kolonki > .kart-osnova { grid-column: 1; }
-.kart-kolonki > .kart-bok { grid-column: 2; }
+.cards-columns > .cards-osnova { grid-column: 1; }
+.cards-columns > .cards-side { grid-column: 2; }
 /* Карточки-разделы, у которых нет старшинства: реквизиты фирмы стояли
    столбиком в 1611px при пустой трети экрана. Сетка сама решает, сколько
    колонок влезет, — списка колонок в разметке нет и разъезжаться нечему. */
-.kart-setka { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr)); gap: 0 20px; align-items: start; }
+.cards-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr)); gap: 0 20px; align-items: start; }
 @media (max-width: 1100px) {
-  .page-kartochka { display: flex; flex-direction: column; }
-  .kart-kolonki, .kart-osnova, .kart-bok { display: contents; }
+  .page-card { display: flex; flex-direction: column; }
+  .cards-columns, .cards-osnova, .cards-side { display: contents; }
 }
 /* Доска сделок — единственный экран, который выходит из общей колонки.
    Остальные страницы читают, а доску обозревают: её польза прямо пропорциональна
@@ -787,13 +787,13 @@ button:active [data-icon="plus"] { transition-duration: 0s; }
 .stage-log-span { color: var(--faint); font-size: 11.5px; flex: none; width: 64px; text-align: right; font-variant-numeric: tabular-nums; }
 /* Выпадающие подсказки над содержимым: без тени они сливались с карточкой
    под ними и читались как прозрачные (владелец, 06.09.2026). */
-.vsplyvashka { box-shadow: var(--hard); }
-.svodka-plitki.szhato .svodka-v { font-size: 17px; }
+.popover-card { box-shadow: var(--hard); }
+.summary-tiles.compact .summary-val { font-size: 17px; }
 /* Итог под списком: число показанных и сумма показанных строк. */
-.itog-spiska { display: flex; justify-content: space-between; gap: 12px; padding: 9px 16px; border-top: 1px solid var(--line); color: var(--faint); font-size: 12px; }
-.itog-spiska-summa { color: var(--muted); font-variant-numeric: tabular-nums; }
-.svodka-plitka.beda .svodka-v { color: var(--danger); }
-.svodka-plitka.horosho .svodka-v { color: var(--success); }
+.total-list { display: flex; justify-content: space-between; gap: 12px; padding: 9px 16px; border-top: 1px solid var(--line); color: var(--faint); font-size: 12px; }
+.total-list-sum { color: var(--muted); font-variant-numeric: tabular-nums; }
+.summary-tile.beda .summary-val { color: var(--danger); }
+.summary-tile.good .summary-val { color: var(--success); }
 
 /* Бланки.
    Поле скана — отдельной полосой над фильтрами, а не одним из них. За стойкой
@@ -1211,22 +1211,22 @@ summary:focus-visible,
    первого раза и мышью, и пальцем, а список из шести категорий сворачивают
    каждый день. Полоса сверху отделяет категорию от предыдущей; у первой её
    нет, иначе она читалась бы как вторая строка рамки карточки. */
-.spisok-kategoriya + .spisok-kategoriya .spisok-kategoriya-head { border-top: 1px solid var(--line); }
-.spisok-kategoriya-head {
+.list-category + .list-category .list-category-head { border-top: 1px solid var(--line); }
+.list-category-head {
   display: flex; align-items: center; gap: 8px; width: 100%;
   padding: 9px 14px; background: var(--surface-2); border: none; cursor: pointer;
   font-family: var(--sans); font-size: 12px; font-weight: 600;
   letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted);
 }
-.spisok-kategoriya-head:hover { color: var(--text); }
-.spisok-kategoriya-imya { flex: 1; text-align: left; }
+.list-category-head:hover { color: var(--text); }
+.list-category-name { flex: 1; text-align: left; }
 /* Счёт цифрами, а не словами: «7 / 41» читается мельком, «7 из 41 квитанции» —
    нет, а глазами по этой строке пробегают, а не читают её. */
-.spisok-kategoriya-schyot { color: var(--faint); font-weight: 500; letter-spacing: 0; }
-.spisok-kategoriya-chevron { transition: transform 180ms ease; flex-shrink: 0; }
-.spisok-kategoriya.svyornuta .spisok-kategoriya-chevron { transform: rotate(-90deg); }
+.list-category-count { color: var(--faint); font-weight: 500; letter-spacing: 0; }
+.list-category-chevron { transition: transform 180ms ease; flex-shrink: 0; }
+.list-category.collapsed .list-category-chevron { transform: rotate(-90deg); }
 @media (prefers-reduced-motion: reduce) {
-  .spisok-kategoriya-chevron { transition: none; }
+  .list-category-chevron { transition: none; }
 }
 .list-header {
   display: flex; align-items: center; gap: 14px; padding: 0 16px; height: 36px;
@@ -1309,7 +1309,7 @@ summary:focus-visible,
    экране в одну строку они не помещаются вместе с числами. */
 .kind-chips { display: flex; gap: 8px; flex-wrap: wrap; margin: -6px 0 16px; }
 /* Число рядом с подписью чипа: серверное, и от снятия вида не меняется. */
-.chip-schyot { margin-left: 6px; color: var(--faint); font-weight: 500; }
+.chip-count { margin-left: 6px; color: var(--faint); font-weight: 500; }
 .option-chip {
   height: 26px; display: inline-flex; align-items: center; gap: 5px; padding: 0 10px;
   border-radius: 6px; border: 1px solid var(--border); color: var(--muted);
@@ -1490,7 +1490,7 @@ summary:focus-visible,
 .funnel-step.kind-lost .funnel-bar { background: var(--tint-danger); }
 
 /* Отметка свежести сводки — в углу шапки, рядом с кнопками. */
-.dash-svezhest { color: var(--faint); font-size: 12px; white-space: nowrap; }
+.dash-freshness { color: var(--faint); font-size: 12px; white-space: nowrap; }
 /* Мои задачи на сегодня */
 .dash-tasks { display: flex; flex-direction: column; gap: 1px; }
 .dash-task { display: flex; align-items: center; gap: 9px; padding: 7px 10px; border-radius: 4px; font-size: 13px; color: var(--text); text-decoration: none; }
@@ -1523,8 +1523,8 @@ summary:focus-visible,
    Серая плитка ровно того же размера, что и будущая карточка: когда файл
    долетит, на её месте окажется картинка, и сетка не дрогнет. Прыгающая при
    каждой загрузке вёрстка сама по себе читается как сбой. */
-.work-card--zaliv { border-style: dashed; }
-.work-media--zaliv {
+.work-card--upload { border-style: dashed; }
+.work-media--upload {
   min-height: 120px;
   display: flex;
   flex-direction: column;
@@ -1534,14 +1534,14 @@ summary:focus-visible,
   padding: 16px 14px;
   background: var(--surface-2);
 }
-.zaliv-polosa {
+.upload-bar {
   width: 100%;
   height: 6px;
   border-radius: 3px;
   background: var(--border);
   overflow: hidden;
 }
-.zaliv-hod {
+.upload-progress {
   height: 100%;
   background: var(--accent);
   border-radius: 3px;
@@ -1549,7 +1549,7 @@ summary:focus-visible,
      доезжает до конца заметно позже, чем файл. */
   transition: width 0.2s linear;
 }
-.zaliv-cifry {
+.upload-digits {
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
@@ -1558,7 +1558,7 @@ summary:focus-visible,
   color: var(--faint);
   text-align: center;
 }
-.zaliv-otmena {
+.upload-cancel {
   position: absolute;
   top: 6px;
   right: 6px;
@@ -1573,8 +1573,8 @@ summary:focus-visible,
   color: var(--faint);
   cursor: pointer;
 }
-.zaliv-otmena:hover { color: var(--text); }
-.zaliv-imya {
+.upload-cancel:hover { color: var(--text); }
+.upload-name {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1669,47 +1669,47 @@ summary:focus-visible,
 /* Адрес отправки: страна, город и индекс в ряд, улица во всю ширину под ними —
    ей нужно место и на длинное значение, и на список подсказок под полем.
    Справа миниатюра карты; без координат её нет, и поля занимают всю карточку. */
-.adres-ryad { display: flex; align-items: flex-start; gap: 16px; padding: 16px 18px; }
-.adres-ryad .contact-grid { flex: 1; min-width: 0; padding: 0; }
-.adres-polya { grid-template-columns: repeat(3, 1fr); gap: 14px 20px; }
-.adres-polya > .adres-pole { grid-column: 1 / -1; }
-.adres-pole { position: relative; }
-.adres-spisok {
+.address-row { display: flex; align-items: flex-start; gap: 16px; padding: 16px 18px; }
+.address-row .contact-grid { flex: 1; min-width: 0; padding: 0; }
+.address-fields { grid-template-columns: repeat(3, 1fr); gap: 14px 20px; }
+.address-fields > .address-field { grid-column: 1 / -1; }
+.address-field { position: relative; }
+.address-list {
   position: absolute; top: 100%; left: 0; right: 0; z-index: 20;
   margin: 4px 0 0; padding: 0; list-style: none;
   max-height: 264px; overflow-y: auto;
 }
-.adres-variant { padding: 8px 12px; cursor: pointer; border-bottom: 1px solid var(--line); }
-.adres-variant:last-child { border-bottom: none; }
-.adres-variant:hover, .adres-variant.active { background: var(--surface-2); }
-.adres-variant-stroka { display: block; color: var(--text); font-size: 13px; }
-.adres-variant-mesto { display: block; color: var(--faint); font-size: 11.5px; margin-top: 2px; }
+.address-variant { padding: 8px 12px; cursor: pointer; border-bottom: 1px solid var(--line); }
+.address-variant:last-child { border-bottom: none; }
+.address-variant:hover, .address-variant.active { background: var(--surface-2); }
+.address-variant-row { display: block; color: var(--text); font-size: 13px; }
+.address-variant-place { display: block; color: var(--faint); font-size: 11.5px; margin-top: 2px; }
 
 /* Миниатюра карты: нажимается целиком и уводит в гугловы карты. Рисуется на
    холсте своими силами (`lib/minikarta.ts`) — установка без интернета обязана
    показывать карточку клиента целиком, а не дыру с крестиком. */
-.karta-mini {
+.map-mini {
   flex: none; width: 232px; max-width: 100%;
   border: 1px solid var(--border); border-radius: 8px; overflow: hidden;
   text-decoration: none;
 }
-.karta-mini:hover { border-color: var(--border-hover); }
-.karta-mini-holst { display: block; width: 100%; height: 142px; }
-.karta-mini-podpis {
+.map-mini:hover { border-color: var(--border-hover); }
+.map-mini-canvas { display: block; width: 100%; height: 142px; }
+.map-mini-caption {
   display: flex; align-items: center; gap: 6px;
   padding: 7px 10px; border-top: 1px solid var(--border);
   background: var(--surface); color: var(--muted); font-size: 11.5px;
 }
-.karta-mini:hover .karta-mini-podpis { color: var(--text); }
+.map-mini:hover .map-mini-caption { color: var(--text); }
 /* Порог по окну, а карточка живёт в колонке шириной «окно минус меню»: на
    900–1050px контейнеру остаётся 580–730px, миниатюра забирает 248, и на три
    поля адреса приходится по сотне пикселей при подписи капителью. До 720px
    окно доходит уже без меню, и там места снова хватает — то есть прежний
    порог не срабатывал никогда. */
 @media (max-width: 1080px) {
-  .adres-ryad { flex-wrap: wrap; }
-  .adres-polya { grid-template-columns: repeat(2, 1fr); }
-  .karta-mini { width: 100%; }
+  .address-row { flex-wrap: wrap; }
+  .address-fields { grid-template-columns: repeat(2, 1fr); }
+  .map-mini { width: 100%; }
 }
 
 /* Лента читается как хронология: линия между значками связывает записи в
@@ -1727,11 +1727,11 @@ summary:focus-visible,
 
 /* Фото и видео к возврату: плитка с подписью. Снимок показывается на месте
    — у возврата спрашивают «как выглядела вещь», а не «какой файл». */
-.vlozheniya { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
-.vlozhenie { margin: 0; border: 1px solid var(--frame); border-radius: 4px; overflow: hidden; background: var(--well); }
-.vlozhenie-media { display: block; width: 100%; height: 120px; object-fit: cover; background: var(--surface-2); }
-.vlozhenie-podpis { display: flex; align-items: center; gap: 6px; padding: 6px 8px; font-size: 12px; color: var(--muted); min-width: 0; }
-.vlozhenie-podpis > span { flex: 1; min-width: 0; }
+.attachments { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+.attachment { margin: 0; border: 1px solid var(--frame); border-radius: 4px; overflow: hidden; background: var(--well); }
+.attachment-media { display: block; width: 100%; height: 120px; object-fit: cover; background: var(--surface-2); }
+.attachment-caption { display: flex; align-items: center; gap: 6px; padding: 6px 8px; font-size: 12px; color: var(--muted); min-width: 0; }
+.attachment-caption > span { flex: 1; min-width: 0; }
 .file-ext { width: 30px; height: 30px; border-radius: 4px; background: var(--tint-accent); color: var(--accent); display: flex; align-items: center; justify-content: center; font-size: 9.5px; font-weight: 700; flex-shrink: 0; }
 .swatch { width: 30px; height: 30px; border-radius: 4px; cursor: pointer; border: 2px solid transparent; }
 .swatch.active { border-color: var(--text); }
@@ -1799,15 +1799,15 @@ summary:focus-visible,
 .task-meta { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 3px; color: var(--faint); font-size: 11.5px; }
 .task-late { color: var(--danger); font-weight: 500; }
 /* Полосы списка напоминаний: просрочено / сегодня / завтра / позже / без срока. */
-.spisok-polosa {
+.list-bar {
   padding: 10px 16px 4px; font-size: 10.5px; font-weight: 700; letter-spacing: 0.12em;
   text-transform: uppercase; color: var(--faint); border-bottom: 1px solid var(--line);
 }
-.spisok-polosa.beda { color: var(--danger); }
+.list-bar.beda { color: var(--danger); }
 /* Полоса «срочно» берёт цвет своей рамки, а не общий красный: красным в
    списке уже помечен просроченный срок, и две красных полосы подряд
    перестают различаться. */
-.spisok-polosa.srochnaya { color: var(--violet); }
+.list-bar.urgent { color: var(--violet); }
 /* Перенос срока одним нажатием — подчёркнуто пунктиром, как действие, а не ссылка. */
 .task-shift {
   background: none; border: 0; padding: 0; cursor: pointer; color: var(--faint);
@@ -1815,40 +1815,40 @@ summary:focus-visible,
 }
 .task-shift:hover { color: var(--brand); }
 /* Скрепка и заметка в строке: значок вместо второй строки текста. */
-.task-vlozheno { display: inline-flex; align-items: center; gap: 3px; }
-.task-new-vazhnost { width: 130px; flex: none; }
+.task-attached { display: inline-flex; align-items: center; gap: 3px; }
+.task-new-importance { width: 130px; flex: none; }
 
 /* --- Важность напоминания --------------------------------------------------
    Четыре ступени вместо флажка «важно»: «перезвонить, когда будет время» и
    «клиент ждёт у двери» — разные вещи, и список обязан их различать.
    Обычная важность чипа не рисует: она у большинства строк, и подпись у
    каждой второй строки перестаёт что-либо значить. */
-.vazhnost-chip {
+.importance-chip {
   display: inline-flex; align-items: center; padding: 1px 7px; border-radius: 999px;
   font-size: 10px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
 }
-.vazhnost-chip.urgent { color: var(--danger); background: var(--tint-danger); }
-.vazhnost-chip.high { color: var(--warning); background: var(--tint-warning); }
-.vazhnost-chip.normal { color: var(--muted); background: var(--tint-neutral); }
-.vazhnost-chip.low { color: var(--muted); background: var(--tint-neutral); }
+.importance-chip.urgent { color: var(--danger); background: var(--tint-danger); }
+.importance-chip.high { color: var(--warning); background: var(--tint-warning); }
+.importance-chip.normal { color: var(--muted); background: var(--tint-neutral); }
+.importance-chip.low { color: var(--muted); background: var(--tint-neutral); }
 
 /* Выбор важности в карточке — сегменты, а не список: четыре ступени видны все
    сразу, и «повысить» делается одним нажатием, а не двумя. */
 /* Без `overflow: hidden`: кольцо фокуса лежит СНАРУЖИ кнопки, и срез оставлял
    идущего табом без ответа на вопрос, где он стоит. Скругление — крайним. */
-.vazhnost-vybor { display: flex; gap: 0; border: 1px solid var(--border); border-radius: 6px; }
-.vazhnost-knopka {
+.importance-choice { display: flex; gap: 0; border: 1px solid var(--border); border-radius: 6px; }
+.importance-btn {
   padding: 6px 12px; border: 0; border-right: 1px solid var(--border); background: var(--well);
   color: var(--faint); font-family: inherit; font-size: 11px; font-weight: 700;
   letter-spacing: 0.06em; text-transform: uppercase; cursor: pointer;
   transition: background 140ms, color 140ms;
 }
-.vazhnost-knopka:first-child { border-radius: 5px 0 0 5px; }
-.vazhnost-knopka:last-child { border-right: 0; border-radius: 0 5px 5px 0; }
-.vazhnost-knopka:hover { color: var(--text); background: var(--surface-2); }
-.vazhnost-knopka.active { color: var(--text); background: var(--surface-2); }
-.vazhnost-knopka.urgent.active { color: var(--danger); background: var(--tint-danger); }
-.vazhnost-knopka.high.active { color: var(--warning); background: var(--tint-warning); }
+.importance-btn:first-child { border-radius: 5px 0 0 5px; }
+.importance-btn:last-child { border-right: 0; border-radius: 0 5px 5px 0; }
+.importance-btn:hover { color: var(--text); background: var(--surface-2); }
+.importance-btn.active { color: var(--text); background: var(--surface-2); }
+.importance-btn.urgent.active { color: var(--danger); background: var(--tint-danger); }
+.importance-btn.high.active { color: var(--warning); background: var(--tint-warning); }
 
 /* --- Рябь по краю у максимальной важности ----------------------------------
    Просьба владельца: «если важность максимальная, всегда вокруг блока анимация
@@ -1865,23 +1865,23 @@ summary:focus-visible,
    размывается сглаживанием в кашу, а неподвижная остаётся пиксельной, чего и
    хотел владелец. Двойное `mask-composite: intersect` оставляет от двух
    решёток четверть — редкие крупные точки, а не мелкое сито. */
-.task-row.srochno,
-.napominanie-karta.srochno {
+.task-row.urgent,
+.reminder-map.urgent {
   position: relative; isolation: isolate; overflow: hidden;
   border-radius: 8px;
   background: linear-gradient(
     100deg, var(--ultra-nachalo) 0%, var(--ultra-seredina) 55%, var(--ultra-konets) 100%
   );
 }
-.task-row.srochno { border-bottom: 0; margin: 8px; padding: 13px 15px; }
-.task-row.srochno + .task-row { border-top: 1px solid var(--line); }
+.task-row.urgent { border-bottom: 0; margin: 8px; padding: 13px 15px; }
+.task-row.urgent + .task-row { border-top: 1px solid var(--line); }
 /* Рамка карточки встаёт вплотную к краю окна: отступ окна (22px) снимается
    отрицательным полем и возвращается своим — иначе рамок было бы две.
    Радиус — внутренний радиус окна (6px минус пиксель рамки), иначе фиолетовое
    легло бы поверх скругления по четырём углам. */
-.napominanie-karta.srochno { margin: -22px; padding: 22px; border-radius: 5px; }
-.task-row.srochno::before,
-.napominanie-karta.srochno::before {
+.reminder-map.urgent { margin: -22px; padding: 22px; border-radius: 5px; }
+.task-row.urgent::before,
+.reminder-map.urgent::before {
   content: ""; position: absolute; z-index: -2; inset: 0; width: 200%; left: -100%;
   /* Плитка ровно в ширину строки (слой вдвое шире), и сдвиг за круг — ровно на
      плитку: иначе блик, дойдя до правого края, прыгал бы к левому. */
@@ -1909,37 +1909,37 @@ summary:focus-visible,
   mask-composite: intersect;
   animation: ultra-hod 3.4s linear infinite;
 }
-.task-row.srochno::after,
-.napominanie-karta.srochno::after {
+.task-row.urgent::after,
+.reminder-map.urgent::after {
   content: ""; position: absolute; z-index: -1; inset: 2px;
   border-radius: 6px; background: var(--surface);
 }
-.napominanie-karta.srochno::after { border-radius: 3px; }
+.reminder-map.urgent::after { border-radius: 3px; }
 @keyframes ultra-hod { to { transform: translate3d(50%, 0, 0); } }
 /* Кому движение мешает — тому ровная фиолетовая рамка: важность видна,
    а взгляд не дёргается. */
 @media (prefers-reduced-motion: reduce) {
-  .task-row.srochno::before,
-  .napominanie-karta.srochno::before { animation: none; }
+  .task-row.urgent::before,
+  .reminder-map.urgent::before { animation: none; }
 }
 
 /* --- Углублённая карточка напоминания -------------------------------------- */
 /* Прокрутка внутри окна, а не страницы под ним: с двумя рядами вложений
    карточка выше экрана ноутбука, а `.modal-backdrop` центрирует без прокрутки,
    и достать уехавший край нечем. */
-.napominanie-karta-telo {
+.reminder-map-body {
   display: flex; flex-direction: column; gap: 14px;
   max-height: min(72vh, 620px); overflow-y: auto;
 }
-.napominanie-zagolovok { font-size: 15px; font-weight: 600; }
-.napominanie-ryad { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
-.napominanie-svyazi {
+.reminder-heading { font-size: 15px; font-weight: 600; }
+.reminder-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.reminder-links {
   display: flex; flex-wrap: wrap; gap: 12px; align-items: center;
   color: var(--faint); font-size: 11.5px;
 }
-.napominanie-svyazi span { display: inline-flex; align-items: center; gap: 4px; }
-.napominanie-vlozheniya { border-top: 1px solid var(--line); padding-top: 14px; }
-.dropzone-vybor { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+.reminder-links span { display: inline-flex; align-items: center; gap: 4px; }
+.reminder-attachments { border-top: 1px solid var(--line); padding-top: 14px; }
+.dropzone-choice { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
 
 /* Число просроченных рядом с пунктом меню. Красное, потому что это долг, а не
    статистика: серое число рядом с названием читается как «всего». */
@@ -2035,10 +2035,10 @@ summary:focus-visible,
 .src-table { display: flex; flex-direction: column; gap: 1px; }
 /* Сводка обращений под строкой ключа: плитки, два ряда столбиков, доли видов. */
 .stat-blok { padding: 4px 16px 16px; border-bottom: 1px solid var(--line); }
-.stat-tikho { color: var(--faint); font-size: 12.5px; padding: 6px 0; }
-.stat-plitki { margin-bottom: 14px; }
-.stat-ryad { margin-bottom: 14px; }
-.stat-ryad .metric-title { margin-bottom: 8px; }
+.stat-quiet { color: var(--faint); font-size: 12.5px; padding: 6px 0; }
+.stat-tiles { margin-bottom: 14px; }
+.stat-row { margin-bottom: 14px; }
+.stat-row .metric-title { margin-bottom: 8px; }
 .stat-bars { gap: 4px; }
 .stat-bar { width: 10px; }
 .src-row {
@@ -2051,9 +2051,9 @@ summary:focus-visible,
 .src-num { position: relative; width: 76px; text-align: right; flex: none; color: var(--muted); font-variant-numeric: tabular-nums; }
 .src-money { position: relative; width: 120px; text-align: right; flex: none; font-variant-numeric: tabular-nums; }
 /* Полоса бюджета: доля факта от плана, перерасход — красным. */
-.byudzhet-polosa { height: 4px; border-radius: 2px; background: var(--surface-2); margin-top: 6px; overflow: hidden; max-width: 320px; }
-.byudzhet-polosa > div { height: 100%; background: var(--chart-brand); border-radius: 2px; }
-.byudzhet-polosa > div.beda { background: var(--danger); }
+.budget-bar { height: 4px; border-radius: 2px; background: var(--surface-2); margin-top: 6px; overflow: hidden; max-width: 320px; }
+.budget-bar > div { height: 100%; background: var(--chart-brand); border-radius: 2px; }
+.budget-bar > div.beda { background: var(--danger); }
 
 /* Разбор суммы: пример расчёта в настройках правил и деньги по заказу.
 
@@ -2255,10 +2255,10 @@ summary:focus-visible,
 /* Дело клиента — третьей колонкой, и только там, где ей есть место. На
    среднем экране она отнимала бы ширину у переписки, ради которой всё и
    открыто, — как в телеграме, где профиль не показывается на узком окне. */
-.tg-delo { display: none; }
+.tg-case { display: none; }
 @media (min-width: 1360px) {
-  .tg-delo { display: flex; }
-  .tg-screen:has(.tg-delo) {
+  .tg-case { display: flex; }
+  .tg-screen:has(.tg-case) {
     grid-template-columns: clamp(240px, 24%, 340px) minmax(0, 1fr) clamp(230px, 22%, 300px);
   }
 }
@@ -2704,7 +2704,7 @@ summary:focus-visible,
  * Во всю ширину и пунктиром: это не действие над записями, а продолжение
  * самого списка. `grid-column` — ради сетки досок, где кнопка иначе встала бы
  * плиткой на место доски и читалась как ещё одна доска. */
-.dochitat {
+.load-more {
   display: block;
   width: 100%;
   grid-column: 1 / -1;
@@ -2724,8 +2724,8 @@ summary:focus-visible,
   text-decoration: underline;
   text-underline-offset: 3px;
 }
-.dochitat:hover:not(:disabled) { background: var(--well-off); color: var(--text); }
-.dochitat:disabled { opacity: 0.6; cursor: default; }
+.load-more:hover:not(:disabled) { background: var(--well-off); color: var(--text); }
+.load-more:disabled { opacity: 0.6; cursor: default; }
 
 /* Кнопка «показать более ранние»: над лентой, неброская — её нажимают редко. */
 .tg-more {
@@ -2876,30 +2876,30 @@ a.tg-file:hover { text-decoration: underline; }
 
 /* Дело клиента рядом с перепиской: третья колонка. У непривязанного диалога
    она не пустует, а предлагает завести карточку — см. довод в разметке. */
-.tg-delo {
+.tg-case {
   flex-direction: column;
   gap: 12px;
   overflow-y: auto;
   padding: 14px;
   border-left: 1px solid var(--line);
 }
-.tg-delo-head { display: flex; flex-direction: column; gap: 2px; }
-.tg-delo-name { font-weight: 600; font-size: 14px; }
-.tg-delo-sub { font-size: 12px; opacity: 0.7; }
-.tg-delo-title { font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; opacity: 0.6; }
-.tg-delo-pusto { font-size: 12.5px; opacity: 0.6; }
-.tg-delo-fields { display: grid; gap: 6px; font-size: 12.5px; }
-.tg-delo-fields > div { display: flex; justify-content: space-between; gap: 8px; }
-.tg-delo-fields span { opacity: 0.6; }
-.tg-delo-deals { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
-.tg-delo-deals > li { display: grid; gap: 3px; font-size: 12.5px; }
-.tg-delo-line { display: flex; justify-content: space-between; gap: 8px; opacity: 0.75; }
+.tg-case-head { display: flex; flex-direction: column; gap: 2px; }
+.tg-case-name { font-weight: 600; font-size: 14px; }
+.tg-case-sub { font-size: 12px; opacity: 0.7; }
+.tg-case-title { font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; opacity: 0.6; }
+.tg-case-empty { font-size: 12.5px; opacity: 0.6; }
+.tg-case-fields { display: grid; gap: 6px; font-size: 12.5px; }
+.tg-case-fields > div { display: flex; justify-content: space-between; gap: 8px; }
+.tg-case-fields span { opacity: 0.6; }
+.tg-case-deals { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.tg-case-deals > li { display: grid; gap: 3px; font-size: 12.5px; }
+.tg-case-line { display: flex; justify-content: space-between; gap: 8px; opacity: 0.75; }
 /* «Завести карточку» и «Обновить из телеграма». Во всю ширину колонки: обе —
    главное действие панели, а узкая кнопка, прижатая к краю столбца шириной в
    палец, читается как примечание. Вид тот же, что у кнопок в шапке разговора
    (`.tg-head-right button`): это соседние действия по одному и тому же
    собеседнику, и разный вид у них означал бы разную важность. */
-.tg-delo-knopka {
+.tg-case-btn {
   width: 100%;
   height: 28px;
   padding: 0 10px;
@@ -2911,8 +2911,8 @@ a.tg-file:hover { text-decoration: underline; }
   font-size: 12.5px;
   cursor: pointer;
 }
-.tg-delo-knopka:hover:not(:disabled) { background: var(--well-off); }
-.tg-delo-knopka:disabled { opacity: 0.5; cursor: default; }
+.tg-case-btn:hover:not(:disabled) { background: var(--well-off); }
+.tg-case-btn:disabled { opacity: 0.5; cursor: default; }
 
 /* Ответ на конкретное сообщение. Цитата отвечает на вопрос «на что это ответ» —
    без неё в разговоре про три позиции заказа ответ читается как ответ на
@@ -3176,7 +3176,7 @@ html { scroll-behavior: smooth; }
 .docs-ref-path { font-size: 13px; color: var(--text); word-break: break-all; }
 .docs-ref-access { margin-left: auto; color: var(--faint); font-size: 11.5px; white-space: nowrap; }
 .docs-ref-access code { font-size: 11.5px; color: var(--muted); }
-.docs-ref-access.a-otkryto { color: var(--success); }
+.docs-ref-access.a-open { color: var(--success); }
 .docs-ref-desc { margin-top: 4px; color: var(--muted); font-size: 12.5px; line-height: 1.5; }
 .docs-ref-desc code { color: var(--text); }
 .docs-endpoint-head code { font-size: 13px; color: var(--text); }
@@ -3205,23 +3205,23 @@ html { scroll-behavior: smooth; }
 /* Подпись стоит в самом поле и всплывает по буквам при вводе: на входе всего два
    поля, и строка подписи над пустым полем занимает место, нужное самому полю.
    Образец — uiverse warm-eel-62. */
-.pole-plav { position: relative; padding-top: 20px; }
-.pole-plav .label { position: absolute; top: 30px; left: 13px; margin: 0; pointer-events: none; }
-.pole-plav .label span {
+.field-float { position: relative; padding-top: 20px; }
+.field-float .label { position: absolute; top: 30px; left: 13px; margin: 0; pointer-events: none; }
+.field-float .label span {
   display: inline-block; min-width: 4px;
   transition: transform 300ms cubic-bezier(0.68, -0.55, 0.265, 1.55), color 300ms;
 }
-.pole-plav .input:focus ~ .label span,
-.pole-plav .input:not(:placeholder-shown) ~ .label span { transform: translateY(-26px); color: var(--accent); }
+.field-float .input:focus ~ .label span,
+.field-float .input:not(:placeholder-shown) ~ .label span { transform: translateY(-26px); color: var(--accent); }
 /* Подсказка-образец показывается только на выбранном поле: иначе она стоит под
    подписью и обе читаются как одна строка. */
-.pole-plav .input:not(:focus)::placeholder { color: transparent; }
+.field-float .input:not(:focus)::placeholder { color: transparent; }
 @media (prefers-reduced-motion: reduce) {
-  .pole-plav .label span { transition: none; }
+  .field-float .label span { transition: none; }
 }
 
 /* Меню по правой кнопке. Образец — uiverse terrible-gecko-91. */
-.ctx-fon { position: fixed; inset: 0; z-index: 70; }
+.ctx-bg { position: fixed; inset: 0; z-index: 70; }
 .ctx-menu {
   position: fixed; min-width: 200px; padding: 6px 0;
   display: flex; flex-direction: column; gap: 2px;
@@ -3232,7 +3232,7 @@ html { scroll-behavior: smooth; }
   from { opacity: 0; transform: scale(0.96); }
   to { opacity: 1; transform: none; }
 }
-.ctx-group.razdel { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--border); }
+.ctx-group.section { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--border); }
 .ctx-item {
   display: flex; align-items: center; gap: 10px;
   width: calc(100% - 12px); margin: 0 6px; padding: 6px 8px;
@@ -3241,7 +3241,7 @@ html { scroll-behavior: smooth; }
   transition: background-color 150ms, color 150ms, transform 150ms;
 }
 .ctx-item.active { background: var(--accent); color: var(--on-brand); transform: translate(1px, -1px); }
-.ctx-item.opasno.active { background: var(--danger-solid); color: var(--on-danger); }
+.ctx-item.danger.active { background: var(--danger-solid); color: var(--on-danger); }
 .ctx-item:active { transform: scale(0.99); }
 @media (prefers-reduced-motion: reduce) {
   .ctx-menu { animation: none; }
@@ -3250,54 +3250,54 @@ html { scroll-behavior: smooth; }
 
 /* Путь сделки по воронке. Ряд кнопок отвечал «куда можно», но не «где мы сейчас»
    и «что уже пройдено». Образец — uiverse orange-newt-23. */
-.shagi { list-style: none; margin: 0 0 4px; padding: 0; }
-.shag { position: relative; }
+.steps { list-style: none; margin: 0 0 4px; padding: 0; }
+.step { position: relative; }
 /* Черта идёт от кружка к кружку и прячется у последнего: линия в пустоту
    читается как незагруженный этап. */
-.shag-liniya { position: absolute; left: 15px; top: 34px; bottom: -2px; width: 2px; background: var(--border); }
-.shag:last-child .shag-liniya { display: none; }
-.shag-knopka {
+.step-line { position: absolute; left: 15px; top: 34px; bottom: -2px; width: 2px; background: var(--border); }
+.step:last-child .step-line { display: none; }
+.step-btn {
   display: flex; align-items: flex-start; gap: 12px;
   width: 100%; padding: 0 0 14px; border: 0; background: none;
   font-family: var(--sans); text-align: left; cursor: pointer;
 }
-.shag-knopka:disabled { cursor: default; }
-.shag-krug {
+.step-btn:disabled { cursor: default; }
+.step-circle {
   position: relative; z-index: 1; flex: none;
   width: 32px; height: 32px; border-radius: 50%;
   display: grid; place-items: center; font-size: 12px;
   background: var(--surface); border: 2px solid var(--border); color: var(--faint);
   transition: background-color 150ms, border-color 150ms, color 150ms;
 }
-.shag.proyden .shag-krug { background: var(--brand); border-color: var(--brand); color: var(--on-brand); }
-.shag.seychas .shag-krug { border-color: var(--brand); color: var(--brand); }
-.shag-telo { display: flex; flex-direction: column; gap: 3px; padding-top: 4px; }
-.shag-nazvanie { font-size: 13.5px; font-weight: 500; color: var(--text); transition: color 150ms; }
-.shag.vperedi .shag-nazvanie { color: var(--sub); }
-.shag-knopka:not(:disabled):hover .shag-nazvanie { color: var(--brand); }
-.shag-knopka:not(:disabled):hover .shag-krug { border-color: var(--brand); }
-.shag-metka {
+.step.passed .step-circle { background: var(--brand); border-color: var(--brand); color: var(--on-brand); }
+.step.now .step-circle { border-color: var(--brand); color: var(--brand); }
+.step-body { display: flex; flex-direction: column; gap: 3px; padding-top: 4px; }
+.step-title { font-size: 13.5px; font-weight: 500; color: var(--text); transition: color 150ms; }
+.step.ahead .step-title { color: var(--sub); }
+.step-btn:not(:disabled):hover .step-title { color: var(--brand); }
+.step-btn:not(:disabled):hover .step-circle { border-color: var(--brand); }
+.step-label {
   align-self: flex-start; padding: 1px 8px; border-radius: 6px; font-size: 11.5px;
   background: var(--well-off); color: var(--faint);
 }
-.shag.proyden .shag-metka { background: var(--tint-success); color: var(--success); }
-.shag.seychas .shag-metka { background: var(--tint-accent); color: var(--accent); }
+.step.passed .step-label { background: var(--tint-success); color: var(--success); }
+.step.now .step-label { background: var(--tint-accent); color: var(--accent); }
 @media (prefers-reduced-motion: reduce) {
-  .shag-krug, .shag-nazvanie { transition: none; }
+  .step-circle, .step-title { transition: none; }
 }
 
 /* Кнопка «скачать» с размером файла. Образец — uiverse chatty-lizard-18.
    Имена с приставкой: общее имя класса в этом файле уже гасило чужую
    кнопку на досках, и правило вступало в силу молча. */
-.skachat {
+.download {
   position: relative; display: flex; align-items: center; justify-content: center;
   color: var(--faint); text-decoration: none;
   transition: transform 300ms ease, color 300ms ease;
 }
 /* Кнопка «идёт вниз» по наведению — туда же, куда поедет файл. Движение
    отвечает раньше щелчка, что кнопка живая. */
-.skachat:hover { transform: translateY(4px); color: var(--accent); }
-.skachat-razmer {
+.download:hover { transform: translateY(4px); color: var(--accent); }
+.download-size {
   position: absolute; top: calc(100% + 8px); left: 50%;
   transform: translateX(-50%) scale(0); transform-origin: top center;
   padding: 4px 7px; border-radius: 5px; white-space: nowrap;
@@ -3305,15 +3305,15 @@ html { scroll-behavior: smooth; }
   font-size: 11px; pointer-events: none; z-index: 3;
   transition: transform 300ms ease-in-out;
 }
-.skachat:hover .skachat-razmer { transform: translateX(-50%) scale(1); }
+.download:hover .download-size { transform: translateX(-50%) scale(1); }
 /* Большая кнопка «скачать все»: то же движение, но размер стоит строкой —
    на ней он решает, качать ли сейчас, и прятать его в подсказку значит
    заставить наводить мышь ради решения. */
-.skachat-vsyo { transition: transform 300ms ease; }
-.skachat-vsyo:hover { transform: translateY(4px); }
+.download-all { transition: transform 300ms ease; }
+.download-all:hover { transform: translateY(4px); }
 @media (prefers-reduced-motion: reduce) {
-  .skachat, .skachat:hover, .skachat-vsyo, .skachat-vsyo:hover { transition: none; transform: none; }
-  .skachat-razmer, .skachat:hover .skachat-razmer { transition: none; }
+  .download, .download:hover, .download-all, .download-all:hover { transition: none; transform: none; }
+  .download-size, .download:hover .download-size { transition: none; }
 }
 
 /* ==========================================================================
@@ -3324,32 +3324,32 @@ html { scroll-behavior: smooth; }
 /* ---- Загрузка: кольцо с переливом и буквы по одной --------------------------
    dexter-st/bright-lizard-8. Кольцо — три внутренние тени на прозрачном круге,
    буквы всплывают со сдвигом на десятую секунды. Без движения кольцо стоит. */
-.zagruzka { position: relative; display: flex; align-items: center; justify-content: center; width: 120px; height: 120px; border-radius: 50%; color: var(--text); font-size: 14px; letter-spacing: 0.02em; user-select: none; }
+.loading { position: relative; display: flex; align-items: center; justify-content: center; width: 120px; height: 120px; border-radius: 50%; color: var(--text); font-size: 14px; letter-spacing: 0.02em; user-select: none; }
 /* Кольцо плоское: две дуги цвета текста и бренда на рамке. Перелив образца
    снят вместе с прочими градиентами (docs/05, строгий стиль). */
-.zagruzka-kolco { position: absolute; inset: 0; border-radius: 50%; border: 4px solid var(--border); border-top-color: var(--text); border-right-color: var(--brand); animation: zagruzka-krug 1.2s linear infinite; z-index: 0; }
+.loading-ring { position: absolute; inset: 0; border-radius: 50%; border: 4px solid var(--border); border-top-color: var(--text); border-right-color: var(--brand); animation: zagruzka-krug 1.2s linear infinite; z-index: 0; }
 @keyframes zagruzka-krug { to { transform: rotate(360deg); } }
-.zagruzka-bukva { display: inline-block; opacity: 0.4; animation: zagruzka-bukva 2s infinite; z-index: 1; }
-.zagruzka-bukva:nth-child(2) { animation-delay: 0.1s; }
-.zagruzka-bukva:nth-child(3) { animation-delay: 0.2s; }
-.zagruzka-bukva:nth-child(4) { animation-delay: 0.3s; }
-.zagruzka-bukva:nth-child(5) { animation-delay: 0.4s; }
-.zagruzka-bukva:nth-child(6) { animation-delay: 0.5s; }
-.zagruzka-bukva:nth-child(7) { animation-delay: 0.6s; }
-.zagruzka-bukva:nth-child(8) { animation-delay: 0.7s; }
-.zagruzka-bukva:nth-child(9) { animation-delay: 0.8s; }
-.zagruzka-bukva:nth-child(10) { animation-delay: 0.9s; }
-.zagruzka-bukva:nth-child(11) { animation-delay: 1s; }
-.zagruzka-bukva:nth-child(12) { animation-delay: 1.1s; }
-@keyframes zagruzka-bukva {
+.loading-letter { display: inline-block; opacity: 0.4; animation: loading-letter 2s infinite; z-index: 1; }
+.loading-letter:nth-child(2) { animation-delay: 0.1s; }
+.loading-letter:nth-child(3) { animation-delay: 0.2s; }
+.loading-letter:nth-child(4) { animation-delay: 0.3s; }
+.loading-letter:nth-child(5) { animation-delay: 0.4s; }
+.loading-letter:nth-child(6) { animation-delay: 0.5s; }
+.loading-letter:nth-child(7) { animation-delay: 0.6s; }
+.loading-letter:nth-child(8) { animation-delay: 0.7s; }
+.loading-letter:nth-child(9) { animation-delay: 0.8s; }
+.loading-letter:nth-child(10) { animation-delay: 0.9s; }
+.loading-letter:nth-child(11) { animation-delay: 1s; }
+.loading-letter:nth-child(12) { animation-delay: 1.1s; }
+@keyframes loading-letter {
   0%, 100% { opacity: 0.4; transform: translateY(0); }
   20% { opacity: 1; transform: scale(1.15); }
   40% { opacity: 0.7; transform: translateY(0); }
 }
 .screen-loading-full { min-height: 100vh; }
 @media (prefers-reduced-motion: reduce) {
-  .zagruzka-kolco { animation: none; opacity: 0.6; }
-  .zagruzka-bukva { animation: none; opacity: 0.8; }
+  .loading-ring { animation: none; opacity: 0.6; }
+  .loading-letter { animation: none; opacity: 0.8; }
 }
 
 /* ---- Всплывающие сообщения: плитка значка, текст, крестик ------------------
@@ -3378,24 +3378,24 @@ html { scroll-behavior: smooth; }
    Cobp/mighty-pig-13. Задник с ярлыком слева, три листа и передняя стенка с
    ярлыком справа; по наведению листы откидываются на разный угол. Цвет папки —
    бренд, листы — три ступени серого из палитры. */
-.papka { position: relative; width: 180px; height: 120px; perspective: 1500px; cursor: pointer; }
-.papka-zad, .papka-list, .papka-pered { position: absolute; border-radius: 6px; transition: transform 300ms ease, box-shadow 300ms ease; }
-.papka-zad { inset: 0; border-top-left-radius: 0; background: var(--brand); transform-origin: top; }
-.papka-zad::after { content: ""; position: absolute; bottom: 99%; left: 0; width: 60px; height: 12px; background: var(--brand); border-radius: 6px 6px 0 0; }
-.papka-zad::before { content: ""; position: absolute; top: -11px; left: 57px; width: 12px; height: 12px; background: var(--brand); clip-path: polygon(0 35%, 0 100%, 50% 100%); }
-.papka-list { inset: 3px; transform-origin: bottom; }
-.papka-l1 { background: var(--border-hover); }
-.papka-l2 { background: var(--border); }
-.papka-l3 { background: var(--surface-2); }
-.papka-pered { left: 0; right: 0; bottom: 0; height: 117px; border-top-right-radius: 0; background: var(--brand); transform-origin: bottom; }
-.papka-pered::after { content: ""; position: absolute; bottom: 99%; right: 0; width: 110px; height: 12px; background: var(--brand); border-radius: 6px 6px 0 0; }
-.papka-pered::before { content: ""; position: absolute; top: -8px; right: 107px; width: 9px; height: 9px; background: var(--brand); clip-path: polygon(100% 14%, 50% 100%, 100% 100%); }
-.papka:hover .papka-zad { box-shadow: 0 20px 40px var(--shade); }
-.papka:hover .papka-l1 { transform: rotateX(-20deg); }
-.papka:hover .papka-l2 { transform: rotateX(-30deg); }
-.papka:hover .papka-l3 { transform: rotateX(-38deg); }
-.papka:hover .papka-pered { transform: rotateX(-46deg) translateY(1px); box-shadow: inset 0 20px 40px var(--glow), inset 0 -20px 40px var(--shade); }
-@media (prefers-reduced-motion: reduce) { .papka-zad, .papka-list, .papka-pered { transition: none; } }
+.folder { position: relative; width: 180px; height: 120px; perspective: 1500px; cursor: pointer; }
+.folder-back, .folder-list, .folder-front { position: absolute; border-radius: 6px; transition: transform 300ms ease, box-shadow 300ms ease; }
+.folder-back { inset: 0; border-top-left-radius: 0; background: var(--brand); transform-origin: top; }
+.folder-back::after { content: ""; position: absolute; bottom: 99%; left: 0; width: 60px; height: 12px; background: var(--brand); border-radius: 6px 6px 0 0; }
+.folder-back::before { content: ""; position: absolute; top: -11px; left: 57px; width: 12px; height: 12px; background: var(--brand); clip-path: polygon(0 35%, 0 100%, 50% 100%); }
+.folder-list { inset: 3px; transform-origin: bottom; }
+.folder-l1 { background: var(--border-hover); }
+.folder-l2 { background: var(--border); }
+.folder-l3 { background: var(--surface-2); }
+.folder-front { left: 0; right: 0; bottom: 0; height: 117px; border-top-right-radius: 0; background: var(--brand); transform-origin: bottom; }
+.folder-front::after { content: ""; position: absolute; bottom: 99%; right: 0; width: 110px; height: 12px; background: var(--brand); border-radius: 6px 6px 0 0; }
+.folder-front::before { content: ""; position: absolute; top: -8px; right: 107px; width: 9px; height: 9px; background: var(--brand); clip-path: polygon(100% 14%, 50% 100%, 100% 100%); }
+.folder:hover .folder-back { box-shadow: 0 20px 40px var(--shade); }
+.folder:hover .folder-l1 { transform: rotateX(-20deg); }
+.folder:hover .folder-l2 { transform: rotateX(-30deg); }
+.folder:hover .folder-l3 { transform: rotateX(-38deg); }
+.folder:hover .folder-front { transform: rotateX(-46deg) translateY(1px); box-shadow: inset 0 20px 40px var(--glow), inset 0 -20px 40px var(--shade); }
+@media (prefers-reduced-motion: reduce) { .folder-back, .folder-list, .folder-front { transition: none; } }
 
 /* ---- Заготовки сообщений карточками ----------------------------------------
    EcheverriaJesus/stale-yak-33. Канал по центру сверху (у образца там цена),
@@ -3420,117 +3420,117 @@ html { scroll-behavior: smooth; }
    Cobp/silent-bullfrog-72. Девять невидимых зон над карточкой: каждая
    поворачивает её в свою сторону и кладёт свой свет внутренней тенью. За
    лицом карточки крутится размытая полоса бренда — видна только по кромке. */
-.propusk-wrap { position: relative; width: 260px; height: 350px; perspective: 1500px; flex: none; }
-.propusk-zona { position: absolute; width: 41%; height: 34%; z-index: 19; }
-.propusk-zona:nth-child(1) { top: -3%; left: -11%; }
-.propusk-zona:nth-child(2) { top: -3%; left: 30%; }
-.propusk-zona:nth-child(3) { top: -3%; left: 71%; }
-.propusk-zona:nth-child(4) { top: 32%; left: -11%; }
-.propusk-zona:nth-child(5) { top: 32%; left: 30%; }
-.propusk-zona:nth-child(6) { top: 32%; left: 71%; }
-.propusk-zona:nth-child(7) { top: 66%; left: -11%; }
-.propusk-zona:nth-child(8) { top: 66%; left: 30%; }
-.propusk-zona:nth-child(9) { top: 66%; left: 71%; }
-.propusk { position: relative; width: 100%; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; padding: 14px; color: var(--text); background: var(--surface); border: 1px solid var(--frame); box-shadow: 8px 8px 0 var(--frame); border-radius: 6px; transform: scale(0.9); transition: transform 600ms cubic-bezier(0.175, 0.885, 0.32, 1.25); overflow: hidden; z-index: 10; }
-.propusk-wrap:hover .propusk { transform: scale(1); }
-.propusk-svet { position: absolute; inset: 0; pointer-events: none; transition: box-shadow 600ms cubic-bezier(0.175, 0.885, 0.32, 1.275); }
-.propusk-zona:nth-child(1):hover ~ .propusk { transform: rotateX(-20deg) rotateY(20deg); }
-.propusk-zona:nth-child(1):hover ~ .propusk .propusk-svet { box-shadow: inset 32px 32px 120px 5px var(--glow), inset -32px -32px 120px 5px var(--shade); }
-.propusk-zona:nth-child(2):hover ~ .propusk { transform: rotateX(-20deg); }
-.propusk-zona:nth-child(2):hover ~ .propusk .propusk-svet { box-shadow: inset 0 32px 120px var(--glow), inset 0 -32px 120px var(--shade); }
-.propusk-zona:nth-child(3):hover ~ .propusk { transform: rotateX(-20deg) rotateY(-20deg); }
-.propusk-zona:nth-child(3):hover ~ .propusk .propusk-svet { box-shadow: inset -32px 32px 120px 5px var(--glow), inset 32px -32px 120px 5px var(--shade); }
-.propusk-zona:nth-child(4):hover ~ .propusk { transform: rotateY(20deg); }
-.propusk-zona:nth-child(4):hover ~ .propusk .propusk-svet { box-shadow: inset 32px 0 120px var(--glow), inset -32px 0 120px var(--shade); }
-.propusk-zona:nth-child(5):hover ~ .propusk { transform: scale(1.05); }
-.propusk-zona:nth-child(5):hover ~ .propusk .propusk-svet { box-shadow: inset 0 0 120px var(--glow), inset 0 0 120px var(--shade); }
-.propusk-zona:nth-child(6):hover ~ .propusk { transform: rotateY(-20deg); }
-.propusk-zona:nth-child(6):hover ~ .propusk .propusk-svet { box-shadow: inset -32px 0 120px var(--glow), inset 32px 0 120px var(--shade); }
-.propusk-zona:nth-child(7):hover ~ .propusk { transform: rotateX(20deg) rotateY(20deg); }
-.propusk-zona:nth-child(7):hover ~ .propusk .propusk-svet { box-shadow: inset -32px 0 120px 5px var(--glow); }
-.propusk-zona:nth-child(8):hover ~ .propusk { transform: rotateX(20deg); }
-.propusk-zona:nth-child(8):hover ~ .propusk .propusk-svet { box-shadow: inset 0 0 120px 5px var(--glow); }
-.propusk-zona:nth-child(9):hover ~ .propusk { transform: rotateX(20deg) rotateY(-20deg); }
-.propusk-zona:nth-child(9):hover ~ .propusk .propusk-svet { box-shadow: inset 32px 0 120px 5px var(--glow); }
-.propusk-logo { padding: 8px 4px; font-size: 22px; font-weight: 800; letter-spacing: -0.02em; color: var(--brand); }
-.propusk-rol { display: flex; align-items: center; gap: 5px; padding: 0 6px; font-size: 18px; font-weight: 600; text-transform: uppercase; color: var(--text); }
-.propusk-rol svg { color: var(--success); }
-.propusk-info { display: flex; padding: 6px; }
-.propusk-info > div { width: 100%; }
-.propusk-l { font-size: 8px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--faint); }
-.propusk-v { font-size: 10px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.propusk-line { width: 100%; border-top: 2px dashed var(--border-hover); margin: 6px 0; }
-.propusk-user { display: flex; flex-direction: column; padding: 6px; }
-.propusk-alias { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.propusk-name { font-size: 18px; font-weight: 600; color: var(--text); }
-.propusk-niz { display: flex; width: 100%; align-items: center; }
-.propusk-qr { display: flex; align-items: center; justify-content: center; width: 64px; height: 64px; margin: 6px 10px; border-radius: 6px; background: var(--surface-2); color: var(--muted); font-size: 22px; font-weight: 700; overflow: hidden; flex: none; }
-.propusk-qr img { width: 100%; height: 100%; object-fit: cover; }
-.propusk-pos { display: flex; flex-direction: column; width: 100%; padding: 4px 6px; }
-.propusk-pos > div { padding: 3px 0; }
+.pass-wrap { position: relative; width: 260px; height: 350px; perspective: 1500px; flex: none; }
+.pass-zone { position: absolute; width: 41%; height: 34%; z-index: 19; }
+.pass-zone:nth-child(1) { top: -3%; left: -11%; }
+.pass-zone:nth-child(2) { top: -3%; left: 30%; }
+.pass-zone:nth-child(3) { top: -3%; left: 71%; }
+.pass-zone:nth-child(4) { top: 32%; left: -11%; }
+.pass-zone:nth-child(5) { top: 32%; left: 30%; }
+.pass-zone:nth-child(6) { top: 32%; left: 71%; }
+.pass-zone:nth-child(7) { top: 66%; left: -11%; }
+.pass-zone:nth-child(8) { top: 66%; left: 30%; }
+.pass-zone:nth-child(9) { top: 66%; left: 71%; }
+.pass { position: relative; width: 100%; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; padding: 14px; color: var(--text); background: var(--surface); border: 1px solid var(--frame); box-shadow: 8px 8px 0 var(--frame); border-radius: 6px; transform: scale(0.9); transition: transform 600ms cubic-bezier(0.175, 0.885, 0.32, 1.25); overflow: hidden; z-index: 10; }
+.pass-wrap:hover .pass { transform: scale(1); }
+.pass-light { position: absolute; inset: 0; pointer-events: none; transition: box-shadow 600ms cubic-bezier(0.175, 0.885, 0.32, 1.275); }
+.pass-zone:nth-child(1):hover ~ .pass { transform: rotateX(-20deg) rotateY(20deg); }
+.pass-zone:nth-child(1):hover ~ .pass .pass-light { box-shadow: inset 32px 32px 120px 5px var(--glow), inset -32px -32px 120px 5px var(--shade); }
+.pass-zone:nth-child(2):hover ~ .pass { transform: rotateX(-20deg); }
+.pass-zone:nth-child(2):hover ~ .pass .pass-light { box-shadow: inset 0 32px 120px var(--glow), inset 0 -32px 120px var(--shade); }
+.pass-zone:nth-child(3):hover ~ .pass { transform: rotateX(-20deg) rotateY(-20deg); }
+.pass-zone:nth-child(3):hover ~ .pass .pass-light { box-shadow: inset -32px 32px 120px 5px var(--glow), inset 32px -32px 120px 5px var(--shade); }
+.pass-zone:nth-child(4):hover ~ .pass { transform: rotateY(20deg); }
+.pass-zone:nth-child(4):hover ~ .pass .pass-light { box-shadow: inset 32px 0 120px var(--glow), inset -32px 0 120px var(--shade); }
+.pass-zone:nth-child(5):hover ~ .pass { transform: scale(1.05); }
+.pass-zone:nth-child(5):hover ~ .pass .pass-light { box-shadow: inset 0 0 120px var(--glow), inset 0 0 120px var(--shade); }
+.pass-zone:nth-child(6):hover ~ .pass { transform: rotateY(-20deg); }
+.pass-zone:nth-child(6):hover ~ .pass .pass-light { box-shadow: inset -32px 0 120px var(--glow), inset 32px 0 120px var(--shade); }
+.pass-zone:nth-child(7):hover ~ .pass { transform: rotateX(20deg) rotateY(20deg); }
+.pass-zone:nth-child(7):hover ~ .pass .pass-light { box-shadow: inset -32px 0 120px 5px var(--glow); }
+.pass-zone:nth-child(8):hover ~ .pass { transform: rotateX(20deg); }
+.pass-zone:nth-child(8):hover ~ .pass .pass-light { box-shadow: inset 0 0 120px 5px var(--glow); }
+.pass-zone:nth-child(9):hover ~ .pass { transform: rotateX(20deg) rotateY(-20deg); }
+.pass-zone:nth-child(9):hover ~ .pass .pass-light { box-shadow: inset 32px 0 120px 5px var(--glow); }
+.pass-logo { padding: 8px 4px; font-size: 22px; font-weight: 800; letter-spacing: -0.02em; color: var(--brand); }
+.pass-role { display: flex; align-items: center; gap: 5px; padding: 0 6px; font-size: 18px; font-weight: 600; text-transform: uppercase; color: var(--text); }
+.pass-role svg { color: var(--success); }
+.pass-info { display: flex; padding: 6px; }
+.pass-info > div { width: 100%; }
+.pass-l { font-size: 8px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--faint); }
+.pass-val { font-size: 10px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pass-line { width: 100%; border-top: 2px dashed var(--border-hover); margin: 6px 0; }
+.pass-user { display: flex; flex-direction: column; padding: 6px; }
+.pass-alias { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pass-name { font-size: 18px; font-weight: 600; color: var(--text); }
+.pass-bottom { display: flex; width: 100%; align-items: center; }
+.pass-qr { display: flex; align-items: center; justify-content: center; width: 64px; height: 64px; margin: 6px 10px; border-radius: 6px; background: var(--surface-2); color: var(--muted); font-size: 22px; font-weight: 700; overflow: hidden; flex: none; }
+.pass-qr img { width: 100%; height: 100%; object-fit: cover; }
+.pass-pos { display: flex; flex-direction: column; width: 100%; padding: 4px 6px; }
+.pass-pos > div { padding: 3px 0; }
 @media (prefers-reduced-motion: reduce) {
-  .propusk, .propusk-svet, .propusk-zona:hover ~ .propusk { transition: none; transform: none; }
+  .pass, .pass-light, .pass-zone:hover ~ .pass { transition: none; transform: none; }
 }
 
 /* ---- Паспорт клиента: толстая рамка, жёсткая тень, полосатая шапка --------
    WattoRex/odd-fish-37. Бруталистская карточка: рамка и тень цветом текста
    (в тёмной теме — светлые, инверсия образца), шапка тинтом бренда с косыми
    полосами, инициалы во всю шапку, три цифры под чертой, кнопка во всю ширину. */
-.pasport { position: relative; width: 360px; max-width: 100%; background: var(--surface); border: 3px solid var(--text); box-shadow: 6px 6px 0 var(--text); overflow: hidden; }
-.pasport-shapka { position: relative; height: 128px; display: flex; align-items: flex-end; background: var(--tint-brand); border-bottom: 3px solid var(--text); overflow: hidden; }
-.pasport-shapka::before { content: ""; position: absolute; inset: 0; background: repeating-linear-gradient(45deg, transparent 0 8px, var(--tint-neutral) 8px 10px); }
-.pasport-fon { position: absolute; right: -6px; bottom: -8px; font-size: 96px; line-height: 0.85; font-weight: 800; letter-spacing: -0.02em; color: var(--text); opacity: 0.07; text-transform: uppercase; pointer-events: none; }
-.pasport-ava { position: relative; z-index: 1; width: 64px; height: 64px; margin-left: 18px; display: flex; align-items: center; justify-content: center; background: var(--text); color: var(--surface); font-size: 24px; font-weight: 800; border: 3px solid var(--text); border-bottom: 0; border-left: 0; overflow: hidden; flex: none; }
-.pasport-status { position: absolute; top: 12px; right: 12px; z-index: 2; padding: 3px 8px; background: var(--success); color: var(--surface); border: 2px solid var(--text); box-shadow: 3px 3px 0 var(--text); font-size: 9px; font-weight: 800; letter-spacing: 0.18em; text-transform: uppercase; }
-.pasport-telo { padding: 14px 16px 0; }
-.pasport-ruchka { font-size: 9.5px; font-weight: 700; letter-spacing: 0.2em; color: var(--faint); text-transform: uppercase; margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.pasport-imya { font-size: 30px; line-height: 0.95; font-weight: 800; letter-spacing: -0.01em; color: var(--text); text-transform: uppercase; margin-bottom: 10px; overflow-wrap: anywhere; }
-.pasport-bio { font-size: 12px; font-weight: 500; color: var(--text); border-left: 4px solid var(--brand); padding-left: 10px; line-height: 1.5; margin-bottom: 14px; }
+.passport { position: relative; width: 360px; max-width: 100%; background: var(--surface); border: 3px solid var(--text); box-shadow: 6px 6px 0 var(--text); overflow: hidden; }
+.passport-header { position: relative; height: 128px; display: flex; align-items: flex-end; background: var(--tint-brand); border-bottom: 3px solid var(--text); overflow: hidden; }
+.passport-header::before { content: ""; position: absolute; inset: 0; background: repeating-linear-gradient(45deg, transparent 0 8px, var(--tint-neutral) 8px 10px); }
+.passport-bg { position: absolute; right: -6px; bottom: -8px; font-size: 96px; line-height: 0.85; font-weight: 800; letter-spacing: -0.02em; color: var(--text); opacity: 0.07; text-transform: uppercase; pointer-events: none; }
+.passport-ava { position: relative; z-index: 1; width: 64px; height: 64px; margin-left: 18px; display: flex; align-items: center; justify-content: center; background: var(--text); color: var(--surface); font-size: 24px; font-weight: 800; border: 3px solid var(--text); border-bottom: 0; border-left: 0; overflow: hidden; flex: none; }
+.passport-status { position: absolute; top: 12px; right: 12px; z-index: 2; padding: 3px 8px; background: var(--success); color: var(--surface); border: 2px solid var(--text); box-shadow: 3px 3px 0 var(--text); font-size: 9px; font-weight: 800; letter-spacing: 0.18em; text-transform: uppercase; }
+.passport-body { padding: 14px 16px 0; }
+.passport-handle { font-size: 9.5px; font-weight: 700; letter-spacing: 0.2em; color: var(--faint); text-transform: uppercase; margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.passport-name { font-size: 30px; line-height: 0.95; font-weight: 800; letter-spacing: -0.01em; color: var(--text); text-transform: uppercase; margin-bottom: 10px; overflow-wrap: anywhere; }
+.passport-bio { font-size: 12px; font-weight: 500; color: var(--text); border-left: 4px solid var(--brand); padding-left: 10px; line-height: 1.5; margin-bottom: 14px; }
 /* Сводка справа от паспорта: пустое место рядом с карточкой заполнено тем,
    что спрашивают первым — заявки, деньги, последний контакт, бумаги, кто ведёт. */
-.svodka-plitki { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; background: var(--frame); border: 1px solid var(--frame); border-radius: 6px; overflow: hidden; }
-.svodka-plitka { background: var(--surface); padding: 12px 14px; min-width: 0; }
-.svodka-l { font-size: 10.5px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--faint); margin-bottom: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.svodka-v { font-size: 19px; font-weight: 700; letter-spacing: -0.02em; color: var(--num); line-height: 1.1; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.svodka-sub { font-size: 12px; color: var(--muted); margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-@media (max-width: 720px) { .svodka-plitki { grid-template-columns: repeat(2, 1fr); } }
-.pasport-stats { display: grid; grid-template-columns: 1fr 1fr 1fr; border-top: 3px solid var(--text); }
-.pasport-stat { padding: 10px 8px; border-right: 3px solid var(--text); text-align: center; }
-.pasport-stat:last-child { border-right: 0; }
-.pasport-stat-v { display: block; font-size: 24px; line-height: 1; font-weight: 800; color: var(--text); font-variant-numeric: tabular-nums; }
-.pasport-stat-l { display: block; margin-top: 3px; font-size: 8.5px; font-weight: 700; letter-spacing: 0.15em; color: var(--faint); text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.pasport-btn { display: block; width: 100%; padding: 12px; background: var(--text); color: var(--surface); border: 0; border-top: 3px solid var(--text); font-family: var(--sans); font-size: 14px; font-weight: 800; letter-spacing: 0.2em; text-transform: uppercase; cursor: pointer; text-align: center; transition: background 150ms, color 150ms; }
-.pasport-btn:hover { background: var(--tint-brand); color: var(--text); }
+.summary-tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; background: var(--frame); border: 1px solid var(--frame); border-radius: 6px; overflow: hidden; }
+.summary-tile { background: var(--surface); padding: 12px 14px; min-width: 0; }
+.summary-l { font-size: 10.5px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--faint); margin-bottom: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.summary-val { font-size: 19px; font-weight: 700; letter-spacing: -0.02em; color: var(--num); line-height: 1.1; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.summary-sub { font-size: 12px; color: var(--muted); margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 720px) { .summary-tiles { grid-template-columns: repeat(2, 1fr); } }
+.passport-stats { display: grid; grid-template-columns: 1fr 1fr 1fr; border-top: 3px solid var(--text); }
+.passport-stat { padding: 10px 8px; border-right: 3px solid var(--text); text-align: center; }
+.passport-stat:last-child { border-right: 0; }
+.passport-stat-val { display: block; font-size: 24px; line-height: 1; font-weight: 800; color: var(--text); font-variant-numeric: tabular-nums; }
+.passport-stat-l { display: block; margin-top: 3px; font-size: 8.5px; font-weight: 700; letter-spacing: 0.15em; color: var(--faint); text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.passport-btn { display: block; width: 100%; padding: 12px; background: var(--text); color: var(--surface); border: 0; border-top: 3px solid var(--text); font-family: var(--sans); font-size: 14px; font-weight: 800; letter-spacing: 0.2em; text-transform: uppercase; cursor: pointer; text-align: center; transition: background 150ms, color 150ms; }
+.passport-btn:hover { background: var(--tint-brand); color: var(--text); }
 
 /* ---- Ключ сайта как банковская карта: переворот по наведению ---------------
    Praashoo7/black-lizard-62. Лицо — чип, номер (приставка ключа), срок, имя;
    оборот — магнитная полоса и полоса подписи, в которой лежит сам ключ.
-   Переворот по наведению, а на касании — по нажатию (класс `klyuch-flipped`). */
-.klyuch { width: 100%; max-width: 300px; height: 190px; margin: 0 auto; perspective: 1000px; cursor: pointer; }
-.klyuch-inner { position: relative; width: 100%; height: 100%; transition: transform 800ms; transform-style: preserve-3d; }
-.klyuch:hover .klyuch-inner, .klyuch.klyuch-flipped .klyuch-inner, .klyuch:focus-within .klyuch-inner { transform: rotateY(180deg); }
-.klyuch-front, .klyuch-back { position: absolute; inset: 0; border-radius: 6px; background: var(--bg-sidebar); border: 1px solid var(--frame); box-shadow: var(--hard); backface-visibility: hidden; -webkit-backface-visibility: hidden; color: var(--text); }
-.klyuch-back { transform: rotateY(180deg); }
-.klyuch-head { position: absolute; top: 16px; right: 18px; font-size: 9px; letter-spacing: 0.2em; color: var(--muted); text-transform: uppercase; }
-.klyuch-chip { position: absolute; top: 28px; left: 20px; width: 34px; height: 26px; border-radius: 4px; background: var(--star); border: 1px solid var(--frame); }
-.klyuch-chip::before { content: ""; position: absolute; inset: 6px 5px; border: 1px solid var(--shade); border-radius: 3px; }
-.klyuch-wave { position: absolute; top: 33px; left: 62px; color: var(--muted); }
-.klyuch-num { position: absolute; top: 84px; left: 20px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 15px; letter-spacing: 0.12em; font-weight: 600; }
-.klyuch-valid { position: absolute; top: 118px; left: 20px; font-size: 7.5px; letter-spacing: 0.1em; color: var(--muted); text-transform: uppercase; }
-.klyuch-date { position: absolute; top: 128px; left: 20px; font-size: 11px; font-weight: 600; }
-.klyuch-name { position: absolute; top: 152px; left: 20px; right: 20px; font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.klyuch-strip { position: absolute; top: 22px; left: 0; right: 0; height: 30px; background: repeating-linear-gradient(45deg, var(--surface-2), var(--surface-2) 10px, var(--well) 10px, var(--well) 20px); }
-.klyuch-sign { position: absolute; top: 68px; left: 14px; right: 14px; min-height: 42px; padding: 6px 8px; background: var(--surface); border: 1px solid var(--border); border-radius: 4px; color: var(--text); font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 10.5px; line-height: 1.4; word-break: break-all; user-select: all; }
-.klyuch-copy { position: absolute; bottom: 10px; right: 12px; }
-.klyuch-hint { margin-top: 10px; text-align: center; color: var(--faint); font-size: 12px; }
-@media (prefers-reduced-motion: reduce) { .klyuch-inner { transition: none; } }
+   Переворот по наведению, а на касании — по нажатию (класс `key-flipped`). */
+.key { width: 100%; max-width: 300px; height: 190px; margin: 0 auto; perspective: 1000px; cursor: pointer; }
+.key-inner { position: relative; width: 100%; height: 100%; transition: transform 800ms; transform-style: preserve-3d; }
+.key:hover .key-inner, .key.key-flipped .key-inner, .key:focus-within .key-inner { transform: rotateY(180deg); }
+.key-front, .key-back { position: absolute; inset: 0; border-radius: 6px; background: var(--bg-sidebar); border: 1px solid var(--frame); box-shadow: var(--hard); backface-visibility: hidden; -webkit-backface-visibility: hidden; color: var(--text); }
+.key-back { transform: rotateY(180deg); }
+.key-head { position: absolute; top: 16px; right: 18px; font-size: 9px; letter-spacing: 0.2em; color: var(--muted); text-transform: uppercase; }
+.key-chip { position: absolute; top: 28px; left: 20px; width: 34px; height: 26px; border-radius: 4px; background: var(--star); border: 1px solid var(--frame); }
+.key-chip::before { content: ""; position: absolute; inset: 6px 5px; border: 1px solid var(--shade); border-radius: 3px; }
+.key-wave { position: absolute; top: 33px; left: 62px; color: var(--muted); }
+.key-num { position: absolute; top: 84px; left: 20px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 15px; letter-spacing: 0.12em; font-weight: 600; }
+.key-valid { position: absolute; top: 118px; left: 20px; font-size: 7.5px; letter-spacing: 0.1em; color: var(--muted); text-transform: uppercase; }
+.key-date { position: absolute; top: 128px; left: 20px; font-size: 11px; font-weight: 600; }
+.key-name { position: absolute; top: 152px; left: 20px; right: 20px; font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.key-strip { position: absolute; top: 22px; left: 0; right: 0; height: 30px; background: repeating-linear-gradient(45deg, var(--surface-2), var(--surface-2) 10px, var(--well) 10px, var(--well) 20px); }
+.key-sign { position: absolute; top: 68px; left: 14px; right: 14px; min-height: 42px; padding: 6px 8px; background: var(--surface); border: 1px solid var(--border); border-radius: 4px; color: var(--text); font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 10.5px; line-height: 1.4; word-break: break-all; user-select: all; }
+.key-copy { position: absolute; bottom: 10px; right: 12px; }
+.key-hint { margin-top: 10px; text-align: center; color: var(--faint); font-size: 12px; }
+@media (prefers-reduced-motion: reduce) { .key-inner { transition: none; } }
 
 
 /* === Глобус ===============================================================
    Командный экран: планета во всю площадь, поверх неё панели-стекло. Вид взят
    у OSIRIS и переведён на наши правила (docs/bloki/25-globus.md §2): цвета
    токенами, движение выключается, класс на каждое имя в разметке. */
-.globus {
+.globe {
   position: relative;
   display: flex;
   flex-direction: column;
@@ -3543,7 +3543,7 @@ html { scroll-behavior: smooth; }
   border-radius: 14px;
   overflow: hidden;
 }
-.globus::before {
+.globe::before {
   content: "";
   position: absolute;
   inset: 0;
@@ -3553,34 +3553,34 @@ html { scroll-behavior: smooth; }
   );
   opacity: 0.18;
 }
-.globus-shapka { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
-.globus-marka { display: flex; flex-direction: column; gap: 3px; }
-.globus-imya {
+.globe-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.globe-mark { display: flex; flex-direction: column; gap: 3px; }
+.globe-name {
   font-family: var(--globus-mono);
   font-size: 15px; font-weight: 700; letter-spacing: 0.42em; text-transform: uppercase;
   color: var(--globus-tekst);
 }
-.globus-podzagolovok {
+.globe-subtitle {
   font-family: var(--globus-mono);
   font-size: 8.5px; letter-spacing: 0.28em; text-transform: uppercase;
   color: var(--globus-zoloto);
 }
-.globus-svodka { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.globus-metka {
+.globe-summary { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.globe-label {
   font-family: var(--globus-mono);
   font-size: 8px; letter-spacing: 0.2em; text-transform: uppercase;
   color: var(--globus-tusklo);
 }
-.globus-znachenie {
+.globe-value {
   font-family: var(--globus-mono);
   font-size: 11px; font-weight: 600; color: var(--globus-zoloto);
   font-variant-numeric: tabular-nums;
 }
-.globus-pole {
+.globe-field {
   position: relative; flex: 1; min-height: 0;
   display: grid; grid-template-columns: 232px minmax(0, 1fr) 268px; gap: 12px;
 }
-.globus-panel {
+.globe-panel {
   display: flex; flex-direction: column; gap: 8px;
   padding: 12px 12px 14px;
   background: var(--globus-panel);
@@ -3589,19 +3589,19 @@ html { scroll-behavior: smooth; }
   overflow-y: auto;
   backdrop-filter: blur(18px);
 }
-.globus-panel::-webkit-scrollbar { width: 3px; }
-.globus-panel::-webkit-scrollbar-thumb { background: var(--globus-ramka-yarko); border-radius: 3px; }
-.globus-sleva { grid-column: 1; }
-.globus-sprava { grid-column: 3; }
-.globus-zagolovok {
+.globe-panel::-webkit-scrollbar { width: 3px; }
+.globe-panel::-webkit-scrollbar-thumb { background: var(--globus-ramka-yarko); border-radius: 3px; }
+.globe-left { grid-column: 1; }
+.globe-right { grid-column: 3; }
+.globe-heading {
   font-family: var(--globus-mono);
   font-size: 8px; letter-spacing: 0.24em; text-transform: uppercase;
   color: var(--globus-tusklo);
   padding-bottom: 6px;
   border-bottom: 1px solid var(--globus-ramka);
 }
-.globus-sloi { display: flex; flex-direction: column; gap: 1px; }
-.globus-sloy {
+.globe-layers { display: flex; flex-direction: column; gap: 1px; }
+.globe-layer {
   display: flex; align-items: center; gap: 8px;
   padding: 5px 6px;
   background: none; border: none; border-radius: 5px;
@@ -3610,63 +3610,63 @@ html { scroll-behavior: smooth; }
   font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase;
   color: var(--globus-tusklo);
 }
-.globus-sloy:hover { background: var(--globus-podsvet); color: var(--globus-tekst); }
-.globus-sloy.vklyuchen { color: var(--globus-tekst); }
-.globus-tumbler {
+.globe-layer:hover { background: var(--globus-podsvet); color: var(--globus-tekst); }
+.globe-layer.on { color: var(--globus-tekst); }
+.globe-toggle {
   position: relative; flex-shrink: 0;
   width: 22px; height: 11px; border-radius: 6px;
   background: var(--globus-podsvet);
   border: 1px solid var(--globus-ramka);
 }
-.globus-tumbler::after {
+.globe-toggle::after {
   content: ""; position: absolute; top: 1px; left: 1px;
   width: 7px; height: 7px; border-radius: 50%;
   background: var(--globus-tusklo);
   transition: left 0.2s ease, background 0.2s ease;
 }
-.globus-sloy.vklyuchen .globus-tumbler { border-color: var(--globus-zoloto); }
-.globus-sloy.vklyuchen .globus-tumbler::after { left: 12px; background: var(--globus-zoloto); }
-.globus-sloy-imya { flex: 1; min-width: 0; }
-.globus-sloy-schyot { font-variant-numeric: tabular-nums; color: var(--globus-zoloto); }
-.globus-strany { display: flex; flex-direction: column; gap: 4px; }
-.globus-strana {
+.globe-layer.on .globe-toggle { border-color: var(--globus-zoloto); }
+.globe-layer.on .globe-toggle::after { left: 12px; background: var(--globus-zoloto); }
+.globe-layer-name { flex: 1; min-width: 0; }
+.globe-layer-count { font-variant-numeric: tabular-nums; color: var(--globus-zoloto); }
+.globe-countries { display: flex; flex-direction: column; gap: 4px; }
+.globe-country {
   position: relative; display: flex; align-items: center; gap: 8px;
   padding: 4px 6px; border-radius: 4px; overflow: hidden;
   font-family: var(--globus-mono); font-size: 10px; color: var(--globus-tusklo);
 }
-.globus-kod { color: var(--globus-zoloto); letter-spacing: 0.1em; }
-.globus-strana-imya { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.globus-polosa {
+.globe-code { color: var(--globus-zoloto); letter-spacing: 0.1em; }
+.globe-country-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.globe-bar {
   position: absolute; left: 0; bottom: 0; height: 2px;
   background: var(--globus-zoloto); opacity: 0.45;
 }
-.globus-bez-mesta {
+.globe-no-place {
   font-family: var(--globus-mono); font-size: 9px; letter-spacing: 0.1em;
   color: var(--globus-tusklo); padding: 4px 6px;
 }
-.globus-holst { position: relative; grid-column: 2; min-width: 0; }
-.globus-canvas { display: block; width: 100%; height: 100%; cursor: grab; }
-.globus-canvas:active { cursor: grabbing; }
-.globus-ugol { position: absolute; width: 48px; height: 48px; pointer-events: none; opacity: 0.55; }
-.globus-ugol-lv { top: 0; left: 0; border-top: 1px solid var(--globus-zoloto); border-left: 1px solid var(--globus-zoloto); }
-.globus-ugol-pv { top: 0; right: 0; border-top: 1px solid var(--globus-zoloto); border-right: 1px solid var(--globus-zoloto); }
-.globus-ugol-ln { bottom: 0; left: 0; border-bottom: 1px solid var(--globus-zoloto); border-left: 1px solid var(--globus-zoloto); }
-.globus-ugol-pn { bottom: 0; right: 0; border-bottom: 1px solid var(--globus-zoloto); border-right: 1px solid var(--globus-zoloto); }
-.globus-kartochka { display: flex; flex-direction: column; gap: 6px; }
-.globus-kartochka-imya { font-family: var(--sans); font-size: 14px; font-weight: 600; color: var(--globus-tekst); }
-.globus-kartochka-podpis {
+.globe-stage { position: relative; grid-column: 2; min-width: 0; }
+.globe-canvas { display: block; width: 100%; height: 100%; cursor: grab; }
+.globe-canvas:active { cursor: grabbing; }
+.globe-corner { position: absolute; width: 48px; height: 48px; pointer-events: none; opacity: 0.55; }
+.globe-corner-lv { top: 0; left: 0; border-top: 1px solid var(--globus-zoloto); border-left: 1px solid var(--globus-zoloto); }
+.globe-corner-pv { top: 0; right: 0; border-top: 1px solid var(--globus-zoloto); border-right: 1px solid var(--globus-zoloto); }
+.globe-corner-ln { bottom: 0; left: 0; border-bottom: 1px solid var(--globus-zoloto); border-left: 1px solid var(--globus-zoloto); }
+.globe-corner-pn { bottom: 0; right: 0; border-bottom: 1px solid var(--globus-zoloto); border-right: 1px solid var(--globus-zoloto); }
+.globe-card { display: flex; flex-direction: column; gap: 6px; }
+.globe-card-name { font-family: var(--sans); font-size: 14px; font-weight: 600; color: var(--globus-tekst); }
+.globe-card-caption {
   font-family: var(--globus-mono); font-size: 10px; letter-spacing: 0.12em;
   text-transform: uppercase; color: var(--globus-cian);
 }
-.globus-para { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
-.globus-pusto {
+.globe-pair { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.globe-empty {
   font-family: var(--globus-mono); font-size: 9.5px; letter-spacing: 0.08em;
   color: var(--globus-tusklo); line-height: 1.55;
 }
-.globus-podrobno { display: flex; flex-direction: column; gap: 8px; }
-.globus-hod { height: 4px; border-radius: 2px; background: var(--globus-podsvet); overflow: hidden; }
-.globus-hod-polosa { display: block; height: 100%; background: var(--globus-zoloto); transition: width 0.4s ease; }
-.globus-knopka {
+.globe-detail { display: flex; flex-direction: column; gap: 8px; }
+.globe-progress { height: 4px; border-radius: 2px; background: var(--globus-podsvet); overflow: hidden; }
+.globe-progress-bar { display: block; height: 100%; background: var(--globus-zoloto); transition: width 0.4s ease; }
+.globe-btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 6px;
   padding: 7px 12px; border-radius: 6px;
   background: var(--globus-podsvet);
@@ -3674,17 +3674,17 @@ html { scroll-behavior: smooth; }
   color: var(--globus-zoloto); cursor: pointer; text-decoration: none;
   font-family: var(--globus-mono); font-size: 9.5px; letter-spacing: 0.16em; text-transform: uppercase;
 }
-.globus-knopka:hover { background: var(--globus-ramka); color: var(--globus-zoloto-svet); }
-.globus-knopka:disabled { opacity: 0.5; cursor: default; }
+.globe-btn:hover { background: var(--globus-ramka); color: var(--globus-zoloto-svet); }
+.globe-btn:disabled { opacity: 0.5; cursor: default; }
 /* Тумблер гостей в настройках доски: отбит от полей сверху линией, чтобы не
    читался как продолжение адресных строк. */
-.doska-geo { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
-.doska-geo-podskazka { color: var(--faint); font-size: 11.5px; margin-top: 8px; line-height: 1.5; }
+.board-geo { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+.board-geo-hint { color: var(--faint); font-size: 11.5px; margin-top: 8px; line-height: 1.5; }
 /* Полоса хода докачки в виджете сводки: та же, что на экране глобуса, но в
    токенах обычной темы — виджет живёт среди светлых карточек. */
-.karta-hod { height: 4px; border-radius: 2px; background: var(--tint-neutral); overflow: hidden; margin: 8px 0; }
-.karta-hod-polosa { display: block; height: 100%; background: var(--accent); transition: width 0.4s ease; }
-.globus-planka {
+.map-progress { height: 4px; border-radius: 2px; background: var(--tint-neutral); overflow: hidden; margin: 8px 0; }
+.map-progress-bar { display: block; height: 100%; background: var(--accent); transition: width 0.4s ease; }
+.globe-plate {
   display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
   padding: 8px 12px;
   background: var(--globus-panel);
@@ -3692,26 +3692,26 @@ html { scroll-behavior: smooth; }
   border-radius: 10px;
 }
 @media (max-width: 1100px) {
-  .globus-pole { grid-template-columns: minmax(0, 1fr); grid-auto-rows: min-content; }
-  .globus-sleva, .globus-sprava, .globus-holst { grid-column: 1; }
-  .globus-holst { min-height: 420px; }
-  .globus { height: auto; }
+  .globe-field { grid-template-columns: minmax(0, 1fr); grid-auto-rows: min-content; }
+  .globe-left, .globe-right, .globe-stage { grid-column: 1; }
+  .globe-stage { min-height: 420px; }
+  .globe { height: auto; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .globus-tumbler::after { transition: none; }
-  .globus-hod-polosa { transition: none; }
-  .karta-hod-polosa { transition: none; }
+  .globe-toggle::after { transition: none; }
+  .globe-progress-bar { transition: none; }
+  .map-progress-bar { transition: none; }
 }
 
 /* --- Карточка ----------------------------------------------------------- */
-.otchyot {
+.report {
   background: var(--otchyot-plita);
   border: 1px solid var(--frame);
   border-radius: 18px;
   padding: 24px 24px 10px;
   color: var(--on-media);
 }
-.otchyot-titul {
+.report-title {
   margin: 0 0 18px;
   font-size: 27px;
   font-weight: 800;
@@ -3721,9 +3721,9 @@ html { scroll-behavior: smooth; }
 }
 
 /* --- Тепловая карта: восемь клеток в ряд -------------------------------- */
-.otchyot-setka { display: flex; flex-direction: column; gap: 6px; }
-.otchyot-setka-ryad { display: grid; grid-template-columns: repeat(8, 1fr); gap: 6px; }
-.otchyot-kletka {
+.report-grid { display: flex; flex-direction: column; gap: 6px; }
+.report-grid-row { display: grid; grid-template-columns: repeat(8, 1fr); gap: 6px; }
+.report-cell {
   position: relative;          /* всплывающее поле держится за клетку */
   display: flex;
   align-items: center;
@@ -3744,21 +3744,21 @@ html { scroll-behavior: smooth; }
      тёмное на тёмном — 2:1, ниже нашего порога; см. README пакета. */
   color: var(--on-media);
 }
-.otchyot-kletka-1 { background: var(--otchyot-shkala-1); }
-.otchyot-kletka-2 { background: var(--otchyot-shkala-2); }
-.otchyot-kletka-3 { background: var(--otchyot-shkala-3); }
-.otchyot-kletka-4 { background: var(--otchyot-shkala-4); }
-.otchyot-kletka-5 { background: var(--otchyot-shkala-5); }
-.otchyot-kletka-6 { background: var(--otchyot-shkala-6); }
-.otchyot-kletka-7 { background: var(--otchyot-shkala-7); color: var(--otchyot-chernila); }
-.otchyot-kletka-8 { background: var(--otchyot-shkala-8); color: var(--otchyot-chernila); }
-.otchyot-kletka-9 { background: var(--otchyot-shkala-9); color: var(--otchyot-chernila); }
-.otchyot-kletka-10 { background: var(--otchyot-shkala-10); color: var(--otchyot-chernila); }
-.otchyot-kletka-11 { background: var(--otchyot-shkala-11); color: var(--otchyot-chernila); }
-.otchyot-kletka-12 { background: var(--otchyot-shkala-12); color: var(--otchyot-chernila); }
+.report-cell-1 { background: var(--otchyot-shkala-1); }
+.report-cell-2 { background: var(--otchyot-shkala-2); }
+.report-cell-3 { background: var(--otchyot-shkala-3); }
+.report-cell-4 { background: var(--otchyot-shkala-4); }
+.report-cell-5 { background: var(--otchyot-shkala-5); }
+.report-cell-6 { background: var(--otchyot-shkala-6); }
+.report-cell-7 { background: var(--otchyot-shkala-7); color: var(--otchyot-chernila); }
+.report-cell-8 { background: var(--otchyot-shkala-8); color: var(--otchyot-chernila); }
+.report-cell-9 { background: var(--otchyot-shkala-9); color: var(--otchyot-chernila); }
+.report-cell-10 { background: var(--otchyot-shkala-10); color: var(--otchyot-chernila); }
+.report-cell-11 { background: var(--otchyot-shkala-11); color: var(--otchyot-chernila); }
+.report-cell-12 { background: var(--otchyot-shkala-12); color: var(--otchyot-chernila); }
 /* Наведённая клетка поднимается над соседями: подсказка лежит внутри неё, а
    соседние клетки рисуются позже и накрывали её собой. */
-.otchyot-kletka-navedena { z-index: 7; }
+.report-cell-hovered { z-index: 7; }
 
 /* --- Всплывающее поле дня ------------------------------------------------
    В разметке живёт только у наведённой клетки: показ — состояние React, а не
@@ -3766,7 +3766,7 @@ html { scroll-behavior: smooth; }
    правил `:hover` здесь нет — поле видно, если оно есть.
    Место: по умолчанию над клеткой и по центру; три поправки для краёв, иначе
    поле уезжает за карточку. */
-.otchyot-vsplyv {
+.report-popover {
   position: absolute;
   z-index: 6;
   left: 50%;
@@ -3786,10 +3786,10 @@ html { scroll-behavior: smooth; }
   pointer-events: none;        /* поле не должно ловить курсор у себя же */
   animation: otchyot-vhod-vsplyv 130ms ease-out both;
 }
-.otchyot-vsplyv-vniz { top: calc(100% + 8px); bottom: auto; }
-.otchyot-vsplyv-vlevo { left: 0; transform: none; }
-.otchyot-vsplyv-vpravo { left: auto; right: 0; transform: none; }
-.otchyot-vsplyv-shapka {
+.report-popover-down { top: calc(100% + 8px); bottom: auto; }
+.report-popover-left { left: 0; transform: none; }
+.report-popover-right { left: auto; right: 0; transform: none; }
+.report-popover-header {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
@@ -3799,9 +3799,9 @@ html { scroll-behavior: smooth; }
   font-size: 11.5px;
   color: var(--on-media-dim);
 }
-.otchyot-vsplyv-data { font-weight: 700; letter-spacing: 0.04em; }
-.otchyot-vsplyv-zakazy { display: flex; flex-direction: column; gap: 5px; }
-.otchyot-vsplyv-zakaz {
+.report-popover-data { font-weight: 700; letter-spacing: 0.04em; }
+.report-popover-orders { display: flex; flex-direction: column; gap: 5px; }
+.report-popover-order {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
@@ -3811,8 +3811,8 @@ html { scroll-behavior: smooth; }
   font-size: 12px;
   color: var(--on-media);
 }
-.otchyot-vsplyv-eshchyo { margin-top: 6px; font-size: 11.5px; color: var(--on-media-dim); }
-.otchyot-vsplyv-itogo {
+.report-popover-more { margin-top: 6px; font-size: 11.5px; color: var(--on-media-dim); }
+.report-popover-total {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
@@ -3821,14 +3821,14 @@ html { scroll-behavior: smooth; }
   padding-top: 8px;
   border-top: 1px solid var(--on-media-line);
 }
-.otchyot-vsplyv-itogo-imya {
+.report-popover-total-name {
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--on-media-dim);
 }
-.otchyot-vsplyv-itogo-summa {
+.report-popover-total-sum {
   font-family: var(--mono);
   font-size: 13px;
   font-weight: 700;
@@ -3836,28 +3836,28 @@ html { scroll-behavior: smooth; }
 }
 
 /* --- Точечная матрица по месяцам ---------------------------------------- */
-.otchyot-mesyatsy { display: flex; flex-direction: column; gap: 16px; }
-.otchyot-mesyats-shapka {
+.report-months { display: flex; flex-direction: column; gap: 16px; }
+.report-month-header {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
   gap: 12px;
   margin-bottom: 8px;
 }
-.otchyot-mesyats-imya {
+.report-month-name {
   font-family: var(--mono);
   font-size: 12.5px;
   font-weight: 700;
   letter-spacing: 0.04em;
   color: var(--on-media);
 }
-.otchyot-mesyats-summa {
+.report-month-sum {
   font-family: var(--mono);
   font-size: 14px;
   font-weight: 600;
   color: var(--on-media);
 }
-.otchyot-matritsa {
+.report-matrix {
   display: flex;
   flex-direction: column;
   gap: 5px;
@@ -3872,12 +3872,12 @@ html { scroll-behavior: smooth; }
 }
 /* Число столбцов = число дней в месяце; приезжает из разметки как
    `style={{ "--stolbtsov": dni.length }}` — величина, а не цвет. */
-.otchyot-matritsa-ryad {
+.report-matrix-row {
   display: grid;
   grid-template-columns: repeat(var(--stolbtsov, 31), 1fr);
   gap: 4px;
 }
-.otchyot-tochka {
+.report-dot {
   width: 6px;
   height: 6px;
   border-radius: 50%;
@@ -3886,14 +3886,14 @@ html { scroll-behavior: smooth; }
   animation: otchyot-vhod-tochka 300ms ease-out both;
   animation-delay: var(--zaderzhka, 0ms);
 }
-.otchyot-tochka-srednyaya { background: var(--otchyot-tochka-srednyaya); }
-.otchyot-tochka-yarkaya {
+.report-dot-middle { background: var(--otchyot-tochka-srednyaya); }
+.report-dot-bright {
   background: var(--otchyot-tochka-yarkaya);
   box-shadow: 0 0 7px var(--otchyot-tochka-oreol);
 }
 
 /* --- Два показателя ------------------------------------------------------ */
-.otchyot-kpi {
+.report-kpi {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 0 22px;
@@ -3901,7 +3901,7 @@ html { scroll-behavior: smooth; }
   animation: otchyot-vhod-stroka 420ms ease-out both;
   animation-delay: var(--zaderzhka, 0ms);
 }
-.otchyot-kpi-imya {
+.report-kpi-name {
   display: flex;
   align-items: center;
   gap: 7px;
@@ -3910,7 +3910,7 @@ html { scroll-behavior: smooth; }
   font-weight: 600;
   color: var(--on-media);
 }
-.otchyot-kpi-znachenie {
+.report-kpi-value {
   font-family: var(--mono);
   font-size: 30px;
   font-weight: 700;
@@ -3919,24 +3919,24 @@ html { scroll-behavior: smooth; }
   color: var(--on-media);
   font-variant-numeric: tabular-nums;
 }
-.otchyot-kpi-podpis { display: flex; align-items: baseline; gap: 8px; margin-top: 9px; }
-.otchyot-rost {
+.report-kpi-caption { display: flex; align-items: baseline; gap: 8px; margin-top: 9px; }
+.report-growth {
   font-family: var(--mono);
   font-size: 12.5px;
   font-weight: 700;
   color: var(--otchyot-rost);
 }
-.otchyot-bylo { font-size: 12.5px; color: var(--on-media-dim); }
+.report-was { font-size: 12.5px; color: var(--on-media-dim); }
 /* Спад. У образца его нет — там только стрелка вверх; на живых данных месяц
    ниже прошлого случается, и красить его зелёным было бы враньём. */
-.otchyot-spad { color: var(--otchyot-spad); }
+.report-drop { color: var(--otchyot-spad); }
 /* Пока данных нет: место карточки занято, а не схлопнуто — иначе сводка
    прыгает под курсором, пока отчёт считается. */
-.otchyot-zhdyom { display: flex; justify-content: center; padding: 48px 0; }
+.report-waiting { display: flex; justify-content: center; padding: 48px 0; }
 
 /* --- Города ------------------------------------------------------------- */
-.otchyot-goroda { display: flex; flex-direction: column; margin-top: 20px; }
-.otchyot-gorod {
+.report-cities { display: flex; flex-direction: column; margin-top: 20px; }
+.report-city {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -3948,7 +3948,7 @@ html { scroll-behavior: smooth; }
   animation: otchyot-vhod-stroka 420ms ease-out both;
   animation-delay: var(--zaderzhka, 0ms);
 }
-.otchyot-gorod-summa {
+.report-city-sum {
   font-family: var(--mono);
   font-size: 14px;
   font-weight: 500;
@@ -3978,28 +3978,28 @@ html { scroll-behavior: smooth; }
   to { opacity: 1; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .otchyot-kletka,
-  .otchyot-tochka,
-  .otchyot-kpi,
-  .otchyot-gorod,
-  .otchyot-vsplyv { animation: none; }
+  .report-cell,
+  .report-dot,
+  .report-kpi,
+  .report-city,
+  .report-popover { animation: none; }
 }
 
 /* Узкая колонка на телефоне: клетки мельче, два показателя друг под другом. */
 @media (max-width: 420px) {
-  .otchyot { padding: 18px 18px 6px; }
-  .otchyot-titul { font-size: 23px; }
-  .otchyot-kletka { height: 29px; font-size: 12px; border-radius: 8px; }
-  .otchyot-kpi { grid-template-columns: 1fr; gap: 18px; }
-  .otchyot-vsplyv { min-width: 168px; }
+  .report { padding: 18px 18px 6px; }
+  .report-title { font-size: 23px; }
+  .report-cell { height: 29px; font-size: 12px; border-radius: 8px; }
+  .report-kpi { grid-template-columns: 1fr; gap: 18px; }
+  .report-popover { min-width: 168px; }
 }
 
 /* ============================================================================
    Блок «Ключи»: хранилище кодов двухфакторной авторизации.
 
    Перевод макета `shablony/klyuchi-2fa.html` (порядок перевода — docs/18).
-   Имена классов получили приставку `kl-`: в файле уже живут `.klyuch` (ключ
-   сайта банковской картой) и `.papka` (папка с листами), и одноимённые правила
+   Имена классов получили приставку `kl-`: в файле уже живут `.key` (ключ
+   сайта банковской картой) и `.folder` (папка с листами), и одноимённые правила
    молча сломали бы оба чужих экрана.
 
    Что взято из готового, а не написано заново: кнопки, поля, подписи, чипы,
@@ -4009,21 +4009,21 @@ html { scroll-behavior: smooth; }
    Разбор — docs/bloki/27-klyuchi.md.
    ========================================================================== */
 
-.kl-shapka {
+.keys-header {
   display: flex; align-items: flex-end; gap: 20px; flex-wrap: wrap;
   padding-bottom: 16px; margin-bottom: 20px;
   border-bottom: 1px solid var(--line);
 }
-.kl-shapka-tekst { flex: 1 1 260px; min-width: 0; }
-.kl-titul { margin: 0; font-size: 26px; font-weight: 800; letter-spacing: -0.02em; line-height: 1.1; }
+.keys-header-text { flex: 1 1 260px; min-width: 0; }
+.keys-title { margin: 0; font-size: 26px; font-weight: 800; letter-spacing: -0.02em; line-height: 1.1; }
 
 /* Строка состояния — не серый текст, а разборные части: сколько всего и
    сколько просит внимания. Второе — чип цвета предупреждения, потому что это
    единственное в строке, по чему надо что-то сделать. Разделителя между
    частями нет: точка отдельным элементом повисала в конце первой строки. */
-.kl-svodka { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
-.kl-svodka-chislo { color: var(--muted); font-size: 12.5px; font-variant-numeric: tabular-nums; }
-.kl-svodka-trevoga {
+.keys-summary { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+.keys-summary-number { color: var(--muted); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.keys-summary-alarm {
   display: inline-flex; align-items: center; gap: 5px; height: 21px; padding: 0 8px;
   border: 0; border-radius: 3px; cursor: pointer;
   background: var(--tint-warning); color: var(--warning);
@@ -4031,14 +4031,14 @@ html { scroll-behavior: smooth; }
   letter-spacing: 0.06em; text-transform: uppercase;
   transition: transform 120ms, box-shadow 120ms;
 }
-.kl-svodka-trevoga:hover { transform: translate(-1px, -1px); box-shadow: 2px 2px 0 var(--warning); }
+.keys-summary-alarm:hover { transform: translate(-1px, -1px); box-shadow: 2px 2px 0 var(--warning); }
 
-.kl-shapka-knopki { display: flex; flex: 1 1 auto; justify-content: flex-end; gap: 8px; align-items: center; flex-wrap: wrap; }
+.keys-header-btns { display: flex; flex: 1 1 auto; justify-content: flex-end; gap: 8px; align-items: center; flex-wrap: wrap; }
 
 /* Поиск: в спокойном виде колодец, при наборе рамка цвета ссылки. Ширина
    растущая, а не зашитая: при жёстком числе подсказка обрезалась на последнем
    слоге, и новое число пришлось бы угадывать при любой правке шрифта. */
-.kl-poisk {
+.keys-search {
   display: flex; align-items: center; gap: 8px;
   flex: 1 1 244px; max-width: 340px;
   height: 34px; padding: 0 10px 0 11px;
@@ -4046,32 +4046,32 @@ html { scroll-behavior: smooth; }
   color: var(--faint); min-width: 0;
   transition: border-color 150ms, background 150ms;
 }
-.kl-poisk:focus-within { border-color: var(--accent); background: var(--surface-2); }
-.kl-poisk input {
+.keys-search:focus-within { border-color: var(--accent); background: var(--surface-2); }
+.keys-search input {
   flex: 1; min-width: 0; border: 0; background: none; color: var(--text);
   font: inherit; outline: none;
 }
 
-.kl-telo { display: grid; grid-template-columns: 224px minmax(0, 1fr); gap: 20px; align-items: start; }
+.keys-body { display: grid; grid-template-columns: 224px minmax(0, 1fr); gap: 20px; align-items: start; }
 
 /* --- категории ----------------------------------------------------------- */
 
-.kl-papki {
+.keys-folders {
   position: sticky; top: 20px;
   background: var(--surface); border: 1px solid var(--frame); border-radius: 6px;
   padding: 7px;
 }
-.kl-papki-zagolovok {
+.keys-folders-heading {
   display: flex; align-items: center; justify-content: space-between; gap: 8px;
   padding: 5px 8px 9px; color: var(--faint);
   font-size: 10.5px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase;
 }
-.kl-papki-spisok { display: flex; flex-direction: column; gap: 1px; }
+.keys-folders-list { display: flex; flex-direction: column; gap: 1px; }
 
 /* Выбранная категория помечена не только фоном: слева выезжает засечка. Фон
    surface-2 в тёмной теме отличается от карточки на два процента яркости —
    одним им выбор не читается. */
-.kl-papka {
+.keys-folder {
   position: relative;
   display: flex; align-items: center; gap: 9px; width: 100%;
   padding: 8px 9px 8px 10px; border: 0; border-radius: 4px;
@@ -4079,54 +4079,55 @@ html { scroll-behavior: smooth; }
   text-align: left; cursor: pointer;
   transition: background 140ms, color 140ms;
 }
-.kl-papka::before {
+.keys-folder::before {
   content: ""; position: absolute; left: 0; top: 7px; bottom: 7px; width: 2px;
   border-radius: 0 2px 2px 0; background: var(--brand);
   transform: scaleY(0); transform-origin: center;
   transition: transform 180ms cubic-bezier(0.34, 1.56, 0.64, 1);
 }
-.kl-papka:hover { background: var(--surface-2); color: var(--text); }
-.kl-papka.kl-vybrana { background: var(--surface-2); color: var(--text); font-weight: 600; }
-.kl-papka.kl-vybrana::before { transform: scaleY(1); }
-.kl-papka-imya { flex: 1; min-width: 0; }
-.kl-papka-schyot {
+.keys-folder:hover { background: var(--surface-2); color: var(--text); }
+.keys-folder.keys-selected { background: var(--surface-2); color: var(--text); font-weight: 600; }
+.keys-folder.keys-selected::before { transform: scaleY(1); }
+.keys-folder-name { flex: 1; min-width: 0; }
+.keys-folder-count {
   flex: none; color: var(--faint); font-size: 11.5px; font-variant-numeric: tabular-nums;
   transition: color 140ms;
 }
-.kl-papka:hover .kl-papka-schyot { color: var(--muted); }
-.kl-papka-znak { flex: none; opacity: 0.8; transition: opacity 140ms, color 140ms; }
-.kl-papka:hover .kl-papka-znak, .kl-papka.kl-vybrana .kl-papka-znak { opacity: 1; }
+.keys-folder:hover .keys-folder-count { color: var(--muted); }
+.keys-folder-icon { flex: none; opacity: 0.8; transition: opacity 140ms, color 140ms; }
+.keys-folder:hover .keys-folder-icon, .keys-folder.keys-selected .keys-folder-icon { opacity: 1; }
 
 /* Категория, куда доступа нет: видно, что она есть и сколько в ней ключей, —
    но не что внутри. Спрятать её целиком значило бы, что человек попросит
    завести второй такой же. Замок под курсором подсвечивается: это ответ на
    вопрос «почему не открывается». */
-.kl-papka.kl-zakryta { color: var(--faint); cursor: not-allowed; }
-.kl-papka.kl-zakryta:hover { background: var(--klyuch-zamok); color: var(--faint); }
-.kl-papka.kl-zakryta:hover .kl-papka-znak { color: var(--warning); opacity: 1; }
+.keys-folder.keys-closed { color: var(--faint); cursor: not-allowed; }
+.keys-folder.keys-closed:hover { background: var(--klyuch-zamok); color: var(--faint); }
+.keys-folder.keys-closed:hover .keys-folder-icon { color: var(--warning); opacity: 1; }
 /* Кнопка «убрать» стоит РЯДОМ с полкой, а не внутри неё: кнопка внутри
    кнопки разметкой не бывает. Появляется по наведению и по табу — до тех пор
    на её месте счётчик, а строка узкая и вторая постоянная кнопка съела бы
    половину имени. */
-.kl-papka-ryad { position: relative; display: flex; align-items: center; }
-.kl-papka-ryad > .kl-papka { flex: 1; min-width: 0; }
-.kl-papka-ubrat {
-  position: absolute; right: 4px;
+.keys-folder-row { position: relative; display: flex; align-items: center; }
+.keys-folder-row > .keys-folder { flex: 1; min-width: 0; }
+.keys-folder-tools { position: absolute; right: 4px; display: flex; align-items: center; gap: 2px; }
+.keys-folder-act {
   width: 22px; height: 22px; opacity: 0; color: var(--faint);
   transition: opacity 140ms, color 140ms;
 }
-.kl-papka-ryad:hover .kl-papka-ubrat,
-.kl-papka-ubrat:focus-visible { opacity: 1; }
-.kl-papka-ubrat:hover { color: var(--danger); }
-.kl-papka-ryad:hover .kl-papka-schyot { opacity: 0; }
+.keys-folder-row:hover .keys-folder-act,
+.keys-folder-act:focus-visible { opacity: 1; }
+.keys-folder-share:hover { color: var(--accent); }
+.keys-folder-remove:hover { color: var(--danger); }
+.keys-folder-row:hover .keys-folder-count { opacity: 0; }
 
-.kl-papki-nizhe { margin-top: 7px; padding-top: 7px; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 1px; }
+.keys-folders-below { margin-top: 7px; padding-top: 7px; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 1px; }
 
 /* --- карточка ключа ------------------------------------------------------ */
 
-.kl-setka { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
+.keys-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
 
-.kl-kartochka {
+.keys-card {
   position: relative;
   display: flex; flex-direction: column; gap: 11px;
   padding: 14px 14px 12px;
@@ -4135,19 +4136,19 @@ html { scroll-behavior: smooth; }
   animation: kl-vhod 320ms cubic-bezier(0.22, 1, 0.36, 1) both;
   animation-delay: calc(var(--n, 0) * 55ms);
 }
-.kl-kartochka:hover, .kl-kartochka:focus-within { box-shadow: var(--hard); transform: translate(-2px, -2px); }
+.keys-card:hover, .keys-card:focus-within { box-shadow: var(--hard); transform: translate(-2px, -2px); }
 @keyframes kl-vhod {
   from { opacity: 0; transform: translateY(10px); }
   to { opacity: 1; transform: none; }
 }
 
-.kl-verh { display: flex; align-items: flex-start; gap: 11px; }
+.keys-top { display: flex; align-items: flex-start; gap: 11px; }
 
 /* Знак сервиса — плитка с рамкой, а не мягкое пятно: рамка ставит её в один
    строй с карточкой и полем. Внутри либо фирменный значок из вшитого набора,
    либо две буквы названия — набора на все сервисы мира не существует
    (`core/services/znaki_service.py`). */
-.kl-znak {
+.keys-icon {
   flex: none; width: 36px; height: 36px; border-radius: 5px;
   display: grid; place-items: center;
   background: var(--tint-accent); color: var(--accent);
@@ -4155,35 +4156,35 @@ html { scroll-behavior: smooth; }
   font-size: 13.5px; font-weight: 800; letter-spacing: 0.02em;
   transition: transform 200ms cubic-bezier(0.34, 1.56, 0.64, 1);
 }
-.kl-kartochka:hover .kl-znak { transform: rotate(-3deg) scale(1.06); }
+.keys-card:hover .keys-icon { transform: rotate(-3deg) scale(1.06); }
 /* Значок красится МАСКОЙ, а не вставляется картинкой. Внутри `<img>` цвет
    `currentColor` берётся от самой картинки, а не от плитки: фирменный чёрный
    Notion стал бы дырой на тёмной плите, а белый — на светлой. Маска же красится
    цветом плитки и потому верна в обеих темах. */
-.kl-znak-kartinka {
+.keys-icon-image {
   width: 19px; height: 19px; display: block; background: currentColor;
   -webkit-mask: var(--znak) center / contain no-repeat;
   mask: var(--znak) center / contain no-repeat;
 }
-.kl-znak-brand { background: var(--tint-brand); color: var(--brand); }
-.kl-znak-violet { background: var(--tint-violet); color: var(--violet); }
-.kl-znak-teal { background: var(--tint-teal); color: var(--teal); }
-.kl-znak-success { background: var(--tint-success); color: var(--success); }
+.keys-icon-brand { background: var(--tint-brand); color: var(--brand); }
+.keys-icon-violet { background: var(--tint-violet); color: var(--violet); }
+.keys-icon-teal { background: var(--tint-teal); color: var(--teal); }
+.keys-icon-success { background: var(--tint-success); color: var(--success); }
 
-.kl-imena { flex: 1; min-width: 0; }
-.kl-imya { font-size: 14px; font-weight: 600; line-height: 1.25; letter-spacing: -0.005em; }
-.kl-uchyotka { margin-top: 3px; color: var(--faint); font-size: 11.5px; font-family: var(--mono); }
+.keys-names { flex: 1; min-width: 0; }
+.keys-name { font-size: 14px; font-weight: 600; line-height: 1.25; letter-spacing: -0.005em; }
+.keys-account { margin-top: 3px; color: var(--faint); font-size: 11.5px; font-family: var(--mono); }
 
 /* Скрыто до наведения только ДЕЙСТВИЕ, никогда содержимое (docs/18). Пока
    карточка спокойна, троеточие не спорит с названием; курсор или таб его
    достают. */
-.kl-menyu {
+.keys-menu {
   flex: none; opacity: 0; color: var(--muted);
   transition: opacity 150ms, color 150ms;
 }
-.kl-kartochka:hover .kl-menyu,
-.kl-kartochka:focus-within .kl-menyu,
-.kl-menyu:focus-visible { opacity: 1; }
+.keys-card:hover .keys-menu,
+.keys-card:focus-within .keys-menu,
+.keys-menu:focus-visible { opacity: 1; }
 
 /* --- сейф с кодом --------------------------------------------------------
    Углубление: тёмная плита, тень внутрь по низу, блик по верхней кромке. Два
@@ -4191,31 +4192,31 @@ html { scroll-behavior: smooth; }
    кольцо, «копировать»); высота одна, поэтому карточка не прыгает.
    Без `overflow: hidden`: плашка «скопировано» стоит выше кнопки, и обрезка
    съедала ей половину. */
-.kl-seyf {
+.keys-safe {
   position: relative;
   display: flex; align-items: center; gap: 12px;
   min-height: 64px; padding: 10px 11px;
   border-radius: 5px; background: var(--klyuch-seyf);
   box-shadow: inset 0 1px 0 var(--klyuch-seyf-kray), inset 0 -10px 18px -12px var(--klyuch-seyf-dno);
 }
-.kl-cifry {
+.keys-digits {
   flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 2px;
   font-family: var(--mono); font-size: 27px; font-weight: 700; line-height: 1;
   color: var(--klyuch-tsifra); font-variant-numeric: tabular-nums;
 }
-/* Цифры приезжают по одной — приём `.zagruzka`. Пробел после половины кода
+/* Цифры приезжают по одной — приём `.loading`. Пробел после половины кода
    отбивает триплеты: шесть цифр подряд читаются хуже. */
-.kl-cifra {
+.keys-digit {
   display: inline-block; min-width: 0.62em; text-align: center;
   animation: kl-cifra-vhod 300ms cubic-bezier(0.22, 1, 0.36, 1) both;
   animation-delay: calc(var(--i, 0) * 45ms);
 }
-.kl-probel { display: inline-block; width: 0.42em; }
+.keys-space { display: inline-block; width: 0.42em; }
 @keyframes kl-cifra-vhod {
   from { opacity: 0; filter: blur(6px); transform: translateY(4px); }
   to { opacity: 1; filter: none; transform: none; }
 }
-.kl-tochki {
+.keys-dots {
   flex: 1; min-width: 0;
   font-family: var(--mono); font-size: 27px; font-weight: 700; line-height: 1;
   letter-spacing: 0.08em; color: var(--klyuch-tochka);
@@ -4225,7 +4226,7 @@ html { scroll-behavior: smooth; }
 /* Кольцо обратного отсчёта. Доля приезжает как `--dolya` — величина, а не
    цвет; цвет ступенями меняют классы. Тонкая засечка сверху отмечает начало
    круга, иначе на полном кольце не видно, откуда он идёт. */
-.kl-koltso {
+.keys-ring {
   position: relative; flex: none; width: 42px; height: 42px; border-radius: 50%;
   background: conic-gradient(
     var(--kl-koltso-tsvet, var(--klyuch-koltso)) calc(var(--dolya, 1) * 360deg),
@@ -4234,22 +4235,22 @@ html { scroll-behavior: smooth; }
   display: grid; place-items: center;
   transition: background 400ms linear;
 }
-.kl-koltso::before {
+.keys-ring::before {
   content: ""; position: absolute; top: -1px; left: 50%; width: 1px; height: 5px;
   margin-left: -0.5px; background: var(--klyuch-koltso-pusto);
 }
-.kl-koltso::after {
+.keys-ring::after {
   content: ""; position: absolute; inset: 3px; border-radius: 50%;
   background: var(--klyuch-seyf);
 }
-.kl-koltso-chislo {
+.keys-ring-number {
   position: relative; z-index: 1;
   font-family: var(--mono); font-size: 12.5px; font-weight: 700;
   color: var(--kl-koltso-tsvet, var(--klyuch-koltso));
   font-variant-numeric: tabular-nums;
 }
-.kl-koltso.kl-skoro { --kl-koltso-tsvet: var(--klyuch-koltso-skoro); }
-.kl-koltso.kl-konets { --kl-koltso-tsvet: var(--klyuch-koltso-konets); animation: kl-koltso-puls 1s ease-in-out infinite; }
+.keys-ring.keys-soon { --kl-koltso-tsvet: var(--klyuch-koltso-skoro); }
+.keys-ring.keys-end { --kl-koltso-tsvet: var(--klyuch-koltso-konets); animation: kl-koltso-puls 1s ease-in-out infinite; }
 @keyframes kl-koltso-puls { 50% { transform: scale(1.07); } }
 
 /* Кнопка внутри сейфа: та же плита, светлеет по наведению. Обычная `.btn` с
@@ -4258,7 +4259,7 @@ html { scroll-behavior: smooth; }
    светлых полупрозрачных, а НЕ из темовых. Плита чёрная в обеих темах, и
    `--tint-neutral` со `--text` в светлой давали тёмное на чёрном: кнопка
    «Показать» пропадала (найдено живым осмотром 07.09.2026). */
-.kl-seyf-knopka {
+.keys-safe-btn {
   flex: none; display: inline-flex; align-items: center; gap: 6px;
   height: 28px; padding: 0 10px; border-radius: 4px;
   background: var(--klyuch-knopka); border: 1px solid transparent; color: var(--on-media);
@@ -4266,14 +4267,17 @@ html { scroll-behavior: smooth; }
   white-space: nowrap;
   transition: background 150ms, border-color 150ms, color 150ms;
 }
-.kl-seyf-knopka:hover { background: var(--klyuch-knopka-navedeno); border-color: var(--on-media-line); }
-.kl-seyf-knopka:disabled { opacity: 0.6; cursor: default; }
+.keys-safe-btn:hover { background: var(--klyuch-knopka-navedeno); border-color: var(--on-media-line); }
+.keys-safe-btn:disabled { opacity: 0.6; cursor: default; }
+/* Пока идём за свежим кодом, прежние цифры уже не годятся: на их месте
+   ожидание, а не кольцо на весь оборот со старыми цифрами под ним. */
+.keys-safe-wait { flex: none; color: var(--on-media-dim); font-size: 11.5px; }
 
 /* «Скопировано» — состояние с таймером, а не `:focus`: подсказка обязана
    гаснуть сама. Текст приезжает из разметки (`data-podskazka`), а не зашит
    сюда строкой: в CSS ему неоткуда взять перевод. */
-.kl-kopiya { position: relative; }
-.kl-kopiya::before {
+.keys-copy { position: relative; }
+.keys-copy::before {
   content: attr(data-podskazka);
   position: absolute; left: 50%; bottom: calc(100% + 8px);
   padding: 3px 7px; border-radius: 4px;
@@ -4283,49 +4287,49 @@ html { scroll-behavior: smooth; }
   opacity: 0; visibility: hidden; pointer-events: none;
   transition: opacity 160ms, transform 160ms, visibility 160ms;
 }
-.kl-kopiya.kl-skopirovano::before { opacity: 1; visibility: visible; transform: translateX(-50%); }
-.kl-kopiya.kl-skopirovano { background: var(--tint-success); color: var(--success); }
+.keys-copy.keys-copied::before { opacity: 1; visibility: visible; transform: translateX(-50%); }
+.keys-copy.keys-copied { background: var(--tint-success); color: var(--success); }
 
 /* --- низ карточки -------------------------------------------------------- */
 
-.kl-niz { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.keys-bottom { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 
 /* Заметка сворачивается родным `details`: две строки видны всегда, остальное
    разворачивает подпись. Это не «текст до наведения» — заметка длинная, а
    карточка в сетке не может расти на десять строк из-за одной из четырёх. */
-.kl-zametka { color: var(--muted); font-size: 12px; line-height: 1.45; }
-.kl-zametka-telo { padding-left: 10px; border-left: 2px solid var(--line); }
-.kl-zametka > .kl-zametka-telo { display: none; }
-.kl-zametka[open] > .kl-zametka-telo { display: block; animation: kl-zametka-vhod 200ms ease-out both; }
+.keys-note { color: var(--muted); font-size: 12px; line-height: 1.45; }
+.keys-note-body { padding-left: 10px; border-left: 2px solid var(--line); }
+.keys-note > .keys-note-body { display: none; }
+.keys-note[open] > .keys-note-body { display: block; animation: kl-zametka-vhod 200ms ease-out both; }
 @keyframes kl-zametka-vhod { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: none; } }
-.kl-zametka-krai {
+.keys-note-edge {
   padding-left: 10px; border-left: 2px solid var(--line);
   cursor: pointer; list-style: none;
   overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
   transition: color 140ms, border-color 140ms;
 }
-.kl-zametka-krai::-webkit-details-marker { display: none; }
-.kl-zametka-krai:hover { color: var(--text); border-color: var(--border-hover); }
-.kl-zametka[open] > .kl-zametka-krai { display: none; }
-.kl-zametka-svernut {
+.keys-note-edge::-webkit-details-marker { display: none; }
+.keys-note-edge:hover { color: var(--text); border-color: var(--border-hover); }
+.keys-note[open] > .keys-note-edge { display: none; }
+.keys-note-collapse {
   display: inline-block; margin-top: 5px; margin-left: 10px;
   color: var(--faint); font-size: 11.5px;
   text-decoration: underline dotted; text-underline-offset: 2px; cursor: pointer;
   background: none; border: 0; font-family: var(--sans); padding: 0;
 }
-.kl-zametka-svernut:hover { color: var(--brand); }
+.keys-note-collapse:hover { color: var(--brand); }
 
-.kl-stroka { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-.kl-svyaz {
+.keys-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.keys-link {
   display: inline-flex; align-items: center; gap: 6px; min-width: 0;
   color: var(--accent); font-size: 12px; text-decoration: none;
   background: none; border: 0; padding: 0; cursor: pointer; font-family: var(--sans);
 }
-.kl-svyaz:hover { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
-.kl-svyaz-znak { flex: none; transition: transform 180ms ease; }
-.kl-svyaz:hover .kl-svyaz-znak { transform: translateX(2px); }
-.kl-svyaz.kl-trevoga { color: var(--warning); }
-.kl-kogda { flex: none; color: var(--faint); font-size: 11.5px; }
+.keys-link:hover { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+.keys-link-icon { flex: none; transition: transform 180ms ease; }
+.keys-link:hover .keys-link-icon { transform: translateX(2px); }
+.keys-link.keys-alarm { color: var(--warning); }
+.keys-when { flex: none; color: var(--faint); font-size: 11.5px; }
 
 /* --- срочный ключ: та же рябь, что вокруг срочного напоминания ------------
    Три слоя под содержимым: фон карточки — фиолетовая заливка полосы,
@@ -4334,12 +4338,12 @@ html { scroll-behavior: smooth; }
    движущаяся шахматка размывается сглаживанием в кашу. Радиусы согласованы
    (6 внутри 8), иначе фиолетовое проступает по четырём углам; подъём по
    наведению снят — тень легла бы поверх ряби. */
-.kl-kartochka.kl-srochnyy {
+.keys-card.keys-urgent {
   isolation: isolate; overflow: hidden; border: 0; border-radius: 8px;
   background: linear-gradient(100deg, var(--ultra-nachalo) 0%, var(--ultra-seredina) 55%, var(--ultra-konets) 100%);
 }
-.kl-kartochka.kl-srochnyy:hover, .kl-kartochka.kl-srochnyy:focus-within { box-shadow: none; transform: none; }
-.kl-kartochka.kl-srochnyy::before {
+.keys-card.keys-urgent:hover, .keys-card.keys-urgent:focus-within { box-shadow: none; transform: none; }
+.keys-card.keys-urgent::before {
   content: ""; position: absolute; z-index: -2; inset: 0; width: 200%; left: -100%;
   background: linear-gradient(90deg, transparent 0%, var(--ultra-blesk-slabyy) 30%, var(--ultra-blesk) 50%, var(--ultra-blesk-slabyy) 70%, transparent 100%);
   background-size: 50% 100%;
@@ -4358,194 +4362,194 @@ html { scroll-behavior: smooth; }
   mask-composite: intersect;
   animation: kl-ultra-hod 3.4s linear infinite;
 }
-.kl-kartochka.kl-srochnyy::after {
+.keys-card.keys-urgent::after {
   content: ""; position: absolute; z-index: -1; inset: 2px; border-radius: 6px;
   background: var(--surface);
 }
 @keyframes kl-ultra-hod { to { transform: translate3d(50%, 0, 0); } }
 /* Внутри срочной карточки сейф получает фиолетовую кромку: важность видна и у
    самого кода, а не только по краю карточки. */
-.kl-kartochka.kl-srochnyy .kl-seyf { box-shadow: inset 0 0 0 1px var(--tint-violet), inset 0 1px 0 var(--klyuch-seyf-kray); }
+.keys-card.keys-urgent .keys-safe { box-shadow: inset 0 0 0 1px var(--tint-violet), inset 0 1px 0 var(--klyuch-seyf-kray); }
 
 /* --- пусто --------------------------------------------------------------- */
 
-.kl-pusto {
+.keys-empty {
   grid-column: 1 / -1;
   display: flex; flex-direction: column; align-items: center; gap: 11px;
   padding: 52px 24px; text-align: center;
   background: var(--surface); border: 1px dashed var(--border-hover); border-radius: 6px;
 }
-.kl-pusto-plita {
+.keys-empty-slab {
   width: 52px; height: 52px; border-radius: 6px; display: grid; place-items: center;
   background: var(--well); border: 1px solid var(--line); color: var(--faint);
   animation: kl-dyhanie 4s ease-in-out infinite;
 }
 @keyframes kl-dyhanie { 50% { transform: translateY(-3px); } }
-.kl-pusto-titul { font-size: 15px; font-weight: 700; }
-.kl-pusto-podpis { color: var(--faint); font-size: 12.5px; max-width: 400px; line-height: 1.5; }
+.keys-empty-title { font-size: 15px; font-weight: 700; }
+.keys-empty-caption { color: var(--faint); font-size: 12.5px; max-width: 400px; line-height: 1.5; }
 
 /* --- разбор вставленной строки ------------------------------------------
    Что система поняла — показываем сразу: человек должен видеть, что вставил
    не то, ДО сохранения. Последняя строка отбита линией: проверка кода — итог
    разбора, а не ещё одно поле. */
-.kl-razbor {
+.keys-breakdown {
   display: grid; gap: 0; padding: 4px 12px;
   border-radius: 4px; background: var(--well); border: 1px solid var(--line);
 }
-.kl-razbor-stroka {
+.keys-breakdown-row {
   display: flex; align-items: baseline; justify-content: space-between; gap: 12px;
   padding: 7px 0; font-size: 12px; border-bottom: 1px solid var(--line);
 }
-.kl-razbor-stroka:last-child { border-bottom: 0; }
-.kl-razbor-imya { color: var(--faint); flex: none; }
-.kl-razbor-znachenie { font-family: var(--mono); color: var(--text); text-align: right; min-width: 0; }
-.kl-razbor-horosho { color: var(--success); display: inline-flex; align-items: center; gap: 5px; }
-.kl-razbor-ploho { color: var(--danger); }
-.kl-razbor-itog { padding-top: 9px; margin-top: 2px; border-top: 1px solid var(--border); }
+.keys-breakdown-row:last-child { border-bottom: 0; }
+.keys-breakdown-name { color: var(--faint); flex: none; }
+.keys-breakdown-value { font-family: var(--mono); color: var(--text); text-align: right; min-width: 0; }
+.keys-breakdown-good { color: var(--success); display: inline-flex; align-items: center; gap: 5px; }
+.keys-breakdown-bad { color: var(--danger); }
+.keys-breakdown-total { padding-top: 9px; margin-top: 2px; border-top: 1px solid var(--border); }
 
 /* --- кто видит ключ ------------------------------------------------------ */
 
-.kl-prava-spisok { display: flex; flex-direction: column; }
-.kl-prava-stroka {
+.keys-rights-list { display: flex; flex-direction: column; }
+.keys-rights-row {
   display: flex; align-items: center; gap: 11px;
   padding: 9px 6px; margin: 0 -6px; border-radius: 4px;
   border-bottom: 1px solid var(--line);
   transition: background 140ms;
 }
-.kl-prava-stroka:hover { background: var(--surface-2); }
-.kl-prava-stroka:last-child { border-bottom: 0; }
-.kl-prava-kto { flex: 1; min-width: 0; }
-.kl-prava-imya { font-size: 13px; }
-.kl-prava-rol { color: var(--faint); font-size: 11.5px; margin-top: 1px; }
+.keys-rights-row:hover { background: var(--surface-2); }
+.keys-rights-row:last-child { border-bottom: 0; }
+.keys-rights-who { flex: 1; min-width: 0; }
+.keys-rights-name { font-size: 13px; }
+.keys-rights-role { color: var(--faint); font-size: 11.5px; margin-top: 1px; }
 
 /* --- замечания ----------------------------------------------------------- */
 
-.kl-zamechanie {
+.keys-notice {
   display: flex; gap: 10px; padding: 11px 12px; border-radius: 4px;
   background: var(--tint-warning); color: var(--warning);
   font-size: 12px; line-height: 1.5;
   margin-bottom: 16px;
 }
-.kl-zamechanie-znak { flex: none; margin-top: 1px; }
-.kl-zamechanie-opasno { background: var(--tint-danger); color: var(--danger); }
+.keys-notice-icon { flex: none; margin-top: 1px; }
+.keys-notice-danger { background: var(--tint-danger); color: var(--danger); }
 
 /* --- запасные коды -------------------------------------------------------
    Потраченный вычёркивается: список, где не видно потраченных, хуже
    отсутствующего — по нему пробуют войти тем, что уже не работает. Ряд ровный
    сеткой, а не переносом; порог дорожки по натуральной ширине кода, иначе код
    рвётся по дефису на двух строках, и его так и набирают с ошибкой. */
-.kl-zapasnye { display: grid; grid-template-columns: repeat(auto-fill, minmax(88px, 1fr)); gap: 6px; }
-.kl-zapasnoy {
+.keys-backups { display: grid; grid-template-columns: repeat(auto-fill, minmax(88px, 1fr)); gap: 6px; }
+.keys-backup {
   font-family: var(--mono); font-size: 11.5px; text-align: center;
   padding: 5px 4px; border-radius: 4px; white-space: nowrap;
   background: var(--well); border: 1px solid var(--line); color: var(--text);
   cursor: pointer;
   transition: border-color 140ms, color 140ms;
 }
-.kl-zapasnoy:not(.kl-potrachen):hover { border-color: var(--border-hover); }
-.kl-zapasnoy.kl-potrachen { color: var(--faint); text-decoration: line-through; background: var(--well-off); cursor: default; }
+.keys-backup:not(.keys-spent):hover { border-color: var(--border-hover); }
+.keys-backup.keys-spent { color: var(--faint); text-decoration: line-through; background: var(--well-off); cursor: default; }
 
 /* Полоса остатка: «6 из 10» цифрой читается медленнее, чем видно долей. */
-.kl-zapasnye-itog { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
-.kl-shkala { flex: 1; min-width: 0; height: 4px; border-radius: 2px; background: var(--tint-neutral); overflow: hidden; }
-.kl-shkala-polosa {
+.keys-backups-total { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
+.keys-scale { flex: 1; min-width: 0; height: 4px; border-radius: 2px; background: var(--tint-neutral); overflow: hidden; }
+.keys-scale-bar {
   display: block; height: 100%; border-radius: 2px; background: var(--success);
   animation: kl-nabor 700ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 @keyframes kl-nabor { from { width: 0; } }
-.kl-shkala-polosa.kl-taet { background: var(--warning); }
-.kl-zapasnye-schyot { flex: none; color: var(--faint); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.keys-scale-bar.keys-low { background: var(--warning); }
+.keys-backups-count { flex: none; color: var(--faint); font-size: 11.5px; font-variant-numeric: tabular-nums; }
 
 /* --- перенос на телефон -------------------------------------------------- */
 
-.kl-qr-ryad { display: flex; gap: 16px; align-items: flex-start; flex-wrap: wrap; }
+.keys-qr-row { display: flex; gap: 16px; align-items: flex-start; flex-wrap: wrap; }
 /* Бумага под QR светлая всегда: считыватель телефона ждёт тёмное на светлом, и
    в тёмной теме инверсия ломала бы чтение. */
-.kl-qr {
+.keys-qr {
   flex: none; width: 168px; height: 168px; padding: 9px;
   border-radius: 6px; background: var(--klyuch-qr-bumaga);
 }
-.kl-qr svg { width: 100%; height: 100%; display: block; }
-.kl-qr-bok { flex: 1 1 200px; min-width: 0; }
-.kl-qr-stroka { display: flex; align-items: center; gap: 8px; }
-.kl-qr-kod {
+.keys-qr svg { width: 100%; height: 100%; display: block; }
+.keys-qr-side { flex: 1 1 200px; min-width: 0; }
+.keys-qr-line { display: flex; align-items: center; gap: 8px; }
+.keys-qr-code {
   flex: 1; min-width: 0; padding: 8px 10px; border-radius: 4px;
   background: var(--well); border: 1px solid var(--line);
   font-family: var(--mono); font-size: 12.5px; color: var(--text); user-select: all;
 }
-.kl-qr-taymer { display: flex; align-items: center; gap: 7px; margin-top: 12px; color: var(--faint); font-size: 11.5px; }
+.keys-qr-timer { display: flex; align-items: center; gap: 7px; margin-top: 12px; color: var(--faint); font-size: 11.5px; }
 
 /* --- поля и действия в окне ---------------------------------------------- */
 
-.kl-deystviya { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 16px; justify-content: flex-end; }
-.kl-pole { margin-bottom: 14px; }
-.kl-pole:last-child { margin-bottom: 0; }
-.kl-menyu-spisok { display: flex; flex-direction: column; gap: 2px; }
-.kl-menyu-punkt {
+.keys-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 16px; justify-content: flex-end; }
+.keys-field { margin-bottom: 14px; }
+.keys-field:last-child { margin-bottom: 0; }
+.keys-menu-list { display: flex; flex-direction: column; gap: 2px; }
+.keys-menu-item {
   display: flex; align-items: center; gap: 9px; width: 100%;
   padding: 9px 10px; border: 0; border-radius: 4px;
   background: none; color: var(--text); font-family: var(--sans); font-size: 13px;
   text-align: left; cursor: pointer;
   transition: background 140ms, color 140ms;
 }
-.kl-menyu-punkt:hover { background: var(--surface-2); }
-.kl-menyu-punkt.kl-opasno { color: var(--danger); }
+.keys-menu-item:hover { background: var(--surface-2); }
+.keys-menu-item.keys-danger { color: var(--danger); }
 
 /* --- узкий экран ---------------------------------------------------------
    Категории на телефоне — не колонка сверху (она отодвигает ключи за первый
    экран), а лента чипов в одну строку с горизонтальной прокруткой. */
 @media (max-width: 980px) {
-  .kl-telo { grid-template-columns: minmax(0, 1fr); gap: 16px; }
-  .kl-papki { position: static; padding: 8px; }
-  .kl-papki-zagolovok { display: none; }
-  .kl-papki-spisok, .kl-papki-nizhe {
+  .keys-body { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+  .keys-folders { position: static; padding: 8px; }
+  .keys-folders-heading { display: none; }
+  .keys-folders-list, .keys-folders-below {
     flex-direction: row; gap: 6px;
     overflow-x: auto; scrollbar-width: none;
     padding-bottom: 2px;
   }
-  .kl-papki-spisok::-webkit-scrollbar, .kl-papki-nizhe::-webkit-scrollbar { display: none; }
-  .kl-papki-nizhe { margin-top: 6px; padding-top: 6px; }
-  .kl-papka { width: auto; flex: none; padding: 7px 11px; border: 1px solid var(--border); border-radius: 999px; }
-  .kl-papka::before { display: none; }
-  .kl-papka.kl-vybrana { border-color: var(--frame); }
+  .keys-folders-list::-webkit-scrollbar, .keys-folders-below::-webkit-scrollbar { display: none; }
+  .keys-folders-below { margin-top: 6px; padding-top: 6px; }
+  .keys-folder { width: auto; flex: none; padding: 7px 11px; border: 1px solid var(--border); border-radius: 999px; }
+  .keys-folder::before { display: none; }
+  .keys-folder.keys-selected { border-color: var(--frame); }
 }
 
 @media (max-width: 720px) {
-  .kl-shapka { align-items: stretch; gap: 14px; }
-  .kl-shapka-tekst { flex: 1 1 100%; }
-  .kl-titul { font-size: 22px; }
-  .kl-shapka-knopki { width: 100%; }
-  .kl-poisk { flex: 1 1 100%; max-width: none; min-width: 0; order: -1; }
-  .kl-shapka-knopki .btn { flex: 1 1 auto; }
-  .kl-setka { grid-template-columns: minmax(0, 1fr); }
+  .keys-header { align-items: stretch; gap: 14px; }
+  .keys-header-text { flex: 1 1 100%; }
+  .keys-title { font-size: 22px; }
+  .keys-header-btns { width: 100%; }
+  .keys-search { flex: 1 1 100%; max-width: none; min-width: 0; order: -1; }
+  .keys-header-btns .btn { flex: 1 1 auto; }
+  .keys-grid { grid-template-columns: minmax(0, 1fr); }
 }
 
 @media (max-width: 420px) {
-  .kl-seyf { flex-wrap: wrap; gap: 10px; min-height: 0; }
-  .kl-cifry, .kl-tochki { font-size: 24px; flex: 1 1 100%; }
-  .kl-koltso { width: 36px; height: 36px; }
-  .kl-seyf-knopka { flex: 1; justify-content: center; }
-  .kl-zapasnye { grid-template-columns: repeat(auto-fill, minmax(78px, 1fr)); }
-  .kl-qr { width: 100%; height: auto; aspect-ratio: 1; }
+  .keys-safe { flex-wrap: wrap; gap: 10px; min-height: 0; }
+  .keys-digits, .keys-dots { font-size: 24px; flex: 1 1 100%; }
+  .keys-ring { width: 36px; height: 36px; }
+  .keys-safe-btn { flex: 1; justify-content: center; }
+  .keys-backups { grid-template-columns: repeat(auto-fill, minmax(78px, 1fr)); }
+  .keys-qr { width: 100%; height: auto; aspect-ratio: 1; }
 }
 
 /* Кому движение мешает — тому неподвижная страница: важность, отсчёт и
    состояния остаются видны цветом и положением. */
 @media (prefers-reduced-motion: reduce) {
-  .kl-kartochka,
-  .kl-kartochka.kl-srochnyy::before,
-  .kl-koltso.kl-konets,
-  .kl-cifra,
-  .kl-pusto-plita,
-  .kl-shkala-polosa,
-  .kl-zametka[open] > .kl-zametka-telo { animation: none; }
-  .kl-shkala-polosa { animation-duration: 1ms; }
-  .kl-papka, .kl-papka::before, .kl-kartochka, .kl-znak, .kl-koltso, .kl-kopiya::before,
-  .kl-poisk, .kl-prava-stroka, .kl-zapasnoy, .kl-menyu, .kl-svyaz-znak, .kl-menyu-punkt,
-  .kl-papka-ubrat, .kl-papka-schyot,
-  .kl-seyf-knopka, .kl-svodka-trevoga, .kl-zametka-krai { transition: none; }
-  .kl-kartochka:hover, .kl-kartochka:focus-within, .kl-svodka-trevoga:hover { transform: none; }
-  .kl-kartochka:hover .kl-znak { transform: none; }
+  .keys-card,
+  .keys-card.keys-urgent::before,
+  .keys-ring.keys-end,
+  .keys-digit,
+  .keys-empty-slab,
+  .keys-scale-bar,
+  .keys-note[open] > .keys-note-body { animation: none; }
+  .keys-scale-bar { animation-duration: 1ms; }
+  .keys-folder, .keys-folder::before, .keys-card, .keys-icon, .keys-ring, .keys-copy::before,
+  .keys-search, .keys-rights-row, .keys-backup, .keys-menu, .keys-link-icon, .keys-menu-item,
+  .keys-folder-remove, .keys-folder-count,
+  .keys-safe-btn, .keys-summary-alarm, .keys-note-edge { transition: none; }
+  .keys-card:hover, .keys-card:focus-within, .keys-summary-alarm:hover { transform: none; }
+  .keys-card:hover .keys-icon { transform: none; }
 }
 
 /* ---- Кнопка удаления: корзинка, разъезжающаяся в пилюлю --------------------
@@ -4568,12 +4572,12 @@ html { scroll-behavior: smooth; }
    клякса), а обычная тихая кнопка системы; красный берётся `--danger-solid` —
    тот же, которым система красит опасные действия. */
 
-.korzina-mesto {
+.trash-place {
   position: relative; flex: none;
   display: inline-block; width: 28px; height: 28px;
   vertical-align: middle;
 }
-.korzina {
+.trash {
   position: absolute; top: 0; right: 0;
   width: 28px; height: 28px; border-radius: 50%;
   display: inline-flex; align-items: center; justify-content: center;
@@ -4581,31 +4585,31 @@ html { scroll-behavior: smooth; }
   cursor: pointer; overflow: hidden;
   transition: width 300ms, border-radius 300ms, background 300ms, color 300ms;
 }
-.korzina-znak {
+.trash-icon {
   width: 11px; height: 11px; fill: currentColor;
   transition: width 300ms, height 300ms, transform 300ms;
 }
-.korzina::before {
+.trash::before {
   content: attr(data-podpis);
   position: absolute; top: -14px; left: 0; right: 0;
   color: var(--on-brand); font-size: 2px; font-weight: 600; text-align: center;
   white-space: nowrap;
   transition: font-size 300ms, transform 300ms;
 }
-.korzina:not(:disabled):hover,
-.korzina:not(:disabled):focus-visible {
+.trash:not(:disabled):hover,
+.trash:not(:disabled):focus-visible {
   width: 104px; border-radius: 14px;
   background: var(--danger-solid); color: var(--on-brand);
 }
-.korzina:not(:disabled):hover .korzina-znak,
-.korzina:not(:disabled):focus-visible .korzina-znak {
+.trash:not(:disabled):hover .trash-icon,
+.trash:not(:disabled):focus-visible .trash-icon {
   width: 30px; height: 30px; transform: translateY(58%);
 }
-.korzina:not(:disabled):hover::before,
-.korzina:not(:disabled):focus-visible::before {
+.trash:not(:disabled):hover::before,
+.trash:not(:disabled):focus-visible::before {
   font-size: 12px; transform: translateY(18px);
 }
-.korzina:disabled { opacity: 0.45; cursor: default; }
+.trash:disabled { opacity: 0.45; cursor: default; }
 
 /* Пока корзинка разъехалась, соседние кнопки в той же строке гаснут.
    Пилюля растёт влево и накрывала «Вернуть» ровно наполовину — а кнопка,
@@ -4617,12 +4621,12 @@ html { scroll-behavior: smooth; }
    кнопки и ссылки — подписи и цифры в строке остаются на месте, иначе строка
    моргала бы целиком. Браузер без `:has()` просто ничего не сделает: было так
    же, как раньше. */
-*:has(> .korzina-mesto > .korzina:hover) > .btn,
-*:has(> .korzina-mesto > .korzina:hover) > .btn-icon,
-*:has(> .korzina-mesto > .korzina:hover) > a.btn,
-*:has(> .korzina-mesto > .korzina:focus-visible) > .btn,
-*:has(> .korzina-mesto > .korzina:focus-visible) > .btn-icon,
-*:has(> .korzina-mesto > .korzina:focus-visible) > a.btn {
+*:has(> .trash-place > .trash:hover) > .btn,
+*:has(> .trash-place > .trash:hover) > .btn-icon,
+*:has(> .trash-place > .trash:hover) > a.btn,
+*:has(> .trash-place > .trash:focus-visible) > .btn,
+*:has(> .trash-place > .trash:focus-visible) > .btn-icon,
+*:has(> .trash-place > .trash:focus-visible) > a.btn {
   opacity: 0;
   pointer-events: none;
   transition: opacity 200ms;
@@ -4631,15 +4635,15 @@ html { scroll-behavior: smooth; }
 /* Кому движение мешает — тому обычная круглая кнопка: она краснеет, но не
    разъезжается, и слово остаётся в `aria-label` и всплывающей подписи. */
 @media (prefers-reduced-motion: reduce) {
-  .korzina, .korzina-znak, .korzina::before { transition: none; }
-  *:has(> .korzina-mesto > .korzina:hover) > .btn,
-  *:has(> .korzina-mesto > .korzina:hover) > .btn-icon { transition: none; }
-  .korzina:not(:disabled):hover,
-  .korzina:not(:disabled):focus-visible { width: 28px; border-radius: 50%; }
-  .korzina:not(:disabled):hover .korzina-znak,
-  .korzina:not(:disabled):focus-visible .korzina-znak { width: 11px; height: 11px; transform: none; }
-  .korzina:not(:disabled):hover::before,
-  .korzina:not(:disabled):focus-visible::before { font-size: 2px; transform: none; }
+  .trash, .trash-icon, .trash::before { transition: none; }
+  *:has(> .trash-place > .trash:hover) > .btn,
+  *:has(> .trash-place > .trash:hover) > .btn-icon { transition: none; }
+  .trash:not(:disabled):hover,
+  .trash:not(:disabled):focus-visible { width: 28px; border-radius: 50%; }
+  .trash:not(:disabled):hover .trash-icon,
+  .trash:not(:disabled):focus-visible .trash-icon { width: 11px; height: 11px; transform: none; }
+  .trash:not(:disabled):hover::before,
+  .trash:not(:disabled):focus-visible::before { font-size: 2px; transform: none; }
 }
 
 /* ---- «Вышло обновление» ----------------------------------------------------
@@ -4647,7 +4651,7 @@ html { scroll-behavior: smooth; }
    не перезагрузили, экран работает вчерашним кодом (разбор — `web/sborka.py`).
    Цвет — предупреждение, а не отказ: ничего не сломалось, но и оставлять как
    есть нельзя. */
-.sborka-polosa {
+.build-bar {
   position: fixed; left: 50%; bottom: 18px; z-index: 60;
   display: flex; align-items: center; gap: 10px;
   padding: 9px 11px 9px 13px; border-radius: 6px;
@@ -4656,16 +4660,16 @@ html { scroll-behavior: smooth; }
   color: var(--warning); font-size: 12.5px;
   animation: sborka-vhod 260ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
-.sborka-tekst { color: var(--text); }
+.build-text { color: var(--text); }
 @keyframes sborka-vhod {
   from { opacity: 0; transform: translateX(-50%) translateY(10px); }
   to { opacity: 1; transform: translateX(-50%); }
 }
 @media (prefers-reduced-motion: reduce) {
-  .sborka-polosa { animation: none; }
+  .build-bar { animation: none; }
 }
 @media (max-width: 560px) {
-  .sborka-polosa { left: 12px; right: 12px; bottom: 12px; transform: none; }
+  .build-bar { left: 12px; right: 12px; bottom: 12px; transform: none; }
   @keyframes sborka-vhod { from { opacity: 0; } to { opacity: 1; } }
 }
 
@@ -4673,12 +4677,12 @@ html { scroll-behavior: smooth; }
    Два прежних экрана стали разделами одного. Заголовок раздела мельче
    страничного и отбит линией сверху — иначе на странице оказывается два
    одинаковых заголовка, и непонятно, который из них главный. */
-.razdel-api + .razdel-api {
+.section-api + .section-api {
   margin-top: 30px; padding-top: 26px; border-top: 1px solid var(--line);
 }
-.razdel-api-shapka {
+.section-api-header {
   display: flex; align-items: flex-start; justify-content: space-between;
   gap: 16px; flex-wrap: wrap; margin-bottom: 18px;
 }
-.razdel-api-titul { margin: 0 0 4px; font-size: 17px; font-weight: 700; letter-spacing: -0.01em; }
+.section-api-title { margin: 0 0 4px; font-size: 17px; font-weight: 700; letter-spacing: -0.01em; }
 

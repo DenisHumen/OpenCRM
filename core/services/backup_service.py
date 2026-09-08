@@ -256,6 +256,11 @@ def sostoyanie() -> dict:
 
 
 def _novaya(kind: str, actor: User) -> dict:
+    # Уборка по срокам живёт здесь, а не только в `sostoyanie()`: там её зовёт
+    # единственный читатель — открытый экран копий. На сервере, где копии снимает
+    # cron, а на экран заходят раз в месяц, объявленные сроки хранения не
+    # соблюдались вовсе, и место занимали копии месячной давности.
+    _ubrat_staroe()
     job = {
         "id": uuid4().hex[:16],
         "kind": kind,
@@ -281,11 +286,22 @@ def _zavershit(job: dict, status: str, error: str | None = None) -> None:
     _zapisat(job)
 
 
-def _v_zhurnal(actor_id: int, action: str, label: str, after: str) -> None:
+def _v_zhurnal(actor_id: int, action: str, label: str, after: str) -> bool:
+    """Запись о копии в журнал. `False` — исполнителя в базе больше нет.
+
+    После заливки копии с ЧУЖОЙ машины журнал — уже чужой, и своей учётки в нём
+    может не быть вовсе. `audit_service.record` на пустом исполнителе падает
+    `ValueError` (и правильно делает: обезличенная запись хуже отсутствующей), а
+    падал он внутри общего `try` восстановления — и удавшееся дело помечалось
+    упавшим. Теперь это ответ, а не исключение: решает вызывающий.
+    """
     with SessionLocal() as db:
+        kto = users_repo.get_by_id(db, actor_id)
+        if kto is None:
+            return False
         audit_service.record(
             db,
-            actor=users_repo.get_by_id(db, actor_id),
+            actor=kto,
             source=SOURCE_MANUAL,
             action=action,
             entity_type=audit_service.ENTITY_BACKUP,
@@ -293,6 +309,18 @@ def _v_zhurnal(actor_id: int, action: str, label: str, after: str) -> None:
             after=after,
         )
         db.commit()
+        return True
+
+
+def _otmetit_zhurnal(job: dict, zapisano: bool) -> None:
+    """Пометка «в журнал не попало» — на самой работе, чтобы это было видно.
+
+    Молча потерянная запись о восстановлении хуже отсутствующей: экран копий
+    показывает «готово», а в журнале следа нет, и объяснить это некому.
+    """
+    if not zapisano:
+        job["zhurnal"] = "actor is gone in the restored database"
+        _zapisat(job)
 
 
 # --- снятие ------------------------------------------------------------------
@@ -420,14 +448,20 @@ def _snyatie(job: dict, actor_id: int) -> None:
         job["check"] = _proverit_fayl(cel, job["kind"], klyuch)
         job["size"] = cel.stat().st_size
         _zavershit(job, "done")
-        _v_zhurnal(
-            actor_id,
-            audit_service.ACTION_BACKUP_TAKEN,
-            job["kind"],
-            f"{job['filename']}, {job['size']} bytes",
-        )
     except Exception as beda:  # noqa: BLE001 — любая беда должна лечь в отчёт, а не в лог потока
         _zavershit(job, "failed", str(beda)[:500])
+    else:
+        # Журнал — ЗА пределами общего `try`: запись в него не вправе
+        # переписать уже объявленный итог. Разбор — у `_v_zhurnal`.
+        _otmetit_zhurnal(
+            job,
+            _v_zhurnal(
+                actor_id,
+                audit_service.ACTION_BACKUP_TAKEN,
+                job["kind"],
+                f"{job['filename']}, {job['size']} bytes",
+            ),
+        )
     finally:
         syroy.unlink(missing_ok=True)
         _osvobodit(job["id"])
@@ -643,7 +677,6 @@ def _vosstanovlenie(job: dict, actor_id: int, syroy: Path) -> None:
             job["files"] = _raspakovat(syroy)
             itog = f"files {job['files']}"
         _zavershit(job, "done")
-        _v_zhurnal(actor_id, audit_service.ACTION_BACKUP_RESTORED, job["kind"][len("restore-"):], itog)
     except Exception as beda:  # noqa: BLE001 — беда обязана лечь в отчёт вместе с именем снимка
         podskazka = (
             f" Maintenance mode is left on; the pre-restore snapshot is {job.get('snapshot')}."
@@ -651,6 +684,16 @@ def _vosstanovlenie(job: dict, actor_id: int, syroy: Path) -> None:
             else ""
         )
         _zavershit(job, "failed", (str(beda)[:400] + podskazka))
+    else:
+        # Журнал — ЗА пределами общего `try` и после итога: у залитой чужой базы
+        # своей учётки может не быть вовсе, и падение записи объявляло удавшееся
+        # восстановление упавшим. Разбор — у `_v_zhurnal`.
+        _otmetit_zhurnal(
+            job,
+            _v_zhurnal(
+                actor_id, audit_service.ACTION_BACKUP_RESTORED, job["kind"][len("restore-"):], itog
+            ),
+        )
     finally:
         syroy.unlink(missing_ok=True)
         _osvobodit(job["id"])

@@ -355,3 +355,31 @@ def test_chuzhoy_uroven_plitki_ne_prinimaetsya():
 
     otvet = ulicy.plitka(12, 1, 1, hotim=True)
     assert otvet["gotovo"] is False and otvet["oshibka"] == "tile_out_of_range"
+
+
+def test_tochka_ne_vezyot_ni_telefona_ni_pochty(root_client):
+    """НАЙДЕНО РАЗБОРОМ: планета раздавала справочник контактов всей базы.
+
+    В точке клиента ехали `company`, `phone`, `email` и имя менеджера, а сужение
+    было одно — состояние блоков. Ни `clients.view`, ни область видимости здесь
+    не спрашивались: право `globe.view` открывало телефоны и почты всех, кому
+    `GET /clients` отвечает отказом. Экран этих полей не рисует вовсе, поэтому
+    их не гасят по праву, а не отдают совсем.
+    """
+    klient = _klient(
+        root_client,
+        name="Глобус контакты",
+        country="UA",
+        phone="+380 44 111-22-33",
+        email="kontakt@globus.test",
+        company="ООО Контакты",
+    )
+    tochka = _tochka(root_client.get(GLOBE).json(), klient["id"])
+    assert tochka is not None, "точка клиента пропала"
+    for pole in ("phone", "email", "company", "manager"):
+        assert pole not in tochka, f"в точке глобуса приехало поле {pole!r}"
+    # Вся картина целиком — тоже без контактов: они не должны всплыть соседним
+    # списком (гости, связи, страны).
+    kartina = root_client.get(GLOBE).text
+    assert "+380 44 111-22-33" not in kartina, "телефон клиента уехал на глобус"
+    assert "kontakt@globus.test" not in kartina, "почта клиента уехала на глобус"

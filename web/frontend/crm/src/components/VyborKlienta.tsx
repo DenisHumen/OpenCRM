@@ -125,7 +125,7 @@ export function VyborKlienta({
       />
       {otkryt && (
         <div
-          className="card vsplyvashka"
+          className="card popover-card"
           style={{
             position: "absolute",
             top: "100%",

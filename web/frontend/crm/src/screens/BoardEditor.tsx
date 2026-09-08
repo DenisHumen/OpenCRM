@@ -371,12 +371,12 @@ export function BoardEditor() {
             {zalivki.map((z) => {
               const dolya = z.vsego > 0 ? Math.min(1, z.ushlo / z.vsego) : 0;
               return (
-                <div key={z.klyuch} className="work-card work-card--zaliv">
-                  <div className="work-media work-media--zaliv">
-                    <div className="zaliv-polosa">
-                      <div className="zaliv-hod" style={{ width: `${dolya * 100}%` }} />
+                <div key={z.klyuch} className="work-card work-card--upload">
+                  <div className="work-media work-media--upload">
+                    <div className="upload-bar">
+                      <div className="upload-progress" style={{ width: `${dolya * 100}%` }} />
                     </div>
-                    <div className="zaliv-cifry">
+                    <div className="upload-digits">
                       <span>{z.idyot ? t("uploading") : t("uploadQueued")}</span>
                       {z.idyot && (
                         <span>
@@ -397,7 +397,7 @@ export function BoardEditor() {
                     {z.otmenit && (
                       <button
                         type="button"
-                        className="zaliv-otmena"
+                        className="upload-cancel"
                         title={t("uploadCancel")}
                         onClick={() => z.otmenit?.()}
                       >
@@ -406,7 +406,7 @@ export function BoardEditor() {
                     )}
                   </div>
                   <div className="work-foot">
-                    <span className="zaliv-imya">{z.imya}</span>
+                    <span className="upload-name">{z.imya}</span>
                   </div>
                 </div>
               );
@@ -576,13 +576,13 @@ export function BoardEditor() {
                 доска доски рознь — портфолио показывают миру, смету одному
                 клиенту (docs/bloki/25-globus.md §10). */}
             {moduleOn(modules, "globe") && (
-              <div className="doska-geo">
+              <div className="board-geo">
                 <Toggle
                   on={board.geo_enabled !== false}
                   onToggle={() => void patchBoard({ geo_enabled: !(board.geo_enabled !== false) })}
                   label={t("globeGeo")}
                 />
-                <div className="doska-geo-podskazka">{t("globeGeoHint")}</div>
+                <div className="board-geo-hint">{t("globeGeoHint")}</div>
               </div>
             )}
           </div>
@@ -743,7 +743,7 @@ export function BoardEditor() {
               Кнопки нет у пустой доски: она отвечала бы отказом. */}
           {board.works.length > 0 && (
             <a
-              className="btn btn-secondary skachat-vsyo"
+              className="btn btn-secondary download-all"
               href={`/api/v1/boards/${board.id}/download`}
             >
               <Icon name="download" size={15} />

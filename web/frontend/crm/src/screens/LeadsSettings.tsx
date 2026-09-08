@@ -157,10 +157,10 @@ export function PriyomZayavok() {
   const missing = config.chosen_id !== null && !people.some((p) => p.id === config.chosen_id);
 
   return (
-    <div className="razdel-api">
-      <div className="razdel-api-shapka">
+    <div className="section-api">
+      <div className="section-api-header">
         <div>
-          <h2 className="razdel-api-titul">{t("leads")}</h2>
+          <h2 className="section-api-title">{t("leads")}</h2>
           <div className="page-sub">{t("leadsSub")}</div>
         </div>
       </div>

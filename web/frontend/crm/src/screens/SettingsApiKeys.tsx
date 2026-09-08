@@ -123,10 +123,10 @@ export function KlyuchiSayta() {
   const skladName = (id: number | null) => sklady.find((s) => s.id === id)?.name ?? (id ? `#${id}` : "—");
 
   return (
-    <div className="razdel-api">
-      <div className="razdel-api-shapka">
+    <div className="section-api">
+      <div className="section-api-header">
         <div>
-          <h2 className="razdel-api-titul">{t("apiKeys")}</h2>
+          <h2 className="section-api-title">{t("apiKeys")}</h2>
           <div className="page-sub">{t("apiKeysSub")}</div>
         </div>
         <button className="btn btn-primary" onClick={() => setCreating(true)}>
@@ -266,6 +266,17 @@ function NewKeyModal({
     reserve_max: "1440",
     ttl: "60",
   });
+  // Склады приезжают вторым запросом, а окно открывается по первому ответу.
+  // Без этого выбранный склад оставался бы пустым навсегда: список заполнялся,
+  // `<select>` показывал первую строку, а кнопка стояла заблокированной — форма
+  // выглядела заполненной и не отправлялась. Пункта «без склада» здесь нет,
+  // поэтому подставить первый безопасно.
+  useEffect(() => {
+    setForm((f) =>
+      f.warehouse_id === null && shops.length > 0 ? { ...f, warehouse_id: shops[0].id } : f,
+    );
+  }, [shops]);
+
   const set = (key: string) => (e: any) => setForm((f) => ({ ...f, [key]: e.target.value }));
   const toggleScope = (scope: string) =>
     setForm((f) => ({
@@ -379,7 +390,7 @@ function KlyuchKarta({ klyuch }: { klyuch: ApiKey }) {
   return (
     <>
       <div
-        className={"klyuch" + (perevyornut ? " klyuch-flipped" : "")}
+        className={"key" + (perevyornut ? " key-flipped" : "")}
         role="button"
         tabIndex={0}
         aria-label={t("apiKeyFlipHint")}
@@ -391,28 +402,28 @@ function KlyuchKarta({ klyuch }: { klyuch: ApiKey }) {
           }
         }}
       >
-        <div className="klyuch-inner">
-          <div className="klyuch-front">
-            <span className="klyuch-head">OpenCRM · API</span>
-            <span className="klyuch-chip" />
-            <span className="klyuch-wave">
+        <div className="key-inner">
+          <div className="key-front">
+            <span className="key-head">OpenCRM · API</span>
+            <span className="key-chip" />
+            <span className="key-wave">
               <Icon name="globe" size={18} />
             </span>
-            <span className="klyuch-num">{klyuch.prefix} •••• •••• ••••</span>
-            <span className="klyuch-valid">{t("apiKeyValid")}</span>
-            <span className="klyuch-date">{srok}</span>
-            <span className="klyuch-name">{klyuch.name}</span>
+            <span className="key-num">{klyuch.prefix} •••• •••• ••••</span>
+            <span className="key-valid">{t("apiKeyValid")}</span>
+            <span className="key-date">{srok}</span>
+            <span className="key-name">{klyuch.name}</span>
           </div>
-          <div className="klyuch-back">
-            <div className="klyuch-strip" />
-            <code className="klyuch-sign">{klyuch.key}</code>
-            <span className="klyuch-copy" onClick={(e) => e.stopPropagation()}>
+          <div className="key-back">
+            <div className="key-strip" />
+            <code className="key-sign">{klyuch.key}</code>
+            <span className="key-copy" onClick={(e) => e.stopPropagation()}>
               <CopyButton text={klyuch.key ?? ""} />
             </span>
           </div>
         </div>
       </div>
-      <div className="klyuch-hint">{t("apiKeyFlipHint")}</div>
+      <div className="key-hint">{t("apiKeyFlipHint")}</div>
     </>
   );
 }
@@ -473,20 +484,20 @@ function KlyuchStatistika({ klyuch }: { klyuch: ApiKey }) {
     );
   }
   if (svodka === null) {
-    return <div className="stat-blok stat-tikho">{t("loading")}</div>;
+    return <div className="stat-blok stat-quiet">{t("loading")}</div>;
   }
   const maxDen = Math.max(1, ...svodka.by_day.map((d) => d.count));
   const maxChas = Math.max(1, ...svodka.by_hour.map((h) => h.count));
   return (
     <div className="stat-blok">
-      <div className="metric-grid stat-plitki">
+      <div className="metric-grid stat-tiles">
         <Plitka title={t("apiStatsToday")} value={svodka.today} />
         <Plitka title={t("apiStatsWeek")} value={svodka.week} />
         <Plitka title={t("apiStatsMonth")} value={svodka.month} sub={t("apiStatsRejected", { n: svodka.rejected_month })} />
         <Plitka title={t("apiStatsAvg")} value={svodka.avg_per_day} />
         <Plitka title={t("apiStatsPeak")} value={svodka.peak_hour} sub={t("apiStatsPeakSub", { n: svodka.rate_per_min })} />
       </div>
-      <div className="stat-ryad">
+      <div className="stat-row">
         <div className="metric-title">{t("apiStatsByDay")}</div>
         <div className="bars stat-bars">
           {svodka.by_day.map((d, i) => (
@@ -501,7 +512,7 @@ function KlyuchStatistika({ klyuch }: { klyuch: ApiKey }) {
           ))}
         </div>
       </div>
-      <div className="stat-ryad">
+      <div className="stat-row">
         <div className="metric-title">{t("apiStatsByHour")}</div>
         <div className="bars stat-bars">
           {svodka.by_hour.map((h, i) => (
@@ -516,9 +527,9 @@ function KlyuchStatistika({ klyuch }: { klyuch: ApiKey }) {
           ))}
         </div>
       </div>
-      <div className="stat-ryad">
+      <div className="stat-row">
         <div className="metric-title">{t("apiStatsByCategory")}</div>
-        {svodka.by_category.length === 0 && <div className="stat-tikho">{t("apiStatsEmpty")}</div>}
+        {svodka.by_category.length === 0 && <div className="stat-quiet">{t("apiStatsEmpty")}</div>}
         <div className="src-table">
           {svodka.by_category.map((c) => (
             <div key={c.category} className="src-row">

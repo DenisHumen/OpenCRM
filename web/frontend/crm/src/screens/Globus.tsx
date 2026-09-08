@@ -498,33 +498,33 @@ export function Globus() {
     summa === null || summa === undefined ? "" : formatMoney(summa, workspace.currency || "USD", locale);
 
   return (
-    <div className="globus">
-      <div className="globus-shapka">
-        <div className="globus-marka">
-          <span className="globus-imya">{t("modGlobe")}</span>
-          <span className="globus-podzagolovok">{t("globeSub")}</span>
+    <div className="globe">
+      <div className="globe-header">
+        <div className="globe-mark">
+          <span className="globe-name">{t("modGlobe")}</span>
+          <span className="globe-subtitle">{t("globeSub")}</span>
         </div>
-        <div className="globus-svodka">
-          <span className="globus-metka">{t("globePoints")}</span>
-          <span className="globus-znachenie">{dannye.totals.clients}</span>
-          <span className="globus-metka">{t("globeLayerVisitors")}</span>
-          <span className="globus-znachenie">{dannye.totals.visitors}</span>
-          <span className="globus-metka">{t("globeLayerLinks")}</span>
-          <span className="globus-znachenie">{dannye.totals.links}</span>
+        <div className="globe-summary">
+          <span className="globe-label">{t("globePoints")}</span>
+          <span className="globe-value">{dannye.totals.clients}</span>
+          <span className="globe-label">{t("globeLayerVisitors")}</span>
+          <span className="globe-value">{dannye.totals.visitors}</span>
+          <span className="globe-label">{t("globeLayerLinks")}</span>
+          <span className="globe-value">{dannye.totals.links}</span>
         </div>
       </div>
 
-      <div className="globus-pole">
-        <aside className="globus-panel globus-sleva">
-          <div className="globus-zagolovok">{t("globeLayers")}</div>
-          <div className="globus-sloi">
+      <div className="globe-field">
+        <aside className="globe-panel globe-left">
+          <div className="globe-heading">{t("globeLayers")}</div>
+          <div className="globe-layers">
             {SLOI.filter((sloy) => dostupnye.has(sloy.key)).map((sloy) => (
               <button
                 key={sloy.key}
                 type="button"
                 role="switch"
                 aria-checked={sloi.has(sloy.key)}
-                className={"globus-sloy" + (sloi.has(sloy.key) ? " vklyuchen" : "")}
+                className={"globe-layer" + (sloi.has(sloy.key) ? " on" : "")}
                 onClick={() =>
                   setSloi((bylo) => {
                     const stalo = new Set(bylo);
@@ -534,22 +534,22 @@ export function Globus() {
                   })
                 }
               >
-                <span className="globus-tumbler" />
-                <span className="globus-sloy-imya">{t(sloy.label)}</span>
-                <span className="globus-sloy-schyot">{schyot.get(sloy.key) ?? ""}</span>
+                <span className="globe-toggle" />
+                <span className="globe-layer-name">{t(sloy.label)}</span>
+                <span className="globe-layer-count">{schyot.get(sloy.key) ?? ""}</span>
               </button>
             ))}
           </div>
 
-          <div className="globus-zagolovok">{t("globeCountries")}</div>
-          <div className="globus-strany">
+          <div className="globe-heading">{t("globeCountries")}</div>
+          <div className="globe-countries">
             {dannye.countries.slice(0, 8).map((strana) => (
-              <div key={strana.code} className="globus-strana">
-                <span className="globus-kod">{strana.code}</span>
-                <span className="globus-strana-imya">{strana.name}</span>
-                <span className="globus-znachenie">{strana.clients}</span>
+              <div key={strana.code} className="globe-country">
+                <span className="globe-code">{strana.code}</span>
+                <span className="globe-country-name">{strana.name}</span>
+                <span className="globe-value">{strana.clients}</span>
                 <span
-                  className="globus-polosa"
+                  className="globe-bar"
                   style={{
                     width: `${Math.round((strana.clients / (dannye.countries[0]?.clients || 1)) * 100)}%`,
                   }}
@@ -557,15 +557,15 @@ export function Globus() {
               </div>
             ))}
             {dannye.totals.no_place > 0 && (
-              <div className="globus-bez-mesta">{t("globeNoPlace", { n: dannye.totals.no_place })}</div>
+              <div className="globe-no-place">{t("globeNoPlace", { n: dannye.totals.no_place })}</div>
             )}
           </div>
         </aside>
 
-        <div className="globus-holst" ref={korob}>
+        <div className="globe-stage" ref={korob}>
           <canvas
             ref={holst}
-            className="globus-canvas"
+            className="globe-canvas"
             aria-label={t("globeCanvas")}
             onMouseDown={(e) => {
               tyanem.current = mesto(e);
@@ -584,60 +584,60 @@ export function Globus() {
             onMouseMove={dvinuli}
             onWheel={koleso}
           />
-          <div className="globus-ugol globus-ugol-lv" />
-          <div className="globus-ugol globus-ugol-pv" />
-          <div className="globus-ugol globus-ugol-ln" />
-          <div className="globus-ugol globus-ugol-pn" />
+          <div className="globe-corner globe-corner-lv" />
+          <div className="globe-corner globe-corner-pv" />
+          <div className="globe-corner globe-corner-ln" />
+          <div className="globe-corner globe-corner-pn" />
         </div>
 
-        <aside className="globus-panel globus-sprava">
-          <div className="globus-zagolovok">{t("globeSelected")}</div>
+        <aside className="globe-panel globe-right">
+          <div className="globe-heading">{t("globeSelected")}</div>
           {vybrano ? (
-            <div className="globus-kartochka">
-              <div className="globus-kartochka-imya">{vybrano.imya}</div>
-              <div className="globus-kartochka-podpis">{vybrano.podpis}</div>
-              <div className="globus-para">
-                <span className="globus-metka">{t("globePrecision")}</span>
-                <span className="globus-znachenie">{t(TOCHNOST[vybrano.tochnost] ?? "globePrecisionCountry")}</span>
+            <div className="globe-card">
+              <div className="globe-card-name">{vybrano.imya}</div>
+              <div className="globe-card-caption">{vybrano.podpis}</div>
+              <div className="globe-pair">
+                <span className="globe-label">{t("globePrecision")}</span>
+                <span className="globe-value">{t(TOCHNOST[vybrano.tochnost] ?? "globePrecisionCountry")}</span>
               </div>
               {vybrano.vid === "client" ? (
                 <>
-                  <div className="globus-para">
-                    <span className="globus-metka">{t("globeLayerDeals")}</span>
-                    <span className="globus-znachenie">{vybrano.deals_open ?? 0}</span>
+                  <div className="globe-pair">
+                    <span className="globe-label">{t("globeLayerDeals")}</span>
+                    <span className="globe-value">{vybrano.deals_open ?? 0}</span>
                   </div>
-                  <div className="globus-para">
-                    <span className="globus-metka">{t("globeLayerOrders")}</span>
-                    <span className="globus-znachenie">
+                  <div className="globe-pair">
+                    <span className="globe-label">{t("globeLayerOrders")}</span>
+                    <span className="globe-value">
                       {vybrano.orders_open ?? 0}
                       {vybrano.overdue ? ` · ${t("globeOverdue", { n: vybrano.overdue })}` : ""}
                     </span>
                   </div>
                   {deneg((vybrano as Tochka & { amount?: number }).amount) && (
-                    <div className="globus-para">
-                      <span className="globus-metka">{t("globeAmount")}</span>
-                      <span className="globus-znachenie">
+                    <div className="globe-pair">
+                      <span className="globe-label">{t("globeAmount")}</span>
+                      <span className="globe-value">
                         {deneg((vybrano as Tochka & { amount?: number }).amount)}
                       </span>
                     </div>
                   )}
                   {can(user, "clients.view") && (
-                    <Link to={`/clients/${vybrano.id}`} className="globus-knopka">
+                    <Link to={`/clients/${vybrano.id}`} className="globe-btn">
                       {t("globeOpenCard")}
                     </Link>
                   )}
                 </>
               ) : (
                 <>
-                  <div className="globus-para">
-                    <span className="globus-metka">{t("globeBoard")}</span>
-                    <span className="globus-znachenie">
+                  <div className="globe-pair">
+                    <span className="globe-label">{t("globeBoard")}</span>
+                    <span className="globe-value">
                       {(vybrano as Tochka & { board?: string }).board ?? ""}
                     </span>
                   </div>
-                  <div className="globus-para">
-                    <span className="globus-metka">{t("globeSeenAt")}</span>
-                    <span className="globus-znachenie">
+                  <div className="globe-pair">
+                    <span className="globe-label">{t("globeSeenAt")}</span>
+                    <span className="globe-value">
                       {formatDateTime((vybrano as Tochka & { at?: string }).at ?? null, locale)}
                     </span>
                   </div>
@@ -645,40 +645,40 @@ export function Globus() {
               )}
             </div>
           ) : (
-            <div className="globus-pusto">{t("globeNothingPicked")}</div>
+            <div className="globe-empty">{t("globeNothingPicked")}</div>
           )}
 
-          <div className="globus-zagolovok">{t("globeDetail")}</div>
-          <div className="globus-podrobno">
+          <div className="globe-heading">{t("globeDetail")}</div>
+          <div className="globe-detail">
             {podrobno?.ready ? (
               <>
-                <div className="globus-para">
-                  <span className="globus-metka">{t("globeDetailReady")}</span>
-                  <span className="globus-znachenie">{podrobno.rings}</span>
+                <div className="globe-pair">
+                  <span className="globe-label">{t("globeDetailReady")}</span>
+                  <span className="globe-value">{podrobno.rings}</span>
                 </div>
                 {can(user, "settings.manage") && (
-                  <button type="button" className="globus-knopka" disabled={guard.busy} onClick={zabyt}>
+                  <button type="button" className="globe-btn" disabled={guard.busy} onClick={zabyt}>
                     {t("globeDetailOff")}
                   </button>
                 )}
               </>
             ) : podrobno?.running ? (
               <>
-                <div className="globus-para">
-                  <span className="globus-metka">{t("globeDetailRunning")}</span>
-                  <span className="globus-znachenie">{podrobno.percent}%</span>
+                <div className="globe-pair">
+                  <span className="globe-label">{t("globeDetailRunning")}</span>
+                  <span className="globe-value">{podrobno.percent}%</span>
                 </div>
-                <div className="globus-hod">
-                  <span className="globus-hod-polosa" style={{ width: `${podrobno.percent}%` }} />
+                <div className="globe-progress">
+                  <span className="globe-progress-bar" style={{ width: `${podrobno.percent}%` }} />
                 </div>
               </>
             ) : (
               <>
-                <div className="globus-pusto">
+                <div className="globe-empty">
                   {podrobno?.wanted ? t("globeDetailWaiting") : t("globeDetailHint")}
                 </div>
                 {can(user, "settings.manage") && !podrobno?.wanted && (
-                  <button type="button" className="globus-knopka" disabled={guard.busy} onClick={podrobnee}>
+                  <button type="button" className="globe-btn" disabled={guard.busy} onClick={podrobnee}>
                     <Icon name="download" size={13} />
                     {t("globeDetailOn")}
                   </button>
@@ -689,21 +689,21 @@ export function Globus() {
         </aside>
       </div>
 
-      <div className="globus-planka">
-        <span className="globus-metka">{t("globeCoords")}</span>
-        <span className="globus-znachenie">
+      <div className="globe-plate">
+        <span className="globe-label">{t("globeCoords")}</span>
+        <span className="globe-value">
           {pod ? `${pod.lat.toFixed(2)}° ${pod.lon.toFixed(2)}°` : "—"}
         </span>
-        <span className="globus-metka">{t("globeBase")}</span>
-        <span className="globus-znachenie">{dannye.base ? dannye.base.imya || "—" : t("globeNoBase")}</span>
-        <span className="globus-metka">{t("globeLayersOn")}</span>
-        <span className="globus-znachenie">
+        <span className="globe-label">{t("globeBase")}</span>
+        <span className="globe-value">{dannye.base ? dannye.base.imya || "—" : t("globeNoBase")}</span>
+        <span className="globe-label">{t("globeLayersOn")}</span>
+        <span className="globe-value">
           {sloi.size}/{dannye.layers.length}
         </span>
-        <span className="globus-metka">{t("globePoints")}</span>
-        <span className="globus-znachenie">{vidimyh}</span>
-        <span className="globus-metka">{t("globeUpdated")}</span>
-        <span className="globus-znachenie">{formatDateTime(dannye.at, locale)}</span>
+        <span className="globe-label">{t("globePoints")}</span>
+        <span className="globe-value">{vidimyh}</span>
+        <span className="globe-label">{t("globeUpdated")}</span>
+        <span className="globe-value">{formatDateTime(dannye.at, locale)}</span>
       </div>
     </div>
   );

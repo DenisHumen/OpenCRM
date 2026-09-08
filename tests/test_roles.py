@@ -1547,3 +1547,251 @@ def test_kto_derzhit_ne_nazyvaet_chuzhie_zayavki(root_client, role_maker, staff_
             f"{API}/modules/warehouse", json={"enabled": False}
         ).status_code == 200
         modules_service.invalidate()
+
+
+# --- четвёртая дверь раздачи прав ---------------------------------------------
+
+
+def test_dolzhnost_po_umolchaniyu_shire_svoey_ne_naznachaetsya(
+    root_client, role_maker, staff_maker
+):
+    """НАЙДЕНО РАЗБОРОМ: четвёртая дверь раздачи прав стояла открытой.
+
+    Три соседние — завести роль, переписать роль, назначить роль — спрашивают
+    «раздать можно только то, что есть у самого». `POST /roles/{id}/default` не
+    спрашивала, а должность по умолчанию получает КАЖДЫЙ, кто зарегистрируется.
+    То есть человек с одним `roles.manage` объявлял умолчанием роль с журналом и
+    настройками и ждал регистрации коллеги — обход в два шага ровно того вида,
+    ради которого правило и написано.
+    """
+    # Прежнюю умолчательную запоминаем и возвращаем: её получает КАЖДЫЙ, кто
+    # зарегистрируется дальше, — забыв вернуть, мы обузим права всем соседним
+    # проверкам набора. Убрать её нельзя (`role_is_default`), только сменить.
+    bylo = next(r for r in root_client.get(ROLES).json()["items"] if r["is_default"])
+    shirokaya = role_maker("Умолчание пошире", ["audit.view", "settings.manage"])
+    uzkaya = role_maker("Умолчание поуже", ["roles.manage", "clients.view"])
+    razdayushchiy = staff_maker("umolchanie-uzkiy@test.local", uzkaya["id"])
+    try:
+        otkaz = razdayushchiy.post(f"{ROLES}/{shirokaya['id']}/default")
+        assert otkaz.status_code == 403, otkaz.text
+        assert otkaz.json()["error"]["code"] == "cannot_grant_what_you_lack"
+
+        # Свою — можно: убавлять и равное раздавать никто не запрещал.
+        svoyu = razdayushchiy.post(f"{ROLES}/{uzkaya['id']}/default")
+        assert svoyu.status_code == 200, svoyu.text
+        assert svoyu.json()["is_default"] is True
+    finally:
+        assert root_client.post(f"{ROLES}/{bylo['id']}/default").status_code == 200
+
+
+def test_summy_zakaza_sprashivayutsya_u_oblasti_zakazov(
+    root_client, role_maker, staff_maker
+):
+    """НАЙДЕНО РАЗБОРОМ: у отметки «собран» право на суммы спрашивалось у заявок.
+
+    Описка, а не решение: остальные тринадцать вызовов в том же файле спрашивают
+    `orders`. Сторож рядом её не ловил, потому что его роли не давали
+    `deals.view_amounts` — значит на любой такой описке он оставался зелёным.
+    Здесь роль нарочно ВИДИТ деньги заявок и НЕ видит деньги заказов.
+    """
+    assert root_client.post(f"{API}/modules/warehouse", json={"enabled": True}).status_code == 200
+    assert root_client.post(f"{API}/modules/orders", json={"enabled": True}).status_code == 200
+    modules_service.invalidate()
+    try:
+        rol = role_maker(
+            "Заказы без своих денег",
+            [
+                "clients.view",
+                "deals.view",
+                "deals.view_amounts",
+                "documents.view",
+                "orders.view",
+                "orders.edit",
+            ],
+        )
+        chelovek = staff_maker("zakazy-bez-deneg@test.local", rol["id"])
+
+        klient = root_client.post(f"{API}/clients", json={"name": "Заказчик суммы"})
+        assert klient.status_code == 201, klient.text
+        zakaz = root_client.post(
+            f"{API}/orders",
+            json={"kind": "sales_order", "client_id": klient.json()["id"]},
+        )
+        assert zakaz.status_code == 201, zakaz.text
+        nomer = zakaz.json()["id"]
+
+        gotov = chelovek.post(f"{API}/orders/{nomer}/ready")
+        assert gotov.status_code == 200, gotov.text
+        assert gotov.json()["total"] is None, (
+            "сумма заказа уехала тому, у кого есть деньги ЗАЯВОК, но не заказов"
+        )
+        assert gotov.json().get("cost") is None
+    finally:
+        root_client.post(f"{API}/modules/orders", json={"enabled": False})
+        root_client.post(f"{API}/modules/warehouse", json={"enabled": False})
+        modules_service.invalidate()
+
+
+def test_svodka_ne_pokazyvaet_dosok_bez_prava(root_client, role_maker, staff_maker):
+    """НАЙДЕНО РАЗБОРОМ: карточки досок сужались блоком, но не правом.
+
+    Соседняя ветка клиентов в том же обработчике спрашивает `clients.view`, а
+    ветка досок спрашивала только «включён ли блок». Сотрудник, которому раздел
+    досок закрыт, получал на сводке названия и обложки четырёх свежих досок.
+    """
+    doska = root_client.post(f"{API}/boards", json={"title": "Доска со сводки"})
+    assert doska.status_code == 201, doska.text
+
+    rol = role_maker("Сводка без досок", ["clients.view", "deals.view"])
+    bez_dosok = staff_maker("svodka-bez-dosok@test.local", rol["id"])
+    assert bez_dosok.get(f"{API}/boards").status_code == 403
+
+    svodka = bez_dosok.get(f"{API}/dashboard")
+    assert svodka.status_code == 200, svodka.text
+    assert svodka.json()["recent_boards"] == [], (
+        f"доски уехали на сводку без права: {svodka.json()['recent_boards']}"
+    )
+
+    # И наоборот: с правом доски обязаны быть, иначе починка — «пусто у всех».
+    s_pravom = role_maker("Сводка с досками", ["clients.view", "deals.view", "boards.view"])
+    vidit = staff_maker("svodka-s-doskami@test.local", s_pravom["id"])
+    assert vidit.get(f"{API}/dashboard").json()["recent_boards"], "доски пропали у всех"
+
+    root_client.delete(f"{API}/boards/{doska.json()['id']}")
+
+
+def test_napominanie_ne_podpisyvaet_chuzhuyu_zayavku(
+    root_client, role_maker, staff_maker, manager_client
+):
+    """НАЙДЕНО РАЗБОРОМ: область видимости заявок обходилась через напоминания.
+
+    Карточка напоминания подписана заголовком заявки, а спрашивали у неё одно
+    право `tasks.view`. Значит `GET /tasks?deal_id=<чужая>` отдавал заголовок
+    чужой заявки, а перебором номеров вычитывался весь их список — мимо блока,
+    который эти заголовки охраняет.
+    """
+    klient = root_client.post(f"{API}/clients", json={"name": "Чужой клиент напоминания"})
+    assert klient.status_code == 201, klient.text
+    chuzhaya = root_client.post(
+        f"{API}/deals",
+        json={"title": "ТАЙНАЯ ЗАЯВКА ДЛЯ НАПОМИНАНИЯ", "client_id": klient.json()["id"]},
+    )
+    assert chuzhaya.status_code == 201, chuzhaya.text
+    zadacha = root_client.post(
+        f"{API}/tasks", json={"title": "Позвонить по тайной", "deal_id": chuzhaya.json()["id"]}
+    )
+    assert zadacha.status_code == 201, zadacha.text
+
+    rol = role_maker("Напоминания без чужих заявок", ["tasks.view", "deals.view"])
+    svoi_tolko = staff_maker("napominaniya-svoi@test.local", rol["id"])
+
+    spisok = svoi_tolko.get(f"{API}/tasks", params={"deal_id": chuzhaya.json()["id"]})
+    assert spisok.status_code == 200, spisok.text
+    assert "ТАЙНАЯ ЗАЯВКА" not in spisok.text, "заголовок чужой заявки уехал в напоминания"
+
+    kartochka = svoi_tolko.get(f"{API}/tasks/{zadacha.json()['id']}")
+    assert kartochka.status_code == 200, kartochka.text
+    assert kartochka.json()["deal_title"] is None, "заголовок чужой заявки на карточке"
+
+    root_client.delete(f"{API}/tasks/{zadacha.json()['id']}")
+
+
+def test_zakazy_ne_vidny_cherez_spisok_bumag(root_client, role_maker, staff_maker):
+    """НАЙДЕНО РАЗБОРОМ: `documents.view` открывало заказы и накладные.
+
+    Заказ, возврат и накладная лежат в той же таблице и в том же списке, но
+    принадлежат блокам `orders` и `waybills` — со своими выключателями и своими
+    правами. Отбор по виду их не спрашивал: `?kind=sales_order` с одним
+    `documents.view` отдавал заказы фирмы вместе с суммами.
+    """
+    assert root_client.post(f"{API}/modules/warehouse", json={"enabled": True}).status_code == 200
+    assert root_client.post(f"{API}/modules/orders", json={"enabled": True}).status_code == 200
+    modules_service.invalidate()
+    try:
+        klient = root_client.post(f"{API}/clients", json={"name": "Заказчик бумаг"})
+        zakaz = root_client.post(
+            f"{API}/orders", json={"kind": "sales_order", "client_id": klient.json()["id"]}
+        )
+        assert zakaz.status_code == 201, zakaz.text
+        nomer = zakaz.json()["id"]
+
+        rol = role_maker("Только квитанции", ["clients.view", "deals.view", "documents.view"])
+        tolko_bumagi = staff_maker("tolko-kvitancii@test.local", rol["id"])
+
+        spisok = tolko_bumagi.get(f"{API}/documents", params={"kind": "sales_order"})
+        assert spisok.status_code == 200, spisok.text
+        assert spisok.json()["items"] == [], "заказы уехали в список бумаг без права на заказы"
+        assert "sales_order" not in spisok.json()["counts"], (
+            "счётчик выдал заказы тому, кому заказы закрыты"
+        )
+
+        kartochka = tolko_bumagi.get(f"{API}/documents/{nomer}")
+        assert kartochka.status_code == 404, kartochka.text
+        assert kartochka.json()["error"]["code"] == "document_not_found"
+    finally:
+        root_client.post(f"{API}/modules/orders", json={"enabled": False})
+        root_client.post(f"{API}/modules/warehouse", json={"enabled": False})
+        modules_service.invalidate()
+
+
+def test_dolgi_suzhayutsya_oblastyu_kak_i_sosedi(root_client, role_maker, staff_maker):
+    """НАЙДЕНО РАЗБОРОМ: долги — единственный отчёт без области видимости.
+
+    Воронка, выручка и источники спрашивают `_scope`, а долги не спрашивали.
+    Менеджер, которому чужие заявки закрыты, читал по ним имена клиентов, номера
+    бумаг и суммы — то есть ровно то, ради чего область и заводилась, только
+    через соседнюю дверь.
+    """
+    bylo = {m["key"]: m["enabled"] for m in root_client.get(f"{API}/modules").json()["items"]}
+    for key in ("documents", "warehouse", "orders", "finance"):
+        root_client.post(f"{API}/modules/{key}", json={"enabled": True})
+    modules_service.invalidate()
+    try:
+        klient = root_client.post(f"{API}/clients", json={"name": "ДОЛЖНИК ЧУЖОЙ"}).json()
+        tovar = root_client.post(
+            f"{API}/warehouse/products",
+            json={"name": "Товар чужого долга", "price": 500, "cost": 100},
+        ).json()
+        # Бумага заведена root и на его же заявке — для менеджера она чужая.
+        zayavka = root_client.post(
+            f"{API}/deals", json={"title": "Чужая заявка долга", "client_id": klient["id"]}
+        ).json()
+        zakaz = root_client.post(
+            f"{API}/orders",
+            json={"kind": "sales_order", "client_id": klient["id"], "deal_id": zayavka["id"]},
+        ).json()
+        root_client.post(
+            f"{API}/orders/{zakaz['id']}/lines", json={"product_id": tovar["id"], "quantity": "2"}
+        )
+        assert any(
+            r["document_id"] == zakaz["id"] for r in root_client.get(f"{API}/reports/debts").json()["items"]
+        ), "долг не попал в отчёт даже владельцу — проверка смотрит не туда"
+
+        rol = role_maker(
+            "Долги только свои",
+            [
+                "clients.view",
+                "deals.view",
+                "documents.view",
+                "reports.view",
+                "reports.view_amounts",
+            ],
+        )
+        svoi = staff_maker("dolgi-svoi@test.local", rol["id"])
+
+        otchyot = svoi.get(f"{API}/reports/debts")
+        assert otchyot.status_code == 200, otchyot.text
+        assert all(r["document_id"] != zakaz["id"] for r in otchyot.json()["items"]), (
+            "чужая бумага уехала в отчёт по долгам"
+        )
+        assert "ДОЛЖНИК ЧУЖОЙ" not in otchyot.text, "имя чужого клиента уехало в отчёт"
+
+        vygruzka = svoi.get(f"{API}/reports/debts.csv", params={"tz_offset": 0})
+        assert vygruzka.status_code == 200, vygruzka.text
+        assert zakaz["number"] not in vygruzka.content.decode("utf-8-sig"), (
+            "чужая бумага уехала в выгрузку долгов — сузили экран, забыв про CSV"
+        )
+    finally:
+        for key in ("finance", "orders", "warehouse", "documents"):
+            root_client.post(f"{API}/modules/{key}", json={"enabled": bylo.get(key, False)})
+        modules_service.invalidate()

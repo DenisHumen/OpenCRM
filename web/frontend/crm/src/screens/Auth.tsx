@@ -100,7 +100,7 @@ export function AuthScreen() {
         <form className="auth-card" onSubmit={submitLogin}>
           <h1 className="auth-title">{t("welcomeBack")}</h1>
           <div className="auth-sub">{t("signInSub")}</div>
-          <div className="field pole-plav">
+          <div className="field field-float">
             {/* inputMode — клавиатура с @ и точкой сразу; autoCapitalize/autoCorrect —
                 иначе iOS пишет адрес с заглавной и «исправляет» домен. autoComplete —
                 чтобы менеджер паролей подставлял пару, а не только логин. */}
@@ -120,7 +120,7 @@ export function AuthScreen() {
             />
             <Podpis text={t("email")} />
           </div>
-          <div className="field pole-plav" style={{ marginBottom: 20 }}>
+          <div className="field field-float" style={{ marginBottom: 20 }}>
             <input
               className="input"
               type="password"

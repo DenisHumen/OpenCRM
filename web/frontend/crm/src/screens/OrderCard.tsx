@@ -99,7 +99,7 @@ export function OrderCard() {
   };
 
   return (
-    <div className="page page-kartochka">
+    <div className="page page-card">
       <Link
         to="/orders"
         style={{ display: "inline-flex", alignItems: "center", gap: 6, color: "var(--muted)", fontSize: 13, marginBottom: 20 }}
@@ -240,8 +240,8 @@ export function OrderCard() {
         </div>
       </div>
 
-      <div className="kart-kolonki">
-      <div className="kart-osnova">
+      <div className="cards-columns">
+      <div className="cards-osnova">
       <div className="card" style={{ overflow: "hidden", marginBottom: 16, order: 2 }}>
         <div className="list-header">
           <span style={{ flex: 1 }}>{t("orderLineName")}</span>
@@ -314,7 +314,7 @@ export function OrderCard() {
       </div>
 
       {open && (
-        <div className="kart-blok" style={{ order: 3 }}>
+        <div className="cards-blok" style={{ order: 3 }}>
           <AddLine orderId={order.id} onAdded={load} />
           <PickScanner orderId={order.id} onPicked={load} />
         </div>
@@ -394,7 +394,7 @@ export function OrderCard() {
         </Modal>
       )}
       </div>
-      <div className="kart-bok">
+      <div className="cards-side">
       {/* Бумаги, выписанные по этому заказу. Закрытие выписывает накладную, и
           не показать КАКУЮ значит оставить человека искать её глазами по
           всему списку накладных.
@@ -417,7 +417,7 @@ export function OrderCard() {
         </div>
       )}
       {moduleOn(modules, "finance") && can(user, "finance.view") && (
-        <div className="kart-blok" style={{ order: 6 }}>
+        <div className="cards-blok" style={{ order: 6 }}>
           <OrderMoney order={order} />
         </div>
       )}
@@ -630,7 +630,7 @@ function OrderMoney({ order }: { order: Order }) {
             {sum(money.received)}
           </div>
           {money.refunded > 0 && (
-            <div className="svodka-sub">{t("orderRefundedByReturns", { sum: sum(money.refunded) })}</div>
+            <div className="summary-sub">{t("orderRefundedByReturns", { sum: sum(money.refunded) })}</div>
           )}
         </div>
         {/*
@@ -1085,7 +1085,7 @@ function AddLine({ orderId, onAdded }: { orderId: number; onAdded: () => Promise
           />
           {found.length > 0 && (
             <div
-              className="card vsplyvashka"
+              className="card popover-card"
               style={{ position: "absolute", top: "100%", left: 0, right: 0, zIndex: 20, marginTop: 4, overflow: "hidden" }}
             >
               {found.map((item) => (

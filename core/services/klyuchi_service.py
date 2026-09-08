@@ -27,12 +27,13 @@ from sqlalchemy.orm import Session
 
 from core import exceptions as errors
 from core.security import secretbox, totp
-from core.services import audit_service, codes, modules_service, znaki_service
+from core.services import audit_service, codes, modules_service, permissions_service, znaki_service
 from core.utils import now_utc
 from database.models import TwoFactorKey, User
 from database.models.audit import SOURCE_MANUAL
 from database.models.task import VAZHNOSTI, VAZHNOST_PO_UMOLCHANIYU
 from database.models.user import ROLE_ROOT, STATUS_ACTIVE
+from database.repositories import audit as audit_repo
 from database.repositories import klyuchi as klyuchi_repo
 from database.repositories import tasks as tasks_repo
 from database.repositories import users as users_repo
@@ -56,6 +57,15 @@ MAX_DLINA_ZAPASNOGO = 64
 #: продолжает открывать сервис и после закрытия доступа в CRM, и держать его на
 #: экране «пока не закроют» значит оставить его открытым на ночь.
 PERENOS_SEKUND = 60
+
+#: Через сколько показ ТОГО ЖЕ ключа ТЕМ ЖЕ человеком пишется в журнал заново.
+#:
+#: Прежде это решал параметр запроса `silent`, то есть сам вызывающий: строка
+#: `POST /keys/7/code?silent=1` из консоли браузера снимала код без единого
+#: следа — а `key.shown` и есть единственный след того, что код сняли. Окном
+#: решает сервер, и выключить его снаружи нечем; повторы внутри окна сходятся в
+#: одну запись, чтобы открытый экран не давал сто двадцать строк в час.
+POKAZ_OKNO_SEKUND = 300
 
 _PROBELY = re.compile(r"\s+")
 
@@ -154,16 +164,51 @@ def _znak(klyuch: TwoFactorKey) -> dict | None:
     return znaki_service.nayti(klyuch.issuer or klyuch.title)
 
 
+def _ne_otkrylis(klyuch: TwoFactorKey) -> bool:
+    """Запасные коды ЛЕЖАТ, но нынешним ключом шифрования не открываются.
+
+    Третье состояние, и его нельзя схлопывать в «не заводили»: так выглядит
+    сменившийся `OPENCRM_SECRET_KEY` (или недоехавшая перекладка после заливки
+    копии с чужой машины). Скажи мы «их нет» — человек не пойдёт искать старый
+    ключ, пока старая машина ещё жива, а именно в этом весь смысл вопроса
+    «войти нечем, где запасные». Тем же способом отвечает почта:
+    `mail_password_undecryptable`.
+    """
+    if not klyuch.backup_codes_encrypted:
+        return False
+    try:
+        secretbox.decrypt(klyuch.backup_codes_encrypted, BACKUP_PURPOSE)
+    except (secretbox.SecretBoxError, ValueError):
+        return True
+    return False
+
+
 def _zapasnye(klyuch: TwoFactorKey) -> list[dict]:
     if not klyuch.backup_codes_encrypted:
         return []
     try:
         spisok = json.loads(secretbox.decrypt(klyuch.backup_codes_encrypted, BACKUP_PURPOSE))
     except (secretbox.SecretBoxError, ValueError):
-        # Ключ шифрования сменился или запись испорчена. Ронять карточку из-за
-        # запасных кодов нельзя — сам ключ при этом может быть цел.
+        # Ронять карточку из-за запасных кодов нельзя — сам ключ при этом может
+        # быть цел. Что список НЕ ПУСТ, а нечитаем, говорит `_ne_otkrylis`.
         return []
     return [x for x in spisok if isinstance(x, dict) and x.get("kod")]
+
+
+def _zadacha(db: Session, klyuch: TwoFactorKey, zadachi: dict | None):
+    """Напоминание карточки — или ничего, если блок напоминаний выключен.
+
+    Выключенный блок исчезает целиком (§3 CLAUDE.md): не только меню, но и срок
+    на чужой карточке со ссылкой `/tasks?id=…`, ведущей на страницу, которой в
+    выключенной системе нет.
+    """
+    if not klyuch.task_id:
+        return None
+    if zadachi is not None:
+        return zadachi.get(klyuch.task_id)
+    if not modules_service.is_enabled(db, "tasks"):
+        return None
+    return tasks_repo.get(db, klyuch.task_id)
 
 
 def kratko(
@@ -179,10 +224,7 @@ def kratko(
     запросом, и на списке это двенадцать запросов вместо одного.
     """
     zapasnye = _zapasnye(klyuch)
-    if zadachi is not None:
-        zadacha = zadachi.get(klyuch.task_id) if klyuch.task_id else None
-    else:
-        zadacha = tasks_repo.get(db, klyuch.task_id) if klyuch.task_id else None
+    zadacha = _zadacha(db, klyuch, zadachi)
     return {
         "note": klyuch.note or "",
         "seen_by": vidyat,
@@ -199,6 +241,9 @@ def kratko(
         "can_edit": _root(actor) or klyuch.created_by == actor.id,
         "backup_total": len(zapasnye),
         "backup_left": sum(1 for z in zapasnye if not z.get("potrachen")),
+        # «Не заводили» и «лежат, но не открываются» — разные ответы: см.
+        # `_ne_otkrylis`.
+        "backup_zakryty": _ne_otkrylis(klyuch),
         "task": (
             {
                 "id": zadacha.id,
@@ -222,8 +267,13 @@ def spisok(
     tolko_svoi: bool = False,
     poisk: str = "",
     v_korzine: bool = False,
+    tolko_prosyat: bool = False,
 ) -> dict:
     kto = _kto_vidit(actor)
+    # Выключенный блок напоминаний уносит с карточек срок, а из шапки — тревогу
+    # вместе с отбором по ней (§3 CLAUDE.md: блок исчезает целиком).
+    s_napominaniyami = modules_service.is_enabled(db, "tasks")
+    teper = now_utc().replace(tzinfo=None)
     klyuchi = klyuchi_repo.spisok(
         db,
         kto,
@@ -231,6 +281,10 @@ def spisok(
         tolko_svoi=tolko_svoi,
         poisk=_stroka(poisk, 120),
         v_korzine=v_korzine,
+        # Отбор «просят обновления» — запросом, а не вычитанием из показанного:
+        # число в шапке считается по всему разделу, и отбор по одной полке давал
+        # бы под ненулевым числом пустой список.
+        prosrocheno=teper if (tolko_prosyat and s_napominaniyami) else None,
     )
     po_kategoriyam = klyuchi_repo.po_kategoriyam(db, kto)
     kategorii = []
@@ -249,12 +303,14 @@ def spisok(
             }
         )
     vidyat = klyuchi_repo.skolko_vidyat(db, [k.id for k in klyuchi])
-    zadachi = tasks_repo.po_nomeram(db, [k.task_id for k in klyuchi])
+    # Пустой словарь, а не `None`: с `None` каждая карточка пошла бы за своим
+    # напоминанием сама и вернула бы то, чего в выключенной системе нет.
+    zadachi = tasks_repo.po_nomeram(db, [k.task_id for k in klyuchi]) if s_napominaniyami else {}
     return {
         "items": [kratko(db, actor, k, vidyat.get(k.id, 0), zadachi) for k in klyuchi],
         # Тревога одна на весь раздел, а не по выбранной полке: число, меняющееся
         # от выбора категории, читалось бы как «здесь просрочено столько».
-        "prosyat": klyuchi_repo.prosyat_obnovleniya(db, kto, now_utc().replace(tzinfo=None)),
+        "prosyat": klyuchi_repo.prosyat_obnovleniya(db, kto, teper) if s_napominaniyami else 0,
         "categories": kategorii,
         "total": klyuchi_repo.skolko(db, kto),
         "mine": klyuchi_repo.svoih(db, actor.id),
@@ -271,14 +327,43 @@ def _kategoriya_po_nazvaniyu(db: Session, actor: User, nazvanie: str) -> int | N
 
     Заводить прямо из формы ключа, а не отдельной кнопкой: человек пишет
     «Бухгалтерия» и ждёт, что она появится, а не что ему откажут.
+
+    **Чужая закрытая по имени не берётся.** Её имя видно всем в левой колонке,
+    поле категории свободного ввода, а `_vidno.svoya_zakrytaya` пускает хозяина
+    категории к ЛЮБОМУ ключу внутри. То есть достаточно было набрать чужое имя,
+    чтобы отдать свой второй фактор чужому человеку — молча и не заметив.
+    Отказ, а не тихое заведение второй такой же: имя категории одно на систему.
     """
     imya = _stroka(nazvanie, MAX_KATEGORIYA)
     if not imya:
         return None
     est = klyuchi_repo.kategoriya_po_imeni(db, imya)
     if est is not None:
+        if est.zakrytaya and not _root(actor) and est.created_by != actor.id:
+            raise errors.ValidationError(
+                "This category is closed by someone else",
+                code="key_category_foreign_closed",
+            )
         return est.id
     return klyuchi_repo.sozdat_kategoriyu(db, name=imya, created_by=actor.id).id
+
+
+def _napominanie(db: Session, actor: User, nomer) -> int | None:
+    """Номер напоминания, которое этому человеку вправду можно привязать.
+
+    Без проверки карточка отдавала бы `title` и `due_at` ЛЮБОЙ задачи: перебери
+    `task_id` на своём же ключе — и весь список напоминаний фирмы прочитан мимо
+    блока, который его охраняет.
+    """
+    if not nomer:
+        return None
+    if not modules_service.is_enabled(db, "tasks"):
+        raise errors.ValidationError("Reminders module is off", code="key_tasks_off")
+    if not permissions_service.has(db, actor, "tasks", "view"):
+        raise errors.ForbiddenError("Permission required: tasks.view", code="permission_denied")
+    if tasks_repo.get(db, int(nomer)) is None:
+        raise errors.NotFoundError("Task not found", code="task_not_found")
+    return int(nomer)
 
 
 def sozdat(db: Session, actor: User, dannye: dict) -> TwoFactorKey:
@@ -337,7 +422,7 @@ def pravit(db: Session, actor: User, key_id: int, dannye: dict) -> TwoFactorKey:
     if "category" in dannye:
         klyuch.category_id = _kategoriya_po_nazvaniyu(db, actor, dannye.get("category"))
     if "task_id" in dannye:
-        klyuch.task_id = dannye.get("task_id") or None
+        klyuch.task_id = _napominanie(db, actor, dannye.get("task_id"))
     if "backup_codes" in dannye:
         _polozhit_zapasnye(klyuch, dannye.get("backup_codes"))
     audit_service.record(
@@ -409,19 +494,28 @@ def steret(db: Session, actor: User, key_id: int) -> None:
 # --- коды --------------------------------------------------------------------
 
 
-def kod(db: Session, actor: User, key_id: int, *, v_zhurnal: bool = True) -> dict:
-    """Нынешний код и сколько ему осталось.
+def kod(db: Session, actor: User, key_id: int) -> dict:
+    """Нынешний код и сколько ему осталось. Показ всегда идёт в журнал.
 
-    `v_zhurnal=False` — то же самое, но без записи: экран переспрашивает код
-    каждые тридцать секунд, и писать каждую пересборку значило бы сто двадцать
-    записей в час с одного открытого экрана. В журнал идёт НАЖАТИЕ «показать».
+    Повторы того же ключа тем же человеком сходятся в одну запись за окно
+    `POKAZ_OKNO_SEKUND` — там и разбор, почему это решает сервер, а не флаг в
+    запросе.
     """
     klyuch = dostat(db, actor, key_id)
     if klyuch.deleted_at is not None:
         raise errors.ValidationError("The key is in the trash", code="key_in_trash")
     sekret = secretbox.decrypt(klyuch.secret_encrypted, SECRET_PURPOSE)
-    seychas = int(now_utc().timestamp())
-    if v_zhurnal:
+    teper = now_utc()
+    seychas = int(teper.timestamp())
+    uzhe_pisali = audit_repo.bylo_nedavno(
+        db,
+        actor_id=actor.id,
+        action=audit_service.ACTION_KEY_SHOWN,
+        entity_type=audit_service.ENTITY_TWOFACTOR,
+        entity_id=klyuch.id,
+        ne_ranshe=(teper - timedelta(seconds=POKAZ_OKNO_SEKUND)).replace(tzinfo=None),
+    )
+    if not uzhe_pisali:
         audit_service.record(
             db,
             actor=actor,
@@ -488,7 +582,18 @@ def sekret(db: Session, actor: User, key_id: int) -> dict:
 
 def _polozhit_zapasnye(klyuch: TwoFactorKey, syroe) -> None:
     """Список запасных кодов сервиса. Пустой список — «завели и все потратили»,
-    `None` — «не заводили вовсе»; это разные состояния."""
+    `None` — «не заводили вовсе»; это разные состояния.
+
+    **Нечитаемый список не затирается.** Шифротекст, не открывшийся нынешним
+    ключом, — данные восстановимые: старый ключ ещё может найтись, а перекладка
+    (`sekrety_service.perelozhit`) для того и написана. Перезаписав его, мы
+    делаем потерю окончательной, и делаем это молча.
+    """
+    if _ne_otkrylis(klyuch):
+        raise errors.ValidationError(
+            "The stored backup codes cannot be decrypted with the current key",
+            code="key_backup_undecryptable",
+        )
     if syroe is None:
         klyuch.backup_codes_encrypted = None
         return
@@ -521,6 +626,7 @@ def zapasnye(db: Session, actor: User, key_id: int) -> dict:
         "items": spisok,
         "left": sum(1 for z in spisok if not z.get("potrachen")),
         "total": len(spisok),
+        "zakryty": _ne_otkrylis(klyuch),
     }
 
 
@@ -529,13 +635,33 @@ def potratit_zapasnoy(db: Session, actor: User, key_id: int, nomer: int) -> dict
 
     Вычёркивание, а не удаление: список от сервиса один, и дырка в нём вместо
     зачёркнутой строки сдвинула бы остальные — человек читал бы не тот код.
+
+    **Под замком: список переписывается ЦЕЛИКОМ.** Двое, вычеркнувшие разные
+    коды разом, читают одинаковый список и пишут его один поверх другого —
+    вычеркнутый первым снова показан годным и будет выдан второй раз (§3
+    CLAUDE.md: посчитал — заперся — записал).
     """
-    klyuch = dostat(db, actor, key_id)
+    dostat(db, actor, key_id)
+    klyuch = klyuchi_repo.zapert(db, key_id)
+    if klyuch is None:
+        raise errors.NotFoundError("Key not found", code="key_not_found")
     spisok = _zapasnye(klyuch)
     if not 0 <= nomer < len(spisok):
         raise errors.NotFoundError("No such backup code", code="key_backup_not_found")
     spisok[nomer]["potrachen"] = True
     _polozhit_zapasnye(klyuch, spisok)
+    audit_service.record(
+        db,
+        actor=actor,
+        source=SOURCE_MANUAL,
+        action=audit_service.ACTION_KEY_BACKUP_SPENT,
+        entity_type=audit_service.ENTITY_TWOFACTOR,
+        entity_id=klyuch.id,
+        entity_label=klyuch.title,
+        # Номер, а не сам код: журнал читают многие, а запасной код открывает
+        # сервис ровно так же, как обычный.
+        after=f"#{nomer + 1}",
+    )
     return zapasnye(db, actor, key_id)
 
 
@@ -618,6 +744,84 @@ def sozdat_kategoriyu(db: Session, actor: User, dannye: dict) -> dict:
         after="created",
     )
     return {"id": kat.id, "name": kat.name, "zakrytaya": kat.zakrytaya}
+
+
+def _hozyain_kategorii(db: Session, actor: User, category_id: int):
+    """Категория, которой этот человек вправе распоряжаться."""
+    kat = klyuchi_repo.kategoriya(db, category_id)
+    if kat is None:
+        raise errors.NotFoundError("Category not found", code="key_category_not_found")
+    if not _root(actor) and kat.created_by != actor.id:
+        raise errors.ForbiddenError(
+            "Only the category owner can change it", code="key_category_not_owner"
+        )
+    return kat
+
+
+def kto_vidit_kategoriyu(db: Session, actor: User, category_id: int) -> dict:
+    """Кого пустили в категорию — и кого ещё можно пустить.
+
+    Пустить в категорию проще, чем в каждый ключ по отдельности: бухгалтеру
+    открывают «Бухгалтерию», а не восемь ключей и потом девятый.
+    """
+    kat = _hozyain_kategorii(db, actor, category_id)
+    otkryty = {d.user_id for d in klyuchi_repo.dostupy_kategorii(db, category_id)}
+    lyudi = []
+    for chelovek in users_repo.list_staff(db, status=STATUS_ACTIVE):
+        hozyain = chelovek.id == kat.created_by
+        lyudi.append(
+            {
+                "id": chelovek.id,
+                "name": chelovek.name or chelovek.email,
+                "role": chelovek.role,
+                "always": hozyain or chelovek.role == ROLE_ROOT,
+                "otkryt": hozyain or chelovek.role == ROLE_ROOT or chelovek.id in otkryty,
+            }
+        )
+    return {
+        "category_id": kat.id,
+        "name": kat.name,
+        "zakrytaya": kat.zakrytaya,
+        "people": lyudi,
+    }
+
+
+def otkryt_kategoriyu(
+    db: Session, actor: User, category_id: int, user_id: int, *, otkryt_li: bool
+) -> dict:
+    """Пустить человека в категорию или закрыть её ему.
+
+    Закрытая списков не слушает — это её определение (`_vidno` требует
+    `zakrytaya = false`), и молча записать в неё доступ значило бы завести
+    строку, которая никогда ничего не откроет.
+    """
+    kat = _hozyain_kategorii(db, actor, category_id)
+    if kat.zakrytaya:
+        raise errors.ValidationError(
+            "A closed category does not take access lists", code="key_category_closed"
+        )
+    chelovek = users_repo.get_by_id(db, user_id)
+    if chelovek is None:
+        raise errors.NotFoundError("User not found", code="user_not_found")
+    if chelovek.id == kat.created_by or chelovek.role == ROLE_ROOT:
+        raise errors.ValidationError(
+            "This person always sees the category", code="key_access_always"
+        )
+    if otkryt_li:
+        klyuchi_repo.otkryt_kategoriyu(db, category_id, user_id, actor.id)
+    else:
+        klyuchi_repo.zakryt_kategoriyu(db, category_id, user_id)
+    audit_service.record(
+        db,
+        actor=actor,
+        source=SOURCE_MANUAL,
+        action=audit_service.ACTION_KEY_ACCESS_CHANGED,
+        entity_type=audit_service.ENTITY_KEY_CATEGORY,
+        entity_id=kat.id,
+        entity_label=kat.name,
+        after=f"{'+' if otkryt_li else '-'}{chelovek.name or chelovek.email}",
+    )
+    return kto_vidit_kategoriyu(db, actor, category_id)
 
 
 def udalit_kategoriyu(db: Session, actor: User, category_id: int) -> None:
