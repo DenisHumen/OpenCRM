@@ -308,7 +308,7 @@ export function DealLines({
               ни фона, ни рамки — строки палитры Ctrl+K ложились прямо на текст. */}
           {podskazki.length > 0 && (
             <div
-              className="card vsplyvashka"
+              className="card popover-card"
               style={{ position: "absolute", top: "100%", left: 0, right: 0, zIndex: 20, marginTop: 4, overflow: "hidden" }}
             >
               {podskazki.map((tovar) => (

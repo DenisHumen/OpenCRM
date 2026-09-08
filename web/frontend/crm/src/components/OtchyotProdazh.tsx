@@ -118,20 +118,20 @@ function VsplyvDnya({
   const { t, locale } = useApp();
   const ostalnye = kletka.znachenie - kletka.sobytiya.length;
   const klassy = [
-    "otchyot-vsplyv",
-    vniz ? "otchyot-vsplyv-vniz" : "",
-    kray ? `otchyot-vsplyv-${kray}` : "",
+    "report-popover",
+    vniz ? "report-popover-down" : "",
+    kray ? `report-popover-${kray}` : "",
   ].filter(Boolean);
 
   return (
     <div className={klassy.join(" ")} role="tooltip">
-      <div className="otchyot-vsplyv-shapka">
-        <span className="otchyot-vsplyv-data">{formatDate(kletka.den, locale)}</span>
+      <div className="report-popover-header">
+        <span className="report-popover-data">{formatDate(kletka.den, locale)}</span>
         <span>{t(kassa ? "salesCashCount" : "salesDealsCount", { count: kletka.znachenie })}</span>
       </div>
-      <div className="otchyot-vsplyv-zakazy">
+      <div className="report-popover-orders">
         {kletka.sobytiya.map((z) => (
-          <div className="otchyot-vsplyv-zakaz" key={z.nomer}>
+          <div className="report-popover-order" key={z.nomer}>
             <span className="truncate" title={z.nomer}>
               {z.nazvanie || z.nomer}
             </span>
@@ -140,11 +140,11 @@ function VsplyvDnya({
         ))}
       </div>
       {ostalnye > 0 && (
-        <div className="otchyot-vsplyv-eshchyo">{t("salesMore", { count: ostalnye })}</div>
+        <div className="report-popover-more">{t("salesMore", { count: ostalnye })}</div>
       )}
-      <div className="otchyot-vsplyv-itogo">
-        <span className="otchyot-vsplyv-itogo-imya">{t("salesTotal")}</span>
-        <span className="otchyot-vsplyv-itogo-summa">
+      <div className="report-popover-total">
+        <span className="report-popover-total-name">{t("salesTotal")}</span>
+        <span className="report-popover-total-sum">
           {formatMoney(kletka.summa_minor, currency, locale)}
         </span>
       </div>
@@ -156,10 +156,10 @@ function VsplyvDnya({
  *  месяц ниже прошлого случается, и красить его зелёным нельзя. */
 function Rost({ itog }: { itog: ItogOtchyota }) {
   const { t } = useApp();
-  if (itog.rost_bp === null) return <span className="otchyot-bylo">{t("salesNoBase")}</span>;
+  if (itog.rost_bp === null) return <span className="report-was">{t("salesNoBase")}</span>;
   const vniz = itog.rost_bp < 0;
   return (
-    <span className={vniz ? "otchyot-rost otchyot-spad" : "otchyot-rost"}>
+    <span className={vniz ? "report-growth report-drop" : "report-growth"}>
       {vniz ? "↓" : "↑"}
       {formatRate(Math.abs(itog.rost_bp), "en").replace("%", "")}%
     </span>
@@ -173,45 +173,45 @@ function PodvalOtchyota({ data }: { data: DannyeOtchyota }) {
 
   return (
     <>
-      <div className="otchyot-kpi" style={{ "--zaderzhka": "640ms" } as React.CSSProperties}>
+      <div className="report-kpi" style={{ "--zaderzhka": "640ms" } as React.CSSProperties}>
         <div>
-          <div className="otchyot-kpi-imya">
+          <div className="report-kpi-name">
             <ZnakMesyatsa />
             {t("salesMonthly")}
           </div>
-          <div className="otchyot-kpi-znachenie">{dengi(data.za_mesyats.summa_minor)}</div>
-          <div className="otchyot-kpi-podpis">
+          <div className="report-kpi-value">{dengi(data.za_mesyats.summa_minor)}</div>
+          <div className="report-kpi-caption">
             <Rost itog={data.za_mesyats} />
             {/* Прошлый период печатается, только если с ним сравнивали: рядом
                 со словами «не с чем сравнить» ноль читается как настоящий. */}
             {data.za_mesyats.rost_bp !== null && (
-              <span className="otchyot-bylo">{dengi(data.za_mesyats.bylo_minor)}</span>
+              <span className="report-was">{dengi(data.za_mesyats.bylo_minor)}</span>
             )}
           </div>
         </div>
         <div>
-          <div className="otchyot-kpi-imya">
+          <div className="report-kpi-name">
             <ZnakGoda />
             {t("salesYearly")}
           </div>
-          <div className="otchyot-kpi-znachenie">{dengi(data.za_god.summa_minor)}</div>
-          <div className="otchyot-kpi-podpis">
+          <div className="report-kpi-value">{dengi(data.za_god.summa_minor)}</div>
+          <div className="report-kpi-caption">
             <Rost itog={data.za_god} />
             {data.za_god.rost_bp !== null && (
-              <span className="otchyot-bylo">{dengi(data.za_god.bylo_minor)}</span>
+              <span className="report-was">{dengi(data.za_god.bylo_minor)}</span>
             )}
           </div>
         </div>
       </div>
-      <div className="otchyot-goroda">
+      <div className="report-cities">
         {data.goroda.map((g, i) => (
           <div
-            className="otchyot-gorod"
+            className="report-city"
             key={g.gorod}
             style={{ "--zaderzhka": `${720 + i * 70}ms` } as React.CSSProperties}
           >
             <span className="truncate">{g.gorod}</span>
-            <span className="otchyot-gorod-summa">{dengi(g.summa_minor)}</span>
+            <span className="report-city-sum">{dengi(g.summa_minor)}</span>
           </div>
         ))}
       </div>
@@ -228,16 +228,16 @@ function Setka({ data }: { data: DannyeOtchyota }) {
   for (let i = 0; i < kletki.length; i += 8) ryady.push(kletki.slice(i, i + 8));
 
   return (
-    <div className="otchyot-setka">
+    <div className="report-grid">
       {ryady.map((ryad, y) => (
-        <div className="otchyot-setka-ryad" key={ryad[0]?.den ?? y}>
+        <div className="report-grid-row" key={ryad[0]?.den ?? y}>
           {ryad.map((kletka, x) => (
             <div
               className={
-                `otchyot-kletka otchyot-kletka-${stupen(kletka.znachenie, maks)}` +
+                `report-cell report-cell-${stupen(kletka.znachenie, maks)}` +
                 // Наведённая клетка поднимается над соседями: подсказка лежит
                 // внутри неё, а соседние клетки рисуются позже и накрывали её.
-                (navedeno === kletka.den ? " otchyot-kletka-navedena" : "")
+                (navedeno === kletka.den ? " report-cell-hovered" : "")
               }
               key={kletka.den}
               style={{ "--zaderzhka": `${60 + (y * 8 + x) * 7}ms` } as React.CSSProperties}
@@ -288,21 +288,21 @@ function Matritsa({ data }: { data: DannyeOtchyota }) {
   };
 
   return (
-    <div className="otchyot-mesyatsy">
+    <div className="report-months">
       {data.mesyatsy.map((m, mi) => {
         const maks = m.dni.reduce((a, b) => Math.max(a, b), 0);
         return (
           <div key={m.mesyats}>
-            <div className="otchyot-mesyats-shapka">
-              <span className="otchyot-mesyats-imya">{imya_mesyatsa(m.mesyats)}</span>
-              <span className="otchyot-mesyats-summa">
+            <div className="report-month-header">
+              <span className="report-month-name">{imya_mesyatsa(m.mesyats)}</span>
+              <span className="report-month-sum">
                 {formatMoney(m.summa_minor, data.currency, locale)}
               </span>
             </div>
-            <div className="otchyot-matritsa">
+            <div className="report-matrix">
               {[0, 1, 2, 3, 4].map((ryad) => (
                 <div
-                  className="otchyot-matritsa-ryad"
+                  className="report-matrix-row"
                   key={ryad}
                   style={{ "--stolbtsov": m.dni.length } as React.CSSProperties}
                 >
@@ -317,10 +317,10 @@ function Matritsa({ data }: { data: DannyeOtchyota }) {
                       <span
                         className={
                           yarko
-                            ? "otchyot-tochka otchyot-tochka-yarkaya"
+                            ? "report-dot report-dot-bright"
                             : srednee
-                              ? "otchyot-tochka otchyot-tochka-srednyaya"
-                              : "otchyot-tochka"
+                              ? "report-dot report-dot-middle"
+                              : "report-dot"
                         }
                         key={den}
                         style={
@@ -370,12 +370,12 @@ export function OtchyotProdazh({ vid }: { vid: "setka" | "matritsa" }) {
   }, [zapros, fail, clear]);
 
   return (
-    <div className="otchyot">
-      <h2 className="otchyot-titul">{t("salesReport")}</h2>
+    <div className="report">
+      <h2 className="report-title">{t("salesReport")}</h2>
       {failure ? (
         <LoadFailed error={failure} onRetry={perechitat} />
       ) : !data ? (
-        <div className="otchyot-zhdyom">
+        <div className="report-waiting">
           <Spinner />
         </div>
       ) : (

@@ -119,13 +119,13 @@ export function Spinner() {
  *  Буквы — оформление, читалке достаточно имени на обёртке. */
 export function Zagruzka({ text }: { text: string }) {
   return (
-    <div className="zagruzka" role="status" aria-label={text}>
+    <div className="loading" role="status" aria-label={text}>
       {Array.from(text).map((bukva, i) => (
-        <span key={i} className="zagruzka-bukva" aria-hidden="true">
+        <span key={i} className="loading-letter" aria-hidden="true">
           {bukva === " " ? "\u00a0" : bukva}
         </span>
       ))}
-      <div className="zagruzka-kolco" />
+      <div className="loading-ring" />
     </div>
   );
 }
@@ -238,10 +238,10 @@ export function ItogSpiska({
   const { t, locale } = useApp();
   if (pokazano === 0) return null;
   return (
-    <div className="itog-spiska">
+    <div className="total-list">
       <span>{t("listShown", { n: pokazano, total: vsego })}</span>
       {summa !== undefined && summa !== null && currency && (
-        <span className="itog-spiska-summa">{t("listSumShown", { sum: formatMoney(summa, currency, locale) })}</span>
+        <span className="total-list-sum">{t("listSumShown", { sum: formatMoney(summa, currency, locale) })}</span>
       )}
     </div>
   );
@@ -261,7 +261,7 @@ export function Dochitat({
   const { t } = useApp();
   if (pokazano >= vsego) return null;
   return (
-    <button type="button" className="dochitat" disabled={zanyat} onClick={onClick}>
+    <button type="button" className="load-more" disabled={zanyat} onClick={onClick}>
       {t("showMore")} ({pokazano} / {vsego})
     </button>
   );
@@ -305,7 +305,7 @@ const FOCUSABLE =
  *  Слово приходит из разметки (`data-podpis`), а не из CSS `content`: в стилях
  *  ему неоткуда взять перевод, а интерфейс у продукта двуязычный.
  *
- *  Обёртка `.korzina-mesto` держит место в 28 пикселей, а сама кнопка на
+ *  Обёртка `.trash-place` держит место в 28 пикселей, а сама кнопка на
  *  наведении разъезжается ПОВЕРХ соседей влево. Без этого расширение сдвигало
  *  бы всю строку действий — в списке из десяти строк это дёрганье под курсором.
  */
@@ -326,17 +326,17 @@ export function KnopkaKorziny({
 }) {
   const { t } = useApp();
   return (
-    <span className="korzina-mesto">
+    <span className="trash-place">
       <button
         type="button"
-        className="korzina"
+        className="trash"
         data-podpis={podpis ?? t("delete")}
         title={title ?? t("delete")}
         aria-label={title ?? t("delete")}
         disabled={disabled}
         onClick={onClick}
       >
-        <svg className="korzina-znak" viewBox="0 0 448 512" aria-hidden="true">
+        <svg className="trash-icon" viewBox="0 0 448 512" aria-hidden="true">
           <path d="M135.2 17.7L128 32H32C14.3 32 0 46.3 0 64S14.3 96 32 96H416c17.7 0 32-14.3 32-32s-14.3-32-32-32H320l-7.2-14.3C307.4 6.8 296.3 0 284.2 0H163.8c-12.1 0-23.2 6.8-28.6 17.7zM416 128H32L53.2 467c1.6 25.3 22.6 45 47.9 45H346.9c25.3 0 46.3-19.7 47.9-45L416 128z" />
         </svg>
       </button>
@@ -506,9 +506,9 @@ export function NovayaSborka() {
 
   if (!vyshlo) return null;
   return (
-    <div className="sborka-polosa" role="status">
+    <div className="build-bar" role="status">
       <Icon name="refresh" size={14} />
-      <span className="sborka-tekst">{t("newBuild")}</span>
+      <span className="build-text">{t("newBuild")}</span>
       <button className="btn btn-sm btn-primary" onClick={() => window.location.reload()}>
         {t("newBuildReload")}
       </button>

@@ -430,7 +430,8 @@ def mark_ready(
 ):
     order = order_service.mark_ready(db, order_id, user)
     return schemas.order_out(
-        order, order_service.lines(db, order.id), amounts=permissions_service.sees_amounts(db, user, "deals"),
+        order, order_service.lines(db, order.id),
+        amounts=permissions_service.sees_amounts(db, user, "orders"),
         client_name=_imya_klienta(db, order),
     )
 

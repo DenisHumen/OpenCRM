@@ -583,8 +583,18 @@ def update_role(db: Session, role_id: int, name: str | None, codes, *, actor: Us
     return role
 
 
-def set_default(db: Session, role_id: int) -> Role:
+def set_default(db: Session, role_id: int, actor: User | None = None) -> Role:
     """Роль по умолчанию ровно одна: её получает новый сотрудник.
+
+    **Это четвёртая дверь раздачи прав, и она стояла открытой.** Три соседние
+    (`create_role`, `update_role`, `assign`) спрашивают
+    `_refuse_granting_what_you_lack`, а эта не спрашивала — и человек с одним
+    `roles.manage` делал должностью по умолчанию ту, что даёт права, которых у
+    него нет. Дальше достаточно дождаться регистрации коллеги. Обход в два шага
+    ровно того вида, ради которого правило и писалось.
+
+    `actor is None` — посев при установке: система заводит роли сама, спрашивать
+    права не у кого.
 
     Оба шага — явные UPDATE, «своя» ставится первой; подробности и цена ошибки
     описаны у основной фирмы (`company_service.set_default`), правило здесь
@@ -597,6 +607,8 @@ def set_default(db: Session, role_id: int) -> Role:
     сотрудник входит в CRM без единого раздела и без объяснения, почему.
     """
     role = get_role(db, role_id)
+    if actor is not None:
+        _refuse_granting_what_you_lack(db, actor, set(codes_of_role(db, role.id)))
     roles_repo.make_default(db, role)
     return role
 

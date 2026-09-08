@@ -1705,10 +1705,10 @@ export function Telegram() {
         ровно там, где потом появится сама карточка.
       */}
       {otkrytyy !== null && vidno_klientov && (
-        <aside className="tg-delo">
+        <aside className="tg-case">
           {klient_id == null ? (
             <>
-              <div className="tg-delo-pusto">{t("tgNoCard")}</div>
+              <div className="tg-case-empty">{t("tgNoCard")}</div>
               {/*
                 Прячем от того, кому сервер откажет: правило `lib/permissions.ts`.
                 Кнопка, отвечающая отказом, хуже её отсутствия — она обещает.
@@ -1716,7 +1716,7 @@ export function Telegram() {
               {can(user, "clients.create") && (
                 <button
                   type="button"
-                  className="tg-delo-knopka"
+                  className="tg-case-btn"
                   onClick={() => void zavesti_kartochku()}
                   disabled={kartochkaGuard.busy}
                 >
@@ -1725,17 +1725,17 @@ export function Telegram() {
               )}
             </>
           ) : delo === null ? (
-            <div className="tg-delo-pusto">{deloIdyot ? t("loading") : t("loadFailed")}</div>
+            <div className="tg-case-empty">{deloIdyot ? t("loading") : t("loadFailed")}</div>
           ) : (
             <>
-              <div className="tg-delo-head">
-                <Link className="tg-delo-name" to={`/clients/${delo.id}`}>
+              <div className="tg-case-head">
+                <Link className="tg-case-name" to={`/clients/${delo.id}`}>
                   {delo.name}
                 </Link>
-                {delo.company && <div className="tg-delo-sub">{delo.company}</div>}
+                {delo.company && <div className="tg-case-sub">{delo.company}</div>}
               </div>
 
-              <div className="tg-delo-fields">
+              <div className="tg-case-fields">
                 {delo.phone && (
                   <div>
                     <span>{t("phone")}</span>
@@ -1760,7 +1760,7 @@ export function Telegram() {
               {can(user, "clients.edit") && est_chto_perenesti(otkrytyy, delo) && (
                 <button
                   type="button"
-                  className="tg-delo-knopka"
+                  className="tg-case-btn"
                   onClick={() => void obnovit_kartochku()}
                   disabled={kartochkaGuard.busy}
                 >
@@ -1768,15 +1768,15 @@ export function Telegram() {
                 </button>
               )}
 
-              <div className="tg-delo-title">{t("deals")}</div>
+              <div className="tg-case-title">{t("deals")}</div>
               {(delo.deals ?? []).length === 0 ? (
-                <div className="tg-delo-pusto">{t("tgNoDeals")}</div>
+                <div className="tg-case-empty">{t("tgNoDeals")}</div>
               ) : (
-                <ul className="tg-delo-deals">
+                <ul className="tg-case-deals">
                   {(delo.deals ?? []).map((zayavka: any) => (
                     <li key={zayavka.id}>
                       <Link to={`/deals/${zayavka.id}`}>{zayavka.title}</Link>
-                      <div className="tg-delo-line">
+                      <div className="tg-case-line">
                         <span>
                           {nazvanieEtapa(t, (stages.items ?? []).find((s: any) => s.key === zayavka.stage)?.name) ||
                             zayavka.stage}

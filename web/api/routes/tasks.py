@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from core import exceptions as errors
-from core.services import task_service
+from core.services import permissions_service, task_service
 from database.models import User
 from database.repositories import clients as clients_repo
 from database.repositories import deals as deals_repo
@@ -44,15 +44,26 @@ class TaskPatchIn(BaseModel):
     is_done: bool | None = None
 
 
-def _out(db: Session, tasks: list) -> list[dict]:
+def _out(db: Session, tasks: list, user: User) -> list[dict]:
     """Имена рядом с номерами: в списке «Заявка» и «Клиент» без названий
-    отвечали лишь на вопрос «есть ли», а спрашивают «какая»."""
+    отвечали лишь на вопрос «есть ли», а спрашивают «какая».
+
+    Заголовок заявки берётся В ОБЛАСТИ смотрящего. Раньше не брался, и это был
+    обход области видимости заявок целиком: `GET /tasks?deal_id=<чужая>` с одним
+    правом `tasks.view` подписывал ответ заголовком чужой заявки, а перебором
+    номеров вычитывался их список. Сам `deal_id` остаётся — он ничего не
+    рассказывает.
+    """
+    oblast = permissions_service.deals_scope(db, user)
     names = {
         u.id: u.name
         for u in users_repo.get_many(db, {t.assignee_id for t in tasks if t.assignee_id})
     }
     klienty = clients_repo.names_by_ids(db, [t.client_id for t in tasks if t.client_id])
-    zayavki = {d.id: d.title for d in deals_repo.by_ids(db, {t.deal_id for t in tasks if t.deal_id})}
+    zayavki = {
+        d.id: d.title
+        for d in deals_repo.by_ids(db, {t.deal_id for t in tasks if t.deal_id}, oblast)
+    }
     nomera = [t.id for t in tasks]
     vlozheniya = task_service.files_counts(db, nomera)
     zametki = task_service.zametki_est(db, nomera)
@@ -75,13 +86,13 @@ def list_tasks(
     assignee_id: int | None = None,
     client_id: int | None = None,
     deal_id: int | None = None,
-    _: User = Depends(require_perm("tasks", "view")),
+    user: User = Depends(require_perm("tasks", "view")),
     db: Session = Depends(get_db),
 ):
     tasks = task_service.search(
         db, scope=scope, assignee_id=assignee_id, client_id=client_id, deal_id=deal_id
     )
-    return {"items": _out(db, tasks)}
+    return {"items": _out(db, tasks, user)}
 
 
 @router.get("/summary")
@@ -94,14 +105,14 @@ def summary(user: User = Depends(require_perm("tasks", "view")), db: Session = D
 @router.get("/{task_id}")
 def get_task(
     task_id: int,
-    _: User = Depends(require_perm("tasks", "view")),
+    user: User = Depends(require_perm("tasks", "view")),
     db: Session = Depends(get_db),
 ):
     """Карточка напоминания: то же, что в списке, плюс вложения. Отдельной
     точкой, потому что список из двухсот строк не должен тянуть их все."""
     task = task_service.get_task(db, task_id)
     vlozheniya = task_service.files(db, task.id)
-    data = _out(db, [task])[0]
+    data = _out(db, [task], user)[0]
     # Подробности и вложения — только здесь: список от них берёт «есть ли».
     data["note"] = task.note
     data["files"] = [schemas.task_file_out(f) for f in vlozheniya]
@@ -116,7 +127,7 @@ def create_task(
     db: Session = Depends(get_db),
 ):
     task = task_service.create(db, payload.model_dump(exclude_unset=True), user)
-    return _out(db, [task])[0]
+    return _out(db, [task], user)[0]
 
 
 @router.patch("/{task_id}")
@@ -127,7 +138,7 @@ def update_task(
     db: Session = Depends(get_db),
 ):
     task = task_service.update(db, task_id, payload.model_dump(exclude_unset=True), user)
-    return _out(db, [task])[0]
+    return _out(db, [task], user)[0]
 
 
 @router.delete("/{task_id}")

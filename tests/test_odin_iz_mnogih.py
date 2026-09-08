@@ -723,3 +723,54 @@ def test_vozvrat_i_storno_nakladnoy_razom(root_client):
         )
     finally:
         root_client.post(f"{API}/modules/waybills", json={"enabled": False})
+
+
+# --- запасные коды двухфакторки ------------------------------------------------
+
+
+def test_dvoe_vycherkivayut_zapasnye_kody_razom(root_client):
+    """Двое вычёркивают РАЗНЫЕ запасные коды одного ключа одновременно.
+
+    Список хранится одной зашифрованной строкой, и вычёркивание переписывает его
+    ЦЕЛИКОМ: прочитал восемь — пометил один — записал восемь обратно. Без замка
+    это классическое потерянное обновление, и вреда от него больше, чем от
+    сбитого счётчика: код, вычеркнутый первым, снова показан годным, его выдадут
+    второй раз, сервис его уже сжёг — а список уверяет, что осталось на один
+    больше, чем есть.
+
+    Утверждение не «прошёл ровно один»: пройти обязаны ОБА, вычёркивают-то они
+    разное. Разойтись не должны только записи.
+    """
+    root_client.post(f"{API}/modules/keys", json={"enabled": True})
+    try:
+        klyuch = root_client.post(
+            f"{API}/keys",
+            json={
+                "secret": "JBSWY3DPEHPK3PXP",
+                "title": "Дуэль запасных кодов",
+                "backup_codes": ["duel-0000", "duel-1111", "duel-2222", "duel-3333"],
+            },
+        )
+        assert klyuch.status_code == 201, klyuch.text
+        nomer = klyuch.json()["id"]
+
+        def vycherknut(kotoryy: int):
+            otvet = root_client.post(f"{API}/keys/{nomer}/backup-codes/{kotoryy}/spend")
+            return (otvet.status_code, otvet.text)
+
+        codes = duel(vycherknut, 0, 3)
+        assert set(codes) == {"first", "second"}, f"об ударе не отчитались: {codes}"
+        ishody = [codes["first"], codes["second"]]
+        assert all(isinstance(i, tuple) and i[0] == 200 for i in ishody), (
+            f"вычёркивание не выдержало гонки: {ishody}"
+        )
+
+        spisok = root_client.get(f"{API}/keys/{nomer}/backup-codes").json()["items"]
+        potracheny = [i for i, z in enumerate(spisok) if z["potrachen"]]
+        assert potracheny == [0, 3], (
+            f"вторая запись затёрла первую: потрачены {potracheny}, а вычёркивали 0 и 3"
+        )
+        root_client.delete(f"{API}/keys/{nomer}")
+        root_client.delete(f"{API}/keys/{nomer}/forever")
+    finally:
+        root_client.post(f"{API}/modules/keys", json={"enabled": False})

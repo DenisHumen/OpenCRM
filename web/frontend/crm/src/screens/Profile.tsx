@@ -29,47 +29,47 @@ const ZONY = [1, 2, 3, 4, 5, 6, 7, 8, 9];
 function Propusk({ user, brand }: { user: User; brand: string }) {
   const { t, locale } = useApp();
   return (
-    <div className="propusk-wrap" aria-hidden="true">
+    <div className="pass-wrap" aria-hidden="true">
       {ZONY.map((z) => (
-        <div key={z} className="propusk-zona" />
+        <div key={z} className="pass-zone" />
       ))}
-      <div className="propusk">
-        <div className="propusk-logo">OpenCRM</div>
-        <div className="propusk-rol">
+      <div className="pass">
+        <div className="pass-logo">OpenCRM</div>
+        <div className="pass-role">
           <span>{user.role === "root" ? t("root") : nazvanieRoli(t, user.role_name) || t("noRole")}</span>
           <Icon name="check" size={18} stroke={2} />
         </div>
-        <div className="propusk-info">
+        <div className="pass-info">
           <div>
-            <div className="propusk-l">{t("company")}</div>
-            <div className="propusk-v">{brand || "OpenCRM"}</div>
+            <div className="pass-l">{t("company")}</div>
+            <div className="pass-val">{brand || "OpenCRM"}</div>
           </div>
           <div>
-            <div className="propusk-l">{t("badgeJoined")}</div>
-            <div className="propusk-v">{user.created_at ? formatDate(user.created_at, locale) : ""}</div>
+            <div className="pass-l">{t("badgeJoined")}</div>
+            <div className="pass-val">{user.created_at ? formatDate(user.created_at, locale) : ""}</div>
           </div>
         </div>
-        <div className="propusk-line" />
-        <div className="propusk-user">
-          <span className="propusk-alias">{user.email}</span>
-          <span className="propusk-name">{user.name}</span>
+        <div className="pass-line" />
+        <div className="pass-user">
+          <span className="pass-alias">{user.email}</span>
+          <span className="pass-name">{user.name}</span>
         </div>
-        <div className="propusk-niz">
-          <div className="propusk-qr">
+        <div className="pass-bottom">
+          <div className="pass-qr">
             {user.avatar_url ? <img src={user.avatar_url} alt="" /> : initials(user.name)}
           </div>
-          <div className="propusk-pos">
+          <div className="pass-pos">
             <div>
-              <div className="propusk-l">{t("badgeId")}</div>
-              <div className="propusk-v">#{user.id}</div>
+              <div className="pass-l">{t("badgeId")}</div>
+              <div className="pass-val">#{user.id}</div>
             </div>
             <div>
-              <div className="propusk-l">{t("badgeSince")}</div>
-              <div className="propusk-v">{user.created_at ? user.created_at.slice(0, 4) : ""}</div>
+              <div className="pass-l">{t("badgeSince")}</div>
+              <div className="pass-val">{user.created_at ? user.created_at.slice(0, 4) : ""}</div>
             </div>
           </div>
         </div>
-        <div className="propusk-svet" />
+        <div className="pass-light" />
       </div>
     </div>
   );
@@ -154,7 +154,7 @@ export function Profile() {
   };
 
   return (
-    <div className="page page-kartochka">
+    <div className="page page-card">
       <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 16, marginBottom: 26 }}>
         <div onClick={() => avatarInput.current?.click()} title={t("changePhoto")} style={{ cursor: "pointer" }}>
           <Avatar text={initials(user.name)} large src={user.avatar_url} online />
@@ -192,7 +192,7 @@ export function Profile() {
         <Propusk user={user} brand={workspace.brand_name} />
       </div>
 
-      <div className="kart-setka">
+      <div className="cards-grid">
       <div className="card card-pad" style={{ marginBottom: 16 }}>
         <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 16 }}>{t("account")}</div>
         <div className="field">

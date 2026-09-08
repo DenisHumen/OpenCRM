@@ -60,8 +60,12 @@ def dashboard(user: User = Depends(require_staff), db: Session = Depends(get_db)
         unique_7d = stats_repo.unique_viewers_in_range(db, views_start, views_end)
         last_view = stats_repo.last_view_at(db)
 
-        recent_boards, _total = boards_repo.search(db, page=1, per_page=4)
-        boards_payload = cards.board_cards(db, recent_boards)
+        # Карточки досок — ТОЛЬКО тому, кому доски открыты, тем же правилом,
+        # что и карточки клиентов ниже. Счётчики и ось графика остаются: они
+        # сужены блоком, и это отдельное решение (07-bezopasnost.md).
+        if permissions_service.has(db, user, "boards", "view"):
+            recent_boards, _total = boards_repo.search(db, page=1, per_page=4)
+            boards_payload = cards.board_cards(db, recent_boards)
     else:
         # Дни остаются, счётчики обнуляются: пустой массив сузил бы не слагаемое,
         # а саму ось графика. Список берём тем же вызовом: арифметика календаря

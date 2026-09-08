@@ -55,10 +55,10 @@ function toLocalInput(iso: string | null): string {
 
 /** Полосы списка по местному дню: в одной ленте «сегодня» терялось между
  *  вчерашним и следующей неделей (владелец, 06.09.2026). */
-type Polosa = "srochno" | "overdue" | "today" | "tomorrow" | "later" | "nodue";
-const POLOSY: Polosa[] = ["srochno", "overdue", "today", "tomorrow", "later", "nodue"];
+type Polosa = "urgent" | "overdue" | "today" | "tomorrow" | "later" | "nodue";
+const POLOSY: Polosa[] = ["urgent", "overdue", "today", "tomorrow", "later", "nodue"];
 const POLOSA_LABEL = {
-  srochno: "vazhnostUrgent",
+  urgent: "vazhnostUrgent",
   overdue: "tasksOverdue",
   today: "tasksToday",
   tomorrow: "tasksTomorrow",
@@ -69,7 +69,7 @@ const POLOSA_LABEL = {
 function polosa(task: { due_at: string | null; vazhnost?: string }, now: number): Polosa {
   // Срочное собирается наверх мимо дней. Иначе «срочно, но без срока» падало в
   // самый низ, под «позже», — а сервер как раз ставит важность выше срока.
-  if (srochno(task.vazhnost)) return "srochno";
+  if (srochno(task.vazhnost)) return "urgent";
   const at = parseDate(task.due_at);
   if (!at) return "nodue";
   const moment = at.getTime();
@@ -222,7 +222,7 @@ export function Tasks() {
         {/* Важность выбирается здесь же: заведённое «на потом» напоминание
             срочным уже не сделают — ради этого пришлось бы открывать карточку. */}
         <select
-          className="input task-new-vazhnost"
+          className="input task-new-importance"
           value={novaya}
           aria-label={t("vazhnost")}
           onChange={(e) => setNovaya(vazhnost(e.target.value))}
@@ -267,9 +267,9 @@ export function Tasks() {
               {sPolosami && imya && (
                 <div
                   className={
-                    "spisok-polosa" +
+                    "list-bar" +
                     (imya === "overdue" ? " beda" : "") +
-                    (imya === "srochno" ? " srochnaya" : "")
+                    (imya === "urgent" ? " urgent" : "")
                   }
                 >
                   {t(POLOSA_LABEL[imya])} · {chast.length}
@@ -283,7 +283,7 @@ export function Tasks() {
             // прошлом, а движущаяся рамка тянет взгляд на то, что уже неважно.
             const volna = srochno(vazhnoe) && !task.is_done;
             return (
-              <div key={task.id} className={"task-row" + (volna ? " srochno" : "")}>
+              <div key={task.id} className={"task-row" + (volna ? " urgent" : "")}>
                 {/* Отметка одним нажатием: если закрытие задачи требует зайти
                     в карточку, её не закрывают, и список перестаёт отражать
                     действительность. */}
@@ -306,16 +306,16 @@ export function Tasks() {
                   </button>
                   <div className="task-meta">
                     {vazhnoe !== "normal" && (
-                      <span className={"vazhnost-chip " + vazhnoe}>{t(VAZHNOST_LABEL[vazhnoe])}</span>
+                      <span className={"importance-chip " + vazhnoe}>{t(VAZHNOST_LABEL[vazhnoe])}</span>
                     )}
                     {task.files_count > 0 && (
-                      <span className="task-vlozheno" title={t("tasksFiles")}>
+                      <span className="task-attached" title={t("tasksFiles")}>
                         <Icon name="image" size={11} />
                         {task.files_count}
                       </span>
                     )}
                     {task.note_est && (
-                      <span className="task-vlozheno" title={t("tasksNote")}>
+                      <span className="task-attached" title={t("tasksNote")}>
                         <Icon name="note" size={11} />
                       </span>
                     )}

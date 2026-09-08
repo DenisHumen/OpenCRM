@@ -67,12 +67,24 @@ def spisok(
     mine: bool = Query(default=False),
     q: str = Query(default=""),
     trash: bool = Query(default=False),
+    alarm: bool = Query(default=False),
     user: User = Depends(require_perm("keys", "view")),
     db: Session = Depends(get_db),
 ):
-    """Ключи, категории и счётчики одним ответом — как рисует экран."""
+    """Ключи, категории и счётчики одним ответом — как рисует экран.
+
+    `alarm=1` — только те, что просят обновления. Отбор делает сервер: число в
+    шапке считается по всему разделу, и вычитание из показанной полки давало бы
+    под ненулевым числом пустой список.
+    """
     return klyuchi_service.spisok(
-        db, user, category_id=category_id, tolko_svoi=mine, poisk=q, v_korzine=trash
+        db,
+        user,
+        category_id=category_id,
+        tolko_svoi=mine,
+        poisk=q,
+        v_korzine=trash,
+        tolko_prosyat=alarm,
     )
 
 
@@ -149,16 +161,16 @@ def steret(
 @router.post("/{key_id}/code")
 def kod(
     key_id: int,
-    silent: bool = Query(default=False),
     user: User = Depends(require_perm("keys", "view")),
     db: Session = Depends(get_db),
 ):
-    """Нынешний код и сколько ему жить.
+    """Нынешний код и сколько ему жить. Показ всегда идёт в журнал.
 
-    `silent=1` — пересборка кода тем же человеком на том же открытом экране: в
-    журнал идёт нажатие «показать», а не каждые тридцать секунд после него.
+    Выключателя записи снаружи нет намеренно: прежний `?silent=1` позволял
+    снимать чужие коды месяцами, не оставив ни строки в журнале, ради которого
+    журнал и заведён. Повторы схлопывает окно (`klyuchi_service.POKAZ_OKNO_SEKUND`).
     """
-    otvet = klyuchi_service.kod(db, user, key_id, v_zhurnal=not silent)
+    otvet = klyuchi_service.kod(db, user, key_id)
     db.commit()
     return otvet
 
@@ -236,6 +248,30 @@ def sozdat_kategoriyu(
     db: Session = Depends(get_db),
 ):
     otvet = klyuchi_service.sozdat_kategoriyu(db, user, payload.model_dump())
+    db.commit()
+    return otvet
+
+
+@router.get("/categories/{category_id}/access")
+def kto_vidit_kategoriyu(
+    category_id: int,
+    user: User = Depends(require_perm("keys", "manage")),
+    db: Session = Depends(get_db),
+):
+    """Кого пустили в категорию. Распоряжается ею тот, кто её завёл, и root."""
+    return klyuchi_service.kto_vidit_kategoriyu(db, user, category_id)
+
+
+@router.post("/categories/{category_id}/access")
+def otkryt_kategoriyu(
+    category_id: int,
+    payload: DostupIn,
+    user: User = Depends(require_perm("keys", "manage")),
+    db: Session = Depends(get_db),
+):
+    otvet = klyuchi_service.otkryt_kategoriyu(
+        db, user, category_id, payload.user_id, otkryt_li=payload.otkryt
+    )
     db.commit()
     return otvet
 

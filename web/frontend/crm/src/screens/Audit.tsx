@@ -65,6 +65,7 @@ const ACTION: Record<string, TranslationKey> = {
   "key.updated": "auditActKeyUpdated",
   "key.shown": "auditActKeyShown",
   "key.secret_shown": "auditActKeySecretShown",
+  "key.backup_spent": "auditActKeyBackupSpent",
   "key.access_changed": "auditActKeyAccessChanged",
   "key.category_changed": "auditActKeyCategoryChanged",
   "apikey.created": "auditActApikeyCreated",

@@ -71,6 +71,12 @@ export function SettingsBackups() {
 
   const [restoreKind, setRestoreKind] = useState<Kind>("db");
   const [restoreFile, setRestoreFile] = useState<File | null>(null);
+  //: Номер поля выбора файла. `<input type="file">` неуправляемое: обнулив одно
+  //: только состояние, мы оставляли в поле имя файла при мёртвой кнопке —
+  //: разметка и состояние расходились. Смена номера пересоздаёт поле, заодно
+  //: возвращая возможность выбрать ТОТ ЖЕ файл второй раз (браузеры на повторный
+  //: выбор того же файла `change` не шлют).
+  const [poleFayla, setPoleFayla] = useState(0);
   const [restoreAsk, setRestoreAsk] = useState(false);
   const [restoreProgress, setRestoreProgress] = useState<number | null>(null);
 
@@ -171,6 +177,7 @@ export function SettingsBackups() {
       }, { kind: restoreKind }).gotovo;
       toast(t("backupRestoreStarted"));
       setRestoreFile(null);
+      setPoleFayla((n) => n + 1);
       load();
     } catch (e) {
       toastError(e);
@@ -379,7 +386,11 @@ export function SettingsBackups() {
             </div>
             <div>
               <label className="label">{t("backupRestoreFile")}</label>
-              <input type="file" onChange={(e) => setRestoreFile(e.target.files?.[0] ?? null)} />
+              <input
+                key={poleFayla}
+                type="file"
+                onChange={(e) => setRestoreFile(e.target.files?.[0] ?? null)}
+              />
             </div>
             <div className="backup-restore-go">
               <button

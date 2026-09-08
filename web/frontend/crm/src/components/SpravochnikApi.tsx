@@ -100,7 +100,7 @@ function Stroka({ ruchka, pred }: { ruchka: Ruchka; pred: Ruchka | null }) {
 
 function Dostup({ ruchka, t }: { ruchka: Ruchka; t: ReturnType<typeof useApp>["t"] }) {
   if (ruchka.vid === "otkryto")
-    return <span className="docs-ref-access a-otkryto">{t("apiRefPublic")}</span>;
+    return <span className="docs-ref-access a-open">{t("apiRefPublic")}</span>;
   if (ruchka.vid === "sotrudnik")
     return <span className="docs-ref-access">{t("apiRefStaff")}</span>;
   if (ruchka.vid === "pravo")

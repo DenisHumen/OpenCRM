@@ -105,7 +105,7 @@ export function ContextMenu({ menu, zakryt }: { menu: Sostoyanie; zakryt: () => 
   // обрезалось бы по границе колонки.
   return createPortal(
     <div
-      className="ctx-fon"
+      className="ctx-bg"
       onMouseDown={zakryt}
       onContextMenu={(e) => {
         e.preventDefault();
@@ -119,11 +119,11 @@ export function ContextMenu({ menu, zakryt }: { menu: Sostoyanie; zakryt: () => 
         onMouseDown={(e) => e.stopPropagation()}
       >
         {menu.punkty.map((p, i) => (
-          <div key={p.key} className={p.razdel ? "ctx-group razdel" : "ctx-group"}>
+          <div key={p.key} className={p.razdel ? "ctx-group section" : "ctx-group"}>
             <button
               type="button"
               className={
-                "ctx-item" + (p.opasno ? " opasno" : "") + (i === aktiv ? " active" : "")
+                "ctx-item" + (p.opasno ? " danger" : "") + (i === aktiv ? " active" : "")
               }
               onMouseMove={() => setAktiv(i)}
               onClick={() => {

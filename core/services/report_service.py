@@ -632,7 +632,7 @@ def operations_csv(rows: list[dict], locale: str) -> bytes:
 DOLGOVYE_VIDY = (KIND_SALES_ORDER, KIND_ACT)
 
 
-def dolgi(db: Session) -> dict:
+def dolgi(db: Session, only_manager_id: int | None = None) -> dict:
     """Долги клиентов: бумаги, по которым получено меньше выписанного.
 
     Периода нет нарочно: прошлогодний неоплаченный заказ — всё ещё долг.
@@ -640,7 +640,7 @@ def dolgi(db: Session) -> dict:
     `document_service.total_minor` — единственное место, где строки становятся
     деньгами; двух ответов на «сколько выписали» быть не должно.
     """
-    kandidaty = finance_repo.bumagi_s_dolgom(db, DOLGOVYE_VIDY)
+    kandidaty = finance_repo.bumagi_s_dolgom(db, DOLGOVYE_VIDY, only_manager_id=only_manager_id)
     stroki = documents_repo.lines_by_documents(db, [bumaga.id for bumaga, _ in kandidaty])
     imena = clients_repo.names_by_ids(db, [bumaga.client_id for bumaga, _ in kandidaty if bumaga.client_id])
     items = []

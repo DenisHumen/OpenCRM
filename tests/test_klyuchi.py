@@ -299,24 +299,56 @@ def test_nasovsem_tolko_iz_korziny(root_client):
 # --- журнал ------------------------------------------------------------------
 
 
-def test_pokaz_pishetsya_a_peresborka_net(root_client):
+def _pokazov(root_client, key_id: int) -> int:
+    zapisi = root_client.get(f"{API}/audit", params={"action": "key.shown"}).json()["items"]
+    return sum(1 for z in zapisi if z["entity_id"] == key_id)
+
+
+def test_povtornye_pokazy_shodyatsya_v_odnu_zapis(root_client):
     """Открытый экран пересобирает код каждые тридцать секунд.
 
     Пиши мы каждую пересборку — один экран за час дал бы сто двадцать записей,
     и журнал, ради которого всё затевалось, стало бы невозможно читать.
     """
     klyuch = zavesti(root_client, title="Журнал показов")
+    bylo = _pokazov(root_client, klyuch["id"])
+    for _ in range(3):
+        assert root_client.post(f"{KLYUCHI}/{klyuch['id']}/code").status_code == 200
+    assert _pokazov(root_client, klyuch["id"]) == bylo + 1, "пересборка кода засоряет журнал"
 
-    def skolko() -> int:
-        zapisi = root_client.get(f"{API}/audit", params={"action": "key.shown"}).json()["items"]
-        return sum(1 for z in zapisi if z["entity_id"] == klyuch["id"])
 
-    bylo = skolko()
-    root_client.post(f"{KLYUCHI}/{klyuch['id']}/code")
-    assert skolko() == bylo + 1, "нажатие «показать» не попало в журнал"
-    root_client.post(f"{KLYUCHI}/{klyuch['id']}/code", params={"silent": True})
-    root_client.post(f"{KLYUCHI}/{klyuch['id']}/code", params={"silent": True})
-    assert skolko() == bylo + 1, "пересборка кода засоряет журнал"
+def test_pokaz_v_zhurnal_snaruzhi_ne_vyklyuchaetsya(root_client, monkeypatch):
+    """**Выключателя записи снаружи нет, и это главное свойство журнала.**
+
+    Прежде решал параметр запроса `silent`, то есть сам вызывающий: строка
+    `?silent=1` из консоли браузера снимала чужой код месяцами, не оставив ни
+    строки. Схлопывание повторов решает сервер окном — здесь оно сведено к нулю,
+    и тогда каждый показ обязан быть записан.
+    """
+    klyuch = zavesti(root_client, title="Журнал без выключателя")
+    monkeypatch.setattr(klyuchi_service, "POKAZ_OKNO_SEKUND", 0)
+    bylo = _pokazov(root_client, klyuch["id"])
+    for parametry in ({}, {"silent": True}, {"silent": 1}):
+        assert (
+            root_client.post(f"{KLYUCHI}/{klyuch['id']}/code", params=parametry).status_code == 200
+        )
+    assert _pokazov(root_client, klyuch["id"]) == bylo + 3, (
+        "показ кода удалось снять мимо журнала"
+    )
+
+
+def test_vycherknutyy_zapasnoy_pishetsya_v_zhurnal(root_client):
+    """«Кто потратил четыре кода из восьми» спрашивают, когда войти уже нечем."""
+    klyuch = zavesti(root_client, title="Запасные в журнале", backup_codes=["aaa-111", "bbb-222"])
+    assert root_client.post(f"{KLYUCHI}/{klyuch['id']}/backup-codes/0/spend").status_code == 200
+    zapisi = root_client.get(
+        f"{API}/audit", params={"action": "key.backup_spent"}
+    ).json()["items"]
+    nashi = [z for z in zapisi if z["entity_id"] == klyuch["id"]]
+    assert nashi, "вычеркнутый запасной код не оставил следа в журнале"
+    assert "aaa-111" not in root_client.get(
+        f"{API}/audit", params={"entity_type": "twofactor"}
+    ).text, "сам запасной код уехал в журнал"
 
 
 def test_sam_klyuch_v_zhurnal_ne_popadaet(root_client):
@@ -478,3 +510,286 @@ def test_chuzhuyu_kategoriyu_ne_uberyot_kto_popalo(root_client, sotrudnik):
     assert otkaz.status_code == 403, otkaz.text
     assert otkaz.json()["error"]["code"] == "key_category_not_owner"
     root_client.delete(f"{KLYUCHI}/categories/{kat.json()['id']}")
+
+
+def test_chuzhaya_zakrytaya_kategoriya_klyucha_ne_prinimaet(root_client, sotrudnik):
+    """**Полем категории нельзя отдать свой ключ чужому человеку.**
+
+    Имя закрытой категории видно всем в левой колонке, поле свободного ввода, а
+    условие видимости пускает хозяина закрытой категории к ЛЮБОМУ ключу внутри.
+    То есть достаточно было набрать чужое имя — и второй фактор уезжал чужому
+    молча, без отказа и без следа.
+    """
+    kat = root_client.post(
+        f"{KLYUCHI}/categories", json={"name": "Личное root", "zakrytaya": True}
+    )
+    assert kat.status_code == 201, kat.text
+    chuzhoy, _ = sotrudnik(
+        "klyuchi.chuzhaya.zakrytaya@test.local", ("keys.view", "keys.create", "keys.edit")
+    )
+
+    otkaz = chuzhoy.post(
+        KLYUCHI, json={"secret": STROKA, "title": "Мой банк", "category": "Личное root"}
+    )
+    assert otkaz.status_code == 422, otkaz.text
+    assert otkaz.json()["error"]["code"] == "key_category_foreign_closed"
+
+    # И переложить уже заведённый — тем же путём, тем же отказом.
+    svoy = chuzhoy.post(KLYUCHI, json={"secret": STROKA, "title": "Мой банк"})
+    assert svoy.status_code == 201, svoy.text
+    perekladka = chuzhoy.patch(f"{KLYUCHI}/{svoy.json()['id']}", json={"category": "Личное root"})
+    assert perekladka.status_code == 422, perekladka.text
+    assert perekladka.json()["error"]["code"] == "key_category_foreign_closed"
+
+    # Ключ чужого в закрытой полке root не появился.
+    vidno = root_client.get(KLYUCHI, params={"category_id": kat.json()["id"]}).json()
+    assert vidno["items"] == [], "чужой ключ всё же лёг в закрытую категорию"
+
+    chuzhoy.delete(f"{KLYUCHI}/{svoy.json()['id']}")
+    root_client.delete(f"{KLYUCHI}/categories/{kat.json()['id']}")
+
+
+def test_svoyu_zakrytuyu_imenem_brat_mozhno(root_client):
+    """Отказ выше — про ЧУЖУЮ. Своя закрытая полка остаётся полкой."""
+    kat = root_client.post(
+        f"{KLYUCHI}/categories", json={"name": "Своя закрытая", "zakrytaya": True}
+    )
+    assert kat.status_code == 201, kat.text
+    klyuch = zavesti(root_client, title="В своей закрытой", category="Своя закрытая")
+    assert klyuch["category_id"] == kat.json()["id"]
+    root_client.delete(f"{KLYUCHI}/{klyuch['id']}")
+    root_client.delete(f"{KLYUCHI}/categories/{kat.json()['id']}")
+
+
+# --- напоминание -------------------------------------------------------------
+
+
+def test_chuzhoe_napominanie_ne_privyazyvaetsya_bez_prava(root_client, sotrudnik):
+    """**Перебором `task_id` вычитывался весь список напоминаний фирмы.**
+
+    Карточка ключа отдаёт название и срок привязанного напоминания. Без проверки
+    достаточно было своего ключа и сотни запросов, чтобы прочитать чужие
+    напоминания мимо блока, который их охраняет.
+    """
+    zadacha = root_client.post(f"{API}/tasks", json={"title": "Отвезти документы в банк"})
+    assert zadacha.status_code == 201, zadacha.text
+    nomer = zadacha.json()["id"]
+
+    bez_prava, _ = sotrudnik(
+        "klyuchi.chuzhaya.zadacha@test.local", ("keys.view", "keys.create", "keys.edit")
+    )
+    svoy = bez_prava.post(KLYUCHI, json={"secret": STROKA, "title": "Свой ключ"})
+    assert svoy.status_code == 201, svoy.text
+    otkaz = bez_prava.patch(f"{KLYUCHI}/{svoy.json()['id']}", json={"task_id": nomer})
+    assert otkaz.status_code == 403, otkaz.text
+    assert "Отвезти документы" not in otkaz.text, "название чужого напоминания уехало в отказ"
+
+    s_pravom, _ = sotrudnik(
+        "klyuchi.svoya.zadacha@test.local",
+        ("keys.view", "keys.create", "keys.edit", "tasks.view"),
+    )
+    ego = s_pravom.post(KLYUCHI, json={"secret": STROKA, "title": "Ключ с правом"})
+    assert ego.status_code == 201, ego.text
+    horosho = s_pravom.patch(f"{KLYUCHI}/{ego.json()['id']}", json={"task_id": nomer})
+    assert horosho.status_code == 200, horosho.text
+    assert horosho.json()["task"]["title"] == "Отвезти документы в банк"
+
+    bez_prava.delete(f"{KLYUCHI}/{svoy.json()['id']}")
+    s_pravom.delete(f"{KLYUCHI}/{ego.json()['id']}")
+    root_client.delete(f"{API}/tasks/{nomer}")
+
+
+def test_nesushchestvuyushchee_napominanie_ne_privyazyvaetsya(root_client):
+    """Номер, за которым ничего нет, — отказ, а не молча пустая ссылка."""
+    klyuch = zavesti(root_client, title="Ключ без напоминания")
+    otkaz = root_client.patch(f"{KLYUCHI}/{klyuch['id']}", json={"task_id": 10_000_000})
+    assert otkaz.status_code == 404, otkaz.text
+    root_client.delete(f"{KLYUCHI}/{klyuch['id']}")
+
+
+def test_vyklyuchennye_napominaniya_uhodyat_s_kartochki(root_client):
+    """Выключенный блок исчезает ЦЕЛИКОМ — и с чужих экранов тоже (§3 CLAUDE.md).
+
+    Иначе на карточке остаётся срок и ссылка `/tasks?id=…` на страницу, которой
+    в выключенной системе нет, а в шапке горит тревога по разделу, которого нет.
+    """
+    klyuch = zavesti(root_client, title="Со сроком", category="Полка со сроком")
+    zadacha = root_client.post(
+        f"{API}/tasks",
+        json={"title": "Сменить ключ: срок", "due_at": "2020-01-01T10:00:00Z"},
+    )
+    assert zadacha.status_code == 201, zadacha.text
+    assert (
+        root_client.patch(
+            f"{KLYUCHI}/{klyuch['id']}", json={"task_id": zadacha.json()["id"]}
+        ).status_code
+        == 200
+    )
+    s_blokom = root_client.get(KLYUCHI).json()
+    assert next(k for k in s_blokom["items"] if k["id"] == klyuch["id"])["task"] is not None
+    assert s_blokom["prosyat"] >= 1
+
+    root_client.post(f"{API}/modules/tasks", json={"enabled": False})
+    try:
+        bez_bloka = root_client.get(KLYUCHI).json()
+        nash = next(k for k in bez_bloka["items"] if k["id"] == klyuch["id"])
+        assert nash["task"] is None, "срок остался на карточке при выключенном блоке"
+        assert bez_bloka["prosyat"] == 0, "тревога горит по выключенному блоку"
+    finally:
+        root_client.post(f"{API}/modules/tasks", json={"enabled": True})
+
+    root_client.delete(f"{API}/tasks/{zadacha.json()['id']}")
+    root_client.delete(f"{KLYUCHI}/{klyuch['id']}")
+
+
+def test_otbor_trevogi_beryot_ves_razdel(root_client):
+    """Число тревоги и список под ним берутся из ОДНОГО источника.
+
+    Отбор по показанной полке давал под ненулевым числом пустой список: тревога
+    считается по всему разделу, а полка — это полка.
+    """
+    klyuch = zavesti(root_client, title="Просрочен и в полке", category="Полка отбора")
+    zadacha = root_client.post(
+        f"{API}/tasks",
+        json={"title": "Сменить ключ: отбор", "due_at": "2020-01-01T10:00:00Z"},
+    )
+    assert zadacha.status_code == 201, zadacha.text
+    assert (
+        root_client.patch(
+            f"{KLYUCHI}/{klyuch['id']}", json={"task_id": zadacha.json()["id"]}
+        ).status_code
+        == 200
+    )
+
+    trevozhnye = root_client.get(KLYUCHI, params={"alarm": True}).json()
+    assert len(trevozhnye["items"]) == trevozhnye["prosyat"], (
+        "под числом тревоги показан не тот набор, по которому оно посчитано"
+    )
+    assert any(k["id"] == klyuch["id"] for k in trevozhnye["items"])
+    # Не просроченный в отбор не попадает.
+    tihiy = zavesti(root_client, title="Без напоминания")
+    trevozhnye = root_client.get(KLYUCHI, params={"alarm": True}).json()
+    assert all(k["id"] != tihiy["id"] for k in trevozhnye["items"])
+
+    root_client.delete(f"{KLYUCHI}/{tihiy['id']}")
+    root_client.delete(f"{API}/tasks/{zadacha.json()['id']}")
+    root_client.delete(f"{KLYUCHI}/{klyuch['id']}")
+
+
+# --- доступ в категорию ------------------------------------------------------
+
+
+def test_v_kategoriyu_puskayut_i_ona_otkryvaet_vse_klyuchi_v_ney(root_client, sotrudnik):
+    """Ради этого категория и описана: пустить бухгалтера в «Бухгалтерию», а не
+    в восемь ключей по отдельности и потом в девятый.
+
+    Таблица, миграция и условие запроса были, а возможности не было вовсе:
+    строк в `key_category_access` не заводил никто.
+    """
+    kat = root_client.post(f"{KLYUCHI}/categories", json={"name": "Бухгалтерия"})
+    assert kat.status_code == 201, kat.text
+    nomer_kat = kat.json()["id"]
+    pervyy = zavesti(root_client, title="Банк-клиент", category="Бухгалтерия")
+    buhgalter, kto = sotrudnik("klyuchi.buhgalter@test.local")
+
+    assert all(k["id"] != pervyy["id"] for k in buhgalter.get(KLYUCHI).json()["items"])
+
+    otkryli = root_client.post(
+        f"{KLYUCHI}/categories/{nomer_kat}/access", json={"user_id": kto, "otkryt": True}
+    )
+    assert otkryli.status_code == 200, otkryli.text
+    assert next(c for c in otkryli.json()["people"] if c["id"] == kto)["otkryt"] is True
+
+    vidno = buhgalter.get(KLYUCHI).json()
+    assert any(k["id"] == pervyy["id"] for k in vidno["items"]), "доступ в категорию не открыл ключ"
+
+    # И тот, что положат туда завтра, — тоже: доступ у полки, а не у ключа.
+    vtoroy = zavesti(root_client, title="Налоговая", category="Бухгалтерия")
+    assert any(k["id"] == vtoroy["id"] for k in buhgalter.get(KLYUCHI).json()["items"])
+
+    zakryli = root_client.post(
+        f"{KLYUCHI}/categories/{nomer_kat}/access", json={"user_id": kto, "otkryt": False}
+    )
+    assert zakryli.status_code == 200, zakryli.text
+    assert all(k["id"] != pervyy["id"] for k in buhgalter.get(KLYUCHI).json()["items"])
+
+    root_client.delete(f"{KLYUCHI}/{pervyy['id']}")
+    root_client.delete(f"{KLYUCHI}/{vtoroy['id']}")
+    root_client.delete(f"{KLYUCHI}/categories/{nomer_kat}")
+
+
+def test_zakrytaya_kategoriya_spiska_dostupa_ne_prinimaet(root_client, sotrudnik):
+    """Закрытая списков не слушает — это её определение.
+
+    Записать в неё доступ значило бы завести строку, которая никогда ничего не
+    откроет: условие видимости требует незакрытой категории.
+    """
+    kat = root_client.post(
+        f"{KLYUCHI}/categories", json={"name": "Закрытая для списка", "zakrytaya": True}
+    )
+    assert kat.status_code == 201, kat.text
+    _, kto = sotrudnik("klyuchi.zakrytaya.spisok@test.local")
+    otkaz = root_client.post(
+        f"{KLYUCHI}/categories/{kat.json()['id']}/access", json={"user_id": kto, "otkryt": True}
+    )
+    assert otkaz.status_code == 422, otkaz.text
+    assert otkaz.json()["error"]["code"] == "key_category_closed"
+    root_client.delete(f"{KLYUCHI}/categories/{kat.json()['id']}")
+
+
+def test_chuzhuyu_kategoriyu_ne_otkroet_kto_popalo(root_client, sotrudnik):
+    """Распоряжается полкой тот, кто её завёл, и root — больше никто.
+
+    Иначе доступ к чужим ключам раздавал бы всякий, у кого есть право на раздел.
+    """
+    kat = root_client.post(f"{KLYUCHI}/categories", json={"name": "Не раздавай"})
+    assert kat.status_code == 201, kat.text
+    chuzhoy, kto = sotrudnik("klyuchi.ne.razdavay@test.local", ("keys.view", "keys.manage"))
+    otkaz = chuzhoy.post(
+        f"{KLYUCHI}/categories/{kat.json()['id']}/access", json={"user_id": kto, "otkryt": True}
+    )
+    assert otkaz.status_code == 403, otkaz.text
+    assert otkaz.json()["error"]["code"] == "key_category_not_owner"
+    root_client.delete(f"{KLYUCHI}/categories/{kat.json()['id']}")
+
+
+def test_nechitaemye_zapasnye_ne_vydayut_sebya_za_nezavedyonnye(root_client, db):
+    """НАЙДЕНО РАЗБОРОМ: «их не заводили» вместо «лежат, но не открываются».
+
+    Так выглядит сменившийся `OPENCRM_SECRET_KEY`: шифротекст на месте, ключа к
+    нему нет. Ответ «запасных не заводили» уводит от восстановления, которое ещё
+    возможно, — а старый ключ ищут, пока старая машина жива. Почта на то же
+    состояние отвечает `mail_password_undecryptable`, и здесь должно быть так же.
+    """
+    from database.models import TwoFactorKey
+
+    klyuch = zavesti(root_client, title="Нечитаемые запасные", backup_codes=["aaa-111", "bbb-222"])
+    try:
+        # Порча одного байта неотличима от чужого ключа — тот же `SecretBoxError`.
+        # Пишем с фиксацией: беду обязан увидеть сервер, а не наша сессия.
+        v_baze = db.get(TwoFactorKey, klyuch["id"])
+        v_baze.backup_codes_encrypted = "ne-shifrotekst-vovse"
+        db.commit()
+
+        kartochka = next(
+            k for k in root_client.get(KLYUCHI).json()["items"] if k["id"] == klyuch["id"]
+        )
+        assert kartochka["backup_zakryty"] is True, "нечитаемый список выдан за незаведённый"
+
+        okno = root_client.get(f"{KLYUCHI}/{klyuch['id']}/backup-codes")
+        assert okno.status_code == 200, okno.text
+        assert okno.json()["zakryty"] is True
+
+        # И затереть его нельзя: старый ключ ещё может найтись.
+        otkaz = root_client.patch(f"{KLYUCHI}/{klyuch['id']}", json={"backup_codes": ["новый-1"]})
+        assert otkaz.status_code == 422, otkaz.text
+        assert otkaz.json()["error"]["code"] == "key_backup_undecryptable"
+        db.expire_all()
+        assert db.get(TwoFactorKey, klyuch["id"]).backup_codes_encrypted == "ne-shifrotekst-vovse", (
+            "нечитаемый шифротекст всё же затёрли — восстанавливать больше нечего"
+        )
+    finally:
+        # За собой убираем сами: фикстура `db` откатывает свою сессию, а
+        # испорченную строку мы зафиксировали.
+        root_client.delete(f"{KLYUCHI}/{klyuch['id']}")
+        root_client.delete(f"{KLYUCHI}/{klyuch['id']}/forever")

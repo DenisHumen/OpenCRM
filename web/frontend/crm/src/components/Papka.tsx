@@ -3,12 +3,12 @@
  *  роли и без имени, чтобы читалка не объявляла пять пустых блоков. */
 export function Papka() {
   return (
-    <div className="papka" aria-hidden="true">
-      <div className="papka-zad" />
-      <div className="papka-list papka-l1" />
-      <div className="papka-list papka-l2" />
-      <div className="papka-list papka-l3" />
-      <div className="papka-pered" />
+    <div className="folder" aria-hidden="true">
+      <div className="folder-back" />
+      <div className="folder-list folder-l1" />
+      <div className="folder-list folder-l2" />
+      <div className="folder-list folder-l3" />
+      <div className="folder-front" />
     </div>
   );
 }

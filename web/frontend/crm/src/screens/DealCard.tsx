@@ -197,7 +197,7 @@ export function DealCard() {
   const closers = (stages.items ?? []).filter((s) => s.kind !== "open");
 
   return (
-    <div className="page page-kartochka" ref={koren}>
+    <div className="page page-card" ref={koren}>
       {ustarelo && (
         <div className="maintenance-bar" style={{ marginBottom: 12 }}>
           <span className="dot" />
@@ -272,25 +272,25 @@ export function DealCard() {
             })}
           </div>
         )}
-        <ol className="shagi">
+        <ol className="steps">
           {nextOpen.map((s, i) => {
             const gde =
-              i === tekushchiy ? "seychas" : tekushchiy >= 0 && i < tekushchiy ? "proyden" : "vperedi";
+              i === tekushchiy ? "now" : tekushchiy >= 0 && i < tekushchiy ? "passed" : "ahead";
             return (
-              <li key={s.key} className={"shag " + gde}>
-                <span className="shag-liniya" />
+              <li key={s.key} className={"step " + gde}>
+                <span className="step-line" />
                 <button
-                  className="shag-knopka"
+                  className="step-btn"
                   disabled={s.key === deal.stage}
                   onClick={() => void moveTo(s.key)}
                 >
-                  <span className="shag-krug">
-                    {gde === "proyden" ? <Icon name="check" size={14} stroke={2} /> : i + 1}
+                  <span className="step-circle">
+                    {gde === "passed" ? <Icon name="check" size={14} stroke={2} /> : i + 1}
                   </span>
-                  <span className="shag-telo">
-                    <span className="shag-nazvanie">{nazvanieEtapa(t, s.name)}</span>
-                    <span className="shag-metka">
-                      {t(gde === "proyden" ? "stagePassed" : gde === "seychas" ? "stageNow" : "stageAhead")}
+                  <span className="step-body">
+                    <span className="step-title">{nazvanieEtapa(t, s.name)}</span>
+                    <span className="step-label">
+                      {t(gde === "passed" ? "stagePassed" : gde === "now" ? "stageNow" : "stageAhead")}
                     </span>
                   </span>
                 </button>
@@ -326,8 +326,8 @@ export function DealCard() {
         )}
       </div>
 
-      <div className="kart-kolonki">
-      <div className="kart-osnova">
+      <div className="cards-columns">
+      <div className="cards-osnova">
       <div className="card card-pad" style={{ marginBottom: 20, order: 1 }}>
         <div className="deal-fields">
           <div className="field">
@@ -475,7 +475,7 @@ export function DealCard() {
       {/* Что ушло со склада под эту заявку и во сколько это обошлось. Стоит
           рядом с суммой не случайно: выручка без себестоимости не отвечает на
           вопрос, заработали мы на этой работе или нет. */}
-      <div className="kart-blok" style={{ order: 5 }}>
+      <div className="cards-blok" style={{ order: 5 }}>
       <DealLines
         dealId={deal.id}
         closed={deal.closed_at !== null}
@@ -491,7 +491,7 @@ export function DealCard() {
         }}
       />
       </div>
-      <div className="kart-blok" style={{ order: 6 }}>
+      <div className="cards-blok" style={{ order: 6 }}>
         <DealStock dealId={deal.id} amount={deal.amount ?? null} />
       </div>
 
@@ -518,7 +518,7 @@ export function DealCard() {
 
       {/* Заказы этой заявки. Заказ может принадлежать заявке, но не заменяет
           её: заявка — это работа, заказ — перечень позиций. */}
-      <div className="kart-blok" style={{ order: 8 }}>
+      <div className="cards-blok" style={{ order: 8 }}>
         <OrdersOfCard dealId={Number(id)} />
       </div>
 
@@ -603,10 +603,10 @@ export function DealCard() {
       )}
 
       </div>
-      <div className="kart-bok">
+      <div className="cards-side">
       {/* Лента: звонки, письма, встречи и заметки одним потоком. Стоит
           сразу после полей — это то, что читают, открыв заявку. */}
-      <div className="kart-blok" style={{ order: 2 }}>
+      <div className="cards-blok" style={{ order: 2 }}>
         <Feed dealId={deal.id} clientId={deal.client_id} />
       </div>
 
@@ -754,27 +754,27 @@ function DealItogi({ deal, seesMoney, currency }: { deal: any; seesMoney: boolea
   const dney = srok ? Math.round((srok.getTime() - Date.now()) / 86_400_000) : null;
   const prosrocheno = dney !== null && dney < 0 && !deal.closed_at;
   return (
-    <div className="svodka-plitki szhato" style={{ marginBottom: 20 }}>
+    <div className="summary-tiles compact" style={{ marginBottom: 20 }}>
       {seesMoney && (
         <>
-          <div className="svodka-plitka">
-            <div className="svodka-l">{t("dealAmount")}</div>
-            <div className="svodka-v">{deal.amount === null ? "—" : money(deal.amount)}</div>
-            <div className="svodka-sub">{deal.amount === null ? t("dealNoAmount") : t("dealPrepaid").toLowerCase() + ": " + money(deal.prepaid)}</div>
+          <div className="summary-tile">
+            <div className="summary-l">{t("dealAmount")}</div>
+            <div className="summary-val">{deal.amount === null ? "—" : money(deal.amount)}</div>
+            <div className="summary-sub">{deal.amount === null ? t("dealNoAmount") : t("dealPrepaid").toLowerCase() + ": " + money(deal.prepaid)}</div>
           </div>
-          <div className={"svodka-plitka" + (deal.is_paid ? " horosho" : "")}>
-            <div className="svodka-l">{t("dealRemainder")}</div>
-            <div className="svodka-v">{deal.is_paid ? t("dealPaidInFull") : deal.remainder === null ? "—" : money(deal.remainder)}</div>
-            <div className="svodka-sub">
+          <div className={"summary-tile" + (deal.is_paid ? " good" : "")}>
+            <div className="summary-l">{t("dealRemainder")}</div>
+            <div className="summary-val">{deal.is_paid ? t("dealPaidInFull") : deal.remainder === null ? "—" : money(deal.remainder)}</div>
+            <div className="summary-sub">
               {deal.remainder !== null && deal.remainder < 0 ? t("dealOverpaid", { sum: money(-deal.remainder) }) : t("dealRemainderHint")}
             </div>
           </div>
         </>
       )}
-      <div className={"svodka-plitka" + (prosrocheno ? " beda" : "")}>
-        <div className="svodka-l">{t("dueDate")}</div>
-        <div className="svodka-v">{srok ? formatDate(deal.due_at, locale) : "—"}</div>
-        <div className="svodka-sub">
+      <div className={"summary-tile" + (prosrocheno ? " beda" : "")}>
+        <div className="summary-l">{t("dueDate")}</div>
+        <div className="summary-val">{srok ? formatDate(deal.due_at, locale) : "—"}</div>
+        <div className="summary-sub">
           {dney === null
             ? t("dealNoDue")
             : deal.closed_at

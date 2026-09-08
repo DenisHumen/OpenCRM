@@ -24,9 +24,9 @@ export function SkachatFayl({
   label: string;
 }) {
   return (
-    <a className="skachat" href={href} aria-label={label} title={label}>
+    <a className="download" href={href} aria-label={label} title={label}>
       <Icon name="download" size={13} />
-      {bytes > 0 && <span className="skachat-razmer">{fileSize(bytes)}</span>}
+      {bytes > 0 && <span className="download-size">{fileSize(bytes)}</span>}
     </a>
   );
 }

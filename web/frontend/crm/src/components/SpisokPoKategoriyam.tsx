@@ -111,16 +111,16 @@ function Kategoriya({
   };
 
   return (
-    <div className={"spisok-kategoriya" + (svyornuta ? " svyornuta" : "")}>
+    <div className={"list-category" + (svyornuta ? " collapsed" : "")}>
       <button
         type="button"
-        className="spisok-kategoriya-head"
+        className="list-category-head"
         aria-expanded={!svyornuta}
         onClick={perevernut}
       >
-        <Icon name="chevronDown" size={13} className="spisok-kategoriya-chevron" />
-        <span className="spisok-kategoriya-imya">{label}</span>
-        <span className="spisok-kategoriya-schyot">
+        <Icon name="chevronDown" size={13} className="list-category-chevron" />
+        <span className="list-category-name">{label}</span>
+        <span className="list-category-count">
           {vsego !== undefined && vsego > priehalo ? `${priehalo} / ${vsego}` : priehalo}
         </span>
       </button>

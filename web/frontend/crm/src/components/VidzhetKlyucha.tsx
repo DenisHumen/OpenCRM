@@ -27,8 +27,25 @@ interface Svodka {
 /** Виджет сводки «ключ сайта»: обращения за сегодня, неделю, месяц, отказы и
  *  ряд по часам — то же, что в настройках ключа, только под рукой. Ключ
  *  приходит из справочника сводки: виджет без ключа (удалили, отозвали)
- *  говорит об этом словами и просит убрать себя, а не показывает нули. */
-export function VidzhetKlyucha({ klyuch, keyId }: { klyuch: KlyuchSayta | undefined; keyId: number }) {
+ *  говорит об этом словами и просит убрать себя, а не показывает нули.
+ *
+ *  **«Ключа нет» и «ещё не знаем» — разные состояния.** Справочник едет
+ *  отдельным запросом, и по одному `klyuch === undefined` виджет советовал
+ *  убрать себя, пока список ещё грузится или упал: человек убирал рабочий ключ,
+ *  а вернуть его можно только через «Добавить блок». */
+export function VidzhetKlyucha({
+  klyuch,
+  keyId,
+  spisokEdet,
+  spisokUpal,
+  povtorSpiska,
+}: {
+  klyuch: KlyuchSayta | undefined;
+  keyId: number;
+  spisokEdet: boolean;
+  spisokUpal: unknown;
+  povtorSpiska: () => void;
+}) {
   const { t } = useApp();
   const [svodka, setSvodka] = useState<Svodka | null>(null);
   const { failure, fail, clear } = useFailure();
@@ -66,7 +83,11 @@ export function VidzhetKlyucha({ klyuch, keyId }: { klyuch: KlyuchSayta | undefi
           {t("viewAll")}
         </Link>
       </div>
-      {!klyuch ? (
+      {spisokUpal !== null ? (
+        <LoadFailed error={spisokUpal} onRetry={povtorSpiska} />
+      ) : spisokEdet ? (
+        <div className="field-desc" style={{ marginTop: 0 }}>{t("loading")}</div>
+      ) : !klyuch ? (
         <div className="field-desc" style={{ marginTop: 0 }}>{t("dashApiKeyGone")}</div>
       ) : failure !== null ? (
         <LoadFailed error={failure} onRetry={() => void load()} />

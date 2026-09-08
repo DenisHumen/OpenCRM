@@ -58,3 +58,29 @@ def search(
 
     stmt = stmt.order_by(AuditEvent.created_at.desc(), AuditEvent.id.desc())
     return page_of(db, stmt, page=page, per_page=per_page)
+
+
+def bylo_nedavno(
+    db: Session,
+    *,
+    actor_id: int | None,
+    action: str,
+    entity_type: str,
+    entity_id: int | None,
+    ne_ranshe: datetime,
+) -> bool:
+    """Писал ли этот человек такую запись про этот объект уже недавно.
+
+    Нужно там, где действие повторяется само: экран пересобирает код каждые
+    тридцать секунд, и запись на каждую пересборку дала бы сто двадцать строк в
+    час с одного открытого экрана. Решать это параметром запроса нельзя —
+    вызывающий выключил бы им журнал целиком.
+    """
+    stmt = select(AuditEvent.id).where(
+        AuditEvent.actor_id == actor_id,
+        AuditEvent.action == action,
+        AuditEvent.entity_type == entity_type,
+        AuditEvent.entity_id == entity_id,
+        AuditEvent.created_at >= ne_ranshe,
+    )
+    return db.scalar(stmt.limit(1)) is not None

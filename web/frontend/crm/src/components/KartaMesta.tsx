@@ -72,7 +72,7 @@ export function KartaMesta({ lat, lon, podpis }: { lat: number; lon: number; pod
 
   return (
     <a
-      className="karta-mini"
+      className="map-mini"
       href={ssylka_na_kartu(lat, lon)}
       target="_blank"
       rel="noreferrer"
@@ -81,8 +81,8 @@ export function KartaMesta({ lat, lon, podpis }: { lat: number; lon: number; pod
       // ищет по тому, что человек читает (WCAG 2.5.3).
       aria-label={`${t("mapOpen")}: ${podpis}`}
     >
-      <canvas ref={holst} className="karta-mini-holst" />
-      <span className="karta-mini-podpis">
+      <canvas ref={holst} className="map-mini-canvas" />
+      <span className="map-mini-caption">
         <Icon name="external" size={12} />
         {/* Место, а не «открыть в картах»: про «открыть» уже сказал значок, а
             на однотонной суше подпись — единственное, что отвечает «где это». */}

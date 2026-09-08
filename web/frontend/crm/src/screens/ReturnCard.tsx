@@ -119,7 +119,7 @@ export function ReturnCard() {
   };
 
   return (
-    <div className="page page-kartochka">
+    <div className="page page-card">
       <div className="page-head">
         <div>
           <Link to="/returns" className="btn btn-secondary btn-sm">
@@ -196,9 +196,9 @@ export function ReturnCard() {
         </div>
       )}
 
-      <div className="kart-kolonki">
-      <div className="kart-osnova">
-      <div className="kart-blok" style={{ order: 1 }}>
+      <div className="cards-columns">
+      <div className="cards-osnova">
+      <div className="cards-blok" style={{ order: 1 }}>
         <ReturnLines vozvrat={vozvrat} canEdit={canEdit} onChanged={() => void load()} />
       </div>
 
@@ -265,8 +265,8 @@ export function ReturnCard() {
       </div>
 
       </div>
-      <div className="kart-bok">
-      <div className="kart-blok" style={{ order: 3 }}>
+      <div className="cards-side">
+      <div className="cards-blok" style={{ order: 3 }}>
         <ReturnMedia vozvrat={vozvrat} canEdit={canEdit} onChanged={() => void load()} />
       </div>
 
@@ -527,17 +527,17 @@ function ReturnMedia({ vozvrat, canEdit, onChanged }: { vozvrat: Return; canEdit
       {files.length === 0 ? (
         <EmptyState icon="image" title={t("returnMediaEmpty")} />
       ) : (
-        <div className="vlozheniya">
+        <div className="attachments">
           {files.map((file) => (
-            <figure key={file.id} className="vlozhenie">
+            <figure key={file.id} className="attachment">
               {file.mime.startsWith("video/") ? (
-                <video className="vlozhenie-media" src={file.download_url} controls preload="metadata" />
+                <video className="attachment-media" src={file.download_url} controls preload="metadata" />
               ) : (
                 <a href={file.download_url} target="_blank" rel="noreferrer">
-                  <img className="vlozhenie-media" src={file.download_url} alt={file.original_name} loading="lazy" />
+                  <img className="attachment-media" src={file.download_url} alt={file.original_name} loading="lazy" />
                 </a>
               )}
-              <figcaption className="vlozhenie-podpis">
+              <figcaption className="attachment-caption">
                 <span className="truncate" title={file.original_name}>{file.original_name}</span>
                 {canEdit && (
                   <KnopkaKorziny

@@ -451,6 +451,11 @@ POST_WITHOUT_LATCH: dict[tuple[str, str], str] = {
     ("Auth.tsx", "/auth/me/password"): "смена своего пароля в то же значение",
     ("Profile.tsx", "/auth/me/password"): "смена своего пароля в то же значение",
     ("app.tsx", "/auth/logout"): "выход",
+    # Нынешний код ключа. Записи не заводит вовсе, а показы одного ключа одним
+    # человеком сходятся в одну строку журнала за окно. Нажатие «показать» всё
+    # равно стоит за `guard.take()`; сюда попадает фоновая пересборка, которая
+    # не от нажатия и заперта своим признаком `zhdyom`.
+    ("Klyuchi.tsx", "/keys/{}/code"): "нынешний код: записи не заводит, повтор безвреден",
 }
 
 
@@ -1554,12 +1559,12 @@ def test_zaglushka_zagruzki_est_i_odeta():
     ekran = (SCREENS / "screens" / "BoardEditor.tsx").read_text(encoding="utf-8")
     stili = (SCREENS / "styles.css").read_text(encoding="utf-8")
 
-    for klass in ("work-card--zaliv", "zaliv-polosa", "zaliv-cifry"):
+    for klass in ("work-card--upload", "upload-bar", "upload-digits"):
         assert klass in ekran, f"в разметке нет {klass}"
         assert f".{klass}" in stili, f"класс {klass} не одет — стиля для него нет"
 
     # Та же высота, что у настоящей карточки: обе держит `min-height` медиа.
-    assert ".work-media--zaliv" in stili
+    assert ".work-media--upload" in stili
     assert "min-height: 120px" in stili, (
         "у заглушки нет высоты настоящей карточки — сетка прыгнет при подмене"
     )

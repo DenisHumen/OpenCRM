@@ -75,8 +75,8 @@ export function VidzhetKarty() {
       {sostoyanie?.running ? (
         <>
           <div className="metric-value">{sostoyanie.percent}%</div>
-          <div className="karta-hod">
-            <span className="karta-hod-polosa" style={{ width: `${sostoyanie.percent}%` }} />
+          <div className="map-progress">
+            <span className="map-progress-bar" style={{ width: `${sostoyanie.percent}%` }} />
           </div>
           <div className="metric-sub">{t("globeDetailRunning")}</div>
         </>

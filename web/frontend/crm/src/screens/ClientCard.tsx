@@ -368,16 +368,16 @@ export function ClientCard() {
         {/* Паспорт — перевод uiverse.io/WattoRex/odd-fish-37 (docs/18): то же имя,
             метки и «добавлен», плюс счётчики вкладок и ход к заявкам, которых
             в шапке прежде не было. */}
-        <div className="pasport">
-          <div className="pasport-shapka">
-            <div className="pasport-fon" aria-hidden="true">{initials(client.name)}</div>
-            <div className="pasport-ava" aria-hidden="true">{initials(client.name)}</div>
-            <div className="pasport-status">{client.tags[0] ?? t("clientBadge")}</div>
+        <div className="passport">
+          <div className="passport-header">
+            <div className="passport-bg" aria-hidden="true">{initials(client.name)}</div>
+            <div className="passport-ava" aria-hidden="true">{initials(client.name)}</div>
+            <div className="passport-status">{client.tags[0] ?? t("clientBadge")}</div>
           </div>
-          <div className="pasport-telo">
-            <div className="pasport-ruchka">{client.phone || client.email || `#${client.id}`}</div>
-            <h1 className="pasport-imya">{client.name}</h1>
-            <div className="pasport-bio">
+          <div className="passport-body">
+            <div className="passport-handle">{client.phone || client.email || `#${client.id}`}</div>
+            <h1 className="passport-name">{client.name}</h1>
+            <div className="passport-bio">
               {client.company && <>{client.company} · </>}
               {t("added")} {formatDate(client.created_at, locale)}
               {client.updated_at && formatDate(client.updated_at, locale) !== formatDate(client.created_at, locale) && (
@@ -393,17 +393,17 @@ export function ClientCard() {
             </div>
           </div>
           <div
-            className="pasport-stats"
+            className="passport-stats"
             style={{ gridTemplateColumns: `repeat(${schyotchiki.length}, 1fr)` }}
           >
             {schyotchiki.map((item) => (
-              <div key={item.key} className="pasport-stat">
-                <span className="pasport-stat-v">{item.count}</span>
-                <span className="pasport-stat-l">{item.label}</span>
+              <div key={item.key} className="passport-stat">
+                <span className="passport-stat-val">{item.count}</span>
+                <span className="passport-stat-l">{item.label}</span>
               </div>
             ))}
           </div>
-          <button type="button" className="pasport-btn" onClick={() => setTab("deals")}>
+          <button type="button" className="passport-btn" onClick={() => setTab("deals")}>
             + {term(workspace.deal_term, locale, "many")}
           </button>
         </div>
@@ -502,8 +502,8 @@ export function ClientCard() {
         <div className="metric-title" style={{ padding: "16px 18px 0" }}>
           {t("shippingAddress")}
         </div>
-        <div className="adres-ryad">
-          <div className="contact-grid adres-polya">
+        <div className="address-row">
+          <div className="contact-grid address-fields">
             {adres.map((pole) => (
               <EditableContact key={pole.field} {...pole} onSave={saveContact} />
             ))}
@@ -588,7 +588,7 @@ export function ClientCard() {
             {notes.map((note, i) => (
               <Fragment key={note.id}>
                 {(i === 0 || relativeDay(notes[i - 1].happened_at, locale) !== relativeDay(note.happened_at, locale)) && (
-                  <div className="spisok-polosa">{relativeDay(note.happened_at, locale)}</div>
+                  <div className="list-bar">{relativeDay(note.happened_at, locale)}</div>
                 )}
               <div className="feed-item">
                 <div className="feed-icon">
@@ -911,30 +911,30 @@ function KlientSvodka({ svodka, currency }: { svodka: Svodka; currency: string }
   const kontakt = svodka.last_contact;
   const kontaktAt = [kontakt?.at, svodka.last_call_at].filter(Boolean).sort().pop() ?? null;
   return (
-    <div className="svodka-plitki">
-      <div className="svodka-plitka">
-        <div className="svodka-l">{t("clientSummaryOpen")}</div>
-        <div className="svodka-v">{svodka.open_count}</div>
-        <div className="svodka-sub">{svodka.open_amount !== null ? money(svodka.open_amount) : t("clientSummaryNoAmounts")}</div>
+    <div className="summary-tiles">
+      <div className="summary-tile">
+        <div className="summary-l">{t("clientSummaryOpen")}</div>
+        <div className="summary-val">{svodka.open_count}</div>
+        <div className="summary-sub">{svodka.open_amount !== null ? money(svodka.open_amount) : t("clientSummaryNoAmounts")}</div>
       </div>
-      <div className="svodka-plitka">
-        <div className="svodka-l">{t("clientSummaryWon")}</div>
-        <div className="svodka-v">{svodka.won_count}</div>
-        <div className="svodka-sub">
+      <div className="summary-tile">
+        <div className="summary-l">{t("clientSummaryWon")}</div>
+        <div className="summary-val">{svodka.won_count}</div>
+        <div className="summary-sub">
           {svodka.won_amount !== null ? money(svodka.won_amount) : t("clientSummaryLost", { n: svodka.lost_count })}
         </div>
       </div>
       {svodka.received_12m !== null && (
-        <div className="svodka-plitka">
-          <div className="svodka-l">{t("clientSummaryReceived")}</div>
-          <div className="svodka-v">{money(svodka.received_12m)}</div>
-          <div className="svodka-sub">{t("clientSummaryReceivedHint")}</div>
+        <div className="summary-tile">
+          <div className="summary-l">{t("clientSummaryReceived")}</div>
+          <div className="summary-val">{money(svodka.received_12m)}</div>
+          <div className="summary-sub">{t("clientSummaryReceivedHint")}</div>
         </div>
       )}
-      <div className="svodka-plitka">
-        <div className="svodka-l">{t("clientSummaryLastContact")}</div>
-        <div className="svodka-v">{kontaktAt ? relativeDay(kontaktAt, locale) : "—"}</div>
-        <div className="svodka-sub" title={kontakt?.body}>
+      <div className="summary-tile">
+        <div className="summary-l">{t("clientSummaryLastContact")}</div>
+        <div className="summary-val">{kontaktAt ? relativeDay(kontaktAt, locale) : "—"}</div>
+        <div className="summary-sub" title={kontakt?.body}>
           {kontakt
             ? (SYSTEM_NOTE_KINDS.has(kontakt.kind) ? podpisSistemnoy(kontakt.body, t) : kontakt.body) ||
               t(VID_ZAPISI[kontakt.kind] ?? "feedNote")
@@ -942,20 +942,20 @@ function KlientSvodka({ svodka, currency }: { svodka: Svodka; currency: string }
         </div>
       </div>
       {svodka.papers !== null && (
-        <div className="svodka-plitka">
-          <div className="svodka-l">{t("clientSummaryPapers")}</div>
-          <div className="svodka-v">{svodka.papers_total}</div>
-          <div className="svodka-sub">
+        <div className="summary-tile">
+          <div className="summary-l">{t("clientSummaryPapers")}</div>
+          <div className="summary-val">{svodka.papers_total}</div>
+          <div className="summary-sub">
             {Object.entries(svodka.papers)
               .map(([kind, n]) => `${kindLabel(t, kind)} ${n}`)
               .join(" · ") || t("noDocuments")}
           </div>
         </div>
       )}
-      <div className="svodka-plitka">
-        <div className="svodka-l">{t("clientSummaryManager")}</div>
-        <div className="svodka-v">{svodka.manager_name ?? "—"}</div>
-        <div className="svodka-sub">{svodka.manager_name ? t("responsible") : t("clientSummaryNobody")}</div>
+      <div className="summary-tile">
+        <div className="summary-l">{t("clientSummaryManager")}</div>
+        <div className="summary-val">{svodka.manager_name ?? "—"}</div>
+        <div className="summary-sub">{svodka.manager_name ? t("responsible") : t("clientSummaryNobody")}</div>
       </div>
     </div>
   );

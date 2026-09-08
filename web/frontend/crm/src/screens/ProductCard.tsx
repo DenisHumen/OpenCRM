@@ -154,7 +154,7 @@ export function ProductCard() {
   const negative = product.stock_milli !== null && product.stock_milli < 0;
 
   return (
-    <div className="page page-kartochka">
+    <div className="page page-card">
       <Link
         to="/warehouse"
         style={{ display: "inline-flex", alignItems: "center", gap: 6, color: "var(--muted)", fontSize: 13, marginBottom: 20 }}
@@ -180,9 +180,9 @@ export function ProductCard() {
       {/* Плитки — то, что спрашивают, открыв товар: остаток, доступно с бронью,
           цена с наценкой, продажи и возвраты (владелец, 06.09.2026). Продажи и
           возвраты приходят только с блоком заказов — без него и плиток нет. */}
-      <div className="kart-kolonki">
-      <div className="kart-osnova">
-      <div className="kart-blok" style={{ order: 1 }}>
+      <div className="cards-columns">
+      <div className="cards-osnova">
+      <div className="cards-blok" style={{ order: 1 }}>
         <TovarPlitki product={product} currency={currency} />
       </div>
       <div className="card card-pad" style={{ marginBottom: 20, order: 2 }}>
@@ -199,16 +199,16 @@ export function ProductCard() {
         )}
       </div>
 
-      <div className="kart-blok" style={{ order: 3 }}>
+      <div className="cards-blok" style={{ order: 3 }}>
         <ProductTexts product={product} onSaved={() => void load()} />
       </div>
-      <div className="kart-blok" style={{ order: 4 }}>
+      <div className="cards-blok" style={{ order: 4 }}>
         <ProductHolders productId={product.id} />
       </div>
 
 
       {!product.is_service && (
-        <div className="kart-blok" style={{ order: 5 }}>
+        <div className="cards-blok" style={{ order: 5 }}>
           <MoveForm product={product} places={places} onSaved={() => void load()} />
         </div>
       )}
@@ -217,7 +217,7 @@ export function ProductCard() {
           появился и не пропал, и в истории это одно событие. Кнопка появляется
           вместе со вторым складом: перевозить внутри одного места нечего. */}
       {!product.is_service && places?.many && (
-        <div className="kart-blok" style={{ order: 6 }}>
+        <div className="cards-blok" style={{ order: 6 }}>
           <div className="section-head" style={{ marginTop: 28 }}>
             <h2 className="section-title">{t("transfers")}</h2>
             <button
@@ -236,9 +236,9 @@ export function ProductCard() {
       {/* Раздел сам решает, показываться ли: выключен блок или нет права —
           возвращает null. Услуге штрихкод не нужен, её не сканируют с полки. */}
       </div>
-      <div className="kart-bok">
+      <div className="cards-side">
       {!product.is_service && (
-        <div className="kart-blok" style={{ order: 7 }}>
+        <div className="cards-blok" style={{ order: 7 }}>
           <ProductBarcodes productId={product.id} />
         </div>
       )}
@@ -246,11 +246,11 @@ export function ProductCard() {
       {/* Снимки — и услуге тоже. «Выезд мастера» на полке не лежит, но
           фотография у услуги осмысленна: так выглядит результат работы, и
           показать её клиенту проще, чем описать. */}
-      <div className="kart-blok" style={{ order: 8 }}>
+      <div className="cards-blok" style={{ order: 8 }}>
         <ProductPhotos productId={product.id} />
       </div>
 
-      <div className="kart-blok" style={{ order: 9 }}>
+      <div className="cards-blok" style={{ order: 9 }}>
       <div className="section-head" style={{ marginTop: 28 }}>
         <h2 className="section-title">{t("moves")}</h2>
         <span className="page-sub">{total}</span>
@@ -509,11 +509,11 @@ function TovarPlitki({ product, currency }: { product: Product; currency: string
   const vernulos90 = product.returns_90d?.quantity_milli ?? 0;
   const dolya = prodano90 > 0 ? Math.round((vernulos90 * 100) / prodano90) : null;
   return (
-    <div className="svodka-plitki szhato" style={{ marginBottom: 12 }}>
-      <div className={"svodka-plitka" + (product.out_of_stock ? " beda" : "")}>
-        <div className="svodka-l">{t("stock")}</div>
-        <div className="svodka-v">{product.stock_milli === null ? t("noStock") : kolvo(product.stock_milli)}</div>
-        <div className="svodka-sub">
+    <div className="summary-tiles compact" style={{ marginBottom: 12 }}>
+      <div className={"summary-tile" + (product.out_of_stock ? " beda" : "")}>
+        <div className="summary-l">{t("stock")}</div>
+        <div className="summary-val">{product.stock_milli === null ? t("noStock") : kolvo(product.stock_milli)}</div>
+        <div className="summary-sub">
           {product.stock_milli === null
             ? t("isService")
             : product.stock_milli < 0
@@ -528,35 +528,35 @@ function TovarPlitki({ product, currency }: { product: Product; currency: string
         </div>
       </div>
       {product.available_milli !== undefined && (
-        <div className="svodka-plitka">
-          <div className="svodka-l">{t("productAvailable")}</div>
-          <div className="svodka-v">{kolvo(product.available_milli)}</div>
-          <div className="svodka-sub">
+        <div className="summary-tile">
+          <div className="summary-l">{t("productAvailable")}</div>
+          <div className="summary-val">{kolvo(product.available_milli)}</div>
+          <div className="summary-sub">
             {product.reserved_milli ? t("productReservedSub", { n: formatQuantity(product.reserved_milli) }) : t("productNoReserve")}
             {product.expected_milli ? ` · ${t("productExpectedSub", { n: formatQuantity(product.expected_milli) })}` : ""}
           </div>
         </div>
       )}
-      <div className="svodka-plitka">
-        <div className="svodka-l">{t("sellPrice")}</div>
-        <div className="svodka-v">{formatMoney(product.price, currency, locale)}</div>
-        <div className="svodka-sub">
+      <div className="summary-tile">
+        <div className="summary-l">{t("sellPrice")}</div>
+        <div className="summary-val">{formatMoney(product.price, currency, locale)}</div>
+        <div className="summary-sub">
           {t("costPrice")}: {formatMoney(product.cost, currency, locale)}
           {natsenka !== null && ` · ${t("productMargin", { p: natsenka })}`}
         </div>
       </div>
       {product.sales_30d && (
-        <div className="svodka-plitka">
-          <div className="svodka-l">{t("productSold30")}</div>
-          <div className="svodka-v">{kolvo(product.sales_30d.quantity_milli)}</div>
-          <div className="svodka-sub">{t("productSold90", { n: formatQuantity(prodano90), orders: product.sales_90d?.count ?? 0 })}</div>
+        <div className="summary-tile">
+          <div className="summary-l">{t("productSold30")}</div>
+          <div className="summary-val">{kolvo(product.sales_30d.quantity_milli)}</div>
+          <div className="summary-sub">{t("productSold90", { n: formatQuantity(prodano90), orders: product.sales_90d?.count ?? 0 })}</div>
         </div>
       )}
       {product.returns_90d && (
-        <div className={"svodka-plitka" + (vernulos90 > 0 ? " beda" : "")}>
-          <div className="svodka-l">{t("productReturns90")}</div>
-          <div className="svodka-v">{kolvo(vernulos90)}</div>
-          <div className="svodka-sub">{dolya !== null ? t("productReturnsShare", { p: dolya }) : t("productNoReturns")}</div>
+        <div className={"summary-tile" + (vernulos90 > 0 ? " beda" : "")}>
+          <div className="summary-l">{t("productReturns90")}</div>
+          <div className="summary-val">{kolvo(vernulos90)}</div>
+          <div className="summary-sub">{dolya !== null ? t("productReturnsShare", { p: dolya }) : t("productNoReturns")}</div>
         </div>
       )}
     </div>

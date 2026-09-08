@@ -134,10 +134,19 @@ def update_role(
     return schemas.role_out(role, codes=sorted(permissions_service.codes_of_role(db, role.id)))
 
 
-@router.post("/{role_id}/default", dependencies=[manage])
-def make_default(role_id: int, db: Session = Depends(get_db)):
-    """Какую должность получает новый сотрудник при регистрации."""
-    role = permissions_service.set_default(db, role_id)
+@router.post("/{role_id}/default")
+def make_default(
+    role_id: int,
+    actor: User = Depends(require_perm("roles", "manage")),
+    db: Session = Depends(get_db),
+):
+    """Какую должность получает новый сотрудник при регистрации.
+
+    Исполнитель берётся по имени, а не просто проверяется: назначить должностью
+    по умолчанию ту, что шире собственной, — тот же escalation, что и выписать
+    себе права напрямую, только чужими руками и на неделю позже.
+    """
+    role = permissions_service.set_default(db, role_id, actor)
     return schemas.role_out(role, codes=sorted(permissions_service.codes_of_role(db, role.id)))
 
 

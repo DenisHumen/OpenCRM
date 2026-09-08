@@ -237,7 +237,18 @@ def snyat(engine, put: Path) -> tuple[int, int]:
             c.execute(text("START TRANSACTION WITH CONSISTENT SNAPSHOT"))
             imena = _tablicy(c)
             vsego_strok = 0
-            with chernovik.open("w", encoding="utf-8", newline="\n") as f:
+            # Дамп закрывается ПРИ РОЖДЕНИИ, а не после. Обычное `open("w")`
+            # при умаске 022 даёт 0644 — полная копия базы, читаемая любым
+            # пользователем машины, и лежит она так все минуты дампа. Готовая
+            # копия получает 0600, а снимок перед восстановлением не получал
+            # ничего вовсе. `O_EXCL` заодно отказывается писать поверх чужого
+            # черновика вместо того, чтобы молча его перезаписать.
+            with os.fdopen(
+                os.open(chernovik, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600),
+                "w",
+                encoding="utf-8",
+                newline="\n",
+            ) as f:
                 f.write(_shapka(engine))
                 for imya in imena:
                     vsego_strok += _odna_tablica(c, f, imya, escape)

@@ -390,7 +390,7 @@ export function Reports() {
                   </span>
                 </Link>
               ))}
-              <div className="itog-spiska">{t("repDebtsTotal", { sum: formatMoney(dolgi.total_due, dolgi.currency ?? currency, locale), n: dolgi.count })}</div>
+              <div className="total-list">{t("repDebtsTotal", { sum: formatMoney(dolgi.total_due, dolgi.currency ?? currency, locale), n: dolgi.count })}</div>
             </div>
           )}
         </div>

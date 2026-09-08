@@ -87,7 +87,7 @@
 | POST | `/roles` | 🔑 `roles.manage` | Создать: `{name, permissions: ["deals.view", …]}`. Несуществующее право — `422 unknown_permission`, занятое имя — `409 role_name_taken` |
 | POST | `/roles/from-preset` | 🔑 `roles.manage` | Создать из готового набора: `{preset, name?}`. `422 unknown_preset` |
 | PATCH | `/roles/{id}` | 🔑 `roles.manage` | Переименовать и/или заменить набор прав. Снять `roles.manage` с последней такой роли нельзя — `403 last_roles_manager` |
-| POST | `/roles/{id}/default` | 🔑 `roles.manage` | Какую роль получает новый сотрудник при регистрации |
+| POST | `/roles/{id}/default` | 🔑 `roles.manage` | Какую роль получает новый сотрудник при регистрации. **Четвёртая дверь раздачи прав**: роль шире собственной умолчанием не назначить (`403 cannot_grant_what_you_lack`) — иначе достаточно дождаться регистрации коллеги |
 | DELETE | `/roles/{id}` | 🔑 `roles.manage` | Удалить. Занятую нельзя (`409 role_in_use`), роль по умолчанию нельзя (`422 role_is_default`) |
 | POST | `/roles/assign/{user_id}` | 🔑 `roles.manage` | Назначить должность (`{"role_id": 3}`; `null` — снять). Себе нельзя (`403 cannot_change_own_role`), root'у нельзя (`403 cannot_assign_role_to_root`), последнего управляющего правами не снять (`403 last_roles_manager`) |
 
@@ -405,7 +405,7 @@
 
 | Метод | Путь | Права | Описание |
 |---|---|---|---|
-| GET | `/tasks` | 🔑 `tasks.view` | Список одним `items`; у записи рядом с номерами — `assignee_name`, `client_name`, `deal_title`, а также `vazhnost`, `note_est` (есть ли подробности) и `files_count`. Фильтры `scope` (по умолчанию `open`), `assignee_id`, `client_id`, `deal_id` |
+| GET | `/tasks` | 🔑 `tasks.view` | Список одним `items`; у записи рядом с номерами — `assignee_name`, `client_name`, `deal_title`, а также `vazhnost`, `note_est` (есть ли подробности) и `files_count`. Фильтры `scope` (по умолчанию `open`), `assignee_id`, `client_id`, `deal_id`. **`deal_title` берётся в области видимости заявок**: у чужой он пуст, номер остаётся — иначе перебором `deal_id` вычитывался список заявок фирмы мимо `deals.view_others` |
 | GET | `/notifications` | 👤 | Свои уведомления страницей (`?page=`): `kind`, `params`, `link`, `read`. Подпись собирает экран по `kind` |
 | GET | `/notifications/summary` | 👤 | Число непрочитанных — для колокольчика |
 | POST | `/notifications/read` | 👤 | Отметить прочитанными: `{ids}` или все свои |
@@ -749,7 +749,7 @@ CRM нет, — человек нажмёт «отправить» снова, �
 
 | Метод | Путь | Права | Описание |
 |---|---|---|---|
-| GET | `/documents` | 🔑 `documents.view` | Список: `search`, `status`, `client_id`, `deal_id`, `kind` (повторяемый), `sort`, пагинация. В ответе сверх обычного — `counts`: сколько бумаг каждого вида. В строках — `total` по строкам бумаги (пусто у бумаги без строк) |
+| GET | `/documents` | 🔑 `documents.view` | Список: `search`, `status`, `client_id`, `deal_id`, `kind` (повторяемый), `sort`, пагинация. В ответе сверх обычного — `counts`: сколько бумаг каждого вида. В строках — `total` по строкам бумаги (пусто у бумаги без строк). **Виды сужены блоком и правом**: квитанция и акт — всегда, заказы и возвраты — при включённом `orders` и `orders.view`, накладные — при `waybills` и `waybills.view`. Карточка и поиск сканом на чужой вид отвечают `404 document_not_found` |
 | POST | `/documents` | 🔑 `documents.create` | Завести бланк |
 | GET | `/documents/by-number/{number}` | 🔑 `documents.view` | Поиск сканом: сюда приходит то, что прочитал сканер штрихкода |
 | GET | `/documents/{id}` | 🔑 `documents.view` | Бланк + история состояний с именами авторов |
@@ -1299,7 +1299,7 @@ SVG только `width` и `height`; пока картинку показыва
 | GET | `/reports/revenue` | 🔑 `reports.view_amounts` | Деньги за период: `received_*` (пришло в кассу) и `won_*` (сумма выигранных заявок), плюс `basis` — чем меряем |
 | GET | `/reports/revenue.csv` | 🔑 `reports.view_amounts` | Она же выгрузкой |
 | GET | `/reports/sources` | 🔑 `reports.view` | Откуда пришли клиенты. Деньги в нём прячет `reports.view_amounts` |
-| GET | `/reports/debts` | 🔑 `reports.view_amounts` | Долги клиентов: бумаги (заказы покупателя, акты), по которым получено меньше выписанного — `items` (номер, вид, клиент, сумма, получено, остаток), `total_due`, `count`; без периода. Нужны блоки `finance` и `documents` |
+| GET | `/reports/debts` | 🔑 `reports.view_amounts` | Долги клиентов: бумаги (заказы покупателя, акты), по которым получено меньше выписанного — `items` (номер, вид, клиент, сумма, получено, остаток), `total_due`, `count`; без периода. Сужается областью видимости заявок, как воронка и выручка (и в выгрузке `debts.csv` тоже). Нужны блоки `finance` и `documents` |
 | GET | `/reports/debts.csv` | 🔑 `reports.view_amounts` | Он же выгрузкой |
 | GET | `/reports/sources.csv` | 🔑 `reports.view` | Он же выгрузкой |
 
@@ -1914,21 +1914,23 @@ curl -sS -X POST https://crm.example.com/api/v1/site/orders \
 
 | Метод | Путь | Права | Описание |
 |---|---|---|---|
-| GET | `/keys` | `keys.view` | Ключи, категории и счётчики одним ответом. Отбор: `category_id`, `mine`, `q`, `trash`. Право на раздел — только вход в него: ЧТО видно, решает список доступа у каждого ключа |
+| GET | `/keys` | `keys.view` | Ключи, категории и счётчики одним ответом. Отбор: `category_id`, `mine`, `q`, `trash`, `alarm` (только просящие обновления — по ВСЕМУ разделу, как и число в шапке). Право на раздел — только вход в него: ЧТО видно, решает список доступа у каждого ключа |
 | POST | `/keys/parse` | `keys.create` | Что система поняла из строки сервиса: сервис, учётка, длина кода, шаг, знак и проверочный код. POST, а не GET: строка `otpauth://` несёт секрет, а адрес запроса оседает в журнале веб-сервера |
-| POST | `/keys` | `keys.create` | Завести ключ. Категория заводится по имени, если её ещё нет |
-| PATCH | `/keys/{key_id}` | `keys.edit` | Название, учётка, сервис, важность, заметка, категория, запасные коды. Правит создатель или root |
+| POST | `/keys` | `keys.create` | Завести ключ. Категория заводится по имени, если её ещё нет. `422 key_category_foreign_closed` — имя занято ЧУЖОЙ закрытой категорией: положить туда ключ значило бы отдать его её хозяину |
+| PATCH | `/keys/{key_id}` | `keys.edit` | Название, учётка, сервис, важность, заметка, категория, запасные коды, `task_id`. Правит создатель или root. Напоминание привязывается только при включённом блоке и своём `tasks.view`: без этого перебором номеров вычитывался бы весь список напоминаний фирмы |
 | DELETE | `/keys/{key_id}` | `keys.delete` | В корзину. Секрет остаётся зашифрованным на месте |
 | POST | `/keys/{key_id}/restore` | `keys.restore` | Вернуть из корзины |
 | DELETE | `/keys/{key_id}/forever` | `keys.delete` | Стереть насовсем. Только из корзины: восстановить нечем |
-| POST | `/keys/{key_id}/code` | `keys.view` | Нынешний код и сколько ему жить. `?silent=1` — пересборка на открытом экране, без записи в журнал |
+| POST | `/keys/{key_id}/code` | `keys.view` | Нынешний код и сколько ему жить. **Всегда пишется в журнал**; выключателя снаружи нет. Повторные показы одного ключа одним человеком сходятся в одну запись за окно (`klyuchi_service.POKAZ_OKNO_SEKUND`, 5 минут) |
 | POST | `/keys/{key_id}/secret` | `keys.view` | Сам ключ, строка `otpauth://` и QR для переноса на телефон. Сверх права — **только root**: проверка стоит в службе, а не в охраннике маршрута. Всегда пишется в журнал отдельным событием |
-| GET | `/keys/{key_id}/backup-codes` | `keys.view` | Запасные коды сервиса и сколько осталось |
-| POST | `/keys/{key_id}/backup-codes/{nomer}/spend` | `keys.edit` | Вычеркнуть потраченный код |
+| GET | `/keys/{key_id}/backup-codes` | `keys.view` | Запасные коды сервиса и сколько осталось. `zakryty: true` — коды лежат, но нынешним ключом шифрования не открываются (сменился `OPENCRM_SECRET_KEY`); это не «не заводили», и затереть такой список правкой нельзя (`422 key_backup_undecryptable`) |
+| POST | `/keys/{key_id}/backup-codes/{nomer}/spend` | `keys.edit` | Вычеркнуть потраченный код. Под замком (список переписывается целиком) и с записью в журнал `key.backup_spent`; в журнал идёт номер, а не сам код |
 | GET | `/keys/{key_id}/access` | `keys.manage` | Кто видит ключ и кого ещё можно открыть |
 | POST | `/keys/{key_id}/access` | `keys.manage` | Открыть или закрыть доступ одному человеку. Создателя и root снять нельзя; в закрытой категории список не действует |
 | POST | `/keys/{key_id}/reminder` | `keys.edit` | Завести напоминание «сменить ключ» обычной задачей |
 | POST | `/keys/categories` | `keys.manage` | Завести категорию. `zakrytaya: true` — внутрь пускают только создателя и root |
+| GET | `/keys/categories/{category_id}/access` | `keys.manage` | Кого пустили в категорию и кого ещё можно пустить. Распоряжается тот, кто завёл её, и root |
+| POST | `/keys/categories/{category_id}/access` | `keys.manage` | Пустить человека в категорию или закрыть её ему: доступ у полки, а не у ключа, — и на те ключи, что положат туда завтра. `422 key_category_closed` — закрытая списков не слушает, это её определение. `403 key_category_not_owner` |
 | DELETE | `/keys/categories/{category_id}` | `keys.manage` | Убрать категорию. Ключи остаются, им обнуляется категория |
 | GET | `/keys/znak/{slug}.svg` | `keys.view` | Фирменный значок сервиса из вшитого набора. По одному: их три с половиной тысячи |
 

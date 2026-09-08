@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Icon } from "../components/Icon";
 import { Avatar, ConfirmModal, KnopkaKorziny, Modal, ScreenLoading } from "../components/ui";
@@ -9,6 +9,7 @@ import { useDebounced } from "../lib/debounce";
 import { useFailure } from "../lib/failure";
 import { useGuard } from "../lib/guard";
 import { can } from "../lib/permissions";
+import { useVspyshkaNa } from "../lib/vspyshka";
 
 /** Знак сервиса из вшитого набора. `null` — рисуем буквы названия. */
 interface Znak {
@@ -31,6 +32,8 @@ interface Klyuch {
   can_edit: boolean;
   backup_total: number;
   backup_left: number;
+  /** Коды лежат, но нынешним ключом шифрования не открываются. */
+  backup_zakryty: boolean;
   note: string;
   seen_by: number;
   task: { id: number; title: string; due_at: string | null; done: boolean } | null;
@@ -73,6 +76,21 @@ interface Kod {
   period: number;
 }
 
+/** Код, лежащий на экране: цифры сервера плюс МОМЕНТ, когда они перестанут
+ *  годиться. Отсчёт ведётся от момента, а не вычитанием единицы на тик:
+ *  вкладка в фоне тиков не получает, и вычитание оставляло на экране код
+ *  пятиминутной давности с полным кольцом — его копировали, сервис отказывал,
+ *  и признака просрочки на экране не было никакого. */
+interface KodNaEkrane extends Kod {
+  istekaet: number;
+  /** Ушли за новым: прежние цифры уже не годятся, а новых ещё нет. */
+  zhdyom: boolean;
+}
+
+function naEkran(kod: Kod): KodNaEkrane {
+  return { ...kod, istekaet: Date.now() + kod.ostalos * 1000, zhdyom: false };
+}
+
 interface Chelovek {
   id: number;
   name: string;
@@ -99,7 +117,7 @@ const NAPOMNIT_CHEREZ = 180;
 
 /** Цвет плитки знака по имени сервиса. Не случайный: у одного сервиса он
  *  обязан быть одним и тем же на всех экранах и после перезагрузки. */
-const OTTENKI = ["", "kl-znak-brand", "kl-znak-violet", "kl-znak-teal", "kl-znak-success"];
+const OTTENKI = ["", "keys-icon-brand", "keys-icon-violet", "keys-icon-teal", "keys-icon-success"];
 
 function ottenokZnaka(imya: string): string {
   let summa = 0;
@@ -122,25 +140,31 @@ export function Klyuchi() {
 
   const [polka, setPolka] = useState<Polka>({ vid: "vse" });
   const [poisk, setPoisk] = useState("");
-  const [kody, setKody] = useState<Record<number, Kod>>({});
+  const [kody, setKody] = useState<Record<number, KodNaEkrane>>({});
   const [novyy, setNovyy] = useState(false);
   const [novaya, setNovaya] = useState(false);
   const [tolkoTrevozhnye, setTolkoTrevozhnye] = useState(false);
   const [prava, setPrava] = useState<{ klyuch: Klyuch; lyudi: Chelovek[] } | null>(null);
-  const [zapasnye, setZapasnye] = useState<{ klyuch: Klyuch; items: Zapasnoy[] } | null>(null);
-  const [perenos, setPerenos] = useState<{ klyuch: Klyuch; secret: string; qr: string } | null>(null);
+  const [zapasnye, setZapasnye] = useState<{
+    klyuch: Klyuch;
+    items: Zapasnoy[];
+    zakryty: boolean;
+  } | null>(null);
+  const [perenos, setPerenos] = useState<{
+    klyuch: Klyuch;
+    secret: string;
+    qr: string;
+    zakroetsya: number;
+  } | null>(null);
+  const [dostupKategorii, setDostupKategorii] = useState<{ kat: Kategoriya; lyudi: Chelovek[] } | null>(null);
   const [menyu, setMenyu] = useState<Klyuch | null>(null);
   const [udalenie, setUdalenie] = useState<Klyuch | null>(null);
   const [nasovsem, setNasovsem] = useState<Klyuch | null>(null);
   const [ubratKat, setUbratKat] = useState<Kategoriya | null>(null);
-  const [skopirovan, setSkopirovan] = useState<number | null>(null);
-
-  // Плашка «скопировано» гаснет сама: держим отметку, а гасит её общий
-  // крючок паузы — своих таймеров на экранах не заводим.
-  const pogaslo = useDebounced(skopirovan, 1400);
-  useEffect(() => {
-    if (pogaslo !== null && pogaslo === skopirovan) setSkopirovan(null);
-  }, [pogaslo, skopirovan]);
+  // Плашка «скопировано» гаснет сама. Общим крючком, а не парой «отметка +
+  // пауза ввода»: та пара гасила свежее нажатие отставшим значением, и второе
+  // нажатие подряд по той же кнопке не показывало ничего.
+  const [skopirovan, otmetitKopiyu] = useVspyshkaNa<number>();
 
   const vKorzine = polka.vid === "korzina";
   const rootLi = user?.role === "root";
@@ -152,9 +176,18 @@ export function Klyuchi() {
     if (polka.vid === "moi") p.set("mine", "1");
     if (polka.vid === "korzina") p.set("trash", "1");
     if (otlozhennyyPoisk) p.set("q", otlozhennyyPoisk);
+    if (tolkoTrevozhnye) p.set("alarm", "1");
     const stroka = p.toString();
     return stroka ? `/keys?${stroka}` : "/keys";
-  }, [polka, otlozhennyyPoisk]);
+  }, [polka, otlozhennyyPoisk, tolkoTrevozhnye]);
+
+  // Полка и поиск снимают отбор по тревоге. Число тревоги — по ВСЕМУ разделу, и
+  // оставленный отбор показывал бы под ним пересечение с полкой: одна и та же
+  // единица в шапке и пустой список под ней.
+  const vybratPolku = useCallback((chto: Polka) => {
+    setTolkoTrevozhnye(false);
+    setPolka(chto);
+  }, []);
 
   const load = useCallback(() => {
     clear();
@@ -173,43 +206,96 @@ export function Klyuchi() {
     return () => { alive = false; };
   }, [zapros, fail, clear]);
 
-  // Отсчёт кодов. Тикаем только когда вкладка на виду: скрытая вкладка всё
-  // равно ничего не показывает, а таймер там продолжал бы дёргать сервер.
+  // Код кончился — идём за новым. Отказ закрывает сейф, а не оставляет на
+  // экране прежние цифры: проглоченный отказ (ключ унесли в корзину, оборвалась
+  // сеть) ничем не отличался от удавшегося запроса.
+  const obnovit = useCallback(
+    async (id: number) => {
+      try {
+        const svezhiy = await api.post<Kod>(`/keys/${id}/code`);
+        setKody((bylo) => (bylo[id] ? { ...bylo, [id]: naEkran(svezhiy) } : bylo));
+      } catch (e) {
+        setKody((bylo) => {
+          if (!bylo[id]) return bylo;
+          const stalo = { ...bylo };
+          delete stalo[id];
+          return stalo;
+        });
+        toastError(e);
+      }
+    },
+    [toastError],
+  );
+
+  // Свежий снимок кодов для тика. Через ссылку, а не через зависимость: иначе
+  // отсчёт пересоздавал бы таймер каждую секунду и сам себя сбивал.
+  const poslednie = useRef(kody);
+  poslednie.current = kody;
+
+  // Пересчёт остатка от настоящего времени. Не вычитание единицы: см. `KodNaEkrane`.
+  //
+  // Запрос за новым кодом стоит СНАРУЖИ обновления состояния: обновление обязано
+  // быть чистым, а в строгом режиме React зовёт его дважды — и запросов ушло бы
+  // тоже два.
+  const peresobrat = useCallback(() => {
+    const teper = Date.now();
+    const stalo: Record<number, KodNaEkrane> = {};
+    const prosit: number[] = [];
+    let menyalos = false;
+    for (const [id, k] of Object.entries(poslednie.current)) {
+      const nomer = Number(id);
+      const ostalos = Math.max(0, Math.ceil((k.istekaet - teper) / 1000));
+      if (ostalos === 0 && !k.zhdyom) {
+        prosit.push(nomer);
+        stalo[nomer] = { ...k, ostalos: 0, zhdyom: true };
+        menyalos = true;
+        continue;
+      }
+      stalo[nomer] = ostalos === k.ostalos ? k : { ...k, ostalos };
+      if (ostalos !== k.ostalos) menyalos = true;
+    }
+    if (menyalos) setKody(stalo);
+    for (const nomer of prosit) void obnovit(nomer);
+  }, [obnovit]);
+
+  // Окно переноса закрывается само — срок называет сервер (`zakroetsya_cherez`).
+  // Тикает и в скрытой вкладке нарочно: беда именно в том, что открытый секрет
+  // остаётся на незапертом экране, пока человек занят другой вкладкой.
+  const [perenosOstalos, setPerenosOstalos] = useState(0);
   useEffect(() => {
-    if (Object.keys(kody).length === 0) return;
-    const timer = window.setInterval(() => {
-      if (document.visibilityState !== "visible") return;
-      setKody((bylo) => {
-        const stalo: Record<number, Kod> = {};
-        let menyalos = false;
-        for (const [id, k] of Object.entries(bylo)) {
-          const ostalos = k.ostalos - 1;
-          if (ostalos <= 0) {
-            // Код кончился — просим новый молча: в журнал идёт нажатие
-            // «показать», а не каждая пересборка раз в тридцать секунд.
-            void api
-              .post<Kod>(`/keys/${id}/code?silent=1`)
-              .then((svezhiy) => setKody((b) => (b[Number(id)] ? { ...b, [Number(id)]: svezhiy } : b)))
-              .catch(() => undefined);
-            stalo[Number(id)] = { ...k, ostalos: k.period };
-          } else {
-            stalo[Number(id)] = { ...k, ostalos };
-          }
-          menyalos = true;
-        }
-        return menyalos ? stalo : bylo;
-      });
-    }, TIK_MS);
+    if (!perenos) return;
+    const schitat = () => {
+      const ostalos = Math.max(0, Math.ceil((perenos.zakroetsya - Date.now()) / 1000));
+      setPerenosOstalos(ostalos);
+      if (ostalos === 0) setPerenos(null);
+    };
+    schitat();
+    // таймер-без-сети: только счёт секунд до закрытия окна. Видимость он
+    // нарочно НЕ спрашивает — беда именно в том, что человек ушёл в другую
+    // вкладку, а открытый секрет остался на незапертом экране.
+    const timer = window.setInterval(schitat, TIK_MS);
     return () => window.clearInterval(timer);
-  }, [kody]);
+  }, [perenos]);
+
+  // Тикаем только когда вкладка на виду: скрытая всё равно ничего не
+  // показывает, а таймер там дёргал бы сервер. Возврат на вкладку пересчитывает
+  // сразу, не дожидаясь своего тика.
+  const estKody = Object.keys(kody).length > 0;
+  useEffect(() => {
+    if (!estKody) return;
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible") peresobrat();
+    }, TIK_MS);
+    document.addEventListener("visibilitychange", peresobrat);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", peresobrat);
+    };
+  }, [estKody, peresobrat]);
 
   if (!dannye) return <ScreenLoading error={failure} onRetry={load} />;
 
-  // Отбор «просят обновления» делается здесь, а не запросом: полка уже
-  // пришла целиком, и лишний заход к серверу ради вычитания ничего не даст.
-  const prosrochen = (k: Klyuch) =>
-    !!k.task && !k.task.done && !!k.task.due_at && new Date(k.task.due_at) < new Date();
-  const pokazyvaem = tolkoTrevozhnye ? dannye.items.filter(prosrochen) : dannye.items;
+  const pokazyvaem = dannye.items;
 
   const mozhnoZavodit = can(user, "keys.create");
   const mozhnoUpravlyat = can(user, "keys.manage");
@@ -218,7 +304,7 @@ export function Klyuchi() {
     if (!guard.take()) return;
     try {
       const kod = await api.post<Kod>(`/keys/${klyuch.id}/code`);
-      setKody((bylo) => ({ ...bylo, [klyuch.id]: kod }));
+      setKody((bylo) => ({ ...bylo, [klyuch.id]: naEkran(kod) }));
     } catch (e) {
       toastError(e);
     } finally {
@@ -233,7 +319,7 @@ export function Klyuchi() {
       toastError(new Error(t("keysCopyFailed")));
       return;
     }
-    setSkopirovan(id);
+    otmetitKopiyu(id);
   };
 
   const otkrytPrava = async (klyuch: Klyuch) => {
@@ -262,11 +348,38 @@ export function Klyuchi() {
     }
   };
 
+  const otkrytDostupKategorii = async (kat: Kategoriya) => {
+    try {
+      const otvet = await api.get<{ people: Chelovek[] }>(`/keys/categories/${kat.id}/access`);
+      setDostupKategorii({ kat, lyudi: otvet.people });
+    } catch (e) {
+      toastError(e);
+    }
+  };
+
+  const perekluchitKategoriyu = async (chelovek: Chelovek) => {
+    if (!dostupKategorii || !guard.take()) return;
+    try {
+      const otvet = await api.post<{ people: Chelovek[] }>(
+        `/keys/categories/${dostupKategorii.kat.id}/access`,
+        { user_id: chelovek.id, otkryt: !chelovek.otkryt },
+      );
+      setDostupKategorii({ ...dostupKategorii, lyudi: otvet.people });
+      load();
+    } catch (e) {
+      toastError(e);
+    } finally {
+      guard.free();
+    }
+  };
+
   const otkrytZapasnye = async (klyuch: Klyuch) => {
     setMenyu(null);
     try {
-      const otvet = await api.get<{ items: Zapasnoy[] }>(`/keys/${klyuch.id}/backup-codes`);
-      setZapasnye({ klyuch, items: otvet.items });
+      const otvet = await api.get<{ items: Zapasnoy[]; zakryty: boolean }>(
+        `/keys/${klyuch.id}/backup-codes`,
+      );
+      setZapasnye({ klyuch, items: otvet.items, zakryty: otvet.zakryty });
     } catch (e) {
       toastError(e);
     }
@@ -275,10 +388,10 @@ export function Klyuchi() {
   const potratit = async (nomer: number) => {
     if (!zapasnye || !guard.take()) return;
     try {
-      const otvet = await api.post<{ items: Zapasnoy[] }>(
+      const otvet = await api.post<{ items: Zapasnoy[]; zakryty: boolean }>(
         `/keys/${zapasnye.klyuch.id}/backup-codes/${nomer}/spend`,
       );
-      setZapasnye({ ...zapasnye, items: otvet.items });
+      setZapasnye({ ...zapasnye, items: otvet.items, zakryty: otvet.zakryty });
       load();
     } catch (e) {
       toastError(e);
@@ -291,8 +404,15 @@ export function Klyuchi() {
     setMenyu(null);
     if (!guard.take()) return;
     try {
-      const otvet = await api.post<{ secret: string; qr: string }>(`/keys/${klyuch.id}/secret`);
-      setPerenos({ klyuch, secret: otvet.secret, qr: otvet.qr });
+      const otvet = await api.post<{ secret: string; qr: string; zakroetsya_cherez: number }>(
+        `/keys/${klyuch.id}/secret`,
+      );
+      setPerenos({
+        klyuch,
+        secret: otvet.secret,
+        qr: otvet.qr,
+        zakroetsya: Date.now() + otvet.zakroetsya_cherez * 1000,
+      });
     } catch (e) {
       toastError(e);
     } finally {
@@ -366,12 +486,12 @@ export function Klyuchi() {
     p.vid === polka.vid && (p.vid !== "kategoriya" || (polka.vid === "kategoriya" && p.id === polka.id));
 
   const znakKarty = (klyuch: Klyuch) => (
-    <div className={`kl-znak ${klyuch.znak ? "" : ottenokZnaka(klyuch.issuer || klyuch.title)}`}>
+    <div className={`keys-icon ${klyuch.znak ? "" : ottenokZnaka(klyuch.issuer || klyuch.title)}`}>
       {klyuch.znak ? (
         // Значок отдаёт сервер по одному: их три с половиной тысячи, и разом
         // это четыре мегабайта на каждое открытие экрана.
         <span
-          className="kl-znak-kartinka"
+          className="keys-icon-image"
           style={{ ["--znak" as string]: `url(/api/v1/keys/znak/${klyuch.znak.slug}.svg)` }}
         />
       ) : (
@@ -384,11 +504,11 @@ export function Klyuchi() {
     const kod = kody[klyuch.id];
     if (!kod) {
       return (
-        <div className="kl-seyf">
-          <div className="kl-tochki">{"•".repeat(Math.min(klyuch.digits, 4))} {"•".repeat(3)}</div>
+        <div className="keys-safe">
+          <div className="keys-dots">{"•".repeat(Math.min(klyuch.digits, 4))} {"•".repeat(3)}</div>
           <button
             type="button"
-            className="kl-seyf-knopka"
+            className="keys-safe-btn"
             disabled={guard.busy || vKorzine}
             onClick={() => void pokazat(klyuch)}
           >
@@ -398,26 +518,36 @@ export function Klyuchi() {
         </div>
       );
     }
+    if (kod.zhdyom) {
+      // Прежние цифры уже не годятся, новых ещё нет. Показать их с полным
+      // кольцом значило бы соврать ровно в тот момент, когда человек копирует.
+      return (
+        <div className="keys-safe">
+          <div className="keys-dots">{"•".repeat(Math.min(klyuch.digits, 4))} {"•".repeat(3)}</div>
+          <span className="keys-safe-wait">{t("keysRefreshing")}</span>
+        </div>
+      );
+    }
     const dolya = kod.ostalos / kod.period;
-    const stupen = kod.ostalos <= 5 ? "kl-konets" : kod.ostalos <= 10 ? "kl-skoro" : "";
+    const stupen = kod.ostalos <= 5 ? "keys-end" : kod.ostalos <= 10 ? "keys-soon" : "";
     const cifry = kod.code.split("");
     const seredina = Math.ceil(cifry.length / 2);
     return (
-      <div className="kl-seyf">
-        <div className="kl-cifry" aria-label={t("keysCodeAria", { code: kod.code })}>
+      <div className="keys-safe">
+        <div className="keys-digits" aria-label={t("keysCodeAria", { code: kod.code })}>
           {cifry.map((c, i) => (
             <span key={i}>
-              {i === seredina && <span className="kl-probel" />}
-              <span className="kl-cifra" style={{ ["--i" as string]: i }}>{c}</span>
+              {i === seredina && <span className="keys-space" />}
+              <span className="keys-digit" style={{ ["--i" as string]: i }}>{c}</span>
             </span>
           ))}
         </div>
-        <div className={`kl-koltso ${stupen}`} style={{ ["--dolya" as string]: dolya }}>
-          <span className="kl-koltso-chislo">{kod.ostalos}</span>
+        <div className={`keys-ring ${stupen}`} style={{ ["--dolya" as string]: dolya }}>
+          <span className="keys-ring-number">{kod.ostalos}</span>
         </div>
         <button
           type="button"
-          className={`kl-seyf-knopka kl-kopiya ${skopirovan === klyuch.id ? "kl-skopirovano" : ""}`}
+          className={`keys-safe-btn keys-copy ${skopirovan === klyuch.id ? "keys-copied" : ""}`}
           data-podskazka={t("keysCopied")}
           onClick={() => void skopirovat(klyuch.id, kod.code)}
         >
@@ -430,19 +560,29 @@ export function Klyuchi() {
 
   return (
     <div className="page page-wide">
-      <div className="kl-shapka">
-        <div className="kl-shapka-tekst">
-          <h1 className="kl-titul">{t("modKeys")}</h1>
-          <div className="kl-svodka">
-            <span className="kl-svodka-chislo">
+      <div className="keys-header">
+        <div className="keys-header-text">
+          <h1 className="keys-title">{t("modKeys")}</h1>
+          <div className="keys-summary">
+            <span className="keys-summary-number">
               {t("keysSummary", { n: dannye.total, k: dannye.categories.length })}
             </span>
             {dannye.prosyat > 0 && (
               <button
                 type="button"
-                className="kl-svodka-trevoga"
+                className="keys-summary-alarm"
                 aria-pressed={tolkoTrevozhnye}
-                onClick={() => setTolkoTrevozhnye((b) => !b)}
+                onClick={() => {
+                  // Тревога — это вид, а не подмешанный к полке фильтр: включаясь,
+                  // она открывает весь раздел и снимает поиск, иначе число и
+                  // список снова считались бы по разным наборам. Выключаясь — не
+                  // трогает ничего: человек возвращается туда, где стоял.
+                  if (!tolkoTrevozhnye) {
+                    setPolka({ vid: "vse" });
+                    setPoisk("");
+                  }
+                  setTolkoTrevozhnye((b) => !b);
+                }}
               >
                 <Icon name="alert" size={11} />
                 {t("keysNeedRotation", { n: dannye.prosyat })}
@@ -450,15 +590,18 @@ export function Klyuchi() {
             )}
           </div>
         </div>
-        <div className="kl-shapka-knopki">
-          <div className="kl-poisk">
+        <div className="keys-header-btns">
+          <div className="keys-search">
             <Icon name="search" size={14} />
             <input
               type="text"
               value={poisk}
               placeholder={t("keysSearch")}
               aria-label={t("keysSearch")}
-              onChange={(e) => setPoisk(e.target.value)}
+              onChange={(e) => {
+                setTolkoTrevozhnye(false);
+                setPoisk(e.target.value);
+              }}
             />
           </div>
           {mozhnoUpravlyat && (
@@ -476,82 +619,99 @@ export function Klyuchi() {
         </div>
       </div>
 
-      <div className="kl-telo">
-        <nav className="kl-papki" aria-label={t("keysCategories")}>
-          <div className="kl-papki-zagolovok">
+      <div className="keys-body">
+        <nav className="keys-folders" aria-label={t("keysCategories")}>
+          <div className="keys-folders-heading">
             {t("keysCategories")}
-            <span className="kl-papka-schyot">{dannye.categories.length}</span>
+            <span className="keys-folder-count">{dannye.categories.length}</span>
           </div>
-          <div className="kl-papki-spisok">
+          <div className="keys-folders-list">
             <button
               type="button"
-              className={`kl-papka ${polkaVybrana({ vid: "vse" }) ? "kl-vybrana" : ""}`}
-              onClick={() => setPolka({ vid: "vse" })}
+              className={`keys-folder ${polkaVybrana({ vid: "vse" }) ? "keys-selected" : ""}`}
+              onClick={() => vybratPolku({ vid: "vse" })}
             >
               <Icon name="database" size={15} />
-              <span className="kl-papka-imya">{t("keysAll")}</span>
-              <span className="kl-papka-schyot">{dannye.total}</span>
+              <span className="keys-folder-name">{t("keysAll")}</span>
+              <span className="keys-folder-count">{dannye.total}</span>
             </button>
             <button
               type="button"
-              className={`kl-papka ${polkaVybrana({ vid: "moi" }) ? "kl-vybrana" : ""}`}
-              onClick={() => setPolka({ vid: "moi" })}
+              className={`keys-folder ${polkaVybrana({ vid: "moi" }) ? "keys-selected" : ""}`}
+              onClick={() => vybratPolku({ vid: "moi" })}
             >
               <Icon name="user" size={15} />
-              <span className="kl-papka-imya">{t("keysMine")}</span>
-              <span className="kl-papka-schyot">{dannye.mine}</span>
+              <span className="keys-folder-name">{t("keysMine")}</span>
+              <span className="keys-folder-count">{dannye.mine}</span>
             </button>
             {dannye.categories.map((kat) => (
-              <div key={kat.id} className="kl-papka-ryad">
+              <div key={kat.id} className="keys-folder-row">
                 <button
                   type="button"
-                  className={`kl-papka ${kat.zakryta_dlya_menya ? "kl-zakryta" : ""} ${
-                    polkaVybrana({ vid: "kategoriya", id: kat.id }) ? "kl-vybrana" : ""
+                  className={`keys-folder ${kat.zakryta_dlya_menya ? "keys-closed" : ""} ${
+                    polkaVybrana({ vid: "kategoriya", id: kat.id }) ? "keys-selected" : ""
                   }`}
                   disabled={kat.zakryta_dlya_menya}
                   title={kat.zakryta_dlya_menya ? t("keysCategoryClosedHint") : undefined}
-                  onClick={() => setPolka({ vid: "kategoriya", id: kat.id })}
+                  onClick={() => vybratPolku({ vid: "kategoriya", id: kat.id })}
                 >
                   <Icon name={kat.zakrytaya ? "lock" : "folder"} size={15} />
-                  <span className="kl-papka-imya truncate">{kat.name}</span>
-                  <span className="kl-papka-schyot">{kat.count}</span>
+                  <span className="keys-folder-name truncate">{kat.name}</span>
+                  <span className="keys-folder-count">{kat.count}</span>
                 </button>
                 {(rootLi || kat.mine) && !kat.zakryta_dlya_menya && (
-                  <button
-                    type="button"
-                    className="btn-icon kl-papka-ubrat"
-                    title={t("keysCategoryRemove")}
-                    aria-label={t("keysCategoryRemove")}
-                    disabled={guard.busy}
-                    onClick={() => setUbratKat(kat)}
-                  >
-                    <Icon name="trash" size={13} />
-                  </button>
+                  <div className="keys-folder-tools">
+                    {/* Закрытая списков не слушает — это её определение, и
+                        кнопка, заводящая доступ, который ничего не откроет,
+                        была бы обманом. */}
+                    {mozhnoUpravlyat && !kat.zakrytaya && (
+                      <button
+                        type="button"
+                        className="btn-icon keys-folder-act keys-folder-share"
+                        title={t("keysCategoryAccess")}
+                        aria-label={t("keysCategoryAccess")}
+                        disabled={guard.busy}
+                        onClick={() => void otkrytDostupKategorii(kat)}
+                      >
+                        <Icon name="staff" size={13} />
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      className="btn-icon keys-folder-act keys-folder-remove"
+                      title={t("keysCategoryRemove")}
+                      aria-label={t("keysCategoryRemove")}
+                      disabled={guard.busy}
+                      onClick={() => setUbratKat(kat)}
+                    >
+                      <Icon name="trash" size={13} />
+                    </button>
+                  </div>
                 )}
               </div>
             ))}
           </div>
-          <div className="kl-papki-nizhe">
+          <div className="keys-folders-below">
             <button
               type="button"
-              className={`kl-papka ${polkaVybrana({ vid: "korzina" }) ? "kl-vybrana" : ""}`}
-              onClick={() => setPolka({ vid: "korzina" })}
+              className={`keys-folder ${polkaVybrana({ vid: "korzina" }) ? "keys-selected" : ""}`}
+              onClick={() => vybratPolku({ vid: "korzina" })}
             >
               <Icon name="trash" size={15} />
-              <span className="kl-papka-imya">{t("keysTrash")}</span>
-              <span className="kl-papka-schyot">{dannye.trash}</span>
+              <span className="keys-folder-name">{t("keysTrash")}</span>
+              <span className="keys-folder-count">{dannye.trash}</span>
             </button>
           </div>
         </nav>
 
-        <div className="kl-setka">
+        <div className="keys-grid">
           {pokazyvaem.length === 0 ? (
-            <div className="kl-pusto">
-              <div className="kl-pusto-plita">
+            <div className="keys-empty">
+              <div className="keys-empty-slab">
                 <Icon name="lock" size={26} />
               </div>
-              <div className="kl-pusto-titul">{vKorzine ? t("keysTrashEmpty") : t("keysEmpty")}</div>
-              <div className="kl-pusto-podpis">{t("keysEmptyHint")}</div>
+              <div className="keys-empty-title">{vKorzine ? t("keysTrashEmpty") : t("keysEmpty")}</div>
+              <div className="keys-empty-caption">{t("keysEmptyHint")}</div>
               {mozhnoZavodit && !vKorzine && (
                 <button className="btn btn-primary" onClick={() => setNovyy(true)}>
                   <Icon name="plus" size={14} />
@@ -563,19 +723,19 @@ export function Klyuchi() {
             pokazyvaem.map((klyuch, i) => (
               <article
                 key={klyuch.id}
-                className={`kl-kartochka ${klyuch.vazhnost === "urgent" ? "kl-srochnyy" : ""}`}
+                className={`keys-card ${klyuch.vazhnost === "urgent" ? "keys-urgent" : ""}`}
                 style={{ ["--n" as string]: i }}
               >
-                <div className="kl-verh">
+                <div className="keys-top">
                   {znakKarty(klyuch)}
-                  <div className="kl-imena">
-                    <div className="kl-imya">{klyuch.title}</div>
-                    {klyuch.account && <div className="kl-uchyotka truncate">{klyuch.account}</div>}
+                  <div className="keys-names">
+                    <div className="keys-name">{klyuch.title}</div>
+                    {klyuch.account && <div className="keys-account truncate">{klyuch.account}</div>}
                   </div>
                   {klyuch.can_edit && !vKorzine && (
                     <button
                       type="button"
-                      className="btn-icon kl-menyu"
+                      className="btn-icon keys-menu"
                       title={t("keysMore")}
                       aria-label={t("keysMore")}
                       onClick={() => setMenyu(klyuch)}
@@ -586,7 +746,7 @@ export function Klyuchi() {
                 </div>
 
                 {vKorzine ? (
-                  <div className="kl-deystviya">
+                  <div className="keys-actions">
                     <button className="btn btn-sm" disabled={guard.busy} onClick={() => void vernut(klyuch)}>
                       <Icon name="refresh" size={13} />
                       {t("keysRestore")}
@@ -605,13 +765,13 @@ export function Klyuchi() {
                 )}
 
                 {klyuch.note && (
-                  <details className="kl-zametka">
-                    <summary className="kl-zametka-krai">{klyuch.note}</summary>
-                    <div className="kl-zametka-telo">{klyuch.note}</div>
+                  <details className="keys-note">
+                    <summary className="keys-note-edge">{klyuch.note}</summary>
+                    <div className="keys-note-body">{klyuch.note}</div>
                   </details>
                 )}
 
-                <div className="kl-niz">
+                <div className="keys-bottom">
                   {klyuch.vazhnost === "urgent" && (
                     <span className="chip chip-danger">{t("vazhnostUrgent")}</span>
                   )}
@@ -626,6 +786,15 @@ export function Klyuchi() {
                   {klyuch.seen_by > 0 && (
                     <span className="chip">{t("keysSeenBy", { n: klyuch.seen_by })}</span>
                   )}
+                  {klyuch.backup_zakryty && (
+                    <button
+                      type="button"
+                      className="chip chip-warning"
+                      onClick={() => void otkrytZapasnye(klyuch)}
+                    >
+                      {t("keysBackupLocked")}
+                    </button>
+                  )}
                   {klyuch.backup_total > 0 && (
                     <button
                       type="button"
@@ -638,13 +807,13 @@ export function Klyuchi() {
                 </div>
 
                 {klyuch.task && (
-                  <div className="kl-stroka">
-                    <a className={`kl-svyaz ${klyuch.task.done ? "" : "kl-trevoga"}`} href={`/tasks?id=${klyuch.task.id}`}>
+                  <div className="keys-row">
+                    <a className={`keys-link ${klyuch.task.done ? "" : "keys-alarm"}`} href={`/tasks?id=${klyuch.task.id}`}>
                       <Icon name="clock" size={13} />
                       <span className="truncate">{klyuch.task.title}</span>
                     </a>
                     {klyuch.task.due_at && (
-                      <span className="kl-kogda">{formatData(klyuch.task.due_at, locale)}</span>
+                      <span className="keys-when">{formatData(klyuch.task.due_at, locale)}</span>
                     )}
                   </div>
                 )}
@@ -677,26 +846,26 @@ export function Klyuchi() {
 
       {menyu && (
         <Modal title={menyu.title} onClose={() => setMenyu(null)}>
-          <div className="kl-menyu-spisok">
+          <div className="keys-menu-list">
             {mozhnoUpravlyat && (
-              <button type="button" className="kl-menyu-punkt" onClick={() => void otkrytPrava(menyu)}>
+              <button type="button" className="keys-menu-item" onClick={() => void otkrytPrava(menyu)}>
                 <Icon name="staff" size={15} />
                 {t("keysWhoSees")}
               </button>
             )}
-            <button type="button" className="kl-menyu-punkt" onClick={() => void otkrytZapasnye(menyu)}>
+            <button type="button" className="keys-menu-item" onClick={() => void otkrytZapasnye(menyu)}>
               <Icon name="clipboard" size={15} />
               {t("keysBackupCodes")}
             </button>
             {rootLi && (
-              <button type="button" className="kl-menyu-punkt" onClick={() => void otkrytPerenos(menyu)}>
+              <button type="button" className="keys-menu-item" onClick={() => void otkrytPerenos(menyu)}>
                 <Icon name="scan" size={15} />
                 {t("keysToPhone")}
               </button>
             )}
             <button
               type="button"
-              className="kl-menyu-punkt kl-opasno"
+              className="keys-menu-item keys-danger"
               onClick={() => {
                 setUdalenie(menyu);
                 setMenyu(null);
@@ -711,17 +880,17 @@ export function Klyuchi() {
 
       {prava && (
         <Modal title={t("keysWhoSeesTitle", { name: prava.klyuch.title })} onClose={() => setPrava(null)}>
-          <div className="kl-zamechanie kl-zamechanie-opasno">
+          <div className="keys-notice keys-notice-danger">
             <Icon name="alert" size={15} />
             <span>{t("keysAccessWarn")}</span>
           </div>
-          <div className="kl-prava-spisok">
+          <div className="keys-rights-list">
             {prava.lyudi.map((chelovek) => (
-              <div key={chelovek.id} className="kl-prava-stroka">
+              <div key={chelovek.id} className="keys-rights-row">
                 <Avatar text={chelovek.name} />
-                <div className="kl-prava-kto">
-                  <div className="kl-prava-imya">{chelovek.name}</div>
-                  <div className="kl-prava-rol">
+                <div className="keys-rights-who">
+                  <div className="keys-rights-name">{chelovek.name}</div>
+                  <div className="keys-rights-role">
                     {chelovek.always ? t("keysSeesAlways") : t(chelovek.role === "root" ? "root" : "manager")}
                   </div>
                 </div>
@@ -740,21 +909,59 @@ export function Klyuchi() {
         </Modal>
       )}
 
+      {dostupKategorii && (
+        <Modal
+          title={t("keysCategoryAccessTitle", { name: dostupKategorii.kat.name })}
+          onClose={() => setDostupKategorii(null)}
+        >
+          <div className="keys-notice">
+            <Icon name="alert" size={15} />
+            <span>{t("keysCategoryAccessWarn")}</span>
+          </div>
+          <div className="keys-rights-list">
+            {dostupKategorii.lyudi.map((chelovek) => (
+              <div key={chelovek.id} className="keys-rights-row">
+                <Avatar text={chelovek.name} />
+                <div className="keys-rights-who">
+                  <div className="keys-rights-name">{chelovek.name}</div>
+                  <div className="keys-rights-role">
+                    {chelovek.always ? t("keysSeesAlways") : t(chelovek.role === "root" ? "root" : "manager")}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className={`toggle-track ${chelovek.otkryt ? "on" : ""}`}
+                  aria-pressed={chelovek.otkryt}
+                  aria-label={chelovek.name}
+                  disabled={chelovek.always || guard.busy}
+                  onClick={() => void perekluchitKategoriyu(chelovek)}
+                />
+              </div>
+            ))}
+          </div>
+        </Modal>
+      )}
+
       {zapasnye && (
         <Modal title={t("keysBackupTitle", { name: zapasnye.klyuch.title })} onClose={() => setZapasnye(null)}>
           <div className="field-desc" style={{ marginTop: 0, marginBottom: 12 }}>
             {t("keysBackupHint")}
           </div>
-          {zapasnye.items.length === 0 ? (
+          {zapasnye.zakryty ? (
+            <div className="keys-notice keys-notice-danger">
+              <Icon name="alert" size={15} />
+              <span>{t("keysBackupLockedHint")}</span>
+            </div>
+          ) : zapasnye.items.length === 0 ? (
             <div className="field-desc">{t("keysBackupNone")}</div>
           ) : (
             <>
-              <div className="kl-zapasnye">
+              <div className="keys-backups">
                 {zapasnye.items.map((z, i) => (
                   <button
                     key={i}
                     type="button"
-                    className={`kl-zapasnoy ${z.potrachen ? "kl-potrachen" : ""}`}
+                    className={`keys-backup ${z.potrachen ? "keys-spent" : ""}`}
                     disabled={z.potrachen || guard.busy}
                     title={z.potrachen ? t("keysBackupSpent") : t("keysBackupSpend")}
                     onClick={() => void potratit(i)}
@@ -763,11 +970,11 @@ export function Klyuchi() {
                   </button>
                 ))}
               </div>
-              <div className="kl-zapasnye-itog">
-                <span className="kl-shkala">
+              <div className="keys-backups-total">
+                <span className="keys-scale">
                   <span
-                    className={`kl-shkala-polosa ${
-                      zapasnye.items.filter((z) => !z.potrachen).length < 3 ? "kl-taet" : ""
+                    className={`keys-scale-bar ${
+                      zapasnye.items.filter((z) => !z.potrachen).length < 3 ? "keys-low" : ""
                     }`}
                     style={{
                       width: `${Math.round(
@@ -776,7 +983,7 @@ export function Klyuchi() {
                     }}
                   />
                 </span>
-                <span className="kl-zapasnye-schyot">
+                <span className="keys-backups-count">
                   {t("keysBackupLeft", {
                     left: zapasnye.items.filter((z) => !z.potrachen).length,
                     total: zapasnye.items.length,
@@ -791,19 +998,19 @@ export function Klyuchi() {
 
       {perenos && (
         <Modal title={t("keysToPhoneTitle", { name: perenos.klyuch.title })} onClose={() => setPerenos(null)}>
-          <div className="kl-zamechanie kl-zamechanie-opasno">
+          <div className="keys-notice keys-notice-danger">
             <Icon name="alert" size={15} />
             <span>{t("keysSecretWarn")}</span>
           </div>
-          <div className="kl-qr-ryad">
-            <div className="kl-qr" role="img" aria-label={t("keysQrAria")} dangerouslySetInnerHTML={{ __html: perenos.qr }} />
-            <div className="kl-qr-bok">
+          <div className="keys-qr-row">
+            <div className="keys-qr" role="img" aria-label={t("keysQrAria")} dangerouslySetInnerHTML={{ __html: perenos.qr }} />
+            <div className="keys-qr-side">
               <span className="label">{t("keysSecretString")}</span>
-              <div className="kl-qr-stroka">
-                <div className="kl-qr-kod truncate">{perenos.secret}</div>
+              <div className="keys-qr-line">
+                <div className="keys-qr-code truncate">{perenos.secret}</div>
                 <button
                   type="button"
-                  className={`btn btn-sm kl-kopiya ${skopirovan === -perenos.klyuch.id ? "kl-skopirovano" : ""}`}
+                  className={`btn btn-sm keys-copy ${skopirovan === -perenos.klyuch.id ? "keys-copied" : ""}`}
                   data-podskazka={t("keysCopied")}
                   title={t("keysCopy")}
                   aria-label={t("keysCopy")}
@@ -813,6 +1020,10 @@ export function Klyuchi() {
                 </button>
               </div>
               <div className="field-desc">{t("keysQrHint")}</div>
+              <div className="keys-qr-timer">
+                <Icon name="clock" size={13} />
+                <span>{t("keysTransferCloses", { n: perenosOstalos })}</span>
+              </div>
             </div>
           </div>
         </Modal>
@@ -938,7 +1149,7 @@ function OknoNovogo({
 
   return (
     <Modal title={t("keysNew")} onClose={onClose}>
-      <div className="kl-pole">
+      <div className="keys-field">
         <label className="label" htmlFor="kl-sekret">{t("keysSecretField")}</label>
         <input
           id="kl-sekret"
@@ -952,52 +1163,52 @@ function OknoNovogo({
       </div>
 
       {(razbor || otkaz) && (
-        <div className="kl-pole">
+        <div className="keys-field">
           <span className="label">{t("keysParsed")}</span>
           {razbor ? (
-            <div className="kl-razbor">
-              <div className="kl-razbor-stroka">
-                <span className="kl-razbor-imya">{t("keysService")}</span>
-                <span className="kl-razbor-znachenie">{razbor.issuer || "—"}</span>
+            <div className="keys-breakdown">
+              <div className="keys-breakdown-row">
+                <span className="keys-breakdown-name">{t("keysService")}</span>
+                <span className="keys-breakdown-value">{razbor.issuer || "—"}</span>
               </div>
-              <div className="kl-razbor-stroka">
-                <span className="kl-razbor-imya">{t("keysAccount")}</span>
-                <span className="kl-razbor-znachenie truncate">{razbor.account || "—"}</span>
+              <div className="keys-breakdown-row">
+                <span className="keys-breakdown-name">{t("keysAccount")}</span>
+                <span className="keys-breakdown-value truncate">{razbor.account || "—"}</span>
               </div>
-              <div className="kl-razbor-stroka">
-                <span className="kl-razbor-imya">{t("keysDigits")}</span>
-                <span className="kl-razbor-znachenie">{razbor.digits}</span>
+              <div className="keys-breakdown-row">
+                <span className="keys-breakdown-name">{t("keysDigits")}</span>
+                <span className="keys-breakdown-value">{razbor.digits}</span>
               </div>
-              <div className="kl-razbor-stroka">
-                <span className="kl-razbor-imya">{t("keysPeriod")}</span>
-                <span className="kl-razbor-znachenie">{razbor.period}</span>
+              <div className="keys-breakdown-row">
+                <span className="keys-breakdown-name">{t("keysPeriod")}</span>
+                <span className="keys-breakdown-value">{razbor.period}</span>
               </div>
-              <div className="kl-razbor-stroka kl-razbor-itog">
-                <span className="kl-razbor-imya">{t("keysCheck")}</span>
-                <span className="kl-razbor-znachenie kl-razbor-horosho">
+              <div className="keys-breakdown-row keys-breakdown-total">
+                <span className="keys-breakdown-name">{t("keysCheck")}</span>
+                <span className="keys-breakdown-value keys-breakdown-good">
                   <Icon name="check" size={12} />
                   {razbor.proverka}
                 </span>
               </div>
             </div>
           ) : (
-            <div className="kl-razbor">
-              <div className="kl-razbor-stroka">
-                <span className="kl-razbor-imya">{t("keysCheck")}</span>
-                <span className="kl-razbor-znachenie kl-razbor-ploho">{otkaz}</span>
+            <div className="keys-breakdown">
+              <div className="keys-breakdown-row">
+                <span className="keys-breakdown-name">{t("keysCheck")}</span>
+                <span className="keys-breakdown-value keys-breakdown-bad">{otkaz}</span>
               </div>
             </div>
           )}
         </div>
       )}
 
-      <div className="kl-pole">
-        <label className="label" htmlFor="kl-imya">{t("keysName")}</label>
-        <input id="kl-imya" className="input" value={nazvanie} onChange={(e) => setNazvanie(e.target.value)} />
+      <div className="keys-field">
+        <label className="label" htmlFor="keys-name">{t("keysName")}</label>
+        <input id="keys-name" className="input" value={nazvanie} onChange={(e) => setNazvanie(e.target.value)} />
         <div className="field-desc">{t("keysNameHint")}</div>
       </div>
 
-      <div className="kl-pole">
+      <div className="keys-field">
         <label className="label" htmlFor="kl-kat">{t("keysCategory")}</label>
         <input
           id="kl-kat"
@@ -1014,7 +1225,7 @@ function OknoNovogo({
         <div className="field-desc">{t("keysCategoryHint")}</div>
       </div>
 
-      <div className="kl-pole">
+      <div className="keys-field">
         <label className="label" htmlFor="kl-vazhnost">{t("keysImportance")}</label>
         <select id="kl-vazhnost" className="input" value={vazhnost} onChange={(e) => setVazhnost(e.target.value)}>
           <option value="urgent">{t("vazhnostUrgent")}</option>
@@ -1024,10 +1235,10 @@ function OknoNovogo({
         </select>
       </div>
 
-      <div className="kl-pole">
-        <label className="label" htmlFor="kl-zametka">{t("keysNote")}</label>
+      <div className="keys-field">
+        <label className="label" htmlFor="keys-note">{t("keysNote")}</label>
         <textarea
-          id="kl-zametka"
+          id="keys-note"
           className="input"
           rows={3}
           placeholder={t("keysNotePlaceholder")}
@@ -1036,11 +1247,11 @@ function OknoNovogo({
         />
       </div>
 
-      <div className="kl-pole">
+      <div className="keys-field">
         <span className="label">{t("keysReminder")}</span>
-        <div className="kl-prava-stroka" style={{ borderBottom: 0, paddingLeft: 0 }}>
-          <span className="kl-prava-kto">
-            <span className="kl-prava-imya">{t("keysReminderHalfYear")}</span>
+        <div className="keys-rights-row" style={{ borderBottom: 0, paddingLeft: 0 }}>
+          <span className="keys-rights-who">
+            <span className="keys-rights-name">{t("keysReminderHalfYear")}</span>
           </span>
           <button
             type="button"
@@ -1052,7 +1263,7 @@ function OknoNovogo({
         </div>
       </div>
 
-      <div className="kl-deystviya">
+      <div className="keys-actions">
         <button className="btn btn-secondary" onClick={onClose}>{t("cancel")}</button>
         <button
           className="btn btn-primary"
@@ -1089,7 +1300,7 @@ function OknoKategorii({ onClose, onSaved }: { onClose: () => void; onSaved: () 
 
   return (
     <Modal title={t("keysNewCategory")} onClose={onClose}>
-      <div className="kl-pole">
+      <div className="keys-field">
         <label className="label" htmlFor="kl-kat-imya">{t("keysCategoryName")}</label>
         <input
           id="kl-kat-imya"
@@ -1100,12 +1311,12 @@ function OknoKategorii({ onClose, onSaved }: { onClose: () => void; onSaved: () 
         />
       </div>
 
-      <div className="kl-pole">
+      <div className="keys-field">
         <span className="label">{t("keysCategoryWho")}</span>
-        <div className="kl-prava-stroka" style={{ borderBottom: 0, paddingLeft: 0 }}>
-          <span className="kl-prava-kto">
-            <span className="kl-prava-imya">{t("keysCategoryClosed")}</span>
-            <span className="kl-prava-rol">{t("keysCategoryClosedHint")}</span>
+        <div className="keys-rights-row" style={{ borderBottom: 0, paddingLeft: 0 }}>
+          <span className="keys-rights-who">
+            <span className="keys-rights-name">{t("keysCategoryClosed")}</span>
+            <span className="keys-rights-role">{t("keysCategoryClosedHint")}</span>
           </span>
           <button
             type="button"
@@ -1117,7 +1328,7 @@ function OknoKategorii({ onClose, onSaved }: { onClose: () => void; onSaved: () 
         </div>
       </div>
 
-      <div className="kl-deystviya">
+      <div className="keys-actions">
         <button className="btn btn-secondary" onClick={onClose}>{t("cancel")}</button>
         <button
           className="btn btn-primary"

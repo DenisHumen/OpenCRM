@@ -361,7 +361,7 @@ export function FinanceSettings() {
               </div>
               {/* Полоса выполнения: «сколько от плана уже потрачено» читается
                   раньше двух чисел рядом; перерасход — красным. */}
-              <div className="byudzhet-polosa" aria-hidden="true">
+              <div className="budget-bar" aria-hidden="true">
                 <div
                   className={row.left < 0 ? "beda" : undefined}
                   style={{ width: `${Math.min(100, Math.round((Math.abs(row.fact) * 100) / Math.max(1, row.planned)))}%` }}
