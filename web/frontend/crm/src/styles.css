@@ -1866,7 +1866,7 @@ summary:focus-visible,
    хотел владелец. Двойное `mask-composite: intersect` оставляет от двух
    решёток четверть — редкие крупные точки, а не мелкое сито. */
 .task-row.urgent,
-.reminder-map.urgent {
+.modal.urgent {
   position: relative; isolation: isolate; overflow: hidden;
   border-radius: 8px;
   background: linear-gradient(
@@ -1875,13 +1875,14 @@ summary:focus-visible,
 }
 .task-row.urgent { border-bottom: 0; margin: 8px; padding: 13px 15px; }
 .task-row.urgent + .task-row { border-top: 1px solid var(--line); }
-/* Рамка карточки встаёт вплотную к краю окна: отступ окна (22px) снимается
-   отрицательным полем и возвращается своим — иначе рамок было бы две.
-   Радиус — внутренний радиус окна (6px минус пиксель рамки), иначе фиолетовое
-   легло бы поверх скругления по четырём углам. */
-.reminder-map.urgent { margin: -22px; padding: 22px; border-radius: 5px; }
+/* Обводит ОКНО, а не карточку внутри него.
+   Тянуть рамку от карточки отрицательным полем не вышло: с трёх сторон она
+   доставала до края окна, а сверху упиралась в его заголовок — три стороны по
+   краю, четвёртая посреди. Своя рамка окна при этом гасится: две рамки вокруг
+   одного края читаются как сбитая вёрстка. */
+.modal.urgent { border-color: transparent; border-radius: 6px; }
 .task-row.urgent::before,
-.reminder-map.urgent::before {
+.modal.urgent::before {
   content: ""; position: absolute; z-index: -2; inset: 0; width: 200%; left: -100%;
   /* Плитка ровно в ширину строки (слой вдвое шире), и сдвиг за круг — ровно на
      плитку: иначе блик, дойдя до правого края, прыгал бы к левому. */
@@ -1909,18 +1910,20 @@ summary:focus-visible,
   mask-composite: intersect;
   animation: ultra-hod 3.4s linear infinite;
 }
+/* Просвет между краем и заливкой и ЕСТЬ толщина рамки: три пикселя вместо
+   двух — по просьбе владельца, двух было мало, чтобы её было видно. */
 .task-row.urgent::after,
-.reminder-map.urgent::after {
-  content: ""; position: absolute; z-index: -1; inset: 2px;
-  border-radius: 6px; background: var(--surface);
+.modal.urgent::after {
+  content: ""; position: absolute; z-index: -1; inset: 3px;
+  border-radius: 5px; background: var(--surface);
 }
-.reminder-map.urgent::after { border-radius: 3px; }
+.modal.urgent::after { border-radius: 3px; }
 @keyframes ultra-hod { to { transform: translate3d(50%, 0, 0); } }
 /* Кому движение мешает — тому ровная фиолетовая рамка: важность видна,
    а взгляд не дёргается. */
 @media (prefers-reduced-motion: reduce) {
   .task-row.urgent::before,
-  .reminder-map.urgent::before { animation: none; }
+  .modal.urgent::before { animation: none; }
 }
 
 /* --- Углублённая карточка напоминания -------------------------------------- */

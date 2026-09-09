@@ -198,179 +198,184 @@ export function KartochkaNapominaniya({
   const tekushchaya = vazhnost(task.vazhnost);
 
   return (
-    <Modal title={t("tasksCard")} onClose={onClose} wide>
-      {/* Рябь по краю окна — та же, что вокруг строки списка: если срочное
-          напоминание открыли, оно и здесь обязано выглядеть срочным. */}
-      <div className={"reminder-map" + (srochno(tekushchaya) ? " urgent" : "")}>
-        <div className="reminder-map-body">
+    // Рябь по краю окна — та же, что вокруг строки списка: если срочное
+    // напоминание открыли, оно и здесь обязано выглядеть срочным. Обводит окно
+    // целиком, вместе с заголовком, — иначе четвёртая сторона рамки повисает
+    // посреди окна.
+    <Modal
+      title={t("tasksCard")}
+      onClose={onClose}
+      wide
+      ramka={srochno(tekushchaya) ? "urgent" : undefined}
+    >
+      <div className="reminder-map-body">
+        <input
+          className="input reminder-heading"
+          value={title}
+          aria-label={t("tasksTitleLabel")}
+          onChange={(e) => setTitle(e.target.value)}
+          onBlur={() => {
+            const text = title.trim();
+            if (!text) {
+              setTitle(sohranyonnoe.current.title);
+              return;
+            }
+            if (text !== sohranyonnoe.current.title) void pravit({ title: text });
+          }}
+        />
+
+        <div className="reminder-row">
+          <div className="importance-choice" role="radiogroup" aria-label={t("vazhnost")}>
+            {VAZHNOSTI.map((slovo) => (
+              <button
+                key={slovo}
+                type="button"
+                role="radio"
+                className={"importance-btn " + slovo + (tekushchaya === slovo ? " active" : "")}
+                aria-checked={tekushchaya === slovo}
+                onClick={() => {
+                  if (tekushchaya !== slovo) void pravit({ vazhnost: slovo });
+                }}
+              >
+                {t(VAZHNOST_LABEL[slovo])}
+              </button>
+            ))}
+          </div>
+          {/* Срок сохраняется по уходу из поля, а не на каждое изменение:
+              стирая месяц у заполненной даты, человек на мгновение оставляет
+              поле пустым — и правка «по изменению» стёрла бы срок целиком. */}
           <input
-            className="input reminder-heading"
-            value={title}
-            aria-label={t("tasksTitleLabel")}
-            onChange={(e) => setTitle(e.target.value)}
+            className="input"
+            type="datetime-local"
+            style={{ width: 200, flex: "none" }}
+            aria-label={t("tasksDueAt")}
+            value={srok}
+            onChange={(e) => setSrok(e.target.value)}
             onBlur={() => {
-              const text = title.trim();
-              if (!text) {
-                setTitle(sohranyonnoe.current.title);
-                return;
-              }
-              if (text !== sohranyonnoe.current.title) void pravit({ title: text });
+              if (srok !== sohranyonnoe.current.srok) void pravit({ due_at: toInstant(srok) });
             }}
           />
+        </div>
 
-          <div className="reminder-row">
-            <div className="importance-choice" role="radiogroup" aria-label={t("vazhnost")}>
-              {VAZHNOSTI.map((slovo) => (
-                <button
-                  key={slovo}
-                  type="button"
-                  role="radio"
-                  className={"importance-btn " + slovo + (tekushchaya === slovo ? " active" : "")}
-                  aria-checked={tekushchaya === slovo}
-                  onClick={() => {
-                    if (tekushchaya !== slovo) void pravit({ vazhnost: slovo });
-                  }}
-                >
-                  {t(VAZHNOST_LABEL[slovo])}
-                </button>
-              ))}
-            </div>
-            {/* Срок сохраняется по уходу из поля, а не на каждое изменение:
-                стирая месяц у заполненной даты, человек на мгновение оставляет
-                поле пустым — и правка «по изменению» стёрла бы срок целиком. */}
-            <input
-              className="input"
-              type="datetime-local"
-              style={{ width: 200, flex: "none" }}
-              aria-label={t("tasksDueAt")}
-              value={srok}
-              onChange={(e) => setSrok(e.target.value)}
-              onBlur={() => {
-                if (srok !== sohranyonnoe.current.srok) void pravit({ due_at: toInstant(srok) });
-              }}
-            />
+        <div className="field">
+          <label className="label" htmlFor="napominanie-note">
+            {t("tasksNote")}
+          </label>
+          <textarea
+            id="napominanie-note"
+            className="input"
+            rows={5}
+            maxLength={MAX_NOTE}
+            placeholder={t("tasksNoteHint")}
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            onBlur={() => {
+              if (note !== sohranyonnoe.current.note) void pravit({ note });
+            }}
+          />
+        </div>
+
+        <div className="reminder-links">
+          {task.assignee_name && (
+            <span>
+              <Icon name="user" size={12} /> {task.assignee_name}
+            </span>
+          )}
+          {task.client_id && (
+            <Link to={`/clients/${task.client_id}`} className="text-link" onClick={onClose}>
+              {task.client_name || t("client")}
+            </Link>
+          )}
+          {task.deal_id && (
+            <Link to={`/deals/${task.deal_id}`} className="text-link" onClick={onClose}>
+              {task.deal_title || t("deal")}
+            </Link>
+          )}
+          <span>{formatDateTime(task.created_at, locale)}</span>
+        </div>
+
+        <div className="reminder-attachments">
+          <div className="metric-title" style={{ marginBottom: 10 }}>
+            <Icon name="image" size={13} />
+            {t("tasksFiles")}
           </div>
-
-          <div className="field">
-            <label className="label" htmlFor="napominanie-note">
-              {t("tasksNote")}
-            </label>
-            <textarea
-              id="napominanie-note"
-              className="input"
-              rows={5}
-              maxLength={MAX_NOTE}
-              placeholder={t("tasksNoteHint")}
-              value={note}
-              onChange={(e) => setNote(e.target.value)}
-              onBlur={() => {
-                if (note !== sohranyonnoe.current.note) void pravit({ note });
-              }}
-            />
-          </div>
-
-          <div className="reminder-links">
-            {task.assignee_name && (
-              <span>
-                <Icon name="user" size={12} /> {task.assignee_name}
-              </span>
-            )}
-            {task.client_id && (
-              <Link to={`/clients/${task.client_id}`} className="text-link" onClick={onClose}>
-                {task.client_name || t("client")}
-              </Link>
-            )}
-            {task.deal_id && (
-              <Link to={`/deals/${task.deal_id}`} className="text-link" onClick={onClose}>
-                {task.deal_title || t("deal")}
-              </Link>
-            )}
-            <span>{formatDateTime(task.created_at, locale)}</span>
-          </div>
-
-          <div className="reminder-attachments">
-            <div className="metric-title" style={{ marginBottom: 10 }}>
-              <Icon name="image" size={13} />
-              {t("tasksFiles")}
-            </div>
-            {/* Кнопка, а не просто область под курсором: с клавиатуры сюда
-                иначе не попасть — скрытое поле фокус не принимает. */}
-            <div
-              className="dropzone"
-              role="button"
-              tabIndex={0}
-              style={{ marginBottom: files.length ? 12 : 0 }}
-              onClick={() => fileInput.current?.click()}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") {
-                  e.preventDefault();
-                  fileInput.current?.click();
-                }
-              }}
-              {...dropTarget((e) => void zalit(e.dataTransfer.files))}
-            >
-              {hod ? (
-                <>
-                  <div className="truncate">{hod.imya}</div>
-                  <div className="map-progress">
-                    <span
-                      className="map-progress-bar"
-                      style={{ width: `${Math.round(hod.dolya * 100)}%` }}
-                    />
-                  </div>
-                </>
-              ) : (
-                <>
-                  {t("dropFiles")} <span className="dropzone-choice">{t("browse")}</span>{" "}
-                  {t("tasksFilesHint")}
-                </>
-              )}
-              {/* Мимо обхода табом: поле скрыто и фокус не принимает, а ловушка
-                  окна считала его последней остановкой и упускала фокус. */}
-              <input
-                ref={fileInput}
-                type="file"
-                multiple
-                tabIndex={-1}
-                accept="image/*,video/*"
-                hidden
-                onChange={(e) => void zalit(e.target.files)}
-              />
-            </div>
-            {files.length === 0 ? (
-              <EmptyState icon="image" title={t("tasksFilesNone")} />
+          {/* Кнопка, а не просто область под курсором: с клавиатуры сюда
+              иначе не попасть — скрытое поле фокус не принимает. */}
+          <div
+            className="dropzone"
+            role="button"
+            tabIndex={0}
+            style={{ marginBottom: files.length ? 12 : 0 }}
+            onClick={() => fileInput.current?.click()}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                fileInput.current?.click();
+              }
+            }}
+            {...dropTarget((e) => void zalit(e.dataTransfer.files))}
+          >
+            {hod ? (
+              <>
+                <div className="truncate">{hod.imya}</div>
+                <div className="map-progress">
+                  <span
+                    className="map-progress-bar"
+                    style={{ width: `${Math.round(hod.dolya * 100)}%` }}
+                  />
+                </div>
+              </>
             ) : (
-              <div className="attachments">
-                {files.map((file) => (
-                  <figure key={file.id} className="attachment">
-                    {file.mime.startsWith("video/") ? (
-                      <video
+              <>
+                {t("dropFiles")} <span className="dropzone-choice">{t("browse")}</span>{" "}
+                {t("tasksFilesHint")}
+              </>
+            )}
+            {/* Мимо обхода табом: поле скрыто и фокус не принимает, а ловушка
+                окна считала его последней остановкой и упускала фокус. */}
+            <input
+              ref={fileInput}
+              type="file"
+              multiple
+              tabIndex={-1}
+              accept="image/*,video/*"
+              hidden
+              onChange={(e) => void zalit(e.target.files)}
+            />
+          </div>
+          {files.length === 0 ? (
+            <EmptyState icon="image" title={t("tasksFilesNone")} />
+          ) : (
+            <div className="attachments">
+              {files.map((file) => (
+                <figure key={file.id} className="attachment">
+                  {file.mime.startsWith("video/") ? (
+                    <video
+                      className="attachment-media"
+                      src={file.download_url}
+                      controls
+                      preload="metadata"
+                    />
+                  ) : (
+                    <a href={file.download_url} target="_blank" rel="noreferrer">
+                      <img
                         className="attachment-media"
                         src={file.download_url}
-                        controls
-                        preload="metadata"
+                        alt={file.original_name}
+                        loading="lazy"
                       />
-                    ) : (
-                      <a href={file.download_url} target="_blank" rel="noreferrer">
-                        <img
-                          className="attachment-media"
-                          src={file.download_url}
-                          alt={file.original_name}
-                          loading="lazy"
-                        />
-                      </a>
-                    )}
-                    <figcaption className="attachment-caption">
-                      <span className="truncate" title={file.original_name}>
-                        {file.original_name}
-                      </span>
-                      <KnopkaKorziny onClick={() => void snyat(file.id)} />
-                    </figcaption>
-                  </figure>
-                ))}
-              </div>
-            )}
-          </div>
+                    </a>
+                  )}
+                  <figcaption className="attachment-caption">
+                    <span className="truncate" title={file.original_name}>
+                      {file.original_name}
+                    </span>
+                    <KnopkaKorziny onClick={() => void snyat(file.id)} />
+                  </figcaption>
+                </figure>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </Modal>
