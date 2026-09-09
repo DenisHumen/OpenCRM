@@ -350,6 +350,7 @@ export function Modal({
   children,
   onClose,
   wide,
+  ramka,
 }: {
   title?: string;
   /** Имя окна, когда видимого заголовка нет (подтверждения). */
@@ -358,6 +359,12 @@ export function Modal({
   onClose: () => void;
   /** редактору обрезки нужна ширина: рядом стоят карта работы и превью */
   wide?: boolean;
+  /** Особая обводка окна («urgent» у срочного напоминания).
+   *
+   *  Рисует её САМО окно, а не что-то внутри него. Прежде рамку тянула карточка
+   *  отрицательным полем: с трёх сторон она доставала до края, а сверху
+   *  упиралась в заголовок — три стороны по краю, четвёртая посреди окна. */
+  ramka?: string;
 }) {
   const { t } = useApp();
   const panel = useRef<HTMLDivElement>(null);
@@ -417,7 +424,7 @@ export function Modal({
       }}
     >
       <div
-        className={"modal" + (wide ? " modal-wide" : "")}
+        className={"modal" + (wide ? " modal-wide" : "") + (ramka ? " " + ramka : "")}
         ref={panel}
         role="dialog"
         aria-modal="true"
