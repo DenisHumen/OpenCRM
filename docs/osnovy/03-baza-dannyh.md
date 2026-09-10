@@ -43,6 +43,7 @@ erDiagram
         string avatar_path "'' | /avatars/<uuid>.webp"
         text dashboard_json "раскладка сводки, JSON; пусто — умолчание"
         datetime last_seen_at "присутствие, переживает logout"
+        datetime last_login_at "момент ВХОДА; NULL — ни разу не входил"
         datetime created_at
         datetime approved_at
     }

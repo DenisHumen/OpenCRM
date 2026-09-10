@@ -5,10 +5,13 @@
 всякий, кто заводит сотрудников, может выдать себе что угодно через новую роль.
 """
 
+from datetime import date
+
 from fastapi import APIRouter, Depends, Query
+from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
-from core.services import auth_service, permissions_service
+from core.services import auth_service, permissions_service, report_service
 from database.models import User
 from database.repositories import deals as deals_repo
 from database.repositories import users as users_repo
@@ -34,6 +37,53 @@ def list_staff(
             for u in users
         ]
     }
+
+
+@router.get("/export.csv")
+def export_staff(
+    actor: User = Depends(require_perm("staff", "view")),
+    db: Session = Depends(get_db),
+):
+    """Список сотрудников файлом.
+
+    Право то же, что на просмотр, и это не послабление: выгрузка отдаёт ровно
+    те строки, которые человек и так видит на экране. Заведи ей своё право — и
+    вышло бы, что смотреть можно, а сохранить нельзя; обошли бы это выделением
+    мышью.
+
+    Отдельным адресом с расширением, а не флагом у списка: у списка ответ в
+    JSON, здесь — файл целиком.
+    """
+    yazyk = "ru" if actor.locale == "ru" else "en"
+    sostoyaniya = report_service.STAFF_STATE_NAMES[yazyk]
+    users = users_repo.list_staff(db)
+    roli = {role.id: role for role in permissions_service.list_roles(db)}
+    zayavki = deals_repo.otkrytye_po_menedzheram(db)
+    stroki = [
+        [
+            u.name,
+            u.email,
+            "root" if u.role == "root" else (roli[u.role_id].name if u.role_id in roli else ""),
+            sostoyaniya.get(u.status, u.status),
+            str(zayavki.get(u.id, 0)),
+            u.created_at.strftime("%Y-%m-%d") if u.created_at else "",
+            u.last_login_at.strftime("%Y-%m-%d %H:%M") if u.last_login_at else "",
+            u.last_seen_at.strftime("%Y-%m-%d %H:%M") if u.last_seen_at else "",
+        ]
+        for u in users
+    ]
+    soderzhimoe = report_service.to_csv(stroki, report_service.CSV_HEADERS["staff"][yazyk])
+    # Имя с датой: в папке «Загрузки» через месяц лежит пять выгрузок, и
+    # «staff.csv (3)» не отвечает, какая из них свежая.
+    imya = f"staff-{date.today().isoformat()}.csv"
+    return Response(
+        content=soderzhimoe,
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="{imya}"',
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 # Право и исполнитель берутся одной зависимостью: `require_perm` и проверяет

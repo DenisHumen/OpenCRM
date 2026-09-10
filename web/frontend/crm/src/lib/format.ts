@@ -183,6 +183,28 @@ export function formatSpan(ms: number, locale: Locale): string {
   return ru ? `${days} д` : `${days} d`;
 }
 
+/** Как давно это было — короткой строкой: «5 мин назад», «вчера», «3 дн. назад».
+ *
+ * Отдельно от `formatSpan`: тот меряет ДЛИТЕЛЬНОСТЬ («звонок 3 мин»), а здесь
+ * ДАВНОСТЬ, и по-русски это разные слова. В колонке присутствия полная дата со
+ * временем занимала половину ширины и отвечала не на тот вопрос: спрашивают
+ * «давно ли», а не «когда именно».
+ */
+export function davnost(iso: string | null | undefined, locale: Locale): string {
+  const date = parseDate(iso);
+  if (!date) return "—";
+  const ru = locale === "ru";
+  const min = Math.max(0, Math.round((Date.now() - date.getTime()) / 60_000));
+  if (min < 1) return ru ? "только что" : "just now";
+  if (min < 60) return ru ? `${min} мин назад` : `${min} min ago`;
+  const hours = Math.round(min / 60);
+  if (hours < 24) return ru ? `${hours} ч назад` : `${hours} h ago`;
+  if (hours < 48) return ru ? "вчера" : "yesterday";
+  const days = Math.round(hours / 24);
+  if (days < 30) return ru ? `${days} дн. назад` : `${days} d ago`;
+  return formatDate(iso, locale);
+}
+
 export function formatDuration(sec: number | null | undefined): string | null {
   if (!sec) return null;
   const m = Math.floor(sec / 60);
