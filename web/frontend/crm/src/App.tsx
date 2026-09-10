@@ -407,10 +407,16 @@ export default function App() {
               <Route path="/settings/telegram" element={<SettingsTelegram />} />
             </Route>
           </Route>
-          <Route element={<PermRoute perm="settings.manage" />}>
-            <Route element={<ModuleRoute module="boards" />}>
+          {/* Файлы — свой блок со своими правами, а не подраздел настроек:
+              дерево показывает весь диск, а не медиа досок, и закрывать его
+              блоком `boards` значило бы прятать вложения клиентов вместе с
+              выключенным портфолио. */}
+          <Route element={<ModuleRoute module="files" />}>
+            <Route element={<PermRoute perm="files.view" />}>
               <Route path="/files" element={<Files />} />
             </Route>
+          </Route>
+          <Route element={<PermRoute perm="settings.manage" />}>
             {/* Модули стоят отдельным маршрутом, а не разделом SettingsLayout:
                 там одна кнопка «Сохранить» на всю группу, а переключатель блока
                 применяется сразу — общая кнопка вводила бы в заблуждение. */}

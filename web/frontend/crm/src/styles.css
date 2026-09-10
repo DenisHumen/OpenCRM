@@ -166,6 +166,17 @@
      сдвигом без размытия. Строгий стиль по образцу odd-fish-37 (docs/05):
      ни градиентов, ни размытых теней. */
   --frame: #6f6b62;         /* 3.0:1 на карточке — граница различима; было #5b574f, 2.3:1 */
+  /* Полупрозрачная папка на экране «Файлы». Плотность подобрана по фону:
+     #1a1a19 плюс белый 42 % даёт примерно #7a7a78 — тот средний серый, при
+     котором видна бумага внутри, а не белый прямоугольник. */
+  --glass-top: rgba(255, 255, 255, 0.42);
+  --glass-bottom: rgba(255, 255, 255, 0.20);
+  --glass-edge: rgba(255, 255, 255, 0.50);
+  --glass-plate: rgba(255, 255, 255, 0.028);
+  --glass-plate-on: rgba(255, 255, 255, 0.055);
+  --paper: #f6f5f1;
+  --paper-2: #dcd9d1;
+  --mark: rgba(255, 255, 255, 0.72);
   --hard: 4px 4px 0 var(--frame);
   --line: #242320;          /* разделители строк списков */
   --well: #141313;          /* фон полей ввода — темнее карточки */
@@ -286,6 +297,18 @@
   --border: #e4e0d8;
   --border-hover: #cdc7bb;
   --frame: #2a2823;         /* чернильная рамка на бумаге — то, чем берёт образец */
+  /* Та же папка чернилами по бумаге: в светлой теме прозрачность идёт от
+     тёмного, иначе белое по белому не читается вовсе. */
+  --glass-top: rgba(38, 36, 31, 0.30);
+  --glass-bottom: rgba(38, 36, 31, 0.15);
+  --glass-edge: rgba(38, 36, 31, 0.38);
+  --glass-plate: rgba(38, 36, 31, 0.035);
+  --glass-plate-on: rgba(38, 36, 31, 0.07);
+  --paper: #ffffff;
+  --paper-2: #eeebe3;
+  /* Чернилами, а не белым: в макете артборд лежал на сером фоне, у нас
+     страница бумажная, и белая надпись на светлой створке даёт 1.5:1. */
+  --mark: rgba(38, 36, 31, 0.62);
   --hard: 4px 4px 0 var(--frame);
   --line: #edeae3;
   --well: #f4f2ed;          /* поле ввода темнее карточки — как и в тёмной */
@@ -4866,3 +4889,137 @@ html { scroll-behavior: smooth; }
 .klienty-work { background: var(--tint-success); color: var(--success); }
 .klienty-sleep { background: var(--well-off); color: var(--muted); }
 .klienty-none { background: var(--tint-brand); color: var(--brand); }
+
+/* --- файлы: дерево слева, содержимое справа ------------------------------- */
+.fayly { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 16px; align-items: start; }
+.fayly-panel {
+  position: sticky; top: 12px; display: flex; flex-direction: column; gap: 12px;
+  padding: 14px; background: var(--surface); border: 1px solid var(--frame); border-radius: 12px;
+}
+.fayly-poisk input { width: 100%; }
+.fayly-derevo { max-height: 60vh; overflow: auto; margin: 0 -6px; }
+.fayl-vetka { position: relative; display: flex; align-items: center; gap: 2px; height: 30px; border-radius: 7px; padding-right: 6px; }
+/* Связка к родителю. Строки лежат плоским списком, вложенность видна только по
+   отступу — без вертикали глубокая ветка читается как соседняя. */
+.fayl-vetka::before {
+  content: ""; position: absolute; top: 0; bottom: 0; left: calc(var(--otstup, 0px) + 3px);
+  width: 1px; background: var(--line);
+}
+.fayl-vetka-koren::before { display: none; }
+.fayl-vetka:hover { background: var(--surface-2); }
+/* Выбранная ветка помечена полосой слева, а не заливкой во всю строку: полоса
+   читается на любом фоне и не спорит с наведением. */
+.fayl-vetka-on { background: var(--surface-2); box-shadow: inset 2px 0 0 var(--brand); }
+.fayl-strelka {
+  width: 18px; height: 18px; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center;
+  border: 0; background: none; color: var(--faint); cursor: pointer; padding: 0;
+}
+.fayl-strelka svg { transition: transform 0.2s cubic-bezier(0.23, 1, 0.32, 1); }
+.fayl-strelka-vniz { transform: rotate(90deg); }
+.fayl-vetka-imya {
+  flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; height: 100%;
+  border: 0; background: none; color: var(--muted); font-size: 13px; text-align: left; cursor: pointer; padding: 0;
+}
+.fayl-vetka-on .fayl-vetka-imya { color: var(--text); font-weight: 600; }
+.fayl-schyot { color: var(--faint); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.fayly-disk { border-top: 1px solid var(--line); padding-top: 12px; }
+.fayly-disk-podpis { display: flex; justify-content: space-between; color: var(--muted); font-size: 12px; margin-bottom: 6px; }
+.fayly-disk-polosa { height: 5px; border-radius: 3px; background: var(--well-off); overflow: hidden; }
+.fayly-disk-polosa span { display: block; height: 100%; background: var(--brand); }
+.fayly-disk-tishe { color: var(--faint); font-size: 11.5px; margin-top: 6px; }
+
+.fayly-soderzhimoe {
+  min-width: 0; padding: 16px 18px 18px;
+  background: var(--surface); border: 1px solid var(--frame); border-radius: 12px;
+}
+.fayly-kroshki { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; color: var(--faint); margin-bottom: 14px; }
+.fayly-kroshki > span { display: inline-flex; align-items: center; gap: 4px; }
+.fayly-kroshka { border: 0; background: none; color: var(--muted); font-size: 12.5px; cursor: pointer; padding: 0; }
+.fayly-kroshka:hover { color: var(--text); }
+.fayly-kroshki > span:last-child .fayly-kroshka { color: var(--text); font-weight: 600; }
+.fayly-papki { display: flex; gap: 14px; overflow-x: auto; padding-bottom: 8px; margin-bottom: 18px; }
+.fayly-zagolovok { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.fayly-svitok { overflow: auto; }
+.fayly-setka { display: grid; grid-template-columns: minmax(180px, 2fr) minmax(120px, 1.2fr) 92px 92px 104px 74px; min-width: 700px; }
+.klienty-th-num { justify-content: flex-end; }
+.fayly-tr { display: contents; }
+.fayly-td { display: flex; align-items: center; height: 46px; padding-right: 12px; border-bottom: 1px solid var(--line); color: var(--text); font-size: 13px; min-width: 0; overflow: hidden; }
+.fayly-tr:hover .fayly-td { background: var(--surface-2); }
+.fayly-kto { gap: 10px; }
+.fayly-num { justify-content: flex-end; font-variant-numeric: tabular-nums; }
+.fayly-mini { width: 28px; height: 28px; border-radius: 5px; object-fit: cover; flex-shrink: 0; }
+.fayly-mini-bez { display: inline-flex; align-items: center; justify-content: center; background: var(--well-off); color: var(--faint); }
+.fayly-hod { color: var(--accent); text-decoration: none; }
+.fayly-hod:hover { text-decoration: underline; }
+.fayly-deystviya { display: flex; gap: 2px; justify-content: flex-end; }
+.fayly-snyat-papku { margin-top: 14px; }
+
+/* --- полупрозрачная папка --------------------------------------------------- */
+/* Четыре слоя: ушко, задняя стенка, листы под обрезкой и передняя створка.
+   Обрезающий контейнер — ключ ко всему: без него листы просвечивают сквозь
+   створку, и папка читается сплошным прямоугольником. */
+.papka-plita {
+  width: 214px; flex-shrink: 0; padding: 18px 18px 16px; border-radius: 16px; cursor: pointer;
+  background: var(--glass-plate); border: 1px solid var(--frame); text-align: left;
+  display: flex; flex-direction: column;
+  transition: transform 0.22s cubic-bezier(0.23, 1, 0.32, 1), background-color 0.22s, border-color 0.22s;
+}
+.papka-plita:hover { transform: translateY(-4px); background: var(--glass-plate-on); border-color: var(--brand); }
+.papka-risunok { position: relative; display: block; height: 140px; margin-bottom: 14px; }
+.papka-ushko {
+  position: absolute; left: 0; top: 8px; width: 82px; height: 18px; border-radius: 9px 9px 0 0;
+  background: linear-gradient(180deg, var(--glass-top), var(--glass-bottom));
+  border-top: 1px solid var(--glass-edge); border-left: 1px solid var(--glass-edge);
+}
+.papka-stenka {
+  position: absolute; left: 0; right: 0; top: 22px; bottom: 0; border-radius: 4px 14px 14px 14px;
+  background: linear-gradient(180deg, var(--glass-top), var(--glass-bottom));
+  border: 1px solid var(--glass-edge); border-top: none;
+}
+.papka-obrez { position: absolute; left: 16px; right: 16px; top: 0; height: 54px; overflow: hidden; }
+.papka-list {
+  position: absolute; left: 50%; width: 108px; border-radius: 4px;
+  background: linear-gradient(180deg, var(--paper), var(--paper-2));
+  transition: transform 0.26s cubic-bezier(0.23, 1, 0.32, 1);
+}
+.papka-list-a { bottom: -60px; height: 86px; transform: translate(-50%, 0) rotate(-3deg); }
+.papka-list-b { bottom: -56px; width: 94px; height: 82px; transform: translate(-50%, 0) rotate(3deg); }
+.papka-plita:hover .papka-list-a { transform: translate(-50%, -13px) rotate(-5deg); }
+.papka-plita:hover .papka-list-b { transform: translate(-50%, -8px) rotate(4deg); }
+.papka-stvorka {
+  position: absolute; left: 0; right: 0; top: 48px; bottom: 0; border-radius: 12px;
+  background: linear-gradient(180deg, var(--glass-top), var(--glass-bottom));
+  border: 1px solid var(--glass-edge); display: flex; align-items: center; justify-content: center;
+}
+.papka-metka {
+  color: var(--mark); font-size: 26px; font-variant-numeric: tabular-nums; font-weight: 600; letter-spacing: -0.01em;
+  text-decoration: underline; text-underline-offset: 4px; text-decoration-thickness: 1px;
+}
+.papka-imya { color: var(--text); font-size: 14.5px; font-weight: 600; letter-spacing: -0.01em; }
+
+/* --- очередь загрузки ------------------------------------------------------- */
+/* Плашкой в углу, а не окном: заливка идёт фоном, и окно поверх экрана
+   отняло бы возможность делать что-то ещё, пока едет стомегабайтное видео. */
+.fayly-ochered {
+  position: fixed; right: 18px; bottom: 18px; z-index: 40; width: 300px;
+  padding: 12px 14px; background: var(--surface); border: 1px solid var(--frame);
+  border-radius: 12px; box-shadow: var(--hard);
+}
+.fayly-ochered-shapka { color: var(--text); font-size: 12.5px; font-weight: 600; margin-bottom: 10px; }
+.fayly-ochered-stroka { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; color: var(--muted); font-size: 12px; }
+.fayly-ochered-stroka > span:first-child { flex: 1; min-width: 0; }
+.fayly-ochered-polosa { width: 82px; height: 4px; border-radius: 2px; background: var(--well-off); overflow: hidden; flex-shrink: 0; }
+.fayly-ochered-polosa span { display: block; height: 100%; background: var(--brand); transition: width 0.2s linear; }
+.fayly-ochered-beda span { background: var(--danger); }
+.fayly-ochered-kuda { color: var(--faint); font-size: 11.5px; border-top: 1px solid var(--line); padding-top: 8px; }
+
+@media (max-width: 900px) {
+  /* Дерева на телефоне нет: три колонки в 390 пикселях — это три полоски.
+     Ветка выбирается крошками, содержимое занимает весь экран. */
+  .fayly { grid-template-columns: minmax(0, 1fr); }
+  .fayly-panel { position: static; }
+  .fayly-derevo { max-height: 240px; }
+  .papka-plita { width: 168px; }
+  .papka-risunok { height: 112px; }
+  .fayly-ochered { left: 12px; right: 12px; width: auto; }
+}

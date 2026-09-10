@@ -93,6 +93,10 @@ def test_kazhdyy_blok_nazvan_hotya_by_v_odnom_nabore():
         # дела: они одинаково нужны и мастерской, и студии, и включают их
         # тогда, когда заводят общие учётки, а не при первом входе.
         "keys",
+        # Файлы — про диск, а не про тип дела: дерево одинаково нужно и
+        # мастерской, и студии, и включён блок по умолчанию. Спрашивать о нём
+        # при первом входе не о чем.
+        "files",
     }
     named = {key for preset in modules.PRESETS for key in preset.modules}
     optional = {m.key for m in modules.MODULES if not m.core and m.ready}
