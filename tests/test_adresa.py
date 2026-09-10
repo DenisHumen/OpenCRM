@@ -329,12 +329,15 @@ def test_vybor_zamenyaet_adres_tselikom(root_client):
     assert otvet.json()["country"] == "PL"
 
 
-def test_adres_ne_zavisit_ot_globusa(root_client):
-    """Глобус выключен (умолчание), а адрес заполняется и точка пишется:
-    подсказки — про карточку клиента, а не про планету."""
-    assert root_client.get(f"{API}/globe").status_code == 403
+def test_adres_zhivyot_sam_po_sebe(root_client):
+    """Адрес заполняется и точка пишется без всякой карты рядом.
 
-    klient = _klient(root_client, name="Адрес без глобуса")
+    Проверка осталась от снятого блока «Глобус»: подсказки заводились в одно
+    время с планетой и, пока она была, могли показаться её частью. Планеты нет,
+    а подсказки и точка клиента остались — это разные возможности, и держатся
+    они порознь.
+    """
+    klient = _klient(root_client, name="Адрес сам по себе")
     otvet = root_client.patch(
         f"{API}/clients/{klient['id']}/address",
         json={"country_code": "UA", "city": "Kyiv", "lat": 50.45, "lon": 30.52},

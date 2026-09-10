@@ -572,19 +572,6 @@ export function BoardEditor() {
               <LoadFailed error={clientDeals.failure} onRetry={clientDeals.reload} />
             )}
             <div style={{ color: "var(--faint)", fontSize: 11.5, marginTop: 10, lineHeight: 1.5 }}>{t("coverHint")}</div>
-            {/* Тумблер гостей на глобусе. Стоит здесь, а не в общих настройках:
-                доска доски рознь — портфолио показывают миру, смету одному
-                клиенту (docs/bloki/25-globus.md §10). */}
-            {moduleOn(modules, "globe") && (
-              <div className="board-geo">
-                <Toggle
-                  on={board.geo_enabled !== false}
-                  onToggle={() => void patchBoard({ geo_enabled: !(board.geo_enabled !== false) })}
-                  label={t("globeGeo")}
-                />
-                <div className="board-geo-hint">{t("globeGeoHint")}</div>
-              </div>
-            )}
           </div>
 
           <div className="rail-card">

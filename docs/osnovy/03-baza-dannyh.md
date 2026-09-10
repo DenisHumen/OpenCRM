@@ -71,7 +71,7 @@ erDiagram
         string email
         string messenger "telegram/whatsapp @..."
         string tags "comma-separated"
-        int lat_e7 "точка на глобусе, 1e-7 градуса; NULL — считаем по стране"
+        int lat_e7 "точка на карте, 1e-7 градуса; NULL — считаем по стране"
         int lon_e7
         int manager_id FK
         datetime created_at
@@ -114,7 +114,6 @@ erDiagram
         datetime created_at
         datetime updated_at
         datetime deleted_at
-            bool geo_enabled "отмечать ли гостей этой доски на глобусе"
     }
 
     works {
@@ -156,7 +155,6 @@ erDiagram
         datetime viewed_at
         string ip_hash
         string user_agent
-            string tz "часовой пояс браузера гостя; пусто — не собирали"
     }
 
     site_settings {
@@ -1271,11 +1269,14 @@ docker compose -p opencrm-tests -f docker/docker-compose.tests.yml up --build   
 проверка содержимого живёт в `core/services/vidzhety_service` — разбор в
 [05](../dizayn/05-dizayn-crm.md), «Сводка из виджетов».
 
-**Точка клиента, пояс гостя и тумблер доски** (06.09.2026, блок `globe`):
-хранится только источник — поставленная рукой точка (`clients.lat_e7`) и сырой
-часовой пояс браузера гостя (`share_views.tz`). Центр страны и город пояса
-производны и считаются при чтении: правило «производное не хранится» тут то же,
-что у остатка склада. Разбор — [25-globus.md](../bloki/25-globus.md) §5.
+**Точка клиента** (06.09.2026): `clients.lat_e7`/`lon_e7` — координаты, которые
+человек поставил сам, выбрав подсказку в поле адреса. Центр страны и город
+часового пояса в базе НЕ лежат: они производные и считаются запросом — то же
+правило, что у остатка склада. Разбор — [26-adresa.md](../bloki/26-adresa.md).
+
+Тумблер доски и пояс гостя витрины (`boards.geo_enabled`, `share_views.tz`) были
+заведены той же ревизией ради блока «Глобус» и сняты вместе с ним ревизией
+`d8b3c05e71a4`: без планеты собирать часовой пояс посетителя не для чего.
 
 **Аватар и «когда его спрашивали» — две разные колонки** (`avatar_path` и
 `avatar_checked_at`), и вторая не служебная. Аватар не приходит с сообщением, за

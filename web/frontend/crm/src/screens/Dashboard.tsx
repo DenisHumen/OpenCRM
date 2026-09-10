@@ -6,7 +6,6 @@ import { Icon } from "../components/Icon";
 import { NewBoardButton } from "../components/NewBoardButton";
 import { StorageCard } from "../components/StorageCard";
 import { OtchyotProdazh } from "../components/OtchyotProdazh";
-import { VidzhetKarty } from "../components/VidzhetKarty";
 import { VidzhetKlyucha, type KlyuchSayta } from "../components/VidzhetKlyucha";
 import { Avatar, Chip, EmptyState, LoadFailed, Modal, ScreenLoading } from "../components/ui";
 import { api } from "../lib/api";
@@ -50,7 +49,7 @@ interface Raskladka {
  *  воронка и задачи, заказы и склад, витрины, хранилище, доски и клиенты. */
 const PORYADOK_UMOLCHANIYA = [
   "money_in_work", "money_received", "money_won", "money_due", "avg_check", "clients", "calls",
-  "funnel", "my_tasks", "orders_week", "low_stock", "showcase_views", "globe_detail", "storage", "recent_boards", "recent_clients",
+  "funnel", "my_tasks", "orders_week", "low_stock", "showcase_views", "storage", "recent_boards", "recent_clients",
 ];
 
 const ZAGOLOVKI: Record<string, TranslationKey> = {
@@ -69,7 +68,6 @@ const ZAGOLOVKI: Record<string, TranslationKey> = {
   storage: "storage",
   recent_boards: "recentBoards",
   recent_clients: "recentClients",
-  globe_detail: "globeDetail",
   sales_grid: "salesReport",
   sales_matrix: "salesReport",
   api_key: "dashApiKey",
@@ -627,8 +625,6 @@ export function Dashboard() {
             </div>
           </div>
         );
-      case "globe_detail":
-        return <VidzhetKarty />;
       // Отчёт продаж двумя видами. Свои данные берёт сам: считает он окно в
       // год, и класть его в общий ответ сводки значило бы платить за него у
       // всех, включая тех, у кого виджета нет.

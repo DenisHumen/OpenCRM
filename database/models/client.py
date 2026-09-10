@@ -52,9 +52,9 @@ class Client(Base):
     # Индекс почтовый, а не число: в Канаде и Британии в нём буквы.
     zip_code: Mapped[str] = mapped_column(String(20), default="", server_default="")
     address: Mapped[str] = mapped_column(String(300), default="", server_default="")
-    # Точка на глобусе, поставленная человеком (1e-7 градуса). Пусто — место
-    # считается по стране и городу и в базе не лежит: производное не хранится
-    # (docs/bloki/25-globus.md §5).
+    # Точка на карте, поставленная человеком (1e-7 градуса). Центр страны и
+    # город считаются по стране и городу и в базе им не место: производное не
+    # хранят. На ней стоит миниатюра карты в карточке (docs/bloki/26-adresa.md).
     lat_e7: Mapped[int | None] = mapped_column(Integer, nullable=True)
     lon_e7: Mapped[int | None] = mapped_column(Integer, nullable=True)
     tags: Mapped[str] = mapped_column(String(500), default="")  # comma-separated (MVP)

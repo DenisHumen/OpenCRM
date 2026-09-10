@@ -3,14 +3,14 @@
  *
  * Картинка с чужого сервера дала бы в карточке клиента крестик на установке
  * без интернета, а карточку обязаны показывать целиком (тот же довод, что в
- * `docs/bloki/25-globus.md` §2). Очертания берём вшитые, `globus/mir.ts`.
+ * `docs/bloki/26-adresa.md`). Очертания берём вшитые, `karta-mir.ts`.
  *
  * Проекция здесь прямоугольная, а не ортографическая: миниатюру читают как
  * «где это на карте» — север сверху, и кривизна шара на паре тысяч километров
  * только мешает узнать очертания.
  */
-import { KONTURY } from "./globus/mir";
-import { razvernut, svernut } from "./globus/proekciya";
+import { KONTURY } from "./karta-mir";
+import { razvernut, svernut } from "./karta-proekciya";
 
 export interface CvetaKarty {
   more: string;

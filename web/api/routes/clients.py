@@ -8,7 +8,7 @@ from core import exceptions as errors
 from core.services import (
     adresa_service,
     client_service,
-    globus_service,
+    mesto_service,
     permissions_service,
     settings_service,
 )
@@ -197,14 +197,14 @@ def set_client_geo(
     _: User = Depends(require_perm("clients", "edit")),
     db: Session = Depends(get_db),
 ):
-    """Поставить точку клиента на глобусе руками или снять её.
+    """Поставить точку клиента на карте руками или снять её.
 
-    Отдельной ручкой, а не полем правки: точку ставят перетаскиванием по
-    планете, и слать туда весь клиент целиком значило бы затирать соседние
-    поля чужой копией (docs/bloki/25-globus.md §5.1).
+    Отдельной ручкой, а не полем правки: точку ставят выбором подсказки в поле
+    адреса, и слать туда весь клиент целиком значило бы затирать соседние поля
+    чужой копией (docs/bloki/26-adresa.md).
     """
     client = client_service.get_client(db, client_id)
-    return schemas.client_out(globus_service.postavit_tochku(db, client, payload.lat, payload.lon))
+    return schemas.client_out(mesto_service.postavit_tochku(db, client, payload.lat, payload.lon))
 
 
 @router.delete("/{client_id}")
