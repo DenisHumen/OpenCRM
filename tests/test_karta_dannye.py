@@ -1,10 +1,10 @@
 """Порождённые данные карты: центры стран, пояса, очертания суши.
 
-Файлы порождает `scripts/globus_dannye.py` из трёх открытых наборов, и на
+Файлы порождает `scripts/karta_dannye.py` из трёх открытых наборов, и на
 боевом сервере их никто не пересчитывает. Значит проверять надо не «совпадает
 ли с источником» (источника рядом нет), а внутреннюю правду: коды по две
 буквы, координаты в пределах шара, кольца не пустые. Разбор —
-`docs/bloki/25-globus.md` §11.
+`docs/bloki/26-adresa.md`.
 """
 import pathlib
 import re
@@ -13,7 +13,7 @@ from core.geo.dannye import CENTRY_STRAN, POYASA
 from core.geo.topojson import kontury, upakovat
 
 KOREN = pathlib.Path(__file__).resolve().parent.parent
-MIR_TS = KOREN / "web" / "frontend" / "crm" / "src" / "lib" / "globus" / "mir.ts"
+MIR_TS = KOREN / "web" / "frontend" / "crm" / "src" / "lib" / "karta-mir.ts"
 KOLCO = re.compile(r"^  \[([-\d,]+)\],$", re.M)
 
 

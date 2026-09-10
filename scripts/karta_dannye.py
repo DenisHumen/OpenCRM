@@ -1,12 +1,12 @@
-"""Порождает данные карты для блока «Глобус» из трёх открытых наборов.
+"""Порождает данные карты для карты из трёх открытых наборов.
 
 Наборы скачиваются раз и кладутся в исходники: на боевом сервере интернета для
 карты не просят, а очертания материков и центры стран не меняются годами.
-Разбор — `docs/bloki/25-globus.md`, раздел «Откуда данные».
+Разбор — `docs/bloki/26-adresa.md`.
 
 Запуск (пути к скачанным файлам):
 
-    python -m scripts.globus_dannye --mir countries-110m.json \\
+    python -m scripts.karta_dannye --mir countries-110m.json \\
         --strany countries.csv --poyasa zone.tab
 
 Источники:
@@ -31,7 +31,7 @@ from core.geo.topojson import kontury, upakovat
 
 KOREN = pathlib.Path(__file__).resolve().parent.parent
 DANNYE_PY = KOREN / "core" / "geo" / "dannye.py"
-MIR_TS = KOREN / "web" / "frontend" / "crm" / "src" / "lib" / "globus" / "mir.ts"
+MIR_TS = KOREN / "web" / "frontend" / "crm" / "src" / "lib" / "karta-mir.ts"
 
 
 def _iso6709(znachenie: str) -> tuple[int, int]:
@@ -85,8 +85,8 @@ def poyasa(put: pathlib.Path) -> dict[str, tuple[str, int, int]]:
 
 SHAPKA_PY = '''"""Данные карты: центры стран и города часовых поясов. ПОРОЖДЁННЫЙ ФАЙЛ.
 
-Правится не он, а `scripts/globus_dannye.py` — там же названы источники и их
-лицензии. Разбор устройства — `docs/bloki/25-globus.md`.
+Правится не он, а `scripts/karta_dannye.py` — там же названы источники и их
+лицензии. Разбор устройства — `docs/bloki/26-adresa.md`.
 
 Координаты целые, в 1e-7 градуса: дробь тут не нужна ни разу, а целое
 сравнивается и складывается без сюрпризов округления.
@@ -114,9 +114,9 @@ def zapisat_python(strany: dict, chasovye: dict) -> None:
 SHAPKA_TS = """/**
  * Очертания материков для глобуса. ПОРОЖДЁННЫЙ ФАЙЛ.
  *
- * Правится не он, а `scripts/globus_dannye.py`; источник и лицензия названы
+ * Правится не он, а `scripts/karta_dannye.py`; источник и лицензия названы
  * там же. Кольца лежат в сотых долях градуса приращениями — так файл втрое
- * легче, а разбор помещается в пять строк (`lib/globus/proekciya.ts`).
+ * легче, а разбор помещается в пять строк (`lib/karta-proekciya.ts`).
  */
 """
 
@@ -132,7 +132,7 @@ def zapisat_ts(kolca: list[list[tuple[float, float]]]) -> None:
 
 
 def main() -> int:
-    razbor = argparse.ArgumentParser(description="порождение данных карты для блока «Глобус»")
+    razbor = argparse.ArgumentParser(description="порождение данных карты для карты")
     razbor.add_argument("--mir", required=True, type=pathlib.Path)
     razbor.add_argument("--strany", required=True, type=pathlib.Path)
     razbor.add_argument("--poyasa", required=True, type=pathlib.Path)

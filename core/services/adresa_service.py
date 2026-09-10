@@ -3,8 +3,8 @@
 Владелец 06.09.2026: «нужно ещё в карточке клиент привязать google карты или
 другие, что бы когда вводить данные в поле "Адрес отправки" оно предлагало».
 
-Правило то же, что у планеты (`globus_karta_service`): установка без интернета
-работает как работала, а подсказки — необязательное улучшение. Выключенный
+Правило: установка без интернета работает как работала, а подсказки —
+необязательное улучшение. Выключенный
 тумблер, пропавшая сеть и отказ чужого сервера дают здесь одно и то же — пустой
 список, и ни одно из трёх не беда.
 
@@ -23,7 +23,7 @@ from sqlalchemy.orm import Session
 
 from core.geo.dannye import CENTRY_STRAN
 from core import exceptions as errors
-from core.services import client_service, globus_service, settings_service
+from core.services import client_service, mesto_service, settings_service
 from database.models import Client
 
 #: Настройка установки: «1» — спрашиваем, «0» — наружу не ходим вовсе.
@@ -139,10 +139,10 @@ def _ryadom_s_klientom(db: Session, client_id: int | None) -> tuple[float, float
         client = client_service.get_client(db, client_id)
     except errors.NotFoundError:
         return None
-    mesto = globus_service.mesto_klienta(client)
+    mesto = mesto_service.mesto_klienta(client)
     # Точность страны в привязку не годится: центр страны поднимает деревни у
     # географической середины вместо города, в котором клиент живёт.
-    if mesto is None or mesto[2] == globus_service.TOCHNOST_STRANA:
+    if mesto is None or mesto[2] == mesto_service.TOCHNOST_STRANA:
         return None
     return mesto[0] / 1e7, mesto[1] / 1e7
 
@@ -327,4 +327,4 @@ def zapisat_vybor(db: Session, client_id: int, vybor: dict) -> Client:
     # Точка тут не производная от адреса, а такой же источник, как поставленная
     # мышью по планете: пересчитать её из строки нечем — чужой справочник может
     # быть выключен, недоступен и отвечать завтра иначе.
-    return globus_service.postavit_tochku(db, client, vybor.get("lat"), vybor.get("lon"))
+    return mesto_service.postavit_tochku(db, client, vybor.get("lat"), vybor.get("lon"))

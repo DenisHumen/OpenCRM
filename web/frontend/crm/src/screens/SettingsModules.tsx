@@ -31,7 +31,6 @@ export const LABEL: Record<string, TranslationKey> = {
   telephony: "modTelephony",
   telegram: "modTelegram",
   finance: "modFinance",
-  globe: "modGlobe",
   keys: "modKeys",
 };
 
@@ -53,7 +52,6 @@ const ABOUT: Record<string, TranslationKey> = {
   telephony: "modTelephonyAbout",
   telegram: "modTelegramAbout",
   finance: "modFinanceAbout",
-  globe: "modGlobeAbout",
   keys: "modKeysAbout",
 };
 
@@ -82,7 +80,6 @@ const ICON: Record<string, string> = {
   // означал бы правку `Icon.PATHS` — общего файла, куда финансам лезть незачем.
   // Меню обязано взять тот же ключ: две карты значков уже расходились молча.
   finance: "receipt",
-  globe: "globe",
   keys: "lock",
 };
 
