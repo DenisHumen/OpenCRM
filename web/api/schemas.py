@@ -406,7 +406,8 @@ def client_out(client: Client) -> dict:
         "messenger": client.messenger,
         "country": client.country,
         "city": client.city,
-        # Точка, поставленная рукой: пусто — глобус считает место по стране.
+        # Точка, поставленная рукой: пусто — место считается по стране
+        # (`mesto_service`), и на мини-карте заказа стоит именно оно.
         "lat": None if client.lat_e7 is None else client.lat_e7 / 1e7,
         "lon": None if client.lon_e7 is None else client.lon_e7 / 1e7,
         "zip_code": client.zip_code,

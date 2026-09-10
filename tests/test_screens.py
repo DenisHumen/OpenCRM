@@ -1659,6 +1659,11 @@ PREDEL_BEZ_STRANITS: dict[tuple[str, str], str] = {
     # Зонд «есть ли хоть одна заявка в работе». Записи не нужны вовсе —
     # нужно `total`, и просить ради него сотню строк было бы расточительством.
     ("Deals.tsx", "per_page=1"): "зонд ради `total`: сами записи не показываются",
+    # Блок сводки, а не список: сколько строк влезло в высоту блока, столько и
+    # показано, а за остальными ведёт ход «Все клиенты» в шапке блока.
+    # Ключ сравнивается со строкой, из которой выброшены скобки и $ — отсюда
+    # голое `skolko` вместо шаблонной подстановки.
+    ("TablitsaKlientov.tsx", "per_page=skolko"): "виджет сводки: продолжение — в разделе клиентов",
 }
 
 
@@ -1875,7 +1880,13 @@ def test_vidzhety_svodki_nazvany_na_ekrane():
     порядок умолчания — на экране. Вид без подписи экран покажет чужим словом
     («Воронка» вместо своего): карта `ZAGOLOVKI` берётся по ключу, и промах по
     ключу здесь ничем не краснеет (06.09.2026)."""
-    servernye = set(re.findall(r'^    "(\w+)": \{"module"', (KOREN / "core/services/vidzhety_service.py").read_text(encoding="utf-8"), re.M))
+    # Реестр берётся ИМПОРТОМ, а не разбором файла глазами регулярки. Разбор
+    # тут уже ломался молча: заготовки размеров (`_plitka`, `_karta`) сделали
+    # словарь короче, регулярка перестала находить в нём хоть что-то, и сторож
+    # начал зеленеть на пустом множестве — то есть проверять ничего.
+    from core.services import vidzhety_service
+
+    servernye = set(vidzhety_service.REESTR)
     assert len(servernye) > 10, "реестр виджетов не прочитался"
     ekran = (SCREENS / "screens" / "Dashboard.tsx").read_text(encoding="utf-8")
     zagolovki = set(re.findall(r"^  (\w+): \"\w+\",", ekran[ekran.index("const ZAGOLOVKI"):], re.M))
@@ -1884,3 +1895,13 @@ def test_vidzhety_svodki_nazvany_na_ekrane():
     umolchanie = set(re.findall(r'"(\w+)"', ekran[ekran.index("const PORYADOK_UMOLCHANIYA"):ekran.index("const ZAGOLOVKI")]))
     lishnie = sorted(umolchanie - servernye)
     assert lishnie == [], f"в порядке умолчания виды, которых сервер не знает: {lishnie}"
+
+
+def test_razmer_setki_svodki_ekran_ne_znaet_sam():
+    """Сколько в сетке колонок, решает сервер: он же по этому числу и проверяет
+    запись. Своя копия на экране разошлась бы с ним молча — и человек получал
+    бы отказ «блок торчит за край» на блоке, который на экране умещается."""
+    ekran = (SCREENS / "screens" / "Dashboard.tsx").read_text(encoding="utf-8")
+    assert "raskladka.grid.cols" in ekran, "экран обязан брать число колонок из ответа сервера"
+    svoi = re.findall(r"^const KOLONOK\b.*$", ekran, re.M)
+    assert svoi == [], f"экран завёл своё число колонок: {svoi}"

@@ -1,3 +1,4 @@
+import json
 import pathlib
 from datetime import timedelta
 
@@ -301,19 +302,62 @@ def test_voronka_znaet_summy_etapov_i_klientov_bez_zayavok(root_client):
 
 def test_raskladka_svodki_hranitsya_u_sotrudnika(root_client, manager_client):
     """Владелец 06.09.2026: блоки сводки добавляются, убираются и переставляются.
-    Раскладка — у сотрудника, а не у фирмы; пусто — умолчание экрана."""
+    Раскладка — у сотрудника, а не у фирмы; пусто — умолчание экрана.
+
+    С 10.09.2026 раскладка — сетка: у блока есть место и размер, и они хранятся
+    вместе с видом. Порядок в списке больше ничего не значит.
+    """
     assert root_client.get(f"{API}/dashboard/layout").json()["layout"] is None
-    r = root_client.put(f"{API}/dashboard/layout", json={"widgets": [{"kind": "funnel", "w": 4}, {"kind": "clients"}]})
+    r = root_client.put(
+        f"{API}/dashboard/layout",
+        json={"widgets": [
+            {"kind": "funnel", "x": 0, "y": 0, "w": 12, "h": 7},
+            {"kind": "clients", "x": 0, "y": 7},
+        ]},
+    )
     assert r.status_code == 200, r.text
-    assert r.json()["layout"]["widgets"] == [
-        {"kind": "funnel", "w": 4, "params": {}},
-        {"kind": "clients", "w": 1, "params": {}},
-    ]
+    assert r.json()["layout"] == {
+        "version": 2,
+        "widgets": [
+            {"kind": "funnel", "x": 0, "y": 0, "w": 12, "h": 7, "params": {}},
+            {"kind": "clients", "x": 0, "y": 7, "w": 3, "h": 4, "params": {}},
+        ],
+    }
     assert r.json()["kinds"]["api_key"]["odin"] is False
+    assert r.json()["grid"] == {"cols": 12, "rows": 400}
     assert root_client.get(f"{API}/dashboard/layout").json()["layout"]["widgets"][0]["kind"] == "funnel"
     assert manager_client.get(f"{API}/dashboard/layout").json()["layout"] is None, "раскладка своя у каждого"
     assert root_client.delete(f"{API}/dashboard/layout").status_code == 200
     assert root_client.get(f"{API}/dashboard/layout").json()["layout"] is None
+
+
+def test_raskladka_pervoy_versii_chitaetsya_setkoy(root_client):
+    """Запись, сделанная до сетки, не теряется и не роняет экран.
+
+    Раскладка лежит строкой JSON у сотрудника, и переписать её миграцией
+    значило бы разбирать JSON в SQL. Поэтому перевод при чтении: ширина из
+    четвертей в двенадцатые, место — по порядку, как её и рисовали.
+    """
+    from core.services import vidzhety_service
+
+    class Podstava:
+        dashboard_json = json.dumps({
+            "version": 1,
+            "widgets": [
+                {"kind": "money_in_work", "w": 1, "params": {}},
+                {"kind": "funnel", "w": 2, "params": {}},
+                {"kind": "showcase_views", "w": 4, "params": {}},
+                {"kind": "pogoda", "w": 1, "params": {}},
+            ],
+        })
+
+    perevod = vidzhety_service.chitat(Podstava())
+    assert perevod["version"] == 2
+    assert perevod["widgets"] == [
+        {"kind": "money_in_work", "x": 0, "y": 0, "w": 3, "h": 4, "params": {}},
+        {"kind": "funnel", "x": 3, "y": 0, "w": 6, "h": 8, "params": {}},
+        {"kind": "showcase_views", "x": 0, "y": 8, "w": 12, "h": 8, "params": {}},
+    ], "неизвестный вид молча выпадает, остальные встают в сетку"
 
 
 def test_raskladka_otvergaet_chuzhoe_s_kodom(root_client, manager_client):
@@ -326,6 +370,19 @@ def test_raskladka_otvergaet_chuzhoe_s_kodom(root_client, manager_client):
     assert otkaz.json()["error"]["code"] == "widget_duplicate"
     otkaz = put(root_client, [{"kind": "funnel", "w": 1}])
     assert otkaz.json()["error"]["code"] == "bad_widget_width"
+    otkaz = put(root_client, [{"kind": "funnel", "h": 1}])
+    assert otkaz.json()["error"]["code"] == "bad_widget_height"
+    otkaz = put(root_client, [{"kind": "funnel", "x": 9, "w": 6}])
+    assert otkaz.json()["error"]["code"] == "bad_widget_place", "блок не торчит за край сетки"
+    otkaz = put(root_client, [{"kind": "funnel", "y": -1}])
+    assert otkaz.json()["error"]["code"] == "bad_widget_place"
+    # Наложение отвергается, а не чинится: молча переставленный блок человек
+    # не двигал и не поймёт, почему он уехал.
+    otkaz = put(root_client, [
+        {"kind": "funnel", "x": 0, "y": 0, "w": 6, "h": 7},
+        {"kind": "my_tasks", "x": 3, "y": 3, "w": 6, "h": 7},
+    ])
+    assert otkaz.json()["error"]["code"] == "widgets_overlap"
     otkaz = put(root_client, [{"kind": "api_key"}])
     assert otkaz.json()["error"]["code"] == "widget_needs_key"
     otkaz = put(root_client, [{"kind": "api_key", "params": {"key_id": 999_999}}])
@@ -348,13 +405,13 @@ def test_vidzhet_klyucha_sayta_po_odnomu_na_klyuch(root_client):
     k1 = root_client.post(keys, json={"name": "магазин", "scopes": ["catalog.read"]}).json()
     k2 = root_client.post(keys, json={"name": "маркетплейс", "scopes": ["catalog.read"]}).json()
     widgets = [
-        {"kind": "api_key", "params": {"key_id": k1["id"]}},
-        {"kind": "api_key", "params": {"key_id": k2["id"], "lishnee": 1}, "w": 4},
+        {"kind": "api_key", "params": {"key_id": k1["id"]}, "x": 0, "y": 0},
+        {"kind": "api_key", "params": {"key_id": k2["id"], "lishnee": 1}, "x": 0, "y": 7, "w": 12},
     ]
     r = root_client.put(f"{API}/dashboard/layout", json={"widgets": widgets})
     assert r.status_code == 200, r.text
     assert [w["params"] for w in r.json()["layout"]["widgets"]] == [{"key_id": k1["id"]}, {"key_id": k2["id"]}]
-    assert r.json()["layout"]["widgets"][1]["w"] == 4
+    assert r.json()["layout"]["widgets"][1]["w"] == 12
     dvazhdy = root_client.put(
         f"{API}/dashboard/layout",
         json={"widgets": [{"kind": "api_key", "params": {"key_id": k1["id"]}}] * 2},

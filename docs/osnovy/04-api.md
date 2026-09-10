@@ -132,8 +132,8 @@
 | GET | `/search/{area}?q=&page=` | 👤 | Продолжение ОДНОЙ группы — «показать ещё» в палитре. `area` — ключ группы из общего поиска, неизвестный даёт 404. Отвечает той же формой, что группа: `items`, `total`, `has_more` |
 | GET | `/dashboard` | 👤 | Сводка: деньги с начала месяца, воронка со счётчиками, мои задачи на сегодня, просмотры за 7 дней, недавние доски и клиенты |
 | GET | `/dashboard/sales-report` | 🔑 `deals.view_amounts` | Отчёт продаж для виджета сводки: 64 клетки дней, три месяца по дням, показатели за месяц и год с ростом к тому же числу прошлого периода, топ городов. `money_basis` называет, чем сосчитано — кассой или выигранными заявками |
-| GET | `/dashboard/layout` | 👤 | Раскладка сводки того, кто спрашивает: `layout` (`null` — умолчание экрана) и `kinds` — реестр виджетов с шириной, блоком и правом |
-| PUT | `/dashboard/layout` | 👤 | Сохранить раскладку: `widgets[]` из `kind`, `w` (1, 2 или 4 колонки из четырёх), `params` (`key_id` у виджета ключа сайта). Отказы: `unknown_widget`, `widget_duplicate`, `bad_widget_width`, `widget_needs_key`, `api_key_not_found`, `module_disabled`, `permission_denied` |
+| GET | `/dashboard/layout` | 👤 | Раскладка сводки того, кто спрашивает: `layout` (`null` — умолчание экрана), `kinds` — реестр виджетов с размерами, блоком и правом, `grid` — размер сетки. Запись первой версии переводится в сетку при чтении |
+| PUT | `/dashboard/layout` | 👤 | Сохранить раскладку: `widgets[]` из `kind`, места `x`, `y` и размера `w`, `h` в сетке из двенадцати колонок, `params` (`key_id` у виджета ключа сайта). Пустые поля берутся из реестра. Отказы: `unknown_widget`, `widget_duplicate`, `bad_widget_width`, `bad_widget_height`, `bad_widget_place`, `widgets_overlap`, `widget_needs_key`, `api_key_not_found`, `module_disabled`, `permission_denied` |
 | DELETE | `/dashboard/layout` | 👤 | Вернуть умолчание экрана |
 
 Группа поиска **пустеет, но не исчезает**: выключенный блок или отсутствие
