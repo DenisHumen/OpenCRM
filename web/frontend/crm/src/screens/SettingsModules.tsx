@@ -32,6 +32,7 @@ export const LABEL: Record<string, TranslationKey> = {
   telegram: "modTelegram",
   finance: "modFinance",
   keys: "modKeys",
+  files: "files",
 };
 
 const ABOUT: Record<string, TranslationKey> = {
@@ -53,9 +54,11 @@ const ABOUT: Record<string, TranslationKey> = {
   telegram: "modTelegramAbout",
   finance: "modFinanceAbout",
   keys: "modKeysAbout",
+  files: "modFilesAbout",
 };
 
 const ICON: Record<string, string> = {
+  files: "folder",
   clients: "clients",
   deals: "deals",
   companies: "building",

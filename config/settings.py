@@ -97,6 +97,13 @@ class Settings(BaseSettings):
         return self.storage_dir / "document_files"
 
     @property
+    def stored_files_dir(self) -> Path:
+        """Файлы, принесённые через модуль «Файлы». Не вложения карточки, а
+        бумаги фирмы: отдавать их наружу можно только по ссылке с проверкой,
+        поэтому и каталог свой — общая папка однажды уехала бы в раздачу."""
+        return self.storage_dir / "files"
+
+    @property
     def branding_dir(self) -> Path:
         return self.storage_dir / "branding"
 

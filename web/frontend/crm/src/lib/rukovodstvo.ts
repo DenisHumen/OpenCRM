@@ -471,6 +471,61 @@ export const RUKOVODSTVO: Razdel[] = [
           { vid: "ekran", put: "/templates", podpis: { ru: "Открыть шаблоны", en: "Open templates" } },
         ],
       },
+      {
+        id: "fayly",
+        perm: "files.view",
+        module: "files",
+        nazvanie: { ru: "Файлы", en: "Files" },
+        kratko: {
+          ru: "Всё, что лежит на сервере, одним деревом — и свои папки с тем, что принесли сами.",
+          en: "Everything stored on the server in one tree — plus your own folders for what you bring in.",
+        },
+        kuski: [
+          {
+            vid: "abzats",
+            tekst: {
+              ru: "Раздел показывает не «файлы модуля», а весь диск: работы досок, вложения клиентов и напоминаний, снимки бланков и товаров. Дерево слева повторяет то, как файлы лежат на самом деле, поэтому найти вложение можно, не помня, у какой карточки оно висит.",
+              en: "The section shows the whole disk, not just “module files”: board works, client and reminder attachments, form and product photos. The tree on the left mirrors how files actually sit on disk, so you can find an attachment without remembering which card it hangs on.",
+            },
+          },
+          {
+            vid: "vnimanie",
+            tekst: {
+              ru: "Ветка появляется вместе с правом на свой раздел. Нет права на клиентов — ветки «Клиенты» не будет вовсе, и это не поломка: файл клиента — это данные клиента, и через список файлов их не обходят.",
+              en: "A branch appears together with the right to its section. No access to clients — no “Clients” branch at all. That is not a fault: a client's file is client data, and the file list is not a way around that.",
+            },
+          },
+          {
+            vid: "spisok",
+            punkty: [
+              {
+                ru: "«Загрузки» — своя ветка: там папки, которые заводите вы, и файлы, которые приносите сами. Договор аренды, шрифты, макет визитки не относятся ни к одной карточке, и место им здесь.",
+                en: "“Uploads” is your own branch: folders you create and files you bring in yourself. A lease, a font set, a business-card layout belong to no card, and this is where they live.",
+              },
+              {
+                ru: "Загрузить можно только в свою папку. Кнопка ждёт, пока вы выберете ветку под «Загрузками» — иначе файл лёг бы в корень по ошибке.",
+                en: "You can only upload into your own folder. The button waits until you pick a branch under “Uploads” — otherwise the file would land in the root by accident.",
+              },
+              {
+                ru: "Файлы можно перетащить прямо в область содержимого. Пока идёт заливка, в углу висит очередь: имя, доля, полоса — и подпись, в какую папку они лягут.",
+                en: "You can drag files straight into the content area. While the upload runs, a queue sits in the corner: name, share, bar — and a line saying which folder they are going into.",
+              },
+              {
+                ru: "Папка удаляется вместе со всем, что внутри, включая вложенные. Файлы стираются с диска — вернуть их нельзя.",
+                en: "Deleting a folder takes everything inside with it, nested folders included. The files are erased from disk — there is no undo.",
+              },
+            ],
+          },
+          {
+            vid: "vazhno",
+            tekst: {
+              ru: "Полоса внизу дерева показывает, сколько места занято на сервере. Если она подошла к краю — начните с самых тяжёлых веток: видео на досках весит в сотни раз больше, чем бумаги.",
+              en: "The bar at the bottom of the tree shows how much server space is taken. If it is near the edge, start with the heaviest branches: board videos weigh hundreds of times more than documents.",
+            },
+          },
+          { vid: "ekran", put: "/files", podpis: { ru: "Открыть файлы", en: "Open files" } },
+        ],
+      },
     ],
   },
   {

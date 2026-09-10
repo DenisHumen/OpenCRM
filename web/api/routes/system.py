@@ -11,7 +11,6 @@ from core.services import (
 )
 from database.models import User
 from database.models.audit import SOURCE_MANUAL
-from web.api import schemas
 from web.api.deps import get_db, require_perm, require_staff
 
 router = APIRouter(prefix="/system", tags=["system"])
@@ -63,16 +62,15 @@ def purge_storage(
     return result
 
 
-@router.get("/files")
-def list_media_files(_: User = Depends(require_perm("settings", "manage")), db: Session = Depends(get_db)):
-    """Менеджер файлов (root): все медиафайлы работ с размером и датами."""
-    items = [schemas.media_file_out(f) for f in files_service.list_media_files(db)]
-    return {"items": items, "storage": storage_service.status(db)}
-
-
 @router.delete("/files/{work_id}")
 def delete_media_file(work_id: int, _: User = Depends(require_perm("settings", "manage")), db: Session = Depends(get_db)):
-    """Удалить одну работу вместе с файлами (root)."""
+    """Удалить одну работу вместе с файлами (root).
+
+    Плоского списка рядом с этой ручкой больше нет: его заменило дерево блока
+    «Файлы» (`GET /files/tree`). Удаление осталось здесь и под тем же правом —
+    оно сносит работу С ДОСКИ, а не файл из папки, и правом блока «Файлы»
+    закрываться не должно.
+    """
     files_service.delete_media_file(db, work_id)
     return {"message": "File deleted", "storage": storage_service.status(db)}
 

@@ -52,6 +52,7 @@ const AREA_LABEL: Record<string, TranslationKey> = {
   telegram: "modTelegram",
   finance: "modFinance",
   keys: "modKeys",
+  files: "files",
   staff: "areaStaff",
   roles: "areaRoles",
   settings: "areaSettings",

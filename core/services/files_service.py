@@ -1,7 +1,9 @@
-"""Менеджер файлов (root): обзор всех медиафайлов работ на диске.
+"""Уборка медиафайлов работ (root).
 
-Показывает реальный размер на диске (оригинал + превью), дату загрузки и дату
-последнего просмотра доски, чтобы находить и удалять то, что занимает место.
+Обзор диска переехал в блок «Файлы» (`core/services/fayly_service.py`): он
+показывает деревом всё, что лежит на диске, а не только работы досок. Здесь
+осталось удаление — оно сносит работу С ДОСКИ, и правом блока «Файлы»
+закрываться не должно.
 """
 
 from sqlalchemy.orm import Session
@@ -10,33 +12,6 @@ from core import exceptions as errors
 from core.services import media_service, storage_service
 from core.utils import now_utc
 from database.repositories import boards as boards_repo
-from database.repositories import shares as shares_repo
-
-
-def list_media_files(db: Session) -> list[dict]:
-    """Все работы живых досок с размером на диске, датами загрузки и просмотра."""
-    last_viewed = shares_repo.last_view_by_board(db)
-    rows = boards_repo.works_with_board_title(db)
-
-    items: list[dict] = []
-    for work, board_title in rows:
-        media = media_service.work_media_urls(work) if work.status == "ready" else {}
-        items.append(
-            {
-                "id": work.id,
-                "board_id": work.board_id,
-                "board_title": board_title,
-                "kind": work.kind,
-                "status": work.status,
-                "original_name": work.original_name,
-                "mime": work.mime,
-                "size_bytes": storage_service.dir_size(media_service.work_dir(work.work_uid)),
-                "created_at": work.created_at,
-                "last_viewed_at": last_viewed.get(work.board_id),
-                "thumb": media.get("thumb"),
-            }
-        )
-    return items
 
 
 def delete_media_file(db: Session, work_id: int) -> None:

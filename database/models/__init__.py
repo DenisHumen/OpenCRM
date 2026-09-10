@@ -36,6 +36,7 @@ from database.models.klyuch import (
     TwoFactorKey,
     TwoFactorKeyAccess,
 )
+from database.models.fayl import FileFolder, StoredFile
 from database.models.audit import AuditEvent
 from database.models.notification import Notification
 
@@ -86,6 +87,8 @@ __all__ = [
     "FinanceRule",
     "AuditEvent",
     "Notification",
+    "FileFolder",
+    "StoredFile",
     "KeyCategory",
     "KeyCategoryAccess",
     "TwoFactorKey",
