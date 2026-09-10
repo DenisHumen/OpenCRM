@@ -4489,3 +4489,237 @@ html { scroll-behavior: smooth; }
 }
 .section-api-title { margin: 0 0 4px; font-size: 17px; font-weight: 700; letter-spacing: -0.01em; }
 
+/* === Сотрудники ============================================================
+   Редизайн владельца 10.09.2026 (макет «Пользователи.dc.html»). Прежде экран
+   рисовал три списка подряд — «ожидают», «активные», «отключённые», — и
+   состояние человека было заголовком раздела, а не свойством строки. Отсюда
+   всё остальное: отбор состоянием был невозможен, а четыре текстовые ссылки
+   действий в каждой строке занимали половину её ширины.
+
+   Стало: одна таблица, состояние — колонка и чип, действия — значки с
+   подписью в `title`. Заявки на регистрацию остались отдельным блоком сверху
+   по решению владельца: их разбирают, а не просматривают. */
+
+.staff-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 22px; }
+
+/* --- заявки на регистрацию ------------------------------------------------ */
+/* Рамка цветом предупреждения, а не оттенком: блок обязан читаться первым, и
+   тонкая линия оттенка на тёмном фоне теряется. */
+.staff-pending {
+  border: 1px solid var(--warning); border-radius: 6px; overflow: hidden;
+  background: var(--surface); margin-bottom: 26px;
+}
+.staff-pending-head {
+  display: flex; align-items: center; gap: 9px; padding: 11px 16px;
+  background: var(--tint-warning); border-bottom: 1px solid var(--frame); color: var(--warning);
+}
+.staff-pending-title { margin: 0; font-size: 13px; font-weight: 700; letter-spacing: -0.01em; }
+.staff-pending-count {
+  display: inline-flex; align-items: center; height: 20px; padding: 0 7px; border-radius: 3px;
+  background: var(--warning); color: var(--bg); font-size: 10px; font-weight: 700; letter-spacing: 0.06em;
+}
+.staff-pending-later {
+  margin-left: auto; padding: 0; border: none; background: none; cursor: pointer;
+  color: var(--warning); font-size: 12px; text-decoration: underline; text-underline-offset: 2px;
+}
+.staff-pending-row {
+  display: flex; align-items: center; gap: 13px; padding: 0 16px; height: 56px;
+  border-bottom: 1px solid var(--line);
+}
+.staff-pending-row:last-child { border-bottom: 0; }
+.staff-pending-who { flex: 1; min-width: 0; }
+.staff-pending-name { color: var(--text); font-size: 13.5px; font-weight: 500; }
+.staff-pending-mail { color: var(--faint); font-size: 12px; }
+.staff-reject { color: var(--danger); }
+
+/* --- панель видов и поиск -------------------------------------------------- */
+.staff-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+.staff-views {
+  display: flex; gap: 2px; padding: 3px; border-radius: 6px;
+  border: 1px solid var(--border); background: var(--surface);
+}
+.staff-view {
+  display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 11px;
+  border: none; border-radius: 4px; background: transparent; cursor: pointer;
+  color: var(--muted); font-family: var(--sans); font-size: 12.5px; font-weight: 500;
+}
+.staff-view:hover { color: var(--text); }
+.staff-view-on { background: var(--surface-2); color: var(--text); }
+.staff-search {
+  display: flex; align-items: center; gap: 8px; height: 32px; width: 250px; padding: 0 11px;
+  border: 1px solid var(--border); border-radius: 4px; background: var(--well); color: var(--faint);
+}
+.staff-search input {
+  flex: 1; min-width: 0; border: none; outline: none; background: none;
+  color: var(--text); font-family: var(--sans); font-size: 12.5px;
+}
+
+/* --- чипы отбора ----------------------------------------------------------- */
+.staff-filters { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
+.staff-chip {
+  display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 11px;
+  border: 1px solid var(--border); border-radius: 4px; background: var(--surface); cursor: pointer;
+  color: var(--muted); font-family: var(--sans); font-size: 12px;
+}
+.staff-chip:hover { border-color: var(--border-hover); color: var(--text); }
+.staff-chip-on { background: var(--surface-2); border-color: var(--border-hover); color: var(--text); }
+.staff-chip-count { color: var(--faint); font-variant-numeric: tabular-nums; }
+.staff-filter-role { width: 150px; }
+.staff-shown { margin-left: auto; color: var(--faint); font-size: 12px; }
+
+/* --- таблица --------------------------------------------------------------- */
+/* Карточка — точка отсчёта для плашки массовых действий: та лежит внутри неё
+   абсолютом, чтобы не уезжать при прокрутке страницы. */
+.staff-table-card {
+  position: relative; background: var(--surface); border: 1px solid var(--frame);
+  border-radius: 6px; overflow: hidden;
+}
+.staff-scroll { overflow-x: auto; }
+/* Сетка одна на заголовок и строки: две разные разъехались бы на первой же
+   правке ширины, и колонка перестала бы стоять под своим заголовком. */
+.staff-grid {
+  display: grid; min-width: 1234px;
+  grid-template-columns: 40px 200px 190px 174px 102px 108px 68px 112px 110px 130px;
+}
+.staff-th {
+  display: flex; align-items: center; height: 36px; padding-right: 14px;
+  border-bottom: 1px solid var(--frame); background: var(--surface);
+  color: var(--faint); font-size: 10.5px; font-weight: 700;
+  letter-spacing: 0.12em; text-transform: uppercase;
+}
+/* Чекбокс и ФИО закреплены: при узком экране таблица едет вбок, а «кто это»
+   обязан остаться на месте — иначе строка теряет хозяина. */
+.staff-th-pick, .staff-td-pick { position: sticky; left: 0; z-index: 2; justify-content: center; padding-right: 0; }
+.staff-th-name, .staff-td-name { position: sticky; left: 40px; z-index: 2; border-right: 1px solid var(--line); }
+.staff-tr { display: contents; }
+.staff-td {
+  display: flex; align-items: center; height: 52px; padding-right: 14px;
+  border-bottom: 1px solid var(--line); background: var(--surface);
+  min-width: 0; overflow: hidden;
+}
+.staff-td-name { gap: 11px; z-index: 1; }
+.staff-td-pick { z-index: 1; }
+.staff-tr:hover .staff-td { background: var(--surface-2); }
+.staff-name { color: var(--text); font-size: 13px; font-weight: 500; }
+.staff-mail { color: var(--accent); font-size: 12.5px; text-decoration: underline; text-underline-offset: 2px; }
+.staff-quiet { color: var(--faint); font-size: 12px; white-space: nowrap; text-overflow: ellipsis; }
+.staff-num { justify-content: flex-end; }
+.staff-num-text { font-variant-numeric: tabular-nums; }
+.staff-role-select { width: 100%; max-width: 172px; }
+
+/* --- действия строкой значков --------------------------------------------- */
+/* Значки вместо четырёх текстовых ссылок: те занимали половину строки и стояли
+   вплотную — промахнуться «Удалить навсегда» вместо «Сбросить пароль» было
+   делом одного неверного пикселя. Подпись у каждого в `title` и `aria-label`. */
+.staff-actions { display: flex; align-items: center; gap: 2px; }
+.staff-act { width: 26px; height: 26px; color: var(--muted); }
+.staff-act:hover:not(:disabled) { background: var(--surface-2); color: var(--text); }
+.staff-act-danger:hover:not(:disabled) { background: var(--tint-danger); color: var(--danger); }
+.staff-you { color: var(--faint); font-size: 12px; }
+
+/* --- подвал с постраничной навигацией -------------------------------------- */
+/* Вне горизонтального скроллера: при прокрутке таблицы вбок подвал стоит. */
+.staff-foot {
+  display: flex; align-items: center; gap: 14px; padding: 10px 16px;
+  border-top: 1px solid var(--frame); background: var(--surface);
+}
+.staff-foot-spacer { flex: 1; }
+.staff-per-page { width: 76px; }
+.staff-pager { display: flex; gap: 4px; }
+.staff-page {
+  min-width: 28px; height: 28px; padding: 0 8px; border: 1px solid transparent; border-radius: 4px;
+  background: transparent; cursor: pointer; color: var(--muted);
+  font-family: var(--sans); font-size: 12px; font-variant-numeric: tabular-nums;
+}
+.staff-page:hover:not(:disabled) { color: var(--text); border-color: var(--border); }
+.staff-page:disabled { color: var(--faint); cursor: default; }
+.staff-page-on { background: var(--surface-2); border-color: var(--border-hover); color: var(--text); }
+
+/* --- массовые действия ------------------------------------------------------ */
+/* Плашка всплывает над подвалом, а не над страницей: она про выделенные строки
+   и обязана исчезнуть вместе с таблицей, если сменили вид. */
+.staff-bulk {
+  position: absolute; left: 50%; bottom: 62px; transform: translateX(-50%); z-index: 5;
+  display: flex; align-items: center; gap: 10px; padding: 9px 12px;
+  border: 1px solid var(--frame); border-radius: 8px; background: var(--bg-sidebar);
+  box-shadow: 0 12px 30px var(--shade);
+}
+.staff-bulk-count {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 22px; height: 22px; padding: 0 7px; border-radius: 4px;
+  background: var(--brand); color: var(--on-brand); font-size: 11px; font-weight: 700;
+}
+.staff-bulk-word { color: var(--text); font-size: 12.5px; font-weight: 500; }
+.staff-bulk-line { width: 1px; height: 20px; background: var(--border); }
+.staff-bulk-role { width: 170px; }
+.staff-bulk-close { width: 28px; height: 28px; border: none; color: var(--faint); }
+.staff-bulk-close:hover { background: var(--surface-2); color: var(--text); }
+
+/* --- вид «доска» ------------------------------------------------------------ */
+.staff-board { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; align-items: start; }
+.staff-col { border: 1px solid var(--frame); border-radius: 6px; overflow: hidden; background: var(--surface); }
+.staff-col-head {
+  display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 14px;
+  border-bottom: 1px solid var(--frame);
+}
+.staff-dot { width: 7px; height: 7px; border-radius: 50%; }
+.staff-dot-online { background: var(--success); }
+.staff-dot-active { background: var(--muted); }
+.staff-dot-pending { background: var(--warning); }
+.staff-dot-off { background: var(--danger); }
+.staff-col-name { color: var(--muted); font-size: 12px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+.staff-col-count {
+  display: inline-flex; align-items: center; height: 20px; padding: 0 7px; border-radius: 3px;
+  background: var(--tint-neutral); color: var(--muted); font-size: 10px; font-weight: 700;
+}
+.staff-col-body { display: flex; flex-direction: column; gap: 8px; padding: 10px; }
+/* Карточка темнее колонки: «утоплена» в неё, а не лежит поверх. */
+.staff-card { border: 1px solid var(--border); border-radius: 6px; padding: 12px; background: var(--bg); }
+.staff-card:hover { border-color: var(--border-hover); }
+.staff-card-top { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.staff-card-who { min-width: 0; }
+.staff-card-mail { font-size: 11.5px; }
+.staff-card-bottom { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.staff-card-deals { margin-left: auto; color: var(--faint); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+
+/* --- вид «список» ----------------------------------------------------------- */
+.staff-flat { border: 1px solid var(--frame); border-radius: 6px; overflow: hidden; background: var(--surface); }
+.staff-flat-row {
+  display: flex; align-items: center; gap: 12px; padding: 0 16px; height: 44px;
+  border-bottom: 1px solid var(--line);
+}
+.staff-flat-row:last-child { border-bottom: 0; }
+.staff-flat-row:hover { background: var(--surface-2); }
+.staff-flat-name { width: 190px; flex: none; color: var(--text); font-size: 13px; font-weight: 500; }
+.staff-flat-mail { flex: 1; min-width: 0; font-size: 12px; }
+.staff-flat-role { flex: none; }
+.staff-flat-seen { flex: none; margin-left: auto; }
+
+/* --- телефон ---------------------------------------------------------------- */
+/* Таблицы на телефоне нет намеренно: десять колонок в 390 пикселях нечитаемы, а
+   горизонтальная прокрутка таблицы внутри вертикальной прокрутки страницы —
+   это два жеста, спорящих за один палец. */
+.staff-mobile { display: none; }
+.staff-m-chips { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
+.staff-m-fields { display: flex; flex-direction: column; gap: 10px; }
+.staff-m-field { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 13px; }
+.staff-m-actions { display: flex; justify-content: flex-end; margin-top: 16px; }
+
+@media (max-width: 900px) {
+  .staff-table-card, .staff-board, .staff-flat, .staff-bar, .staff-shown { display: none; }
+  .staff-mobile { display: block; border: 1px solid var(--frame); border-radius: 6px; overflow: hidden; background: var(--surface); }
+  /* Строка 60px и зона нажатия во всю ширину: пальцем целятся хуже, чем мышью. */
+  .staff-m-row {
+    display: flex; align-items: center; gap: 12px; width: 100%; height: 60px; padding: 0 14px;
+    border: none; border-bottom: 1px solid var(--line); background: none; cursor: pointer;
+    color: var(--muted); text-align: left;
+  }
+  .staff-m-row:last-child { border-bottom: 0; }
+  .staff-m-who { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+  .staff-m-role { font-size: 12px; }
+  .staff-head { flex-direction: column; align-items: stretch; gap: 12px; }
+  /* Значок 26px — мышиный размер: пальцем в него не целятся, а рядом стоит
+     «Удалить навсегда». В карточке они растянуты на всю ширину поровну. */
+  .staff-m-actions .staff-actions { flex: 1; gap: 8px; }
+  .staff-m-actions .staff-act { flex: 1; height: 40px; width: auto; border: 1px solid var(--frame); }
+}

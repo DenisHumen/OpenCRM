@@ -370,6 +370,7 @@ def user_out(user: User, role=None, permissions: list[str] | None = None) -> dic
         "must_change_password": user.must_change_password,
         "avatar_url": user.avatar_path or None,
         "last_seen_at": _iso(user.last_seen_at),
+        "last_login_at": _iso(user.last_login_at),
         "is_online": is_online(user.last_seen_at),
         "created_at": _iso(user.created_at),
         "approved_at": _iso(user.approved_at),

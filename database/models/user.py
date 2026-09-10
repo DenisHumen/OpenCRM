@@ -47,6 +47,11 @@ class User(Base):
     dashboard_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     # присутствие: обновляется на активность (throttle в auth_service), переживает logout
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # Последний ВХОД — это не присутствие: присутствие обновляется на любую
+    # активность и переживает выход, а вход случается один раз за сессию.
+    # Считать его по `user_sessions` нельзя: строку сессии сносят при выходе,
+    # сбросе пароля и отключении, то есть восстанавливать не из чего.
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     approved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 

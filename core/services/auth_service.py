@@ -119,6 +119,9 @@ def login(db: Session, email: str, password: str, limiter) -> tuple[User, str]:
     token = tokens.new_session_token()
     ttl = timedelta(days=get_settings().session_ttl_days)
     users_repo.create_session(db, user.id, tokens.sha256_hex(token), now_utc() + ttl)
+    # Момент входа, а не активности. Пишется здесь и только здесь: это
+    # единственное место, где вход вправду состоялся.
+    user.last_login_at = now_utc().replace(tzinfo=None)
     return user, token
 
 

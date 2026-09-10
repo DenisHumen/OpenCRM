@@ -489,6 +489,23 @@ CSV_HEADERS = {
         "en": ["Source", "Clients", "Won", "Lost", "Revenue", "Win rate, %"],
         "ru": ["Источник", "Клиентов", "Выиграно", "Потеряно", "Выручка", "Доля побед, %"],
     },
+    "staff": {
+        "en": [
+            "Name", "Email", "Role", "State", "Open deals",
+            "Registered", "Last sign-in", "Last activity",
+        ],
+        "ru": [
+            "Имя", "Почта", "Должность", "Состояние", "Открытых заявок",
+            "Регистрация", "Последний вход", "Последняя активность",
+        ],
+    },
+}
+
+# Состояние в выгрузке словами, а не `pending`: файл открывают в таблице люди,
+# которым машинное слово не говорит ничего.
+STAFF_STATE_NAMES = {
+    "en": {"active": "Active", "pending": "Pending", "disabled": "Disabled"},
+    "ru": {"active": "Активен", "pending": "Ожидает", "disabled": "Отключён"},
 }
 
 SOURCE_NAMES = {
