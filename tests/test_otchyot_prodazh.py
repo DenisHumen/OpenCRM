@@ -181,8 +181,8 @@ def test_vidzhet_stavitsya_v_raskladku(root_client):
         f"{API}/dashboard/layout",
         json={
             "widgets": [
-                {"kind": "sales_grid", "w": 2, "params": {}},
-                {"kind": "sales_matrix", "w": 4, "params": {}},
+                {"kind": "sales_grid", "x": 0, "y": 0, "params": {}},
+                {"kind": "sales_matrix", "x": 6, "y": 0, "params": {}},
             ]
         },
     )

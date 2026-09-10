@@ -82,6 +82,26 @@ export function formatMoney(
   }
 }
 
+/** Та же сумма коротко: «900 тыс. ₽», «$1.2M». Для подписей осей, где полное
+ *  число не помещается и не нужно — там читают порядок, а не копейки. */
+export function formatMoneyShort(
+  minor: number | null | undefined,
+  currency: string,
+  locale: Locale,
+): string {
+  if (minor === null || minor === undefined) return "—";
+  try {
+    return new Intl.NumberFormat(locale === "ru" ? "ru-RU" : "en-US", {
+      style: "currency",
+      currency,
+      notation: "compact",
+      maximumFractionDigits: 1,
+    }).format(minor / 100);
+  } catch {
+    return String(Math.round(minor / 100));
+  }
+}
+
 /** Сумма из поля ввода в минорные единицы: «12,5» → 1250, «80» → 8000.
  *
  * Копейки считает браузер и только на самом краю — здесь: дальше число едет

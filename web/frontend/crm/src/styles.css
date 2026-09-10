@@ -395,30 +395,67 @@ button { font-family: var(--sans); }
 .dash-cols > .card { margin-bottom: 0; }
 @media (max-width: 900px) { .dash-cols { grid-template-columns: 1fr; } }
 
-/* Сводка из виджетов: сетка в четыре колонки, плитка — одна, блок — две,
-   полоса — четыре. На планшете колонок две, на телефоне одна; ширины
-   складываются, а не обрезаются. */
-.summary-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 12px; align-items: start; }
-.widget { min-width: 0; }
-.widget > .card { margin-bottom: 0; }
-.widget-w1 { grid-column: span 1; }
-.widget-w2 { grid-column: span 2; }
-.widget-w4 { grid-column: span 4; }
-.widget-setting { border: 1px dashed var(--frame); border-radius: 12px; padding: 4px; cursor: grab; }
-.widget-setting:active { cursor: grabbing; }
-.widget-dragging { opacity: 0.45; }
-.widget-target { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft, transparent); }
-.widget-header { display: flex; align-items: center; gap: 6px; padding: 2px 6px 6px; color: var(--muted); font-size: 12px; }
-.widget-name { flex: 1; min-width: 0; }
-.widget-btns { display: flex; gap: 2px; }
-@media (max-width: 1100px) {
-  .summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .widget-w4 { grid-column: span 2; }
+/* --- сводка: сетка из двенадцати колонок ---------------------------------- */
+/* Блоки лежат абсолютом, а не сеткой CSS: у сетки нет тяжести вверх и нет
+   расталкивания, а без них перетаскивание оставляет дырки. Место считает
+   `lib/setka.ts`, здесь только расстановка. Высоту полотна задаёт экран —
+   абсолют её не поднимает, и страница не прокрутилась бы до нижнего блока. */
+.svodka { margin-bottom: 12px; }
+.svodka-setka { position: relative; }
+/* Узкий экран: сетки нет вовсе — двенадцать колонок в телефоне это двенадцать
+   полосок по тридцать пикселей. Блоки идут столбцом в порядке сетки. */
+.svodka:not(.svodka-setka) { display: flex; flex-direction: column; gap: 12px; }
+.svodka:not(.svodka-setka) .vd-telo { overflow: visible; }
+
+.vd { min-width: 0; }
+.svodka-setka .vd { transition: left 0.28s cubic-bezier(0.23, 1, 0.32, 1), top 0.28s cubic-bezier(0.23, 1, 0.32, 1), width 0.28s cubic-bezier(0.23, 1, 0.32, 1), height 0.28s cubic-bezier(0.23, 1, 0.32, 1); }
+/* Блок под рукой не догоняет её плавностью: он обязан стоять там, где палец. */
+.svodka-derzhim .vd-v-ruke { transition: none; z-index: 6; }
+.vd-v-ruke .vd-karta { box-shadow: var(--hard); border-color: var(--brand); }
+
+.vd-karta {
+  height: 100%; display: flex; flex-direction: column; position: relative;
+  background: var(--surface); border: 1px solid var(--frame); border-radius: 12px; overflow: hidden;
 }
-@media (max-width: 640px) {
-  .summary-grid { grid-template-columns: minmax(0, 1fr); }
-  .widget-w2, .widget-w4 { grid-column: span 1; }
+.vd-shapka {
+  display: flex; align-items: center; gap: 9px; flex-shrink: 0;
+  padding: 14px 16px 0; cursor: grab; user-select: none; touch-action: none;
 }
+.vd-shapka:active { cursor: grabbing; }
+.vd-znachok { color: var(--brand); flex-shrink: 0; }
+.vd-imya { flex: 1; min-width: 0; color: var(--text); font-size: 14px; font-weight: 600; letter-spacing: -0.01em; }
+.vd-hod { color: var(--faint); font-size: 12px; text-decoration: none; opacity: 0; transition: opacity 0.15s; }
+.vd-karta:hover .vd-hod { opacity: 1; }
+.vd-hod:hover { color: var(--accent); }
+/* Ручки в покое не видны: экран должен читаться как композиция, а не как
+   конструктор. Появляются под курсором — там же, где ими и пользуются. */
+.vd-ruchka { color: var(--faint); display: inline-flex; opacity: 0; transition: opacity 0.15s; }
+.vd-karta:hover .vd-ruchka { opacity: 1; }
+.vd-ruchka-svoya { position: absolute; top: 8px; right: 8px; z-index: 2; padding: 4px; cursor: grab; background: var(--surface); border-radius: 4px; touch-action: none; }
+.vd-ubrat { width: 22px; height: 22px; border: 0; }
+.vd-ubrat-svoya { position: absolute; top: 6px; right: 30px; z-index: 2; background: var(--surface); }
+.vd-telo { flex: 1; min-height: 0; padding: 10px 16px 16px; overflow: auto; }
+.vd-tyanut {
+  position: absolute; right: 0; bottom: 0; width: 18px; height: 18px; padding: 4px;
+  display: flex; align-items: flex-end; justify-content: flex-end;
+  color: var(--faint); cursor: nwse-resize; opacity: 0; transition: opacity 0.15s; touch-action: none;
+}
+.vd-karta:hover .vd-tyanut { opacity: 1; }
+/* Блок со своей карточкой: рама отдаёт ему всё место и оставляет только ручки. */
+.vd-svoya .vd-karta { background: none; border: 0; border-radius: 0; }
+.vd-svoya .vd-telo { padding: 0; }
+.vd-svoya .card, .vd-svoya .report { margin-bottom: 0; }
+
+/* Деньги — тем же кеглем, что и счётчики: две крупные величины разного
+   размера рядом читаются как «эта важнее», а важность у них одна. */
+.vd-dengi { letter-spacing: -0.035em; }
+.vd-chislo { color: var(--num); font-size: 30px; font-weight: 800; letter-spacing: -0.03em; line-height: 1; font-variant-numeric: tabular-nums; }
+.vd-pod { color: var(--sub); font-size: 12px; margin-top: 7px; }
+
+.vd-podpis { color: var(--faint); font-size: 10.5px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; margin-bottom: 10px; }
+.vd-trevoga { padding-bottom: 8px; }
+.vitriny { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; flex-wrap: wrap; }
+.vitriny-chisla { display: flex; gap: 36px; flex-wrap: wrap; }
 .board-grid-2 { grid-template-columns: repeat(2, 1fr); }
 .page-docs { max-width: 1360px; }
 .page-narrow { max-width: 760px; }
@@ -4723,3 +4760,109 @@ html { scroll-behavior: smooth; }
   .staff-m-actions .staff-actions { flex: 1; gap: 8px; }
   .staff-m-actions .staff-act { flex: 1; height: 40px; width: auto; border: 1px solid var(--frame); }
 }
+
+/* --- поток денег ----------------------------------------------------------- */
+.potok { display: flex; flex-direction: column; gap: 12px; height: 100%; min-height: 0; }
+.potok-zhdyom { display: flex; align-items: center; justify-content: center; padding: 24px 0; }
+.potok-verh { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.potok-itog { min-width: 0; }
+.potok-summa { color: var(--num); font-size: 28px; font-weight: 800; letter-spacing: -0.03em; line-height: 1; font-variant-numeric: tabular-nums; }
+.potok-pod { display: flex; align-items: center; gap: 7px; margin-top: 7px; color: var(--sub); font-size: 11.5px; flex-wrap: wrap; }
+.potok-tochka { width: 3px; height: 3px; border-radius: 50%; background: var(--faint); }
+.potok-rost { color: var(--success); font-weight: 600; }
+.potok-spad { color: var(--danger); font-weight: 600; }
+.potok-tishe { color: var(--faint); }
+/* Переключатель окна — пилюля с внутренним фоном у выбранного, как у видов на
+   «Сотрудниках»: два одинаковых по смыслу переключателя обязаны выглядеть
+   одинаково, иначе их читают как разные вещи. */
+.potok-okna { display: flex; gap: 2px; padding: 2px; background: var(--well-off); border-radius: 8px; }
+.potok-okno { height: 26px; padding: 0 10px; border: 0; border-radius: 6px; background: none; color: var(--muted); font-size: 12px; cursor: pointer; }
+.potok-okno:hover { color: var(--text); }
+.potok-okno-on { background: var(--surface); color: var(--text); font-weight: 600; }
+/* Врезка внутри блока — на фоне поля, а не карточки: она принадлежит блоку и
+   не должна читаться как второй блок рядом. */
+.potok-rekord {
+  display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+  padding: 9px 12px; border-radius: 9px; background: var(--well-off); text-decoration: none;
+}
+.potok-rekord:hover { background: var(--surface-2); }
+.potok-rekord-podpis { color: var(--brand); font-size: 10.5px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; }
+.potok-rekord-tekst { color: var(--muted); font-size: 12.5px; }
+.potok-grafik { flex: 1; min-height: 90px; display: flex; gap: 10px; }
+.potok-os { display: flex; flex-direction: column; justify-content: space-between; color: var(--faint); font-size: 10.5px; font-variant-numeric: tabular-nums; text-align: right; }
+.potok-pole { position: relative; flex: 1; min-width: 0; }
+.potok-holst { width: 100%; height: 100%; display: block; }
+.potok-setka { stroke: var(--line); stroke-width: 1; stroke-dasharray: 3 4; }
+.potok-krivaya { fill: none; stroke: var(--brand); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.potok-zalivka { fill: var(--tint-brand); }
+/* Точки — кнопками поверх холста: растянутый viewBox сплющил бы кружок в овал,
+   и попасть по нему пальцем было бы нечем. */
+.potok-tochka-krivoy {
+  position: absolute; width: 16px; height: 16px; margin: -8px 0 0 -8px; padding: 0;
+  border: 0; border-radius: 50%; background: none; cursor: pointer;
+}
+.potok-tochka-krivoy::after {
+  content: ""; position: absolute; inset: 5px; border-radius: 50%;
+  background: var(--surface); border: 2px solid var(--brand); transition: inset 0.15s;
+}
+.potok-tochka-krivoy:hover::after, .potok-tochka-on::after { inset: 3px; }
+.potok-vsplyv {
+  position: absolute; z-index: 3; transform: translate(-50%, calc(-100% - 12px));
+  padding: 7px 10px; border-radius: 8px; background: var(--surface);
+  border: 1px solid var(--frame); box-shadow: var(--hard);
+  pointer-events: none; white-space: nowrap;
+}
+.potok-vsplyv-vlevo { transform: translate(-100%, calc(-100% - 12px)); }
+.potok-vsplyv-vpravo { transform: translate(0, calc(-100% - 12px)); }
+.potok-vsplyv-den { color: var(--faint); font-size: 11px; }
+.potok-vsplyv-summa { color: var(--text); font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; margin-top: 2px; }
+.potok-niz { display: flex; justify-content: space-between; color: var(--faint); font-size: 11px; }
+
+/* --- откуда пришли клиенты ------------------------------------------------- */
+.istochniki { display: flex; flex-direction: column; gap: 14px; height: 100%; min-height: 0; }
+.istochniki-pusto { color: var(--faint); font-size: 12.5px; text-align: center; padding: 20px 0; }
+.istochniki-koltso { position: relative; width: 100%; max-width: 168px; margin: 0 auto; aspect-ratio: 1; flex-shrink: 0; }
+.istochniki-koltso svg { width: 100%; height: 100%; display: block; transform: rotate(-90deg); }
+.istochniki-fon { fill: none; stroke: var(--line); stroke-width: 11; }
+/* Доли рисуются одной окружностью со сдвигом штриха: так дуги стыкуются без
+   зазора, а считать точки дуги вручную не приходится. */
+.istochniki-dolya { fill: none; stroke-width: 11; stroke-linecap: butt; }
+.istochniki-tsentr { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; }
+.istochniki-vsego { color: var(--num); font-size: 26px; font-weight: 800; letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
+.istochniki-podpis { color: var(--faint); font-size: 11px; }
+.istochniki-legenda { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 8px; overflow: auto; }
+.istochniki-stroka { display: flex; align-items: center; gap: 9px; }
+.istochniki-metka { width: 3px; height: 14px; border-radius: 2px; flex-shrink: 0; }
+.istochniki-imya { flex: 1; min-width: 0; color: var(--muted); font-size: 12.5px; }
+.istochniki-chislo { color: var(--text); font-size: 12.5px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.istochniki-hod { justify-content: center; flex-shrink: 0; }
+
+/* --- клиенты таблицей ------------------------------------------------------ */
+.klienty-vidzhet { display: flex; flex-direction: column; gap: 12px; height: 100%; min-height: 0; }
+.klienty-panel { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.klienty-poisk { position: relative; display: flex; align-items: center; color: var(--faint); }
+.klienty-poisk svg { position: absolute; left: 9px; pointer-events: none; }
+.klienty-poisk input { width: 190px; padding-left: 28px; }
+.klienty-chipy { display: flex; gap: 6px; flex-wrap: wrap; }
+.klienty-vygruzka { margin-left: auto; }
+.klienty-pusto { color: var(--faint); font-size: 12.5px; padding: 18px 0; }
+.klienty-svitok { flex: 1; min-height: 0; overflow: auto; }
+.klienty-setka { display: grid; grid-template-columns: 54px minmax(140px, 1.4fr) minmax(150px, 1.3fr) 120px 104px minmax(110px, 1fr); min-width: 720px; }
+.klienty-th {
+  display: flex; align-items: center; height: 30px; padding-right: 12px;
+  position: sticky; top: 0; z-index: 1; background: var(--surface);
+  border-bottom: 1px solid var(--frame);
+  color: var(--faint); font-size: 10.5px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase;
+}
+.klienty-tr { display: contents; text-decoration: none; }
+.klienty-td { display: flex; align-items: center; height: 46px; padding-right: 12px; border-bottom: 1px solid var(--line); color: var(--text); font-size: 13px; min-width: 0; overflow: hidden; }
+.klienty-tr:hover .klienty-td { background: var(--surface-2); }
+.klienty-nomer { color: var(--faint); font-family: ui-monospace, monospace; font-size: 12px; }
+.klienty-kto { gap: 9px; }
+.klienty-tishe { color: var(--faint); font-size: 12px; }
+/* Мягкая пилюля на тинте своего цвета: состояние читается цветом раньше, чем
+   словом, и три состояния обязаны различаться на просвет. */
+.klienty-pilyulya { padding: 3px 9px; border-radius: 8px; font-size: 11.5px; font-weight: 600; white-space: nowrap; }
+.klienty-work { background: var(--tint-success); color: var(--success); }
+.klienty-sleep { background: var(--well-off); color: var(--muted); }
+.klienty-none { background: var(--tint-brand); color: var(--brand); }

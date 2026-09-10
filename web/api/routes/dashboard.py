@@ -220,10 +220,17 @@ def dashboard(user: User = Depends(require_staff), db: Session = Depends(get_db)
 
 
 class WidgetIn(BaseModel):
-    """Виджет раскладки: вид, ширина (пусто — по реестру), параметры — у ключа сайта."""
+    """Виджет раскладки: вид, место и размер в сетке, параметры — у ключа сайта.
+
+    Пусто — берётся из реестра. Проверяет всё `vidzhety_service.razobrat`, а не
+    pydantic: отказ должен назвать виджет и причину кодом, а не полем.
+    """
 
     kind: str = Field(max_length=40)
+    x: int | None = None
+    y: int | None = None
     w: int | None = None
+    h: int | None = None
     params: dict = Field(default_factory=dict)
 
 
@@ -232,13 +239,18 @@ class LayoutIn(BaseModel):
 
 
 def _reestr() -> dict:
-    """Реестр виджетов для экрана: ширины, блок и право. Одна карта на обоих —
+    """Реестр виджетов для экрана: размеры, блок и право. Одна карта на обоих —
     вторая копия на фронтенде разошлась бы с этой молча."""
     return {
-        kind: {"w": opis["w"], "shiriny": list(opis["shiriny"]), "odin": opis["odin"],
-               "module": opis["module"], "perm": opis["perm"]}
+        kind: {"w": opis["w"], "h": opis["h"], "min_w": opis["min_w"], "min_h": opis["min_h"],
+               "odin": opis["odin"], "module": opis["module"], "perm": opis["perm"]}
         for kind, opis in vidzhety_service.REESTR.items()
     }
+
+
+def _setka() -> dict:
+    """Размер сетки — с сервера: он же по нему и проверяет запись."""
+    return {"cols": vidzhety_service.KOLONOK, "rows": vidzhety_service.STROK}
 
 
 @router.get("/sales-report")
@@ -261,7 +273,7 @@ def sales_report(
 @router.get("/layout")
 def dashboard_layout(user: User = Depends(require_staff)):
     """Раскладка сводки того, кто спрашивает; `null` — умолчание экрана."""
-    return {"layout": vidzhety_service.chitat(user), "kinds": _reestr()}
+    return {"layout": vidzhety_service.chitat(user), "kinds": _reestr(), "grid": _setka()}
 
 
 @router.put("/layout")
@@ -271,11 +283,11 @@ def save_dashboard_layout(
     """Сохранить раскладку. Неизвестный виджет, чужой блок или право, второй
     такой же, ключ сайта без ключа — отказ с кодом, а не молчаливая потеря."""
     raskladka = vidzhety_service.sohranit(db, user, [w.model_dump() for w in payload.widgets])
-    return {"layout": raskladka, "kinds": _reestr()}
+    return {"layout": raskladka, "kinds": _reestr(), "grid": _setka()}
 
 
 @router.delete("/layout")
 def reset_dashboard_layout(user: User = Depends(require_staff), db: Session = Depends(get_db)):
     """Вернуть умолчание экрана."""
     vidzhety_service.sbrosit(db, user)
-    return {"layout": None, "kinds": _reestr()}
+    return {"layout": None, "kinds": _reestr(), "grid": _setka()}
