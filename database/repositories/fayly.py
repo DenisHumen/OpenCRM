@@ -23,6 +23,7 @@ from database.models import (
     DocumentFile,
     FileFolder,
     FileLink,
+    FileLinkGuest,
     FileLinkView,
     Product,
     ProductPhoto,
@@ -364,8 +365,17 @@ def udalit_ssylku(db: Session, ssylka_: FileLink) -> None:
     db.flush()
 
 
-def otmetit_otkrytie(db: Session, link_id: int, ip_hash: str, user_agent: str) -> None:
-    db.add(FileLinkView(link_id=link_id, ip_hash=ip_hash, user_agent=user_agent[:300]))
+def otmetit_otkrytie(
+    db: Session, link_id: int, ip_hash: str, user_agent: str, guest_email: str = ""
+) -> None:
+    db.add(
+        FileLinkView(
+            link_id=link_id,
+            ip_hash=ip_hash,
+            user_agent=user_agent[:300],
+            guest_email=(guest_email or "")[:200],
+        )
+    )
 
 
 def schyot_otkrytiy(db: Session, link_id: int) -> tuple[int, int, object | None]:
@@ -389,3 +399,72 @@ def schyot_otkrytiy(db: Session, link_id: int) -> tuple[int, int, object | None]
 
 def rabota_po_nomeru(db: Session, work_id: int) -> Work | None:
     return db.execute(select(Work).where(Work.id == work_id)).scalar_one_or_none()
+
+
+# --- приглашённые по почте -----------------------------------------------------
+
+
+def gosti(db: Session, link_id: int) -> list[FileLinkGuest]:
+    return list(
+        db.execute(
+            select(FileLinkGuest)
+            .where(FileLinkGuest.link_id == link_id)
+            .order_by(FileLinkGuest.email, FileLinkGuest.id)
+        ).scalars()
+    )
+
+
+def gosti_mnogih(db: Session, link_ids: list[int]) -> dict[int, int]:
+    """Сколько приглашённых у каждой ссылки. Одним запросом: значок в строке
+    нужен у каждой, а по запросу на строку это обращение к базе на каждую."""
+    if not link_ids:
+        return {}
+    stroki = db.execute(
+        select(FileLinkGuest.link_id, func.count(FileLinkGuest.id))
+        .where(FileLinkGuest.link_id.in_(link_ids))
+        .group_by(FileLinkGuest.link_id)
+    ).all()
+    return {link_id: skolko for link_id, skolko in stroki}
+
+
+def gost_est(db: Session, link_id: int, email: str) -> bool:
+    return bool(
+        db.execute(
+            select(func.count(FileLinkGuest.id)).where(
+                FileLinkGuest.link_id == link_id, FileLinkGuest.email == email
+            )
+        ).scalar_one()
+    )
+
+
+def pozvat(db: Session, link_id: int, email: str) -> FileLinkGuest:
+    gost = FileLinkGuest(link_id=link_id, email=email)
+    db.add(gost)
+    db.flush()
+    return gost
+
+
+def vycherknut(db: Session, link_id: int, email: str) -> bool:
+    gost = db.execute(
+        select(FileLinkGuest).where(
+            FileLinkGuest.link_id == link_id, FileLinkGuest.email == email
+        )
+    ).scalar_one_or_none()
+    if gost is None:
+        return False
+    db.delete(gost)
+    db.flush()
+    return True
+
+
+def otkrytiya(db: Session, link_id: int, skolko: int) -> list[FileLinkView]:
+    """Последние открытия ссылки. Не всё подряд: журнал читают, чтобы решить,
+    отзывать ли, а для этого хватает последних."""
+    return list(
+        db.execute(
+            select(FileLinkView)
+            .where(FileLinkView.link_id == link_id)
+            .order_by(FileLinkView.viewed_at.desc(), FileLinkView.id.desc())
+            .limit(skolko)
+        ).scalars()
+    )

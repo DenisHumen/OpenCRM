@@ -126,6 +126,11 @@ STRINGS = {
         "file_open": "Open the file",
         "file_no_preview": "This kind of file cannot be shown in a browser — ask the sender for a copy.",
         "file_no_print": "Printing is off for a view-only file.",
+        "file_guest_title": "This file is for invited people",
+        "file_guest_hint": "Enter the email address it was sent to",
+        "file_guest_submit": "Open",
+        "file_guest_wrong": "That address is not on the list — check it and try again",
+        "file_guest_bottom": "Your name goes into the open log and onto the file",
     },
     "ru": {
         "works": "работ",
@@ -159,6 +164,11 @@ STRINGS = {
         "file_open": "Открыть файл",
         "file_no_preview": "Такой файл браузер показать не умеет — попросите копию у отправителя.",
         "file_no_print": "Печать выключена: файл открыт только для просмотра.",
+        "file_guest_title": "Файл открыт приглашённым",
+        "file_guest_hint": "Введите почту, на которую его прислали",
+        "file_guest_submit": "Открыть",
+        "file_guest_wrong": "Этого адреса нет в списке — проверьте и попробуйте ещё раз",
+        "file_guest_bottom": "Ваша почта попадёт в журнал открытий и на сам файл",
     },
 }
 
@@ -606,6 +616,41 @@ def _file_pin_ok(request: Request, ssylka) -> bool:
     return bool(value and tokens.check_pin_access_cookie(value, ssylka.id, ssylka.pin_hash or ""))
 
 
+#: Пропуск приглашённого. Одна ссылка — одна cookie, как и у кода: общая на все
+#: ссылки открывала бы вторую по первой.
+FILE_GUEST_COOKIE_PREFIX = "opencrm_fg_"
+
+
+def _file_guest_cookie(link_id: int) -> str:
+    return f"{FILE_GUEST_COOKIE_PREFIX}{link_id}"
+
+
+def _gost(request: Request, db: Session, ssylka) -> str:
+    """Чья почта назвалась по этой ссылке и всё ещё есть в списке.
+
+    Список сверяется на КАЖДОМ обращении, а не один раз у двери: пропуск живёт
+    сутки, и без сверки вычеркнутый гость смотрел бы файл до их конца — то есть
+    «вычеркнуть» не значило бы ничего.
+
+    Подпись пропуска проверяется ключом сервера: подставить в cookie чужой
+    адрес и получить его в водяном знаке нельзя — знак должен говорить правду,
+    иначе он хуже, чем ничего.
+    """
+    if ssylka.krug != "invited":
+        return ""
+    value = request.cookies.get(_file_guest_cookie(ssylka.id))
+    adres = tokens.read_guest_cookie(value or "", ssylka.id)
+    if not adres or not fayly_ssylki_service.gost_pozvan(db, ssylka, adres):
+        return ""
+    return adres
+
+
+def _file_guest_ok(ssylka, gost: str) -> bool:
+    """Принимает уже добытую почту: `_gost` ходит в базу, и спрашивать дважды за
+    одно обращение незачем."""
+    return ssylka.krug != "invited" or bool(gost)
+
+
 @router.get("/f/{token}")
 def fayl_po_ssylke(token: str, request: Request, db: Session = Depends(get_db)):
     otkryto = fayly_ssylki_service.otkryt(db, token)
@@ -621,8 +666,17 @@ def fayl_po_ssylke(token: str, request: Request, db: Session = Depends(get_db)):
             {"site": site, "t": strings, "token": token, "error": None},
         )
 
+    gost = _gost(request, db, ssylka)
+    if not _file_guest_ok(ssylka, gost):
+        # Страница почты тоже молчит о файле: назвать имя до проверки значило
+        # бы отдать его всякому, кому переслали адрес.
+        return templates.TemplateResponse(
+            request, "file_guest.html",
+            {"site": site, "t": strings, "token": token, "error": None},
+        )
+
     fayly_ssylki_service.otmetit_otkrytie(
-        db, ssylka, client_ip(request), request.headers.get("user-agent", "")
+        db, ssylka, client_ip(request), request.headers.get("user-agent", ""), gost
     )
     imya = fayly_ssylki_service.imya_fayla(fayl)
     return templates.TemplateResponse(
@@ -637,8 +691,8 @@ def fayl_po_ssylke(token: str, request: Request, db: Session = Depends(get_db)):
             "vid": fayly_ssylki_service.vid_pokaza(imya),
             # Ключ живёт десять минут: скопированный со страницы адрес картинки
             # перестаёт работать раньше, чем дойдёт до того, кому его переслали.
-            "klyuch": fayly_ssylki_service.klyuch_prosmotra(ssylka),
-            "znak": fayly_ssylki_service.znak(ssylka),
+            "klyuch": fayly_ssylki_service.klyuch_prosmotra(ssylka, gost),
+            "znak": fayly_ssylki_service.znak(ssylka, gost),
         },
     )
 
@@ -704,7 +758,8 @@ def fayl_skachat(token: str, request: Request, db: Session = Depends(get_db)):
     if otkryto is None:
         return _closed_page(request, db)
     ssylka, fayl = otkryto
-    if not _file_pin_ok(request, ssylka):
+    gost = _gost(request, db, ssylka)
+    if not _file_pin_ok(request, ssylka) or not _file_guest_ok(ssylka, gost):
         return _closed_page(request, db, status_code=401)
     if ssylka.rezhim != "download":
         return _closed_page(request, db, status_code=403)
@@ -712,7 +767,7 @@ def fayl_skachat(token: str, request: Request, db: Session = Depends(get_db)):
     if put is None or not put.is_file():
         return _closed_page(request, db)
     fayly_ssylki_service.otmetit_otkrytie(
-        db, ssylka, client_ip(request), request.headers.get("user-agent", "")
+        db, ssylka, client_ip(request), request.headers.get("user-agent", ""), gost
     )
     return FileResponse(
         put,
@@ -726,8 +781,8 @@ def fayl_skachat(token: str, request: Request, db: Session = Depends(get_db)):
 def fayl_posmotret(token: str, request: Request, k: str = "", db: Session = Depends(get_db)):
     """Байты файла для показа НА СТРАНИЦЕ, а не в файл.
 
-    Те же пять проверок, что у страницы, плюс ключ на десять минут. Ключ
-    привязан к ссылке, а не к человеку, — за ней человека нет; он закрывает
+    Те же проверки, что у страницы, плюс ключ на десять минут. Ключ привязан
+    к ссылке, а у приглашённых — и к почте смотрящего. Он закрывает
     «скопировал адрес картинки и переслал», и это записано честно: снимок
     экрана он не закрывает, и на странице владельца так и написано.
 
@@ -739,9 +794,10 @@ def fayl_posmotret(token: str, request: Request, k: str = "", db: Session = Depe
     if otkryto is None:
         return _closed_page(request, db)
     ssylka, fayl = otkryto
-    if not _file_pin_ok(request, ssylka):
+    gost = _gost(request, db, ssylka)
+    if not _file_pin_ok(request, ssylka) or not _file_guest_ok(ssylka, gost):
         return _closed_page(request, db, status_code=401)
-    if not fayly_ssylki_service.klyuch_veren(ssylka, k):
+    if not fayly_ssylki_service.klyuch_veren(ssylka, k, gost):
         return _closed_page(request, db, status_code=403)
     put = fayly_ssylki_service.bayty(db, ssylka, fayl)
     if put is None or not put.is_file():
@@ -751,3 +807,67 @@ def fayl_posmotret(token: str, request: Request, k: str = "", db: Session = Depe
         media_type=getattr(fayl, "mime", "application/octet-stream"),
         headers={"Cache-Control": "no-store", "Content-Disposition": "inline"},
     )
+
+
+@router.post("/f/{token}/guest")
+def fayl_gost(
+    token: str,
+    request: Request,
+    email: str = Form(default=""),
+    db: Session = Depends(get_db),
+):
+    """Назвать почту по ссылке для приглашённых.
+
+    Отказ выглядит одинаково при «такого адреса не звали» и при «адрес набран
+    криво»: разные ответы отдавали бы список по одному адресу за попытку.
+    Счётчик попыток тот же, что у кода, и по той же причине.
+    """
+    otkryto = fayly_ssylki_service.otkryt(db, token)
+    if otkryto is None:
+        return _closed_page(request, db)
+    ssylka, _fayl = otkryto
+    site, strings = _ctx(db)
+    if ssylka.krug != "invited":
+        return RedirectResponse(url=f"/f/{token}", status_code=303)
+
+    try:
+        zanyato = pin_limiter.proverit_i_zanyat(f"fg:{ssylka.id}:{tokens.hash_ip(client_ip(request))}")
+    except errors.LimiterUnavailableError:
+        # Счётчика нет — не пускаем вовсе: без него список почт перебирается
+        # без предела, причём именно тогда, когда за системой никто не смотрит.
+        return templates.TemplateResponse(
+            request, "file_guest.html",
+            {"site": site, "t": strings, "token": token, "error": strings["pin_rate_limited"]},
+            status_code=503,
+        )
+    if zanyato:
+        bezopasnost.otmetit("pin_zapert")
+        return templates.TemplateResponse(
+            request, "file_guest.html",
+            {"site": site, "t": strings, "token": token, "error": strings["pin_rate_limited"]},
+            status_code=429,
+        )
+
+    if not fayly_ssylki_service.gost_pozvan(db, ssylka, email):
+        bezopasnost.otmetit("pin_promah")
+        return templates.TemplateResponse(
+            request, "file_guest.html",
+            {"site": site, "t": strings, "token": token, "error": strings["file_guest_wrong"]},
+            status_code=401,
+        )
+
+    # Счётчик НЕ обнуляется удачей — этим дверь почты отличается от двери кода.
+    #
+    # Знающему код узнавать больше нечего, а знающий один званый адрес только
+    # начал: сбрасывай счёт удачей, и этот адрес стал бы кнопкой сброса — четыре
+    # проверяемых адреса на пять запросов, без пауз и без блокировок.
+    otvet = RedirectResponse(url=f"/f/{token}", status_code=303)
+    otvet.set_cookie(
+        _file_guest_cookie(ssylka.id),
+        tokens.make_guest_cookie(ssylka.id, fayly_ssylki_service.pochta(email)),
+        httponly=True,
+        secure=get_settings().cookies_secure,
+        samesite="lax",
+        max_age=tokens.PIN_ACCESS_SECONDS,
+    )
+    return otvet

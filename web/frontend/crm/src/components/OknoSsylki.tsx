@@ -5,6 +5,7 @@ import { ConfirmModal, Modal, Spinner } from "./ui";
 import { api } from "../lib/api";
 import { copyText } from "../lib/clipboard";
 import { useApp } from "../lib/app";
+import { formatDateTime } from "../lib/format";
 import { useGuard } from "../lib/guard";
 
 /**
@@ -14,15 +15,18 @@ import { useGuard } from "../lib/guard";
  * досок — код, срок, счётчик открытий, отзыв, — и она уже проверена людьми;
  * писать вторую значило бы получить два набора условий на один вопрос.
  *
- * **«Только приглашённым» здесь нет.** Список почт и журнал входов по нему —
- * отдельная работа; вариант в окне без него был бы обещанием, а не выбором.
+ * **«Только приглашённым» отвечает не на «как не пустить чужого», а на «кто
+ * именно смотрел».** Почта называется на входе, сверяется со списком и попадает
+ * и в журнал открытий, и в водяной знак поверх файла.
  */
 
 interface Ssylka {
   id: number;
   url: string;
   rezhim: "view" | "download";
-  krug: "link" | "code";
+  krug: "link" | "code" | "invited";
+  guests: string[];
+  log: { at: string | null; email: string }[];
   is_active: boolean;
   expires_at: string | null;
   has_code: boolean;
@@ -49,9 +53,10 @@ function ostalos(iso: string | null): number {
 }
 
 export function OknoSsylki({ nomer, imya, onClose }: { nomer: string; imya: string; onClose: () => void }) {
-  const { t, toast, toastError } = useApp();
+  const { t, locale, toast, toastError } = useApp();
   const [ssylka, setSsylka] = useState<Ssylka | null | undefined>(undefined);
   const [kod, setKod] = useState("");
+  const [gost, setGost] = useState("");
   const [otzyv, setOtzyv] = useState(false);
   const guard = useGuard();
 
@@ -84,6 +89,35 @@ export function OknoSsylki({ nomer, imya, onClose }: { nomer: string; imya: stri
         : await api.post<{ link: Ssylka }>(`/files/${encodeURIComponent(nomer)}/link`, telo);
       setSsylka(otvet.link);
       setKod("");
+    } catch (e) {
+      toastError(e);
+    } finally {
+      guard.free();
+    }
+  };
+
+  const pozvat = async () => {
+    if (!ssylka || !guard.take()) return;
+    try {
+      const otvet = await api.post<{ link: Ssylka }>(`/files/links/${ssylka.id}/guests`, {
+        email: gost.trim(),
+      });
+      setSsylka(otvet.link);
+      setGost("");
+    } catch (e) {
+      toastError(e);
+    } finally {
+      guard.free();
+    }
+  };
+
+  const vycherknut = async (email: string) => {
+    if (!ssylka || !guard.take()) return;
+    try {
+      const otvet = await api.del<{ link: Ssylka }>(
+        `/files/links/${ssylka.id}/guests?email=${encodeURIComponent(email)}`,
+      );
+      setSsylka(otvet.link);
     } catch (e) {
       toastError(e);
     } finally {
@@ -127,7 +161,7 @@ export function OknoSsylki({ nomer, imya, onClose }: { nomer: string; imya: stri
             <div className="ssylka-vybor">
               <button
                 type="button"
-                className={"ssylka-knopka" + (ssylka?.krug !== "code" ? " ssylka-knopka-on" : "")}
+                className={"ssylka-knopka" + (!ssylka || ssylka.krug === "link" ? " ssylka-knopka-on" : "")}
                 disabled={guard.busy}
                 onClick={() => void zapisat({ krug: "link", pin: null })}
               >
@@ -143,6 +177,16 @@ export function OknoSsylki({ nomer, imya, onClose }: { nomer: string; imya: stri
               >
                 <span className="ssylka-imya">{t("linkByCode")}</span>
                 <span className="ssylka-tishe">{t("linkByCodeHint")}</span>
+              </button>
+              <button
+                type="button"
+                className={"ssylka-knopka" + (ssylka?.krug === "invited" ? " ssylka-knopka-on" : "")}
+                disabled={guard.busy || !ssylka || ssylka.guests.length === 0}
+                title={!ssylka || ssylka.guests.length === 0 ? t("linkInvitedFirst") : undefined}
+                onClick={() => void zapisat({ krug: "invited" })}
+              >
+                <span className="ssylka-imya">{t("linkInvited")}</span>
+                <span className="ssylka-tishe">{t("linkInvitedHint")}</span>
               </button>
             </div>
             {/* Поле кода стоит рядом с выбором, а не в отдельном блоке ниже:
@@ -170,6 +214,51 @@ export function OknoSsylki({ nomer, imya, onClose }: { nomer: string; imya: stri
               )}
             </label>
           </div>
+
+          {ssylka && (
+            <div className="ssylka-blok">
+              <div className="ssylka-podpis">{t("linkGuests")}</div>
+              <div className="ssylka-gosti">
+                {ssylka.guests.map((g) => (
+                  <span className="ssylka-gost" key={g}>
+                    <span className="truncate">{g}</span>
+                    <button
+                      type="button"
+                      className="btn-icon ssylka-gost-snyat"
+                      aria-label={t("linkGuestRemove")}
+                      title={t("linkGuestRemove")}
+                      disabled={guard.busy}
+                      onClick={() => void vycherknut(g)}
+                    >
+                      <Icon name="x" size={11} />
+                    </button>
+                  </span>
+                ))}
+                {ssylka.guests.length === 0 && <span className="ssylka-tishe">{t("linkGuestsNone")}</span>}
+              </div>
+              <div className="ssylka-adres ssylka-zvat">
+                <input
+                  className="input input-sm"
+                  type="email"
+                  inputMode="email"
+                  maxLength={200}
+                  placeholder="client@example.com"
+                  aria-label={t("linkGuestAdd")}
+                  value={gost}
+                  onChange={(e) => setGost(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && void pozvat()}
+                />
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  disabled={guard.busy || !gost.includes("@")}
+                  onClick={() => void pozvat()}
+                >
+                  {t("linkGuestAdd")}
+                </button>
+              </div>
+            </div>
+          )}
 
           <div className="ssylka-blok">
             <div className="ssylka-podpis">{t("linkWhat")}</div>
@@ -202,7 +291,9 @@ export function OknoSsylki({ nomer, imya, onClose }: { nomer: string; imya: stri
             <div className="ssylka-blok ssylka-zashchita">
               <div className="ssylka-podpis">{t("linkDrm")}</div>
               <div className="ssylka-tishe">{t("linkDrmWhat")}</div>
-              <div className="ssylka-chestno">{t("linkDrmHonest")}</div>
+              <div className="ssylka-chestno">
+                {t(ssylka?.krug === "invited" ? "linkDrmHonestGuest" : "linkDrmHonest")}
+              </div>
             </div>
           )}
 
@@ -234,8 +325,21 @@ export function OknoSsylki({ nomer, imya, onClose }: { nomer: string; imya: stri
                 </button>
               </div>
               <div className="ssylka-schyot">
-                {t("linkOpened", { n: ssylka.views_count, people: ssylka.unique_views_count })}
+                {t("linkOpened", {
+                  n: ssylka.views_count,
+                  people: t("linkOpenedPeople", { people: ssylka.unique_views_count }),
+                })}
               </div>
+              {ssylka.log.length > 0 && (
+                <div className="ssylka-zhurnal">
+                  {ssylka.log.map((z, i) => (
+                    <div className="ssylka-zapis" key={`${z.at}-${i}`}>
+                      <span className="truncate">{z.email || t("linkOpenAnon")}</span>
+                      <span className="ssylka-kogda">{z.at ? formatDateTime(z.at, locale) : "—"}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
               <button type="button" className="text-link danger" onClick={() => setOtzyv(true)}>
                 {t("linkRevoke")}
               </button>

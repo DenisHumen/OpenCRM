@@ -13,7 +13,15 @@
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Integer, String
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 
@@ -72,12 +80,15 @@ REZHIM_SMOTRET = "view"
 REZHIM_SKACHAT = "download"
 REZHIMY = (REZHIM_SMOTRET, REZHIM_SKACHAT)
 
-#: Кому открыта ссылка. «Только приглашённым» здесь пока нет: список почт и
-#: журнал входов по нему — отдельная работа, а вариант в окне без него был бы
-#: обещанием.
+#: Кому открыта ссылка.
+#:
+#: `invited` отвечает не на «как не пустить чужого», а на «кто именно смотрел»:
+#: почта называется на входе, сверяется со списком и попадает и в журнал, и в
+#: водяной знак поверх файла. Утёкший снимок экрана показывает, от кого он ушёл.
 KRUG_SSYLKA = "link"
 KRUG_KOD = "code"
-KRUGI = (KRUG_SSYLKA, KRUG_KOD)
+KRUG_GOSTI = "invited"
+KRUGI = (KRUG_SSYLKA, KRUG_KOD, KRUG_GOSTI)
 
 
 class FileLink(Base):
@@ -141,3 +152,33 @@ class FileLinkView(Base):
     )
     ip_hash: Mapped[str] = mapped_column(String(64), default="")
     user_agent: Mapped[str] = mapped_column(String(300), default="")
+    # Чья это была почта, если ссылка для приглашённых. Пусто — круг «по
+    # ссылке» или «по коду»: там смотрящий анонимен по устройству, и писать
+    # сюда «аноним» значило бы выдумать имя, которого никто не называл.
+    guest_email: Mapped[str] = mapped_column(String(200), default="")
+
+
+class FileLinkGuest(Base):
+    """Приглашённый: одна почта в списке одной ссылки.
+
+    Своя таблица, а не строка через запятую в `file_links`: список правят по
+    одному адресу, ищут по одному адресу и считают по одному адресу, а строка
+    через запятую не умеет ни первого, ни второго, ни третьего — и однажды
+    получает адрес с запятой внутри.
+
+    Почта лежит приведённой к нижнему регистру: «Ivan@X.ru» и «ivan@x.ru» —
+    один человек, и пустить первого, отказав второму, значило бы сделать
+    список зависящим от того, как гость набрал своё имя.
+    """
+
+    __tablename__ = "file_link_guests"
+    __table_args__ = (
+        UniqueConstraint("link_id", "email", name="uq_file_link_guests_link_email"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    link_id: Mapped[int] = mapped_column(
+        ForeignKey("file_links.id", ondelete="CASCADE"), index=True
+    )
+    email: Mapped[str] = mapped_column(String(200))
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

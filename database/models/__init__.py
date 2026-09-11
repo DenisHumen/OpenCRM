@@ -36,7 +36,13 @@ from database.models.klyuch import (
     TwoFactorKey,
     TwoFactorKeyAccess,
 )
-from database.models.fayl import FileFolder, FileLink, FileLinkView, StoredFile
+from database.models.fayl import (
+    FileFolder,
+    FileLink,
+    FileLinkGuest,
+    FileLinkView,
+    StoredFile,
+)
 from database.models.audit import AuditEvent
 from database.models.notification import Notification
 
@@ -89,6 +95,7 @@ __all__ = [
     "Notification",
     "FileFolder",
     "FileLink",
+    "FileLinkGuest",
     "FileLinkView",
     "StoredFile",
     "KeyCategory",

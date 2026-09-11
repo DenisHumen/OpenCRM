@@ -80,21 +80,47 @@ def _view_serializer() -> URLSafeTimedSerializer:
     return URLSafeTimedSerializer(get_settings().secret_key, salt="file-view-key")
 
 
-def make_view_key(link_id: int) -> str:
+def make_view_key(link_id: int, gost: str = "") -> str:
     """Ключ на просмотр файла по ссылке.
 
-    Привязан к ССЫЛКЕ, а не к человеку, — потому что человека за ней нет: адрес
-    открывают анонимно. Что он вправду закрывает: «скопировал адрес картинки со
-    страницы и переслал дальше» — через десять минут такой адрес мёртв, а сама
-    страница остаётся под кодом и сроком. Что не закрывает: снимок экрана; об
-    этом на странице владельца написано прямо.
+    Привязан к ссылке, а у приглашённых — ещё и к почте смотрящего. Что он
+    вправду закрывает: «скопировал адрес картинки со страницы и переслал
+    дальше» — через десять минут такой адрес мёртв, а у приглашённых мёртв и
+    раньше, если у получателя нет пропуска на ту же почту. Что не закрывает:
+    снимок экрана; об этом на странице владельца написано прямо.
     """
-    return _view_serializer().dumps({"lid": link_id})
+    return _view_serializer().dumps({"lid": link_id, "kto": gost or ""})
 
 
-def check_view_key(value: str, link_id: int) -> bool:
+def check_view_key(value: str, link_id: int, gost: str = "") -> bool:
     try:
         data = _view_serializer().loads(value, max_age=VIEW_KEY_SECONDS)
     except (BadSignature, SignatureExpired):
         return False
-    return isinstance(data, dict) and data.get("lid") == link_id
+    if not isinstance(data, dict) or data.get("lid") != link_id:
+        return False
+    # Ключ, выданный одному гостю, не открывает файл другому: пересланная
+    # вместе со страницей подпись без пропуска на ту же почту мертва.
+    return (data.get("kto") or "") == (gost or "")
+
+
+def _guest_serializer() -> URLSafeTimedSerializer:
+    return URLSafeTimedSerializer(get_settings().secret_key, salt="file-guest-access")
+
+
+def make_guest_cookie(link_id: int, email: str) -> str:
+    """Пропуск приглашённого: он назвал почту из списка этой ссылки."""
+    return _guest_serializer().dumps({"lid": link_id, "kto": email})
+
+
+def read_guest_cookie(value: str, link_id: int) -> str:
+    """Чья почта в пропуске или пусто. Подпись проверяется ключом сервера:
+    подставить чужой адрес и получить его в водяном знаке нельзя — знак обязан
+    говорить правду, иначе он хуже, чем ничего."""
+    try:
+        data = _guest_serializer().loads(value, max_age=PIN_ACCESS_SECONDS)
+    except (BadSignature, SignatureExpired):
+        return ""
+    if not isinstance(data, dict) or data.get("lid") != link_id:
+        return ""
+    return str(data.get("kto") or "")

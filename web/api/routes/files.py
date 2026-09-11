@@ -201,3 +201,32 @@ def otozvat_ssylku(
     и её включают обратно по ошибке."""
     fayly_ssylki_service.otozvat(db, actor, link_id)
     return {"message": "Link revoked"}
+
+
+class GostIn(BaseModel):
+    email: str = Field(max_length=200)
+
+
+@router.post("/links/{link_id}/guests")
+def pozvat_gostya(
+    link_id: int,
+    payload: GostIn,
+    actor: User = Depends(require_perm("files", "share")),
+    db: Session = Depends(get_db),
+):
+    """Позвать по почте. Тот же адрес дважды — не ошибка, а «уже позвали»."""
+    ssylka = fayly_ssylki_service.pozvat(db, actor, link_id, payload.email)
+    return {"link": fayly_ssylki_service.kartochka(db, ssylka)}
+
+
+@router.delete("/links/{link_id}/guests")
+def vycherknut_gostya(
+    link_id: int,
+    email: str = Query(max_length=200),
+    actor: User = Depends(require_perm("files", "share")),
+    db: Session = Depends(get_db),
+):
+    """Вычеркнуть из списка. Последнего у ссылки «приглашённым» вычеркнуть
+    нельзя: круг остался бы без того, чем он закрыт, — то есть открытым."""
+    ssylka = fayly_ssylki_service.vycherknut(db, actor, link_id, email)
+    return {"link": fayly_ssylki_service.kartochka(db, ssylka)}

@@ -48,6 +48,7 @@ from database.models import (
     ProductBarcode,
     FileFolder,
     FileLink,
+    FileLinkGuest,
     ProductPhoto,
     Role,
     RolePermission,
@@ -171,6 +172,7 @@ TOPICS: dict[type, Topic | Callable | None] = {
     FileFolder: T_FILES,
     StoredFile: T_FILES,
     FileLink: T_FILES,
+    FileLinkGuest: T_FILES,
     # Открытие ссылки пишется на каждый заход получателя — это счётчик, а
     # не то, на что смотрят живьём; окно ссылки перечитывает его само.
     FileLinkView: None,

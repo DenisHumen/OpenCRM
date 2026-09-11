@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% from "_macros.html" import brand_mark %}
+
+{% block title %}{{ site.brand_name }}{% endblock %}
+
+{% block og %}
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="{{ site.brand_name }}">
+<meta property="og:title" content="{{ site.brand_name }}">
+<meta name="robots" content="noindex, nofollow">
+{% endblock %}
+
+{% block style %}
+<style>
+  .gost-ekran {
+    min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    padding: 32px; text-align: center;
+  }
+  .gost-ekran .brand-mark { margin-bottom: 48px; animation: rise 300ms ease-out both; }
+  .gost-ekran h1 { font-size: clamp(24px, 3.6vw, 32px); margin-bottom: 10px; animation: rise 300ms ease-out 60ms both; }
+  .gost-hint { color: var(--muted); font-size: 14.5px; margin-bottom: 30px; animation: rise 300ms ease-out 120ms both; }
+  .gost-forma { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; animation: rise 300ms ease-out 150ms both; }
+  .gost-forma input {
+    height: 46px; width: min(320px, 78vw); padding: 0 14px; border-radius: 11px;
+    border: 1px solid var(--border); background: var(--surface); color: var(--text); font-size: 15px;
+  }
+  .gost-forma input:focus { outline: none; border-color: var(--faint); }
+  .gost-forma button {
+    height: 46px; padding: 0 22px; border-radius: 11px; border: none;
+    background: var(--text); color: var(--bg); font-size: 15px; font-weight: 600; cursor: pointer;
+  }
+  .gost-msg { font-size: 13px; margin-top: 18px; min-height: 18px; color: var(--danger); }
+  .gost-niz { color: var(--faint); font-size: 13px; margin-top: 40px; animation: rise 300ms ease-out 180ms both; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="gost-ekran">
+  {{ brand_mark(site) }}
+  <h1>{{ t.file_guest_title }}</h1>
+  <div class="gost-hint">{{ t.file_guest_hint }}</div>
+  <form class="gost-forma" method="post" action="/f/{{ token }}/guest">
+    <input name="email" type="email" inputmode="email" autocomplete="email" autofocus
+           maxlength="200" aria-label="{{ t.file_guest_hint }}">
+    <button type="submit">{{ t.file_guest_submit }}</button>
+  </form>
+  <div class="gost-msg">{{ error or ' ' }}</div>
+  {# Говорим заранее, что почта попадёт в журнал и на сам файл: узнать об этом
+     после того, как открыл, — неприятная неожиданность. #}
+  <div class="gost-niz">{{ t.file_guest_bottom }}</div>
+</div>
+{% endblock %}

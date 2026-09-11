@@ -5028,7 +5028,9 @@ html { scroll-behavior: smooth; }
 .ssylka-fayl { color: var(--muted); font-size: 12.5px; margin-bottom: 16px; }
 .ssylka-blok { margin-bottom: 18px; }
 .ssylka-podpis { color: var(--faint); font-size: 10.5px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; margin-bottom: 8px; }
-.ssylka-vybor { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+/* Кругов три, и в два столбца третий уезжал бы один под соседями. `auto-fit`
+   держит их в ряд, пока хватает ширины, и складывает, когда нет. */
+.ssylka-vybor { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
 /* Выбор кнопками, а не переключателем: у каждого варианта есть пояснение под
    именем, и в строку радиокнопки оно не помещается. */
 .ssylka-knopka {
@@ -5056,3 +5058,17 @@ html { scroll-behavior: smooth; }
 /* Честная оговорка отдельным цветом: её читают те, кто иначе решил бы, что
    файл защищён полностью. */
 .ssylka-chestno { color: var(--warning); font-size: 11.5px; line-height: 1.5; margin-top: 8px; }
+.ssylka-gosti { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+/* Приглашённый — пилюля с крестиком: список правят по одному адресу, и
+   отдельная строка на каждого заняла бы окно целиком. */
+.ssylka-gost {
+  display: inline-flex; align-items: center; gap: 4px; max-width: 100%;
+  padding: 3px 4px 3px 10px; border-radius: 8px; background: var(--well-off);
+  color: var(--muted); font-size: 12px;
+}
+.ssylka-gost-snyat { width: 18px; height: 18px; border: 0; }
+.ssylka-zvat { margin-top: 0; }
+.ssylka-zhurnal { margin: 8px 0 10px; max-height: 148px; overflow: auto; }
+.ssylka-zapis { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 4px 0; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 12px; }
+.ssylka-zapis:last-child { border-bottom: 0; }
+.ssylka-kogda { color: var(--faint); white-space: nowrap; font-variant-numeric: tabular-nums; }
