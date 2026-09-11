@@ -450,3 +450,330 @@ def test_kod_zakryvaet_i_prosmotr(root_client):
     assert "/view?k=" not in guest.get(f"/f/{token}").text
     assert guest.get(f"/f/{token}/view").status_code == 401, "сначала код, потом ключ"
     root_client.delete(f"{API}/files/links/{ssylka['id']}")
+
+
+def _pozvat(client, link_id, email):
+    otvet = client.post(f"{API}/files/links/{link_id}/guests", json={"email": email})
+    assert otvet.status_code == 200, otvet.text
+    return otvet.json()["link"]
+
+
+def test_krug_priglashyonnym_bez_spiska_ne_zavoditsya(root_client):
+    """Круг без того, чем он закрыт, — открытая ссылка, которая называется
+    закрытой. «Приглашённым» с пустым списком — то же враньё, что «по коду»
+    без кода, и отвергается тем же местом."""
+    nomer = _svoy_fayl(root_client, "gosti.txt", "для своих")
+    # У новой ссылки список пуст всегда: звать некого, пока ссылки нет.
+    otkaz = root_client.post(
+        f"{API}/files/{nomer}/link", json={"rezhim": "view", "krug": "invited"}
+    )
+    assert otkaz.status_code == 422
+    assert otkaz.json()["error"]["code"] == "link_guests_required"
+
+    ssylka = root_client.post(
+        f"{API}/files/{nomer}/link", json={"rezhim": "view", "krug": "link"}
+    ).json()["link"]
+    ne_dali = root_client.patch(
+        f"{API}/files/links/{ssylka['id']}", json={"rezhim": "view", "krug": "invited"}
+    )
+    assert ne_dali.status_code == 422
+    assert ne_dali.json()["error"]["code"] == "link_guests_required"
+
+    _pozvat(root_client, ssylka["id"], "ivan@example.ru")
+    dali = root_client.patch(
+        f"{API}/files/links/{ssylka['id']}", json={"rezhim": "view", "krug": "invited"}
+    )
+    assert dali.status_code == 200, dali.text
+    assert dali.json()["link"]["krug"] == "invited"
+    root_client.delete(f"{API}/files/links/{ssylka['id']}")
+
+
+def test_pochta_privoditsya_k_odnomu_vidu(root_client):
+    """«Ivan@X.ru» и «ivan@x.ru» — один человек.
+
+    Пустить первого, отказав второму, значило бы поставить список в
+    зависимость от того, как гость набрал собственное имя.
+    """
+    nomer = _svoy_fayl(root_client, "odin-vid.txt", "почта")
+    ssylka = root_client.post(
+        f"{API}/files/{nomer}/link", json={"rezhim": "view", "krug": "link"}
+    ).json()["link"]
+
+    posle = _pozvat(root_client, ssylka["id"], "  Ivan@Example.RU ")
+    assert posle["guests"] == ["ivan@example.ru"]
+    # Тот же адрес дважды — не ошибка, а «уже позвали».
+    opyat = _pozvat(root_client, ssylka["id"], "IVAN@example.ru")
+    assert opyat["guests"] == ["ivan@example.ru"]
+
+    krivo = root_client.post(
+        f"{API}/files/links/{ssylka['id']}/guests", json={"email": "ivan-sobaki-net"}
+    )
+    assert krivo.status_code == 422
+    assert krivo.json()["error"]["code"] == "bad_email"
+    root_client.delete(f"{API}/files/links/{ssylka['id']}")
+
+
+def _gostevaya(root_client, imya="priglasili.png", email="ivan@example.ru"):
+    """Ссылка «только приглашённым» на просмотр: узел, карточка и токен.
+
+    Круг ставится вторым шагом, и это не обход: у новой ссылки список пуст
+    всегда — звать некого, пока ссылки нет.
+    """
+    nomer = _svoy_fayl(root_client, imya, "для приглашённых")
+    ssylka = root_client.post(
+        f"{API}/files/{nomer}/link", json={"rezhim": "view", "krug": "link"}
+    ).json()["link"]
+    _pozvat(root_client, ssylka["id"], email)
+    ssylka = root_client.patch(
+        f"{API}/files/links/{ssylka['id']}", json={"rezhim": "view", "krug": "invited"}
+    ).json()["link"]
+    return nomer, ssylka, ssylka["url"].rsplit("/", 1)[-1]
+
+
+def test_gost_nazyvaet_pochtu_i_ona_lozhitsya_na_fayl(root_client):
+    """Почта называется на входе и попадает и в журнал, и на сам файл.
+
+    Отказ «такого адреса не звали» выглядит так же, как «набрали криво»:
+    разные ответы отдавали бы список по одному адресу за попытку.
+    """
+    nomer, ssylka, token = _gostevaya(root_client)
+
+    guest = TestClient(app)
+    dver = guest.get(f"/f/{token}")
+    assert dver.status_code == 200
+    assert "priglasili.png" not in dver.text, "страница почты не раскрывает даже имени"
+    assert "/view?k=" not in dver.text, "ключ выдаётся после проверки, а не до"
+    assert guest.get(f"/f/{token}/view").status_code == 401, "сначала почта, потом байты"
+
+    chuzhoy = guest.post(f"/f/{token}/guest", data={"email": "petr@example.ru"})
+    krivo = guest.post(f"/f/{token}/guest", data={"email": "petr-sobaki-net"})
+    assert chuzhoy.status_code == krivo.status_code == 401
+    assert chuzhoy.text == krivo.text, "не званый и кривой отвечают одинаково"
+
+    proshli = guest.post(
+        f"/f/{token}/guest", data={"email": " Ivan@Example.RU "}, follow_redirects=False
+    )
+    assert proshli.status_code == 303
+
+    stranitsa = guest.get(f"/f/{token}")
+    assert "priglasili.png" in stranitsa.text
+    assert "ivan@example.ru" in stranitsa.text, "водяной знак несёт почту смотрящего"
+
+    zapisi = root_client.get(f"{API}/files/{nomer}/link").json()["link"]["log"]
+    assert zapisi[0]["email"] == "ivan@example.ru", "журнал знает, кто именно смотрел"
+    root_client.delete(f"{API}/files/links/{ssylka['id']}")
+
+
+def test_klyuch_gostya_ne_rabotaet_bez_ego_propuska(root_client):
+    """Пересланная вместе со страницей ссылка на картинку не открывает файл
+    тому, у кого нет пропуска на ту же почту.
+
+    Без этого страницу с готовым ключом пересылали бы целиком, и следующие
+    десять минут файл смотрел бы кто угодно — мимо списка и мимо журнала.
+    """
+    _nomer, ssylka, token = _gostevaya(root_client, "klyuch.png", "ivan@example.ru")
+
+    svoy = TestClient(app)
+    assert svoy.post(
+        f"/f/{token}/guest", data={"email": "ivan@example.ru"}, follow_redirects=False
+    ).status_code == 303
+    import re
+
+    klyuch = re.search(rf"/f/{token}/view\?k=([\w\.\-]+)", svoy.get(f"/f/{token}").text).group(1)
+    assert svoy.get(f"/f/{token}/view?k={klyuch}").status_code == 200
+
+    chuzhoy = TestClient(app)
+    assert chuzhoy.get(f"/f/{token}/view?k={klyuch}").status_code == 401
+    root_client.delete(f"{API}/files/links/{ssylka['id']}")
+
+
+def test_priglashyonnym_zakryto_i_skachivanie(root_client):
+    """Байты закрыты тем же списком, что и страница: иначе «приглашённым»
+    означало бы «страница приглашённым, а файл всем»."""
+    nomer = _svoy_fayl(root_client, "skachat-gostyu.txt", "копия")
+    ssylka = root_client.post(
+        f"{API}/files/{nomer}/link", json={"rezhim": "download", "krug": "link"}
+    ).json()["link"]
+    _pozvat(root_client, ssylka["id"], "ivan@example.ru")
+    root_client.patch(
+        f"{API}/files/links/{ssylka['id']}", json={"rezhim": "download", "krug": "invited"}
+    )
+    token = ssylka["url"].rsplit("/", 1)[-1]
+
+    guest = TestClient(app)
+    assert guest.get(f"/f/{token}/download").status_code == 401
+    guest.post(f"/f/{token}/guest", data={"email": "ivan@example.ru"}, follow_redirects=False)
+    skachalos = guest.get(f"/f/{token}/download")
+    assert skachalos.status_code == 200
+    assert skachalos.content.decode("utf-8") == "копия"
+    root_client.delete(f"{API}/files/links/{ssylka['id']}")
+
+
+def test_poslednego_priglashyonnogo_ne_vycherknut(root_client):
+    """Вычеркнуть последнего у ссылки «приглашённым» нельзя: круг остался бы
+    без того, чем он закрыт, — то есть открытым, называясь закрытым."""
+    _nomer, ssylka, _token = _gostevaya(root_client, "posledniy.png", "ivan@example.ru")
+    nomer = ssylka["id"]
+
+    _pozvat(root_client, nomer, "petr@example.ru")
+    ushyol = root_client.delete(f"{API}/files/links/{nomer}/guests?email=petr@example.ru")
+    assert ushyol.status_code == 200, ushyol.text
+    assert ushyol.json()["link"]["guests"] == ["ivan@example.ru"]
+
+    otkaz = root_client.delete(f"{API}/files/links/{nomer}/guests?email=ivan@example.ru")
+    assert otkaz.status_code == 422
+    assert otkaz.json()["error"]["code"] == "link_guests_required"
+
+    # Сменили круг — держать список стало незачем, и последний уходит.
+    root_client.patch(f"{API}/files/links/{nomer}", json={"rezhim": "view", "krug": "link"})
+    teper = root_client.delete(f"{API}/files/links/{nomer}/guests?email=ivan@example.ru")
+    assert teper.status_code == 200, teper.text
+    assert teper.json()["link"]["guests"] == []
+    root_client.delete(f"{API}/files/links/{nomer}")
+
+
+def _propusk(token, email):
+    """Гость с пропуском на эту ссылку — отдельный браузер."""
+    guest = TestClient(app)
+    otvet = guest.post(f"/f/{token}/guest", data={"email": email}, follow_redirects=False)
+    assert otvet.status_code == 303, otvet.text
+    return guest
+
+
+def _klyuch(guest, token):
+    import re
+
+    nayden = re.search(rf"/f/{token}/view\?k=([\w\.\-]+)", guest.get(f"/f/{token}").text)
+    assert nayden, "страница не выдала ключ просмотра"
+    return nayden.group(1)
+
+
+def test_vycherknutyy_gost_teryaet_dostup_srazu(root_client):
+    """Вычеркнули — доступ кончился в ту же секунду, а не с концом пропуска.
+
+    Пропуск живёт сутки, и сверяйся список один раз у двери, вычеркнутый
+    смотрел бы файл до их конца: «вычеркнуть» не значило бы ничего именно
+    тогда, когда его нажимают — когда человек ушёл из фирмы.
+    """
+    _nomer, ssylka, token = _gostevaya(root_client, "vycherknut.png", "ivan@example.ru")
+    _pozvat(root_client, ssylka["id"], "petr@example.ru")
+
+    ivan = _propusk(token, "ivan@example.ru")
+    assert "vycherknut.png" in ivan.get(f"/f/{token}").text
+    klyuch = _klyuch(ivan, token)
+    assert ivan.get(f"/f/{token}/view?k={klyuch}").status_code == 200
+
+    ushyol = root_client.delete(f"{API}/files/links/{ssylka['id']}/guests?email=ivan@example.ru")
+    assert ushyol.status_code == 200, ushyol.text
+
+    # Тот же браузер, тот же пропуск, тот же ещё живой ключ — и всё закрыто.
+    assert "vycherknut.png" not in ivan.get(f"/f/{token}").text
+    assert ivan.get(f"/f/{token}/view?k={klyuch}").status_code == 401
+    root_client.delete(f"{API}/files/links/{ssylka['id']}")
+
+
+def test_klyuch_odnogo_gostya_ne_otkryvaet_drugomu(root_client):
+    """Ключ просмотра принадлежит человеку, а не списку.
+
+    Оба званы, у обоих свой пропуск — и всё же чужим ключом файл не
+    открывается. Иначе ключ означал бы «любой из приглашённых», и журнал с
+    водяным знаком, где написана одна почта, говорили бы о другом человеке.
+    """
+    _nomer, ssylka, token = _gostevaya(root_client, "dvoe.png", "ivan@example.ru")
+    _pozvat(root_client, ssylka["id"], "petr@example.ru")
+
+    ivan = _propusk(token, "ivan@example.ru")
+    petr = _propusk(token, "petr@example.ru")
+    klyuch_ivana = _klyuch(ivan, token)
+
+    assert petr.get(f"/f/{token}/view?k={klyuch_ivana}").status_code == 403
+    assert petr.get(f"/f/{token}/view?k={_klyuch(petr, token)}").status_code == 200
+    assert "petr@example.ru" in petr.get(f"/f/{token}").text, "знак называет того, кто смотрит"
+    root_client.delete(f"{API}/files/links/{ssylka['id']}")
+
+
+def test_smena_kruga_snimaet_kod_i_ssylka_ostayotsya_rabochey(root_client):
+    """Код уходит вместе со своим кругом, а не переживает переключение.
+
+    Пока здесь снимался код только у круга «по ссылке», переключение «по коду»
+    → «приглашённым» оставляло хвост, и ссылка переставала работать у ВСЕХ:
+    код проверяется раньше почты, а гостю кода никто не давал. Чинить это было
+    нечем — единственная кнопка снятия кода переводит круг в «все по ссылке»,
+    то есть открывает файл всему интернету.
+    """
+    nomer = _svoy_fayl(root_client, "hvost-koda.png", "под кодом")
+    ssylka = root_client.post(
+        f"{API}/files/{nomer}/link",
+        json={"rezhim": "view", "krug": "code", "pin": "4079"},
+    ).json()["link"]
+    assert ssylka["has_code"] is True
+    _pozvat(root_client, ssylka["id"], "ivan@example.ru")
+
+    # Ровно то, что шлёт кнопка «Только приглашённым»: ключа `pin` в теле нет.
+    stalo = root_client.patch(
+        f"{API}/files/links/{ssylka['id']}", json={"rezhim": "view", "krug": "invited"}
+    ).json()["link"]
+    assert stalo["krug"] == "invited"
+    assert stalo["has_code"] is False, "код остался у чужого круга"
+
+    token = ssylka["url"].rsplit("/", 1)[-1]
+    guest = TestClient(app)
+    assert "hvost-koda.png" not in guest.get(f"/f/{token}").text
+    assert guest.post(
+        f"/f/{token}/guest", data={"email": "ivan@example.ru"}, follow_redirects=False
+    ).status_code == 303, "званый упёрся в код, которого ему не давали"
+    assert "hvost-koda.png" in guest.get(f"/f/{token}").text
+    root_client.delete(f"{API}/files/links/{ssylka['id']}")
+
+
+def test_kod_zavoditsya_tolko_svoemu_krugu(root_client):
+    """Код у круга, который его не просил, — ссылка, которая называется открытой
+    и спрашивает цифры.
+
+    Правило одно на оба пути: и выпуск, и правка заводят код только кругу «по
+    коду». Интерфейс такого тела не шлёт, но ручка открыта, и без этого
+    `{krug: "link", pin: "4079"}` давал бы ссылку, запертую от всех, кому её
+    дали.
+    """
+    nomer = _svoy_fayl(root_client, "chuzhoy-kod.txt", "открыто")
+    ssylka = root_client.post(
+        f"{API}/files/{nomer}/link",
+        json={"rezhim": "download", "krug": "link", "pin": "4079"},
+    ).json()["link"]
+    assert ssylka["has_code"] is False
+
+    token = ssylka["url"].rsplit("/", 1)[-1]
+    guest = TestClient(app)
+    assert "chuzhoy-kod.txt" in guest.get(f"/f/{token}").text, "открытая ссылка спросила код"
+    assert guest.get(f"/f/{token}/download").status_code == 200
+    root_client.delete(f"{API}/files/links/{ssylka['id']}")
+
+
+def test_udachnyy_adres_ne_obnulyaet_schyot_popytok(root_client):
+    """Знающий один званый адрес только начал, и этот адрес не кнопка сброса.
+
+    У двери кода обнуление на удаче безвредно: знающему код узнавать больше
+    нечего. Здесь иначе — сбрасывай счётчик удачей, и список вычитывался бы по
+    четыре проверки на пять запросов, то есть предела не было бы вовсе.
+    """
+    from core.security import tokens
+    from web.api.deps import pin_limiter
+
+    _nomer, ssylka, token = _gostevaya(root_client, "perebor.png", "ivan@example.ru")
+    schyot = f"fg:{ssylka['id']}:{tokens.hash_ip('testclient')}"
+    pin_limiter.reset(schyot)
+    try:
+        guest = TestClient(app)
+        for nomer_popytki in range(4):
+            otkaz = guest.post(f"/f/{token}/guest", data={"email": "chuzhoy@example.ru"})
+            assert otkaz.status_code == 401, f"попытка {nomer_popytki + 1}: {otkaz.status_code}"
+        # Пятая попытка — своя и удачная; набранные промахи она не трогает.
+        assert guest.post(
+            f"/f/{token}/guest", data={"email": "ivan@example.ru"}, follow_redirects=False
+        ).status_code == 303
+        assert guest.post(
+            f"/f/{token}/guest", data={"email": "eshchyo@example.ru"}
+        ).status_code == 429, "удача обнулила набранные промахи"
+    finally:
+        pin_limiter.reset(schyot)
+    root_client.delete(f"{API}/files/links/{ssylka['id']}")
