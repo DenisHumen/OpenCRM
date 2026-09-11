@@ -172,3 +172,281 @@ def test_udalenie_raboty_ostalos_pod_nastroykami(root_client, manager_client):
     ostalis = root_client.get(f"{API}/files?node=board:{board['id']}").json()["items"]
     assert f"work:{work['id']}" not in [f["id"] for f in ostalis]
     assert manager_client.get(f"{API}/boards/{board['id']}").status_code == 200
+
+
+# --- ссылки наружу ---
+
+def _svoy_fayl(client, imya="dogovor.txt", telo="аренда"):
+    """Свой файл в корне «Загрузок». Содержимое сверяется с расширением, и
+    выдуманный PNG приёмка не пропустит — картинку берём настоящую."""
+    bayty = png_bytes() if imya.endswith(".png") else telo.encode("utf-8")
+    tip = "image/png" if imya.endswith(".png") else "text/plain"
+    otvet = client.post(f"{API}/files", files={"file": (imya, bayty, tip)})
+    assert otvet.status_code == 201, otvet.text
+    return otvet.json()["id"]
+
+
+def test_ssylka_otdayot_fayl_tolko_v_svoyom_rezhime(root_client):
+    """«Смотреть» без «скачать» — отдельное решение, и оно отказывает, а не
+    прячет кнопку.
+
+    Спрятанная кнопка означает «не нашёл», а не «нельзя»: адрес выдачи в
+    разметке страницы виден любому, кто её сохранил.
+    """
+    nomer = _svoy_fayl(root_client, "smotret.txt", "только смотреть")
+    vypusk = root_client.post(f"{API}/files/{nomer}/link", json={"rezhim": "view", "krug": "link"})
+    assert vypusk.status_code == 201, vypusk.text
+    ssylka = vypusk.json()["link"]
+    token = ssylka["url"].rsplit("/", 1)[-1]
+
+    guest = TestClient(app)
+    stranitsa = guest.get(f"/f/{token}")
+    assert stranitsa.status_code == 200
+    assert "smotret.txt" in stranitsa.text
+    assert guest.get(f"/f/{token}/download").status_code == 403, "смотреть — значит не скачивать"
+
+    pravka = root_client.patch(
+        f"{API}/files/links/{ssylka['id']}", json={"rezhim": "download", "krug": "link"}
+    )
+    assert pravka.status_code == 200, pravka.text
+    skachalos = guest.get(f"/f/{token}/download")
+    assert skachalos.status_code == 200
+    assert skachalos.content.decode("utf-8") == "только смотреть"
+    assert "smotret.txt" in skachalos.headers["content-disposition"]
+
+
+def test_kod_zakryvaet_i_stranitsu_i_bayty(root_client):
+    """Код закрывает ОБА пути. У витрин однажды было наоборот: страница
+    отвечала 401, а файлы 200 — то есть «доступно навсегда тому, кому однажды
+    показали», ровно то, от чего код и заводят."""
+    nomer = _svoy_fayl(root_client, "pod-kodom.txt", "секрет")
+    vypusk = root_client.post(
+        f"{API}/files/{nomer}/link",
+        json={"rezhim": "download", "krug": "code", "pin": "4079"},
+    )
+    assert vypusk.status_code == 201, vypusk.text
+    ssylka = vypusk.json()["link"]
+    assert ssylka["has_code"] is True
+    token = ssylka["url"].rsplit("/", 1)[-1]
+
+    guest = TestClient(app)
+    stranitsa = guest.get(f"/f/{token}")
+    assert stranitsa.status_code == 200
+    assert "pod-kodom.txt" not in stranitsa.text, "страница кода не раскрывает даже имени"
+    assert guest.get(f"/f/{token}/download").status_code == 401, "байты закрыты тем же кодом"
+
+    assert guest.post(f"/f/{token}/pin", data={"pin": "1111"}).status_code == 401
+    proshli = guest.post(f"/f/{token}/pin", data={"pin": "4079"}, follow_redirects=False)
+    assert proshli.status_code == 303
+    assert "pod-kodom.txt" in guest.get(f"/f/{token}").text
+    assert guest.get(f"/f/{token}/download").status_code == 200
+
+
+def test_srok_i_otzyv_zakryvayut_ssylku(root_client):
+    """Истёкший срок и отзыв закрывают ссылку одинаково — снаружи не видно,
+    что именно случилось."""
+    nomer = _svoy_fayl(root_client, "srok.txt", "до вторника")
+    ssylka = root_client.post(
+        f"{API}/files/{nomer}/link", json={"rezhim": "download", "krug": "link"}
+    ).json()["link"]
+    token = ssylka["url"].rsplit("/", 1)[-1]
+    guest = TestClient(app)
+    assert guest.get(f"/f/{token}").status_code == 200
+
+    root_client.patch(
+        f"{API}/files/links/{ssylka['id']}",
+        json={"rezhim": "download", "krug": "link", "expires_at": "2020-01-01T00:00:00"},
+    )
+    assert guest.get(f"/f/{token}").status_code == 404
+    assert guest.get(f"/f/{token}/download").status_code == 404
+
+    root_client.patch(
+        f"{API}/files/links/{ssylka['id']}",
+        json={"rezhim": "download", "krug": "link", "expires_at": None},
+    )
+    assert guest.get(f"/f/{token}").status_code == 200
+
+    assert root_client.delete(f"{API}/files/links/{ssylka['id']}").status_code == 200
+    assert guest.get(f"/f/{token}").status_code == 404
+    assert root_client.get(f"{API}/files/{nomer}/link").json()["link"] is None
+
+
+def test_ssylka_u_fayla_odna(root_client):
+    """Второй выпуск правит первую, а не заводит вторую: два набора условий на
+    одни байты означали бы, что отзывать надо обе, помня о второй."""
+    nomer = _svoy_fayl(root_client, "odna.txt", "раз")
+    pervaya = root_client.post(
+        f"{API}/files/{nomer}/link", json={"rezhim": "view", "krug": "link"}
+    ).json()["link"]
+    vtoraya = root_client.post(
+        f"{API}/files/{nomer}/link", json={"rezhim": "download", "krug": "link"}
+    ).json()["link"]
+    assert vtoraya["id"] == pervaya["id"]
+    assert vtoraya["rezhim"] == "download"
+    assert vtoraya["url"] == pervaya["url"], "адрес не меняется: его уже переслали"
+    root_client.delete(f"{API}/files/links/{pervaya['id']}")
+
+
+def test_krug_po_kodu_bez_koda_ne_zavoditsya(root_client):
+    """«По коду» без кода — открытая ссылка, которая называется закрытой."""
+    nomer = _svoy_fayl(root_client, "bez-koda.txt", "нет кода")
+    otkaz = root_client.post(f"{API}/files/{nomer}/link", json={"rezhim": "view", "krug": "code"})
+    assert otkaz.status_code == 422
+    assert otkaz.json()["error"]["code"] == "link_code_required"
+
+    ssylka = root_client.post(
+        f"{API}/files/{nomer}/link", json={"rezhim": "view", "krug": "code", "pin": "4079"}
+    ).json()["link"]
+    # Переключение обратно снимает код: оставленный хвост вернулся бы вместе с
+    # переключением и потребовал бы кода, которого никто не называл.
+    obratno = root_client.patch(
+        f"{API}/files/links/{ssylka['id']}", json={"rezhim": "view", "krug": "link"}
+    ).json()["link"]
+    assert obratno["has_code"] is False
+    root_client.delete(f"{API}/files/links/{ssylka['id']}")
+
+
+def test_udalenie_fayla_unosit_ssylku(root_client):
+    """Каскад: снесли файл — ссылка на него не ведёт в никуда."""
+    nomer = _svoy_fayl(root_client, "unesyot.txt", "уйдёт")
+    ssylka = root_client.post(
+        f"{API}/files/{nomer}/link", json={"rezhim": "download", "krug": "link"}
+    ).json()["link"]
+    token = ssylka["url"].rsplit("/", 1)[-1]
+    guest = TestClient(app)
+    assert guest.get(f"/f/{token}").status_code == 200
+
+    assert root_client.delete(f"{API}/files/{nomer.split(':')[1]}").status_code == 200
+    assert guest.get(f"/f/{token}").status_code == 404
+
+
+def test_vyklyuchennyy_blok_gasit_ssylki(root_client):
+    """Выключенный блок исчезает ЦЕЛИКОМ: разосланные ссылки перестают отдавать
+    бумаги фирмы, а не только пункт уходит из меню."""
+    nomer = _svoy_fayl(root_client, "vyklyuchat.txt", "тайна")
+    ssylka = root_client.post(
+        f"{API}/files/{nomer}/link", json={"rezhim": "download", "krug": "link"}
+    ).json()["link"]
+    token = ssylka["url"].rsplit("/", 1)[-1]
+    guest = TestClient(app)
+    assert guest.get(f"/f/{token}").status_code == 200
+
+    assert root_client.post(f"{API}/modules/files", json={"enabled": False}).status_code == 200
+    try:
+        assert guest.get(f"/f/{token}").status_code == 404
+        assert guest.get(f"/f/{token}/download").status_code == 404
+    finally:
+        assert root_client.post(f"{API}/modules/files", json={"enabled": True}).status_code == 200
+    assert guest.get(f"/f/{token}").status_code == 200
+    root_client.delete(f"{API}/files/links/{ssylka['id']}")
+
+
+def test_bez_prava_delitsya_nelzya(manager_client, root_client):
+    """Право `files.share` отдельное: смотреть файл внутри фирмы и положить его
+    в интернет — разные полномочия."""
+    nomer = _svoy_fayl(root_client, "chuzhoye.txt", "не всем")
+    assert manager_client.post(f"{API}/files/{nomer}/link", json={"rezhim": "view", "krug": "link"}).status_code == 403
+    assert manager_client.get(f"{API}/files/{nomer}/link").status_code == 403
+
+
+def test_pravka_sroka_ne_snimaet_kod(root_client):
+    """Поле, которого в теле НЕТ, значит «не трогай», а не «сними».
+
+    Пока и то и другое было одним `None`, смена срока у ссылки под кодом
+    отвечала «нужен код»: поправить срок было нельзя вовсе, а понять почему —
+    неоткуда, потому что кода никто и не трогал.
+    """
+    nomer = _svoy_fayl(root_client, "srok-i-kod.txt", "оба")
+    ssylka = root_client.post(
+        f"{API}/files/{nomer}/link",
+        json={"rezhim": "view", "krug": "code", "pin": "4079"},
+    ).json()["link"]
+    assert ssylka["has_code"] is True
+
+    # Прислали всё, кроме кода — код на месте.
+    tolko_srok = root_client.patch(
+        f"{API}/files/links/{ssylka['id']}",
+        json={"rezhim": "view", "krug": "code", "expires_at": "2027-01-01T00:00:00"},
+    )
+    assert tolko_srok.status_code == 200, tolko_srok.text
+    assert tolko_srok.json()["link"]["has_code"] is True
+    assert tolko_srok.json()["link"]["expires_at"].startswith("2027-01-01")
+
+    # Прислали пустой код вместе с кругом «по ссылке» — сняли.
+    snyali = root_client.patch(
+        f"{API}/files/links/{ssylka['id']}",
+        json={"rezhim": "view", "krug": "link", "pin": None},
+    )
+    assert snyali.status_code == 200, snyali.text
+    assert snyali.json()["link"]["has_code"] is False
+    root_client.delete(f"{API}/files/links/{ssylka['id']}")
+
+
+# --- защита просмотра ---
+
+def test_bayty_na_prosmotr_trebuyut_klyucha(root_client):
+    """Адрес картинки со страницы живёт десять минут и только по подписи.
+
+    Это то, что защита вправду закрывает: «скопировал адрес картинки и
+    переслал». Снимок экрана она не закрывает — и в окне владельца так и
+    написано.
+    """
+    nomer = _svoy_fayl(root_client, "kartinka.png", "PNG")
+    ssylka = root_client.post(
+        f"{API}/files/{nomer}/link", json={"rezhim": "view", "krug": "link"}
+    ).json()["link"]
+    token = ssylka["url"].rsplit("/", 1)[-1]
+
+    guest = TestClient(app)
+    stranitsa = guest.get(f"/f/{token}")
+    assert stranitsa.status_code == 200
+    # Ключ страница выдаёт сама — вынимаем его оттуда, как это делает браузер.
+    import re
+
+    nayden = re.search(rf"/f/{token}/view\?k=([\w\.\-]+)", stranitsa.text)
+    assert nayden, "страница не выдала ключ просмотра"
+    klyuch = nayden.group(1)
+
+    assert guest.get(f"/f/{token}/view").status_code == 403, "без ключа байты не отдаются"
+    assert guest.get(f"/f/{token}/view?k=podelka").status_code == 403, "подделка не проходит"
+    otvet = guest.get(f"/f/{token}/view?k={klyuch}")
+    assert otvet.status_code == 200
+    assert otvet.headers["content-disposition"] == "inline", "показ, а не сохранение"
+    assert otvet.headers["cache-control"] == "no-store"
+    root_client.delete(f"{API}/files/links/{ssylka['id']}")
+
+
+def test_klyuch_odnoy_ssylki_ne_otkryvaet_druguyu(root_client):
+    """Ключ привязан к ссылке: подпись от соседней не открывает эту."""
+    pervyy = _svoy_fayl(root_client, "pervyy.png", "один")
+    vtoroy = _svoy_fayl(root_client, "vtoroy.png", "два")
+    a = root_client.post(f"{API}/files/{pervyy}/link", json={"rezhim": "view", "krug": "link"}).json()["link"]
+    b = root_client.post(f"{API}/files/{vtoroy}/link", json={"rezhim": "view", "krug": "link"}).json()["link"]
+    token_a = a["url"].rsplit("/", 1)[-1]
+    token_b = b["url"].rsplit("/", 1)[-1]
+
+    guest = TestClient(app)
+    import re
+
+    klyuch_b = re.search(rf"/f/{token_b}/view\?k=([\w\.\-]+)", guest.get(f"/f/{token_b}").text).group(1)
+    assert guest.get(f"/f/{token_a}/view?k={klyuch_b}").status_code == 403
+
+    root_client.delete(f"{API}/files/links/{a['id']}")
+    root_client.delete(f"{API}/files/links/{b['id']}")
+
+
+def test_kod_zakryvaet_i_prosmotr(root_client):
+    """Показ закрыт тем же кодом, что и страница: иначе «по коду» означало бы
+    «страница по коду, а картинка всем»."""
+    nomer = _svoy_fayl(root_client, "zakryto.png", "тайна")
+    ssylka = root_client.post(
+        f"{API}/files/{nomer}/link",
+        json={"rezhim": "view", "krug": "code", "pin": "4079"},
+    ).json()["link"]
+    token = ssylka["url"].rsplit("/", 1)[-1]
+
+    guest = TestClient(app)
+    # Ключа у гостя нет вовсе — страница его не выдала, она показала код.
+    assert "/view?k=" not in guest.get(f"/f/{token}").text
+    assert guest.get(f"/f/{token}/view").status_code == 401, "сначала код, потом ключ"
+    root_client.delete(f"{API}/files/links/{ssylka['id']}")

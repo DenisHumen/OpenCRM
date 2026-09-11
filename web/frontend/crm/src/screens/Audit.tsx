@@ -31,6 +31,7 @@ const COL = {
  * ключ как есть. Иначе новое действие в сервисе требовало бы правки фронта тем
  * же коммитом, и его просто не стали бы писать в журнал. */
 const ACTION: Record<string, TranslationKey> = {
+  "file.shared": "auditActFileShared",
   "deal.stage_changed": "auditActStageChanged",
   "deal.amount_changed": "auditActAmountChanged",
   "deal.prepaid_changed": "auditActPrepaidChanged",

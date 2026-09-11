@@ -2,17 +2,24 @@
 
 Раздел раньше жил в системных настройках под `settings.manage` и показывал
 только работы досок плоским списком. Стал блоком со своими правами: смотреть
-дерево, приносить файлы, убирать их и (в следующем заходе) выпускать наружу по
-ссылке. ЧТО видно в дереве, решают права на разделы, из которых файлы пришли, —
-разбор в `core/services/fayly_service.py`.
+дерево, приносить файлы, убирать их и выпускать наружу по ссылке. ЧТО видно в
+дереве, решают права на разделы, из которых файлы пришли, — разбор в
+`core/services/fayly_service.py`; про ссылки — в `fayly_ssylki_service.py`.
 """
+
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, Query, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from core.services import fayly_service, storage_service
+from core.services import (
+    fayly_service,
+    fayly_ssylki_service,
+    permissions_service,
+    storage_service,
+)
 from database.models import User
 from web.api.deps import get_db, require_perm
 
@@ -37,7 +44,13 @@ def spisok(
     actor: User = Depends(require_perm("files", "view")),
     db: Session = Depends(get_db),
 ):
-    return fayly_service.soderzhimoe(db, actor, node, page, per_page)
+    otvet = fayly_service.soderzhimoe(db, actor, node, page, per_page)
+    # Состояние ссылок — тем же ответом и одним запросом на страницу: значок в
+    # строке нужен у каждой, а по запросу на строку это обращение к базе на
+    # каждую. Без права выпускать — не спрашиваем вовсе.
+    if permissions_service.has(db, actor, "files", "share"):
+        otvet["links"] = fayly_ssylki_service.po_faylam(db, [f["id"] for f in otvet["items"]])
+    return otvet
 
 
 class PapkaIn(BaseModel):
@@ -115,3 +128,76 @@ def udalit(
 ):
     fayly_service.udalit(db, actor, file_id)
     return {"message": "File deleted", "storage": storage_service.status(db)}
+
+
+class SsylkaIn(BaseModel):
+    """Настройки ссылки.
+
+    Поле, которого в теле НЕТ, означает «не трогай»; присланное `null` — «сними»
+    (код) или «без срока». Различать их обязательно: пока и то и другое было
+    одним `None`, смена срока у ссылки под кодом отвечала «нужен код», и
+    поправить срок было нельзя вовсе.
+    """
+
+    rezhim: str = Field(default="view", max_length=16)
+    krug: str = Field(default="link", max_length=16)
+    pin: str | None = None
+    expires_at: datetime | None = None
+
+    def chto_prislali(self) -> dict:
+        """Только те поля, которые вправду были в теле запроса."""
+        return {imya: getattr(self, imya) for imya in self.model_fields_set}
+
+
+@router.get("/{node}/link")
+def uznat_ssylku(
+    node: str,
+    _: User = Depends(require_perm("files", "share")),
+    db: Session = Depends(get_db),
+):
+    """Что сейчас у файла со ссылкой. Пусто — не делились."""
+    ssylka = fayly_ssylki_service.ssylka_fayla(db, node)
+    return {"link": None if ssylka is None else fayly_ssylki_service.kartochka(db, ssylka)}
+
+
+@router.post("/{node}/link", status_code=201)
+def vypustit_ssylku(
+    node: str,
+    payload: SsylkaIn,
+    actor: User = Depends(require_perm("files", "share")),
+    db: Session = Depends(get_db),
+):
+    ssylka = fayly_ssylki_service.vypustit(
+        db,
+        actor,
+        node,
+        rezhim=payload.rezhim,
+        krug=payload.krug,
+        pin=payload.pin,
+        expires_at=payload.expires_at,
+    )
+    return {"link": fayly_ssylki_service.kartochka(db, ssylka)}
+
+
+@router.patch("/links/{link_id}")
+def nastroit_ssylku(
+    link_id: int,
+    payload: SsylkaIn,
+    actor: User = Depends(require_perm("files", "share")),
+    db: Session = Depends(get_db),
+):
+    ssylka = fayly_ssylki_service.nastroit(db, actor, link_id, **payload.chto_prislali())
+    return {"link": fayly_ssylki_service.kartochka(db, ssylka)}
+
+
+@router.delete("/links/{link_id}")
+def otozvat_ssylku(
+    link_id: int,
+    actor: User = Depends(require_perm("files", "share")),
+    db: Session = Depends(get_db),
+):
+    """Отозвать насовсем: строка уходит вместе с журналом открытий. Отзыв — не
+    «выключить»: оставленная неактивной строка выглядит как «просто выключена»,
+    и её включают обратно по ошибке."""
+    fayly_ssylki_service.otozvat(db, actor, link_id)
+    return {"message": "Link revoked"}

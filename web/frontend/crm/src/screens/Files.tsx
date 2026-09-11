@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { Icon } from "../components/Icon";
+import { OknoSsylki } from "../components/OknoSsylki";
 import { ConfirmModal, Dochitat, Modal, ScreenLoading } from "../components/ui";
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
@@ -33,6 +34,14 @@ interface Fayl {
   where: string;
   open: string | null;
   thumb: string | null;
+}
+
+/** Что сейчас у файла со ссылкой. Приходит тем же ответом, что и список:
+ *  значок нужен в каждой строке, а по запросу на строку это обращение к базе
+ *  на каждую. */
+interface SostoyanieSsylki {
+  rezhim: "view" | "download";
+  is_active: boolean;
 }
 
 interface Hranilishche {
@@ -110,6 +119,7 @@ export function Files() {
   // Работа доски сносится С ДОСКИ, а не из папки: право на это осталось
   // настройками, как было у прежнего менеджера файлов.
   const mozhnoUbratRabotu = can(user, "settings.manage");
+  const mozhnoDelitsya = can(user, "files.share");
 
   const [derevo, setDerevo] = useState<Uzel | null>(null);
   const [hranilishche, setHranilishche] = useState<Hranilishche | null>(null);
@@ -124,6 +134,8 @@ export function Files() {
   const [imyaPapki, setImyaPapki] = useState("");
   const [snyat, setSnyat] = useState<{ vid: "file" | "folder" | "work"; id: number; name: string } | null>(null);
   const [ochered, setOchered] = useState<{ name: string; dolya: number; beda?: string }[]>([]);
+  const [ssylki, setSsylki] = useState<Record<string, SostoyanieSsylki>>({});
+  const [delimsya, setDelimsya] = useState<{ nomer: string; imya: string } | null>(null);
   const vybor = useRef<HTMLInputElement | null>(null);
   /** Поколение списка. Ветку переключили, пока ехала вторая страница прошлой —
    *  та приедет и допишется к чужим строкам, а «всего» останется от прошлой.
@@ -154,12 +166,13 @@ export function Files() {
       else pokolenie.current += 1;
       const moyo = pokolenie.current;
       api
-        .get<{ items: Fayl[]; total: number }>(
+        .get<{ items: Fayl[]; total: number; links?: Record<string, SostoyanieSsylki> }>(
           `/files?node=${encodeURIComponent(kuda)}&page=${page}&per_page=${NA_STRANITSE}`,
         )
         .then((d) => {
           if (pokolenie.current !== moyo) return;
           setStroki((bylo) => (dobavit && bylo ? [...bylo, ...d.items] : d.items));
+          setSsylki((bylo) => (dobavit ? { ...bylo, ...(d.links ?? {}) } : d.links ?? {}));
           setVsego(d.total);
           setStranitsa(page);
         })
@@ -501,6 +514,24 @@ export function Files() {
                       {f.created_at ? formatDate(f.created_at, locale) : "—"}
                     </span>
                     <span className="fayly-td fayly-deystviya">
+                      {mozhnoDelitsya && (f.id.startsWith("stored:") || f.id.startsWith("work:")) && (
+                        <button
+                          type="button"
+                          className={
+                            "btn-icon staff-act" +
+                            (ssylki[f.id] ? ` fayl-ssylka-${ssylki[f.id].rezhim}` : "")
+                          }
+                          title={
+                            ssylki[f.id]
+                              ? t(ssylki[f.id].rezhim === "download" ? "linkDownload" : "linkViewOnly")
+                              : t("linkAccess")
+                          }
+                          aria-label={t("linkAccess")}
+                          onClick={() => setDelimsya({ nomer: f.id, imya: f.name })}
+                        >
+                          <Icon name={ssylki[f.id]?.rezhim === "view" ? "lock" : "link"} size={14} />
+                        </button>
+                      )}
                       {f.id.startsWith("stored:") && (
                         <a
                           className="btn-icon staff-act"
@@ -578,6 +609,17 @@ export function Files() {
             {t("filesQueueTo", { name: imya(doroga[doroga.length - 1]) })}
           </div>
         </div>
+      )}
+
+      {delimsya && (
+        <OknoSsylki
+          nomer={delimsya.nomer}
+          imya={delimsya.imya}
+          onClose={() => {
+            setDelimsya(null);
+            soderzhimoe(uzel);
+          }}
+        />
       )}
 
       {novaya && (
