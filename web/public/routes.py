@@ -10,6 +10,7 @@ from core import bezopasnost
 from core import exceptions as errors
 from core.security import tokens
 from core.services import (
+    fayly_ssylki_service,
     board_service,
     media_service,
     modules_service,
@@ -114,6 +115,17 @@ STRINGS = {
         "return_to_site": "Return to the site",
         # подсказка на обрезанной длинной работе: кликом открывается целиком
         "view_full": "View full",
+        # Страница файла по ссылке.
+        "file_title": "A file was shared with you",
+        "file_download": "Download",
+        "file_view_only": "View only",
+        "file_view_only_hint": "The owner opened this file for viewing, not for downloading.",
+        "file_until": "The link works until",
+        "file_pin_title": "This file is protected",
+        "file_pin_hint": "Enter the code to open it",
+        "file_open": "Open the file",
+        "file_no_preview": "This kind of file cannot be shown in a browser — ask the sender for a copy.",
+        "file_no_print": "Printing is off for a view-only file.",
     },
     "ru": {
         "works": "работ",
@@ -136,6 +148,17 @@ STRINGS = {
         "view_case": "View case",
         "return_to_site": "Return to the site",
         "view_full": "View full",
+        # Страница файла по ссылке.
+        "file_title": "Вам открыли файл",
+        "file_download": "Скачать",
+        "file_view_only": "Только просмотр",
+        "file_view_only_hint": "Владелец открыл файл для просмотра, а не для скачивания.",
+        "file_until": "Ссылка действует до",
+        "file_pin_title": "Этот файл защищён кодом",
+        "file_pin_hint": "Введите код, чтобы открыть его",
+        "file_open": "Открыть файл",
+        "file_no_preview": "Такой файл браузер показать не умеет — попросите копию у отправителя.",
+        "file_no_print": "Печать выключена: файл открыт только для просмотра.",
     },
 }
 
@@ -557,4 +580,174 @@ def document_status(number: str, request: Request, db: Session = Depends(get_db)
             "t": strings_for(doc.locale),
             "created": doc.created_at.strftime("%d.%m.%Y"),
         },
+    )
+
+
+# --- файл по ссылке -----------------------------------------------------------
+#
+# Прямого адреса у файла не существует: наружу ведёт только `/f/{token}`, и
+# байты проходят те же проверки, что и страница. Разбор, почему это правило
+# записано отдельно, — в шапке `core/services/fayly_ssylki_service.py`: у витрин
+# файлы однажды остались открытыми после отзыва ссылки и снятия с публикации.
+
+#: Приставка cookie с пропуском по коду ссылки на файл. Одна ссылка — одна
+#: cookie, как и у витрин; общая на все ссылки открывала бы вторую по первой.
+FILE_PIN_COOKIE_PREFIX = "opencrm_fv_"
+
+
+def _file_pin_cookie(link_id: int) -> str:
+    return f"{FILE_PIN_COOKIE_PREFIX}{link_id}"
+
+
+def _file_pin_ok(request: Request, ssylka) -> bool:
+    if ssylka.pin_hash is None:
+        return True
+    value = request.cookies.get(_file_pin_cookie(ssylka.id))
+    return bool(value and tokens.check_pin_access_cookie(value, ssylka.id, ssylka.pin_hash or ""))
+
+
+@router.get("/f/{token}")
+def fayl_po_ssylke(token: str, request: Request, db: Session = Depends(get_db)):
+    otkryto = fayly_ssylki_service.otkryt(db, token)
+    if otkryto is None:
+        return _closed_page(request, db)
+    ssylka, fayl = otkryto
+    site, strings = _ctx(db)
+
+    if not _file_pin_ok(request, ssylka):
+        # Страница кода не раскрывает о файле ничего: ни имени, ни размера.
+        return templates.TemplateResponse(
+            request, "file_pin.html",
+            {"site": site, "t": strings, "token": token, "error": None},
+        )
+
+    fayly_ssylki_service.otmetit_otkrytie(
+        db, ssylka, client_ip(request), request.headers.get("user-agent", "")
+    )
+    imya = fayly_ssylki_service.imya_fayla(fayl)
+    return templates.TemplateResponse(
+        request, "file_link.html",
+        {
+            "site": site,
+            "t": strings,
+            "token": token,
+            "imya": imya,
+            "mozhno_skachat": ssylka.rezhim == "download",
+            "srok": ssylka.expires_at,
+            "vid": fayly_ssylki_service.vid_pokaza(imya),
+            # Ключ живёт десять минут: скопированный со страницы адрес картинки
+            # перестаёт работать раньше, чем дойдёт до того, кому его переслали.
+            "klyuch": fayly_ssylki_service.klyuch_prosmotra(ssylka),
+            "znak": fayly_ssylki_service.znak(ssylka),
+        },
+    )
+
+
+@router.post("/f/{token}/pin")
+def fayl_kod(
+    token: str,
+    request: Request,
+    pin: str = Form(default=""),
+    db: Session = Depends(get_db),
+):
+    otkryto = fayly_ssylki_service.otkryt(db, token)
+    if otkryto is None:
+        return _closed_page(request, db)
+    ssylka, _fayl = otkryto
+    site, strings = _ctx(db)
+
+    try:
+        ok = fayly_ssylki_service.proverit_kod(db, ssylka, pin, client_ip(request), pin_limiter)
+    except errors.RateLimitedError:
+        return templates.TemplateResponse(
+            request, "file_pin.html",
+            {"site": site, "t": strings, "token": token, "error": strings["pin_rate_limited"]},
+            status_code=429,
+        )
+    except errors.LimiterUnavailableError:
+        # Счётчик попыток недоступен — код не проверяем вовсе: пустить сюда без
+        # счётчика значит отдать четыре цифры на перебор без предела, причём
+        # именно тогда, когда за системой никто не смотрит.
+        return templates.TemplateResponse(
+            request, "file_pin.html",
+            {"site": site, "t": strings, "token": token, "error": strings["pin_rate_limited"]},
+            status_code=503,
+        )
+    if not ok:
+        return templates.TemplateResponse(
+            request, "file_pin.html",
+            {"site": site, "t": strings, "token": token, "error": strings["pin_wrong"]},
+            status_code=401,
+        )
+    otvet = RedirectResponse(url=f"/f/{token}", status_code=303)
+    otvet.set_cookie(
+        _file_pin_cookie(ssylka.id),
+        tokens.make_pin_access_cookie(ssylka.id, ssylka.pin_hash or ""),
+        httponly=True,
+        secure=get_settings().cookies_secure,
+        samesite="lax",
+        max_age=tokens.PIN_ACCESS_SECONDS,
+    )
+    return otvet
+
+
+@router.get("/f/{token}/download")
+def fayl_skachat(token: str, request: Request, db: Session = Depends(get_db)):
+    """Байты файла. Те же пять проверок, что и у страницы, плюс режим.
+
+    Отдельной дороги к байтам нет: `Content-Disposition: attachment` уходит
+    только тогда, когда владелец выбрал «смотреть и скачивать». При «только
+    смотреть» здесь отказ, а не тихая отдача — иначе запрет означал бы лишь
+    «кнопка спрятана».
+    """
+    otkryto = fayly_ssylki_service.otkryt(db, token)
+    if otkryto is None:
+        return _closed_page(request, db)
+    ssylka, fayl = otkryto
+    if not _file_pin_ok(request, ssylka):
+        return _closed_page(request, db, status_code=401)
+    if ssylka.rezhim != "download":
+        return _closed_page(request, db, status_code=403)
+    put = fayly_ssylki_service.bayty(db, ssylka, fayl)
+    if put is None or not put.is_file():
+        return _closed_page(request, db)
+    fayly_ssylki_service.otmetit_otkrytie(
+        db, ssylka, client_ip(request), request.headers.get("user-agent", "")
+    )
+    return FileResponse(
+        put,
+        media_type=getattr(fayl, "mime", "application/octet-stream"),
+        filename=fayly_ssylki_service.imya_fayla(fayl),
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@router.get("/f/{token}/view")
+def fayl_posmotret(token: str, request: Request, k: str = "", db: Session = Depends(get_db)):
+    """Байты файла для показа НА СТРАНИЦЕ, а не в файл.
+
+    Те же пять проверок, что у страницы, плюс ключ на десять минут. Ключ
+    привязан к ссылке, а не к человеку, — за ней человека нет; он закрывает
+    «скопировал адрес картинки и переслал», и это записано честно: снимок
+    экрана он не закрывает, и на странице владельца так и написано.
+
+    `Content-Disposition: inline` и `no-store`: файл показывается, а не
+    сохраняется. У режима «смотреть и скачивать» есть своя ручка — эта отдаёт
+    то же самое, но без предложения сохранить.
+    """
+    otkryto = fayly_ssylki_service.otkryt(db, token)
+    if otkryto is None:
+        return _closed_page(request, db)
+    ssylka, fayl = otkryto
+    if not _file_pin_ok(request, ssylka):
+        return _closed_page(request, db, status_code=401)
+    if not fayly_ssylki_service.klyuch_veren(ssylka, k):
+        return _closed_page(request, db, status_code=403)
+    put = fayly_ssylki_service.bayty(db, ssylka, fayl)
+    if put is None or not put.is_file():
+        return _closed_page(request, db)
+    return FileResponse(
+        put,
+        media_type=getattr(fayl, "mime", "application/octet-stream"),
+        headers={"Cache-Control": "no-store", "Content-Disposition": "inline"},
     )

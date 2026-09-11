@@ -68,3 +68,33 @@ def check_pin_access_cookie(value: str, share_link_id: int, pin_hash: str) -> bo
     # её нечем — ключ сервера. Подбирающий сравнивает свой же старый пропуск
     # со свежим отпечатком и узнаёт из времени ровно ничего.
     return data.get("fp") == _pin_fingerprint(pin_hash)
+
+
+#: Сколько живёт ключ просмотра файла по ссылке. Десять минут — столько, чтобы
+#: хватило открыть большой файл, и мало, чтобы пересланный адрес картинки
+#: перестал работать раньше, чем дойдёт до получателя.
+VIEW_KEY_SECONDS = 10 * 60
+
+
+def _view_serializer() -> URLSafeTimedSerializer:
+    return URLSafeTimedSerializer(get_settings().secret_key, salt="file-view-key")
+
+
+def make_view_key(link_id: int) -> str:
+    """Ключ на просмотр файла по ссылке.
+
+    Привязан к ССЫЛКЕ, а не к человеку, — потому что человека за ней нет: адрес
+    открывают анонимно. Что он вправду закрывает: «скопировал адрес картинки со
+    страницы и переслал дальше» — через десять минут такой адрес мёртв, а сама
+    страница остаётся под кодом и сроком. Что не закрывает: снимок экрана; об
+    этом на странице владельца написано прямо.
+    """
+    return _view_serializer().dumps({"lid": link_id})
+
+
+def check_view_key(value: str, link_id: int) -> bool:
+    try:
+        data = _view_serializer().loads(value, max_age=VIEW_KEY_SECONDS)
+    except (BadSignature, SignatureExpired):
+        return False
+    return isinstance(data, dict) and data.get("lid") == link_id

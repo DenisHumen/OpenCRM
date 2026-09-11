@@ -5023,3 +5023,36 @@ html { scroll-behavior: smooth; }
   .papka-risunok { height: 112px; }
   .fayly-ochered { left: 12px; right: 12px; width: auto; }
 }
+
+/* --- окно «Доступ по ссылке» ------------------------------------------------ */
+.ssylka-fayl { color: var(--muted); font-size: 12.5px; margin-bottom: 16px; }
+.ssylka-blok { margin-bottom: 18px; }
+.ssylka-podpis { color: var(--faint); font-size: 10.5px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; margin-bottom: 8px; }
+.ssylka-vybor { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+/* Выбор кнопками, а не переключателем: у каждого варианта есть пояснение под
+   именем, и в строку радиокнопки оно не помещается. */
+.ssylka-knopka {
+  display: flex; flex-direction: column; gap: 3px; align-items: flex-start; text-align: left;
+  padding: 10px 12px; border-radius: 9px; border: 1px solid var(--frame);
+  background: var(--surface); cursor: pointer;
+}
+.ssylka-knopka:hover:not(:disabled) { border-color: var(--border-hover, var(--brand)); }
+.ssylka-knopka:disabled { opacity: 0.5; cursor: default; }
+.ssylka-knopka-on { border-color: var(--brand); background: var(--tint-brand); }
+.ssylka-imya { color: var(--text); font-size: 13px; font-weight: 600; }
+.ssylka-tishe { color: var(--faint); font-size: 11.5px; line-height: 1.35; }
+.ssylka-kod { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+.ssylka-kod input { width: 96px; font-variant-numeric: tabular-nums; letter-spacing: 0.14em; }
+.ssylka-sroki { width: fit-content; }
+.ssylka-adres { display: flex; gap: 8px; }
+.ssylka-adres input { flex: 1; min-width: 0; font-family: ui-monospace, monospace; font-size: 12px; }
+.ssylka-schyot { color: var(--faint); font-size: 12px; margin: 10px 0 8px; }
+/* Значок ссылки в строке файла: цвет говорит, что по ней можно. Серая цепочка
+   без цвета — не делились вовсе. */
+.fayl-ssylka-view { color: var(--violet); }
+.fayl-ssylka-download { color: var(--success); }
+.ssylka-zashchita { padding: 12px; border-radius: 9px; background: var(--well-off); }
+.ssylka-zashchita .ssylka-tishe { line-height: 1.5; }
+/* Честная оговорка отдельным цветом: её читают те, кто иначе решил бы, что
+   файл защищён полностью. */
+.ssylka-chestno { color: var(--warning); font-size: 11.5px; line-height: 1.5; margin-top: 8px; }

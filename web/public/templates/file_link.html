@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+{% from "_macros.html" import brand_mark %}
+
+{% block title %}{{ imya }} · {{ site.brand_name }}{% endblock %}
+
+{% block og %}
+{# Имени файла в карточке ссылки нет намеренно: адрес пересылают в мессенджере,
+   и предпросмотр показал бы название договора всем, кто видит переписку. #}
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="{{ site.brand_name }}">
+<meta property="og:title" content="{{ site.brand_name }}">
+<meta name="robots" content="noindex, nofollow">
+{% endblock %}
+
+{% block style %}
+<style>
+  .fayl-ekran {
+    min-height: 100vh; display: flex; flex-direction: column; align-items: center;
+    padding: 40px 24px 56px; text-align: center;
+  }
+  .fayl-ekran .brand-mark { margin-bottom: 32px; animation: rise 300ms ease-out both; }
+  .fayl-nadpis { color: var(--muted); font-size: 14.5px; margin-bottom: 10px; animation: rise 300ms ease-out 60ms both; }
+  .fayl-imya {
+    font-size: clamp(19px, 3vw, 26px); font-weight: 600; letter-spacing: -0.02em;
+    margin-bottom: 22px; word-break: break-word; max-width: 720px;
+    animation: rise 300ms ease-out 90ms both;
+  }
+
+  /* Окно показа. Водяной знак лежит поверх и не ловит нажатий: он метка, а не
+     преграда — закрыть его нечем, а мешать чтению он не должен. */
+  .fayl-okno {
+    position: relative; width: 100%; max-width: 880px; margin-bottom: 24px;
+    border-radius: 14px; overflow: hidden; background: var(--surface);
+    border: 1px solid var(--border); animation: rise 300ms ease-out 120ms both;
+  }
+  .fayl-okno img, .fayl-okno video { display: block; width: 100%; height: auto; max-height: 72vh; object-fit: contain; background: #000; }
+  .fayl-okno iframe { display: block; width: 100%; height: 72vh; border: 0; background: var(--surface); }
+  .fayl-znak {
+    position: absolute; inset: 0; pointer-events: none; display: flex;
+    align-items: center; justify-content: center; overflow: hidden;
+  }
+  .fayl-znak span {
+    color: rgba(255, 255, 255, 0.34); font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
+    white-space: nowrap; transform: rotate(-24deg); text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
+    line-height: 3.6;
+  }
+  .fayl-net-pokaza { padding: 48px 24px; color: var(--faint); font-size: 13.5px; }
+
+  .fayl-knopka {
+    display: inline-flex; align-items: center; gap: 10px; height: 46px; padding: 0 22px;
+    border-radius: 12px; border: none; background: var(--text); color: var(--bg);
+    font-size: 15px; font-weight: 600; text-decoration: none;
+    animation: rise 300ms ease-out 140ms both;
+  }
+  .fayl-knopka:hover { opacity: 0.9; }
+  /* Неактивная кнопка с подписью «почему», а не спрятанная: человек пришёл за
+     файлом, и молчаливое отсутствие кнопки он читает как поломку. */
+  .fayl-nelzya {
+    display: inline-flex; align-items: center; gap: 10px; height: 46px; padding: 0 22px;
+    border-radius: 12px; border: 1px solid var(--border); background: var(--surface);
+    color: var(--faint); font-size: 15px; font-weight: 600;
+    animation: rise 300ms ease-out 140ms both;
+  }
+  .fayl-pochemu { color: var(--faint); font-size: 13px; margin-top: 14px; max-width: 460px; animation: rise 300ms ease-out 180ms both; }
+  .fayl-srok { color: var(--faint); font-size: 13px; margin-top: 32px; animation: rise 300ms ease-out 220ms both; }
+
+  /* Защита просмотра: выделение, перетаскивание и печать. Обещания «файл не
+     утечёт» здесь нет и быть не может — экран фотографируют; это делает утечку
+     заметной и неудобной, а не невозможной. */
+  .fayl-beregom img, .fayl-beregom video { -webkit-user-select: none; user-select: none; -webkit-user-drag: none; }
+  @media print {
+    .fayl-beregom .fayl-okno { display: none !important; }
+    .fayl-beregom::after { content: attr(data-net-pechati); color: #000; font-size: 14px; }
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="fayl-ekran{% if not mozhno_skachat %} fayl-beregom{% endif %}" data-net-pechati="{{ t.file_no_print }}">
+  {{ brand_mark(site) }}
+  <div class="fayl-nadpis">{{ t.file_title }}</div>
+  <div class="fayl-imya">{{ imya }}</div>
+
+  {% if vid != "none" %}
+    <div class="fayl-okno">
+      {% if vid == "image" %}
+        <img src="/f/{{ token }}/view?k={{ klyuch }}" alt="{{ imya }}" draggable="false">
+      {% elif vid == "video" %}
+        <video src="/f/{{ token }}/view?k={{ klyuch }}" controls playsinline
+               {% if not mozhno_skachat %}controlslist="nodownload noplaybackrate" disablepictureinpicture{% endif %}></video>
+      {% else %}
+        {# Бумага показывается встроенным просмотрщиком браузера: свой рисовать
+           нечем, а без показа «только смотреть» не даёт посмотреть вовсе. #}
+        <iframe src="/f/{{ token }}/view?k={{ klyuch }}#toolbar=0&navpanes=0" title="{{ imya }}"></iframe>
+      {% endif %}
+      {% if not mozhno_skachat %}
+        <div class="fayl-znak" aria-hidden="true">
+          <span>{{ znak }} &nbsp;·&nbsp; {{ znak }} &nbsp;·&nbsp; {{ znak }}</span>
+        </div>
+      {% endif %}
+    </div>
+  {% else %}
+    <div class="fayl-okno"><div class="fayl-net-pokaza">{{ t.file_no_preview }}</div></div>
+  {% endif %}
+
+  {% if mozhno_skachat %}
+    <a class="fayl-knopka" href="/f/{{ token }}/download">{{ t.file_download }}</a>
+  {% else %}
+    <span class="fayl-nelzya">{{ t.file_view_only }}</span>
+    <div class="fayl-pochemu">{{ t.file_view_only_hint }}</div>
+  {% endif %}
+  {% if srok %}
+    <div class="fayl-srok">{{ t.file_until }} {{ srok.strftime("%d.%m.%Y") }}</div>
+  {% endif %}
+</div>
+{% endblock %}
+
+{% block script %}
+{% if not mozhno_skachat %}
+<script>
+  // Правое нажатие на файле — самый короткий путь к «сохранить картинку как».
+  // Закрываем только внутри окна показа: на всей странице это отняло бы у
+  // человека обычные действия браузера там, где файла нет.
+  const okno = document.querySelector(".fayl-okno");
+  if (okno) okno.addEventListener("contextmenu", (e) => e.preventDefault());
+</script>
+{% endif %}
+{% endblock %}

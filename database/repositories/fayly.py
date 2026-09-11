@@ -22,6 +22,8 @@ from database.models import (
     Document,
     DocumentFile,
     FileFolder,
+    FileLink,
+    FileLinkView,
     Product,
     ProductPhoto,
     StoredFile,
@@ -286,3 +288,104 @@ def snimki_tovarov(db: Session, smeshchenie: int, skolko: int):
         ).all()
     )
     return stroki, vsego
+
+
+# --- ссылки наружу ------------------------------------------------------------
+
+
+def zavesti_ssylku(
+    db: Session,
+    *,
+    stored_file_id: int | None,
+    work_id: int | None,
+    token: str,
+    rezhim: str,
+    krug: str,
+    expires_at,
+    pin_hash: str | None,
+    author_id: int | None,
+) -> FileLink:
+    ssylka = FileLink(
+        stored_file_id=stored_file_id,
+        work_id=work_id,
+        token=token,
+        rezhim=rezhim,
+        krug=krug,
+        expires_at=expires_at,
+        pin_hash=pin_hash,
+        created_by=author_id,
+    )
+    db.add(ssylka)
+    db.flush()
+    return ssylka
+
+
+def ssylka(db: Session, link_id: int) -> FileLink | None:
+    return db.execute(select(FileLink).where(FileLink.id == link_id)).scalar_one_or_none()
+
+
+def ssylka_po_tokenu(db: Session, token: str) -> FileLink | None:
+    return db.execute(select(FileLink).where(FileLink.token == token)).scalar_one_or_none()
+
+
+def ssylka_fayla(db: Session, *, stored_file_id: int | None, work_id: int | None) -> FileLink | None:
+    """Живая ссылка файла. По одной на файл: вторая означала бы два разных
+    набора условий на одни байты, и отозвать пришлось бы обе, помня о второй."""
+    gde = (
+        FileLink.stored_file_id == stored_file_id
+        if stored_file_id is not None
+        else FileLink.work_id == work_id
+    )
+    return db.execute(
+        select(FileLink).where(gde).order_by(FileLink.id.desc()).limit(1)
+    ).scalar_one_or_none()
+
+
+def ssylki_faylov(
+    db: Session, stored_ids: list[int], work_ids: list[int]
+) -> tuple[dict[int, FileLink], dict[int, FileLink]]:
+    """Ссылки сразу для страницы файлов: значок в строке нужен у каждой, и по
+    запросу на строку это по обращению к базе на строку списка."""
+    svoi: dict[int, FileLink] = {}
+    raboty_: dict[int, FileLink] = {}
+    if stored_ids:
+        for s in db.execute(
+            select(FileLink).where(FileLink.stored_file_id.in_(stored_ids))
+        ).scalars():
+            svoi[s.stored_file_id] = s
+    if work_ids:
+        for s in db.execute(select(FileLink).where(FileLink.work_id.in_(work_ids))).scalars():
+            raboty_[s.work_id] = s
+    return svoi, raboty_
+
+
+def udalit_ssylku(db: Session, ssylka_: FileLink) -> None:
+    db.delete(ssylka_)
+    db.flush()
+
+
+def otmetit_otkrytie(db: Session, link_id: int, ip_hash: str, user_agent: str) -> None:
+    db.add(FileLinkView(link_id=link_id, ip_hash=ip_hash, user_agent=user_agent[:300]))
+
+
+def schyot_otkrytiy(db: Session, link_id: int) -> tuple[int, int, object | None]:
+    """Сколько открытий, сколько разных смотрящих и когда открывали последний раз."""
+    vsego = db.execute(
+        select(func.count(FileLinkView.id)).where(FileLinkView.link_id == link_id)
+    ).scalar_one()
+    raznyh = db.execute(
+        select(func.count(func.distinct(FileLinkView.ip_hash))).where(
+            FileLinkView.link_id == link_id
+        )
+    ).scalar_one()
+    posledniy = db.execute(
+        select(FileLinkView.viewed_at)
+        .where(FileLinkView.link_id == link_id)
+        .order_by(FileLinkView.viewed_at.desc(), FileLinkView.id.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    return vsego, raznyh, posledniy
+
+
+def rabota_po_nomeru(db: Session, work_id: int) -> Work | None:
+    return db.execute(select(Work).where(Work.id == work_id)).scalar_one_or_none()

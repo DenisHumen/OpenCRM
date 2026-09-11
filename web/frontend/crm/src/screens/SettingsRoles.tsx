@@ -28,6 +28,7 @@ const ACTION_LABEL: Record<string, TranslationKey> = {
   move_stage: "permMoveStage",
   view_others: "permViewOthers",
   view_amounts: "permViewAmounts",
+  share: "permShare",
   manage: "permManage",
 };
 

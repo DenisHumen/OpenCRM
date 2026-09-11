@@ -47,6 +47,7 @@ from database.models import (
     Product,
     ProductBarcode,
     FileFolder,
+    FileLink,
     ProductPhoto,
     Role,
     RolePermission,
@@ -57,6 +58,7 @@ from database.models import (
     StockMove,
     StockTransfer,
     Task,
+    FileLinkView,
     StoredFile,
     TaskFile,
     TelegramChat,
@@ -168,6 +170,10 @@ TOPICS: dict[type, Topic | Callable | None] = {
     TaskFile: T_TASK_FILES,
     FileFolder: T_FILES,
     StoredFile: T_FILES,
+    FileLink: T_FILES,
+    # Открытие ссылки пишется на каждый заход получателя — это счётчик, а
+    # не то, на что смотрят живьём; окно ссылки перечитывает его само.
+    FileLinkView: None,
     MessageTemplate: T_TEMPLATES,
     MailAccount: T_MAIL,
     MailMessage: T_MAIL,
