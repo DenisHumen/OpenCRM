@@ -11,3 +11,4 @@ dist/
 .claude
 tmp/
 docker/.env
+vps.json

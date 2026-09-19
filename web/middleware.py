@@ -32,8 +32,13 @@
 запросов разом.
 """
 
+import html
+import logging
+
+import pymysql
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, JSONResponse
+from sqlalchemy.exc import DBAPIError
 from starlette.datastructures import MutableHeaders
 from starlette.requests import Request
 from starlette.responses import Response
@@ -45,6 +50,8 @@ from database.session import SessionLocal
 from web import sborka
 from web.api.deps import CSRF_COOKIE, CSRF_HEADER, SESSION_COOKIE
 from web.public import routes as public_routes
+
+logger = logging.getLogger(__name__)
 
 
 MUTATING_METHODS = {"POST", "PATCH", "PUT", "DELETE"}
@@ -204,6 +211,117 @@ class MaintenanceMode:
         await response(scope, receive, send)
 
 
+#: Коды MySQL, означающие «до сервера не достучаться», а не «запрос неверен».
+#:
+#: 2003 — не соединиться, 2006 — сервер ушёл, 2013 — соединение оборвалось посреди
+#: запроса, 2055 — то же на уровне клиента. Взаимная блокировка (1213) и ожидание
+#: замка (1205) сюда НЕ входят: это беды самого запроса, и им место в трейсе.
+KODY_NEDOSTUPNOSTI = frozenset({2003, 2006, 2013, 2055})
+
+#: Через сколько секунд переспросить. Перезапуск MySQL на стенде — четыре с
+#: половиной; страница перезапрашивает сама, поэтому «чуть позже» лучше, чем «сразу».
+POVTOR_CHEREZ = 5
+
+NEDOSTUPNA_STRINGS = {
+    "en": {
+        "title": "Restarting",
+        "text": "The database is restarting. This page will reload by itself in a few seconds.",
+    },
+    "ru": {
+        "title": "Перезапуск",
+        "text": "База данных перезапускается. Страница обновится сама через несколько секунд.",
+    },
+}
+
+
+def baza_nedostupna(oshibka: BaseException) -> bool:
+    """Упал ли запрос оттого, что до базы не достучаться.
+
+    `connection_invalidated` SQLAlchemy ставит сам, опознав обрыв; код проверяем
+    ещё и потому, что отказ СОЕДИНИТЬСЯ (2003) приходит из пула до того, как
+    опознавать было что.
+    """
+    if isinstance(oshibka, DBAPIError):
+        if oshibka.connection_invalidated:
+            return True
+        oshibka = oshibka.orig
+    if not isinstance(oshibka, pymysql.err.OperationalError) or not oshibka.args:
+        return False
+    return oshibka.args[0] in KODY_NEDOSTUPNOSTI
+
+
+def _nedostupna_otvet(path: str, jazyk: str) -> Response:
+    zagolovki = {"Retry-After": str(POVTOR_CHEREZ), "Cache-Control": "no-store"}
+    if path.startswith("/api/") or path == "/healthz":
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": {
+                    "code": "db_unavailable",
+                    "message": "The database is restarting, try again in a few seconds",
+                }
+            },
+            headers=zagolovki,
+        )
+    t = NEDOSTUPNA_STRINGS["ru" if jazyk.lower().startswith("ru") else "en"]
+    # Страница обновляет себя сама: человеку не нужно знать, что был перезапуск,
+    # — ему нужно, чтобы через пять секунд открылось то, что он открывал.
+    stranitsa = (
+        "<!doctype html><html><head><meta charset=\"utf-8\">"
+        f"<meta http-equiv=\"refresh\" content=\"{POVTOR_CHEREZ}\">"
+        "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+        f"<title>{html.escape(t['title'])}</title></head>"
+        "<body style=\"font:15px/1.5 system-ui,sans-serif;max-width:32rem;margin:15vh auto;"
+        "padding:0 1.5rem;color:#333\">"
+        f"<h1 style=\"font-size:20px\">{html.escape(t['title'])}</h1>"
+        f"<p>{html.escape(t['text'])}</p></body></html>"
+    )
+    return HTMLResponse(stranitsa, status_code=503, headers=zagolovki)
+
+
+class BazaNedostupna:
+    """Обрыв связи с базой — ответ 503 «переспросите», а не пятисотая с трейсом.
+
+    Перезапуск MySQL под живым приложением даёт несколько секунд отказов, и это
+    не ошибка кода: пул сам заменяет мёртвые соединения, как только база
+    вернулась. Но каждый такой отказ писал в журнал трейс строк на сто
+    семьдесят и отдавал человеку голую пятисотую — перезапуск выглядел аварией.
+    Здесь — одна строка в журнал и страница, которая обновится сама.
+
+    Ловит ТОЛЬКО недоступность базы (`baza_nedostupna`); всё прочее идёт дальше
+    как было, с трейсом. И только пока ответ не начат: второй заголовок поверх
+    уже отданного не пошлёшь.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        nachat = False
+
+        async def otpravit(message: Message) -> None:
+            nonlocal nachat
+            if message["type"] == "http.response.start":
+                nachat = True
+            await send(message)
+
+        try:
+            await self.app(scope, receive, otpravit)
+        except Exception as oshibka:
+            if nachat or not baza_nedostupna(oshibka):
+                raise
+            path = scope.get("path", "")
+            logger.warning(
+                "база недоступна: %s %s — %s", scope.get("method", ""), path, oshibka.__class__.__name__
+            )
+            jazyk = Request(scope).headers.get("accept-language", "")
+            await _nedostupna_otvet(path, jazyk)(scope, receive, send)
+
+
 class SecurityHeaders:
     """Потолок тела, проверка CSRF и заголовки безопасности на каждом ответе."""
 
@@ -306,8 +424,11 @@ def register(app: FastAPI) -> None:
     """Навесить посредников. Заголовки безопасности — снаружи всех.
 
     `add_middleware` кладёт нового посредника поверх прежних, поэтому режим
-    обслуживания добавляется первым, а заголовки вторым: так они достаются и
-    ответу заглушки, а не только обычным страницам.
+    обслуживания добавляется первым, а заголовки последними: так они достаются и
+    ответу заглушки, а не только обычным страницам. «База недоступна» — между
+    ними: режим обслуживания читает базу на каждом запросе, и её обрыв первым
+    случается именно там.
     """
     app.add_middleware(MaintenanceMode)
+    app.add_middleware(BazaNedostupna)
     app.add_middleware(SecurityHeaders)
