@@ -29,8 +29,8 @@
 3. **`alembic_version`.** Без неё восстановленная база не знает своей версии, и
    следующее обновление накатит миграции поверх уже накатанных.
 
-Чего круг НЕ проверяет и почему: двоичные значения. Дампер их сегодня не
-записывает вовсе — разбор и сторож в `test_dvoichnoe_znachenie_damper_poka_ne_beryot`.
+Двоичные значения идут своим кругом (`test_dvoichnoe_znachenie_edet_po_krugu`):
+в моделях двоичных колонок нет, и в имена клиентов байты не положишь.
 """
 
 import os
@@ -339,54 +339,45 @@ def test_kopiya_pomnit_reviziyu_alembic(chistaya_baza, snyataya_kopiya):
     )
 
 
-#: Типы колонок, значения которых дампер не умеет записывать.
-DVOICHNYE = (sa.LargeBinary, sa.BINARY, sa.VARBINARY, sa.BLOB)
+def test_dvoichnoe_znachenie_edet_po_krugu(chistaya_baza, tmp_path):
+    """Двоичное значение доезжает из копии байт в байт.
 
+    До PyMySQL 1.2.3 драйвер отдавал двоичный литерал строкой с суррогатами, и
+    любой байт от 0x80 ронял снятие копии с `UnicodeEncodeError`. Здесь стоял
+    сторож «дампер пока не берёт» — и покраснел ровно тогда, когда было надо:
+    19.09.2026 образ ворот собрался с 1.2.3, где литерал стал `_binary X'…'`.
+    Отсюда нижняя граница версии в `pyproject.toml`.
 
-def test_dvoichnoe_znachenie_damper_poka_ne_beryot(chistaya_baza, tmp_path):
-    """Двоичное значение валит снятие копии, и в моделях его поэтому быть не должно.
-
-    `pymysql` отдаёт двоичный литерал строкой с суррогатами (`escape_bytes`
-    декодирует байты как ascii с `surrogateescape`), а дамп пишется в utf-8 —
-    любой байт от 0x80 роняет снятие с `UnicodeEncodeError`. Сегодня беда спит:
-    двоичных колонок в моделях нет ни одной.
-
-    Сторож стоит на обоих концах. Появится двоичная колонка — обновление
-    перестанет снимать копию перед миграциями, то есть откатываться станет
-    некуда; научится дампер двоичному — покраснеет первая половина, и тогда
-    двоичное значение надо гнать по кругу наравне с остальными.
+    Не сохранности «не упало» мало: копию снимают, чтобы ИЗ НЕЁ поднять, поэтому
+    проверяется весь круг — снять, залить в другую базу, сверить каждый байт.
     """
+    znacheniya = {
+        # все байты разом: 0x00, `\Z`, кавычка и обратная косая среди них
+        1: bytes(range(256)),
+        2: bytes([0x00, 0x7F, 0x80, 0xFF]),
+        3: b"'",
+        4: b"\\",
+        5: b"",
+    }
     with _dvizhok(chistaya_baza) as dvizhok:
         with dvizhok.begin() as soedinenie:
             soedinenie.execute(text(
-                "CREATE TABLE proba_dvoichnogo (id INT PRIMARY KEY, znachenie VARBINARY(8))"
+                "CREATE TABLE proba_dvoichnogo (id INT PRIMARY KEY, znachenie VARBINARY(256))"
             ))
-            soedinenie.execute(
-                text("INSERT INTO proba_dvoichnogo VALUES (1, :znachenie)"),
-                {"znachenie": bytes([0x00, 0x7F, 0x80, 0xFF])},
-            )
-        try:
-            snyat(dvizhok, tmp_path / "damp.sql")
-        except UnicodeEncodeError:
-            umeet = False
-        else:
-            umeet = True
-    assert not umeet, (
-        "дампер научился записывать двоичное значение — сверка ниже больше не "
-        "нужна, а двоичное значение надо гнать по кругу наравне с остальными "
-        "(ZLYE в этом файле)"
-    )
+            for nomer, bayty in znacheniya.items():
+                soedinenie.execute(
+                    text("INSERT INTO proba_dvoichnogo VALUES (:nomer, :bayty)"),
+                    {"nomer": nomer, "bayty": bayty},
+                )
+        snyat(dvizhok, tmp_path / "damp.sql")
 
-    nashlis = [
-        f"{tablitsa}.{kolonka.name}"
-        for tablitsa, opisanie in sorted(Base.metadata.tables.items())
-        for kolonka in opisanie.columns
-        if isinstance(kolonka.type, DVOICHNYE)
-    ]
-    assert not nashlis, (
-        "двоичные колонки в моделях есть, а дампер их не записывает — копия "
-        f"перед миграциями снята не будет вовсе: {', '.join(nashlis)}"
-    )
+    with _svoya_shema("dvoichnoe_krug") as tsel:
+        _zalit(tsel, tmp_path / "damp.sql")
+        with _dvizhok(tsel) as dvizhok, dvizhok.connect() as soedinenie:
+            doehalo = dict(
+                soedinenie.execute(text("SELECT id, znachenie FROM proba_dvoichnogo")).all()
+            )
+    assert doehalo == znacheniya
 
 
 # --- заливка пачками ----------------------------------------------------------
