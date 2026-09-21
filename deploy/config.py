@@ -165,7 +165,11 @@ class UpdateConfig:
             health_attempts=int(get("HEALTH_ATTEMPTS", "30")),
             health_delay=float(get("HEALTH_DELAY", "4")),
             build_timeout=int(get("BUILD_TIMEOUT", "1800")),
-            checks_timeout=int(get("CHECKS_TIMEOUT", "1800")),
+            # Набор здесь гоняется только там, где спросить не у кого
+            # (см. `_checks`), и на боевой машине это дороже, чем в CI: два
+            # прохода и два сервера базы делят пару ядер с живым сайтом.
+            # Получаса не хватило 21.09.2026 — обновление не состоялось вовсе.
+            checks_timeout=int(get("CHECKS_TIMEOUT", "3600")),
             snapshot_timeout=int(get("SNAPSHOT_TIMEOUT", "3600")),
             # Два гигабайта — не круглое число «на всякий случай», а сумма
             # замеров: копия боевой базы 1,2 ГБ плюс слои образа. Меньше —

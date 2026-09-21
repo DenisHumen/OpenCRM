@@ -61,7 +61,14 @@ from pathlib import Path
 
 from deploy import notify, otchyot, vyzhimka
 from deploy.config import UpdateConfig
-from deploy.github import CHECKS_FAILURE, CHECKS_PENDING, GitHub, GitHubError, chas
+from deploy.github import (
+    CHECKS_FAILURE,
+    CHECKS_PENDING,
+    CHECKS_SUCCESS,
+    GitHub,
+    GitHubError,
+    chas,
+)
 # _atomic_write, а не своя запись: гарантия ровно та же, что у состояния демона —
 # недописанного JSON на диске не бывает. Ход обновления читают в произвольный
 # момент, и половина файла разобралась бы у страницы как порча.
@@ -434,7 +441,11 @@ class Updater:
         if gate is not None:
             return gate
 
-        return self._deploy(current, head.sha)
+        # Гейт выше пропускает дальше ТОЛЬКО зелёный CI — значит на обычном
+        # пути спрашивать GitHub второй раз незачем, ответ уже есть.
+        return self._deploy(
+            current, head.sha, ci_zelyonye=not force and self.config.require_ci
+        )
 
     def _ci_gate(self, current: str, target: str, force: bool) -> Outcome | None:
         """Проверки GitHub на входящем коммите. `None` — путь свободен.
@@ -551,7 +562,7 @@ class Updater:
 
     # --- сам деплой ---
 
-    def _deploy(self, previous: str, target: str) -> Outcome:
+    def _deploy(self, previous: str, target: str, ci_zelyonye: bool = False) -> Outcome:
         started = self._clock()
         steps: list[Step] = []
         summary = self.github.summary(target)
@@ -582,7 +593,7 @@ class Updater:
             self._preflight(steps)
             self._step(steps, "fetch", self._git("fetch", "--quiet", "origin", self.config.branch))
             self._step(steps, "checkout", self._git(*self._checkout_args(target)))
-            self._checks(steps)
+            self._checks(steps, target, ci_zelyonye)
             self._config_check(steps)
             # Шаги объявляются ДО работы, а не после: страницу читают ровно в ту
             # минуту, когда шаг идёт, а «сделано» посетителю уже неинтересно.
@@ -724,7 +735,7 @@ class Updater:
         except OSError:
             return None
 
-    def _checks(self, steps: list[Step]) -> None:
+    def _checks(self, steps: list[Step], target: str, ci_zelyonye: bool = False) -> None:
         """Тесты нового кода — до того, как живой сайт тронут.
 
         Гоняются в контейнере, а не на хосте: на боевом сервере нет ни venv
@@ -752,9 +763,22 @@ class Updater:
         компоуза: иначе красный набор проехал бы дальше зелёным. `--build` тут
         законен (в отличие от `run --build`, см. `_config_check`): у `up` этот
         флаг был всегда.
+
+        **И всё это не запускается, когда тот же набор на том же коммите уже
+        прошёл в CI.** Прогон здесь — та же команда на тех же исходниках, только
+        на боевой машине, где два прохода набора и два сервера базы делят
+        пару ядер с работающим сайтом. Цена вышла наружу 21.09.2026: обновление
+        уткнулось в получасовой потолок и не состоялось вовсе, хотя проверки
+        GitHub на этом коммите были зелёными. Остаётся прогон там, где спросить
+        не у кого: CI отключён, GitHub недоступен или проверок на коммите нет.
         """
         if not self.config.run_checks:
             steps.append(Step("tests", True, "пропущены (OPENCRM_UPDATE_RUN_CHECKS=0)"))
+            return
+        zelyonye = "зелёный в CI" if ci_zelyonye else self._ci_zelyonye(target)
+        if zelyonye is not None:
+            steps.append(Step("tests", True, f"не гоняли: тот же набор {zelyonye}"))
+            self.log(f"tests: не гоняли, тот же набор {zelyonye}")
             return
         compose_tests = self.config.project_dir / "docker" / "docker-compose.tests.yml"
         result = self.shell.run(
@@ -777,6 +801,25 @@ class Updater:
             timeout=300,
         )
         self._step(steps, "tests", result)
+
+    def _ci_zelyonye(self, target: str) -> str | None:
+        """Прошёл ли тот же набор на этом коммите в CI. Строка — да, `None` — гнать свой.
+
+        Спрашиваем даже при `force-update`: «обновись сейчас» — это про ожидание
+        зелёного, а не про отказ от проверки, которая уже посчитана. Любая
+        заминка с ответом означает «гнать свой набор»: пропустить проверку из-за
+        недоступного GitHub значило бы обменять её на тишину.
+        """
+        if not self.config.require_ci:
+            return None
+        try:
+            checks = self.github.checks(target)
+        except GitHubError as failure:
+            self.log(f"проверки GitHub недоступны ({failure}) — гоню набор здесь")
+            return None
+        if checks.state != CHECKS_SUCCESS:
+            return None
+        return f"зелёный в CI ({checks.detail})"
 
     def _config_check(self, steps: list[Step]) -> None:
         """Поднимется ли новый код на ЭТОЙ машине — до того, как сайт тронут.
