@@ -135,6 +135,15 @@ def get_session_by_hash(db: Session, token_hash: str) -> UserSession | None:
     return db.scalar(select(UserSession).where(UserSession.token_hash == token_hash))
 
 
+def otmetit_prisutstvie(db: Session, user_id: int, kogda: datetime) -> None:
+    """Проставить «последний раз в сети» одним запросом, без участия ORM.
+
+    Через ORM это была бы грязная строка в сессии, а она уходит в базу на первом
+    же `autoflush` — то есть в НАЧАЛЕ запроса. Разбор беды — в `web/api/deps`.
+    """
+    db.execute(update(User).where(User.id == user_id).values(last_seen_at=kogda))
+
+
 def get_session_with_user(db: Session, token_hash: str) -> tuple[UserSession, User] | None:
     """Сессия ВМЕСТЕ с хозяином — одним запросом. `None` — сессии нет.
 
