@@ -131,6 +131,14 @@ def logout(db: Session, token: str) -> None:
         users_repo.delete_session(db, session)
 
 
+#: Под этим ключом сессия базы несёт просьбу отметить присутствие.
+#:
+#: Не поле и не глобальная переменная: просьба принадлежит ОДНОМУ запросу, а
+#: сессия — единственное, что живёт ровно столько же и доезжает до места
+#: фиксации. Тем же способом ездит `live_collector.ACTOR`.
+PRISUTSTVIE = "prisutstvie"
+
+
 def get_user_by_session(db: Session, token: str) -> User | None:
     """Кто пришёл. `None` — не пустить.
 
@@ -161,8 +169,20 @@ def get_user_by_session(db: Session, token: str) -> User | None:
     # сносим: миграция ради мёртвого поля дороже самого поля.
     now = now_utc()
     if user.last_seen_at is None or (now - user.last_seen_at).total_seconds() > PRESENCE_TOUCH_SECONDS:
-        user.last_seen_at = now
+        # Не пишем здесь, а ПРОСИМ записать перед фиксацией: запись через ORM
+        # заперла бы строку сотрудника на весь запрос. Разбор — в `web/api/deps`.
+        db.info[PRISUTSTVIE] = (user.id, now)
     return user
+
+
+def zapisat_prisutstvie(db: Session) -> None:
+    """Исполнить отложенную просьбу отметить присутствие. Нет просьбы — тишина.
+
+    Зовётся вплотную к фиксации (`web/api/deps`): там разбор, почему не раньше.
+    """
+    prosba = db.info.pop(PRISUTSTVIE, None)
+    if prosba is not None:
+        users_repo.otmetit_prisutstvie(db, *prosba)
 
 
 def change_password(
