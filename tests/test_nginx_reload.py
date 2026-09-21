@@ -344,3 +344,25 @@ def test_render_pri_starte_zovyot_skript_a_ne_upominaet_ego():
     assert any("if-changed" in v for v in vyzovy), (
         "цикл перечитывания пропал — правки шаблонов перестанут применяться"
     )
+
+
+def test_zalivka_perezhivaet_zaminku_svyazi():
+    """Потолок на паузу в теле запроса больше умолчания nginx.
+
+    БЕДА 21.09.2026: заливка большого файла в доску на медленном провайдере
+    рвалась на середине. Умолчание — 60 с между двумя чтениями тела, и его
+    хватает ровно до первой заминки мобильного интернета: человек видит
+    «Network error» и начинает сначала, а на стомегабайтном файле начинает
+    бесконечно. Прогресс при этом показан честно — тем обиднее.
+
+    Сторож стоит на ОБОИХ шаблонах: правку легко внести в один и забыть про
+    второй, а по HTTP ходит установка без сертификата.
+    """
+    for name in ("http.conf.template", "https.conf.template"):
+        template = _read(TEMPLATES / name)
+        nayden = re.search(r"client_body_timeout\s+(\d+)s", template)
+        assert nayden, f"{name} не задаёт client_body_timeout — останется умолчание в 60 с"
+        assert int(nayden.group(1)) >= 300, (
+            f"{name}: client_body_timeout {nayden.group(1)} с — заминки связи "
+            "длиннее этого рвут заливку на середине"
+        )
