@@ -588,7 +588,9 @@ def test_force_update_is_the_human_override(tmp_path):
     updater = make_updater(tmp_path, github=github)
 
     assert updater.run_once(force=True).status == STATUS_DEPLOYED
-    assert github.checks_asked == []
+    # Спросить — спрашиваем, но ОЖИДАНИЕ зелёного force снимает: иначе выкатить
+    # фикс упавшего CI было бы нечем. А раз CI красный, набор гоняется здесь.
+    assert updater.shell.ran("docker-compose.tests.yml"), "красный CI — а набор не прогнали"
 
 
 def test_the_gate_can_be_switched_off_where_there_is_no_ci(tmp_path):
@@ -897,7 +899,8 @@ def test_a_failed_sweep_does_not_spoil_a_good_deploy(tmp_path):
 
 
 def test_the_tests_run_before_the_live_site_is_touched(tmp_path):
-    updater = make_updater(tmp_path)
+    # Без CI набор гоняется здесь — этот путь и проверяем.
+    updater = make_updater(tmp_path, OPENCRM_UPDATE_REQUIRE_CI="0")
 
     updater.run_once()
 
@@ -1007,7 +1010,7 @@ def test_local_edits_can_be_overridden_on_purpose(tmp_path):
 def test_red_tests_never_reach_the_live_site(tmp_path):
     shell = FakeShell()
     shell.fail("docker-compose.tests.yml up", err="2 failed")
-    updater = make_updater(tmp_path, shell=shell)
+    updater = make_updater(tmp_path, shell=shell, OPENCRM_UPDATE_REQUIRE_CI="0")
 
     outcome = updater.run_once()
 
@@ -1097,8 +1100,45 @@ def test_a_directory_that_is_not_a_repository_stops_cleanly(tmp_path):
     assert not shell.ran("docker")
 
 
+def test_zelyonyy_ci_ne_zastavlyaet_gnat_nabor_vtoroy_raz(tmp_path):
+    """Тот же набор на том же коммите уже прошёл в CI — здесь его не гоняют.
+
+    БЕДА 21.09.2026: обновление уткнулось в получасовой потолок на шаге `tests`
+    и не состоялось вовсе — при зелёных проверках GitHub на этом же коммите.
+    Прогон здесь стоил получаса: два прохода набора и два сервера базы делят
+    пару ядер боевой машины с работающим сайтом.
+    """
+    updater = make_updater(tmp_path)
+
+    outcome = updater.run_once()
+
+    assert outcome.status == STATUS_DEPLOYED
+    assert not updater.shell.ran("docker-compose.tests.yml"), "набор прогнали второй раз"
+    shag = next(step for step in outcome.steps if step.name == "tests")
+    assert shag.ok and "зелёный в CI" in shag.detail
+
+
+def test_nedostupnyy_github_vozvrashchaet_nabor_na_mesto(tmp_path):
+    """Спросить не у кого — гоним свой набор.
+
+    Пропустить проверку из-за молчащего GitHub значило бы обменять её на
+    тишину: деплой прошёл бы вообще без единого прогона.
+    """
+
+    # `force=True` — это `./opencrm.sh update` руками: ожидание зелёного
+    # пропускается, но спросить-то мы всё равно спрашиваем.
+    updater = make_updater(tmp_path, github=FakeGitHub(checks=GitHubError("GitHub молчит")))
+
+    outcome = updater.run_once(force=True)
+
+    assert outcome.status == STATUS_DEPLOYED
+    assert updater.shell.ran("docker-compose.tests.yml"), "набор не прогнали вовсе"
+
+
 def test_checks_can_be_switched_off(tmp_path):
-    updater = make_updater(tmp_path, OPENCRM_UPDATE_RUN_CHECKS="0")
+    updater = make_updater(
+        tmp_path, OPENCRM_UPDATE_RUN_CHECKS="0", OPENCRM_UPDATE_REQUIRE_CI="0"
+    )
 
     outcome = updater.run_once()
 
@@ -1125,7 +1165,7 @@ def test_nabor_gonyaetsya_pod_svoim_imenem_proekta(tmp_path):
     Флаг `-p` сильнее переменной окружения, поэтому проверяем именно его — и на
     обоих вызовах: забытый на уборке опаснее забытого на запуске.
     """
-    updater = make_updater(tmp_path)
+    updater = make_updater(tmp_path, OPENCRM_UPDATE_REQUIRE_CI="0")
 
     updater.run_once()
 
@@ -2891,3 +2931,25 @@ def test_chas_dopisyvaet_datu_kogda_ona_ne_segodnyashnyaya():
     assert chas(0) == ""
     daleko = chasy.mktime((2100, 1, 1, 2, 0, 0, 0, 0, -1))
     assert chas(daleko) == "01.01.2100 02:00"
+
+
+def test_dolgaya_komanda_ne_molchit(monkeypatch):
+    """Длинная команда тикает, пока идёт.
+
+    `subprocess.run` молчит до конца, и шаг обновления выглядел зависшим:
+    строка с командой и пустота на полчаса. Человек в это время решает, ждать
+    или бить тревогу, — и решает без единого признака.
+    """
+    import sys
+
+    from deploy import runner
+
+    monkeypatch.setattr(runner, "TIK", 0.05)
+    skazano: list[str] = []
+    shell = runner.Shell(log=skazano.append)
+
+    itog = shell.run([sys.executable, "-c", "import time; time.sleep(0.4)"])
+
+    assert itog.ok, itog.text
+    tiki = [stroka for stroka in skazano if stroka.startswith("… идёт")]
+    assert tiki, f"команда шла молча: {skazano}"

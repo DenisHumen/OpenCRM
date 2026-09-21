@@ -8,6 +8,8 @@
 from __future__ import annotations
 
 import subprocess
+import time
+import threading
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -34,6 +36,13 @@ class Result:
         return "\n".join(self.text.splitlines()[-lines:])
 
 
+#: Как часто говорить, что команда ещё идёт.
+#:
+#: Полминуты — это «видно, что не зависло» и при этом не лента: сборка образа
+#: даёт десяток строк, а не сотню.
+TIK = 30.0
+
+
 class Shell:
     def __init__(self, log=None) -> None:
         self._log = log or (lambda _message: None)
@@ -56,26 +65,51 @@ class Shell:
         argv = tuple(str(part) for part in argv)
         self._log("$ " + " ".join(argv) + (f" < {stdin}" if stdin else ""))
         istochnik = None
+        itog: dict = {}
+
+        def rabota() -> None:
+            try:
+                itog["done"] = subprocess.run(
+                    argv,
+                    cwd=str(cwd) if cwd else None,
+                    stdin=istochnik,
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout,
+                    encoding="utf-8",
+                    errors="replace",
+                )
+            except BaseException as beda:  # noqa: BLE001 — разбираем у себя, ниже
+                itog["beda"] = beda
+
         try:
             if stdin is not None:
                 istochnik = open(stdin, "rb")  # noqa: SIM115 — закрываем в finally
-            done = subprocess.run(
-                argv,
-                cwd=str(cwd) if cwd else None,
-                stdin=istochnik,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-                encoding="utf-8",
-                errors="replace",
-            )
-        except subprocess.TimeoutExpired:
-            return Result(argv, 124, "", f"команда не уложилась в {timeout} c")
-        except OSError as error:
-            return Result(argv, 127, "", str(error))
+            # Команда уходит в отдельный поток не ради скорости, а ради ТИКОВ.
+            # `subprocess.run` молчит до конца, и шаги обновления выглядели
+            # зависшими: `docker compose up` идёт минутами, а человек видит одну
+            # строку с командой и пустоту. Захват вывода, потолок времени и
+            # стандартный ввод остаются теми же — их по-прежнему делает `run`.
+            potok = threading.Thread(target=rabota, daemon=True)
+            nachalo = time.monotonic()
+            potok.start()
+            while True:
+                potok.join(TIK)
+                if not potok.is_alive():
+                    break
+                self._log(f"… идёт {int(time.monotonic() - nachalo)} c")
         finally:
             if istochnik is not None:
                 istochnik.close()
+
+        beda = itog.get("beda")
+        if isinstance(beda, subprocess.TimeoutExpired):
+            return Result(argv, 124, "", f"команда не уложилась в {timeout} c")
+        if isinstance(beda, OSError):
+            return Result(argv, 127, "", str(beda))
+        if beda is not None:
+            raise beda
+        done = itog["done"]
         return Result(argv, done.returncode, done.stdout or "", done.stderr or "")
 
 
