@@ -2,8 +2,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { Icon } from "./Icon";
 import { ConfirmModal } from "./ui";
-import { api, ApiError } from "../lib/api";
+import { api, ApiError, type Zalivka } from "../lib/api";
 import { useApp } from "../lib/app";
+import { fileSize } from "../lib/format";
 import { useGuard } from "../lib/guard";
 import { can } from "../lib/permissions";
 
@@ -30,13 +31,24 @@ interface Photo {
   created_at: string | null;
 }
 
+const dolya = (hod: { ushlo: number; vsego: number }) =>
+  hod.vsego > 0 ? Math.min(1, hod.ushlo / hod.vsego) : 0;
+
 export function ProductPhotos({ productId }: { productId: number }) {
   const { t, user, toastError } = useApp();
   const [items, setItems] = useState<Photo[] | null>(null);
   const [open, setOpen] = useState<Photo | null>(null);
   const [confirm, setConfirm] = useState<Photo | null>(null);
+  // Ход заливки: снимок с телефона — это мегабайты, и на медленной связи без
+  // полосы не видно, идёт ли что-нибудь вообще (владелец 23.09.2026).
+  const [hod, setHod] = useState<{ ushlo: number; vsego: number } | null>(null);
+  const zalivka = useRef<Zalivka<unknown> | null>(null);
   const guard = useGuard();
   const vybor = useRef<HTMLInputElement>(null);
+
+  // Ушли с карточки посреди заливки — бросаем её: полоса, которой никто не видит,
+  // только держит соединение.
+  useEffect(() => () => zalivka.current?.otmenit(), []);
 
   const mozhno_pravit = can(user, "warehouse.edit");
 
@@ -63,12 +75,19 @@ export function ProductPhotos({ productId }: { productId: number }) {
 
   const prilozhit = async (file: File) => {
     if (!guard.take()) return;
+    setHod({ ushlo: 0, vsego: file.size });
+    const rabota = api.zagruzka(`/warehouse/products/${productId}/photos`, file, (k) =>
+      setHod({ ushlo: k.ushlo, vsego: k.vsego }),
+    );
+    zalivka.current = rabota;
     try {
-      await api.upload(`/warehouse/products/${productId}/photos`, file);
+      await rabota.gotovo;
       await load();
     } catch (e) {
-      toastError(e);
+      if (!(e instanceof ApiError && e.code === "canceled")) toastError(e);
     } finally {
+      zalivka.current = null;
+      setHod(null);
       guard.free();
     }
   };
@@ -113,7 +132,7 @@ export function ProductPhotos({ productId }: { productId: number }) {
         />
       </div>
 
-      {items.length === 0 ? (
+      {items.length === 0 && !hod ? (
         <div className="field-desc">{t("prodNoPhotos")}</div>
       ) : (
         <div className="photo-grid">
@@ -147,6 +166,37 @@ export function ProductPhotos({ productId }: { productId: number }) {
               )}
             </div>
           ))}
+          {/* Заглушка стоит там, куда ляжет снимок, — в конце: новый идёт последним.
+              После 100 % полоса ждёт, пока сервер ужмёт снимок, — это секунда-две. */}
+          {hod && (
+            <div className="photo-cell">
+              <div
+                className="photo-open photo-upload"
+                role="progressbar"
+                aria-label={t("uploading")}
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={Math.round(dolya(hod) * 100)}
+              >
+                <div className="upload-bar">
+                  <div className="upload-progress" style={{ width: `${dolya(hod) * 100}%` }} />
+                </div>
+                <div className="upload-digits">
+                  <span>{Math.round(dolya(hod) * 100)}%</span>
+                  <span>{fileSize(hod.ushlo)} / {fileSize(hod.vsego)}</span>
+                </div>
+              </div>
+              <button
+                type="button"
+                className="photo-drop photo-drop-shown"
+                aria-label={t("uploadCancel")}
+                title={t("uploadCancel")}
+                onClick={() => zalivka.current?.otmenit()}
+              >
+                <Icon name="x" size={12} />
+              </button>
+            </div>
+          )}
         </div>
       )}
 

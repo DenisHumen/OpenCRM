@@ -230,6 +230,22 @@ def png_bytes(color=(217, 119, 87), size=(640, 480)) -> bytes:
     return buffer.getvalue()
 
 
+def jpeg_s_telefona(metka: int, size=(60, 30)) -> bytes:
+    """JPEG, каким его пишет телефон: кадр датчика и метка поворота в EXIF.
+
+    Верх кадра красный, низ синий — по одному пикселю видно, куда лёг верх.
+    """
+    from PIL import Image
+
+    kadr = Image.new("RGB", size, (220, 30, 30))
+    kadr.paste((30, 30, 220), (0, size[1] // 2, size[0], size[1]))
+    exif = Image.Exif()
+    exif[0x0112] = metka
+    buffer = io.BytesIO()
+    kadr.save(buffer, "JPEG", exif=exif.tobytes(), quality=95)
+    return buffer.getvalue()
+
+
 @pytest.fixture
 def db():
     """Сессия БД для проверок уровнем ниже HTTP — репозитории и общий слой запросов.

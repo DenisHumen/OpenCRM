@@ -3049,6 +3049,13 @@ a.tg-file:hover { text-decoration: underline; }
 /* Кнопка удаления проявляется по наведению, но при фокусе с клавиатуры видна
    всегда: спрятанная за наведением, она недостижима для того, кто ходит табом. */
 .photo-cell:hover .photo-drop, .photo-drop:focus-visible { opacity: 1; }
+/* Заглушка заливки — плитка того же размера, что и будущий снимок: когда он
+   долетит, сетка не дрогнет. Отмена видна сразу, без наведения. */
+.photo-upload {
+  display: flex; flex-direction: column; justify-content: center; gap: 8px;
+  padding: 12px; border-style: dashed; cursor: default;
+}
+.photo-drop-shown { opacity: 1; }
 /* Просмотр целиком. Отдельным слоем поверх страницы, без своей рамки и
    заголовка: смотрят снимок, а не окно вокруг него. */
 .photo-viewer {

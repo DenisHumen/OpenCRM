@@ -253,6 +253,29 @@ def test_razzhatie_kartinki_prohodit_cherez_ochered(obshchee, tmp_path):
     assert obshchee.skolko_zanyato(media_service.KLYUCH_MESTA) == 0, "место не отдано"
 
 
+def test_rabota_s_telefona_lozhitsya_kak_snimali(obshchee, tmp_path):
+    """Снятая боком работа доски — стоячая и в производных, и в размерах.
+
+    Размер в метаданных задаёт пропорции плитки витрины: повернуть картинку, но
+    оставить лежачий размер значило бы растянуть её по чужой рамке.
+    """
+    from PIL import Image
+
+    from tests.conftest import jpeg_s_telefona
+
+    for metka in (3, 6):
+        original = tmp_path / f"original-{metka}.jpg"
+        original.write_bytes(jpeg_s_telefona(metka))
+        meta = media_service.process_image(f"proba-{metka}", original)
+        large = Image.open(original.parent / "large.webp").convert("RGB")
+        if metka == 6:
+            assert (meta["width"], meta["height"]) == (30, 60), meta
+            assert large.size == (30, 60), large.size
+        else:
+            verh = large.getpixel((large.width // 2, 1))
+            assert verh[2] > verh[0], "сверху красный — работа легла вверх ногами"
+
+
 def test_mesto_otdayotsya_i_posle_bedy(obshchee):
     """Упавшая обработка обязана отдать место.
 

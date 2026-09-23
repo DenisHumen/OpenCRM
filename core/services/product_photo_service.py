@@ -125,6 +125,7 @@ def dobavit(
     try:
         with Image.open(BytesIO(content)) as im:
             im.load()
+            media_service.povernut_po_metke(im)
             if im.mode not in ("RGB", "RGBA"):
                 im = im.convert(
                     "RGBA" if "transparency" in im.info or im.mode in ("P", "LA") else "RGB"

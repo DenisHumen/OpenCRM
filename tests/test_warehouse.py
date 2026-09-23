@@ -734,6 +734,35 @@ def test_snimok_dobavlyaetsya_i_otdayotsya_dvumya_razmerami(root_client):
         assert otdan.content[:4] == b"RIFF", f"{razmer} — не webp"
 
 
+def test_snimok_s_telefona_lozhitsya_kak_snimali(root_client):
+    """Снимок, снятый «вверх ногами» или боком, ложится так, как его держали.
+
+    Телефон пишет кадр датчика как есть, а поворот — меткой EXIF. WEBP метку не
+    несёт, и без поворота при сохранении снимок вставал вверх ногами (владелец
+    23.09.2026: «первое фото перевернулось, второе нормально»).
+    """
+    import io
+
+    from PIL import Image
+
+    from tests.conftest import jpeg_s_telefona
+
+    item = new_product(root_client, name="Снятый с телефона")
+    for metka, stoyachiy in ((3, False), (6, True)):
+        photo = _snimok(root_client, item["id"], "IMG_0001.jpg", content=jpeg_s_telefona(metka))
+        assert photo.status_code == 201, photo.text
+        for razmer in ("view", "thumb"):
+            otdan = root_client.get(
+                f"{WH}/products/{item['id']}/photos/{photo.json()['id']}", params={"size": razmer}
+            )
+            kadr = Image.open(io.BytesIO(otdan.content)).convert("RGB")
+            shirina, vysota = kadr.size
+            assert (vysota > shirina) == stoyachiy, f"метка {metka}, {razmer}: кадр {kadr.size}"
+            if metka == 3:
+                verh = kadr.getpixel((shirina // 2, 1))
+                assert verh[2] > verh[0], f"{razmer}: сверху красный — кадр лёг вверх ногами"
+
+
 def test_pervyy_snimok_tot_chto_pokazyvayut(root_client):
     """Порядок задаёт человек, и первый — тот, что идёт в список.
 

@@ -14,7 +14,7 @@ from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageOps
 
 import blurhash as blurhash_lib
 
@@ -206,6 +206,25 @@ def sanitize_svg(content: bytes) -> bytes:
         return b"" if bad else match.group(0)
 
     return _SVG_HREF_RE.sub(drop_if_script, content)
+
+
+# --- поворот по метке EXIF ---
+
+#: Метка EXIF Orientation. Телефон пишет кадр так, как лёг датчик, а то, как держали
+#: телефон, — этой меткой. Производные WEBP её не несут, и без поворота снимок,
+#: снятый «вверх ногами» или боком, так и ложится на диск.
+METKA_POVOROTA = 0x0112
+
+
+def povernut_po_metke(im: Image.Image) -> None:
+    """Повернуть кадр по метке, на месте. Нет метки или она «как есть» — ничего."""
+    ImageOps.exif_transpose(im, in_place=True)
+
+
+def razmer_po_metke(im: Image.Image) -> tuple[int, int]:
+    """Ширина и высота кадра после поворота: у меток 5–8 они меняются местами."""
+    shirina, vysota = im.size
+    return (vysota, shirina) if im.getexif().get(METKA_POVOROTA) in (5, 6, 7, 8) else (shirina, vysota)
 
 
 # --- обработка (фоновая задача после загрузки) ---
@@ -532,8 +551,9 @@ def process_image(work_uid: str, original: Path) -> dict:
         # потому что дальше `draft` изменит `im.size`, а в метаданных работы
         # обязан лежать размер ОРИГИНАЛА: по нему считаются пропорции,
         # `is_long_image` и `srcset`. Уменьшенный размер там означал бы тихо
-        # испорченную вёрстку витрины у всех загруженных работ.
-        width, height = im.size
+        # испорченную вёрстку витрины у всех загруженных работ. Размер — после
+        # поворота по метке: снятый боком кадр ляжет на диск стоячим.
+        width, height = razmer_po_metke(im)
 
         # Разжать сразу помельче. JPEG умеет отдавать 1/2, 1/4, 1/8, и Pillow
         # выбирает ближайший масштаб НЕ МЕНЬШЕ запрошенного; исходник мельче
@@ -551,6 +571,7 @@ def process_image(work_uid: str, original: Path) -> dict:
 
         with mesto_razzhatiya():
             im.load()
+            povernut_po_metke(im)
             if im.mode not in ("RGB", "RGBA"):
                 im = im.convert(
                     "RGBA" if "transparency" in im.info or im.mode in ("P", "LA") else "RGB"

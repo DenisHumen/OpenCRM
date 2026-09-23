@@ -28,6 +28,24 @@ def test_avatar_upload_serve_and_delete(manager_client):
     assert TestClient(app).get(url).status_code == 404  # файл удалён с диска
 
 
+def test_avatar_s_telefona_ne_perevorachivaetsya(manager_client):
+    """Селфи, снятое «вверх ногами», встаёт по метке EXIF, как снимок товара."""
+    import io
+
+    from PIL import Image
+
+    from tests.conftest import jpeg_s_telefona
+
+    resp = manager_client.post(
+        f"{API}/auth/me/avatar",
+        files={"file": ("selfie.jpg", jpeg_s_telefona(3), "image/jpeg")},
+    )
+    assert resp.status_code == 201, resp.text
+    kadr = Image.open(io.BytesIO(TestClient(app).get(resp.json()["avatar_url"]).content)).convert("RGB")
+    verh = kadr.getpixel((kadr.width // 2, 1))
+    assert verh[2] > verh[0], "сверху красный — аватар лёг вверх ногами"
+
+
 def test_avatar_rejects_svg(manager_client):
     # SVG может нести скрипт — аватаром его не принимаем (только растр)
     svg = b'<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>'
