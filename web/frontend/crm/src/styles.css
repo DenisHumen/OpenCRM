@@ -4931,9 +4931,14 @@ html { scroll-behavior: smooth; }
 .fayl-schyot { color: var(--faint); font-size: 11.5px; font-variant-numeric: tabular-nums; }
 .fayly-disk { border-top: 1px solid var(--line); padding-top: 12px; }
 .fayly-disk-podpis { display: flex; justify-content: space-between; color: var(--muted); font-size: 12px; margin-bottom: 6px; }
-.fayly-disk-polosa { height: 5px; border-radius: 3px; background: var(--well-off); overflow: hidden; }
-.fayly-disk-polosa span { display: block; height: 100%; background: var(--brand); }
-.fayly-disk-tishe { color: var(--faint); font-size: 11.5px; margin-top: 6px; }
+.fayly-disk-polosa { display: flex; height: 5px; border-radius: 3px; background: var(--well-off); overflow: hidden; }
+.fayly-disk-polosa span { display: block; height: 100%; }
+.fayly-disk-fayly { background: var(--brand); }
+.fayly-disk-prochee { background: var(--faint); }
+.fayly-disk-tishe { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 2px 10px; color: var(--faint); font-size: 11.5px; margin-top: 6px; }
+/* Метка у подписи — какой цвет полосы чей. */
+.fayly-disk-metka { display: inline-block; width: 7px; height: 7px; margin-right: 6px; border-radius: 2px; background: var(--brand); }
+.fayly-disk-metka-prochee { background: var(--faint); }
 
 .fayly-soderzhimoe {
   min-width: 0; padding: 16px 18px 18px;
@@ -4947,7 +4952,9 @@ html { scroll-behavior: smooth; }
 .fayly-papki { display: flex; gap: 14px; overflow-x: auto; padding-bottom: 8px; margin-bottom: 18px; }
 .fayly-zagolovok { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
 .fayly-svitok { overflow: auto; }
-.fayly-setka { display: grid; grid-template-columns: minmax(180px, 2fr) minmax(120px, 1.2fr) 92px 92px 104px 74px; min-width: 700px; }
+/* Колонка действий — под три кнопки по 26 (ссылка, скачать, убрать) и поле 12: при 74
+   третья не влезала, и первую, ссылку, срезало у левого края ячейки. */
+.fayly-setka { display: grid; grid-template-columns: minmax(180px, 2fr) minmax(120px, 1.2fr) 92px 92px 104px 96px; min-width: 720px; }
 .klienty-th-num { justify-content: flex-end; }
 .fayly-tr { display: contents; }
 .fayly-td { display: flex; align-items: center; height: 46px; padding-right: 12px; border-bottom: 1px solid var(--line); color: var(--text); font-size: 13px; min-width: 0; overflow: hidden; }

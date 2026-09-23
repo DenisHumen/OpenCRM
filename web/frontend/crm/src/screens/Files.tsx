@@ -48,6 +48,7 @@ interface Hranilishche {
   storage_bytes: number;
   total_bytes: number;
   used_bytes: number;
+  free_bytes: number;
   percent_used: number;
   level: string;
 }
@@ -109,6 +110,40 @@ function Steklyannaya({ imya, skolko, onClick }: { imya: string; skolko: number;
       </span>
       <span className="truncate papka-imya">{imya}</span>
     </button>
+  );
+}
+
+/** Место на диске. Полоса — весь раздел: на ней файлы CRM и всё прочее (система, база,
+ *  копии). Подпись называет обе части: раньше при полосе всего диска стояла одна цифра
+ *  файлов, и «6.4 ГБ занято, 55.7 свободно» при полосе на половину читалось как ошибка. */
+function MestoNaDiske({ h }: { h: Hranilishche }) {
+  const { t } = useApp();
+  const fayly = Math.min(h.storage_bytes, h.used_bytes);
+  const prochee = Math.max(0, h.used_bytes - fayly);
+  const shirina = (n: number) => `${h.total_bytes > 0 ? Math.min(100, (n / h.total_bytes) * 100) : 0}%`;
+  return (
+    <div className="fayly-disk">
+      <div className="fayly-disk-podpis">
+        <span>
+          <i className="fayly-disk-metka" />
+          {t("filesDisk")}
+        </span>
+        <span>{formatBytes(h.storage_bytes)}</span>
+      </div>
+      <div className="fayly-disk-polosa" aria-hidden="true">
+        <span className="fayly-disk-fayly" style={{ width: shirina(fayly) }} />
+        <span className="fayly-disk-prochee" style={{ width: shirina(prochee) }} />
+      </div>
+      <div className="fayly-disk-tishe">
+        <span>
+          <i className="fayly-disk-metka fayly-disk-metka-prochee" />
+          {t("filesDiskOther", { size: formatBytes(prochee) })}
+        </span>
+        {/* free_bytes, а не total − used: в total сидит запас раздела за root, и
+            разность обещала бы место, которого процессу не дадут. */}
+        <span>{t("filesDiskFree", { size: formatBytes(h.free_bytes) })}</span>
+      </div>
+    </div>
   );
 }
 
@@ -421,20 +456,7 @@ export function Files() {
               <div className="klienty-pusto">{t("clientsNothingFound")}</div>
             )}
           </div>
-          {hranilishche && (
-            <div className="fayly-disk">
-              <div className="fayly-disk-podpis">
-                <span>{t("filesDisk")}</span>
-                <span>{formatBytes(hranilishche.storage_bytes)}</span>
-              </div>
-              <div className="fayly-disk-polosa">
-                <span style={{ width: `${Math.min(100, hranilishche.percent_used)}%` }} />
-              </div>
-              <div className="fayly-disk-tishe">
-                {t("filesDiskFree", { size: formatBytes(hranilishche.total_bytes - hranilishche.used_bytes) })}
-              </div>
-            </div>
-          )}
+          {hranilishche && <MestoNaDiske h={hranilishche} />}
         </aside>
 
         <section
