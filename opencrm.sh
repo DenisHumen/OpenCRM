@@ -2551,6 +2551,17 @@ cmd_backup() {
         rm -f "$_incoming"
         die "$(tr_ "не удалось снять дамп — ./opencrm.sh logs db" "could not take the dump — ./opencrm.sh logs db")"
     fi
+    # Дамп писал этот процесс (под systemd — root), а переносит, закрывает и
+    # проверяет его контейнер под OPENCRM_UID. Чужой файл 600 ему не поддаётся:
+    # с 15.08 по 25.09.2026 каждая ночная копия обрывалась на `chmod` за дампом.
+    _uid=$(env_get "$DOCKER_ENV" OPENCRM_UID 2>/dev/null || true)
+    if [ -n "$_uid" ] && [ "$_uid" != "$(id -u)" ]; then
+        _gid=$(env_get "$DOCKER_ENV" OPENCRM_GID 2>/dev/null || true)
+        if ! $SUDO chown "$_uid:${_gid:-$_uid}" "$_incoming"; then
+            rm -f "$_incoming"
+            die "$(tr_ "дамп снят, но отдать его контейнеру (UID $_uid) не удалось — ./opencrm.sh repair" "the dump is taken but could not be handed to the container (UID $_uid) — ./opencrm.sh repair")"
+        fi
+    fi
     # Дальше всё как всегда: имя по дате, архив storage, ключ шифрования,
     # ротация и проверка годности — это живёт в одном месте, scripts/backup.sh.
     #
@@ -3114,8 +3125,15 @@ cmd_doctor() {
     # `scripts/verify_backup.py` рядом с копиями — вопрос «есть ли у нас
     # рабочая копия» должен иметь ответ на диске, а не в чьей-то памяти.
     _check="$(home_dir)/data/backups/last-check.json"
+    # Отчёт обязан быть о последней копии: месяц строка горела зелёным «проверена
+    # 2026-08-26», пока каждая ночная копия обрывалась до проверки.
+    # shellcheck disable=SC2012  # имена копий делает сам скрипт
+    _last=$(ls -1t "$(home_dir)/data/backups/daily"/db-* 2>/dev/null | head -n1)
+    _checked=$(sed -n 's/.*"database": "\([^"]*\)".*/\1/p' "$_check" 2>/dev/null | head -n1)
     if [ ! -f "$_check" ]; then
         probe "$(tr_ "резервная копия" "backup")" 0 "$(tr_ "ни одной проверенной копии — ./opencrm.sh backup" "no verified backup yet — ./opencrm.sh backup")"
+    elif [ -n "$_last" ] && [ "${_last##*/}" != "${_checked##*/}" ]; then
+        probe "$(tr_ "резервная копия" "backup")" 0 "$(tr_ "последняя копия ${_last##*/} не проверена — journalctl -u opencrm-backup -n 30" "the latest backup ${_last##*/} is not verified — journalctl -u opencrm-backup -n 30")"
     elif grep -q '"ok": true' "$_check" 2>/dev/null; then
         _when=$(sed -n 's/.*"checked_at": "\([^"]*\)".*/\1/p' "$_check" | head -n1)
         probe "$(tr_ "резервная копия" "backup")" 1 "$(tr_ "проверена $_when" "verified $_when")"

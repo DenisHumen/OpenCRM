@@ -966,3 +966,77 @@ def test_metki_kontsa_ne_razoshlis():
     script = Path("scripts/restore.sh").read_text(encoding="utf-8")
     assert verify_backup.KHVOST_DUMPA in script, "restore.sh не знает хвоста mysqldump"
     assert METKA in script, "restore.sh не знает метки предмиграционного снимка"
+
+
+# --- дамп с хоста переходит к контейнеру ---------------------------------------
+
+
+def _telo_iz_skripta(imya: str) -> str:
+    text = Path("opencrm.sh").read_text(encoding="utf-8")
+    nachalo = text.index(NL + imya + "() {") + 1
+    return text[nachalo : text.index(NL + "}" + NL, nachalo) + 3]
+
+
+def _backup_pod_sh(tmp_path, *, ya: str, chown_padaet: bool = False) -> tuple[str, Path]:
+    """Гоняет НАСТОЯЩУЮ `cmd_backup` от имени пользователя `ya`.
+
+    `id` и `chown` — функции оболочки, а не подставные файлы в PATH: функцию
+    оболочка берёт раньше любой программы, и подмена срабатывает везде.
+    """
+    koren = tmp_path.as_posix()
+    zhurnal = f"{koren}/zhurnal"
+    (tmp_path / "docker.env").write_text("OPENCRM_UID=4242" + NL + "OPENCRM_GID=4343" + NL, encoding="utf-8")
+    skript = NL.join([
+        'SUDO=""',
+        f"DOCKER_ENV='{koren}/docker.env'",
+        "need_install() { :; }", "step() { :; }", "info() { :; }", "ok() { :; }", "warn() { :; }",
+        "tr_() { printf '%s' \"$1\"; }",
+        f"die() {{ echo \"DIE $*\" >> '{zhurnal}'; exit 1; }}",
+        f"home_dir() {{ printf '%s' '{koren}'; }}",
+        "dump_mysql() { echo '-- Dump completed' > \"$1\"; }",
+        f"run_painted() {{ echo \"HANDOFF\" >> '{zhurnal}'; }}",
+        f"id() {{ echo {ya}; }}",
+        f"chown() {{ echo \"chown $*\" >> '{zhurnal}'; {'return 1' if chown_padaet else 'return 0'}; }}",
+        _telo_iz_skripta("env_get"),
+        _telo_iz_skripta("cmd_backup"),
+        "cmd_backup",
+    ])
+    subprocess.run(["sh"], input=skript, capture_output=True, text=True, encoding="utf-8", timeout=60)
+    put = tmp_path / "zhurnal"
+    return (put.read_text(encoding="utf-8") if put.exists() else ""), tmp_path / "data" / "backups" / "incoming.sql"
+
+
+@pytest.mark.skipif(shutil.which("sh") is None, reason="нужен sh")
+def test_damp_ot_root_otdayotsya_kontejneru_do_perenosa(tmp_path):
+    """Живой случай, боевой сервер, 15.08–25.09.2026: 41 ночь без годной копии.
+
+    Таймер копий работает от root, и дамп на хосте рождался root-овым с правами
+    600. `scripts/backup.sh` в контейнере (UID 1000) переносил его и падал на
+    `chmod 600` — чужой файл ему не поддаётся, а под `set -eu` это конец скрипта:
+    ни архива файлов, ни ключа, ни проверки, ни ротации. Отдать файл обязан тот,
+    кто его создал, и до того, как контейнер за него возьмётся.
+    """
+    zhurnal, incoming = _backup_pod_sh(tmp_path, ya="0")
+    stroki = zhurnal.splitlines()
+    assert f"chown 4242:4343 {incoming.as_posix()}" in stroki, zhurnal
+    assert "HANDOFF" in stroki, zhurnal
+    assert stroki.index(f"chown 4242:4343 {incoming.as_posix()}") < stroki.index("HANDOFF"), (
+        "дамп отдан контейнеру раньше, чем стал его"
+    )
+
+
+@pytest.mark.skipif(shutil.which("sh") is None, reason="нужен sh")
+def test_vladelets_ustanovki_damp_ne_perevladevaet(tmp_path):
+    """Запуск от владельца установки — дамп и так свой, chown не нужен."""
+    zhurnal, _incoming = _backup_pod_sh(tmp_path, ya="4242")
+    assert "chown" not in zhurnal, zhurnal
+    assert "HANDOFF" in zhurnal.splitlines(), zhurnal
+
+
+@pytest.mark.skipif(shutil.which("sh") is None, reason="нужен sh")
+def test_neotdannyy_damp_ne_uhodit_v_kontejner(tmp_path):
+    """Не вышло отдать — отказ с понятной причиной, а не `chmod` из глубины контейнера."""
+    zhurnal, incoming = _backup_pod_sh(tmp_path, ya="0", chown_padaet=True)
+    assert "HANDOFF" not in zhurnal.splitlines(), zhurnal
+    assert "DIE" in zhurnal and "4242" in zhurnal, zhurnal
+    assert not incoming.exists(), "недоотданный дамп остался лежать и выглядит готовым"

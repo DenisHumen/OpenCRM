@@ -18,6 +18,8 @@
 
 import asyncio
 import importlib
+import json
+import os
 import re
 import shutil
 import subprocess
@@ -256,6 +258,33 @@ def test_ochered_razzhatiya_vidna_v_metrikakh(metrics_module, monkeypatch):
     from core.services import media_service
 
     assert predel == media_service.ODNOVREMENNO
+
+
+def _proverena_li(metrics_module, monkeypatch, tmp_path, *, o_kakoy: str) -> str:
+    daily = tmp_path / "backups" / "daily"
+    daily.mkdir(parents=True)
+    (daily / "db-2026-08-26.sql").write_text("-- Dump completed", encoding="utf-8")
+    svezhaya = daily / "db-2026-09-25.sql"
+    svezhaya.write_text("-- Dump completed", encoding="utf-8")
+    os.utime(daily / "db-2026-08-26.sql", (1_000, 1_000))
+    otchyot = {"ok": True, "database": f"/app/data/backups/daily/{o_kakoy}"}
+    (tmp_path / "backups" / "last-check.json").write_text(json.dumps(otchyot), encoding="utf-8")
+    monkeypatch.setenv("OPENCRM_DATA_DIR", str(tmp_path))
+    out = metrics_module.Metrics()
+    metrics_module._collect_backups(out)
+    return next(v for n, _l, v in _samples(chr(10).join(out.lines)) if n == "opencrm_backup_verified")
+
+
+def test_otchyot_o_proshloy_kopii_ne_delaet_svezhuyu_proverennoy(metrics_module, monkeypatch, tmp_path):
+    """Боевой сервер, 15.08–25.09.2026: ночная копия обрывалась между дампом и
+    проверкой, а `last-check.json` от 26.08 лежал с `"ok": true`. Метрика читала
+    его и отвечала «годна» — `BackupBroken` молчал 41 ночь.
+    """
+    assert _proverena_li(metrics_module, monkeypatch, tmp_path, o_kakoy="db-2026-08-26.sql") == "0"
+
+
+def test_otchyot_o_posledney_kopii_zasvechivaet_godnost(metrics_module, monkeypatch, tmp_path):
+    assert _proverena_li(metrics_module, monkeypatch, tmp_path, o_kakoy="db-2026-09-25.sql") == "1"
 
 
 def test_metrics_ne_khodit_v_bazu(metrics_module):
