@@ -271,15 +271,18 @@ def soderzhimoe(db: Session, actor: User, uzel: str, page: int, per_page: int) -
         if not otkryto[TOVARY]:
             raise errors.ForbiddenError("Warehouse is not available", code="permission_denied")
         stroki, vsego = fayly_repo.snimki_tovarov(db, smeshchenie, per_page)
+        # Колонки mime у снимка нет: на диске он всегда WEBP. Обращение к ней
+        # роняло весь узел в 500, стоило на складе появиться первому снимку.
         items = [
             _stroka(
                 f"product:{p.id}",
                 p.original_name,
-                p.mime,
+                "image/webp",
                 p.size_bytes,
-                None,
+                p.created_at,
                 imya,
                 f"/warehouse/{p.product_id}",
+                f"/api/v1/warehouse/products/{p.product_id}/photos/{p.id}?size=thumb",
             )
             for p, imya in stroki
         ]

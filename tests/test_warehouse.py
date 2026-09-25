@@ -763,6 +763,26 @@ def test_snimok_s_telefona_lozhitsya_kak_snimali(root_client):
                 assert verh[2] > verh[0], f"{razmer}: сверху красный — кадр лёг вверх ногами"
 
 
+def test_snimki_tovara_vidny_v_menedzhere_faylov(root_client):
+    """Боевой сервер, 22.09.2026: ветка «Товары» в менеджере файлов отвечала 500.
+
+    Строка брала `mime` у снимка, а такой колонки нет: на диске снимок всегда
+    WEBP. Пустая ветка проходила, и набор зеленел — падала ветка с первым снимком.
+    """
+    item = new_product(root_client, name="Деталь для менеджера файлов")
+    photo = _snimok(root_client, item["id"], "detal.png").json()
+
+    otvet = root_client.get(f"{API}/files", params={"node": "goods"})
+    assert otvet.status_code == 200, otvet.text
+    zapis = next(f for f in otvet.json()["items"] if f["id"] == f"product:{photo['id']}")
+    assert zapis["mime"] == "image/webp"
+    assert zapis["where"] == "Деталь для менеджера файлов"
+    assert zapis["open"] == f"/warehouse/{item['id']}"
+    assert zapis["created_at"], "у снимка есть дата, а строка её теряла"
+    plitka = root_client.get(zapis["thumb"])
+    assert plitka.status_code == 200 and plitka.headers["content-type"] == "image/webp"
+
+
 def test_pervyy_snimok_tot_chto_pokazyvayut(root_client):
     """Порядок задаёт человек, и первый — тот, что идёт в список.
 
