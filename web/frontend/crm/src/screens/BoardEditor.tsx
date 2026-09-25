@@ -126,12 +126,14 @@ export function BoardEditor() {
 
   const share = board.shares.find((s: any) => s.is_active) ?? board.shares[0] ?? null;
 
-  const patchBoard = async (patch: any) => {
+  const patchBoard = async (patch: any): Promise<boolean> => {
     try {
       const updated = await api.patch(`/boards/${id}`, patch);
       setBoard((prev: any) => ({ ...prev, ...updated }));
+      return true;
     } catch (e) {
       toastError(e);
+      return false;
     }
   };
 
@@ -541,9 +543,9 @@ export function BoardEditor() {
           <div className="rail-card">
             <div className="rail-title">{t("boardSettings")}</div>
             <label className="label">{t("boardTitle")}</label>
-            <BlurInput value={board.title} onSave={(v) => void patchBoard({ title: v })} style={{ marginBottom: 12, height: 32 }} />
+            <BlurInput value={board.title} onSave={(v) => patchBoard({ title: v })} style={{ marginBottom: 12, height: 32 }} />
             <label className="label">{t("description")}</label>
-            <BlurInput value={board.description} onSave={(v) => void patchBoard({ description: v })} textarea style={{ marginBottom: 12 }} />
+            <BlurInput value={board.description} onSave={(v) => patchBoard({ description: v })} textarea style={{ marginBottom: 12 }} />
             <label className="label">{t("client")}</label>
             <VyborKlienta
               value={board.client_id ?? null}
@@ -1038,14 +1040,19 @@ function BlurInput({
   style,
 }: {
   value: string;
-  onSave: (value: string) => void;
+  onSave: (value: string) => Promise<boolean>;
   textarea?: boolean;
   style?: React.CSSProperties;
 }) {
   const [draft, setDraft] = useState(value);
   useEffect(() => setDraft(value), [value]);
-  const commit = () => {
-    if (draft !== value) onSave(draft);
+  const commit = async (e: React.FocusEvent) => {
+    // Ушли в другое окно (скопировать название) — поле не покинуто, фокус вернётся
+    // сюда же. Сохранялось недописанное: пустой заголовок, отказ, и так трижды за доску.
+    if (!document.hasFocus() || document.activeElement === e.currentTarget) return;
+    if (draft === value) return;
+    // Отказ сервера — вернуть сохранённое: иначе поле показывает то, чего в доске нет.
+    if (!(await onSave(draft))) setDraft(value);
   };
   return textarea ? (
     <textarea className="textarea" style={style} value={draft} onChange={(e) => setDraft(e.target.value)} onBlur={commit} />
