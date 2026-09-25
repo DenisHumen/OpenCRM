@@ -290,14 +290,19 @@ groups:
         # Копия, не прошедшая проверку годности, хуже отсутствующей: на неё
         # рассчитывают. Оборванный `.backup` выглядит как база и читается до
         # первой битой страницы.
+        #
+        # Непроверенная — то же самое: метрика даёт 0, если отчёт — о прошлой копии.
+        # Час, а не минуты: между дампом и проверкой идёт архив файлов, он растёт.
         expr: min(opencrm_backup_verified) == 0
-        for: 10m
+        for: 1h
         labels:
           severity: critical
         annotations:
-          summary: "Последняя резервная копия НЕГОДНА"
+          summary: "Последняя резервная копия не проверена или НЕГОДНА"
           description: "Копия, не прошедшая проверку годности, хуже отсутствующей: на неё рассчитывают."
-          lechenie: "cat ~/opencrm/data/backups/last-check.json"
+          lechenie: |-
+            journalctl -u opencrm-backup -n 30
+            cat ~/opencrm/data/backups/last-check.json
 
       - alert: DeployRolledBack
         # Откат — это уже сработавшая защита: сайт живой, но приехавший коммит

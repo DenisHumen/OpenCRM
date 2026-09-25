@@ -329,10 +329,13 @@ def _collect_backups(out: Metrics) -> None:
     except (OSError, ValueError):
         return
     if isinstance(payload.get("ok"), bool):
+        # Отчёт обязан быть о ПОСЛЕДНЕЙ копии. С 15.08 по 25.09.2026 скрипт обрывался
+        # между дампом и проверкой, а метрика месяц хвалила отчёт от 26.08 — и тревога молчала.
+        pro_poslednyuyu = Path(str(payload.get("database") or "")).name == last.name
         out.add(
             "opencrm_backup_verified",
-            1 if payload["ok"] else 0,
-            help_text="1 — последняя копия прошла проверку годности, 0 — нет.",
+            1 if payload["ok"] and pro_poslednyuyu else 0,
+            help_text="1 — последняя копия прошла проверку годности, 0 — не прошла или не проверялась.",
         )
 
 
