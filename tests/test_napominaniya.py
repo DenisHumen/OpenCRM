@@ -315,6 +315,20 @@ def test_kalendar_raskladyvaet_povtory(root_client):
     assert razy == ["2031-05-04", "2031-05-11", "2031-05-18", "2031-05-25"]
 
 
+def test_kalendar_ne_zabivaetsya_staroy_prosrochkoy(role_maker, staff_maker, monkeypatch):  # noqa: F811
+    """Разбор 28.09.2026: окно грузило открытые «до конца окна» по сроку и резало на
+    потолке — старая разовая просрочка вытесняла всё, что в окне."""
+    rol = role_maker("Календарь с хвостами", ["tasks.view", "tasks.create", "tasks.edit"])
+    anna = staff_maker("kalendar-hvosty@test.local", rol["id"])
+    for n in range(6):
+        _zavesti(anna, title=f"Хвост {n}", due_at=datetime(2030, 1, 1 + n, 9, tzinfo=timezone.utc).isoformat())
+    v_okne = _zavesti(anna, title="В окне", due_at=datetime(2033, 3, 10, 9, tzinfo=timezone.utc).isoformat())
+    monkeypatch.setattr(task_service, "KALENDAR_LIMIT", 5)
+    otvet = anna.get(f"{TASKS}/calendar", params={"s": "2033-03-01T00:00:00Z", "po": "2033-04-01T00:00:00Z"})
+    assert otvet.status_code == 200, otvet.text
+    assert v_okne["id"] in [r["task"]["id"] for r in otvet.json()["items"]]
+
+
 def test_kalendar_okno_ne_bolshe_dvuh_mesyatsev(root_client):
     otvet = root_client.get(f"{TASKS}/calendar", params={"s": "2031-01-01T00:00:00Z", "po": "2031-06-01T00:00:00Z"})
     assert otvet.status_code == 422

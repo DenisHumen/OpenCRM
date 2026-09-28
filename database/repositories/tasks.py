@@ -126,14 +126,16 @@ def search(
 
 
 def v_okne(db: Session, *, user_id: int, vse: bool, s, po, limit: int) -> list[Task]:
-    """Для календаря: открытые со сроком до конца окна и закрытые внутри окна.
+    """Для календаря: открытые со сроком в окне, повторяющиеся со сроком до его
+    конца (их разы в окне раскладывает сервис) и закрытые внутри окна.
 
-    Открытые — все до `po`, а не с `s`: просроченное и повторяющееся тоже нужно
-    календарю. Разы повторяющихся по дням раскладывает сервис.
+    Разовое просроченное календарю не нужно, а грузилось первым: две тысячи старых
+    хвостов упирались в потолок, и окно оставалось пустым (разбор 28.09.2026).
     """
     query = _vidimye(select(Task), user_id, vse).where(
         or_(
-            and_(Task.done_at.is_(None), Task.due_at.is_not(None), Task.due_at < po),
+            and_(Task.done_at.is_(None), Task.due_at >= s, Task.due_at < po),
+            and_(Task.done_at.is_(None), Task.povtor.is_not(None), Task.due_at < s),
             and_(Task.done_at.is_not(None), Task.done_at >= s, Task.done_at < po),
         )
     )
