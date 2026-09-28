@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import threading
 
-from core.services import push_service, task_service
+from core.services import board_service, push_service, task_service
 from database.session import SessionLocal
 
 #: Шаг, секунд. Окно звонка — пятнадцать минут назад, так что пропуск шага не теряет звонков.
@@ -45,6 +45,10 @@ def _krug() -> None:
                 with SessionLocal() as db:
                     task_service.zvonki_ubrat_starye(db)
                     db.commit()
+            # Первый заход — через минуту после старта: брошенное выкладкой видно сразу.
+            if nomer % UBORKA_KAZHDYE == 3:
+                with SessionLocal() as db:
+                    board_service.dovesti_zastryavshie(db)
         except Exception as exc:  # noqa: BLE001 — поток обязан пережить сбой базы
             print(f"[opencrm] звонки напоминаний: шаг не удался — {exc!r}")
 

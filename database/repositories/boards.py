@@ -1,7 +1,10 @@
-from sqlalchemy import func, or_, select
+from datetime import datetime
+
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.orm import Session
 
 from database.models import Board, Work
+from database.models.board import WORK_FAILED, WORK_PROCESSING
 from database.query import contains, page_of, page_without_total
 
 
@@ -126,6 +129,31 @@ def get_work_by_uid(db: Session, work_uid: str) -> Work | None:
     if not work_uid:
         return None
     return db.scalar(select(Work).where(Work.work_uid == work_uid))
+
+
+def zastryavshie(db: Session, ranshe: datetime, skolko: int) -> list[int]:
+    """Работы в обработке, заведённые раньше `ranshe`, — старые первыми."""
+    return list(
+        db.execute(
+            select(Work.id)
+            .where(Work.status == WORK_PROCESSING, Work.created_at < ranshe)
+            .order_by(Work.id)
+            .limit(skolko)
+        ).scalars()
+    )
+
+
+def vzyat_zastryavshuyu(db: Session, work_id: int) -> bool:
+    """«В обработке» → «не вышло» условным UPDATE: берёт ровно один из процессов."""
+    return (
+        db.execute(
+            update(Work)
+            .where(Work.id == work_id, Work.status == WORK_PROCESSING)
+            .values(status=WORK_FAILED)
+            .execution_options(synchronize_session=False)
+        ).rowcount
+        == 1
+    )
 
 
 def get_work_by_id(db: Session, work_id: int) -> Work | None:

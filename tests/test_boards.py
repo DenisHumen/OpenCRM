@@ -1,6 +1,7 @@
 import io
 import zipfile
 
+import pytest
 from fastapi.testclient import TestClient
 
 from config.settings import get_settings
@@ -639,3 +640,71 @@ def test_doska_znaet_kto_i_kogda_eyo_zavyol(manager_client):
         db.commit()
     staraya = manager_client.get(f"{API}/boards/{board['id']}").json()
     assert "created_by_name" in staraya and staraya["created_by_name"] is None
+
+
+def _brosit_rabotu(manager_client, title: str) -> int:
+    """Работа, будто её обработку оборвала выкладка час назад."""
+    from datetime import timedelta
+
+    from core.utils import now_utc
+    from database.models import Work
+    from database.session import SessionLocal
+
+    board = manager_client.post(f"{API}/boards", json={"title": title}).json()
+    up = manager_client.post(f"{API}/boards/{board['id']}/works", files={"file": ("w.png", png_bytes(), "image/png")})
+    assert up.status_code == 202, up.text
+    with SessionLocal() as db:
+        work = db.get(Work, up.json()["id"])
+        work.status = "processing"
+        work.created_at = now_utc().replace(tzinfo=None) - timedelta(hours=1)
+        db.commit()
+    return up.json()["id"]
+
+
+def test_broshennaya_obrabotka_dovoditsya(manager_client, monkeypatch):
+    """Разбор 28.09.2026: фоновая обработка умирала с процессом при выкладке, и
+    работа оставалась «processing» навсегда. Роняющая процесс — «failed», не цикл."""
+    from core.services import board_service, media_service
+    from database.models import Work
+    from database.session import SessionLocal
+
+    class PadenieProcessa(BaseException):
+        """Смерть процесса: ни один `except Exception` её не ловит."""
+
+    celaya = _brosit_rabotu(manager_client, "Брошенная обработка")
+    bitaya = _brosit_rabotu(manager_client, "Битая обработка")
+    nastoyashchaya = media_service.process_image
+
+    def obrabotka(work_uid, original):
+        if work_uid == bitaya_uid:
+            raise PadenieProcessa()
+        return nastoyashchaya(work_uid, original)
+
+    with SessionLocal() as db:
+        bitaya_uid = db.get(Work, bitaya).work_uid
+    monkeypatch.setattr(media_service, "process_image", obrabotka)
+    monkeypatch.setattr(board_service, "ZASTRYAVSHIH_ZA_RAZ", 1000)
+    with SessionLocal() as db, pytest.raises(PadenieProcessa):
+        board_service.dovesti_zastryavshie(db)
+    with SessionLocal() as db:
+        assert db.get(Work, celaya).status == "ready"
+        assert db.get(Work, bitaya).status == "failed"
+        vtoroy = board_service.dovesti_zastryavshie(db)
+    assert celaya not in vtoroy and bitaya not in vtoroy, "не вышло — второй раз не берётся"
+
+
+def test_svezhaya_obrabotka_ne_trogaetsya(manager_client):
+    """Работа, которую прямо сейчас обрабатывает соседний процесс, не отбирается."""
+    from core.services import board_service
+    from database.models import Work
+    from database.session import SessionLocal
+
+    work_id = _brosit_rabotu(manager_client, "Свежая обработка")
+    from core.utils import now_utc
+
+    with SessionLocal() as db:
+        db.get(Work, work_id).created_at = now_utc().replace(tzinfo=None)
+        db.commit()
+        assert work_id not in board_service.dovesti_zastryavshie(db)
+        assert db.get(Work, work_id).status == "processing"
+

@@ -1,5 +1,6 @@
 import re
 import uuid
+from datetime import timedelta
 from pathlib import Path
 
 from sqlalchemy.orm import Session
@@ -206,6 +207,34 @@ def process_work(work_id: int) -> None:
             db.commit()
     finally:
         db.close()
+
+
+#: Дольше этого обработка не идёт (ffmpeg — 5 минут потолком), значит работу бросили.
+ZASTRYALA_MINUT = 15
+#: Сколько брошенных дообрабатывать за заход: заход идёт в потоке звонков.
+ZASTRYAVSHIH_ZA_RAZ = 3
+
+
+def dovesti_zastryavshie(db: Session) -> list[int]:
+    """Работы, брошенные обработкой (фоновая задача умерла с процессом при выкладке).
+
+    Каждую сначала помечаем «не вышло» и фиксируем, и лишь потом обрабатываем
+    заново: работа, которая сама роняет процесс, так остаётся «не вышло», а не
+    роняет его на каждом заходе (разбор 28.09.2026). Возвращает взятые номера.
+    """
+    ranshe = (now_utc() - timedelta(minutes=ZASTRYALA_MINUT)).replace(tzinfo=None)
+    vzyaty = [
+        work_id
+        for work_id in boards_repo.zastryavshie(db, ranshe, ZASTRYAVSHIH_ZA_RAZ)
+        if boards_repo.vzyat_zastryavshuyu(db, work_id)
+    ]
+    db.commit()
+    for work_id in vzyaty:
+        try:
+            process_work(work_id)
+        except Exception as exc:  # noqa: BLE001 — одна битая работа не останавливает остальные
+            print(f"[opencrm] работа {work_id}: повторная обработка не удалась — {exc!r}")
+    return vzyaty
 
 
 def update_work(db: Session, board_id: int, work_id: int, data: dict) -> Work:
