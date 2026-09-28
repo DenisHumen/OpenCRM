@@ -1909,3 +1909,19 @@ def test_razmer_setki_svodki_ekran_ne_znaet_sam():
     assert "raskladka.grid.cols" in ekran, "экран обязан брать число колонок из ответа сервера"
     svoi = re.findall(r"^const KOLONOK\b.*$", ekran, re.M)
     assert svoi == [], f"экран завёл своё число колонок: {svoi}"
+
+
+def test_summa_iz_polya_odna_i_ne_boitsya_probelov():
+    """«1 500» — обычный набор, а `Number("1 500")` — NaN: цена прихода ложилась нулём (28.09.2026).
+
+    Разборщиков было три, и каждый ошибался по-своему. Теперь один — `lib/format.ts`.
+    """
+    format_ts = (SCREENS / "lib" / "format.ts").read_text(encoding="utf-8")
+    telo = re.search(r"export function toMinorOrNull[\s\S]*?\n}\n", format_ts)
+    assert telo and 'replace(/\s/g, "")' in telo.group(0), "пробелы в тысячах не убираются"
+    svoi = [
+        str(put.relative_to(SCREENS))
+        for put in SCREENS.rglob("*.tsx")
+        if re.search(r"function toMinor\w*\(", put.read_text(encoding="utf-8"))
+    ]
+    assert svoi == [], f"свой разбор суммы — берите toMinorOrNull из lib/format.ts: {svoi}"

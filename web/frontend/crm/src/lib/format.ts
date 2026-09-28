@@ -114,8 +114,19 @@ export function formatMoneyShort(
  * `null` и превратил бы опечатку в отказ без объяснения.
  */
 export function toMinorUnits(typed: string): number {
-  const value = Number(typed.replace(",", "."));
-  return Number.isFinite(value) ? Math.round(value * 100) : 0;
+  return toMinorOrNull(typed) ?? 0;
+}
+
+/** То же, но пустое или нечитаемое поле — `null`: «не указано», а не ноль.
+ *
+ * Пробел в тысячах — обычный набор («1 500», из буфера — с неразрывным): `Number`
+ * на нём даёт `NaN`, и цена прихода ложилась нулём без единого слова (28.09.2026).
+ */
+export function toMinorOrNull(typed: string): number | null {
+  const chistoe = typed.replace(/\s/g, "").replace(",", ".");
+  if (!chistoe) return null;
+  const value = Number(chistoe);
+  return Number.isFinite(value) ? Math.round(value * 100) : null;
 }
 
 /** Ставка из базисных пунктов в проценты: 500 → «5%», 650 → «6,5%».

@@ -15,7 +15,7 @@ import { useLiveTopic, useNachatayaPravka } from "../lib/live";
 import { useFailure } from "../lib/failure";
 import { useGuard } from "../lib/guard";
 import { nazvanieBumagi, paperLink, statusLabel, statusVariant } from "../lib/documents";
-import { formatDate, formatDateTime, formatMoney, formatSpan, parseDate } from "../lib/format";
+import { formatDate, formatDateTime, formatMoney, formatSpan, parseDate, toMinorOrNull } from "../lib/format";
 import { moduleOn } from "../lib/modules";
 import { can } from "../lib/permissions";
 import { useReference } from "../lib/reference";
@@ -34,15 +34,6 @@ const asDateInput = (iso: string | null) => (iso ? iso.slice(0, 10) : "");
  *  выглядел бы как «работа бесплатная», а это другое состояние. */
 const asMoneyInput = (minor: number | null | undefined) =>
   minor === null || minor === undefined ? "" : String(minor / 100);
-
-/** Поле ввода → минимальные единицы. Округляем, а не отбрасываем дробь:
- *  «10.999» от быстрого набора должно стать 11.00, а не 10.99. */
-function toMinor(value: string): number | null {
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-  const parsed = Number(trimmed);
-  return Number.isFinite(parsed) ? Math.round(parsed * 100) : null;
-}
 
 export function DealCard() {
   const { id } = useParams();
@@ -420,7 +411,7 @@ export function DealCard() {
               key={`amount-${deal.amount}`}
               defaultValue={asMoneyInput(deal.amount)}
               onBlur={(e) => {
-                const next = toMinor(e.target.value);
+                const next = toMinorOrNull(e.target.value);
                 if (next !== deal.amount) void patch({ amount: next });
               }}
             />
@@ -435,7 +426,7 @@ export function DealCard() {
               step="0.01"
               defaultValue={asMoneyInput(deal.prepaid)}
               onBlur={(e) => {
-                const next = toMinor(e.target.value) ?? 0;
+                const next = toMinorOrNull(e.target.value) ?? 0;
                 if (next !== deal.prepaid) void patch({ prepaid: next });
               }}
             />
