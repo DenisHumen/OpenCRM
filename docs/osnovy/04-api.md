@@ -1915,7 +1915,7 @@ curl -sS -X POST https://crm.example.com/api/v1/site/orders \
 |---|---|---|---|
 | GET | `/push/key` | 👤 | Открытый ключ VAPID сервера — `applicationServerKey` для `pushManager.subscribe` |
 | GET | `/push/subscriptions` | 👤 | Свои подписки: `nazvanie` устройства, `endpoint_hash` (sha256 адреса — по нему экран узнаёт «это устройство»), последняя доставка |
-| POST | `/push/subscriptions` | 👤 | Подписать браузер: `endpoint` (только `https`, иначе `422 push_endpoint`), `keys.p256dh`, `keys.auth` (`422 push_keys`), `nazvanie`. Тот же адрес под другим входом переезжает к нему |
+| POST | `/push/subscriptions` | 👤 | Подписать браузер: `endpoint` (только адрес службы браузера — FCM, Mozilla, Apple, Windows; иначе `422 push_endpoint`), `keys.p256dh`, `keys.auth` (`422 push_keys`), `nazvanie`. Тот же адрес под другим входом переезжает к нему |
 | DELETE | `/push/subscriptions/{sub_id}` | 👤 | Отключить своё устройство; чужое — `404 push_subscription_not_found` |
 | POST | `/push/action` | 🔓 | Кнопка системного уведомления; вместо сессии — подпись HMAC в `token`: `{token, deystvie: done\|later}`. Шлётся без cookie; `401 push_deystvie_ne_to` / `push_deystvie_istyok`, `409 zvonok_ustarel` — напоминание ушло дальше того звонка, `403` — нет права или блок выключен |
 

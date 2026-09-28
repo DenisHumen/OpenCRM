@@ -68,18 +68,47 @@ def _moy_id(client) -> int:
 
 
 def test_podpiska_proveryaet_adres_i_klyuchi(root_client):
-    b = Brauzer("https://push.example.test/p/1").podpiska()
-    net_https = root_client.post(f"{PUSH}/subscriptions", json={**b, "endpoint": "http://push.example.test/p/1"})
+    b = Brauzer("https://fcm.googleapis.com/fcm/send/p1").podpiska()
+    net_https = root_client.post(f"{PUSH}/subscriptions", json={**b, "endpoint": "http://fcm.googleapis.com/fcm/send/p1"})
     assert net_https.json()["error"]["code"] == "push_endpoint"
     ne_klyuch = root_client.post(f"{PUSH}/subscriptions", json={**b, "keys": {"p256dh": "AAAA", "auth": "AAAA"}})
     assert ne_klyuch.json()["error"]["code"] == "push_keys"
     assert root_client.get(f"{PUSH}/key").json()["key"] == push_service.otkrytyy_klyuch()
 
 
+@pytest.mark.parametrize(
+    "adres",
+    [
+        "https://127.0.0.1/p",
+        "https://localhost/p",
+        "https://10.0.0.130/api/v1/system/backups/restore",
+        "https://crm.example.com/p",
+        "https://fcm.googleapis.com.evil.test/p",
+        "https://fcm.googleapis.com@evil.test/p",
+        "https://fcm.googleapis.com:8443/p",
+    ],
+)
+def test_podpiska_tolko_na_sluzhbu_brauzera(root_client, adres):
+    """SSRF: адрес подписки задаёт сотрудник, а POST на него шлёт сервер."""
+    b = Brauzer(adres).podpiska()
+    otvet = root_client.post(f"{PUSH}/subscriptions", json=b)
+    assert otvet.status_code == 422 and otvet.json()["error"]["code"] == "push_endpoint"
+
+
+def test_podpiski_vsekh_brauzerov_prinimayutsya():
+    for adres in (
+        "https://fcm.googleapis.com/fcm/send/x",
+        "https://updates.push.services.mozilla.com/wpush/v2/x",
+        "https://web.push.apple.com/x",
+        "https://wns2-par02p.notify.windows.com/w/?token=x",
+    ):
+        assert push_service.sluzhba_brauzera(adres), adres
+
+
 def test_podpiska_svoya_i_pereezzhaet_s_brauzerom(root_client, role_maker, staff_maker):  # noqa: F811
     rol = role_maker("Push — напоминания", ["tasks.view", "tasks.create", "tasks.edit"])
     anna = staff_maker("push-anna@test.local", rol["id"])
-    b = Brauzer("https://push.example.test/p/pereezd").podpiska()
+    b = Brauzer("https://updates.push.services.mozilla.com/wpush/v2/pereezd").podpiska()
     moya = root_client.post(f"{PUSH}/subscriptions", json=b)
     assert moya.status_code == 201, moya.text
     assert anna.delete(f"{PUSH}/subscriptions/{moya.json()['id']}").json()["error"]["code"] == "push_subscription_not_found"
@@ -91,8 +120,8 @@ def test_podpiska_svoya_i_pereezzhaet_s_brauzerom(root_client, role_maker, staff
 
 
 def test_rassylka_shifruet_podpisyvaet_i_ubiraet_mertvye(root_client):
-    zhivoy = Brauzer("https://push.example.test/p/zhivoy")
-    mertvyy = Brauzer("https://push.example.test/p/mertvyy")
+    zhivoy = Brauzer("https://fcm.googleapis.com/fcm/send/zhivoy")
+    mertvyy = Brauzer("https://web.push.apple.com/mertvyy")
     for b in (zhivoy, mertvyy):
         assert root_client.post(f"{PUSH}/subscriptions", json=b.podpiska()).status_code == 201
     task = _napominanie(root_client, due_at=_cherez(minutes=30), vazhnost="urgent")
@@ -122,6 +151,26 @@ def test_rassylka_shifruet_podpisyvaet_i_ubiraet_mertvye(root_client):
         adresa = {p.endpoint: p for p in db.query(PushSubscription).all()}
     assert mertvyy.endpoint not in adresa, "служба ответила 410 — подписку надо убрать"
     assert adresa[zhivoy.endpoint].last_ok_at is not None
+
+
+def test_chuzhoy_adres_v_baze_v_set_ne_idyot(root_client):
+    """Строка, вписанная мимо проверки (или до неё), не превращается в запрос сервера."""
+    b = Brauzer("https://fcm.googleapis.com/fcm/send/podmena")
+    otvet = root_client.post(f"{PUSH}/subscriptions", json=b.podpiska())
+    with SessionLocal() as db:
+        db.get(PushSubscription, otvet.json()["id"]).endpoint = "https://127.0.0.1:8000/api/v1/x"
+        db.commit()
+    task = _napominanie(root_client, due_at=_cherez(minutes=30))
+    zaprosy: list[httpx.Request] = []
+    with SessionLocal() as db:
+        t = db.get(Task, task["id"])
+        ochered = [(t.id, t.title, t.vazhnost, t.due_at, _moy_id(root_client), "due", t.poyas)]
+        with httpx.Client(transport=httpx.MockTransport(lambda z: zaprosy.append(z) or httpx.Response(201))) as k:
+            push_service.razoslat(db, ochered, k)
+        db.commit()
+    assert not any("127.0.0.1" in str(z.url) for z in zaprosy)
+    with SessionLocal() as db:
+        assert db.get(PushSubscription, otvet.json()["id"]) is None
 
 
 def test_shag_planirovshchika_shlyot_push_posle_fiksatsii(root_client, monkeypatch):

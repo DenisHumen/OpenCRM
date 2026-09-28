@@ -15,6 +15,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
+from urllib.parse import urlsplit
 
 import httpx
 from sqlalchemy.orm import Session
@@ -64,6 +65,24 @@ def _kontakt() -> str:
     return s.base_url if s.base_url.startswith("https://") else f"mailto:{s.root_email}"
 
 
+#: Службы браузеров, которым мы шлём. Любой иной https-адрес сотрудник мог бы
+#: подставить сам — и сервер стучался бы POST'ом во внутреннюю сеть (SSRF).
+SLUZHBY = ("fcm.googleapis.com", "android.googleapis.com", "updates.push.services.mozilla.com", "web.push.apple.com")
+SLUZHBY_POD = (".push.apple.com", ".notify.windows.com")
+
+
+def sluzhba_brauzera(endpoint: str) -> bool:
+    try:
+        chast = urlsplit(endpoint)
+        port = chast.port
+    except ValueError:
+        return False
+    host = (chast.hostname or "").lower()
+    if chast.scheme != "https" or port not in (None, 443) or chast.username or chast.password:
+        return False
+    return host in SLUZHBY or host.endswith(SLUZHBY_POD)
+
+
 def _otpechatok(endpoint: str) -> str:
     return hashlib.sha256(endpoint.encode("utf-8")).hexdigest()
 
@@ -85,8 +104,8 @@ def podpisat(db: Session, user: User, data: dict) -> PushSubscription:
     """Завести подписку этого браузера. Тот же браузер под другим входом — переезжает."""
     endpoint = (data.get("endpoint") or "").strip()
     klyuchi = data.get("keys") or {}
-    if not endpoint.startswith("https://") or len(endpoint) > 1000:
-        raise errors.ValidationError("Push endpoint must be an https URL", code="push_endpoint")
+    if len(endpoint) > 1000 or not sluzhba_brauzera(endpoint):
+        raise errors.ValidationError("Push endpoint must be a browser push service", code="push_endpoint")
     try:
         tochka = push_shifr.iz_b64u(klyuchi.get("p256dh") or "")
         auth = push_shifr.iz_b64u(klyuchi.get("auth") or "")
@@ -214,6 +233,10 @@ def razoslat(db: Session, ochered: list, klient: httpx.Client | None = None) -> 
 
 
 def _otpravit(db: Session, klient: httpx.Client, p: PushSubscription, telo: bytes, task_id: int, srochno: bool) -> int:
+    if not sluzhba_brauzera(p.endpoint):
+        # Заведена до списка служб или вписана в базу мимо — в сеть не идёт.
+        push_repo.ubrat(db, p.id)
+        return 0
     try:
         otvet = klient.post(
             p.endpoint,
