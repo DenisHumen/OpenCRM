@@ -76,7 +76,7 @@
 | POST | `/staff/{id}/reject` | 🔑 `staff.manage` | Отклонить заявку (запись удаляется) |
 | POST | `/staff/{id}/disable` | 🔑 `staff.manage` | Деактивировать: сессии гаснут, войти нельзя |
 | POST | `/staff/{id}/enable` | 🔑 `staff.manage` | Вернуть деактивированного в строй |
-| POST | `/staff/{id}/reset-password` | 🔑 `staff.manage` | Выдать временный пароль с принудительной сменой |
+| POST | `/staff/{id}/reset-password` | 🔑 `staff.manage` | Выдать временный пароль с принудительной сменой. Только сотруднику не шире себя: пароль приходит сбросившему, это вход под коллегой (`403 cannot_grant_what_you_lack`) |
 | POST | `/staff/{id}/role` | 🔑 `roles.manage` | Сделать root'ом или вернуть обратно (`{"role": "root"\|"manager"}`) — это признак владельца системы, а не должность. Только активным; свою нельзя (`403 cannot_change_own_role`), последнего root не снять (`403 last_root`), `409 not_active` |
 | DELETE | `/staff/{id}` | 🔑 `staff.manage` | Удалить аккаунт безвозвратно. Себя нельзя (`403 cannot_delete_self`), последнего root нельзя (`403 last_root`). Авторство сохраняется, но обнуляется |
 
@@ -1902,7 +1902,7 @@ curl -sS -X POST https://crm.example.com/api/v1/site/orders \
 | Метод | Путь | Права | Описание |
 |---|---|---|---|
 | GET | `/tokens` | 🔑 `settings.manage` | Все токены, включая отозванные и истёкшие: имя, `prefix`, сотрудник, `tolko_chtenie`, срок, последнее обращение, `state`; `alive` — сколько живых, `sroki` — допустимые сроки, `v_minutu` — потолок |
-| POST | `/tokens` | 🔑 `settings.manage` | Выдать: `name`, `user_id` (по умолчанию — себе), `days` (30/90/180/365, 0 — бессрочный; иначе `422 bad_term`), `tolko_chtenie`. Ответ `201` содержит `token` — **один раз**. `422 user_not_active` |
+| POST | `/tokens` | 🔑 `settings.manage` | Выдать: `name`, `user_id` (по умолчанию — себе), `days` (30/90/180/365, 0 — бессрочный; иначе `422 bad_term`), `tolko_chtenie`. Ответ `201` содержит `token` — **один раз**. `422 user_not_active`; за коллегу — только не шире себя (`403 cannot_grant_what_you_lack`), за root — только root (`403 cannot_modify_root`) |
 | POST | `/tokens/{token_id}/revoke` | 🔑 `settings.manage` | Отзыв отметкой; строка остаётся. `404 token_not_found` |
 
 Самому токену `/tokens` закрыт: токен не выпускает токенов.

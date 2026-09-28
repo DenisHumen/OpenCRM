@@ -319,7 +319,11 @@ def enable(db: Session, actor: User, user_id: int) -> User:
 
 
 def reset_password(db: Session, actor: User, user_id: int) -> tuple[User, str]:
+    from core.services import permissions_service
+
     user = _get_manager(db, user_id)
+    # Временный пароль приходит тому, кто сбрасывал, — это вход под коллегой.
+    permissions_service.ne_shire_sebya(db, actor, user)
     temp_password = secrets.token_urlsafe(9)
     user.password_hash = passwords.hash_password(temp_password)
     user.must_change_password = True

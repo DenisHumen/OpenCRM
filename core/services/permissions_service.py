@@ -546,6 +546,20 @@ def _refuse_granting_what_you_lack(db: Session, actor: User, codes: set[str]) ->
     )
 
 
+def ne_shire_sebya(db: Session, actor: User, target: User) -> None:
+    """Действовать за коллегу — токен от его имени, временный пароль ему — это вход под ним.
+
+    Значит можно только тому, у кого есть всё, что есть у коллеги, а за root — только
+    root'у: иначе «Director» с `settings.manage` выпускал токен на root и делал root себя
+    (разбор 28.09.2026, docs/ekspluatatsiya/07-bezopasnost.md).
+    """
+    if target.id == actor.id:
+        return
+    if target.role == ROLE_ROOT and actor.role != ROLE_ROOT:
+        raise errors.ForbiddenError("Only root can act for root", code="cannot_modify_root")
+    _refuse_granting_what_you_lack(db, actor, codes_of(db, target))
+
+
 def update_role(db: Session, role_id: int, name: str | None, codes, *, actor: User) -> Role:
     """`actor` обязателен и без значения по умолчанию нарочно: проверка на
     самоповышение опирается только на него, а необязательный аргумент однажды

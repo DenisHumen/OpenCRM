@@ -198,3 +198,36 @@ def test_opisanie_dlya_mcp_tolko_o_dostupnom(root_client):
     assert "/api/v1/tasks" in puti and "/api/v1/clients" in puti
     assert not any(p.startswith(("/api/v1/tokens", "/api/v1/keys", "/api/v1/site/")) for p in puti)
     assert "/api/v1/auth/me/password" not in puti and "/api/v1/live" not in puti
+
+
+def test_token_za_kollegu_tolko_ne_shire_sebya(root_client, role_maker, staff_maker):  # noqa: F811
+    """Разбор 28.09.2026: «Director» с settings.manage выпускал токен на root и делал root себя."""
+    direktor = staff_maker(
+        "token-direktor@test.local", role_maker("Токен — директор", ["settings.manage", "tasks.view"])["id"]
+    )
+    shire = staff_maker("token-shire@test.local", role_maker("Токен — шире", ["tasks.view", "clients.view"])["id"])
+    uzhe = staff_maker("token-uzhe@test.local", role_maker("Токен — уже", ["tasks.view"])["id"])
+
+    na_root = direktor.post(TOKENS, json={"name": "x", "user_id": _moy_id(root_client)})
+    assert na_root.status_code == 403 and na_root.json()["error"]["code"] == "cannot_modify_root"
+    na_shire = direktor.post(TOKENS, json={"name": "x", "user_id": _moy_id(shire)})
+    assert na_shire.status_code == 403 and na_shire.json()["error"]["code"] == "cannot_grant_what_you_lack"
+    assert direktor.post(TOKENS, json={"name": "x", "user_id": _moy_id(uzhe)}).status_code == 201
+
+
+def test_sbros_parolya_tolko_ne_shire_sebya(root_client, role_maker, staff_maker):  # noqa: F811
+    """Временный пароль приходит сбросившему — это вход под коллегой."""
+    kadrovik = staff_maker("sbros-kadry@test.local", role_maker("Сброс — кадры", ["staff.view", "staff.manage"])["id"])
+    shire = staff_maker("sbros-shire@test.local", role_maker("Сброс — шире", ["staff.view", "settings.manage"])["id"])
+    uzhe = staff_maker("sbros-uzhe@test.local", role_maker("Сброс — уже", ["staff.view"])["id"])
+
+    otkaz = kadrovik.post(f"{API}/staff/{_moy_id(shire)}/reset-password")
+    assert otkaz.status_code == 403 and otkaz.json()["error"]["code"] == "cannot_grant_what_you_lack"
+    assert kadrovik.post(f"{API}/staff/{_moy_id(uzhe)}/reset-password").status_code == 200
+
+
+@pytest.mark.parametrize(("metod", "put"), [("POST", "/roles"), ("POST", "/staff/1/role"), ("POST", "/roles/assign/1")])
+def test_token_ne_razdayot_prava(root_client, metod, put):
+    agent = _po_tokenu(_vypustit(root_client)["token"])
+    otvet = agent.request(metod, f"{API}{put}", json={})
+    assert otvet.status_code == 403 and otvet.json()["error"]["code"] == "token_not_allowed"

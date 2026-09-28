@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from core import exceptions as errors
 from core.ratelimit import SlidingWindowLimiter
-from core.services import audit_service, auth_service
+from core.services import audit_service, auth_service, permissions_service
 from core.utils import PRESENCE_TOUCH_SECONDS, now_utc
 from database.models import User, UserToken
 from database.models.audit import SOURCE_MANUAL
@@ -45,6 +45,10 @@ ZAKRYTO: tuple[tuple[frozenset[str] | None, str], ...] = (
     (None, "/keys*"),
     (None, "/system/backups*"),
     (None, "/settings/api-keys*"),
+    # Раздача прав: роли и должности, root, допуск нового сотрудника.
+    (frozenset({"POST", "PATCH", "PUT", "DELETE"}), "/roles*"),
+    (None, "/staff/{user_id}/role"),
+    (None, "/staff/{user_id}/approve"),
     (None, "/system/storage/purge"),
     (frozenset({"DELETE"}), "/system/files/{work_id}"),
     (None, "/staff/{user_id}/reset-password"),
@@ -120,6 +124,7 @@ def vypustit(db: Session, actor: User, data: dict) -> tuple[dict, str]:
     user = users_repo.get_by_id(db, data.get("user_id") or actor.id)
     if user is None or user.status != STATUS_ACTIVE:
         raise errors.ValidationError("The employee is not active", code="user_not_active")
+    permissions_service.ne_shire_sebya(db, actor, user)
     raw = PRIPISKA + secrets.token_urlsafe(32)
     tok = tokens_repo.dobavit(
         db,
