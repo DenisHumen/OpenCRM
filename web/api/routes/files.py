@@ -152,11 +152,11 @@ class SsylkaIn(BaseModel):
 @router.get("/{node}/link")
 def uznat_ssylku(
     node: str,
-    _: User = Depends(require_perm("files", "share")),
+    actor: User = Depends(require_perm("files", "share")),
     db: Session = Depends(get_db),
 ):
     """Что сейчас у файла со ссылкой. Пусто — не делились."""
-    ssylka = fayly_ssylki_service.ssylka_fayla(db, node)
+    ssylka = fayly_ssylki_service.ssylka_fayla(db, actor, node)
     return {"link": None if ssylka is None else fayly_ssylki_service.kartochka(db, ssylka)}
 
 

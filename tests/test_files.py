@@ -2,6 +2,7 @@ from fastapi.testclient import TestClient
 
 from core.services import media_service
 from tests.conftest import API, png_bytes
+from tests.test_roles import role_maker, staff_maker  # noqa: F401 — фикстуры
 from web.main import app
 
 
@@ -777,3 +778,65 @@ def test_udachnyy_adres_ne_obnulyaet_schyot_popytok(root_client):
     finally:
         pin_limiter.reset(schyot)
     root_client.delete(f"{API}/files/links/{ssylka['id']}")
+
+
+def test_bez_prava_na_doski_rabotu_ne_vylozhit(root_client, manager_client, role_maker, staff_maker):  # noqa: F811
+    """Разбор 28.09.2026: `files.share` без `boards.view` выкладывал в интернет любую
+    работу доски перебором `work:N` — ветку дерево прятало, а ручка ссылок нет."""
+    _, work = _board_with_work(manager_client, "Доска чужих работ")
+    rol = role_maker("Файлы без досок", ["files.view", "files.create", "files.share"])
+    chuzhoy = staff_maker("fayly-bez-dosok@test.local", rol["id"])
+    nomer = f"work:{work['id']}"
+
+    otkaz = chuzhoy.post(f"{API}/files/{nomer}/link", json={"rezhim": "download", "krug": "link"})
+    assert otkaz.status_code == 403 and otkaz.json()["error"]["code"] == "permission_denied"
+    assert chuzhoy.get(f"{API}/files/{nomer}/link").status_code == 403
+    ssylka = root_client.post(f"{API}/files/{nomer}/link", json={"rezhim": "view", "krug": "link"}).json()["link"]
+    pravka = chuzhoy.patch(f"{API}/files/links/{ssylka['id']}", json={"rezhim": "download", "krug": "link"})
+    assert pravka.status_code == 403, "открыть скачивание чужой работы правкой ссылки тоже нельзя"
+    assert chuzhoy.post(f"{API}/files/links/{ssylka['id']}/guests", json={"email": "gost@example.com"}).status_code == 403
+
+    svoy = _svoy_fayl(chuzhoy, "obshchiy.txt", "всем")
+    assert chuzhoy.post(f"{API}/files/{svoy}/link", json={"rezhim": "view", "krug": "link"}).status_code == 201
+
+
+def test_vetka_blankov_suzhena_vidami_bumag(root_client, role_maker, staff_maker):  # noqa: F811
+    """Разбор 28.09.2026: ветка бланков отдавала вложения заказов и накладных с одним
+    `documents.view` — мимо `orders.view`, как список бумаг до `_vidno_vidov`."""
+    from uuid import uuid4
+
+    from database.models import DocumentFile
+    from database.session import SessionLocal
+
+    bylo = {m["key"]: m["enabled"] for m in root_client.get(f"{API}/modules").json()["items"]}
+    for klyuch in ("documents", "warehouse", "orders"):
+        assert root_client.post(f"{API}/modules/{klyuch}", json={"enabled": True}).status_code == 200
+    fayl_id = None
+    try:
+        order = root_client.post(f"{API}/orders", json={"kind": "sales_order"}).json()
+        with SessionLocal() as db:
+            fayl = DocumentFile(document_id=order["id"], file_uid=uuid4().hex, original_name="schet-zakaza.pdf",
+                                mime="application/pdf", size_bytes=10)
+            db.add(fayl)
+            db.commit()
+            fayl_id = fayl.id
+        rol = role_maker("Бланки без заказов", ["files.view", "documents.view"])
+        chuzhoy = staff_maker("blanki-bez-zakazov@test.local", rol["id"])
+
+        blanki = next(v for v in chuzhoy.get(f"{API}/files/tree").json()["tree"]["kids"] if v["id"] == "docs")
+        assert all(k["id"] != "doc:sales_order" for k in blanki["kids"])
+        otkaz = chuzhoy.get(f"{API}/files", params={"node": "doc:sales_order"})
+        assert otkaz.status_code == 403 and otkaz.json()["error"]["code"] == "permission_denied"
+        vse = chuzhoy.get(f"{API}/files", params={"node": "docs", "per_page": 200}).json()["items"]
+        assert "schet-zakaza.pdf" not in [f["name"] for f in vse]
+
+        u_roota = root_client.get(f"{API}/files", params={"node": "doc:sales_order", "per_page": 200}).json()["items"]
+        assert "schet-zakaza.pdf" in [f["name"] for f in u_roota]
+    finally:
+        if fayl_id is not None:
+            with SessionLocal() as db:
+                db.delete(db.get(DocumentFile, fayl_id))
+                db.commit()
+        for klyuch in ("orders", "warehouse", "documents"):
+            root_client.post(f"{API}/modules/{klyuch}", json={"enabled": bylo[klyuch]})
+

@@ -11,7 +11,7 @@ from core import events as event_bus
 from core import exceptions as errors
 from core import references
 from core import uniqueness
-from core.services import audit_service, company_service, settings_service
+from core.services import audit_service, company_service, modules_service, permissions_service, settings_service
 from core.utils import now_utc
 from database.models import Client, Company, Deal, Document, DocumentEvent, User
 from database.models.audit import SOURCE_MANUAL
@@ -19,7 +19,9 @@ from database.models.document import (
     DOCUMENT_KINDS,
     DOCUMENT_LOCALES,
     DOCUMENT_STATUSES,
+    KIND_ACT,
     KIND_INTAKE,
+    KIND_RETURN,
     ORDER_KINDS,
     STATUS_CANCELLED,
     STATUS_CLOSED,
@@ -70,6 +72,31 @@ INTAKE_FIELDS = (
     "estimate",      # предварительная цена
     "terms",         # сроки и условия
 )
+
+
+def vidno_vidov(db: Session, user: User) -> tuple[str, ...]:
+    """Виды бумаг, которые этому человеку вообще можно показывать.
+
+    **Право `documents.view` — это квитанция и акт, а не все бумаги системы.**
+    Заказы, накладные и возвраты живут в тех же `documents` и в том же списке,
+    но принадлежат блокам `orders` и `waybills` — со своими выключателями и
+    своими правами. Отбор по ним не спрашивался вовсе: `?kind=sales_order` с
+    одним `documents.view` отдавал заказы фирмы вместе с суммами, а выключенный
+    блок их не прятал.
+
+    Разбивка по блокам — та же, что у живых обновлений (`live/topics`). Ею же
+    сужена ветка бланков в блоке «Файлы» (разбор 28.09.2026).
+    """
+    vidno = [KIND_INTAKE, KIND_ACT]
+    if modules_service.is_enabled(db, "orders") and permissions_service.has(
+        db, user, "orders", "view"
+    ):
+        vidno.extend([*ORDER_KINDS, KIND_RETURN])
+    if modules_service.is_enabled(db, "waybills") and permissions_service.has(
+        db, user, "waybills", "view"
+    ):
+        vidno.extend(WAYBILL_KINDS)
+    return tuple(vidno)
 
 
 def _company_snapshot(company: Company | None, site: dict) -> dict:

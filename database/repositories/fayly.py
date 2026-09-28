@@ -158,13 +158,14 @@ def schyot_rabot(db: Session) -> list[tuple[int, str, str, int]]:
     ]
 
 
-def schyot_blankov(db: Session) -> list[tuple[str, int]]:
+def schyot_blankov(db: Session, vidy: tuple[str, ...]) -> list[tuple[str, int]]:
     """Вложения бланков по виду бланка: актов столько, накладных столько."""
     return [
         (kind, skolko)
         for kind, skolko in db.execute(
             select(Document.kind, func.count(DocumentFile.id))
             .join(DocumentFile, DocumentFile.document_id == Document.id)
+            .where(Document.kind.in_(vidy))
             .group_by(Document.kind)
             .order_by(Document.kind)
         ).all()
@@ -258,8 +259,8 @@ def vlozheniya_zadach(db: Session, smeshchenie: int, skolko: int, user_id: int |
     return stroki, vsego
 
 
-def vlozheniya_blankov(db: Session, kind: str | None, smeshchenie: int, skolko: int):
-    gde = [] if kind is None else [Document.kind == kind]
+def vlozheniya_blankov(db: Session, kind: str | None, vidy: tuple[str, ...], smeshchenie: int, skolko: int):
+    gde = [Document.kind.in_(vidy)] if kind is None else [Document.kind == kind]
     vsego = db.execute(
         select(func.count(DocumentFile.id))
         .join(Document, Document.id == DocumentFile.document_id)

@@ -11,8 +11,6 @@ from core.services import (
     act_service,
     codes,
     document_service,
-    modules_service,
-    permissions_service,
     settings_service,
 )
 from database.models import User
@@ -21,9 +19,6 @@ from database.models.document import (
     DOCUMENT_LOCALES,
     KIND_ACT,
     KIND_INTAKE,
-    KIND_RETURN,
-    ORDER_KINDS,
-    WAYBILL_KINDS,
 )
 from database.repositories import documents as documents_repo
 from database.repositories import users as users_repo
@@ -120,33 +115,9 @@ def _proverennye_vidy(kind: list[str] | None) -> tuple[str, ...] | None:
     return tuple(dict.fromkeys(kind))
 
 
-def _vidno_vidov(db: Session, user: User) -> tuple[str, ...]:
-    """Виды бумаг, которые этому человеку вообще можно показывать.
-
-    **Право `documents.view` — это квитанция и акт, а не все бумаги системы.**
-    Заказы, накладные и возвраты живут в тех же `documents` и в том же списке,
-    но принадлежат блокам `orders` и `waybills` — со своими выключателями и
-    своими правами. Отбор по ним не спрашивался вовсе: `?kind=sales_order` с
-    одним `documents.view` отдавал заказы фирмы вместе с суммами, а выключенный
-    блок их не прятал.
-
-    Разбивка по блокам — та же, что у живых обновлений (`live/topics`).
-    """
-    vidno = [KIND_INTAKE, KIND_ACT]
-    if modules_service.is_enabled(db, "orders") and permissions_service.has(
-        db, user, "orders", "view"
-    ):
-        vidno.extend([*ORDER_KINDS, KIND_RETURN])
-    if modules_service.is_enabled(db, "waybills") and permissions_service.has(
-        db, user, "waybills", "view"
-    ):
-        vidno.extend(WAYBILL_KINDS)
-    return tuple(vidno)
-
-
 def _tolko_vidimye(db: Session, user: User, kinds: tuple[str, ...] | None) -> tuple[str, ...]:
     """Запрошенные виды, пересечённые с разрешёнными. Пусто — все разрешённые."""
-    vidno = _vidno_vidov(db, user)
+    vidno = document_service.vidno_vidov(db, user)
     if kinds is None:
         return vidno
     return tuple(v for v in kinds if v in vidno)
@@ -158,7 +129,7 @@ def _svoy_vid(db: Session, user: User, document) -> None:
     Отказ по правам сам рассказал бы, что заказ с таким номером существует, —
     а вместе с ним и то, сколько заказов у фирмы, если перебрать номера.
     """
-    if document.kind not in _vidno_vidov(db, user):
+    if document.kind not in document_service.vidno_vidov(db, user):
         raise errors.NotFoundError("Document not found", code="document_not_found")
 
 
@@ -194,7 +165,7 @@ def list_documents(
     выглядит как успех: человек просит «по номеру», получает список по дате и
     уверен, что так и должно быть.
 
-    Виды сужаются правами смотрящего (`_vidno_vidov`): заказы и накладные лежат
+    Виды сужаются правами смотрящего (`document_service.vidno_vidov`): заказы и накладные лежат
     в этой же таблице, но принадлежат другим блокам.
     """
     kinds = _tolko_vidimye(db, user, _proverennye_vidy(kind))
@@ -224,7 +195,7 @@ def list_documents(
     # человек потерял бы и число рядом с ними — то есть способ вернуть их.
     otvet["counts"] = document_service.schyot_po_vidam(
         db, q=search, status=status, client_id=client_id, deal_id=deal_id,
-        sredi=_vidno_vidov(db, user),
+        sredi=document_service.vidno_vidov(db, user),
     )
     return otvet
 

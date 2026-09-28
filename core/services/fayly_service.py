@@ -27,6 +27,7 @@ from core.security import tokens
 from core.services import (
     audit_service,
     client_service,
+    document_service,
     media_service,
     modules_service,
     permissions_service,
@@ -84,9 +85,13 @@ def _chi_zadachi(db: Session, actor: User) -> int | None:
     return None if task_service.vidit_vse(db, actor) else actor.id
 
 
+def doski_vidny(db: Session, actor: User) -> bool:
+    return _vidno(db, actor, "boards", "boards")
+
+
 def _korni(db: Session, actor: User) -> dict[str, bool]:
     return {
-        DOSKI: _vidno(db, actor, "boards", "boards"),
+        DOSKI: doski_vidny(db, actor),
         KLIENTY: _vidno(db, actor, None, "clients"),
         ZADACHI: _vidno(db, actor, "tasks", "tasks"),
         BLANKI: _vidno(db, actor, "documents", "documents"),
@@ -133,7 +138,7 @@ def derevo(db: Session, actor: User) -> dict:
     if otkryto[BLANKI]:
         deti = [
             {"id": f"doc:{kind}", "kind": f"doc-{kind}", "n": skolko}
-            for kind, skolko in fayly_repo.schyot_blankov(db)
+            for kind, skolko in fayly_repo.schyot_blankov(db, document_service.vidno_vidov(db, actor))
         ]
         vetki.append({"id": BLANKI, "kind": "docs", "n": sum(d["n"] for d in deti), "kids": deti})
     if otkryto[TOVARY]:
@@ -259,7 +264,11 @@ def soderzhimoe(db: Session, actor: User, uzel: str, page: int, per_page: int) -
         if not otkryto[BLANKI]:
             raise errors.ForbiddenError("Documents are not available", code="permission_denied")
         kind = uzel.split(":")[1] if ":" in uzel else None
-        stroki, vsego = fayly_repo.vlozheniya_blankov(db, kind, smeshchenie, per_page)
+        # `documents.view` — квитанция и акт; заказы и накладные — своих блоков и прав.
+        vidy = document_service.vidno_vidov(db, actor)
+        if kind is not None and kind not in vidy:
+            raise errors.ForbiddenError("Documents of this kind are not available", code="permission_denied")
+        stroki, vsego = fayly_repo.vlozheniya_blankov(db, kind, vidy, smeshchenie, per_page)
         items = [
             _stroka(
                 f"doc:{f.id}",

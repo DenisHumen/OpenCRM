@@ -54,6 +54,13 @@ def _razobrat_nomer(nomer: str) -> tuple[int | None, int | None]:
     raise errors.ValidationError("This file cannot be shared yet", code="file_not_shareable")
 
 
+def _doski_vidny(db: Session, actor: User, work_id: int | None) -> None:
+    # `files.share` без `boards.view` выкладывал в интернет любую работу перебором
+    # номеров `work:N` — дерево прячет ветку, а ручка ссылок нет (разбор 28.09.2026).
+    if work_id is not None and not fayly_service.doski_vidny(db, actor):
+        raise errors.ForbiddenError("Boards are not available", code="permission_denied")
+
+
 def _proverit(rezhim: str, krug: str, est_kod: bool, est_gosti: bool = True) -> None:
     """Круг без того, чем он закрыт, — открытая ссылка, которая называется
     закрытой. «По коду» без кода и «приглашённым» с пустым списком — одно и то
@@ -115,6 +122,7 @@ def vypustit(
     """Выпустить ссылку. По одной на файл: вторая означала бы два разных набора
     условий на одни байты, и отзывать пришлось бы обе, помня о второй."""
     stored_id, work_id = _razobrat_nomer(nomer)
+    _doski_vidny(db, actor, work_id)
     # Список у НОВОЙ ссылки пуст всегда: пригласить некого, пока ссылки нет.
     # Поэтому «приглашённым» с ходу не выпускается — сначала ссылка, потом
     # список, потом круг.
@@ -168,6 +176,7 @@ def nastroit(
     ssylka = fayly_repo.ssylka(db, link_id)
     if ssylka is None:
         raise errors.NotFoundError("Link not found", code="link_not_found")
+    _doski_vidny(db, actor, ssylka.work_id)
 
     novyy_rezhim = ssylka.rezhim if rezhim is NE_TRONUTO else rezhim
     novyy_krug = ssylka.krug if krug is NE_TRONUTO else krug
@@ -222,9 +231,10 @@ def otozvat(db: Session, actor: User, link_id: int) -> None:
     fayly_repo.udalit_ssylku(db, ssylka)
 
 
-def ssylka_fayla(db: Session, nomer: str) -> FileLink | None:
+def ssylka_fayla(db: Session, actor: User, nomer: str) -> FileLink | None:
     """Живая ссылка этого файла или `None`."""
     stored_id, work_id = _razobrat_nomer(nomer)
+    _doski_vidny(db, actor, work_id)
     return fayly_repo.ssylka_fayla(db, stored_file_id=stored_id, work_id=work_id)
 
 
@@ -264,6 +274,7 @@ def pozvat(db: Session, actor: User, link_id: int, email: str) -> FileLink:
     ssylka = fayly_repo.ssylka(db, link_id)
     if ssylka is None:
         raise errors.NotFoundError("Link not found", code="link_not_found")
+    _doski_vidny(db, actor, ssylka.work_id)
     adresok = pochta(email)
     if not fayly_repo.gost_est(db, link_id, adresok):
         fayly_repo.pozvat(db, link_id, adresok)
