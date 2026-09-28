@@ -20,6 +20,7 @@ from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from core import exceptions as errors
 from core.services import finance_service, report_service, settings_service
 from database.models import User
 from database.models.finance import DIRECTIONS
@@ -391,6 +392,11 @@ def list_operations(
     return data
 
 
+#: Строк в выгрузке журнала. Больше — отказ, а не обрезанный файл: бухгалтер сводил
+#: бы неполный год, не зная об этом (разбор 28.09.2026).
+PREDEL_VYGRUZKI = 10_000
+
+
 @router.get("/operations.csv")
 def export_operations(
     period: Period = Depends(),
@@ -407,15 +413,20 @@ def export_operations(
     if direction is not None and direction not in DIRECTIONS:
         direction = None
     stroki: list = []
-    # Страницами по двести, не больше полусотни страниц: журнал за год — это
-    # тысячи строк, а один запрос «всё сразу» без предела однажды съест память.
-    for page in range(1, 51):
-        items, _total = finance_service.list_operations(
+    # Страницами по двести: журнал за год — это тысячи строк, а один запрос «всё
+    # сразу» без предела однажды съест память.
+    for page in range(1, PREDEL_VYGRUZKI // 200 + 2):
+        items, vsego = finance_service.list_operations(
             db,
             category_id=category_id, direction=direction, deal_id=deal_id,
             client_id=client_id, company_id=company_id,
             start=period.start, end=period.end, page=page, per_page=200,
         )
+        if vsego > PREDEL_VYGRUZKI:
+            raise errors.ValidationError(
+                f"Too many operations to export at once (limit {PREDEL_VYGRUZKI}); narrow the period",
+                code="export_too_large",
+            )
         stroki.extend(_decorate(db, items))
         if len(items) < 200:
             break

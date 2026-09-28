@@ -831,3 +831,18 @@ def test_vygruzka_operatsiy_csv_otdayot_ves_zhurnal(root_client, money):
     text = otvet.content.decode("utf-8-sig")
     assert "Выгрузка строка дохода" in text and "Выгрузка строка расхода" in text
     assert "123,45" in text, "сумма в минорных единицах не переведена в рубли-копейки"
+
+
+def test_vygruzka_bolshe_predela_otkazyvaet_a_ne_rezhet(root_client, money, monkeypatch):
+    """Разбор 28.09.2026: журнал больше десяти тысяч строк уходил обрезанным молча,
+    и бухгалтер сводил неполный год. Как у выгрузки клиентов — отказ."""
+    from web.api.routes import finance as finance_routes
+
+    income, _expense = money
+    for n in range(3):
+        add(root_client, income["id"], 100 + n, comment=f"Предел выгрузки {n}")
+    monkeypatch.setattr(finance_routes, "PREDEL_VYGRUZKI", 2)
+    otvet = root_client.get(
+        f"{API}/finance/operations.csv", params={"from": "2031-03-01", "to": "2031-03-31"}
+    )
+    assert otvet.status_code == 422 and otvet.json()["error"]["code"] == "export_too_large"
