@@ -123,8 +123,7 @@ def dobavit(
     bolshoy = katalog / f"{uid}.webp"
     plitka = katalog / f"{uid}-thumb.webp"
     try:
-        with Image.open(BytesIO(content)) as im:
-            im.load()
+        with Image.open(BytesIO(content)) as im, media_service.razzhat(im, MAX_STORONA):
             media_service.povernut_po_metke(im)
             if im.mode not in ("RGB", "RGBA"):
                 im = im.convert(
@@ -132,7 +131,9 @@ def dobavit(
                 )
             _ulozhit(im, MAX_STORONA).save(bolshoy, "WEBP", quality=85)
             _ulozhit(im, MAX_STORONA_PLITKI).save(plitka, "WEBP", quality=80)
-    except errors.AppError:
+    except errors.DomainError:
+        # Был `errors.AppError` — такого класса нет, и любой битый файл давал 500
+        # вместо «не читается», оставляя половину пары на диске.
         raise
     except Exception:
         # Убираем ОБА: половина пары на диске — это снимок, который откроется

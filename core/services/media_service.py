@@ -541,6 +541,20 @@ def _proverit_byudzhet(im: Image.Image) -> None:
         )
 
 
+@contextmanager
+def razzhat(im: Image.Image, korobka: int) -> Iterator[Image.Image]:
+    """Разжать по правилам работ досок: `draft` до коробки, бюджет до разжатия, общая очередь.
+
+    Аватар и снимок товара разжимались мимо всего этого: PNG в 21 КБ открывался как
+    13300×13300, и 1,5 ГБ пика от одной смены аватара клали CRM (разбор 28.09.2026).
+    """
+    im.draft("RGB", (korobka, korobka))
+    _proverit_byudzhet(im)
+    with mesto_razzhatiya():
+        im.load()
+        yield im
+
+
 def assert_decodable(content: bytes) -> None:
     """Проверить картинку ДО того, как её примут. Зовётся из загрузки.
 

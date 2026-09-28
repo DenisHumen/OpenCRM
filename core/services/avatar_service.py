@@ -49,13 +49,14 @@ def save_avatar(db: Session, user: User, content: bytes) -> str:
     directory.mkdir(parents=True, exist_ok=True)
     filename = f"{uuid.uuid4().hex}.webp"
     try:
-        with Image.open(BytesIO(content)) as im:
-            im.load()
+        with Image.open(BytesIO(content)) as im, media_service.razzhat(im, AVATAR_SIZE * 2):
             media_service.povernut_po_metke(im)
             if im.mode not in ("RGB", "RGBA"):
                 im = im.convert("RGBA" if "transparency" in im.info or im.mode in ("P", "LA") else "RGB")
             square = _center_square(im).resize((AVATAR_SIZE, AVATAR_SIZE), Image.LANCZOS)
             square.save(directory / filename, "WEBP", quality=85)
+    except errors.DomainError:
+        raise
     except Exception:
         (directory / filename).unlink(missing_ok=True)
         raise errors.ValidationError("Could not read image", code="bad_image")

@@ -955,3 +955,28 @@ def test_spisok_sortiruetsya_po_ostatku_i_znaet_prodazhi(root_client):
     finally:
         for key in ("orders", "documents"):
             root_client.post(f"{API}/modules/{key}", json={"enabled": bylo.get(key, False)})
+
+
+def _bomba_png(storona: int = 8000) -> bytes:
+    """64 Мпикс в нескольких килобайтах: однобитный PNG из нулей — сжатие его не замечает."""
+    import io as _io
+
+    from PIL import Image as _Image
+
+    bufer = _io.BytesIO()
+    _Image.new("1", (storona, storona)).save(bufer, "PNG")
+    return bufer.getvalue()
+
+
+def test_snimok_tovara_ne_razzhimaet_bombu(root_client):
+    """Разбор 28.09.2026: снимок товара разжимался мимо бюджета работ досок."""
+    item = new_product(root_client, name="Бомба-снимок")
+    otvet = _snimok(root_client, item["id"], content=_bomba_png())
+    assert otvet.status_code == 422 and otvet.json()["error"]["code"] == "image_too_large", otvet.text
+
+
+def test_bityy_snimok_tovara_otvechaet_otkazom_a_ne_500(root_client):
+    """`except errors.AppError` — такого класса нет: битый файл давал 500 вместо «не читается»."""
+    item = new_product(root_client, name="Битый снимок")
+    otvet = _snimok(root_client, item["id"], content=b"\x89PNG\r\n\x1a\n" + b"\x00" * 200)
+    assert otvet.status_code == 422 and otvet.json()["error"]["code"] == "bad_image", otvet.text

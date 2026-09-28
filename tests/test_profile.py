@@ -104,3 +104,15 @@ def test_staff_list_presence(root_client, manager_client):
     assert mgr["last_seen_at"] is not None
     assert ghost["is_online"] is False
     assert ghost["last_seen_at"] is None
+
+
+def test_avatar_ne_razzhimaet_bombu(manager_client):
+    """Разбор 28.09.2026: PNG в несколько КБ разжимался в 1,5 ГБ пика — сменой аватара клали CRM."""
+    import io as _io
+
+    from PIL import Image as _Image
+
+    bufer = _io.BytesIO()
+    _Image.new("1", (8000, 8000)).save(bufer, "PNG")
+    otvet = manager_client.post(f"{API}/auth/me/avatar", files={"file": ("bomba.png", bufer.getvalue(), "image/png")})
+    assert otvet.status_code == 422 and otvet.json()["error"]["code"] == "image_too_large", otvet.text
