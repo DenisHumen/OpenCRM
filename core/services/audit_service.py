@@ -28,9 +28,13 @@ from database.models import User
 from database.models.audit import (
     FACELESS_SOURCES,
     SOURCE_MANUAL,
+    SOURCE_TOKEN,
     SOURCES,
     AuditEvent,
 )
+
+#: Ключ `db.info`: запрос пришёл по токену — `(номер, имя)`. Ставит `token_service`.
+PO_TOKENU = "opencrm_po_tokenu"
 
 __all__ = [
     "SOURCE_MANUAL",
@@ -113,6 +117,10 @@ ACTION_APIKEY_CREATED = "apikey.created"
 ACTION_APIKEY_REVOKED = "apikey.revoked"
 ACTION_APIKEY_ROTATED = "apikey.rotated"
 ACTION_APIKEY_UPDATED = "apikey.updated"
+#: Токен сотрудника к `/api/v1`: выдан, отозван. Обращения токеном в журнал не
+#: пишутся — пишутся сделанные им изменения, с источником `token`.
+ACTION_TOKEN_CREATED = "token.created"
+ACTION_TOKEN_REVOKED = "token.revoked"
 #: Смена типа склада открывает или закрывает витрину целиком — вопрос «почему с
 #: сайта пропал весь товар» задают через неделю, и отвечать должна запись.
 ACTION_WAREHOUSE_KIND_CHANGED = "warehouse.kind_changed"
@@ -184,6 +192,8 @@ ENTITY_FILE = "file"
 ENTITY_BACKUP = "backup"
 #: Ключ доступа сайта; в `entity_label` — его имя.
 ENTITY_APIKEY = "apikey"
+#: Токен сотрудника; в `entity_label` — его имя.
+ENTITY_TOKEN = "token"
 #: Ключ двухфакторной авторизации; в `entity_label` — его название. Сам секрет
 #: в журнал не попадает никогда — только имя, время и что открывали.
 ENTITY_TWOFACTOR = "twofactor"
@@ -257,6 +267,12 @@ def record(
     случае, ради которого его читают.
     """
     assert_actor(actor, source, f"Audit entry {action!r}")
+    # Службы пишут «рука» и не знают, как пришёл запрос; без подмены правка
+    # агента в журнале неотличима от правки человека.
+    po_tokenu = db.info.get(PO_TOKENU)
+    if source == SOURCE_MANUAL and po_tokenu:
+        source = SOURCE_TOKEN
+        source_ref = source_ref or f"#{po_tokenu[0]} {po_tokenu[1]}"
 
     entry = AuditEvent(
         action=action[:MAX_ACTION],

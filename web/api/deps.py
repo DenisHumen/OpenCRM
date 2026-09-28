@@ -7,7 +7,7 @@ from core import modules as core_modules
 from core import permissions as core_permissions
 from core.live import collector as live_collector
 from core.ratelimit import SlidingWindowLimiter
-from core.services import auth_service, modules_service, permissions_service
+from core.services import auth_service, modules_service, permissions_service, token_service
 from database.models import User
 from database.session import SessionLocal, snyat_zamki
 
@@ -106,6 +106,7 @@ def _edinica_raboty():
         # на боевом сервере 21.09.2026: так падали `/live` и состояние
         # хранилища. Здесь замок живёт микросекунды.
         auth_service.zapisat_prisutstvie(db)
+        token_service.zapisat_otmetku(db)
         db.commit()
     except Exception:
         db.rollback()
@@ -135,7 +136,20 @@ def get_db(db: Session = Depends(_edinica_raboty, scope="function")) -> Session:
 
 
 def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
-    """Аутентифицированный активный сотрудник (смена пароля может требоваться)."""
+    """Аутентифицированный активный сотрудник (смена пароля может требоваться).
+
+    Программа приходит с `Authorization: Bearer`, браузер — с cookie. Заголовок
+    CSRF не нужен: чужая страница прислать его не может без разрешения CORS.
+    """
+    zagolovok = request.headers.get("authorization", "")
+    if zagolovok[:7].lower() == "bearer ":
+        # Запреты токена записаны шаблонами путей внутри роутера (`/staff/{user_id}`,
+        # без `/api/v1`) — FastAPI кладёт в `scope["route"]` именно такой маршрут.
+        shablon = getattr(request.scope.get("route"), "path", request.url.path)
+        tok, user = token_service.voyti(db, zagolovok[7:], request.method, shablon)
+        request.state.token_id = tok.id
+        db.info[live_collector.ACTOR] = user.id
+        return user
     token = request.cookies.get(SESSION_COOKIE)
     if not token:
         raise errors.AuthError("Not authenticated", code="not_authenticated")
@@ -148,9 +162,13 @@ def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
     return user
 
 
-def require_staff(user: User = Depends(get_current_user)) -> User:
-    """Обычные рабочие эндпоинты: доступ закрыт, пока не сменён временный пароль."""
-    if user.must_change_password:
+def require_staff(request: Request, user: User = Depends(get_current_user)) -> User:
+    """Обычные рабочие эндпоинты: доступ закрыт, пока не сменён временный пароль.
+
+    Токену временный пароль не мешает: пароль он не показывает, а сотрудника-агента
+    заводят с временным и никогда им не входят.
+    """
+    if user.must_change_password and getattr(request.state, "token_id", None) is None:
         raise errors.ForbiddenError(
             "Password change required before continuing", code="password_change_required"
         )

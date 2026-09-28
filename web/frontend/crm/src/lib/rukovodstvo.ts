@@ -1540,7 +1540,7 @@ export const RUKOVODSTVO: Razdel[] = [
   {
     id: "api",
     znachok: "docs",
-    nazvanie: { ru: "API сайта", en: "Site API" },
+    nazvanie: { ru: "API", en: "API" },
     statyi: [
       {
         id: "obshchee",
@@ -1553,8 +1553,8 @@ export const RUKOVODSTVO: Razdel[] = [
           {
             vid: "vazhno",
             tekst: {
-              ru: "Раздел для того, кто пишет сайт магазина, витрину или связку с маркетплейсом. Наружу открыто только это API — по ключу. Всё остальное, что делает система, зовут её собственные экраны, и снаружи оно не нужно.",
-              en: "This section is for whoever builds the shop website, a storefront or a marketplace link. Only this API is open to the outside — with a key. Everything else the system does is called by its own screens and is not needed from outside.",
+              ru: "Раздел для того, кто пишет сайт магазина, витрину или связку с маркетплейсом: ему — API сайта по ключу, узкое и без сотрудника. Программе или ИИ-агенту, который работает как сотрудник, — токен и всё внутреннее API (статья «Токены и MCP»).",
+              en: "This section is for whoever builds the shop website, a storefront or a marketplace link: for them there is the site API with a key — narrow and without an employee. A program or an AI agent working as an employee gets a token and the whole internal API (the “Tokens and MCP” article).",
             },
           },
           {
@@ -1702,6 +1702,66 @@ export const RUKOVODSTVO: Razdel[] = [
               en: "How to issue a key, what scopes exist and what the site sees in stock — see the «Shop-site API» article in the «Facing the client» section.",
             },
           },
+        ],
+      },
+      {
+        id: "tokeny",
+        perm: "settings.manage",
+        nazvanie: { ru: "Токены и MCP", en: "Tokens and MCP" },
+        kratko: {
+          ru: "Всё API системы для программы или ИИ-агента — ролью сотрудника.",
+          en: "The whole system API for a program or an AI agent — with an employee's role.",
+        },
+        kuski: [
+          {
+            vid: "abzats",
+            tekst: {
+              ru: "Токен — это сотрудник без браузера. Он открывает то же API, которое зовут экраны системы, с правами роли своего сотрудника: заявки, клиенты, напоминания, склад — всё, что эта роль умеет. Так к системе подключают отчёты, выгрузки и ИИ-агента — например, Claude через MCP.",
+              en: "A token is an employee without a browser. It opens the same API the system's screens call, with its employee's role: deals, clients, reminders, stock — whatever that role can do. This is how reports, exports and an AI agent — Claude via MCP, for example — connect to the system.",
+            },
+          },
+          {
+            vid: "shagi",
+            punkty: [
+              {
+                ru: "Агенту заведите отдельного сотрудника («Claude») и дайте ему роль ровно под задачу — токен не умеет больше роли.",
+                en: "Create a separate employee for the agent (“Claude”) and give it a role that fits the job exactly — a token can do no more than its role.",
+              },
+              {
+                ru: "Настройки → API → «Выпустить токен»: имя, от чьего имени, срок; для агента, который только отвечает на вопросы, — «Только чтение».",
+                en: "Settings → API → “Issue a token”: a name, who it acts as, a term; for an agent that only answers questions — “Read only”.",
+              },
+              {
+                ru: "Скопируйте строку ocrm_… сразу: она показывается один раз.",
+                en: "Copy the ocrm_… string right away: it is shown once.",
+              },
+              {
+                ru: "Впишите токен и адрес описания API в настройки MCP-клиента — он сам соберёт инструменты из описания.",
+                en: "Put the token and the API description address into the MCP client's settings — it builds its tools from the description.",
+              },
+            ],
+          },
+          {
+            vid: "kod",
+            yazyk: "bash",
+            tekst: `curl -H "Authorization: Bearer ocrm_…" https://crm.example.com/api/v1/auth/me
+curl -H "Authorization: Bearer ocrm_…" https://crm.example.com/api/v1/system/openapi.json`,
+          },
+          {
+            vid: "vnimanie",
+            tekst: {
+              ru: "Токену закрыто всегда, какой бы ни была роль: сейф паролей, копии, выдача ключей и токенов, удаление насовсем. Пароль, попавший агенту, из системы уже ушёл.",
+              en: "Always closed to a token, whatever the role: the password vault, backups, issuing keys and tokens, deleting forever. A password that reached an agent has already left the system.",
+            },
+          },
+          {
+            vid: "abzats",
+            tekst: {
+              ru: "Всё, что токен меняет, в журнале действий помечено источником «Токен» и его именем. Потолок — 300 запросов в минуту на токен. Отозванный токен перестаёт работать на следующем же запросе.",
+              en: "Everything a token changes is marked in the audit log with the “Token” source and its name. The limit is 300 requests per minute per token. A revoked token stops working at its very next request.",
+            },
+          },
+          { vid: "ekran", put: "/settings/api", podpis: { ru: "Выпустить токен", en: "Issue a token" } },
         ],
       },
     ],

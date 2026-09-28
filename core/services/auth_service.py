@@ -167,12 +167,15 @@ def get_user_by_session(db: Session, token: str) -> User | None:
     # же. То есть это была вторая запись в строку, которую никто никогда не
     # спрашивал, — на пути, который выполняется чаще всех прочих. Саму колонку не
     # сносим: миграция ради мёртвого поля дороже самого поля.
-    now = now_utc()
+    poprosit_prisutstvie(db, user, now_utc())
+    return user
+
+
+def poprosit_prisutstvie(db: Session, user: User, now) -> None:
     if user.last_seen_at is None or (now - user.last_seen_at).total_seconds() > PRESENCE_TOUCH_SECONDS:
         # Не пишем здесь, а ПРОСИМ записать перед фиксацией: запись через ORM
         # заперла бы строку сотрудника на весь запрос. Разбор — в `web/api/deps`.
         db.info[PRISUTSTVIE] = (user.id, now)
-    return user
 
 
 def zapisat_prisutstvie(db: Session) -> None:

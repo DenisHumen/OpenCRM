@@ -73,6 +73,8 @@ const ACTION: Record<string, TranslationKey> = {
   "apikey.revoked": "auditActApikeyRevoked",
   "apikey.rotated": "auditActApikeyRotated",
   "apikey.updated": "auditActApikeyUpdated",
+  "token.created": "auditActTokenCreated",
+  "token.revoked": "auditActTokenRevoked",
   "warehouse.kind_changed": "auditActWarehouseKind",
   "customer.registered": "auditActCustomerRegistered",
   "finance.operation_added": "auditActOperationAdded",
@@ -130,6 +132,7 @@ const ENTITY: Record<string, TranslationKey> = {
   document: "auditEntDocument",
   backup: "auditEntBackup",
   apikey: "auditEntApikey",
+  token: "auditEntToken",
   twofactor: "auditEntKey",
   key_category: "auditEntKeyCategory",
   finance_category: "auditEntFinanceCategory",
@@ -143,6 +146,7 @@ const SOURCE: Record<string, TranslationKey> = {
   telephony_webhook: "auditSrcTelephonyWebhook",
   mail_sync: "auditSrcMailSync",
   site_api: "auditSrcSiteApi",
+  token: "auditSrcToken",
 };
 
 /** Действия, у которых величина — деньги в минорных единицах.

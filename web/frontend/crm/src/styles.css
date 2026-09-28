@@ -3384,6 +3384,10 @@ html { scroll-behavior: smooth; }
   transition: opacity 200ms, transform 200ms cubic-bezier(0.68, -0.55, 0.265, 1.55);
 }
 .docs-copy:hover .docs-copy-tip, .docs-copy.done .docs-copy-tip { opacity: 1; transform: translateX(-50%) scale(1); }
+/* Токен показывают один раз, а на телефоне наведения нет: кнопка видна всегда,
+   длинная строка переносится, а не уезжает под кнопку. */
+.token-kod .docs-copy { opacity: 1; }
+.token-kod .code-block { margin: 0; padding-right: 46px; white-space: pre-wrap; overflow-wrap: anywhere; }
 
 .docs-code-label { margin-bottom: 5px; font-size: 11px; color: var(--faint); text-transform: uppercase; letter-spacing: .04em; }
 .docs-endpoint { padding: 14px; border: 1px solid var(--line); border-radius: 6px; background: var(--well); }

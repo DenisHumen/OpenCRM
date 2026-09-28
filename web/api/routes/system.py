@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy.orm import Session
 
 from core.services import (
@@ -11,6 +11,7 @@ from core.services import (
 )
 from database.models import User
 from database.models.audit import SOURCE_MANUAL
+from web.api import opisanie
 from web.api.deps import get_db, require_perm, require_staff
 
 router = APIRouter(prefix="/system", tags=["system"])
@@ -20,6 +21,12 @@ router = APIRouter(prefix="/system", tags=["system"])
 def storage_status(_: User = Depends(require_staff), db: Session = Depends(get_db)):
     """Место на диске. Видят все сотрудники: именно они загружают файлы."""
     return storage_service.status(db)
+
+
+@router.get("/openapi.json")
+def opisanie_api(request: Request, _: User = Depends(require_staff)):
+    """Описание API для токена и MCP: только то, куда токен пустят."""
+    return opisanie.sobrat(request.app, str(request.base_url).rstrip("/") + "/api/v1")
 
 
 @router.get("/github")

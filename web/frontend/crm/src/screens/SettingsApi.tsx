@@ -1,6 +1,7 @@
 import { useApp } from "../lib/app";
 import { PriyomZayavok } from "./LeadsSettings";
 import { KlyuchiSayta } from "./SettingsApiKeys";
+import { TokenySotrudnikov } from "./SettingsTokens";
 
 /** Один экран на всё, чем сайт разговаривает с системой: приём заявок и ключи
  *  доступа.
@@ -27,6 +28,7 @@ export function SettingsApi() {
       </div>
       <PriyomZayavok />
       <KlyuchiSayta />
+      <TokenySotrudnikov />
     </div>
   );
 }

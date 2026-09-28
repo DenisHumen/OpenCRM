@@ -71,6 +71,7 @@ from database.models import (
     TelegramMessage,
     User,
     UserSession,
+    UserToken,
     Warehouse,
     Work,
 )
@@ -213,6 +214,8 @@ TOPICS: dict[type, Topic | Callable | None] = {
     # Сессия пишется на каждом запросе (отметка присутствия) — это не изменение
     # данных, а пульс.
     UserSession: None,
+    # Список токенов открывает один настройщик; «последнее обращение» раз в минуту — пульс.
+    UserToken: None,
     Role: T_ROLES,
     RolePermission: T_ROLE_PERMS,
     ModuleState: T_MODULES,

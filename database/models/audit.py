@@ -32,7 +32,11 @@ SOURCE_MAIL_SYNC = "mail_sync"
 #: стоит чужая программа.
 SOURCE_SITE_API = "site_api"
 
-SOURCES = (SOURCE_MANUAL, SOURCE_TELEPHONY_WEBHOOK, SOURCE_MAIL_SYNC, SOURCE_SITE_API)
+#: Запрос по токену сотрудника (`docs/bloki/30-tokeny-i-mcp.md`): исполнитель —
+#: сотрудник токена, а руку отделяем, чтобы «это сделал агент» было видно.
+SOURCE_TOKEN = "token"
+
+SOURCES = (SOURCE_MANUAL, SOURCE_TELEPHONY_WEBHOOK, SOURCE_MAIL_SYNC, SOURCE_SITE_API, SOURCE_TOKEN)
 
 #: Источники, у которых исполнителя действительно нет.
 #:
