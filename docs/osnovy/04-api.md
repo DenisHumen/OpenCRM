@@ -1387,7 +1387,7 @@ SVG только `width` и `height`; пока картинку показыва
 | GET | `/telephony/calls` | 🔑 `telephony.view` | Журнал: `?direction=in\|out`, `?outcome=`, `?client_id=`, `?deal_id=`, `?user_id=`, `?number=` (приводится к нормализованному виду), `?since=`, `?until=`, пагинация. Незнакомое значение `direction`/`outcome` — `422`, а не пустая выдача, неотличимая от «звонков нет» |
 | GET | `/telephony/calls/{id}` | 🔑 `telephony.view` | Карточка звонка |
 | PATCH | `/telephony/calls/{id}` | 🔑 `telephony.edit` | Привязать разговор к заявке или отвязать: `{"deal_id": 7 \| null}`. `422 deal_other_client` — заявка чужого клиента |
-| POST | `/telephony/calls/{id}/callback-task` | 🔑 `telephony.create` | Напоминание перезвонить по пропущенному. `422 call_not_missed`, `409 module_disabled` — блок напоминаний выключен |
+| POST | `/telephony/calls/{id}/callback-task` | 🔑 `telephony.create` | Напоминание перезвонить по пропущенному. `422 call_not_missed`, `409 module_disabled` — блок напоминаний выключен. Нужно и `tasks.create`: заводится напоминание, а права складываются (разбор 28.09.2026) |
 | POST | `/telephony/click-to-call` | 🔑 `telephony.create` | Просит АТС набрать: `{"number": "…", "from_ext": "…", "deal_id": 7}`. `422 telephony_not_configured`, `400 pbx_unavailable`, `409 pbx_call_id_taken` — станция выдала ключ, который уже занят прошлым разговором |
 | GET | `/telephony/settings` | 🔑 `settings.manage` | Настройки подключения. Секреты не отдаются — только `has_api_token` / `has_webhook_secret` |
 | PATCH | `/telephony/settings` | 🔑 `settings.manage` | Провайдер, адрес команды набора, токен, внутренний номер, смещение зоны АТС, код страны. `422 bad_telephony_url` — адрес станции не http(s) или слишком длинный |

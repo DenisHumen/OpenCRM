@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from core import exceptions as errors
-from core.services import mail_service
+from core.services import deal_service, mail_service
 from database.models import User
 from database.models.mail import MAIL_DIRECTIONS
 from database.repositories import mail as mail_repo
@@ -220,6 +220,7 @@ def send(
     user: User = Depends(require_perm("mail", "create")),
     db: Session = Depends(get_db),
 ):
+    deal_service.proverit_vidimost(db, user, payload.deal_id)
     message = mail_service.send_message(
         db,
         user,

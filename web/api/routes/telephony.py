@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from core import exceptions as errors
 from core.ratelimit import SlidingWindowLimiter
 from core.security import tokens
-from core.services import modules_service, telephony_service
+from core.services import deal_service, modules_service, permissions_service, telephony_service
 from core.utils import normalize_phone, to_utc_naive
 from database.models import PhoneCall, User
 from database.models.telephony import CALL_DIRECTIONS, CALL_OUTCOMES
@@ -118,11 +118,12 @@ def get_call(
 def update_call(
     call_id: int,
     payload: CallPatchIn,
-    _: User = Depends(require_perm("telephony", "edit")),
+    user: User = Depends(require_perm("telephony", "edit")),
     db: Session = Depends(get_db),
 ):
     """Привязать разговор к заявке или отвязать. Больше в звонке править нечего:
     остальное — факт, пришедший от станции."""
+    deal_service.proverit_vidimost(db, user, payload.deal_id)
     call = _call(db, call_id)
     # Пустой PATCH не должен отвязывать заявку: `null` означает «отвязать»
     # только тогда, когда его прислали явно.
@@ -137,7 +138,10 @@ def create_callback_task(
     user: User = Depends(require_perm("telephony", "create")),
     db: Session = Depends(get_db),
 ):
-    """Напоминание перезвонить по пропущенному звонку (блок ``tasks``)."""
+    """Напоминание перезвонить по пропущенному звонку (блок ``tasks``). Права
+    складываются: заводит напоминание — значит нужно и `tasks.create` (разбор 28.09.2026)."""
+    if not permissions_service.has(db, user, "tasks", "create"):
+        raise errors.ForbiddenError("Permission required: tasks.create", code="permission_denied")
     task = telephony_service.create_callback_task(db, _call(db, call_id), user)
     return schemas.task_out(task)
 
@@ -148,6 +152,7 @@ def click_to_call(
     user: User = Depends(require_perm("telephony", "create")),
     db: Session = Depends(get_db),
 ):
+    deal_service.proverit_vidimost(db, user, payload.deal_id)
     call = telephony_service.click_to_call(
         db, user, payload.number, payload.from_ext, payload.deal_id
     )

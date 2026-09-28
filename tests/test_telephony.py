@@ -18,6 +18,7 @@ from core import exceptions as errors
 from core.services import telephony_providers
 from core.utils import normalize_phone
 from tests.conftest import API
+from tests.test_roles import role_maker, staff_maker  # noqa: F401 — фикстуры
 from web.main import app
 
 WEBHOOK = f"{API}/telephony/webhook"
@@ -927,3 +928,32 @@ def test_dva_sobytiya_razom_ne_dvoyat_zapis_v_lente(root_client, telephony, clie
     assert len(pro_duel) == 1, (
         f"в ленте {len(pro_duel)} записи об одном разговоре, исходы ударов: {ishody}"
     )
+
+
+def test_zvonok_ne_obkhodit_prava_na_napominaniya_i_zayavki(root_client, role_maker, staff_maker):  # noqa: F811
+    """Разбор 28.09.2026: «перезвонить» заводило напоминание без `tasks.create`, а
+    привязка звонка принимала чужую заявку мимо `deals.view_others`."""
+    from database.models import PhoneCall
+    from database.session import SessionLocal
+
+    root_client.post(f"{API}/modules/telephony", json={"enabled": True})
+    root_client.post(f"{API}/modules/tasks", json={"enabled": True})
+    with SessionLocal() as db:
+        zvonok = PhoneCall(
+            external_id="prava-zvonka-1", direction="in", from_number="+380501112233", to_number="100",
+            outcome="missed", started_at=datetime.now(timezone.utc).replace(tzinfo=None),
+        )
+        db.add(zvonok)
+        db.commit()
+        zvonok_id = zvonok.id
+    klient = root_client.post(f"{API}/clients", json={"name": "Чужой по телефону"}).json()
+    chuzhaya = root_client.post(f"{API}/deals", json={"title": "Чужая по телефону", "client_id": klient["id"]}).json()
+    rol = role_maker("Телефон без напоминаний", ["telephony.view", "telephony.create", "telephony.edit", "deals.view"])
+    operator = staff_maker("telefon-bez-napominaniy@test.local", rol["id"])
+
+    perezvonit = operator.post(f"{API}/telephony/calls/{zvonok_id}/callback-task")
+    assert perezvonit.status_code == 403 and perezvonit.json()["error"]["code"] == "permission_denied"
+    privyazat = operator.patch(f"{API}/telephony/calls/{zvonok_id}", json={"deal_id": chuzhaya["id"]})
+    assert privyazat.status_code == 403 and privyazat.json()["error"]["code"] == "permission_denied"
+    assert root_client.post(f"{API}/telephony/calls/{zvonok_id}/callback-task").status_code == 201
+
