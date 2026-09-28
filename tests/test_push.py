@@ -225,3 +225,29 @@ def test_poddelnaya_ili_istyokshaya_knopka_ne_rabotaet(root_client, porcha):
     otvet = _deystvie(token, "done")
     assert otvet.status_code == 401, otvet.text
     assert root_client.get(f"{API}/tasks/{task['id']}").json()["done_at"] is None
+
+
+def test_otklyuchenie_ubiraet_ustroystva_i_rassylka_ih_ne_zhdyot(root_client, role_maker, staff_maker):  # noqa: F811
+    """Уволенный не получает push ни через свои подписки, ни через оставшиеся с прошлых увольнений."""
+    rol = role_maker("Push — уволенный", ["tasks.view", "tasks.edit"])
+    anna = staff_maker("push-uvolen@test.local", rol["id"])
+    anna_id = _moy_id(anna)
+    b = Brauzer("https://fcm.googleapis.com/fcm/send/uvolen")
+    podpiska = anna.post(f"{PUSH}/subscriptions", json=b.podpiska()).json()
+    task = _napominanie(root_client, due_at=_cherez(minutes=30))
+
+    assert root_client.post(f"{API}/staff/{anna_id}/disable").status_code == 200
+    with SessionLocal() as db:
+        assert db.get(PushSubscription, podpiska["id"]) is None, "отключение оставило устройство"
+        # Подписка, оставшаяся с увольнения до правки: рассылка обязана её пропустить.
+        db.add(PushSubscription(user_id=anna_id, endpoint=b.endpoint, endpoint_hash="x" * 64,
+                                p256dh=b.podpiska()["keys"]["p256dh"], auth=b.podpiska()["keys"]["auth"]))
+        db.commit()
+    zaprosy: list[httpx.Request] = []
+    with SessionLocal() as db:
+        t = db.get(Task, task["id"])
+        ochered = [(t.id, t.title, t.vazhnost, t.due_at, anna_id, "due", t.poyas)]
+        with httpx.Client(transport=httpx.MockTransport(lambda z: zaprosy.append(z) or httpx.Response(201))) as k:
+            assert push_service.razoslat(db, ochered, k) == 0
+        db.commit()
+    assert zaprosy == []

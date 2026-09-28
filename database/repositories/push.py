@@ -44,5 +44,9 @@ def ubrat_svoyu(db: Session, user_id: int, endpoint_hash: str) -> int:
     ).rowcount
 
 
+def ubrat_vse(db: Session, user_id: int) -> int:
+    return db.execute(delete(PushSubscription).where(PushSubscription.user_id == user_id)).rowcount
+
+
 def dostavleno(db: Session, podpiska_id: int, kogda: datetime) -> None:
     db.execute(update(PushSubscription).where(PushSubscription.id == podpiska_id).values(last_ok_at=kogda))

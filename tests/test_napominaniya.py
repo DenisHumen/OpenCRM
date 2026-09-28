@@ -353,3 +353,17 @@ def test_gotovo_so_starym_srokom_ne_zakryvaet_sleduyushchiy_raz(root_client):
     # Без срока — как раньше: программы, которые его не шлют, не ломаются.
     assert root_client.post(f"{TASKS}/{task['id']}/done").status_code == 200
 
+
+def test_otklyuchennomu_ne_zvonit(root_client, role_maker, staff_maker):  # noqa: F811
+    """Уволенному звонок не идёт: push унёс бы названия и суммы на его личный телефон."""
+    rol = role_maker("Звонки — уволенный", ["tasks.view", "tasks.edit"])
+    anna = staff_maker("zvon-uvolen@test.local", rol["id"])
+    anna_id = _moy_id(anna)
+    srok = datetime.now(timezone.utc).replace(microsecond=0) + timedelta(minutes=2)
+    task = _zavesti(root_client, title="Обоим", due_at=srok.isoformat(), poluchateli=[_moy_id(root_client), anna_id])
+    assert root_client.post(f"{API}/staff/{anna_id}/disable").status_code == 200
+
+    _tick(srok.replace(tzinfo=None) + timedelta(seconds=5))
+
+    komu = {user_id for user_id, _vid, _m in _zvonki(task["id"])}
+    assert anna_id not in komu and _moy_id(root_client) in komu

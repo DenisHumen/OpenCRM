@@ -26,6 +26,7 @@ from core.services import povtor_service, push_shifr
 from core.utils import now_utc
 from database.models import PushSubscription, Task, User
 from database.repositories import push as push_repo
+from database.models.user import STATUS_ACTIVE
 from database.repositories import users as users_repo
 
 logger = logging.getLogger("opencrm.push")
@@ -212,7 +213,9 @@ def razoslat(db: Session, ochered: list, klient: httpx.Client | None = None) -> 
     podpiski = push_repo.dlya(db, [z[4] for z in ochered])
     if not podpiski:
         return 0
-    lyudi = {u.id: u for u in users_repo.get_many(db, {p.user_id for p in podpiski})}
+    lyudi = {
+        u.id: u for u in users_repo.get_many(db, {p.user_id for p in podpiski}) if u.status == STATUS_ACTIVE
+    }
     svoy = klient is None
     klient = klient or httpx.Client(timeout=10)
     dostavleno = 0

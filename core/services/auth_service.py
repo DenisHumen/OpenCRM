@@ -19,6 +19,7 @@ from database.models.user import (
     STATUS_PENDING,
     LOCALES,
 )
+from database.repositories import push as push_repo
 from database.repositories import users as users_repo
 
 
@@ -299,6 +300,8 @@ def disable(db: Session, actor: User, user_id: int) -> User:
     was = user.status
     user.status = STATUS_DISABLED
     users_repo.delete_sessions_for_user(db, user.id)
+    # Устройства — тоже: звонок напоминания уходил бы на личный телефон уволенного.
+    push_repo.ubrat_vse(db, user.id)
     db.flush()
     _record_access(
         db, actor, user, audit_service.ACTION_STAFF_DISABLED, was, STATUS_DISABLED

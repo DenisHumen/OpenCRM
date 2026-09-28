@@ -21,6 +21,7 @@ from core.services import povtor_service
 from core.utils import now_utc, to_utc_naive
 from database.models import Task, TaskEvent, TaskFile, TaskMember, TaskSignal, TaskStep, TaskUrl, User
 from database.models.task import POYAS_PO_UMOLCHANIYU, VAZHNOSTI, VAZHNOST_PO_UMOLCHANIYU
+from database.models.user import STATUS_ACTIVE
 from database.repositories import tasks as tasks_repo
 from database.repositories import users as users_repo
 
@@ -616,8 +617,13 @@ def summary(db: Session, user: User) -> dict:
 # --- звонки -------------------------------------------------------------------
 
 
-def _poluchateli_zvonka(lyudi: list[TaskMember]) -> list[TaskMember]:
-    return [chelovek for chelovek in lyudi if chelovek.poluchaet]
+def _poluchateli_zvonka(lyudi: list[TaskMember], aktivnye: set[int]) -> list[TaskMember]:
+    # Отключённому не звоним: push ушёл бы на личный телефон уволенного (разбор 28.09.2026).
+    return [chelovek for chelovek in lyudi if chelovek.poluchaet and chelovek.user_id in aktivnye]
+
+
+def _aktivnye(db: Session, user_ids) -> set[int]:
+    return {u.id for u in users_repo.get_many(db, user_ids) if u.status == STATUS_ACTIVE}
 
 
 def tick(db: Session, teper: datetime | None = None) -> int:
@@ -634,6 +640,7 @@ def tick(db: Session, teper: datetime | None = None) -> int:
         db, teper - NASTOYCHIVO_OKNO, teper + timedelta(minutes=OPOVESHENIE_MAX_MINUT)
     )
     lyudi = tasks_repo.lyudi(db, [t.id for t in kandidaty])
+    aktivnye = _aktivnye(db, {c.user_id for spisok in lyudi.values() for c in spisok})
     zvonkov = 0
     for task in kandidaty:
         momenty: list[tuple[datetime, str]] = []
@@ -648,7 +655,7 @@ def tick(db: Session, teper: datetime | None = None) -> int:
                     momenty.append((moment, "nag"))
         if not momenty:
             continue
-        for chelovek in _poluchateli_zvonka(lyudi.get(task.id, [])):
+        for chelovek in _poluchateli_zvonka(lyudi.get(task.id, []), aktivnye):
             for moment, vid in momenty:
                 # Минута, пришедшаяся на «отложить», не звонит и потом: иначе
                 # проснувшийся получал бы разом всё, что копилось за отсрочку.
@@ -658,9 +665,11 @@ def tick(db: Session, teper: datetime | None = None) -> int:
                     continue
                 zvonkov += _pozvonit(db, task, chelovek.user_id, moment, vid)
 
-    for chelovek in tasks_repo.otlozhennye_v_okne(db, s, teper):
+    prosnulis = tasks_repo.otlozhennye_v_okne(db, s, teper)
+    aktivnye = _aktivnye(db, {c.user_id for c in prosnulis})
+    for chelovek in _poluchateli_zvonka(prosnulis, aktivnye):
         task = tasks_repo.get(db, chelovek.task_id)
-        if task is not None and task.done_at is None and chelovek.poluchaet:
+        if task is not None and task.done_at is None:
             zvonkov += _pozvonit(db, task, chelovek.user_id, chelovek.otlozheno_do, "snooze")
     return zvonkov
 
