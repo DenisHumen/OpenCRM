@@ -1352,3 +1352,24 @@ def test_neprochitannye_schitayutsya_dlya_menyu(root_client, mail_on):
     pismo = root_client.get(f"{MAIL}/messages", params={"account_id": account["id"], "unread": True}).json()["items"][0]
     assert root_client.post(f"{MAIL}/messages/{pismo['id']}/read", json={"is_read": True}).status_code == 200
     assert root_client.get(f"{MAIL}/unread").json()["count"] == bylo + 1
+
+
+def test_krivaya_data_i_krivoe_pismo_ne_stoporyat_yashchik(monkeypatch):
+    """Разбор 28.09.2026: письмо с `Date: 31 Dec 9999 23:59:59 -2359` роняло разбор
+    прямо в `fetch`; указатель ящика не сдвигался, и забор почты стоял навсегда."""
+    from core.services import mail_transport
+
+    assert mail_transport.header_date_to_utc("Fri, 31 Dec 9999 23:59:59 -2359") is not None
+    syroe = (
+        b"From: a@example.com\r\nTo: b@example.com\r\nSubject: test\r\n"
+        b"Date: Fri, 31 Dec 9999 23:59:59 -2359\r\n\r\nbody\r\n"
+    )
+    assert mail_transport.razobrat_ili_zaglushka(syroe, 7).uid == 7
+
+    def padaet(raw, uid=None):
+        raise RuntimeError("кривое письмо")
+
+    monkeypatch.setattr(mail_transport, "parse_raw_message", padaet)
+    zaglushka = mail_transport.razobrat_ili_zaglushka(b"x", 9)
+    assert zaglushka.uid == 9 and zaglushka.message_id, "указатель ящика должен уехать вперёд"
+

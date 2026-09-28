@@ -13,6 +13,7 @@ import email
 import email.policy
 import email.utils
 import imaplib
+import logging
 import smtplib
 import ssl
 from abc import ABC, abstractmethod
@@ -23,6 +24,8 @@ from email.message import EmailMessage
 from email.utils import getaddresses, make_msgid, parsedate_to_datetime
 
 from core.utils import now_utc
+
+logger = logging.getLogger(__name__)
 
 # Сколько писем забираем за один заход. Первая синхронизация большого ящика иначе
 # затянула бы HTTP-запрос на минуты и упёрлась бы в таймаут прокси.
@@ -176,7 +179,7 @@ class ImapSmtpTransport(MailTransport):
                 status, payload = connection.uid("FETCH", str(uid), "(RFC822)")
                 if status != "OK" or not payload or not isinstance(payload[0], tuple):
                     continue
-                messages.append(parse_raw_message(payload[0][1], uid=uid))
+                messages.append(razobrat_ili_zaglushka(payload[0][1], uid))
             return messages
         except (OSError, imaplib.IMAP4.error) as exc:
             raise MailTransportError(f"IMAP: {exc}") from exc
@@ -299,6 +302,24 @@ def _close_quietly(connection: imaplib.IMAP4) -> None:
 
 # --- разбор письма (без сети, поэтому проверяется тестами напрямую) ---
 
+def razobrat_ili_zaglushka(raw: bytes, uid: int) -> FetchedMessage:
+    """Письмо, которое не разобралось, — заглушкой со своим UID, а не отказом всей
+    пачки: иначе ящик вставал на нём навсегда, указатель не сдвигался, и каждая
+    следующая синхронизация падала на том же письме (разбор 28.09.2026)."""
+    try:
+        return parse_raw_message(raw, uid=uid)
+    except Exception as beda:  # noqa: BLE001 — любое кривое письмо, а не наша поломка
+        logger.warning("почта: письмо uid=%s не разобрано: %r", uid, beda)
+        return FetchedMessage(
+            uid=uid,
+            message_id=f"<nerazobrano-{uid}@opencrm.invalid>",
+            subject="(unreadable message)",
+            from_addr="",
+            to_addrs=[],
+            sent_at=now_utc(),
+        )
+
+
 def parse_raw_message(raw: bytes, uid: int | None = None) -> FetchedMessage:
     letter = email.message_from_bytes(raw, policy=email.policy.default)
 
@@ -363,7 +384,11 @@ def header_date_to_utc(value: str | None) -> datetime:
         # Отправитель не указал зону. По RFC это «местное время неизвестно где»;
         # считаем UTC — другого разумного предположения нет.
         return parsed
-    return parsed.astimezone(timezone.utc).replace(tzinfo=None)
+    try:
+        return parsed.astimezone(timezone.utc).replace(tzinfo=None)
+    except (OverflowError, ValueError):
+        # «31 Dec 9999 -2359» разбирается, но в UTC не переводится (разбор 28.09.2026).
+        return now_utc()
 
 
 def _decode(value: str | None) -> str:
