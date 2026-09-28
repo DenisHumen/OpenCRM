@@ -898,24 +898,32 @@ def mark_ready(db: Session, document_id: int, author: User) -> Document:
 # --- мелочи -------------------------------------------------------------------
 
 
-def otgruzheno_nakladnymi(db: Session, order_id: int) -> list[Document]:
-    """Проведённые накладные заказа, не снятые проведённым сторно.
+def _ostalos_po_nakladnoy(db: Session, nakladnaya: Document) -> dict[int, int]:
+    """Что уехало по накладной за вычетом её проведённых сторно: {товар: тысячные}."""
+    ostalos: dict[int, int] = {}
+    for row in documents_repo.lines_of(db, nakladnaya.id):
+        if row.product_id is not None:
+            ostalos[row.product_id] = ostalos.get(row.product_id, 0) + row.quantity_milli
+    for storno in documents_repo.po_osnovaniyu(db, nakladnaya.id):
+        if storno.status in (STATUS_ISSUED, STATUS_CLOSED):
+            for row in documents_repo.lines_of(db, storno.id):
+                if row.product_id is not None:
+                    ostalos[row.product_id] = ostalos.get(row.product_id, 0) - row.quantity_milli
+    return {product_id: milli for product_id, milli in ostalos.items() if milli > 0}
 
-    Сторно — обратная бумага по основанию накладной; проведённое сторно значит
-    «товар вернулся», и исходная накладная больше не считается отгрузкой:
-    иначе заказ после возврата нельзя было бы ни закрыть, ни откатить.
+
+def otgruzheno_nakladnymi(db: Session, order_id: int) -> list[Document]:
+    """Проведённые накладные заказа, по которым что-то осталось уехавшим.
+
+    Считается по количеству, а не «есть ли сторно»: частичное сторно («вернули
+    одну из трёх») снимало накладную целиком, и запрет двойной отгрузки
+    пропускал закрытие заказа — уезжало больше заказанного (разбор 28.09.2026).
     """
-    itog = []
-    for nakladnaya in documents_repo.po_osnovaniyu(db, order_id):
-        if nakladnaya.status not in (STATUS_ISSUED, STATUS_CLOSED):
-            continue
-        snyato = any(
-            storno.status in (STATUS_ISSUED, STATUS_CLOSED)
-            for storno in documents_repo.po_osnovaniyu(db, nakladnaya.id)
-        )
-        if not snyato:
-            itog.append(nakladnaya)
-    return itog
+    return [
+        nakladnaya
+        for nakladnaya in documents_repo.po_osnovaniyu(db, order_id)
+        if nakladnaya.status in (STATUS_ISSUED, STATUS_CLOSED) and _ostalos_po_nakladnoy(db, nakladnaya)
+    ]
 
 
 def otgruzheno_po_tovaram(db: Session, order_id: int) -> dict[int, int]:
@@ -923,9 +931,8 @@ def otgruzheno_po_tovaram(db: Session, order_id: int) -> dict[int, int]:
     Одна формула для закрытия по накладной и для строки «отгружено N из M»."""
     uekhalo: dict[int, int] = {}
     for nakladnaya in otgruzheno_nakladnymi(db, order_id):
-        for row in documents_repo.lines_of(db, nakladnaya.id):
-            if row.product_id is not None:
-                uekhalo[row.product_id] = uekhalo.get(row.product_id, 0) + row.quantity_milli
+        for product_id, milli in _ostalos_po_nakladnoy(db, nakladnaya).items():
+            uekhalo[product_id] = uekhalo.get(product_id, 0) + milli
     return uekhalo
 
 

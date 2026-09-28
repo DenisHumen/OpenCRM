@@ -338,6 +338,28 @@ def po_zakazu(
     stroki = documents_repo.lines_of(db, basis.id)
     if not stroki:
         raise errors.ValidationError("This order has no lines", code="order_is_empty")
+    from core.services import order_service
+
+    # Уже уехавшее накладными в черновик не едет: полные количества заказа после
+    # частичной отгрузки отгружали бы его второй раз (разбор 28.09.2026).
+    uekhalo = order_service.otgruzheno_po_tovaram(db, basis.id)
+    plan = []
+    for row in stroki:
+        # Накладная — о товаре: услуги и разовые позиции («упаковка») в неё не
+        # едут, как и у черновика-зеркала; иначе одна и та же бумага выходила
+        # бы с «упаковкой» или без неё в зависимости от настройки автоматики.
+        if row.product_id is None:
+            continue
+        if warehouse_service.get_product(db, row.product_id, include_deleted=True).is_service:
+            continue
+        zachteno = min(row.quantity_milli, uekhalo.get(row.product_id, 0))
+        uekhalo[row.product_id] = uekhalo.get(row.product_id, 0) - zachteno
+        if row.quantity_milli > zachteno:
+            plan.append((row, row.quantity_milli - zachteno))
+    if not plan:
+        raise errors.ValidationError(
+            f"Everything in order {basis.number} has already been shipped", code="order_fully_shipped"
+        )
 
     waybill = create(
         db,
@@ -353,22 +375,14 @@ def po_zakazu(
         },
         author,
     )
-    for row in stroki:
-        # Накладная — о товаре: услуги и разовые позиции («упаковка») в неё не
-        # едут, как и у черновика-зеркала; иначе одна и та же бумага выходила
-        # бы с «упаковкой» или без неё в зависимости от настройки автоматики.
-        if row.product_id is None:
-            continue
-        product = warehouse_service.get_product(db, row.product_id, include_deleted=True)
-        if product.is_service:
-            continue
+    for row, skolko in plan:
         documents_repo.add_line(
             db,
             DocumentLine(
                 document_id=waybill.id,
                 product_id=row.product_id,
                 name_snapshot=row.name_snapshot,
-                quantity_milli=row.quantity_milli,
+                quantity_milli=skolko,
                 price_minor=row.price_minor,
                 cost_minor=None,
                 sort_order=row.sort_order,
@@ -764,7 +778,7 @@ def _proverit_storno_protiv_vozvrata(db: Session, waybill: Document, rows: list)
     if waybill.basis_id is None:
         return
     ishodnaya = documents_repo.get(db, waybill.basis_id)
-    if ishodnaya is None or ishodnaya.kind not in WAYBILL_KINDS or ishodnaya.basis_id is None:
+    if ishodnaya is None or ishodnaya.kind not in WAYBILL_KINDS:
         return
     documents_repo.zapert_bumagu(db, ishodnaya.id)
     uekhalo: dict[int, int] = {}

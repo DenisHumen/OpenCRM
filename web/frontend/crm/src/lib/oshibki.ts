@@ -78,6 +78,7 @@ export const KODY_OSHIBOK: Record<string, TranslationKey> = {
   nothing_to_print: "errNothingToPrint",
   nothing_to_return: "errNothingToReturn",
   order_finished: "errOrderFinished",
+  order_fully_shipped: "errOrderFullyShipped",
   order_is_empty: "errOrderIsEmpty",
   order_not_closed: "errOrderNotClosed",
   order_not_new: "errOrderNotNew",

@@ -539,12 +539,42 @@ def test_nakladnaya_po_zakrytomu_zakazu_ne_provoditsya(root_client, client_row):
     assert root_client.post(f"{ORDERS}/{zakaz['id']}/close", json={}).status_code == 200
     assert ostatok(root_client, item) == 7_000
 
-    nakladnaya = root_client.post(f"{WAYBILLS}/from-order/{zakaz['id']}")
+    # Черновик из отгруженного целиком заказа не заводится вовсе (28.09.2026)…
+    iz_zakaza = root_client.post(f"{WAYBILLS}/from-order/{zakaz['id']}")
+    assert iz_zakaza.status_code == 422 and iz_zakaza.json()["error"]["code"] == "order_fully_shipped"
+    # …а заведённый по основанию руками не проводится.
+    nakladnaya = root_client.post(
+        WAYBILLS, json={"kind": "waybill_out", "client_id": client_row["id"], "basis_id": zakaz["id"]}
+    )
     assert nakladnaya.status_code == 201, nakladnaya.text
     otvet = root_client.post(f"{WAYBILLS}/{nakladnaya.json()['id']}/post", json={})
     assert otvet.status_code == 422, "товар уехал бы дважды"
     assert otvet.json()["error"]["code"] == "basis_already_shipped"
     assert ostatok(root_client, item) == 7_000
+
+
+def test_chastichnoe_storno_ne_snimaet_zapret_dvoynoy_otgruzki(root_client, client_row):
+    """Разбор 28.09.2026: отгрузка считалась «есть ли проведённое сторно», и сторно
+    одной штуки из трёх снимало накладную целиком — заказ закрывался полной
+    отгрузкой, а черновик из заказа снова вёз всё заказанное."""
+    item = product(root_client, stock="20")
+    zakaz = root_client.post(ORDERS, json={"kind": "sales_order", "client_id": client_row["id"]}).json()
+    root_client.post(f"{ORDERS}/{zakaz['id']}/lines", json={"product_id": item["id"], "quantity": "6"})
+    polovina = root_client.post(f"{WAYBILLS}/from-order/{zakaz['id']}").json()
+    [stroka] = polovina["lines"]
+    root_client.patch(f"{WAYBILLS}/{polovina['id']}/lines/{stroka['id']}", json={"quantity": "3"})
+    assert root_client.post(f"{WAYBILLS}/{polovina['id']}/post", json={}).status_code == 200
+    storno = root_client.post(f"{WAYBILLS}/{polovina['id']}/reverse").json()
+    [s_stroka] = storno["lines"]
+    root_client.patch(f"{WAYBILLS}/{storno['id']}/lines/{s_stroka['id']}", json={"quantity": "1"})
+    assert root_client.post(f"{WAYBILLS}/{storno['id']}/post", json={}).status_code == 200
+    assert ostatok(root_client, item) == 18_000
+
+    zakryt = root_client.post(f"{ORDERS}/{zakaz['id']}/close", json={})
+    assert zakryt.status_code == 422 and zakryt.json()["error"]["code"] == "already_shipped_by_waybill"
+    ostatok_zakaza = root_client.post(f"{WAYBILLS}/from-order/{zakaz['id']}").json()
+    assert [s["quantity_milli"] for s in ostatok_zakaza["lines"]] == [4_000], "уехавшие две снова в черновике"
+    assert ostatok(root_client, item) == 18_000
 
 
 def test_zakaz_s_provedennoy_nakladnoy_ne_zakryvaetsya(root_client, client_row):
