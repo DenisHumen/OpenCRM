@@ -451,3 +451,25 @@ def test_formula_v_vygruzke_ne_vypolnyaetsya(manager_client):
     assert "'=HYPERLINK" in tekst and "\n=HYPERLINK" not in tekst and ';=HYPERLINK' not in tekst
     stroka = to_csv([["@SUM(A1)", "-123,45", "+380 67 123 45 67", "\t=cmd", "обычный"]], ["a", "b", "c", "d", "e"])
     assert stroka.decode("utf-8-sig").splitlines()[1] == "'@SUM(A1);-123,45;+380 67 123 45 67;'\t=cmd;обычный"
+
+
+def test_podbor_ne_obhodit_schyotchik_variantami_pochty(root_client):
+    """Разбор 28.09.2026: счётчик вёлся по присланной почте, а база сравнивает её без
+    диакритики — пять промахов с «á», «à», «â»… не запирали учётную запись вовсе."""
+    from tests.conftest import register
+
+    pochta = "podbor-variant@test.local"
+    assert register(TestClient(app), "Подбор", pochta).status_code == 201
+    lyudi = root_client.get(f"{API}/staff", params={"status": "pending"}).json()["items"]
+    user_id = next(u["id"] for u in lyudi if u["email"] == pochta)
+    assert root_client.post(f"{API}/staff/{user_id}/approve").status_code == 200
+
+    for bukva in "áàâäā":
+        variant = pochta.replace("a", bukva, 1)
+        assert variant != pochta
+        promah = login(TestClient(app), variant, "ne-tot-parol-123")
+        assert promah.status_code in (401, 429), promah.text
+    # Верный пароль с чистой почтой: счёт по сотруднику уже исчерпан.
+    otvet = login(TestClient(app), pochta, "manager-pass-123")
+    assert otvet.status_code == 429 and otvet.json()["error"]["code"] == "login_rate_limited", otvet.text
+

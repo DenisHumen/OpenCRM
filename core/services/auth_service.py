@@ -99,6 +99,12 @@ def login(db: Session, email: str, password: str, limiter) -> tuple[User, str]:
         # пятисоток съедают весь его запас. База вернулась — а войти нельзя.
         limiter.vernut(email, metka)
         raise
+    # Второй счёт — на самого сотрудника: база сравнивает почту без диакритики, и
+    # «ádmin@», «admin\u0301@» находили того же человека, каждый со своим счётчиком
+    # по присланной строке — вариантов бесконечно много (разбор 28.09.2026).
+    if user is not None and limiter.zanyat_mesto(f"u:{user.id}") is None:
+        bezopasnost.otmetit("vhod_zapert")
+        raise errors.RateLimitedError("Too many attempts, try later", code="login_rate_limited")
     if user is None or not passwords.verify_password(password, user.password_hash):
         # Несуществующая почта и неверный пароль считаются ОДНИМ видом нарочно.
         # Разделить их значило бы завести на панели ряд «сколько раз спросили
@@ -113,6 +119,7 @@ def login(db: Session, email: str, password: str, limiter) -> tuple[User, str]:
     # выбирал бы свой же лимит: пароль он вводит правильный, и подбором это не
     # является ни в каком смысле.
     limiter.reset(email)
+    limiter.reset(f"u:{user.id}")
     if user.status == STATUS_PENDING:
         raise errors.ForbiddenError("Account is waiting for approval", code="account_pending")
     if user.status == STATUS_DISABLED:
