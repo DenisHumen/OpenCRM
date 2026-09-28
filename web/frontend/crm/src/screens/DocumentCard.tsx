@@ -415,13 +415,18 @@ function ActCard({ act, reload }: { act: any; reload: () => Promise<void> }) {
             {/* Склад выбирается явно: молчаливое списание с основного однажды
                 снимет деталь не оттуда, где её взяли. */}
             <WarehousePicker places={places} value={place ?? places?.items[0]?.id ?? null} onChange={setPlace} inline />
-            <label className="label" style={{ marginBottom: 0 }}>{t("actNextStage")}</label>
-            <select className="select select-inline" value={stage} onChange={(e) => setStage(e.target.value)}>
-              <option value="">{t("actNextStageAuto")}</option>
-              {(stages.items ?? []).map((s) => (
-                <option key={s.key} value={s.key}>{nazvanieEtapa(t, s.name)}</option>
-              ))}
-            </select>
+            {/* Без права двигать заявку акт ставит следующий этап сам — выбирать нечего. */}
+            {can(user, "deals.move_stage") && (
+              <>
+                <label className="label" style={{ marginBottom: 0 }}>{t("actNextStage")}</label>
+                <select className="select select-inline" value={stage} onChange={(e) => setStage(e.target.value)}>
+                  <option value="">{t("actNextStageAuto")}</option>
+                  {(stages.items ?? []).map((s) => (
+                    <option key={s.key} value={s.key}>{nazvanieEtapa(t, s.name)}</option>
+                  ))}
+                </select>
+              </>
+            )}
             <button
               className="btn btn-primary"
               disabled={guard.busy || act.lines.length === 0}

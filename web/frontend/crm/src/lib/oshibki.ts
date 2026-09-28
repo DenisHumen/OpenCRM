@@ -17,6 +17,7 @@ export const KODY_OSHIBOK: Record<string, TranslationKey> = {
   accrual_reverted: "errAccrualReverted",
   act_finished: "errActFinished",
   act_is_empty: "errActIsEmpty",
+  act_stage_forbidden: "errActStageForbidden",
   amount_from_lines: "errAmountFromLines",
   api_key_expired: "errApiKeyExpired",
   api_key_revoked: "errApiKeyRevoked",

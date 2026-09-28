@@ -29,6 +29,7 @@ from database.models.document import (
 )
 from database.repositories import documents as documents_repo
 from tests.conftest import API
+from tests.test_roles import role_maker, staff_maker  # noqa: F401 — фикстуры
 from web.api.routes.documents import ACT_PRINT_STRINGS
 
 ACTS = f"{API}/documents/acts"
@@ -775,3 +776,34 @@ def test_bez_svoego_nazvaniya_spisok_i_list_govoryat_odno(root_client, deal):
     assert zagolovok.startswith(ACT_PRINT_STRINGS["ru"]["title"]), (
         f"в шапке русского листа «{zagolovok}» — не то, что показывает список"
     )
+
+
+def test_bez_prava_dvigat_akt_stavit_tolko_sleduyushchiy_etap(root_client, deal, role_maker, staff_maker):  # noqa: F811
+    """Разбор 28.09.2026: `documents.issue` без `deals.move_stage` проводил акт с любым
+    `stage` — ставил заявке `won` (выручка) или уводил её назад мимо права доски."""
+    rol = role_maker("Акты без воронки", [
+        "documents.view", "documents.create", "documents.edit", "documents.issue", "deals.view", "deals.view_others",
+    ])
+    buhgalter = staff_maker("akty-bez-voronki@test.local", rol["id"])
+    item = product(root_client, stock="5", service=True)
+
+    act = make_act(buhgalter, deal)
+    add_line(root_client, act, product_id=item["id"], quantity="1")
+    otkaz = buhgalter.post(f"{ACTS}/{act['id']}/complete", json={"stage": "ready"})
+    assert otkaz.status_code == 403 and otkaz.json()["error"]["code"] == "act_stage_forbidden"
+    assert stage_of(root_client, deal) == "new"
+    zavesti = buhgalter.post(ACTS, json={"deal_id": deal["id"], "next_stage": "ready"})
+    assert zavesti.status_code == 403 and zavesti.json()["error"]["code"] == "act_stage_forbidden"
+
+    # Следующий этап — то, что акт делает сам: и без выбора, и названный явно.
+    provodka = buhgalter.post(f"{ACTS}/{act['id']}/complete", json={"stage": "in_progress"})
+    assert provodka.status_code == 200, provodka.text
+    assert stage_of(root_client, deal) == "in_progress"
+
+
+def test_s_pravom_dvigat_etap_vybirayut_lyuboy(root_client, deal):
+    item = product(root_client, stock="5")
+    act = act_with(root_client, deal, item, quantity="1", next_stage="ready")
+    assert root_client.post(f"{ACTS}/{act['id']}/complete", json={}).status_code == 200
+    assert stage_of(root_client, deal) == "ready"
+

@@ -37,7 +37,8 @@ from sqlalchemy.orm import Session
 # `events()` — история акта для его экрана.
 from core import events as event_bus
 from core import exceptions as errors
-from core.services import audit_service, document_service, notification_service, pipeline_service, settings_service
+from core.services import audit_service, document_service, notification_service, permissions_service
+from core.services import pipeline_service, settings_service
 from core.services import warehouse_service
 from database.models import Document, DocumentEvent, DocumentLine, User
 from database.models.audit import SOURCE_MANUAL
@@ -100,6 +101,7 @@ def create(db: Session, data: dict, author: User) -> Document:
     # до отката успели бы сходить за номером и поднять событие о выпуске: отказ
     # на опечатке в ключе не должен тратить номер из сквозной нумерации года.
     next_stage = _clean_stage(db, data.get("next_stage"))
+    _vybor_etapa(db, author, next_stage, deal_id)
 
     fields = dict(data)
     fields["kind"] = KIND_ACT
@@ -289,6 +291,7 @@ def complete(
         # следующего этапа» оставлял бы бумагу открытой навсегда.
         target = None
     else:
+        _vybor_etapa(db, author, _clean_stage(db, stage), act.deal_id, zapisan=act.next_stage)
         target = _clean_stage(db, stage) or act.next_stage or _next_stage_of(db, act.deal_id)
     # Этап заявки спрашиваем ДО события: после него заявка уже переведена, и
     # «было» в журнале совпало бы со «стало» — то есть запись перестала бы
@@ -481,6 +484,23 @@ def _clean_stage(db: Session, key: str | None) -> str:
         return ""
     pipeline_service.get_stage(db, value)  # бросит unknown_stage, если этапа нет
     return value
+
+
+def _vybor_etapa(db: Session, actor: User, vybran: str, deal_id: int, zapisan: str | None = None) -> None:
+    """Следующий этап акт ставит по устройству; любой другой — это «двигать заявку», и
+    право на него то же, что у доски: иначе `documents.issue` ставил `won` и выручку
+    без `deals.move_stage` (разбор 28.09.2026)."""
+    if not vybran or vybran == zapisan or permissions_service.has(db, actor, "deals", "move_stage"):
+        return
+    try:
+        sleduyushchiy = _next_stage_of(db, deal_id)
+    except errors.ValidationError:
+        sleduyushchiy = None
+    if vybran != sleduyushchiy:
+        raise errors.ForbiddenError(
+            "Only the next stage is yours to choose — moving further needs deals.move_stage",
+            code="act_stage_forbidden",
+        )
 
 
 def stage_of(db: Session, deal_id: int) -> str:

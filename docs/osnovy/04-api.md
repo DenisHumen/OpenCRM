@@ -789,7 +789,7 @@ CRM нет, — человек нажмёт «отправить» снова, �
 | POST | `/documents/{id}/status` | 🔑 `documents.issue` | Сменить состояние: `{status, note}` |
 | DELETE | `/documents/{id}` | 🔑 `documents.edit` | Удалить квитанцию или акт, заведённые по ошибке: не закрытые, без движений склада, денег и накладных по основанию (`422 document_in_use`). Пишется в журнал `document.deleted` |
 | GET | `/documents/{id}/print` | 🔑 `documents.view` | **HTML на печать**, а не JSON: две одинаковые половины с линией отреза, штрихкод и QR. `?locale=` переопределяет язык бумаги. Заказ и накладная — отказ (`document_is_an_order`, `document_is_a_waybill`): у них свои формы |
-| POST | `/documents/acts` | 🔑 `documents.create` | Завести акт выполненных работ |
+| POST | `/documents/acts` | 🔑 `documents.create` | Завести акт выполненных работ. `next_stage` не следующий по воронке — только при `deals.move_stage`, иначе `403 act_stage_forbidden` |
 
 #### Порядок и категории списка бумаг
 
@@ -824,7 +824,7 @@ CRM нет, — человек нажмёт «отправить» снова, �
 | GET | `/documents/acts/{id}` | 🔑 `documents.view` | Акт: позиции и история |
 | POST | `/documents/acts/{id}/lines` | 🔑 `documents.edit` | Добавить строку работ |
 | DELETE | `/documents/acts/{id}/lines/{line_id}` | 🔑 `documents.edit` | Убрать строку |
-| POST | `/documents/acts/{id}/complete` | 🔑 `documents.issue` | Провести акт |
+| POST | `/documents/acts/{id}/complete` | 🔑 `documents.issue` | Провести акт. Без `deals.move_stage` заявка уходит на записанный в акте или следующий по воронке этап; другой `stage` — `403 act_stage_forbidden`: на `won` считается выручка, а это право доски, а не бланков (разбор 28.09.2026) |
 | POST | `/documents/acts/{id}/cancel` | 🔑 `documents.edit` | Отменить непроведённый. Склада и воронки не касается — их не трогали |
 | GET | `/documents/acts/{id}/print` | 🔑 `documents.view` | **HTML на печать**: перечень работ, итог и две подписи на одном листе |
 
