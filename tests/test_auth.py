@@ -352,3 +352,14 @@ def test_vhod_s_neznakomoy_pochtoy_sveryaet_parol_vholostuyu(monkeypatch):
     assert otvet.json()["error"]["code"] == "invalid_credentials"
     assert len(sverki) == 1, "пароль незнакомой почты не сверялся — ответ быстрее, чем у знакомой"
 
+
+def test_pochta_vida_u_nomer_ne_zapiraet_sotrudnika(root_client):
+    """Разбор 28.09.2026: ключи почты и сотрудника лежали в одном отсеке, и вход с
+    «почтой» `u:N` тратил попытки сотрудника N — запереть можно было любого по номеру."""
+    manager = make_manager(root_client, "zapiraemyy@test.local")
+    moy_id = manager.get(f"{API}/auth/me").json()["id"]
+    anon = TestClient(app)
+    for _ in range(8):
+        login(anon, f"u:{moy_id}", "chto-ugodno-1")
+    assert login(TestClient(app), "zapiraemyy@test.local", "manager-pass-123").status_code == 200
+

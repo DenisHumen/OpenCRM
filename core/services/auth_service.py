@@ -84,7 +84,10 @@ def login(db: Session, email: str, password: str, limiter) -> tuple[User, str]:
     #
     # С меткой, а не просто «да/нет»: ниже стоит чтение пользователя, и от него
     # можно не дождаться ответа.
-    metka = limiter.zanyat_mesto(email)
+    # Приставки разводят ключи почты и сотрудника в одном отсеке: без них «почта»
+    # `u:1` тратила попытки сотрудника №1, не зная его адреса (разбор 28.09.2026).
+    klyuch_pochty = f"e:{email}"
+    metka = limiter.zanyat_mesto(klyuch_pochty)
     if metka is None:
         # Отметка идёт ДО исключения: после `raise` сюда уже не вернутся, а
         # запрет — это как раз то событие, ради которого счётчик и заведён.
@@ -103,7 +106,7 @@ def login(db: Session, email: str, password: str, limiter) -> tuple[User, str]:
         # базы запирала честного сотрудника на пятнадцать: он вводит ВЕРНЫЙ
         # пароль, получает 500 (пользователя нечем прочитать), и пять таких
         # пятисоток съедают весь его запас. База вернулась — а войти нельзя.
-        limiter.vernut(email, metka)
+        limiter.vernut(klyuch_pochty, metka)
         raise
     # Второй счёт — на самого сотрудника: база сравнивает почту без диакритики, и
     # «ádmin@», «admin\u0301@» находили того же человека, каждый со своим счётчиком
@@ -128,7 +131,7 @@ def login(db: Session, email: str, password: str, limiter) -> tuple[User, str]:
     # записи. Иначе одобрения ждущий человек, пробующий войти каждые пять минут,
     # выбирал бы свой же лимит: пароль он вводит правильный, и подбором это не
     # является ни в каком смысле.
-    limiter.reset(email)
+    limiter.reset(klyuch_pochty)
     limiter.reset(f"u:{user.id}")
     if user.status == STATUS_PENDING:
         raise errors.ForbiddenError("Account is waiting for approval", code="account_pending")
