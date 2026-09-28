@@ -88,6 +88,10 @@ def test_otnositelnye_ssylki_vedut_v_sushchestvuyushchie_fayly():
             put = target.partition("#")[0]
             if not put:
                 continue
+            # `.github` не входит в образ шлюза (.dockerignore): там ссылку в него не
+            # проверить, а в CI и у разработчика каталог на месте, и проверка честная.
+            if put.startswith(".github/") and not (KOREN / ".github").exists():
+                continue
             if not (fayl.parent / put).exists():
                 bityye.append(f"{fayl.relative_to(KOREN)} → {target}")
     assert bityye == [], "ссылки в пустоту:\n  " + "\n  ".join(bityye)
