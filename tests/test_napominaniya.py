@@ -266,6 +266,24 @@ def test_privyazka_k_vyklyuchennomu_bloku_otvergaetsya(root_client):
         root_client.post(f"{API}/modules/warehouse", json={"enabled": bylo})
 
 
+def test_imena_privyazok_tolko_iz_otkrytyh_razdelov(root_client, role_maker, staff_maker):  # noqa: F811
+    """Разбор 28.09.2026: общее напоминание с полки показывало имя клиента и название
+    заявки тому, у кого нет `clients.view` и `deals.view`."""
+    klient = root_client.post(f"{API}/clients", json={"name": "Скрытый заказчик"}).json()
+    zayavka = root_client.post(f"{API}/deals", json={"title": "Скрытая сделка", "client_id": klient["id"]}).json()
+    task = _zavesti(root_client, title="С полки", obshchee=True, client_id=klient["id"], deal_id=zayavka["id"])
+    rol = role_maker("Только напоминания", ["tasks.view"])
+    chuzhoy = staff_maker("imena-privyazok@test.local", rol["id"])
+
+    stroka = next(s for s in chuzhoy.get(TASKS, params={"scope": "open"}).json()["items"] if s["id"] == task["id"])
+    assert stroka["client_name"] is None and stroka["deal_title"] is None
+    assert stroka["client_id"] == klient["id"], "номер остаётся — он ничего не рассказывает"
+    kartochka = chuzhoy.get(f"{TASKS}/{task['id']}").json()
+    assert kartochka["client_name"] is None and kartochka["deal_title"] is None
+    svoya = root_client.get(f"{TASKS}/{task['id']}").json()
+    assert svoya["client_name"] == "Скрытый заказчик" and svoya["deal_title"] == "Скрытая сделка"
+
+
 def test_shagi_i_ssylki(root_client):
     task = _zavesti(root_client, title="С шагами", shagi=["Позвонить", "Выставить счёт"],
                     ssylki=[{"url": "https://example.com/dogovor", "title": "Договор"}])

@@ -106,19 +106,27 @@ def _out(db: Session, tasks: list[Task], user: User) -> list[dict]:
 
     Заголовок заявки — в ОБЛАСТИ смотрящего: иначе перебором `deal_id` вычитывался
     бы список чужих заявок мимо `deals.view_others`. Номер остаётся — он ничего не
-    рассказывает. Имена выключенных блоков не отдаются вовсе (docs/bloki/29 §7).
+    рассказывает. Имена выключенных блоков и закрытых правом `view` не отдаются
+    вовсе (docs/bloki/29 §7).
     """
     nomera = [t.id for t in tasks]
     lyudi = tasks_repo.lyudi(db, nomera)
     imena = {u.id: u.name for u in users_repo.get_many(db, {c.user_id for v in lyudi.values() for c in v})}
-    vkl = {blok: modules_service.is_enabled(db, blok) for blok in ("documents", "warehouse", "boards")}
-    klienty = clients_repo.names_by_ids(db, [t.client_id for t in tasks if t.client_id])
-    zayavki = {
-        d.id: d.title
-        for d in deals_repo.by_ids(
-            db, {t.deal_id for t in tasks if t.deal_id}, permissions_service.deals_scope(db, user)
-        )
+    vkl = {
+        blok: modules_service.is_enabled(db, blok) and permissions_service.has(db, user, blok, "view")
+        for blok in ("clients", "deals", "documents", "warehouse", "boards")
     }
+    klienty = clients_repo.names_by_ids(db, [t.client_id for t in tasks if t.client_id]) if vkl["clients"] else {}
+    zayavki = (
+        {
+            d.id: d.title
+            for d in deals_repo.by_ids(
+                db, {t.deal_id for t in tasks if t.deal_id}, permissions_service.deals_scope(db, user)
+            )
+        }
+        if vkl["deals"]
+        else {}
+    )
     bumagi = documents_repo.podpisi_po_nomeram(db, [t.document_id for t in tasks]) if vkl["documents"] else {}
     tovary = (
         {p.id: p.name for p in warehouse_repo.products_by_ids(db, {t.product_id for t in tasks if t.product_id})}
