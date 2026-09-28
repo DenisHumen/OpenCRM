@@ -15,9 +15,10 @@ from sqlalchemy.orm import Session
 
 from core import exceptions as errors
 from core.services import (
+    deal_service,
     permissions_service,
-    reserve_service,
     product_photo_service,
+    reserve_service,
     settings_service,
     site_service,
     warehouse_service,
@@ -312,6 +313,7 @@ def list_moves(
     user: User = Depends(require_perm("warehouse", "view")),
     db: Session = Depends(get_db),
 ):
+    deal_service.proverit_vidimost(db, user, deal_id)
     amounts = permissions_service.sees_amounts(db, user, "warehouse")
     items, total = warehouse_repo.list_moves(
         db, product_id=product_id, deal_id=deal_id, warehouse_id=warehouse_id,
@@ -337,6 +339,7 @@ def create_move(
     user: User = Depends(require_perm("warehouse", "create")),
     db: Session = Depends(get_db),
 ):
+    deal_service.proverit_vidimost(db, user, payload.deal_id)
     move, went_negative = warehouse_service.add_move(db, payload.model_dump(), user)
     data = schemas.stock_move_out(
         move, amounts=permissions_service.sees_amounts(db, user, "warehouse")

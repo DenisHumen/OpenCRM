@@ -418,6 +418,22 @@ def board(
     return kolonki
 
 
+def proverit_vidimost(db: Session, actor: User, deal_id: int | None) -> None:
+    """Заявка, названная номером в чужом разделе, — по той же видимости, что карточка.
+
+    Бумаги, склад и их списки принимали любой `deal_id`: акт двигал чужую заявку по
+    воронке, заказ уводил её бронь, ответы отдавали её название (разбор 28.09.2026).
+    Несуществующую отвергает сам раздел своим словом — здесь только видимость.
+    """
+    if not deal_id:
+        return
+    from core.services import permissions_service
+
+    deal = deals_repo.get(db, deal_id)
+    if deal is not None:
+        ensure_visible(db, deal, permissions_service.deals_scope(db, actor))
+
+
 def ensure_visible(db: Session, deal: Deal, only_manager_id: int | None) -> Deal:
     """Отказать, если заявка чужая, а права видеть чужие нет.
 

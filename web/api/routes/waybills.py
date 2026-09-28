@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 from core import exceptions as errors
 from core.services import (
     codes,
+    deal_service,
     document_service,
     permissions_service,
     settings_service,
@@ -108,6 +109,7 @@ def list_waybills(
     user: User = Depends(require_perm("waybills", "view")),
     db: Session = Depends(get_db),
 ):
+    deal_service.proverit_vidimost(db, user, deal_id)
     kinds = (kind,) if kind in WAYBILL_KINDS else WAYBILL_KINDS
     items, total = documents_repo.search(
         db, q=search, status=status, client_id=client_id, deal_id=deal_id,
@@ -134,6 +136,7 @@ def create_waybill(
     user: User = Depends(require_perm("waybills", "create")),
     db: Session = Depends(get_db),
 ):
+    deal_service.proverit_vidimost(db, user, payload.deal_id)
     waybill = waybill_service.create(db, payload.model_dump(), user)
     return _karta(db, user, waybill)
 

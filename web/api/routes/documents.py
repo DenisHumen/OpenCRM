@@ -10,6 +10,7 @@ from core.utils import money_for_print
 from core.services import (
     act_service,
     codes,
+    deal_service,
     document_service,
     settings_service,
 )
@@ -168,6 +169,7 @@ def list_documents(
     Виды сужаются правами смотрящего (`document_service.vidno_vidov`): заказы и накладные лежат
     в этой же таблице, но принадлежат другим блокам.
     """
+    deal_service.proverit_vidimost(db, user, deal_id)
     kinds = _tolko_vidimye(db, user, _proverennye_vidy(kind))
     _proverit_poryadok(sort)
     items, total = document_service.search(
@@ -206,6 +208,7 @@ def create_document(
     user: User = Depends(require_perm("documents", "create")),
     db: Session = Depends(get_db),
 ):
+    deal_service.proverit_vidimost(db, user, payload.deal_id)
     document = document_service.create(db, payload.model_dump(), user)
     return schemas.document_out(document)
 
@@ -343,6 +346,7 @@ def create_act(
     user: User = Depends(require_perm("documents", "create")),
     db: Session = Depends(get_db),
 ):
+    deal_service.proverit_vidimost(db, user, payload.deal_id)
     act = act_service.create(db, payload.model_dump(), user)
     return schemas.act_out(act, [])
 

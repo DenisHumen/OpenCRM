@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 from core import exceptions as errors
 from core.services import (
     codes,
+    deal_service,
     document_service,
     modules_service,
     order_service,
@@ -155,6 +156,7 @@ def list_orders(
     отгружают, закрытые не трогают. Поэтому счёт категорий здесь по статусам, а
     у бланков — по видам: там шесть видов вперемешку и различить их нечем.
     """
+    deal_service.proverit_vidimost(db, user, deal_id)
     if sort and sort not in documents_repo.PORYADKI:
         raise errors.ValidationError(
             f"Unknown sort: {sort}. Known: {', '.join(sorted(documents_repo.PORYADKI))}",
@@ -200,6 +202,7 @@ def create_order(
     user: User = Depends(require_perm("orders", "create")),
     db: Session = Depends(get_db),
 ):
+    deal_service.proverit_vidimost(db, user, payload.deal_id)
     order, client_created = order_service.create(db, payload.model_dump(), user)
     # «Заведён новый клиент» — часть ответа, а не догадка экрана по тому, был ли
     # `client_id` в запросе: карточку могли и найти по номеру.
