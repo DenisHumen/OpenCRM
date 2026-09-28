@@ -16,6 +16,7 @@ from core.services import otchyot_prodazh_service as otchyot
 from tests.conftest import API, make_manager
 from tests.test_dashboard_deals import win
 from tests.test_deals import make_client
+from tests.test_roles import role_maker, staff_maker  # noqa: F401 — фикстуры
 
 OTCHYOT = f"{API}/dashboard/sales-report"
 
@@ -202,3 +203,23 @@ def test_okna_sutok_ne_peresekayutsya(root_client):
     assert len(okna) == 4
     for (_, konets), (nachalo, _) in zip(okna, okna[1:]):
         assert konets == nachalo, "между сутками появилась щель или нахлёст"
+
+
+def test_otchyot_suzhaetsya_do_svoih_zayavok(root_client, role_maker, staff_maker):  # noqa: F811
+    """Разбор 28.09.2026: менеджер «только со своими» видел в отчёте продаж оборот всей
+    фирмы и названия чужих выигранных заявок — список закрыт, а отчёт рядом открыт."""
+    rol = role_maker(
+        "Отчёт — только свои",
+        ["deals.view", "deals.create", "deals.edit", "deals.move_stage", "deals.view_amounts",
+         "clients.view", "clients.create"],
+    )
+    svoy = staff_maker("otchyot-svoi@test.local", rol["id"])
+    bylo = svoy.get(OTCHYOT).json()["kletki"][0]["summa_minor"]
+    win(svoy, make_client(svoy, "Свой клиент отчёта")["id"], amount=1000)
+    chuzhaya = win(root_client, make_client(root_client, "Чужой клиент отчёта")["id"], amount=777777)
+
+    kletka = svoy.get(OTCHYOT).json()["kletki"][0]
+    assert kletka["summa_minor"] == bylo + 1000, "в отчёт менеджера попали чужие деньги"
+    assert f"#{chuzhaya['id']}" not in {s["nomer"] for s in kletka["sobytiya"]}
+    u_root = root_client.get(OTCHYOT).json()["kletki"][0]
+    assert f"#{chuzhaya['id']}" in {s["nomer"] for s in u_root["sobytiya"]}

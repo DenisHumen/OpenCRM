@@ -474,7 +474,9 @@ def _postupleniya():
     )
 
 
-def goroda_postupleniy(db: Session, ot: datetime, do: datetime, predel: int) -> list[tuple[str, int]]:
+def goroda_postupleniy(
+    db: Session, ot: datetime, do: datetime, predel: int, only_manager_id: int | None = None
+) -> list[tuple[str, int]]:
     """[(город, сумма), …] по убыванию — для отчёта продаж на сводке.
 
     Здесь, а не в своём файле отчёта: отбор «что считается пришедшими деньгами»
@@ -485,11 +487,13 @@ def goroda_postupleniy(db: Session, ot: datetime, do: datetime, predel: int) -> 
         select(Client.city, func.coalesce(func.sum(FinanceOperation.amount_minor), 0).label("summa"))
         .join(FinanceCategory, FinanceCategory.id == FinanceOperation.category_id)
         .join(Client, Client.id == FinanceOperation.client_id)
+        .outerjoin(Deal, Deal.id == FinanceOperation.deal_id)
         .where(
             *_postupleniya(),
             FinanceOperation.happened_at >= ot,
             FinanceOperation.happened_at < do,
             Client.city != "",
+            *_moi_dengi(only_manager_id),
         )
         .group_by(Client.city)
         .order_by(func.coalesce(func.sum(FinanceOperation.amount_minor), 0).desc(), Client.city)
@@ -499,7 +503,7 @@ def goroda_postupleniy(db: Session, ot: datetime, do: datetime, predel: int) -> 
 
 
 def pervye_postupleniya_dney(
-    db: Session, ot: datetime, do: datetime, predel_v_dne: int
+    db: Session, ot: datetime, do: datetime, predel_v_dne: int, only_manager_id: int | None = None
 ) -> dict[str, list[tuple[str, str, int]]]:
     """{день: [(номер, подпись, сумма), …]} — первые поступления каждого дня.
 
@@ -524,10 +528,13 @@ def pervye_postupleniya_dney(
             nomer,
         )
         .join(FinanceCategory, FinanceCategory.id == FinanceOperation.category_id)
+        .outerjoin(Deal, Deal.id == FinanceOperation.deal_id)
+        .outerjoin(Client, Client.id == FinanceOperation.client_id)
         .where(
             *_postupleniya(),
             FinanceOperation.happened_at >= ot,
             FinanceOperation.happened_at < do,
+            *_moi_dengi(only_manager_id),
         )
         .subquery()
     )

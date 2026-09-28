@@ -26,17 +26,18 @@ def _vyigrannye(db: Session) -> list[str]:
     return [key for key, kind in pipeline_repo.kinds_by_key(db).items() if kind == KIND_WON]
 
 
-def _v_okne(vyigrannye: list[str], ot: datetime, do: datetime):
-    return (
+def _v_okne(vyigrannye: list[str], ot: datetime, do: datetime, only_manager_id: int | None = None):
+    usloviya = (
         Deal.deleted_at.is_(None),
         Deal.stage.in_(vyigrannye),
         Deal.closed_at >= ot,
         Deal.closed_at < do,
     )
+    return usloviya if only_manager_id is None else (*usloviya, Deal.manager_id == only_manager_id)
 
 
 def pervye_vyigrannye_dney(
-    db: Session, ot: datetime, do: datetime, predel_v_dne: int
+    db: Session, ot: datetime, do: datetime, predel_v_dne: int, only_manager_id: int | None = None
 ) -> dict[str, list[tuple[str, str, int]]]:
     """{день: [(номер, название, сумма), …]} — первые выигранные заявки дня.
 
@@ -63,7 +64,7 @@ def pervye_vyigrannye_dney(
             func.coalesce(Deal.amount, 0).label("summa"),
             nomer,
         )
-        .where(*_v_okne(vyigrannye, ot, do))
+        .where(*_v_okne(vyigrannye, ot, do, only_manager_id))
         .subquery()
     )
     rows = db.execute(
@@ -77,7 +78,9 @@ def pervye_vyigrannye_dney(
     return itog
 
 
-def goroda_vyigrannyh(db: Session, ot: datetime, do: datetime, predel: int) -> list[tuple[str, int]]:
+def goroda_vyigrannyh(
+    db: Session, ot: datetime, do: datetime, predel: int, only_manager_id: int | None = None
+) -> list[tuple[str, int]]:
     """[(город, сумма), …] по убыванию суммы.
 
     Карточки без города пропускаются: пустая строка в списке городов — это не
@@ -89,7 +92,7 @@ def goroda_vyigrannyh(db: Session, ot: datetime, do: datetime, predel: int) -> l
     rows = db.execute(
         select(Client.city, func.coalesce(func.sum(Deal.amount), 0).label("summa"))
         .join(Client, Client.id == Deal.client_id)
-        .where(*_v_okne(vyigrannye, ot, do), Client.city != "")
+        .where(*_v_okne(vyigrannye, ot, do, only_manager_id), Client.city != "")
         .group_by(Client.city)
         .order_by(func.coalesce(func.sum(Deal.amount), 0).desc(), Client.city)
         .limit(predel)

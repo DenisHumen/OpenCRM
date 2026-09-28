@@ -264,7 +264,11 @@ def sales_report(
     """
     return {
         "currency": settings_service.get_all(db).get("currency", "USD"),
-        **otchyot_prodazh_service.otchyot(db),
+        **otchyot_prodazh_service.otchyot(
+            db,
+            mine=permissions_service.deals_scope(db, user),
+            podpisi_kassy=permissions_service.has(db, user, "finance", "view"),
+        ),
     }
 
 

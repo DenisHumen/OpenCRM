@@ -76,7 +76,9 @@ def _tot_zhe_den(den: date, god: int, mesyats: int) -> date:
     return date(god, mesyats, min(den.day, monthrange(god, mesyats)[1]))
 
 
-def _po_oknam(db: Session, kassa: bool, okna: list[tuple[datetime, datetime]]) -> list[tuple[int, int]]:
+def _po_oknam(
+    db: Session, kassa: bool, okna: list[tuple[datetime, datetime]], mine: int | None = None
+) -> list[tuple[int, int]]:
     """[(сколько событий, сумма), …] по окнам — нынешним счётом выручки.
 
     Окна обязаны идти по возрастанию и не пересекаться: `CASE` относит строку к
@@ -85,12 +87,12 @@ def _po_oknam(db: Session, kassa: bool, okna: list[tuple[datetime, datetime]]) -
     if not okna:
         return []
     if kassa:
-        dengi = finance_service.postupleniya_po_mesyatsam(db, okna) or {}
+        dengi = finance_service.postupleniya_po_mesyatsam(db, okna, only_manager_id=mine) or {}
         return [
             (int(dengi.get(i, {}).get("count", 0)), int(dengi.get(i, {}).get("total", 0)))
             for i in range(len(okna))
         ]
-    dengi = reports_repo.money_by_month(db, okna)
+    dengi = reports_repo.money_by_month(db, okna, only_manager_id=mine)
     return [
         (
             int(dengi.get((i, KIND_WON), {}).get("count", 0)),
@@ -110,7 +112,9 @@ def _sutki(ot: date, do: date) -> list[tuple[datetime, datetime]]:
     return okna
 
 
-def _itog(db: Session, kassa: bool, bylo_ot: date, bylo_do: date, stalo_ot: date, stalo_do: date) -> dict:
+def _itog(
+    db: Session, kassa: bool, bylo_ot: date, bylo_do: date, stalo_ot: date, stalo_do: date, mine: int | None = None
+) -> dict:
     """Показатель «сейчас против того же куска прошлого периода».
 
     Оба окна — одним запросом: они не пересекаются и идут по возрастанию.
@@ -122,12 +126,20 @@ def _itog(db: Session, kassa: bool, bylo_ot: date, bylo_do: date, stalo_ot: date
             (_polnoch(bylo_ot), _polnoch(bylo_do + timedelta(days=1))),
             (_polnoch(stalo_ot), _polnoch(stalo_do + timedelta(days=1))),
         ],
+        mine,
     )
     return {"summa_minor": stalo, "rost_bp": _rost_bp(stalo, bylo), "bylo_minor": bylo}
 
 
-def otchyot(db: Session, seychas: datetime | None = None) -> dict:
-    """Всё, что рисуют оба вида отчёта, одним ответом."""
+def otchyot(
+    db: Session, seychas: datetime | None = None, *, mine: int | None = None, podpisi_kassy: bool = True
+) -> dict:
+    """Всё, что рисуют оба вида отчёта, одним ответом.
+
+    `mine` — «только свои заявки» (`deals_scope`), `podpisi_kassy` — есть ли право на
+    финансы: отчёт на сводке отдавал оборот всей фирмы и комментарии операций кассы
+    менеджеру без этих прав (разбор 28.09.2026).
+    """
     seychas = seychas or now_utc()
     segodnya = seychas.date()
     kassa = finance_service.bazis_vyruchki(db) == finance_service.BAZIS_KASSA
@@ -139,13 +151,13 @@ def otchyot(db: Session, seychas: datetime | None = None) -> dict:
     okna = _sutki(nachalo_dney, segodnya)
     po_dnyam = {
         (nachalo_dney + timedelta(days=i)).isoformat(): znachenie
-        for i, znachenie in enumerate(_po_oknam(db, kassa, okna))
+        for i, znachenie in enumerate(_po_oknam(db, kassa, okna, mine))
     }
 
     pervye = (
-        finance_repo.pervye_postupleniya_dney(db, okna[0][0], okna[-1][1], V_DNE)
+        finance_repo.pervye_postupleniya_dney(db, okna[0][0], okna[-1][1], V_DNE, mine)
         if kassa
-        else otchyot_repo.pervye_vyigrannye_dney(db, okna[0][0], okna[-1][1], V_DNE)
+        else otchyot_repo.pervye_vyigrannye_dney(db, okna[0][0], okna[-1][1], V_DNE, mine)
     )
 
     kletki = []
@@ -158,7 +170,7 @@ def otchyot(db: Session, seychas: datetime | None = None) -> dict:
                 "znachenie": skolko,
                 "summa_minor": summa,
                 "sobytiya": [
-                    {"nomer": nomer, "nazvanie": nazvanie, "summa_minor": summa_sobytiya}
+                    {"nomer": nomer, "nazvanie": nazvanie if podpisi_kassy or not kassa else "", "summa_minor": summa_sobytiya}
                     for nomer, nazvanie, summa_sobytiya in pervye.get(den, ())
                 ],
             }
@@ -179,21 +191,21 @@ def otchyot(db: Session, seychas: datetime | None = None) -> dict:
     za_mesyats = _itog(
         db, kassa,
         proshlyy_mesyats, _tot_zhe_den(segodnya, proshlyy_mesyats.year, proshlyy_mesyats.month),
-        date(segodnya.year, segodnya.month, 1), segodnya,
+        date(segodnya.year, segodnya.month, 1), segodnya, mine,
     )
     proshlyy_god = segodnya.year - 1
     za_god = _itog(
         db, kassa,
         date(proshlyy_god, 1, 1), _tot_zhe_den(segodnya, proshlyy_god, segodnya.month),
-        date(segodnya.year, 1, 1), segodnya,
+        date(segodnya.year, 1, 1), segodnya, mine,
     )
 
     nachalo_goda = _polnoch(date(segodnya.year, 1, 1))
     zavtra = _polnoch(segodnya + timedelta(days=1))
     goroda = (
-        finance_repo.goroda_postupleniy(db, nachalo_goda, zavtra, GORODOV)
+        finance_repo.goroda_postupleniy(db, nachalo_goda, zavtra, GORODOV, mine)
         if kassa
-        else otchyot_repo.goroda_vyigrannyh(db, nachalo_goda, zavtra, GORODOV)
+        else otchyot_repo.goroda_vyigrannyh(db, nachalo_goda, zavtra, GORODOV, mine)
     )
 
     return {
