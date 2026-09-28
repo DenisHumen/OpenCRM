@@ -40,6 +40,8 @@ interface Job {
   snapshot?: string;
   copy_taken_at?: string | null;
   has_secret_key?: boolean;
+  /** Везёт ли копия ключ шифрования: только копия root (docs/15 §12). */
+  klyuchi?: boolean;
   secrets?: Sekrety;
 }
 
@@ -69,7 +71,8 @@ export function SettingsBackups() {
   const [replaceAsk, setReplaceAsk] = useState(false);
   const [deleteAsk, setDeleteAsk] = useState<Job | null>(null);
 
-  const [restoreKind, setRestoreKind] = useState<Kind>("db");
+  const root = user?.role === "root";
+  const [restoreKind, setRestoreKind] = useState<Kind>(root ? "db" : "storage");
   const [restoreFile, setRestoreFile] = useState<File | null>(null);
   //: Номер поля выбора файла. `<input type="file">` неуправляемое: обнулив одно
   //: только состояние, мы оставляли в поле имя файла при мёртвой кнопке —
@@ -325,7 +328,7 @@ export function SettingsBackups() {
                     )}
                     {job.files !== undefined && <span>{t("backupFiles", { count: job.files })}</span>}
                     {job.copy_taken_at && <span>{t("backupCopyTakenAt", { t: job.copy_taken_at })}</span>}
-                    {job.kind === "db" && job.status === "done" && <span>{t("backupKeyInCopy")}</span>}
+                    {job.kind === "db" && job.status === "done" && <span>{job.klyuchi === false ? t("backupBezKlyucha") : t("backupKeyInCopy")}</span>}
                     {job.has_secret_key === false && <span className="bad">{t("backupNoKeyInCopy")}</span>}
                     {job.secrets?.bez_klyucha && <span className="bad">{t("backupSecretsLost")}</span>}
                     {job.secrets?.tot_zhe_klyuch && <span>{t("backupSecretsSameKey")}</span>}
@@ -350,10 +353,14 @@ export function SettingsBackups() {
                   <div className="backup-row-actions">
                     {job.status === "done" && (job.kind === "db" || job.kind === "storage") && (
                       <>
-                        <a className="btn btn-primary btn-sm" href={`/api/v1/system/backups/jobs/${job.id}/file`}>
-                          <Icon name="download" size={13} />
-                          {t("backupDownload")}
-                        </a>
+                        {job.kind === "db" && job.klyuchi !== false && !root ? (
+                          <span className="field-desc">{t("backupTolkoRoot")}</span>
+                        ) : (
+                          <a className="btn btn-primary btn-sm" href={`/api/v1/system/backups/jobs/${job.id}/file`}>
+                            <Icon name="download" size={13} />
+                            {t("backupDownload")}
+                          </a>
+                        )}
                         <button className="btn btn-secondary btn-sm" disabled={guard.busy} onClick={() => void check(job)}>
                           {t("backupCheck")}
                         </button>
@@ -375,12 +382,13 @@ export function SettingsBackups() {
           <div className="backup-card-title">{t("backupRestoreTitle")}</div>
           <div className="field-desc">
             {restoreKind === "db" ? t("backupRestoreSub") : t("backupRestoreStorageSub")}
+            {!root && <> {t("backupRestoreDbRoot")}</>}
           </div>
           <div className="backup-restore">
             <div>
               <label className="label">{t("backupRestoreWhat")}</label>
               <select className="input" value={restoreKind} onChange={(e) => setRestoreKind(e.target.value as Kind)}>
-                <option value="db">{t("backupTakeDb")}</option>
+                <option value="db" disabled={!root}>{t("backupTakeDb")}</option>
                 <option value="storage">{t("backupTakeStorage")}</option>
               </select>
             </div>

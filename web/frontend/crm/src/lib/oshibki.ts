@@ -22,6 +22,7 @@ export const KODY_OSHIBOK: Record<string, TranslationKey> = {
   api_key_revoked: "errApiKeyRevoked",
   backup_bad_key: "errBackupBadKey",
   backup_busy: "errBackupBusy",
+  backup_tolko_root: "errBackupTolkoRoot",
   backup_gone: "errBackupGone",
   backup_key_exists: "errBackupKeyExists",
   backup_key_missing: "errBackupKeyMissing",

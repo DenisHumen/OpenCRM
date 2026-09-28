@@ -42,6 +42,7 @@ from core.services import audit_service, maintenance_mode, modules_service, sekr
 from database import schema_check
 from database.models import User
 from database.models.audit import SOURCE_MANUAL
+from database.models.user import ROLE_ROOT
 from database.repositories import backups as backups_repo
 from database.repositories import users as users_repo
 from database.session import SessionLocal, engine
@@ -332,6 +333,9 @@ def snyat(actor: User, kind: str) -> dict:
         raise errors.ValidationError("Unknown backup kind", code="backup_bad_kind")
     _klyuch()
     job = _novaya(kind, actor)
+    # Ключ шифрования в копии открывает секреты «Ключей», которые видит только root
+    # (docs/bloki/27): копия не-root его не везёт (разбор 28.09.2026, docs/15 §12).
+    job["klyuchi"] = kind == "db" and actor.role == ROLE_ROOT
     _zapisat(job)
     threading.Thread(target=_snyatie, args=(job, actor.id), daemon=True, name=f"backup-{job['id']}").start()
     return job
@@ -437,7 +441,8 @@ def _snyatie(job: dict, actor_id: int) -> None:
         if job["kind"] == "db":
             job["tables"], job["rows"] = snapshot_db.snyat(engine, syroy)
             job["revision"] = snapshot_db.revizia(engine)
-            _dopisat_klyuchi(syroy)
+            if job.get("klyuchi"):
+                _dopisat_klyuchi(syroy)
             job["filename"] = f"opencrm-db-{_shtamp()}.sql.enc"
         else:
             job["files"] = _arhiv_storage(syroy)
@@ -470,10 +475,17 @@ def _snyatie(job: dict, actor_id: int) -> None:
 # --- скачивание и проверка ---------------------------------------------------
 
 
+def nesyot_klyuchi(job: dict) -> bool:
+    # Копии, снятые до отметки, — все копии базы: тогда ключ вписывался всегда.
+    return bool(job.get("klyuchi", job.get("kind") == "db"))
+
+
 def fayl_dlya_skachivaniya(db: Session, actor: User, job_id: str) -> tuple[Path, str]:
     job = rabota(job_id)
     if job.get("status") != "done" or job["kind"] not in VIDY:
         raise errors.NotFoundError("The copy is not ready", code="backup_not_ready")
+    if nesyot_klyuchi(job) and actor.role != ROLE_ROOT:
+        raise errors.ForbiddenError("This copy carries the encryption key: root only", code="backup_tolko_root")
     put = katalog() / f"{job_id}.enc"
     if not put.is_file():
         raise errors.NotFoundError("The copy has already been removed", code="backup_gone")
@@ -582,6 +594,9 @@ def vosstanovit(db: Session, actor: User, kind: str, zagruzka: Path) -> dict:
     """Проверить копию и начать восстановление. Порядок — docs/15 §6."""
     if kind not in VIDY:
         raise errors.ValidationError("Unknown backup kind", code="backup_bad_kind")
+    if kind == "db" and actor.role != ROLE_ROOT:
+        # Дамп правится руками: вписать себе роль root и залить — вот и весь путь наверх.
+        raise errors.ForbiddenError("Only root replaces the database", code="backup_tolko_root")
     klyuch = _klyuch()
     job = _novaya(f"restore-{kind}", actor)
     k = katalog()

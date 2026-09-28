@@ -209,13 +209,13 @@
 | GET | `/system/backups` | 🔑 `settings.manage` | Копии с экрана: есть ли ключ, последние работы, итог последней проверки. Разбор — [15-kopii-s-shifrovaniem.md](../ekspluatatsiya/15-kopii-s-shifrovaniem.md) §10 |
 | POST | `/system/backups/key` | 🔑 `settings.manage` | Породить ключ копий; показывается один раз и до подтверждения не действует. `409 backup_key_exists` — ключ уже есть, менять через `{"replace": true}` |
 | POST | `/system/backups/key/confirm` | 🔑 `settings.manage` | Подтвердить ключ последними восемью знаками. `404 backup_key_not_pending`, `422 backup_key_fragment_mismatch` |
-| POST | `/system/backups/db` | 🔑 `settings.manage` | Снять копию базы в потоке; отвечает работой `{id, status}`. `409 backup_key_missing` — ключа нет, `409 backup_busy` — другая работа идёт |
+| POST | `/system/backups/db` | 🔑 `settings.manage` | Снять копию базы в потоке; отвечает работой `{id, status, klyuchi}`: ключ шифрования копия везёт, только если снимает root (docs/15 §13). `409 backup_key_missing` — ключа нет, `409 backup_busy` — другая работа идёт |
 | POST | `/system/backups/storage` | 🔑 `settings.manage` | То же для архива файлов (`storage`): фотографии, вложения, оформление. Отдельным файлом — решение владельца, docs/15 §0 |
 | GET | `/system/backups/jobs/{id}` | 🔑 `settings.manage` | Состояние работы: `running / done / failed`, имя и размер файла, таблицы и строки, итог проверки ключом |
-| GET | `/system/backups/jobs/{id}/file` | 🔑 `settings.manage` | Готовая копия файлом; пишется в журнал и ставит отметку увоза. `404 backup_not_ready`, `404 backup_gone` (копия старше суток убрана) |
+| GET | `/system/backups/jobs/{id}/file` | 🔑 `settings.manage` | Готовая копия файлом; пишется в журнал и ставит отметку увоза. Копия с ключом шифрования — только root (`403 backup_tolko_root`). `404 backup_not_ready`, `404 backup_gone` (копия старше суток убрана) |
 | POST | `/system/backups/jobs/{id}/check` | 🔑 `settings.manage` | Ещё раз открыть копию нынешним ключом — так обнаруживается потерянный или заменённый ключ |
 | DELETE | `/system/backups/jobs/{id}` | 🔑 `settings.manage` | Убрать копию с сервера раньше суток; идущую нельзя (`409 backup_busy`). Пишется в журнал `backup.deleted` |
-| POST | `/system/backups/restore` | 🔑 `backups.manage` | Заменить базу (или дополнить файлы) из зашифрованной копии: multipart `kind=db|storage`, `file`. Отказы до того, как тронута база: `422 backup_not_encrypted`, `backup_bad_key`, `backup_truncated`, `backup_unknown_revision`; `409 backup_busy`. Дальше — работа, за которой следят по `/jobs/{id}` |
+| POST | `/system/backups/restore` | 🔑 `backups.manage` | Заменить базу (или дополнить файлы) из зашифрованной копии: multipart `kind=db|storage`, `file`. Базу — только root (`403 backup_tolko_root`): дамп можно поправить и вписать себе любые права. Отказы до того, как тронута база: `422 backup_not_encrypted`, `backup_bad_key`, `backup_truncated`, `backup_unknown_revision`; `409 backup_busy`. Дальше — работа, за которой следят по `/jobs/{id}` |
 
 `purge` — **единственное место в системе, где данные исчезают безвозвратно**,
 поэтому вызов пишется в журнал действий (`ACTION_STORAGE_PURGED`) с перечнем

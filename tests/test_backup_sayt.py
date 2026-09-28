@@ -25,6 +25,7 @@ import pytest
 from core.services import backup_service
 from scripts import snapshot_db, verify_backup
 from tests.conftest import API
+from tests.test_roles import role_maker, staff_maker  # noqa: F401 — фикстуры
 
 pytestmark = pytest.mark.skipif(
     shutil.which("openssl") is None, reason="нужен openssl (он есть в образе app)"
@@ -432,3 +433,44 @@ def test_itog_raboty_oznachaet_svobodnyy_zamok(sayt):
         backup_service._put_raboty(job["id"]).unlink(missing_ok=True)
         if noviy:
             backup_service._put_raboty(noviy["id"]).unlink(missing_ok=True)
+
+
+# --- ключ шифрования в копии — только root (разбор 28.09.2026, docs/15 §12) ---
+
+
+@pytest.fixture
+def direktor(root_client, role_maker, staff_maker):  # noqa: F811
+    """Должность «всё, кроме прав root» — как пресет Director."""
+    from core import permissions
+
+    rol = role_maker("Копии — директор", sorted(permissions.all_codes()))
+    return staff_maker("kopii-direktor@test.local", rol["id"])
+
+
+def test_kopiya_ne_root_ne_vezyot_klyucha_a_kopiyu_root_emu_ne_skachat(root_client, direktor, sayt):
+    """Ключ шифрования в копии открывает секреты «Ключей», которые видит только root."""
+    klyuch = _zavesti_klyuch(root_client)
+    svoya = direktor.post(f"{BACKUPS}/db")
+    assert svoya.status_code == 200, svoya.text
+    svoya = _dozhdatsya(svoya.json()["id"])
+    assert svoya["status"] == "done" and svoya["klyuchi"] is False
+    skachano = direktor.get(f"{BACKUPS}/jobs/{svoya['id']}/file")
+    assert skachano.status_code == 200
+    (sayt / "d.enc").write_bytes(skachano.content)
+    verify_backup.rasshifrovat(sayt / "d.enc", sayt / "d.sql", klyuch=bytes.fromhex(klyuch))
+    assert backup_service.klyuchi_iz_dampa(sayt / "d.sql") == {}, "копия не-root везёт ключ шифрования"
+
+    kopiya_root = _snyat(root_client, "db")
+    assert kopiya_root["klyuchi"] is True
+    otkaz = direktor.get(f"{BACKUPS}/jobs/{kopiya_root['id']}/file")
+    assert otkaz.status_code == 403 and otkaz.json()["error"]["code"] == "backup_tolko_root"
+    assert root_client.get(f"{BACKUPS}/jobs/{kopiya_root['id']}/file").status_code == 200
+
+
+def test_bazu_iz_kopii_zamenyaet_tolko_root(root_client, direktor, sayt):
+    """В дамп можно вписать себе роль root — с `backups.manage` это был путь наверх."""
+    _zavesti_klyuch(root_client)
+    musor = sayt / "musor.enc"
+    musor.write_bytes(b"not a copy")
+    otkaz = _zalit(direktor, "db", musor)
+    assert otkaz.status_code == 403 and otkaz.json()["error"]["code"] == "backup_tolko_root"
