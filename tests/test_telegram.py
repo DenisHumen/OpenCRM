@@ -1188,6 +1188,26 @@ def test_fotografiya_otdayotsya_dlya_pokaza_a_dokument_dlya_sohraneniya(
     )
 
 
+def test_tip_vlozheniya_ne_beryotsya_iz_imeni_ot_otpravitelya(root_client, bot_nastroen, monkeypatch):
+    """Разбор 28.09.2026: документ `x.js` от постороннего уходил `text/javascript` —
+    годным для `<script src>` с нашего домена, как бы ни был подписан ответ."""
+    from core.services import telegram_service
+
+    monkeypatch.setattr(
+        telegram_service, "skachat_fayl", lambda kluch, file_id, opener=None: b"alert(1)"
+    )
+    telo = _obnovlenie(505601, 1, caption="скрипт")
+    telo["message"]["document"] = {"file_id": "DOC-JS", "file_name": "zloy.js", "file_size": 8}
+    _poslat(root_client, bot_nastroen, telo)
+    dialog = _dialog(root_client, 505601)
+    stroka = root_client.get(f"{TG}/chats/{dialog['id']}/messages").json()["items"][0]
+    otvet = root_client.get(f"{TG}/chats/{dialog['id']}/messages/{stroka['id']}/file")
+    assert otvet.status_code == 200, otvet.text
+    assert otvet.headers["content-type"] == "application/octet-stream"
+    assert telegram_service.tip_otdachi("photo", "photo.jpg") == "image/jpeg"
+    assert telegram_service.tip_otdachi("photo", "snimok.html") == "image/jpeg"
+
+
 # --- прочтение у открытого диалога -------------------------------------------
 
 

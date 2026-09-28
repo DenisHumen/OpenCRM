@@ -552,6 +552,21 @@ def _vlozhenie(soobshchenie: dict) -> tuple[str, str, str, int]:
     return KIND_TEXT, "", "", 0
 
 
+#: Чем отдавать вложение: по виду и белому списку. Тип «по имени» брал имя от
+#: отправителя, и `x.js` уходил `text/javascript` — источник скрипта на нашем
+#: домене для `<script src>`, `attachment` его не останавливает (разбор 28.09.2026).
+_TIP_PO_HVOSTU = {
+    KIND_PHOTO: {"png": "image/png", "gif": "image/gif", "webp": "image/webp"},
+    KIND_VIDEO: {"mov": "video/quicktime", "webm": "video/webm"},
+}
+_TIP_VIDA = {KIND_PHOTO: "image/jpeg", KIND_VIDEO: "video/mp4", KIND_VOICE: "audio/ogg"}
+
+
+def tip_otdachi(kind: str, imya: str) -> str:
+    hvost = imya.rsplit(".", 1)[-1].lower() if "." in imya else ""
+    return _TIP_PO_HVOSTU.get(kind, {}).get(hvost) or _TIP_VIDA.get(kind, "application/octet-stream")
+
+
 # --- кнопки под сообщением ----------------------------------------------------
 #
 # Кнопки нужны там, где ответ должен быть В ОДНО ДЕЙСТВИЕ и без переключения

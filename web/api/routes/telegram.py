@@ -505,6 +505,7 @@ def vlozhenie(
     put, stroka = telegram_service.fayl_soobshcheniya(db, chat_row_id, message_id)
     return FileResponse(
         put,
+        media_type=telegram_service.tip_otdachi(stroka.kind, stroka.file_name or ""),
         # Имя для сохранения — то, под которым файл прислали. На диске он лежит
         # под своим (имя от постороннего доверия не заслуживает), но человеку
         # показать надо привычное.
