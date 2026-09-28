@@ -1017,9 +1017,10 @@ def revert_transfer(db: Session, transfer_id: int, author: User) -> StockTransfe
     сойдётся — то есть ошибка станет невидимой.
 
     Второй раз тот же переезд не отменяется: иначе двойное нажатие увезло бы
-    товар обратно дважды.
+    товар обратно дважды. Проверка — под замком шапки: без него двое проходили её
+    разом (разбор 28.09.2026).
     """
-    header = places_repo.get_transfer(db, transfer_id)
+    header = places_repo.zapert_pereezd(db, transfer_id)
     if header is None:
         raise errors.NotFoundError("Transfer not found", code="transfer_not_found")
     if places_repo.reversal_of(db, header.id) is not None:

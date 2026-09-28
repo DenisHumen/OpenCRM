@@ -165,6 +165,11 @@ def names_of(db: Session, warehouse_ids) -> dict[int, str]:
 # --- переезды ---
 
 
+def zapert_pereezd(db: Session, transfer_id: int) -> StockTransfer | None:
+    """Шапка переезда под замком: «уже отменён» проверяется после него."""
+    return db.scalars(select(StockTransfer).where(StockTransfer.id == transfer_id).with_for_update()).first()
+
+
 def get_transfer(db: Session, transfer_id: int) -> StockTransfer | None:
     return db.get(StockTransfer, transfer_id)
 

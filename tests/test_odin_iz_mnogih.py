@@ -812,6 +812,49 @@ def test_dva_storno_odnoy_nakladnoy_razom(root_client, monkeypatch):
         root_client.post(f"{API}/modules/waybills", json={"enabled": False})
 
 
+def test_dvoe_otmenyayut_odin_pereezd_razom(root_client, monkeypatch):
+    """Проверка «переезд уже отменён» шла без замка: двойное нажатие увозило товар
+    обратно дважды. Замок — на шапку переезда (`warehouses.zapert_pereezd`)."""
+    import time
+
+    from database.repositories import warehouses as places_repo
+    from tests.test_warehouses import WAREHOUSES, product, stock_on
+
+    root_client.post(f"{API}/modules/warehouse", json={"enabled": True})
+    osnovnoy = next(w for w in root_client.get(WAREHOUSES).json()["items"] if w["is_default"])
+    vtoroy = root_client.post(WAREHOUSES, json={"name": "Дуэль переезда", "code": "WHDUEL"}).json()
+    try:
+        tovar = product(root_client, stock="10")
+        pereezd = root_client.post(
+            f"{API}/warehouse/transfers",
+            json={"product_id": tovar["id"], "from_warehouse_id": osnovnoy["id"],
+                  "to_warehouse_id": vtoroy["id"], "quantity": "4"},
+        ).json()
+
+        nastoyashchiy = places_repo.moves_of_transfer
+
+        def medlenno(*args, **kwargs):
+            time.sleep(0.6)
+            return nastoyashchiy(*args, **kwargs)
+
+        monkeypatch.setattr(places_repo, "moves_of_transfer", medlenno)
+
+        def vtoroy_udar():
+            time.sleep(0.2)
+            return root_client.post(f"{API}/warehouse/transfers/{pereezd['id']}/revert").status_code
+
+        codes = duel(
+            lambda udar: udar(),
+            lambda: root_client.post(f"{API}/warehouse/transfers/{pereezd['id']}/revert").status_code,
+            vtoroy_udar,
+        )
+        monkeypatch.undo()
+        assert sorted(codes.values()) == [201, 409], f"переезд отменён дважды: {codes}"
+        assert stock_on(root_client, tovar["id"], vtoroy["id"]) == 0
+    finally:
+        root_client.delete(f"{WAREHOUSES}/{vtoroy['id']}")
+
+
 # --- запасные коды двухфакторки ------------------------------------------------
 
 
