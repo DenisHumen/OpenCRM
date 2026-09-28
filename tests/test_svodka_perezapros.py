@@ -137,7 +137,8 @@ def test_dorogi_za_dannymi_odna():
     """
     # Ищем сам вызов, а не цепочку целиком: `api` и `.get` стоят на разных
     # строках, и регулярка по «api.get» их не видит.
-    skolko = len(re.findall(r'\.get\("/dashboard"\)', _svodka()))
+    # Строка запроса (`?tz_offset=`) — та же дорога.
+    skolko = len(re.findall(r'\.get\([`"]/dashboard(\?[^`"]*)?[`"]\)', _svodka()))
     assert skolko == 1, (
         f"за сводкой ходят из {skolko} мест. Дорога обязана быть одна, иначе "
         "фоновый перезапрос и первая загрузка разойдутся"

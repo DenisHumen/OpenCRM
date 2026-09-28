@@ -75,6 +75,35 @@ def _move_views(board_id: int, moment) -> int:
         return len(views)
 
 
+def test_mesyats_na_svodke_mestnyy_kak_v_otchyote(root_client, monkeypatch):
+    """Разбор 28.09.2026: «с начала месяца» считалось по UTC. В Киеве 1 июля в 01:30
+    по UTC ещё июнь, и июньская сделка стояла на плитке «за месяц», а отчёт за
+    июль её не видел."""
+    from datetime import datetime, timezone
+
+    from database.models import Deal
+    from web.api.routes import dashboard as svodka
+
+    etapy = {s["kind"]: s["key"] for s in root_client.get(f"{API}/pipeline/stages").json()["items"]}
+    klient = root_client.post(f"{API}/clients", json={"name": "Июньский заказчик"}).json()
+    zayavka = root_client.post(f"{API}/deals", json={"title": "Июньская", "client_id": klient["id"]}).json()
+    with SessionLocal() as db:
+        deal = db.get(Deal, zayavka["id"])
+        deal.stage, deal.amount, deal.closed_at = etapy["won"], 1000, datetime(2031, 6, 15, 12)
+        db.commit()
+    # 30 июня 22:30 UTC — в Киеве (UTC+3) уже 1 июля, 01:30.
+    monkeypatch.setattr(svodka, "now_utc", lambda: datetime(2031, 6, 30, 22, 30, tzinfo=timezone.utc))
+    try:
+        po_utc = root_client.get(f"{API}/dashboard", params={"tz_offset": 0}).json()["won_count_this_month"]
+        v_kieve = root_client.get(f"{API}/dashboard", params={"tz_offset": -180}).json()["won_count_this_month"]
+        assert po_utc - v_kieve == 1
+    finally:
+        # Сделка из будущего портила бы соседям «заведомо пустое» окно.
+        with SessionLocal() as db:
+            db.get(Deal, zayavka["id"]).deleted_at = datetime(2031, 7, 1)
+            db.commit()
+
+
 def test_views_tile_equals_the_sum_of_the_bars_under_it(manager_client):
     """Плитка «просмотров за 7 дней» и столбики под ней — одно число.
 

@@ -241,7 +241,8 @@ export function Dashboard() {
     (tikho = false) => {
       if (!tikho) clear();
       api
-        .get("/dashboard")
+        // Месяц на плитках — по местному календарю, как в отчётах.
+        .get(`/dashboard?tz_offset=${new Date().getTimezoneOffset()}`)
         .then((svezhee) => {
           setData(svezhee);
           setObnovleno(new Date());

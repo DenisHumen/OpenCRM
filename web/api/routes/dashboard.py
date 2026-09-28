@@ -1,6 +1,6 @@
 from datetime import timedelta
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -33,8 +33,16 @@ router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
 
 @router.get("")
-def dashboard(user: User = Depends(require_staff), db: Session = Depends(get_db)):
+def dashboard(
+    tz_offset: int = Query(default=0, ge=-840, le=840),
+    user: User = Depends(require_staff),
+    db: Session = Depends(get_db),
+):
     now = now_utc()
+    # Месяц — по местному календарю смотрящего, как в отчётах (`month_buckets`): по
+    # UTC первые часы месяца в Киеве три часа считались прошлым (разбор 28.09.2026).
+    sdvig = timedelta(minutes=tz_offset)
+    month_start = (now - sdvig).replace(day=1, hour=0, minute=0, second=0, microsecond=0) + sdvig
 
     # Окно просмотров считается ОДИН раз на все запросы блока: пока плитка брала
     # скользящие 168 часов, а график — семь календарных суток, число над графиком
@@ -44,7 +52,7 @@ def dashboard(user: User = Depends(require_staff), db: Session = Depends(get_db)
     # календарную неделю со скользящей значило бы считать рост от разной длины.
     prev_start = views_start - timedelta(days=7)
 
-    clients_total, clients_this_month, clients_this_week, clients_without_deals = stats_repo.clients_totals(db)
+    clients_total, clients_this_month, clients_this_week, clients_without_deals = stats_repo.clients_totals(db, month_start)
 
     # Сводка сужается вместе с блоками, а не отказывает: выключили доски — их
     # слагаемых в ответе нет, остальное считается как считалось. Пустые значения,
@@ -81,7 +89,6 @@ def dashboard(user: User = Depends(require_staff), db: Session = Depends(get_db)
 
     # Деньги с начала месяца, а не за последние 30 дней: владелец сверяет их с
     # месячной отчётностью, а скользящее окно ни с чем не сходится.
-    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     # Сужается тем же правом, что список и канбан: спрятать чужие карточки и
     # оставить их сумму значит не запретить ничего — оборот и был целью.
     mine_only = permissions_service.deals_scope(db, user)
