@@ -59,26 +59,41 @@ def sobrat(istochnik: Path, cel: Path, proshlyy: Path | None = None) -> dict:
     chernovik = cel.with_name(cel.name + ".part")
     shutil.rmtree(chernovik, ignore_errors=True)
     chernovik.mkdir(parents=True)
-    itog = {"files": 0, "bytes": 0, "linked": 0, "copied": 0, "base": proshlyy.name if proshlyy else None}
+    itog = {
+        "files": 0, "bytes": 0, "linked": 0, "copied": 0, "ischezlo": 0,
+        "base": proshlyy.name if proshlyy else None,
+    }
 
     for koren, _papki, fayly in os.walk(istochnik):
         otn = Path(koren).relative_to(istochnik)
         if otn != Path("."):
             # Права вложенных каталогов — как у оригинала: восстановленный storage
             # отдаёт nginx. Корень снимка остаётся 700 — посторонним внутрь хода нет.
-            (chernovik / otn).mkdir()
-            os.chmod(chernovik / otn, stat.S_IMODE(Path(koren).stat().st_mode))
+            try:
+                rezhim = stat.S_IMODE(Path(koren).stat().st_mode)
+            except FileNotFoundError:
+                itog["ischezlo"] += 1
+                continue
+            (chernovik / otn).mkdir(parents=True, exist_ok=True)
+            os.chmod(chernovik / otn, rezhim)
         for imya in fayly:
             otkuda = Path(koren) / imya
-            st = otkuda.lstat()
-            if not stat.S_ISREG(st.st_mode):
-                continue
             kuda = chernovik / otn / imya
-            if proshlyy is not None and _svyazat(st, proshlyy / otn / imya, kuda):
-                itog["linked"] += 1
-            else:
-                shutil.copy2(otkuda, kuda)
-                itog["copied"] += 1
+            # Живой каталог меняется под ногами: удалили вложение, обновлятор
+            # переписал файл хода. Пропажа одного файла не повод ронять всю ночь
+            # под `set -eu` в backup.sh (разбор 28.09.2026).
+            try:
+                st = otkuda.lstat()
+                if not stat.S_ISREG(st.st_mode):
+                    continue
+                if proshlyy is not None and _svyazat(st, proshlyy / otn / imya, kuda):
+                    itog["linked"] += 1
+                else:
+                    shutil.copy2(otkuda, kuda)
+                    itog["copied"] += 1
+            except FileNotFoundError:
+                itog["ischezlo"] += 1
+                continue
             itog["files"] += 1
             itog["bytes"] += st.st_size
 

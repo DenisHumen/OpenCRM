@@ -1190,3 +1190,29 @@ def test_vosstanovlenie_raskladyvaet_snimok(tmp_path):
     kuda = tmp_path / "vosstanovlennyy-storage"
     assert (kuda / "files" / "dogovor.txt").read_text(encoding="utf-8") == "аренда"
     assert not (kuda / s.METKA).exists()
+
+
+def test_snimok_ne_padaet_kogda_fayl_ischez_posredi_obhoda(tmp_path, monkeypatch):
+    """Разбор 28.09.2026: файл или каталог, исчезнувший между листингом и копией,
+    ронял ночную копию целиком — `FileNotFoundError` под `set -eu`."""
+    from scripts import snimok_storage
+
+    istochnik = tmp_path / "storage"
+    (istochnik / "clients").mkdir(parents=True)
+    (istochnik / "clients" / "est.txt").write_text("на месте", encoding="utf-8")
+    nastoyashchiy = os.walk
+
+    def obhod(koren, *args, **kwargs):
+        yield from nastoyashchiy(koren, *args, **kwargs)
+        if Path(koren) == istochnik:
+            # Будто листинг видел их, а к копии они уже исчезли.
+            yield str(istochnik / "clients"), [], ["ischez.txt"]
+            yield str(istochnik / "propavshiy"), [], ["tozhe.txt"]
+
+    monkeypatch.setattr(snimok_storage.os, "walk", obhod)
+    cel = tmp_path / "snimok"
+    itog = snimok_storage.sobrat(istochnik, cel)
+    assert snimok_storage.gotov(cel)
+    assert (cel / "clients" / "est.txt").read_text(encoding="utf-8") == "на месте"
+    assert itog["ischezlo"] == 2 and itog["files"] == 1
+
