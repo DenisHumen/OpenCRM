@@ -40,6 +40,8 @@ from database.models.document import (
     STATUS_CANCELLED,
     STATUS_CLOSED,
     STATUS_DRAFT,
+    STATUS_ISSUED,
+    WAYBILL_KINDS,
 )
 from database.models.warehouse import MOVE_RETURN
 from database.repositories import clients as clients_repo
@@ -103,7 +105,22 @@ def dostupno(db: Session, order: Document, krome_id: int | None = None) -> dict[
     Считается запросом на каждый вопрос, а не хранится: остаток «к возврату»
     — производное, как и остаток склада. Услуги в счёт не идут — на склад им
     возвращаться нечем.
+
+    Шёл заказ накладными — «отгружено» берётся из них, за вычетом их сторно: по
+    строкам заказа возврат разрешал пять там, где кладовщик отгрузил четыре, и
+    приходовал пятую, которой не было (разбор 28.09.2026).
     """
+    from core.services import order_service
+
+    vernulos = documents_repo.vozvrashcheno_po_zakazu(db, order.id, krome_id=krome_id)
+    if any(
+        n.kind in WAYBILL_KINDS and n.status in (STATUS_ISSUED, STATUS_CLOSED)
+        for n in documents_repo.po_osnovaniyu(db, order.id)
+    ):
+        otgruzheno = order_service.otgruzheno_po_tovaram(db, order.id)
+        return {
+            product_id: max(0, milli - vernulos.get(product_id, 0)) for product_id, milli in otgruzheno.items()
+        }
     otgruzheno: dict[int, int] = {}
     for row in documents_repo.lines_of(db, order.id):
         if row.product_id is None:
@@ -111,7 +128,6 @@ def dostupno(db: Session, order: Document, krome_id: int | None = None) -> dict[
         if warehouse_service.get_product(db, row.product_id, include_deleted=True).is_service:
             continue
         otgruzheno[row.product_id] = otgruzheno.get(row.product_id, 0) + row.quantity_milli
-    vernulos = documents_repo.vozvrashcheno_po_zakazu(db, order.id, krome_id=krome_id)
     # Сторно накладной заказа — тоже возврат товара, только бумагой склада.
     storno = documents_repo.stornirovano_po_zakazu(db, order.id)
     return {

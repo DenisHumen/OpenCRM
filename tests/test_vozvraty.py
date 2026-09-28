@@ -229,6 +229,27 @@ def test_storno_nakladnoy_zakaza_schitaetsya_vozvrashchyonnym(root_client):
     assert ostatok(root_client, item["id"]) == 10000
 
 
+def test_vozvrat_schitaet_ot_uekhavshego_nakladnoy_a_ne_ot_zakaza(root_client):
+    """Разбор 28.09.2026: кладовщик пишет в черновик «собрано четыре» из пяти,
+    закрытие отгружает четыре, а возврат разрешал пять и приходовал пятую."""
+    item = tovar(root_client)
+    order = root_client.post(ORDERS, json={"kind": "sales_order"}).json()
+    root_client.post(f"{ORDERS}/{order['id']}/lines", json={"product_id": item["id"], "quantity": "5"})
+    chernovik = root_client.post(f"{WB}/from-order/{order['id']}").json()
+    [stroka] = chernovik["lines"]
+    assert root_client.patch(f"{WB}/{chernovik['id']}/lines/{stroka['id']}", json={"quantity": "4"}).status_code == 200
+    assert root_client.post(f"{ORDERS}/{order['id']}/close", json={}).status_code == 200
+    assert ostatok(root_client, item["id"]) == 6000
+
+    v = vozvrat(root_client, order)
+    assert [l["quantity_milli"] for l in v["lines"]] == [4000], "возврат предложил больше уехавшего"
+    [s] = v["lines"]
+    root_client.patch(f"{RETURNS}/{v['id']}/lines/{s['id']}", json={"quantity": "5"})
+    otkaz = provesti(root_client, v["id"])
+    assert otkaz.status_code == 422 and otkaz.json()["error"]["code"] == "return_exceeds_shipped"
+    assert ostatok(root_client, item["id"]) == 6000
+
+
 def test_bez_nakladnykh_vozvrat_pishet_dvizheniya_sam(root_client):
     assert root_client.post(f"{API}/modules/waybills", json={"enabled": False}).status_code == 200
     try:
