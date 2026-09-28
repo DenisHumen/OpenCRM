@@ -12,6 +12,7 @@ import itertools
 import pytest
 
 from tests.conftest import API
+from tests.test_roles import role_maker, staff_maker  # noqa: F401 — фикстуры
 
 ORDERS = f"{API}/orders"
 STOCK = f"{API}/warehouse"
@@ -460,6 +461,24 @@ def test_pechat_zakaza_daet_tablitsu_pozitsiy(root_client, client_row):
     assert "1300.00" in page.text
     # Номер уходит в штрихкод: заказ находят сканером так же, как квитанцию.
     assert "<svg" in page.text
+
+
+def test_pechat_zakaza_postavshchiku_bez_prava_na_summy_bez_tsen(
+    root_client, client_row, role_maker, staff_maker  # noqa: F811
+):
+    """Разбор 28.09.2026: печать заказа поставщику отдавала закупочные цены тому,
+    от кого `orders.view_amounts` их и прячет; API отвечал ему `null`."""
+    item = product(root_client, stock="10", price=50000)
+    postavka = order_with(root_client, client_row, item, quantity="2", kind="purchase_order")
+    prodazha = order_with(root_client, client_row, item, quantity="2")
+    rol = role_maker("Заказы без сумм", ["orders.view", "clients.view"])
+    kladovshchik = staff_maker("zakazy-bez-summ@test.local", rol["id"])
+
+    zakupka = kladovshchik.get(f"{ORDERS}/{postavka['id']}/print")
+    assert zakupka.status_code == 200 and postavka["number"] in zakupka.text
+    assert "1000.00" not in zakupka.text and "500.00" not in zakupka.text
+    assert "1000.00" in root_client.get(f"{ORDERS}/{postavka['id']}/print").text
+    assert "1000.00" in kladovshchik.get(f"{ORDERS}/{prodazha['id']}/print").text
 
 
 def test_sobran_otdelnyy_shag(root_client, client_row):

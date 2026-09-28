@@ -539,9 +539,10 @@ def print_order(
     «что вы у меня взяли», заказ — «что и почём мне отдадут». Печатает браузер,
     как и всё остальное: сервер на VPS, принтер на столе.
 
-    Суммы показываем всегда: тот, кто печатает заказ клиенту, обязан видеть
-    цены — иначе бумага уйдёт с пустым столбцом. Право `orders.view_amounts`
-    закрывает закупочную цену в интерфейсе, а не отпускную в бумаге.
+    Суммы у заказа покупателю показываем всегда: тот, кто печатает его клиенту,
+    обязан видеть цены — иначе бумага уйдёт с пустым столбцом. У заказа
+    поставщику цена — закупочная, ровно то, что закрывает `orders.view_amounts`:
+    без права она не печатается (разбор 28.09.2026).
     """
     order = order_service.get(db, order_id)
     rows = order_service.lines(db, order.id)
@@ -549,12 +550,17 @@ def print_order(
 
     currency = settings_service.get_all(db).get("currency", "USD")
     payload = document_service.payload_of(order)
+    summy = order.kind == KIND_SALES_ORDER or permissions_service.sees_amounts(db, user, "orders")
+
+    def dengi(minor) -> str:
+        return money_for_print(minor, currency) if summy else ""
+
     lines = [
         {
             "name": line.name_snapshot,
             "quantity": _quantity(line.quantity_milli),
-            "price": money_for_print(line.price_minor, currency),
-            "sum": money_for_print(summa, currency),
+            "price": dengi(line.price_minor),
+            "sum": dengi(summa),
         }
         for line, summa in zip(rows, document_service.line_totals(rows))
     ]
@@ -570,7 +576,7 @@ def print_order(
         party=(payload.get("client") or {}).get("name"),
         created=order.created_at.strftime("%d.%m.%Y %H:%M") if order.created_at else "",
         lines=lines,
-        total=money_for_print(order_service.total_minor(rows), currency),
+        total=dengi(order_service.total_minor(rows)),
         barcode=codes.barcode_svg(order.number),
     )
     return HTMLResponse(html)
