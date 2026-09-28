@@ -206,6 +206,28 @@ def test_a_picture_cannot_smuggle_a_script(root_client):
     assert b"data:image/png" in cleaned
 
 
+def test_ochistka_svg_lineyna():
+    """Разбор 28.09.2026: `<script\\b.*?</script>` дочитывал файл на каждом незакрытом
+    открытии — 312 КБ очищались 35 с, мегабайты часами, и загрузка одного «логотипа»
+    останавливала всю CRM. Потолок в секунду — с запасом на медленную машину ворот."""
+    import time
+
+    from core.services.media_service import sanitize_svg
+
+    for ataka in (
+        b"<svg>" + b"<script>" * 500_000,
+        b"<svg" + b' onx="a' * 200_000,
+        b"<svg" + b" href='a" * 200_000,
+        b"<svg>" + b"<script>a</script" * 200_000,
+    ):
+        nachalo = time.perf_counter()
+        sanitize_svg(ataka)
+        assert time.perf_counter() - nachalo < 1.0, ataka[:20]
+    # Незакрытый скрипт срезается до конца: хвост после него — тоже скрипт.
+    assert sanitize_svg(b"<svg><rect/><script>alert(1)") == b"<svg><rect/>"
+    assert sanitize_svg(b"<svg><SCRIPT type=x>a</script ><g/></svg>") == b"<svg><g/></svg>"
+
+
 def test_the_uploaded_logo_is_cleaned_too(root_client):
     """Логотип чистится наравне с работами: /branding/logo.svg открывают прямо."""
     import pathlib

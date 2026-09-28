@@ -150,7 +150,8 @@ def delete_work_files(work_uid: str) -> None:
         shutil.rmtree(directory, ignore_errors=True)
 
 
-_SVG_SCRIPT_RE = re.compile(rb"<script\b.*?</script\s*>", re.IGNORECASE | re.DOTALL)
+_SVG_SCRIPT_OTKR = re.compile(rb"<script\b", re.IGNORECASE)
+_SVG_SCRIPT_ZAKR = re.compile(rb"</script\s*>", re.IGNORECASE)
 #: Обработчик события. Значение бывает в кавычках и без них — без кавычек
 #: (`onload=alert(1)`) прежнее выражение его не видело и пропускало целиком.
 _SVG_EVENT_RE = re.compile(rb"\son\w+\s*=\s*(\"[^\"]*\"|'[^']*'|[^\s>]+)", re.IGNORECASE)
@@ -181,6 +182,24 @@ def _unescape(value: bytes) -> bytes:
     return _CHAR_REF_RE.sub(one, value)
 
 
+def _vyrezat_skripty(content: bytes) -> bytes:
+    """`<script>…</script>` одним проходом вперёд; незакрытый — до конца файла.
+
+    Выражение с `.*?` на каждом незакрытом открытии дочитывало файл до конца — квадрат:
+    312 КБ из «<script>» очищались 35 с, мегабайты — часами, и вся CRM с ними (28.09.2026).
+    """
+    kuski: list[bytes] = []
+    s = 0
+    while (otkr := _SVG_SCRIPT_OTKR.search(content, s)) is not None:
+        kuski.append(content[s : otkr.start()])
+        zakr = _SVG_SCRIPT_ZAKR.search(content, otkr.end())
+        if zakr is None:
+            return b"".join(kuski)
+        s = zakr.end()
+    kuski.append(content[s:])
+    return b"".join(kuski)
+
+
 def sanitize_svg(content: bytes) -> bytes:
     """Убрать из SVG то, что делает его документом со скриптом.
 
@@ -194,7 +213,7 @@ def sanitize_svg(content: bytes) -> bytes:
     (`onload=alert(1)`) прежнее выражение не видело вовсе, как и ссылку со
     схемой, записанной числовой ссылкой (`javas&#99;ript:`).
     """
-    content = _SVG_SCRIPT_RE.sub(b"", content)
+    content = _vyrezat_skripty(content)
     content = _SVG_EVENT_RE.sub(b"", content)
 
     def drop_if_script(match):
