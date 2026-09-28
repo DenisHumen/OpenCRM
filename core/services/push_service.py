@@ -207,7 +207,11 @@ def _soobshchenie(zvonok, locale: str) -> dict:
 
 
 def razoslat(db: Session, ochered: list, klient: httpx.Client | None = None) -> int:
-    """Отправить звонки из очереди во все браузеры адресатов. Возвращает, сколько доставлено."""
+    """Отправить звонки из очереди во все браузеры адресатов. Возвращает, сколько доставлено.
+
+    Сначала вся сеть, потом запись: отметка доставки посреди запросов держала замок
+    строки подписки через все таймауты чужих служб до конца рассылки (разбор 28.09.2026).
+    """
     if not ochered:
         return 0
     podpiski = push_repo.dlya(db, [z[4] for z in ochered])
@@ -218,6 +222,8 @@ def razoslat(db: Session, ochered: list, klient: httpx.Client | None = None) -> 
     }
     svoy = klient is None
     klient = klient or httpx.Client(timeout=10)
+    mertvye: set[int] = set()
+    zhivye: set[int] = set()
     dostavleno = 0
     try:
         for zvonok in ochered:
@@ -226,20 +232,30 @@ def razoslat(db: Session, ochered: list, klient: httpx.Client | None = None) -> 
                 continue
             telo = json.dumps(_soobshchenie(zvonok, chelovek.locale), ensure_ascii=False).encode()
             for p in podpiski:
-                if p.user_id != chelovek.id:
+                if p.user_id != chelovek.id or p.id in mertvye:
                     continue
-                dostavleno += _otpravit(db, klient, p, telo, zvonok[0], zvonok[2] == "urgent")
+                ishod = _otpravit(klient, p, telo, zvonok[0], zvonok[2] == "urgent")
+                if ishod == "ubrat":
+                    mertvye.add(p.id)
+                elif ishod == "ok":
+                    zhivye.add(p.id)
+                    dostavleno += 1
     finally:
         if svoy:
             klient.close()
+    teper = now_utc()
+    for podpiska_id in mertvye:
+        push_repo.ubrat(db, podpiska_id)
+    for podpiska_id in zhivye - mertvye:
+        push_repo.dostavleno(db, podpiska_id, teper)
     return dostavleno
 
 
-def _otpravit(db: Session, klient: httpx.Client, p: PushSubscription, telo: bytes, task_id: int, srochno: bool) -> int:
+def _otpravit(klient: httpx.Client, p: PushSubscription, telo: bytes, task_id: int, srochno: bool) -> str:
+    """Один запрос к службе браузера. «ok», «ubrat» (подписка мертва) или «» — не вышло."""
     if not sluzhba_brauzera(p.endpoint):
         # Заведена до списка служб или вписана в базу мимо — в сеть не идёт.
-        push_repo.ubrat(db, p.id)
-        return 0
+        return "ubrat"
     try:
         otvet = klient.post(
             p.endpoint,
@@ -256,13 +272,11 @@ def _otpravit(db: Session, klient: httpx.Client, p: PushSubscription, telo: byte
         )
     except (httpx.HTTPError, ValueError) as exc:
         logger.warning("push: %s — %r", p.nazvanie or p.id, exc)
-        return 0
+        return ""
     if otvet.status_code in (404, 410):
         # Браузер отписался или подписка протухла — служба больше её не примет.
-        push_repo.ubrat(db, p.id)
-        return 0
+        return "ubrat"
     if otvet.is_success:
-        push_repo.dostavleno(db, p.id, now_utc())
-        return 1
+        return "ok"
     logger.warning("push: %s — %s %s", p.nazvanie or p.id, otvet.status_code, otvet.text[:200])
-    return 0
+    return ""

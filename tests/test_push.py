@@ -153,6 +153,48 @@ def test_rassylka_shifruet_podpisyvaet_i_ubiraet_mertvye(root_client):
     assert adresa[zhivoy.endpoint].last_ok_at is not None
 
 
+def test_rassylka_ne_pishet_v_bazu_mezhdu_zaprosami(root_client):
+    """Разбор 28.09.2026: отметка доставки посреди рассылки держала замок строки подписки
+    через таймауты всех следующих служб. Запись — только после сети."""
+    from sqlalchemy import event
+
+    from database.session import engine
+
+    mertvyy = Brauzer("https://web.push.apple.com/zamok-mertvyy")
+    zhivoy = Brauzer("https://fcm.googleapis.com/fcm/send/zamok-zhivoy")
+    for b in (mertvyy, zhivoy):
+        assert root_client.post(f"{PUSH}/subscriptions", json=b.podpiska()).status_code == 201
+    task = _napominanie(root_client, due_at=_cherez(minutes=30))
+    zapisi: list[str] = []
+    zaprosy: list[str] = []
+
+    def slushat(conn, cursor, statement, *args):
+        if statement.lstrip().upper().startswith(("UPDATE", "DELETE")) and "push_subscriptions" in statement:
+            zapisi.append(statement)
+
+    def sluzhba(zapros: httpx.Request) -> httpx.Response:
+        assert zapisi == [], "запись в подписки раньше, чем кончилась сеть"
+        zaprosy.append(str(zapros.url))
+        return httpx.Response(410 if "mertvyy" in str(zapros.url) else 201)
+
+    event.listen(engine, "before_cursor_execute", slushat)
+    try:
+        with SessionLocal() as db:
+            t = db.get(Task, task["id"])
+            zvonok = (t.id, t.title, t.vazhnost, t.due_at, _moy_id(root_client), "due", t.poyas)
+            with httpx.Client(transport=httpx.MockTransport(sluzhba)) as klient:
+                push_service.razoslat(db, [zvonok, zvonok], klient)
+            db.commit()
+    finally:
+        event.remove(engine, "before_cursor_execute", slushat)
+    assert zapisi, "мёртвая подписка должна уйти, живая — получить отметку"
+    assert sum("zamok-mertvyy" in z for z in zaprosy) == 1, "мёртвой подписке второй звонок не шлют"
+    assert sum("zamok-zhivoy" in z for z in zaprosy) == 2
+    with SessionLocal() as db:
+        adresa = {p.endpoint: p for p in db.query(PushSubscription).all()}
+    assert mertvyy.endpoint not in adresa and adresa[zhivoy.endpoint].last_ok_at is not None
+
+
 def test_chuzhoy_adres_v_baze_v_set_ne_idyot(root_client):
     """Строка, вписанная мимо проверки (или до неё), не превращается в запрос сервера."""
     b = Brauzer("https://fcm.googleapis.com/fcm/send/podmena")
