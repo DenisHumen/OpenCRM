@@ -12,7 +12,7 @@
 from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy.orm import Session
 
-from core.services import permissions_service, report_service, settings_service
+from core.services import document_service, permissions_service, report_service, settings_service
 from database.models import User
 from web.api.deps import get_db, require_module, require_perm
 
@@ -85,6 +85,13 @@ def csv_response(content: bytes, name: str, period: Period) -> Response:
     )
 
 
+def _dolgovye_vidy(db: Session, user: User) -> tuple[str, ...]:
+    # Заказы в долгах — только тому, кому открыты заказы: бухгалтер без `orders.view`
+    # видел номера, клиентов и суммы заказов мимо права (разбор 28.09.2026).
+    vidno = document_service.vidno_vidov(db, user)
+    return tuple(v for v in report_service.DOLGOVYE_VIDY if v in vidno)
+
+
 @router.get(
     "/debts",
     dependencies=[Depends(require_module("finance")), Depends(require_module("documents"))],
@@ -101,7 +108,7 @@ def debts_report(
     фирмы с именами клиентов и суммами.
     """
     return {
-        **report_service.dolgi(db, _scope(db, user)),
+        **report_service.dolgi(db, _scope(db, user), _dolgovye_vidy(db, user)),
         "currency": settings_service.get_all(db).get("currency", "USD"),
     }
 
@@ -116,7 +123,7 @@ def debts_export(
     db: Session = Depends(get_db),
 ):
     return csv_response(
-        report_service.dolgi_csv(report_service.dolgi(db, _scope(db, user)), user.locale),
+        report_service.dolgi_csv(report_service.dolgi(db, _scope(db, user), _dolgovye_vidy(db, user)), user.locale),
         "debts",
         period,
     )

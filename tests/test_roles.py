@@ -1739,6 +1739,37 @@ def test_zakazy_ne_vidny_cherez_spisok_bumag(root_client, role_maker, staff_make
         modules_service.invalidate()
 
 
+def test_dolgi_po_zakazam_tolko_s_pravom_na_zakazy(root_client, role_maker, staff_maker):
+    """Разбор 28.09.2026: долги отдавали заказы (номер, клиент, сумма) тому, у кого
+    нет `orders.view`, — хотя список бумаг их ему не показывает."""
+    bylo = {m["key"]: m["enabled"] for m in root_client.get(f"{API}/modules").json()["items"]}
+    for key in ("documents", "warehouse", "orders", "finance"):
+        root_client.post(f"{API}/modules/{key}", json={"enabled": True})
+    modules_service.invalidate()
+    try:
+        klient = root_client.post(f"{API}/clients", json={"name": "Должник по заказу"}).json()
+        tovar = root_client.post(
+            f"{API}/warehouse/products", json={"name": "Товар долга по заказу", "price": 700, "cost": 100}
+        ).json()
+        zakaz = root_client.post(f"{API}/orders", json={"kind": "sales_order", "client_id": klient["id"]}).json()
+        root_client.post(f"{API}/orders/{zakaz['id']}/lines", json={"product_id": tovar["id"], "quantity": "1"})
+        prava = ["clients.view", "deals.view", "deals.view_others", "documents.view", "reports.view", "reports.view_amounts"]
+        bez_zakazov = staff_maker("dolgi-bez-zakazov@test.local", role_maker("Долги без заказов", prava)["id"])
+        s_zakazami = staff_maker(
+            "dolgi-s-zakazami@test.local", role_maker("Долги с заказами", prava + ["orders.view"])["id"]
+        )
+
+        otchyot = bez_zakazov.get(f"{API}/reports/debts")
+        assert otchyot.status_code == 200, otchyot.text
+        assert all(r["document_id"] != zakaz["id"] for r in otchyot.json()["items"])
+        assert zakaz["number"] not in bez_zakazov.get(f"{API}/reports/debts.csv", params={"tz_offset": 0}).text
+        assert any(r["document_id"] == zakaz["id"] for r in s_zakazami.get(f"{API}/reports/debts").json()["items"])
+    finally:
+        for key in ("finance", "orders", "warehouse", "documents"):
+            root_client.post(f"{API}/modules/{key}", json={"enabled": bylo.get(key, False)})
+        modules_service.invalidate()
+
+
 def test_dolgi_suzhayutsya_oblastyu_kak_i_sosedi(root_client, role_maker, staff_maker):
     """НАЙДЕНО РАЗБОРОМ: долги — единственный отчёт без области видимости.
 
