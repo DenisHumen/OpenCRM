@@ -71,7 +71,7 @@ async def zhivoy_potok(
     db: Session = Depends(get_db),
 ):
     token = request.cookies.get(SESSION_COOKIE, "")
-    rabotaet = vklyucheno(db)
+    rabotaet = await asyncio.to_thread(vklyucheno, db)
     since = request.headers.get("last-event-id") or None
 
     async def sobytiya():

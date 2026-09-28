@@ -24,7 +24,6 @@ from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.exc import DBAPIError, OperationalError
 from sqlalchemy.orm import Session
-from starlette.concurrency import run_in_threadpool
 
 from config.settings import get_settings
 from core import exceptions as errors
@@ -35,7 +34,7 @@ from database.models import User
 from database.repositories import clients as clients_repo
 from database.repositories import telegram as telegram_repo
 from web.api import schemas
-from web.api.deps import MAX_SEARCH, client_ip, get_db, require_module, require_perm
+from web.api.deps import MAX_SEARCH, client_ip, get_db, require_module, require_perm, telo_zaprosa
 
 logger = logging.getLogger(__name__)
 
@@ -215,7 +214,7 @@ SECRET_HEADER = "x-telegram-bot-api-secret-token"
 
 
 @webhook_router.post("/webhook", status_code=200)
-async def vebkhuk(request: Request, db: Session = Depends(get_db)) -> dict:
+def vebkhuk(request: Request, telo: bytes = Depends(telo_zaprosa), db: Session = Depends(get_db)) -> dict:
     """Обновление от телеграма.
 
     **Отвечаем 200 почти всегда, и это не небрежность.** Телеграм считает любой
@@ -262,17 +261,15 @@ async def vebkhuk(request: Request, db: Session = Depends(get_db)) -> dict:
         raise errors.AuthError("Bad webhook secret", code="bad_webhook_secret")
 
     try:
-        obnovlenie = await request.json()
+        obnovlenie = json.loads(telo)
     except Exception:  # noqa: BLE001 — телеграм прислал не JSON
         return {"status": "ignored", "reason": "bad_json"}
 
     try:
-        # В отдельном потоке, а не прямо здесь. Ручка объявлена `async def`, а
-        # внутри разбора живёт синхронный `urllib` с таймаутами до минуты:
-        # выполненный в корутине, он останавливает ЦИКЛ СОБЫТИЙ, то есть все
-        # запросы этого процесса разом — включая `/healthz`, по которому
-        # обновление решает, откатывать ли живой релиз.
-        return await run_in_threadpool(telegram_service.prinyat, db, obnovlenie)
+        # Ручка — `def`, то есть в потоке: внутри разбора синхронный `urllib` с
+        # таймаутами до минуты, а в корутине он остановил бы все запросы
+        # процесса, включая `/healthz`, по которому обновление решает об откате.
+        return telegram_service.prinyat(db, obnovlenie)
     except errors.DomainError:
         # Наши доменные отказы разбирает общий обработчик: у них свой код и своё
         # объяснение, и подменять их безликим «error» незачем.
@@ -460,7 +457,7 @@ def otvetit(
 
 
 @router.post("/chats/{chat_row_id}/files", status_code=201)
-async def otpravit_fayl(
+def otpravit_fayl(
     chat_row_id: int,
     file: UploadFile = File(...),
     caption: str = Form(""),
@@ -472,23 +469,20 @@ async def otpravit_fayl(
     user: User = Depends(require_perm("telegram", "create")),
 ) -> dict:
     """Отправить клиенту файл: картинку, видео или документ."""
-    soderzhimoe = await file.read()
-    # Отправка в телеграм — синхронный `urllib` с таймаутом в минуту на
-    # пятидесяти мегабайтах. В корутине он остановил бы цикл событий вместе со
-    # всеми запросами процесса, поэтому уходит в поток.
+    # `def`, а не `async def`: отправка — синхронный `urllib` с таймаутом в минуту,
+    # и в корутине она остановила бы цикл событий со всеми запросами процесса.
+    soderzhimoe = file.file.read()
     if not soderzhimoe:
         raise errors.ValidationError("File is empty", code="file_empty")
     if len(soderzhimoe) > get_settings().max_upload_bytes:
         raise errors.ValidationError("File is too large", code="file_too_large")
-    stroka = await run_in_threadpool(
-        lambda: telegram_service.otpravit(
-            db,
-            chat_row_id,
-            tekst=caption,
-            author=user,
-            fayl=(file.filename or "file", soderzhimoe),
-            otvet_na=int(reply_to_id) if reply_to_id.strip().isdigit() else None,
-        )
+    stroka = telegram_service.otpravit(
+        db,
+        chat_row_id,
+        tekst=caption,
+        author=user,
+        fayl=(file.filename or "file", soderzhimoe),
+        otvet_na=int(reply_to_id) if reply_to_id.strip().isdigit() else None,
     )
     return _soobshchenie_naruzhu(stroka)
 
@@ -802,6 +796,19 @@ def prochitano(
 MAX_ZHIZN_POTOKA = 300
 
 
+def _zabrat(podpiska) -> list[str]:
+    """Всё, что уже пришло. `timeout=0` — забрать и вернуться: ждать здесь нельзя,
+    см. про пул потоков в `potok`."""
+    prishlo = []
+    while soobshchenie := podpiska.get_message(timeout=0):
+        dannye = soobshchenie.get("data")
+        if isinstance(dannye, bytes):
+            dannye = dannye.decode("utf-8", "replace")
+        if dannye:
+            prishlo.append(dannye)
+    return prishlo
+
+
 @router.get("/stream")
 async def potok(
     request: Request,
@@ -827,7 +834,9 @@ async def potok(
     очень медленным запросом. Заметить это на локальной машине без nginx нельзя
     вовсе: там всё работает.
     """
-    podpiska = realtime.podpisatsya()
+    # Подписка и выборка — синхронный Redis: в корутине связь с ним, повисшая на
+    # секунду таймаута, останавливала бы весь процесс (разбор 28.09.2026).
+    podpiska = await asyncio.to_thread(realtime.podpisatsya)
 
     async def sobytiya():
         # Первое событие — сразу, не дожидаясь новостей. Оно говорит браузеру,
@@ -849,17 +858,8 @@ async def potok(
                     break
 
                 if podpiska is not None:
-                    while True:
-                        # `timeout=0` — забрать то, что уже пришло, и вернуться.
-                        # Ждать здесь нельзя: см. про пул потоков выше.
-                        soobshchenie = podpiska.get_message(timeout=0)
-                        if not soobshchenie:
-                            break
-                        dannye = soobshchenie.get("data")
-                        if isinstance(dannye, bytes):
-                            dannye = dannye.decode("utf-8", "replace")
-                        if dannye:
-                            yield f"data: {dannye}\n\n"
+                    for dannye in await asyncio.to_thread(_zabrat, podpiska):
+                        yield f"data: {dannye}\n\n"
 
                 # Пульс раз в двадцать секунд. Не украшение: молчащее соединение
                 # рвут посредники и мобильные операторы, а браузер узнаёт об

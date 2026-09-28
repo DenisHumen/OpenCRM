@@ -4,6 +4,7 @@
 ни в меню, ни в API. Вебхук закрыт иначе, и почему — написано у него.
 """
 
+import json
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, Query, Request
@@ -19,7 +20,7 @@ from database.models import PhoneCall, User
 from database.models.telephony import CALL_DIRECTIONS, CALL_OUTCOMES
 from database.repositories import telephony as telephony_repo
 from web.api import schemas
-from web.api.deps import MAX_SEARCH, client_ip, get_db, require_module, require_perm
+from web.api.deps import MAX_SEARCH, client_ip, get_db, require_module, require_perm, telo_zaprosa
 
 # Рабочие ручки: сотрудник + включённый блок.
 router = APIRouter(
@@ -178,7 +179,7 @@ def regenerate_secret(_: User = Depends(require_perm("settings", "manage")), db:
 # --- вебхук АТС ---
 
 @webhook_router.post("/webhook")
-async def webhook(request: Request, db: Session = Depends(get_db)):
+def webhook(request: Request, body: bytes = Depends(telo_zaprosa), db: Session = Depends(get_db)):
     """Точка приёма событий звонка от АТС.
 
     Сессии здесь нет и быть не может: запрос шлёт станция, а не браузер.
@@ -205,7 +206,6 @@ async def webhook(request: Request, db: Session = Depends(get_db)):
     if webhook_limiter.proverit_i_zanyat(ip_key):
         raise errors.RateLimitedError("Too many webhook calls", code="webhook_rate_limited")
 
-    body = await request.body()
     secret = telephony_service.get_settings_values(db)[telephony_service.SETTING_WEBHOOK_SECRET]
     if not secret:
         # секрет не задан — принимать анонимные события неоткуда и незачем
@@ -219,7 +219,7 @@ async def webhook(request: Request, db: Session = Depends(get_db)):
         return {"status": "ignored", "reason": "module_disabled"}
 
     try:
-        payload = await request.json()
+        payload = json.loads(body)
     except ValueError as exc:
         # Оборванная передача или мусор вместо тела — отказ с объяснением, а не
         # 500. Станция на ошибку сервера считает событие недоставленным и шлёт

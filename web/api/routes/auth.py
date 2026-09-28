@@ -80,12 +80,12 @@ def heartbeat(user: User = Depends(get_current_user)):
 
 
 @router.post("/me/avatar", status_code=201)
-async def upload_avatar(
+def upload_avatar(
     file: UploadFile,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    content = await file.read()
+    content = file.file.read()
     avatar_service.save_avatar(db, user, content)
     return _me(db, user)
 

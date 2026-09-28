@@ -79,7 +79,7 @@ def snyat_papku(
 
 
 @router.post("", status_code=201)
-async def zalit(
+def zalit(
     file: UploadFile,
     folder_id: int | None = Query(default=None),
     actor: User = Depends(require_perm("files", "create")),
@@ -92,7 +92,7 @@ async def zalit(
     проверками. Понадобится она — понадобится всем, кто грузит видео, включая
     доски; это отдельная работа, а не свойство этого экрана.
     """
-    content = await file.read()
+    content = file.file.read()
     fayl = fayly_service.prinyat(db, actor, folder_id, file.filename or "file", content)
     return {
         "id": f"stored:{fayl.id}",

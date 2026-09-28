@@ -37,6 +37,7 @@
 """
 
 import hmac
+import json
 import logging
 
 from fastapi import APIRouter, Depends, Request
@@ -47,7 +48,7 @@ from config.settings import get_settings
 from core import exceptions as errors
 from core.ratelimit import SlidingWindowLimiter
 from core.services import trevogi_service
-from web.api.deps import client_ip, get_db
+from web.api.deps import client_ip, get_db, telo_zaprosa
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +61,7 @@ limiter = SlidingWindowLimiter(100, 60, name="alertswebhook")
 
 
 @router.post("/webhook", status_code=200)
-async def vebkhuk(request: Request, db: Session = Depends(get_db)):
+def vebkhuk(request: Request, syroe: bytes = Depends(telo_zaprosa), db: Session = Depends(get_db)):
     """Доставка от Alertmanager: список тревог, зажёгшихся или погасших.
 
     **Отвечаем 200 не всегда, и это отличие от вебхука телеграма.** Там повтор
@@ -119,7 +120,7 @@ async def vebkhuk(request: Request, db: Session = Depends(get_db)):
         raise errors.RateLimitedError("Too many alert deliveries", code="alerts_flooded")
 
     try:
-        telo = await request.json()
+        telo = json.loads(syroe)
     except Exception:  # noqa: BLE001 — прислали не JSON
         return {"status": "ignored", "reason": "bad_json"}
     if not isinstance(telo, dict):

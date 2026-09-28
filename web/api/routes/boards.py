@@ -129,14 +129,14 @@ def delete_board(
 # --- работы ---
 
 @router.post("/{board_id}/works", status_code=202)
-async def upload_work(
+def upload_work(
     board_id: int,
     file: UploadFile,
     background: BackgroundTasks,
     _: User = Depends(require_perm("boards", "create")),
     db: Session = Depends(get_db),
 ):
-    content = await file.read()
+    content = file.file.read()
     work = board_service.upload_work(db, board_id, file.filename or "file", content)
     # коммитим до планирования фоновой задачи: она работает в своей сессии
     db.commit()

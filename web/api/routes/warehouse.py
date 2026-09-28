@@ -509,13 +509,13 @@ def list_photos(
 
 
 @router.post("/products/{product_id}/photos", status_code=201)
-async def add_photo(
+def add_photo(
     product_id: int,
     file: UploadFile,
     user: User = Depends(require_perm("warehouse", "edit")),
     db: Session = Depends(get_db),
 ):
-    content = await file.read()
+    content = file.file.read()
     photo = product_photo_service.dobavit(
         db, product_id, user, file.filename or "photo", content
     )

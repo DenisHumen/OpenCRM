@@ -54,8 +54,8 @@ def update_settings(payload: schemas.SettingsPatchIn, db: Session = Depends(get_
 
 
 @router.post("/logo", status_code=201, dependencies=[manage])
-async def upload_logo(file: UploadFile, db: Session = Depends(get_db)):
-    content = await file.read()
+def upload_logo(file: UploadFile, db: Session = Depends(get_db)):
+    content = file.file.read()
     path = settings_service.save_logo(db, file.filename or "logo.png", content)
     return {"brand_logo_path": path}
 
@@ -67,8 +67,8 @@ def delete_logo(db: Session = Depends(get_db)):
 
 
 @router.post("/site-logo", status_code=201, dependencies=[manage])
-async def upload_site_logo(file: UploadFile, db: Session = Depends(get_db)):
-    content = await file.read()
+def upload_site_logo(file: UploadFile, db: Session = Depends(get_db)):
+    content = file.file.read()
     path = settings_service.save_site_logo(db, file.filename or "site-logo.png", content)
     return {"studio_site_logo": path}
 
@@ -92,8 +92,8 @@ def delete_site_logo(db: Session = Depends(get_db)):
 
 
 @router.post("/og-image", status_code=201, dependencies=[manage])
-async def upload_og_image(file: UploadFile, db: Session = Depends(get_db)):
-    content = await file.read()
+def upload_og_image(file: UploadFile, db: Session = Depends(get_db)):
+    content = file.file.read()
     path = settings_service.save_og_default(db, file.filename or "og.png", content)
     return {"og_default_image": path}
 

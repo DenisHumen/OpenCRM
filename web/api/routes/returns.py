@@ -273,13 +273,13 @@ def remove_line(
 
 
 @router.post("/{return_id}/files", status_code=201)
-async def upload_file(
+def upload_file(
     return_id: int,
     file: UploadFile,
     user: User = Depends(require_perm("orders", "edit")),
     db: Session = Depends(get_db),
 ):
-    content = await file.read()
+    content = file.file.read()
     record = return_service.add_file(db, return_id, user, file.filename or "file", content)
     return schemas.document_file_out(record)
 

@@ -454,14 +454,14 @@ def delete_link(
 
 
 @router.post("/{task_id}/files", status_code=201)
-async def upload_file(
+def upload_file(
     task_id: int,
     file: UploadFile,
     user: User = Depends(require_perm("tasks", "edit")),
     db: Session = Depends(get_db),
 ):
     _pravit(db, user, task_id)
-    content = await file.read()
+    content = file.file.read()
     record = task_service.add_file(db, task_id, user, file.filename or "file", content)
     return schemas.task_file_out(record)
 

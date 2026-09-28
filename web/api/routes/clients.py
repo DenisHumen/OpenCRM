@@ -301,13 +301,13 @@ def list_files(
 
 
 @router.post("/{client_id}/files", status_code=201)
-async def upload_file(
+def upload_file(
     client_id: int,
     file: UploadFile,
     user: User = Depends(require_perm("clients", "edit")),
     db: Session = Depends(get_db),
 ):
-    content = await file.read()
+    content = file.file.read()
     record = client_service.add_file(
         db, client_id, user, file.filename or "file", content, file.content_type or ""
     )

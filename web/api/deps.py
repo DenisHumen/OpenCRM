@@ -123,6 +123,12 @@ def _edinica_raboty():
         db.close()
 
 
+async def telo_zaprosa(request: Request) -> bytes:
+    """Тело запроса для синхронной ручки: читать его можно только в корутине, а
+    работа ручки с базой и Redis обязана идти в потоке, не в цикле событий."""
+    return await request.body()
+
+
 def get_db(db: Session = Depends(_edinica_raboty, scope="function")) -> Session:
     """Сессия БД для маршрутов. Спрашивается как обычно: `Depends(get_db)`.
 
