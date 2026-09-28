@@ -7,6 +7,7 @@
 """
 
 import shutil
+import threading
 import time
 from pathlib import Path
 
@@ -24,13 +25,15 @@ LEVEL_CRITICAL = "critical"
 # полный обход каталога с медиа стоит дорого — держим результат недолго в памяти
 _SIZE_CACHE_TTL = 60.0
 _size_cache: dict[str, tuple[float, int]] = {}
+# Кэш сбрасывает каждая загрузка, а место спрашивает каждая вкладка: без замка
+# промахи одного процесса обходили весь storage разом, по обходу на запрос.
+_obkhod = threading.Lock()
+#: Работа в корзине до очистки не меняется: её размер считается один раз.
+_korzina: dict[str, int] = {}
+_KORZINA_MAKS = 10_000
 
 
-def dir_size(path: Path, cache_key: str | None = None) -> int:
-    if cache_key:
-        cached = _size_cache.get(cache_key)
-        if cached and time.monotonic() - cached[0] < _SIZE_CACHE_TTL:
-            return cached[1]
+def _obojti(path: Path) -> int:
     total = 0
     if path.exists():
         for entry in path.rglob("*"):
@@ -39,9 +42,35 @@ def dir_size(path: Path, cache_key: str | None = None) -> int:
                     total += entry.stat().st_size
             except OSError:
                 continue  # файл могли удалить во время обхода
-    if cache_key:
-        _size_cache[cache_key] = (time.monotonic(), total)
     return total
+
+
+def dir_size(path: Path, cache_key: str | None = None) -> int:
+    if not cache_key:
+        return _obojti(path)
+
+    def svezhee() -> int | None:
+        cached = _size_cache.get(cache_key)
+        return cached[1] if cached and time.monotonic() - cached[0] < _SIZE_CACHE_TTL else None
+
+    if (gotovo := svezhee()) is not None:
+        return gotovo
+    with _obkhod:
+        # Пока ждали замок, сосед мог уже посчитать.
+        if (gotovo := svezhee()) is not None:
+            return gotovo
+        total = _obojti(path)
+        _size_cache[cache_key] = (time.monotonic(), total)
+        return total
+
+
+def _v_korzine(work_uid: str) -> int:
+    razmer = _korzina.get(work_uid)
+    if razmer is None:
+        if len(_korzina) >= _KORZINA_MAKS:
+            _korzina.clear()
+        razmer = _korzina[work_uid] = _obojti(media_service.work_dir(work_uid))
+    return razmer
 
 
 def invalidate_size_cache() -> None:
@@ -88,7 +117,7 @@ def reclaimable(db: Session) -> dict:
     for board_works in works.values():
         for work in board_works:
             works_count += 1
-            board_bytes += dir_size(media_service.work_dir(work.work_uid))
+            board_bytes += _v_korzine(work.work_uid)
 
     clients = clients_repo.deleted(db)
     files = clients_repo.files_of(db, [client.id for client in clients])

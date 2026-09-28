@@ -219,3 +219,45 @@ def test_cleanup_asks_the_database_a_fixed_number_of_questions(root_client, mana
     assert many <= few + 2, (
         f"уборка десяти лишних клиентов стоила лишних запросов: было {few}, стало {many}"
     )
+
+
+def test_obkhod_storage_odin_na_odnovremennye_promahi(monkeypatch, tmp_path):
+    """Разбор 28.09.2026: кэш места сбрасывает каждая загрузка, а спрашивает место
+    каждая вкладка — промахи одного процесса обходили весь storage разом."""
+    import threading
+    import time
+
+    obkhody = []
+
+    def medlenno(path):
+        obkhody.append(path)
+        time.sleep(0.3)
+        return 42
+
+    monkeypatch.setattr(storage_service, "_obojti", medlenno)
+    storage_service.invalidate_size_cache()
+    otvety = []
+    potoki = [
+        threading.Thread(target=lambda: otvety.append(storage_service.dir_size(tmp_path, cache_key="proba")))
+        for _ in range(6)
+    ]
+    for p in potoki:
+        p.start()
+    for p in potoki:
+        p.join()
+    storage_service.invalidate_size_cache()
+    assert otvety == [42] * 6
+    assert len(obkhody) == 1, f"обходов {len(obkhody)} вместо одного"
+
+
+def test_rabota_v_korzine_schitaetsya_odin_raz(monkeypatch):
+    """Корзина до очистки не меняется, а опрос места идёт с каждой вкладки: по обходу
+    каталога на каждую удалённую работу при каждом опросе."""
+    obkhody = []
+    monkeypatch.setattr(storage_service, "_obojti", lambda path: obkhody.append(path) or 7)
+    monkeypatch.setattr(storage_service, "_korzina", {})
+    assert storage_service._v_korzine("korzina-uid") == 7
+    storage_service.invalidate_size_cache()  # загрузка нового файла корзину не трогает
+    assert storage_service._v_korzine("korzina-uid") == 7
+    assert len(obkhody) == 1
+
