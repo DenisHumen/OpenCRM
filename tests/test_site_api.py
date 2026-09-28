@@ -285,6 +285,26 @@ def test_lenta_listaetsya_kursorom(root_client, shop):
     assert ids <= sobrano and krugov >= 2
 
 
+def test_holodnyy_start_ne_teryaet_hvost_kataloga(root_client, shop, monkeypatch):
+    """Лента брала «весь каталог» через `page_of`, а тот режет страницу до 500: товары
+    после 500-го на сайт не попадали вовсе (разбор 28.09.2026). Потолок подменён на 3 —
+    та же беда на пяти товарах."""
+    from database import query
+
+    monkeypatch.setattr(query, "MAX_PER_PAGE", 3)
+    key = make_key(root_client, ALL, shop["id"])["key"]
+    ids = {product(root_client, shop["id"], stock="1")["id"] for _ in range(5)}
+    sobrano, since = set(), None
+    for _ in range(50):
+        adres = f"{SITE}/changes?limit=2" + (f"&since={since}" if since else "")
+        stranitsa = root_client.get(adres, headers={H: key}).json()
+        sobrano |= {i["id"] for i in stranitsa["items"]}
+        since = stranitsa["next_since"]
+        if not stranitsa["has_more"]:
+            break
+    assert ids <= sobrano, f"не дошли до сайта: {sorted(ids - sobrano)}"
+
+
 # --- заказы --------------------------------------------------------------------
 
 

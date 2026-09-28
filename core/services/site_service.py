@@ -246,9 +246,9 @@ def changes(db: Session, key: ApiKey, since: str | None, limit: int) -> dict:
         vid, metka, posle_id = "full", None, 0
 
     if vid == "full":
-        # Холодный старт: весь каталог по возрастанию id, страницами по курсору.
-        items, _total = warehouse_repo.site_catalog(db, sklad_id, page=1, per_page=10**9)
-        items = [p for p in items if p.id > posle_id]
+        # Холодный старт: каталог по возрастанию id, страницами по курсору; на одну больше —
+        # чтобы знать, есть ли ещё.
+        items = warehouse_repo.site_catalog_posle(db, sklad_id, posle_id, limit + 1)
     else:
         izmenilis = warehouse_repo.site_changed_since(db, sklad_id, metka)
         izmenilis |= documents_repo.tovary_zakazov_s(db, KIND_SALES_ORDER, OPEN_ORDER_STATUSES, metka)

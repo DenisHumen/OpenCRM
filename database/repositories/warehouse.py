@@ -580,6 +580,22 @@ def site_catalog(db: Session, warehouse_id: int | None, page: int = 1, per_page:
     return page_of(db, stmt, page=page, per_page=per_page)
 
 
+def site_catalog_posle(db: Session, warehouse_id: int | None, posle_id: int, limit: int) -> list[Product]:
+    """Каталог сайта по ключу: `id > posle_id`, не больше `limit` строк.
+
+    Не `page_of`: тот режет страницу до `MAX_PER_PAGE`, и лента, бравшая «весь
+    каталог» и фильтровавшая его в памяти, молча теряла всё после 500-го товара.
+    """
+    return list(
+        db.scalars(
+            select(Product)
+            .where(Product.deleted_at.is_(None), _opublikovan(warehouse_id), Product.id > posle_id)
+            .order_by(Product.id)
+            .limit(limit)
+        )
+    )
+
+
 def site_product(db: Session, warehouse_id: int | None, product_id: int) -> Product | None:
     return db.scalar(
         select(Product).where(
