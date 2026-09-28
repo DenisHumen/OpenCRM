@@ -107,7 +107,7 @@ MAX_CLIENT_CANDIDATES = 6
 # --- заказ --------------------------------------------------------------------
 
 
-def create(db: Session, data: dict, author: User) -> tuple[Document, bool]:
+def create(db: Session, data: dict, author: User, *, iskat_klienta: bool = True) -> tuple[Document, bool]:
     """Завести заказ. Позиции добавляются отдельно — их может не быть сразу.
 
     Пустой заказ законен: у стойки сначала заводят бумагу, потом набивают
@@ -125,7 +125,13 @@ def create(db: Session, data: dict, author: User) -> tuple[Document, bool]:
     fields = dict(data)
     # Квитанция требует описания вещи, заказу оно не нужно: у него есть строки.
     fields["item"] = data.get("item") or _title(kind)
-    fields["client_id"], created_client = _resolve_client(db, data, author)
+    if iskat_klienta:
+        fields["client_id"], created_client = _resolve_client(db, data, author)
+    else:
+        # Заказ с сайта: покупателя уже искали точными приметами. Поиск по имени
+        # подстрокой отдавал ключу сайта справочник клиентов в 409 и не пропускал
+        # «Анну» при любой «Анне…» в базе (разбор 28.09.2026).
+        fields["client_id"], created_client = data.get("client_id"), False
     # **Заказ без клиента законен, и это не поблажка.** У заказа поставщику
     # клиента нет по устройству: он адресован поставщику, а поставщик отдельной
     # сущностью в системе не заведён. У заказа покупателя клиент бывает не

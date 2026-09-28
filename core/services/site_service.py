@@ -231,7 +231,8 @@ def _kursor_iz_stroki(since: str) -> tuple[str, datetime | None, int]:
         if vid == "t":
             metka = datetime.fromisoformat(chasti[1].replace("Z", "+00:00")).astimezone(timezone.utc).replace(tzinfo=None)
             return vid, metka, int(chasti[2]) if len(chasti) > 2 else 0
-    except (ValueError, IndexError, binascii.Error, UnicodeDecodeError):
+    except (ValueError, IndexError, OverflowError, binascii.Error, UnicodeDecodeError):
+        # `OverflowError` — «0001-01-01+05:00» в UTC не переводится: был 500 (разбор 28.09.2026).
         pass
     raise errors.ValidationError("Bad cursor", code="bad_cursor")
 
@@ -448,7 +449,7 @@ def create_order(db: Session, key: ApiKey, payload: dict) -> tuple[dict, bool]:
         dannye["client_id"] = klient.id
     try:
         with tochka_otkata(db):
-            order, _novyy_klient = order_service.create(db, dannye, avtor)
+            order, _novyy_klient = order_service.create(db, dannye, avtor, iskat_klienta=False)
             order.site_ref = site_ref
             order.api_key_id = key.id
             order.reserved_until = srok
@@ -511,7 +512,9 @@ def register_customer(db: Session, key: ApiKey, payload: dict) -> dict:
     """Завести карточку или узнать свою. Ответ одной формы в обоих случаях."""
     if not payload.get("consent"):
         raise errors.ValidationError("consent is required", code="consent_required")
-    name = str(payload.get("name") or "").strip()
+    # Предел — сразу: целиком имя уходило в заметку известной карточки, и 70 000
+    # знаков давали 500 на `TEXT` вместо ответа (разбор 28.09.2026).
+    name = str(payload.get("name") or "").strip()[:200]
     if not name:
         raise errors.ValidationError("Name is required", code="name_required")
     email = str(payload.get("email") or "").strip().lower()[:255]

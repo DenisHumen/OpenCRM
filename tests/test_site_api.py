@@ -336,6 +336,17 @@ def test_zakaz_zanimaet_tovar_a_povtor_vozvrashchaet_tot_zhe(root_client, shop):
     assert vnutri["site_ref"] == ref and vnutri["reserved_until"] and vnutri["reserve_expired"] is False
 
 
+def test_zakaz_s_imenem_ne_ishchet_klienta_podstrokoy(root_client, shop):
+    """Разбор 28.09.2026: имя покупателя уходило в поиск подстрокой — 409 отдавал ключу
+    сайта кандидатов из справочника, а «Анна» не проходила при любой «Анне…» в базе."""
+    root_client.post(f"{API}/clients", json={"name": "Анна Справочникова", "phone": "+380501234567"})
+    item = product(root_client, shop["id"], stock="5")
+    key = make_key(root_client, ALL, shop["id"], stock_mode="exact")["key"]
+    r = _zakaz(root_client, key, f"web-{_uniq()}", [{"sku": item["sku"], "quantity": "1"}], customer={"name": "Анна"})
+    assert r.status_code == 201, r.text
+    assert "Справочникова" not in r.text and "candidates" not in r.text
+
+
 def test_nehvatka_otvechaet_chislami_i_po_tovaru(root_client, shop):
     item = product(root_client, shop["id"], stock="6")
     key = make_key(root_client, ALL, shop["id"], stock_mode="exact")["key"]
@@ -448,7 +459,12 @@ def test_registratsiya_otvechaet_odnoy_formoy_i_ne_pravit_chuzhuyu_kartochku(roo
     ).json()
     assert vtoroy == pervyy, "«завели» и «узнали» неотличимы по форме"
 
-    klienty = root_client.get(f"{API}/clients", params={"search": email}).json()["items"]
+    # По точной почте: общий поиск ловит и цифры в чужих телефонах, и проверка
+    # краснела от того, какой номер выпал соседнему файлу.
+    klienty = [
+        k for k in root_client.get(f"{API}/clients", params={"search": email}).json()["items"]
+        if (k.get("email") or "").lower() == email
+    ]
     assert len(klienty) == 1 and klienty[0]["name"] == "Anna Petrenko", "чужая карточка не переписана"
     assert klienty[0]["source"] == "site"
     lenta = root_client.get(f"{API}/clients/{klienty[0]['id']}/notes").json()["items"]
@@ -555,3 +571,21 @@ def test_istekshuyu_bron_mozhno_prodlit(root_client, shop):
     bez_broni = root_client.post(f"{API}/orders", json={"kind": "sales_order"}).json()
     otkaz = root_client.post(f"{API}/orders/{bez_broni['id']}/reserve", json={"days": 2})
     assert otkaz.status_code == 422 and otkaz.json()["error"]["code"] == "no_reservation"
+
+
+def test_kursor_i_dlinnoe_imya_ne_dayut_500(root_client, shop):
+    """Разбор 28.09.2026: курсор «t|0001-01-01T00:00:00+05:00» и имя покупателя в
+    70 000 знаков отвечали 500 — сайт повторял бы запрос вечно."""
+    import base64
+
+    key = make_key(root_client, ALL, shop["id"])["key"]
+    kursor = base64.urlsafe_b64encode(b"t|0001-01-01T00:00:00+05:00").decode().rstrip("=")
+    otvet = root_client.get(f"{SITE}/changes", params={"since": kursor}, headers={H: key})
+    assert otvet.status_code == 422 and otvet.json()["error"]["code"] == "bad_cursor"
+    pochta = f"dlinnoe-imya-{_uniq()}@example.com"
+    root_client.post(f"{SITE}/customers", json={"name": "Покупатель", "email": pochta, "consent": True}, headers={H: key})
+    povtor = root_client.post(
+        f"{SITE}/customers", json={"name": "Я" * 70_000, "email": pochta, "consent": True}, headers={H: key}
+    )
+    assert povtor.status_code in (200, 201, 202), povtor.text[:200]
+
