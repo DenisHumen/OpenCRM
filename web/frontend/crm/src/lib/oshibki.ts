@@ -54,6 +54,7 @@ export const KODY_OSHIBOK: Record<string, TranslationKey> = {
   line_name_required: "errLineNameRequired",
   lines_required: "errLinesRequired",
   login_rate_limited: "errLoginRateLimited",
+  register_rate_limited: "errRegisterRateLimited",
   mail_account_inactive: "errMailAccountInactive",
   mail_password_missing: "errMailPasswordMissing",
   mail_send_failed: "errMailSendFailed",

@@ -320,3 +320,35 @@ def test_vozvrat_mesta_ne_obnulyaet_chuzhoy_schyot(root_client, monkeypatch):
         "счёт подбора обнулился вместе с возвратом одного места — уронивший "
         f"базу получил себе чистый лист (вышло {dobito.status_code})"
     )
+
+
+def test_registratsiya_s_odnogo_adresa_ogranichena(monkeypatch):
+    """Разбор 28.09.2026: форма заявки на доступ открыта в интернет и ничем не
+    ограничивалась — бесконечные строки в базе, bcrypt на каждую, перебор почт."""
+    import uuid
+
+    from core.ratelimit import SlidingWindowLimiter
+    from web.api.routes import auth as auth_routes
+
+    monkeypatch.setattr(auth_routes, "register_limiter", SlidingWindowLimiter(2, 3600, name=f"register-{uuid.uuid4().hex}"))
+    anon = TestClient(app)
+    for n in range(2):
+        assert register(anon, "Заявка", f"predel-{n}-{uuid.uuid4().hex[:6]}@test.local").status_code == 201
+    otkaz = register(anon, "Заявка", f"predel-3-{uuid.uuid4().hex[:6]}@test.local")
+    assert otkaz.status_code == 429 and otkaz.json()["error"]["code"] == "register_rate_limited"
+
+
+def test_vhod_s_neznakomoy_pochtoy_sveryaet_parol_vholostuyu(monkeypatch):
+    """Разбор 28.09.2026: без сверки «нет такой почты» отвечала за миллисекунды, а
+    «не тот пароль» — за время bcrypt, и заведённые почты читались по часам."""
+    from core.services import auth_service
+
+    sverki = []
+    nastoyashchaya = auth_service.passwords.verify_password
+    monkeypatch.setattr(
+        auth_service.passwords, "verify_password", lambda *a: sverki.append(a) or nastoyashchaya(*a)
+    )
+    otvet = login(TestClient(app), "nikogo-net-takoy@test.local", "kakoy-to-parol")
+    assert otvet.json()["error"]["code"] == "invalid_credentials"
+    assert len(sverki) == 1, "пароль незнакомой почты не сверялся — ответ быстрее, чем у знакомой"
+

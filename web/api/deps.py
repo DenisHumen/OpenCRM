@@ -25,6 +25,8 @@ login_limiter = SlidingWindowLimiter(
 pin_limiter = SlidingWindowLimiter(
     _settings.pin_max_attempts, _settings.pin_lockout_minutes * 60, name="pin"
 )
+#: Считает все заявки на доступ, а не промахи: промаха у регистрации нет.
+register_limiter = SlidingWindowLimiter(_settings.register_max_per_hour, 3600, name="register")
 
 #: Сколько раз с одного адреса можно спросить состояние заказа по номеру.
 #:

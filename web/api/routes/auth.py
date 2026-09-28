@@ -4,11 +4,21 @@ from fastapi import APIRouter, Depends, Request, Response, UploadFile
 from sqlalchemy.orm import Session
 
 from config.settings import get_settings
+from core import exceptions as errors
+from core.security import tokens
 from core.services import auth_service, avatar_service, permissions_service
 from database.models import User
 from database.repositories import roles as roles_repo
 from web.api import schemas
-from web.api.deps import CSRF_COOKIE, SESSION_COOKIE, get_current_user, get_db, login_limiter
+from web.api.deps import (
+    CSRF_COOKIE,
+    SESSION_COOKIE,
+    client_ip,
+    get_current_user,
+    get_db,
+    login_limiter,
+    register_limiter,
+)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -29,7 +39,11 @@ def _set_auth_cookies(response: Response, session_token: str) -> None:
 
 
 @router.post("/register", status_code=201)
-def register(payload: schemas.RegisterIn, db: Session = Depends(get_db)):
+def register(payload: schemas.RegisterIn, request: Request, db: Session = Depends(get_db)):
+    # Без предела форма, открытая в интернет, была бесплатной: бесконечные заявки
+    # в базе, bcrypt на каждую и перебор почт по `email_taken` (разбор 28.09.2026).
+    if register_limiter.proverit_i_zanyat(tokens.hash_ip(client_ip(request))):
+        raise errors.RateLimitedError("Too many sign-up requests, try later", code="register_rate_limited")
     user = auth_service.register(db, payload.name, payload.email, payload.password)
     return {
         "message": "Registration submitted. Wait for approval by the administrator.",

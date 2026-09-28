@@ -1,5 +1,6 @@
 import secrets
 from datetime import timedelta
+from functools import lru_cache
 
 from sqlalchemy.orm import Session
 
@@ -69,6 +70,11 @@ def register(db: Session, name: str, email: str, password: str) -> User:
     )
 
 
+@lru_cache(maxsize=1)
+def _holostoy_hash() -> str:
+    return passwords.hash_password("opencrm-holostaya-sverka")
+
+
 def login(db: Session, email: str, password: str, limiter) -> tuple[User, str]:
     email = normalize_email(email)
     # Место занимается ОДНОЙ операцией, а не «проверил, потом отметил». Пока
@@ -105,6 +111,10 @@ def login(db: Session, email: str, password: str, limiter) -> tuple[User, str]:
     if user is not None and limiter.zanyat_mesto(f"u:{user.id}") is None:
         bezopasnost.otmetit("vhod_zapert")
         raise errors.RateLimitedError("Too many attempts, try later", code="login_rate_limited")
+    if user is None:
+        # Холостая сверка: без неё «нет такой почты» отвечала за миллисекунды, а «не
+        # тот пароль» — за время bcrypt, и почты перебирались по часам (разбор 28.09.2026).
+        passwords.verify_password(password, _holostoy_hash())
     if user is None or not passwords.verify_password(password, user.password_hash):
         # Несуществующая почта и неверный пароль считаются ОДНИМ видом нарочно.
         # Разделить их значило бы завести на панели ряд «сколько раз спросили

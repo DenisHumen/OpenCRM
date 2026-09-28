@@ -52,7 +52,7 @@
 
 | Метод | Путь | Права | Описание |
 |---|---|---|---|
-| POST | `/auth/register` | 🔓 | Заявка на аккаунт менеджера: `name, email, password`. Ответ — «ожидайте одобрения» |
+| POST | `/auth/register` | 🔓 | Заявка на аккаунт менеджера: `name, email, password`. Ответ — «ожидайте одобрения». С одного адреса — 20 в час, иначе `429 register_rate_limited` |
 | POST | `/auth/login` | 🔓 | Вход. `403 account_pending` — не одобрен, `403 account_disabled` — деактивирован |
 | POST | `/auth/logout` | 👤 | Выход |
 | GET | `/auth/me` | 👤 | Текущий пользователь: имя, `role` (root или нет), `role_id`/`role_name` (должность), `permissions` — текущий набор прав, `locale`, `must_change_password`, `avatar_url`, `is_online`, `last_seen_at`. Права читаются на каждый запрос, а не запоминаются при входе |

@@ -71,6 +71,9 @@ class Settings(BaseSettings):
     login_lockout_minutes: int = 15
     pin_max_attempts: int = 5
     pin_lockout_minutes: int = 15
+    # Заявок на доступ с одного адреса за час: форма открыта в интернет, и каждая
+    # стоит bcrypt и строки в базе. Двадцать — с запасом на офис за одним NAT.
+    register_max_per_hour: int = 20
 
     # соль для хэширования IP в журнале просмотров (не для паролей)
     ip_hash_salt: str = DEV_IP_SALT
