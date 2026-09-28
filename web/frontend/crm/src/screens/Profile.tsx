@@ -9,6 +9,7 @@ import {
   vklyuchit_signaly,
   vyklyuchit_signaly,
 } from "../lib/signaly";
+import { PushUstroystva } from "../components/PushUstroystva";
 import { formatDate, initials } from "../lib/format";
 import { THEMES, type Theme } from "../lib/theme";
 import { nazvanieRoli } from "../lib/roli";
@@ -290,6 +291,8 @@ export function Profile() {
         </div>
         <div style={{ color: "var(--faint)", fontSize: 11.5 }}>{t("tgSignalsHint")}</div>
       </div>
+
+      <PushUstroystva />
 
       <form className="card card-pad" onSubmit={changePassword}>
         <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 16 }}>{t("changePassword")}</div>

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import threading
 
-from core.services import task_service
+from core.services import push_service, task_service
 from database.session import SessionLocal
 
 #: Шаг, секунд. Окно звонка — пятнадцать минут назад, так что пропуск шага не теряет звонков.
@@ -26,7 +26,12 @@ def shag() -> int:
     """Один шаг в своей сессии. Отказ шага не роняет поток — следующий повторит окно."""
     with SessionLocal() as db:
         zvonkov = task_service.tick(db)
+        ochered = db.info.pop(push_service.OCHERED, [])
         db.commit()
+        # В сеть — после фиксации: чужая служба не должна держать замки нашей базы.
+        if ochered:
+            push_service.razoslat(db, ochered)
+            db.commit()
         return zvonkov
 
 

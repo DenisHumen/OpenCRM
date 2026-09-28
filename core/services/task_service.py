@@ -667,7 +667,7 @@ def tick(db: Session, teper: datetime | None = None) -> int:
 
 def _pozvonit(db: Session, task: Task, user_id: int, moment: datetime, vid: str) -> int:
     """Записать звонок и оповестить. Ключ уже занят — звонил другой процесс: тишина."""
-    from core.services import notification_service
+    from core.services import notification_service, push_service
 
     zapisan = tasks_repo.zvonok_zapisat(
         db, TaskSignal(task_id=task.id, user_id=user_id, moment=moment, srok=task.due_at, vid=vid)
@@ -679,6 +679,7 @@ def _pozvonit(db: Session, task: Task, user_id: int, moment: datetime, vid: str)
         notification_service.notify(
             db, [komu], "task_signal", {"title": task.title, "vid": vid}, f"/tasks?open={task.id}"
         )
+        push_service.v_ochered(db, task, user_id, vid)
     return 1
 
 

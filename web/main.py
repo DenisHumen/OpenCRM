@@ -54,6 +54,7 @@ from web.api.routes import (
     orders,
     people,
     pipeline,
+    push,
     clients,
     dashboard,
     reports,
@@ -417,6 +418,7 @@ def create_app() -> FastAPI:
     app.include_router(backups.router, prefix=api_prefix)
     app.include_router(apikeys.router, prefix=api_prefix)
     app.include_router(tokens.router, prefix=api_prefix)
+    app.include_router(push.router, prefix=api_prefix)
     app.include_router(site.router, prefix=api_prefix)
     app.include_router(live.router, prefix=api_prefix)
     app.include_router(workspace.router, prefix=api_prefix)
@@ -518,6 +520,14 @@ def create_app() -> FastAPI:
     spa_dist = Path(__file__).parent / "frontend" / "crm" / "dist"
     if spa_dist.is_dir():
         app.mount("/assets", StaticFiles(directory=spa_dist / "assets"), name="spa-assets")
+
+        # Service worker Web Push — из корня: его область — пути ниже его адреса.
+        # `no-cache`, иначе браузер держал бы прежнюю версию (docs/bloki/31-web-push.md).
+        @app.get("/sw.js", include_in_schema=False)
+        def service_worker():
+            return FileResponse(
+                spa_dist / "sw.js", media_type="text/javascript", headers={"Cache-Control": "no-cache"}
+            )
 
         @app.api_route("/{full_path:path}", methods=["GET", "HEAD"], include_in_schema=False)
         def spa(full_path: str):

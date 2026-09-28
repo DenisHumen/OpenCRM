@@ -193,6 +193,10 @@ export const RUKOVODSTVO: Razdel[] = [
                 en: "The sound and the desktop pop-up are switched on in the profile — the same «alerts in this browser» as client messages. One tab signals, even with three open.",
               },
               {
+                ru: "Звонок напоминания при закрытой вкладке — отдельная настройка профиля «Звонок при закрытой вкладке», по устройствам: системное уведомление с кнопками «Готово» и «Через 10 минут» приходит, даже когда браузер свёрнут, а на телефоне — на экран блокировки.",
+                en: "A reminder ringing with the tab closed is a separate profile setting, «Ring with the tab closed», per device: a system notification with «Done» and «In 10 minutes» buttons arrives even with the browser minimised, and on a phone — on the lock screen.",
+              },
+              {
                 ru: "Уведомления хранятся два месяца и убираются сами: это подсказки, а не учёт. Учёт — в журнале действий.",
                 en: "Notifications are kept for two months and then removed by themselves: they are hints, not records. The record is the activity log.",
               },

@@ -157,6 +157,11 @@ PUBLIC_ROUTES = {
     ("GET", f"{API}/metrics"),
     # проверка здоровья: на ней держится откат обновления
     ("GET", "/healthz"),
+    # кнопка системного уведомления: service worker шлёт без cookie, вместо
+    # сессии подпись HMAC (напоминание, сотрудник, срок звонка) — docs/bloki/31
+    ("POST", f"{API}/push/action"),
+    # service worker Web Push: файл сборки, данных в нём нет
+    ("GET", "/sw.js"),
     # сборка SPA и её отдача
     ("GET", "/{full_path:path}"),
 }

@@ -72,6 +72,7 @@ from database.models import (
     User,
     UserSession,
     UserToken,
+    PushSubscription,
     Warehouse,
     Work,
 )
@@ -216,6 +217,8 @@ TOPICS: dict[type, Topic | Callable | None] = {
     UserSession: None,
     # Список токенов открывает один настройщик; «последнее обращение» раз в минуту — пульс.
     UserToken: None,
+    # Подписки браузера видит только их хозяин в профиле; отметка доставки — пульс.
+    PushSubscription: None,
     Role: T_ROLES,
     RolePermission: T_ROLE_PERMS,
     ModuleState: T_MODULES,

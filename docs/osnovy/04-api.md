@@ -1905,6 +1905,18 @@ curl -sS -X POST https://crm.example.com/api/v1/site/orders \
 
 Самому токену `/tokens` закрыт: токен не выпускает токенов.
 
+## Web Push (`/push`)
+
+Разбор — [31-web-push.md](../bloki/31-web-push.md). Подписки — свои, у каждого сотрудника.
+
+| Метод | Путь | Права | Описание |
+|---|---|---|---|
+| GET | `/push/key` | 👤 | Открытый ключ VAPID сервера — `applicationServerKey` для `pushManager.subscribe` |
+| GET | `/push/subscriptions` | 👤 | Свои подписки: `nazvanie` устройства, `endpoint_hash` (sha256 адреса — по нему экран узнаёт «это устройство»), последняя доставка |
+| POST | `/push/subscriptions` | 👤 | Подписать браузер: `endpoint` (только `https`, иначе `422 push_endpoint`), `keys.p256dh`, `keys.auth` (`422 push_keys`), `nazvanie`. Тот же адрес под другим входом переезжает к нему |
+| DELETE | `/push/subscriptions/{sub_id}` | 👤 | Отключить своё устройство; чужое — `404 push_subscription_not_found` |
+| POST | `/push/action` | 🔓 | Кнопка системного уведомления; вместо сессии — подпись HMAC в `token`: `{token, deystvie: done\|later}`. Шлётся без cookie; `401 push_deystvie_ne_to` / `push_deystvie_istyok`, `409 zvonok_ustarel` — напоминание ушло дальше того звонка, `403` — нет права или блок выключен |
+
 ## Служебные ручки без сессии
 
 Пять адресов внутри `/api/v1`, у которых нет ни сессии, ни права. Каждый закрыт
