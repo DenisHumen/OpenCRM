@@ -716,7 +716,9 @@ def test_kopiya_ne_chitaetsya_postoronnimi(tmp_path):
     assert len(fayly) == 3, [p.name for p in fayly]
     for fayl in fayly:
         rezhim = stat.S_IMODE(fayl.stat().st_mode)
-        assert rezhim == 0o600, f"{fayl.name}: права {rezhim:o}, а не 600"
+        # Снимок storage — каталог: 700 закрывает вход во всё, что внутри.
+        nado = 0o700 if fayl.is_dir() else 0o600
+        assert rezhim == nado, f"{fayl.name}: права {rezhim:o}, а не {nado:o}"
 
 
 @nuzhen_sh
@@ -765,11 +767,17 @@ def test_voskresnaya_kopiya_uezzhaet_v_weekly_i_zhivyot_chetyre_nedeli(tmp_path)
 
     trojka = sorted(p.name for p in (backups / "weekly").glob("*2026-08-16*"))
     assert trojka == [
-        "db-2026-08-16.sql", "secret-2026-08-16.env", "storage-2026-08-16.tar.gz",
+        "db-2026-08-16.sql", "secret-2026-08-16.env", "storage-2026-08-16",
     ], f"воскресная копия уехала в weekly не целиком: {trojka}"
     for imya in trojka:
-        rezhim = stat.S_IMODE((backups / "weekly" / imya).stat().st_mode)
-        assert rezhim == 0o600, f"weekly/{imya}: права {rezhim:o}, а не 600"
+        put = backups / "weekly" / imya
+        rezhim = stat.S_IMODE(put.stat().st_mode)
+        nado = 0o700 if put.is_dir() else 0o600
+        assert rezhim == nado, f"weekly/{imya}: права {rezhim:o}, а не {nado:o}"
+    # Недельный снимок — те же файлы ссылками, а не второй экземпляр на диске.
+    dnevnoy = backups / "daily" / "storage-2026-08-16" / "fayl.txt"
+    nedelnyy = backups / "weekly" / "storage-2026-08-16" / "fayl.txt"
+    assert dnevnoy.stat().st_ino == nedelnyy.stat().st_ino
 
 
 @nuzhen_sh
@@ -790,6 +798,118 @@ def test_dampy_pered_vosstanovleniem_ne_kopyatsya_vechno(tmp_path):
     assert zapusk.returncode == 0, zapusk.stdout + zapusk.stderr
     assert not staryy.exists(), "дамп перед восстановлением копится на диске вечно"
     assert svezhiy.exists(), "свежий дамп перед восстановлением удалять нельзя"
+
+
+# --- снимок storage: ночь стоит только новых файлов ---------------------------
+
+
+def _hranilishche(koren: Path) -> Path:
+    (koren / "media" / "abc").mkdir(parents=True)
+    (koren / "media" / "abc" / "large.webp").write_bytes(b"kartinka" * 100)
+    (koren / "files").mkdir()
+    (koren / "files" / "dogovor.txt").write_text("аренда", encoding="utf-8")
+    return koren
+
+
+def test_vtoraya_noch_stoit_tolko_novyh_faylov(tmp_path):
+    """Боевой сервер, 28.09.2026: tar всего storage — 7,9 ГБ каждую ночь, а свободно 22.
+
+    Неизменный файл во втором снимке — та же запись на диске (жёсткая ссылка),
+    изменённый и новый — копии, а прошлый снимок от правки не меняется.
+    """
+    from scripts import snimok_storage as s
+
+    storage = _hranilishche(tmp_path / "storage")
+    daily = tmp_path / "backups" / "daily"
+    pervyy = daily / "storage-2026-09-27"
+    itog1 = s.sobrat(storage, pervyy, s.proshlyy_snimok(pervyy))
+    assert (itog1["files"], itog1["copied"], itog1["linked"]) == (2, 2, 0)
+
+    (storage / "files" / "dogovor.txt").write_text("аренда, редакция 2", encoding="utf-8")
+    (storage / "media" / "abc" / "card.webp").write_bytes(b"novaya")
+    vtoroy = daily / "storage-2026-09-28"
+    itog2 = s.sobrat(storage, vtoroy, s.proshlyy_snimok(vtoroy))
+    assert itog2["base"] == "storage-2026-09-27"
+    assert (itog2["files"], itog2["copied"], itog2["linked"]) == (3, 2, 1)
+
+    kartinka = "media/abc/large.webp"
+    assert (pervyy / kartinka).stat().st_ino == (vtoroy / kartinka).stat().st_ino
+    assert (pervyy / "files" / "dogovor.txt").read_text(encoding="utf-8") == "аренда"
+    assert not (vtoroy.with_name(vtoroy.name + ".part")).exists()
+    assert verify_backup.verify(good_dump(tmp_path / "db.sql"), vtoroy, None)["storage_entries"] == 3
+
+
+def test_nedosobrannyy_snimok_ne_prinimaetsya(tmp_path):
+    """Снимок без метки — оборванный: копия файлов, о неполноте которой не сказали."""
+    from scripts import snimok_storage as s
+
+    snimok = tmp_path / "storage-2026-09-28"
+    s.sobrat(_hranilishche(tmp_path / "storage"), snimok)
+    dump = good_dump(tmp_path / "db.sql")
+    assert verify_backup.verify(dump, snimok, None)["ok"] is True
+
+    (snimok / "files" / "dogovor.txt").unlink()
+    otchyot = verify_backup.verify(dump, snimok, None)
+    assert otchyot["ok"] is False and "метка говорит" in " ".join(otchyot["problems"])
+
+    (snimok / s.METKA).unlink()
+    otchyot = verify_backup.verify(dump, snimok, None)
+    assert otchyot["ok"] is False and "не дособран" in " ".join(otchyot["problems"])
+
+
+@nuzhen_sh
+def test_vosstanovlenie_snimka_ostavlyaet_fayly_nginx(tmp_path):
+    """Корень снимка закрыт (700), но внутри права оригинала: восстановленные медиа
+    отдаёт nginx из-под своего пользователя, и каталог 700 он не прочтёт."""
+    from scripts import snimok_storage as s
+
+    storage = _hranilishche(tmp_path / "storage")
+    os.chmod(storage / "media", 0o755)
+    os.chmod(storage / "media" / "abc" / "large.webp", 0o644)
+    snimok = tmp_path / "backups" / "daily" / "storage-2026-09-28"
+    prezhnyaya = os.umask(0o077)  # как в backup.sh
+    try:
+        s.sobrat(storage, snimok)
+    finally:
+        os.umask(prezhnyaya)
+    assert stat.S_IMODE(snimok.stat().st_mode) == 0o700
+
+    kuda = tmp_path / "vosstanovlennyy"
+    kuda.mkdir(mode=0o755)
+    assert s.vosstanovit(snimok, kuda) == 2
+    assert stat.S_IMODE((kuda / "media").stat().st_mode) == 0o755
+    assert stat.S_IMODE((kuda / "media" / "abc" / "large.webp").stat().st_mode) == 0o644
+    assert stat.S_IMODE(kuda.stat().st_mode) == 0o755, "права самого storage тронуты"
+    assert not (kuda / s.METKA).exists()
+    assert (kuda / "files" / "dogovor.txt").read_text(encoding="utf-8") == "аренда"
+
+
+@nuzhen_sh
+def test_rotatsiya_ne_vyedaet_snimok_iznutri(tmp_path):
+    """`find daily -type f -mtime +7 -delete` без `-maxdepth 1` зашёл бы в снимок и
+    удалил из него всё, что не менялось неделю, — то есть почти всё."""
+    backups = tmp_path / "backups"
+    (backups / "daily").mkdir(parents=True)
+    (backups / "weekly").mkdir(parents=True)
+    staryy = backups / "daily" / "storage-2020-01-01"
+    staryy.mkdir()
+    (staryy / ".opencrm-snimok").write_text("{}", encoding="utf-8")
+    kogda = time.time() - 10 * 86400
+    os.utime(staryy, (kogda, kogda))
+
+    hranilishche = tmp_path / "storage"
+    hranilishche.mkdir()
+    davniy = hranilishche / "davniy.webp"
+    davniy.write_bytes(b"lezhit s leta")
+    os.utime(davniy, (time.time() - 90 * 86400,) * 2)
+
+    zapusk, backups = _snyat_kopiyu(tmp_path)
+    assert zapusk.returncode == 0, zapusk.stdout + zapusk.stderr
+    snimki = [p for p in (backups / "daily").iterdir() if p.is_dir()]
+    assert len(snimki) == 1 and snimki[0].name != staryy.name, [p.name for p in snimki]
+    assert (snimki[0] / "davniy.webp").read_bytes() == b"lezhit s leta", (
+        "ротация выела из свежего снимка файл с давней датой"
+    )
 
 
 # --- восстановление: копия проверяется ДО того, как тронуть базу --------------
@@ -817,9 +937,9 @@ def _podstavnoy_klient(tmp_path) -> tuple[Path, Path]:
     return bin_dir, sled
 
 
-def _vosstanovit(tmp_path, kopiya: Path, **pravki):
+def _vosstanovit(tmp_path, kopiya: Path, storage: Path | None = None, **pravki):
     bin_dir, sled = _podstavnoy_klient(tmp_path)
-    arkhiv = good_storage(tmp_path / "storage.tar.gz")
+    arkhiv = storage or good_storage(tmp_path / "storage.tar.gz")
     zapusk = subprocess.run(
         ["sh", "scripts/restore.sh", str(kopiya), str(arkhiv)],
         capture_output=True, text=True, encoding="utf-8", timeout=60,
@@ -1040,3 +1160,33 @@ def test_neotdannyy_damp_ne_uhodit_v_kontejner(tmp_path):
     assert "HANDOFF" not in zhurnal.splitlines(), zhurnal
     assert "DIE" in zhurnal and "4242" in zhurnal, zhurnal
     assert not incoming.exists(), "недоотданный дамп остался лежать и выглядит готовым"
+
+
+@nuzhen_sh
+def test_vosstanovlenie_otkazyvaet_nedosobrannomu_snimku_do_bazy(tmp_path):
+    """Оборванный снимок файлов — отказ до первой правки базы, а не после неё."""
+    (tmp_path / "backups" / "daily").mkdir(parents=True)
+    kopiya = good_dump(tmp_path / "backups" / "daily" / "db-2026-09-28.sql", users=3)
+    snimok = tmp_path / "backups" / "daily" / "storage-2026-09-28"
+    (snimok / "media").mkdir(parents=True)
+
+    zapusk, sled = _vosstanovit(tmp_path, kopiya, snimok)
+    assert zapusk.returncode != 0, zapusk.stdout
+    assert "не дособран" in zapusk.stderr, zapusk.stderr
+    assert not sled.exists(), "база тронута до того, как заметили оборванный снимок"
+
+
+@nuzhen_sh
+def test_vosstanovlenie_raskladyvaet_snimok(tmp_path):
+    from scripts import snimok_storage as s
+
+    (tmp_path / "backups" / "daily").mkdir(parents=True)
+    kopiya = good_dump(tmp_path / "backups" / "daily" / "db-2026-09-28.sql", users=3)
+    snimok = tmp_path / "backups" / "daily" / "storage-2026-09-28"
+    s.sobrat(_hranilishche(tmp_path / "storage"), snimok)
+
+    zapusk, _sled = _vosstanovit(tmp_path, kopiya, snimok)
+    assert zapusk.returncode == 0, zapusk.stdout + zapusk.stderr
+    kuda = tmp_path / "vosstanovlennyy-storage"
+    assert (kuda / "files" / "dogovor.txt").read_text(encoding="utf-8") == "аренда"
+    assert not (kuda / s.METKA).exists()

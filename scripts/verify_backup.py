@@ -21,7 +21,8 @@
    `database/schema_check.py`).
 3. **Данные на месте.** Пустая копия — самый коварный случай: файл есть, размер
    правдоподобный, а внутри одни пустые таблицы.
-4. **Архив storage читается** — `tar -tzf` по списку, без распаковки.
+4. **Копия storage цела** — у снимка метка готовности и сошедшийся счёт файлов,
+   у старого архива `tar -tzf` по списку, без распаковки.
 5. **Ключ шифрования сохранён — и не пустой.** Без `OPENCRM_SECRET_KEY` пароли
    ящиков и секреты двухфакторок в восстановленной базе не расшифровать
    НИКОГДА: ключ не выводится из данных, и потеря его необратима. Проверяется
@@ -720,6 +721,24 @@ def bedy_sekretov(tekst: str) -> list[str]:
     ]
 
 
+def _proverit_snimok(snimok: Path, report: dict, fail) -> None:
+    """Снимок storage (`scripts/snimok_storage.py`): дособран и цел по счёту файлов."""
+    from scripts.snimok_storage import METKA
+
+    try:
+        metka = json.loads((snimok / METKA).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        fail(f"снимок storage не дособран — метки {METKA} нет: {snimok}")
+        return
+    naydeno = sum(
+        1 for koren, _p, fayly in os.walk(snimok) for imya in fayly
+        if not (koren == str(snimok) and imya == METKA)
+    )
+    if naydeno != metka.get("files"):
+        fail(f"в снимке storage {naydeno} файлов, а метка говорит {metka.get('files')}")
+    report["storage_entries"] = naydeno
+
+
 def verify(
     db_path: Path,
     storage_path: Path | None,
@@ -763,8 +782,10 @@ def verify(
 
     if storage_path is not None:
         report["storage"] = str(storage_path)
-        if not storage_path.is_file():
-            fail(f"архива storage нет: {storage_path}")
+        if storage_path.is_dir():
+            _proverit_snimok(storage_path, report, fail)
+        elif not storage_path.is_file():
+            fail(f"копии storage нет: {storage_path}")
         else:
             # Читаем оглавление, не распаковывая: оборванный архив падает уже
             # на нём, а место под распаковку может и не найтись.
@@ -795,7 +816,7 @@ def verify(
 
 ISPOLZOVANIE = "\n".join((
     "использование:",
-    "  verify_backup.py <dump.sql|dump.sql.enc> [storage.tar.gz] [secret.env] [ключ]",
+    "  verify_backup.py <dump.sql|dump.sql.enc> [storage-снимок|storage.tar.gz] [secret.env] [ключ]",
     "  verify_backup.py --zashifrovat ИСТОЧНИК ЦЕЛЬ ключ",
     "  verify_backup.py --rasshifrovat ИСТОЧНИК ЦЕЛЬ ключ",
     "  verify_backup.py --sozdat-klyuch ФАЙЛ",

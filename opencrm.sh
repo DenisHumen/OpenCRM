@@ -2608,8 +2608,10 @@ cmd_restore() {
     _stamp=$(basename "$_db" | sed 's/^db-//; s/\.db$//; s/\.sql$//')
     # Пара ищется РЯДОМ с выбранной базой: недельная копия лежит в weekly, и
     # жёсткий `$_dir` не нашёл бы её архив.
-    _storage="$(dirname "$_db")/storage-$_stamp.tar.gz"
-    [ -f "$_storage" ] || die "$(tr_ "нет пары к базе: $_storage" "no storage archive to match the database: $_storage")"
+    # Пара — снимком-каталогом (с 28.09.2026) или архивом от прежних копий.
+    _storage="$(dirname "$_db")/storage-$_stamp"
+    [ -d "$_storage" ] || _storage="$_storage.tar.gz"
+    [ -e "$_storage" ] || die "$(tr_ "нет пары к базе: $_storage" "no storage copy to match the database: $_storage")"
 
     # Копию от другой базы восстановить нельзя: дамп MySQL не заливается в
     # Файл SQLite среди копий может остаться от прежних времён. Заливать его

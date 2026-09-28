@@ -133,8 +133,10 @@ snyat_dump() {
 DB_COPY="$BACKUP_DIR/daily/db-$STAMP.sql"
 snyat_dump "$DB_COPY"
 
-# 2) storage: полный архив (файлы неизменяемые, дельта не критична для MVP)
-tar -czf "$BACKUP_DIR/daily/storage-$STAMP.tar.gz" -C "$STORAGE_DIR" .
+# 2) storage — снимком: неизменное ставится жёсткой ссылкой на прошлый снимок, и
+#    ночь стоит только новых файлов. Полный tar каждую ночь съедал диск (28.09.2026).
+STORAGE_COPY="$BACKUP_DIR/daily/storage-$STAMP"
+python -m scripts.snimok_storage "$STORAGE_DIR" "$STORAGE_COPY"
 
 # 3) ключ шифрования и соль хэша IP — то, чего нет в базе и что не выводится
 #    из неё ничем. Соль нужна, чтобы после восстановления просмотры витрины
@@ -169,13 +171,19 @@ chmod 600 "$SECRET_FILE"
 # 4) воскресный бэкап дублируем в weekly
 if [ "$DOW" = "7" ]; then
     cp "$DB_COPY" "$BACKUP_DIR/weekly/"
-    cp "$BACKUP_DIR/daily/storage-$STAMP.tar.gz" "$BACKUP_DIR/weekly/"
+    # Снимок — ссылками, а не копией: он лежит на том же диске и места не прибавит.
+    rm -rf "$BACKUP_DIR/weekly/storage-$STAMP"
+    cp -al "$STORAGE_COPY" "$BACKUP_DIR/weekly/"
     cp "$SECRET_FILE" "$BACKUP_DIR/weekly/"
 fi
 
-# 5) ротация: daily > 7 дней, weekly > 28 дней
-find "$BACKUP_DIR/daily" -type f -mtime +7 -delete
-find "$BACKUP_DIR/weekly" -type f -mtime +28 -delete
+# 5) ротация: daily > 7 дней, weekly > 28 дней.
+#    `-maxdepth 1` обязателен: внутри снимков лежат файлы с их СТАРЫМИ датами, и
+#    обход вглубь выедал бы из снимка всё, что не менялось неделю.
+find "$BACKUP_DIR/daily" -maxdepth 1 -type f -mtime +7 -delete
+find "$BACKUP_DIR/weekly" -maxdepth 1 -type f -mtime +28 -delete
+find "$BACKUP_DIR/daily" -mindepth 1 -maxdepth 1 -type d -name 'storage-*' -mtime +7 -exec rm -rf {} +
+find "$BACKUP_DIR/weekly" -mindepth 1 -maxdepth 1 -type d -name 'storage-*' -mtime +28 -exec rm -rf {} +
 
 # `db-before-restore-*.sql` кладёт рядом scripts/restore.sh — это полный дамп
 # базы ПЕРЕД заливкой, единственный путь назад из неудачного восстановления.
@@ -211,7 +219,9 @@ find "$BACKUP_DIR" -maxdepth 1 -type f -name 'db-before-restore-*.sql' -mtime +2
 #
 # Гигиена прав не имеет права стоить проверки копии. Поэтому: правим своё,
 # чужое не трогаем, о чужом молчим — если оно и так закрыто.
-find "$BACKUP_DIR/daily" "$BACKUP_DIR/weekly" \
+# Только верхний уровень: внутри снимков права оригинала — их отдаёт nginx после
+# восстановления, а посторонних и так не пускает корень снимка с правами 700.
+find "$BACKUP_DIR/daily" "$BACKUP_DIR/weekly" -maxdepth 1 \
     -type f -user "$(id -u)" -exec chmod 600 {} + || true
 
 # А вот если чужой файл вправду открыт наружу — сказать надо, и с числом.
@@ -219,7 +229,7 @@ find "$BACKUP_DIR/daily" "$BACKUP_DIR/weekly" \
 # Молчать здесь нельзя: дамп базы, читаемый любым пользователем машины, — это
 # вся система в одном файле. Но и падать нельзя: поправить его мы всё равно не
 # можем, а копия уже снята и ждёт проверки.
-_otkrytyh=$(find "$BACKUP_DIR/daily" "$BACKUP_DIR/weekly" \
+_otkrytyh=$(find "$BACKUP_DIR/daily" "$BACKUP_DIR/weekly" -maxdepth 1 \
     -type f ! -user "$(id -u)" -perm /0077 2>/dev/null | wc -l)
 if [ "$_otkrytyh" -gt 0 ]; then
     echo "backup: $_otkrytyh копий чужого владельца открыты на чтение посторонним." >&2
@@ -231,7 +241,7 @@ fi
 #    рассчитывают. Проверка сама разбирается, файл перед ней или дамп.
 python -m scripts.verify_backup \
     "$DB_COPY" \
-    "$BACKUP_DIR/daily/storage-$STAMP.tar.gz" \
+    "$STORAGE_COPY" \
     "$SECRET_FILE"
 
 # 7) «копию давно не забирали».

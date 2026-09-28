@@ -1,6 +1,6 @@
 #!/bin/sh
 # Восстановление OpenCRM из бэкапа.
-# Использование: restore.sh <db-YYYY-MM-DD.sql> <storage-YYYY-MM-DD.tar.gz>
+# Использование: restore.sh <db-YYYY-MM-DD.sql> <storage-YYYY-MM-DD | storage-YYYY-MM-DD.tar.gz>
 # ВНИМАНИЕ: перезаписывает текущую базу и storage. Останавливайте приложение перед запуском.
 #
 # **Копия проверяется ДО того, как тронуть базу.** Восстановление — это
@@ -16,7 +16,11 @@ DB_URL="${OPENCRM_DB_URL:-}"
 STORAGE_DIR="${OPENCRM_STORAGE_DIR:-/app/storage}"
 
 [ -f "$DB_BACKUP" ] || { echo "no db backup: $DB_BACKUP"; exit 1; }
-[ -f "$STORAGE_BACKUP" ] || { echo "no storage backup: $STORAGE_BACKUP"; exit 1; }
+[ -e "$STORAGE_BACKUP" ] || { echo "no storage backup: $STORAGE_BACKUP"; exit 1; }
+if [ -d "$STORAGE_BACKUP" ] && [ ! -f "$STORAGE_BACKUP/.opencrm-snimok" ]; then
+    echo "снимок storage не дособран — метки .opencrm-snimok нет: $STORAGE_BACKUP" >&2
+    exit 1
+fi
 
 # Годна ли копия — спрашиваем ДО того, как тронуть базу.
 #
@@ -140,8 +144,13 @@ else
     esac
 fi
 
+# Снимок — каталогом (с 28.09.2026), старые копии — архивом: оба вида лежат рядом.
 mkdir -p "$STORAGE_DIR"
-tar -xzf "$STORAGE_BACKUP" -C "$STORAGE_DIR"
+if [ -d "$STORAGE_BACKUP" ]; then
+    python -m scripts.snimok_storage --vosstanovit "$STORAGE_BACKUP" "$STORAGE_DIR"
+else
+    tar -xzf "$STORAGE_BACKUP" -C "$STORAGE_DIR"
+fi
 
 # Ключ шифрования из копии не подставляем автоматически: он живёт в
 # config/.env, а тот в контейнер не смонтирован, да и молча менять ключ
