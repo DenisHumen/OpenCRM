@@ -1,3 +1,4 @@
+import pytest
 from fastapi.testclient import TestClient
 
 from core.services import media_service
@@ -839,4 +840,28 @@ def test_vetka_blankov_suzhena_vidami_bumag(root_client, role_maker, staff_maker
                 db.commit()
         for klyuch in ("orders", "warehouse", "documents"):
             root_client.post(f"{API}/modules/{klyuch}", json={"enabled": bylo[klyuch]})
+
+
+@pytest.mark.parametrize("imya, pesochnitsa", [("kartinka.png", True), ("dogovor.pdf", False)])
+def test_pokaz_po_ssylke_vstraivaetsya_u_sebya_a_svg_v_pesochnitse(root_client, imya, pesochnitsa):
+    """Разбор 28.09.2026: показ шёл с политикой приложения — файл с нашего домена без
+    песочницы, а превью PDF на странице файла не открывалось (`frame-ancestors 'none'`)."""
+    import re
+
+    if imya.endswith(".png"):
+        nomer = _svoy_fayl(root_client, imya)
+    else:
+        otvet = root_client.post(f"{API}/files", files={"file": (imya, b"%PDF-1.4 proba", "application/pdf")})
+        assert otvet.status_code == 201, otvet.text
+        nomer = otvet.json()["id"]
+    ssylka = root_client.post(f"{API}/files/{nomer}/link", json={"rezhim": "view", "krug": "link"}).json()["link"]
+    token = ssylka["url"].rsplit("/", 1)[-1]
+    guest = TestClient(app)
+    klyuch = re.search(rf"/f/{token}/view\?k=([\w\.\-]+)", guest.get(f"/f/{token}").text).group(1)
+    pokaz = guest.get(f"/f/{token}/view?k={klyuch}")
+    assert pokaz.status_code == 200
+    politika = pokaz.headers["content-security-policy"]
+    assert "frame-ancestors 'self'" in politika and pokaz.headers["x-frame-options"] == "SAMEORIGIN"
+    assert ("sandbox" in politika) is pesochnitsa
+    root_client.delete(f"{API}/files/links/{ssylka['id']}")
 

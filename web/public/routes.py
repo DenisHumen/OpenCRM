@@ -777,6 +777,23 @@ def fayl_skachat(token: str, request: Request, db: Session = Depends(get_db)):
     )
 
 
+#: Показ файла по ссылке. Страница файла встраивает его у себя — `frame-ancestors
+#: 'self'`: с политикой приложения (`'none'`, `DENY`) превью PDF не открывалось
+#: вовсе. SVG с нашего домена — песочница: санитайзер лишь второй рубеж. PDF её
+#: не терпит (просмотрщик браузера в песочнице не встаёт) — разбор 28.09.2026.
+CSP_POKAZA = "default-src 'none'; img-src 'self'; media-src 'self'; style-src 'unsafe-inline'; frame-ancestors 'self'"
+
+
+def _zagolovki_pokaza(mime: str) -> dict:
+    politika = CSP_POKAZA if mime == "application/pdf" else CSP_POKAZA + "; sandbox"
+    return {
+        "Cache-Control": "no-store",
+        "Content-Disposition": "inline",
+        "Content-Security-Policy": politika,
+        "X-Frame-Options": "SAMEORIGIN",
+    }
+
+
 @router.get("/f/{token}/view")
 def fayl_posmotret(token: str, request: Request, k: str = "", db: Session = Depends(get_db)):
     """Байты файла для показа НА СТРАНИЦЕ, а не в файл.
@@ -802,11 +819,8 @@ def fayl_posmotret(token: str, request: Request, k: str = "", db: Session = Depe
     put = fayly_ssylki_service.bayty(db, ssylka, fayl)
     if put is None or not put.is_file():
         return _closed_page(request, db)
-    return FileResponse(
-        put,
-        media_type=getattr(fayl, "mime", "application/octet-stream"),
-        headers={"Cache-Control": "no-store", "Content-Disposition": "inline"},
-    )
+    mime = getattr(fayl, "mime", "application/octet-stream")
+    return FileResponse(put, media_type=mime, headers=_zagolovki_pokaza(mime))
 
 
 @router.post("/f/{token}/guest")
