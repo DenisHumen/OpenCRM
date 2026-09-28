@@ -321,9 +321,28 @@ def delete_task(
     return {"message": "Task deleted"}
 
 
+class RazIn(BaseModel):
+    #: Срок раза, который человек видел. Второй получатель без него закрывал завтрашний раз.
+    srok: datetime | None = None
+
+
+def _tot_raz(db: Session, user: User, task_id: int, payload: RazIn | None) -> Task:
+    _pravit(db, user, task_id)
+    task = tasks_repo.zapert(db, task_id)
+    if payload is not None and payload.srok is not None and task.done_at is None:
+        if task.due_at is None or task.due_at != to_utc_naive(payload.srok):
+            raise errors.ConflictError("The reminder has moved on", code="zvonok_ustarel")
+    return task
+
+
 @router.post("/{task_id}/done")
-def done(task_id: int, user: User = Depends(require_perm("tasks", "edit")), db: Session = Depends(get_db)):
-    task = _pravit(db, user, task_id)
+def done(
+    task_id: int,
+    payload: RazIn | None = None,
+    user: User = Depends(require_perm("tasks", "edit")),
+    db: Session = Depends(get_db),
+):
+    task = _tot_raz(db, user, task_id, payload)
     if task.done_at is not None:
         raise errors.ConflictError("Already done", code="task_uzhe_sdelano")
     task_service.zakryt(db, task, user)
@@ -337,8 +356,13 @@ def reopen(task_id: int, user: User = Depends(require_perm("tasks", "edit")), db
 
 
 @router.post("/{task_id}/skip")
-def skip(task_id: int, user: User = Depends(require_perm("tasks", "edit")), db: Session = Depends(get_db)):
-    task = task_service.propustit(db, _pravit(db, user, task_id), user)
+def skip(
+    task_id: int,
+    payload: RazIn | None = None,
+    user: User = Depends(require_perm("tasks", "edit")),
+    db: Session = Depends(get_db),
+):
+    task = task_service.propustit(db, _tot_raz(db, user, task_id, payload), user)
     return _out(db, [task], user)[0]
 
 

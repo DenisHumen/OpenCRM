@@ -129,7 +129,7 @@ export function ZvonkiNapominaniy() {
           </div>
           <div className="zvonok-nazvanie">{z.title}</div>
           <div className="zvonok-knopki">
-            <button type="button" className="btn btn-primary btn-sm" onClick={() => void deystvie(z, "done")}>
+            <button type="button" className="btn btn-primary btn-sm" onClick={() => void deystvie(z, "done", { srok: z.srok })}>
               <Icon name="check" size={13} stroke={2} />
               {t("napomGotovo")}
             </button>

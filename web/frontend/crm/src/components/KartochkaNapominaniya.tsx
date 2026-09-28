@@ -288,13 +288,13 @@ export function KartochkaNapominaniya({
             type="button"
             className={"btn btn-sm " + (task.is_done ? "btn-secondary" : "btn-primary")}
             disabled={!mozhno}
-            onClick={() => void razom(task.is_done ? "reopen" : "done")}
+            onClick={() => void (task.is_done ? razom("reopen") : razom("done", { srok: task.due_at }))}
           >
             <Icon name="check" size={13} stroke={2} />
             {task.is_done ? t("tasksReopen") : t("napomGotovo")}
           </button>
           {task.povtor && !task.is_done && (
-            <button type="button" className="btn btn-secondary btn-sm" disabled={!mozhno} onClick={() => void razom("skip")}>
+            <button type="button" className="btn btn-secondary btn-sm" disabled={!mozhno} onClick={() => void razom("skip", { srok: task.due_at })}>
               {t("napomPropustit")}
             </button>
           )}

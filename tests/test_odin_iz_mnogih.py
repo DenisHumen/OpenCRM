@@ -811,3 +811,32 @@ def test_dva_protsessa_zvonyat_odnomu_v_odnu_minutu(root_client):
             select(func.count(TaskSignal.id)).where(TaskSignal.task_id == task["id"], TaskSignal.vid == "due")
         )
     assert zvonkov == 1, f"звонков {zvonkov}, исходы шагов: {codes}"
+
+
+def test_dva_poluchatelya_zakryvayut_odin_raz_razom(root_client):
+    """«Готово» на один звонок повторяющегося — засчитывается один раз, завтрашний цел.
+
+    Без срока в запросе и без замка второй получатель закрывал уже следующий раз:
+    у повторяющегося `done_at` пуст всегда, проверять было нечего (разбор 28.09.2026).
+    """
+    from datetime import timedelta, timezone
+
+    from core.utils import now_utc
+    from database.models import Task
+    from database.session import SessionLocal
+
+    srok = now_utc().replace(microsecond=0) + timedelta(minutes=5)
+    task = root_client.post(
+        f"{API}/tasks",
+        json={"title": "Дуэль «Готово»", "due_at": srok.replace(tzinfo=timezone.utc).isoformat(), "povtor": "FREQ=DAILY"},
+    ).json()
+    uvideli = task["due_at"]
+
+    codes = duel(
+        lambda _: root_client.post(f"{API}/tasks/{task['id']}/done", json={"srok": uvideli}).status_code, None, None
+    )
+    assert sorted(codes.values()) == [200, 409], codes
+    with SessionLocal() as db:
+        zapis = db.get(Task, task["id"])
+        assert zapis.sdelano_raz == 1, f"засчитано {zapis.sdelano_raz}, исходы: {codes}"
+        assert zapis.due_at - srok < timedelta(days=2), "закрыт и завтрашний раз"

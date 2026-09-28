@@ -340,3 +340,16 @@ def test_migratsiya_perenosit_lyudey_i_otkatyvaetsya(chistaya_baza, nakatit, nas
             assert dict(s.execute(text("SELECT id, assignee_id FROM tasks")).all()) == {1: 1, 2: 2, 3: None}
     finally:
         dvigatel.dispose()
+
+
+def test_gotovo_so_starym_srokom_ne_zakryvaet_sleduyushchiy_raz(root_client):
+    """Кнопка вчерашнего окошка не закрывает сегодняшний раз повторяющегося."""
+    task = _zavesti(root_client, title="Каждый день", due_at=_cherez(minutes=5), povtor="FREQ=DAILY")
+    videl = task["due_at"]
+    assert root_client.post(f"{TASKS}/{task['id']}/done", json={"srok": videl}).status_code == 200
+    for put in ("done", "skip"):
+        otvet = root_client.post(f"{TASKS}/{task['id']}/{put}", json={"srok": videl})
+        assert otvet.status_code == 409 and otvet.json()["error"]["code"] == "zvonok_ustarel", put
+    # Без срока — как раньше: программы, которые его не шлют, не ломаются.
+    assert root_client.post(f"{TASKS}/{task['id']}/done").status_code == 200
+

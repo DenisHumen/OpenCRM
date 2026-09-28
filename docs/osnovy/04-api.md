@@ -452,9 +452,9 @@
 | POST | `/tasks` | 🔑 `tasks.create` | Завести: `title`, `vazhnost`, `note`, `due_at`, `ves_den`, `poyas`, `povtor`, `povtor_posle`, `opovesheniya`, `nastoychivo`, `poluchateli`, `nablyudateli`, `obshchee`, привязки, `shagi`, `ssylki`. Чужие люди и полка — ещё и `tasks.assign`. `kazhdomu: true` — по напоминанию на получателя, ответ `{items}`. Прежнее `assignee_id` понимается |
 | PATCH | `/tasks/{id}` | 🔑 `tasks.edit` | Любое поле, `is_done` (закрыть или вернуть раз). Людей меняет владелец (или видящий все) — иначе `403 task_ne_vladelets` |
 | DELETE | `/tasks/{id}` | 🔑 `tasks.delete` | Удалить с вложениями; только владелец, видящий все или с полки |
-| POST | `/tasks/{id}/done` | 🔑 `tasks.edit` | Закрыть раз. У повторяющегося срок уезжает на следующий раз после сегодняшнего |
+| POST | `/tasks/{id}/done` | 🔑 `tasks.edit` | Закрыть раз. У повторяющегося срок уезжает на следующий раз после сегодняшнего. Тело `{srok}` — срок раза, который человек видел: ушло дальше — `409 zvonok_ustarel` (второй получатель не закроет завтрашний раз). Без тела — как прежде |
 | POST | `/tasks/{id}/reopen` | 🔑 `tasks.edit` | Вернуть в работу |
-| POST | `/tasks/{id}/skip` | 🔑 `tasks.edit` | Пропустить раз повторяющегося (`409 task_ne_povtor` у прочих) |
+| POST | `/tasks/{id}/skip` | 🔑 `tasks.edit` | Пропустить раз повторяющегося (`409 task_ne_povtor` у прочих); `{srok}` — как у `done` |
 | POST | `/tasks/{id}/snooze` | 🔑 `tasks.view` | Отложить СВОЙ звонок: `{do}` в будущем. Под просмотром нарочно — меняется только когда звонить ему |
 | POST | `/tasks/{id}/take` | 🔑 `tasks.edit` | Взять с общей полки (`409 task_ne_na_polke` у прочих) |
 | POST | `/tasks/{id}/steps` | 🔑 `tasks.edit` | Добавить шаг: `{text}`; до 50 |

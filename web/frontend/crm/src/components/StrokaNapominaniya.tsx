@@ -108,7 +108,7 @@ export function StrokaNapominaniya({
       {vremya !== undefined && <div className="napom-vremya">{vremya}</div>}
       <button
         className={"task-check" + (zakryt ? " done" : "")}
-        onClick={() => void (zakryt ? pravit({ is_done: false }) : deystvie("done"))}
+        onClick={() => void (zakryt ? pravit({ is_done: false }) : deystvie("done", { srok: task.due_at }))}
         disabled={budushchiy || (sdelan && !task.is_done)}
         aria-label={t("napomGotovo")}
       >
@@ -231,7 +231,7 @@ export function StrokaNapominaniya({
                   role="menuitem"
                   onClick={() => {
                     setMenyu(false);
-                    void deystvie("skip");
+                    void deystvie("skip", { srok: task.due_at });
                   }}
                 >
                   {t("napomPropustit")}
