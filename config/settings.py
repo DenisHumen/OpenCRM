@@ -6,6 +6,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 DEV_SECRET_KEY = "dev-secret-key-change-in-production"
+#: Короче — подпись перебирается; `token_urlsafe(48)` установщика даёт 64.
+MIN_SECRET_KEY = 32
 DEV_IP_SALT = "dev-ip-salt"
 #: Пароль root по умолчанию — такое же dev-значение, как два выше.
 #:
@@ -252,6 +254,14 @@ class Settings(BaseSettings):
             )
         if not self.is_production and self.secret_key == DEV_SECRET_KEY:
             warnings.append("OPENCRM_SECRET_KEY — dev-значение. Для боевого запуска задайте свой.")
+        # Предупреждение, а не отказ: отказ остановил бы обновление живой установки
+        # с коротким ключом, и она откатывалась бы по кругу (разбор 28.09.2026).
+        if self.is_production and self.secret_key != DEV_SECRET_KEY and 0 < len(self.secret_key) < MIN_SECRET_KEY:
+            warnings.append(
+                f"OPENCRM_SECRET_KEY короче {MIN_SECRET_KEY} знаков: подпись cookie, кнопок "
+                "уведомлений и шифр «Ключей» перебираются по одной подписи. "
+                f"Сгенерировать: {generate_secret_hint()}"
+            )
         return warnings
 
 

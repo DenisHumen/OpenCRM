@@ -192,3 +192,14 @@ def test_dlinnyy_no_dopustimyy_parol_root_prokhodit():
     rovno = "Пароль" * 6  # 36 знаков, 72 байта
     assert len(rovno.encode()) == 72
     assert _settings(root_password=rovno).config_errors() == []
+
+
+def test_korotkiy_klyuch_preduprezhdaet_no_ne_ostanavlivaet():
+    """Разбор 28.09.2026: ключ «password1» проходил молча. Отказом его не сделать —
+    живая установка с коротким ключом перестала бы обновляться."""
+    korotkiy = _settings(secret_key="password1")
+    assert any("SECRET_KEY" in stroka for stroka in korotkiy.config_warnings())
+    assert not any("SECRET_KEY" in stroka for stroka in korotkiy.config_errors())
+    dlinnyy = _settings(secret_key="x" * 64)
+    assert not any("SECRET_KEY" in stroka for stroka in dlinnyy.config_warnings())
+
