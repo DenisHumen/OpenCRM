@@ -493,7 +493,7 @@ def add_line(db: Session, document_id: int, data: dict, author: User) -> Documen
     Товар переименуют, прайс поменяют — в заказе останется то, что человек
     заказывал. Ровно та же причина, по которой у бланка снимок для печати.
     """
-    order = get(db, document_id)
+    order = _pod_zamkom(db, document_id)
     _assert_open(order)
 
     quantity = warehouse_service.parse_quantity(data.get("quantity"))
@@ -552,7 +552,7 @@ def _stroki_izmenilis(db: Session, order: Document, author: User | None) -> None
 def update_line(
     db: Session, document_id: int, line_id: int, data: dict, author: User | None = None
 ) -> DocumentLine:
-    order = get(db, document_id)
+    order = _pod_zamkom(db, document_id)
     _assert_open(order)
     line = _line(db, order.id, line_id)
 
@@ -578,7 +578,7 @@ def update_line(
 def remove_line(
     db: Session, document_id: int, line_id: int, author: User | None = None
 ) -> None:
-    order = get(db, document_id)
+    order = _pod_zamkom(db, document_id)
     _assert_open(order)
     documents_repo.drop_line(db, _line(db, order.id, line_id))
     _stroki_izmenilis(db, order, author)
@@ -686,7 +686,7 @@ def close(
     заказу этого мало: отгрузить нечего физически. Остановка и явное
     подтверждение, которое записывается.
     """
-    order = get(db, document_id)
+    order = _pod_zamkom(db, document_id)
     _assert_open(order)
 
     rows = documents_repo.lines_of(db, order.id)
@@ -864,7 +864,7 @@ def close(
 
 def cancel(db: Session, document_id: int, author: User, note: str = "") -> Document:
     """Отменить непроведённый заказ. Склада не касается — резерв снимется сам."""
-    order = get(db, document_id)
+    order = _pod_zamkom(db, document_id)
     _assert_open(order)
     # Товар уже уехал накладной — «отменён» соврал бы про отгрузку. Такому
     # заказу путь один: он закрыт накладной, а откат — через сторно.
@@ -1044,6 +1044,15 @@ def prodlit_bron(db: Session, document_id: int, days: int, author: User) -> Docu
         ),
     )
     return order
+
+
+def _pod_zamkom(db: Session, document_id: int) -> Document:
+    """Заказ под замком строки — для всего, что его меняет. Без замка строка,
+    добавленная во время закрытия, оставалась в закрытом заказе неотгруженной, а
+    закрытие рядом с проведением накладной отгружало дважды (разбор 28.09.2026).
+    Порядок замков у всех один: заказ, потом товары."""
+    documents_repo.zapert_i_perechitat(db, document_id)
+    return get(db, document_id)
 
 
 def _assert_open(order: Document) -> None:

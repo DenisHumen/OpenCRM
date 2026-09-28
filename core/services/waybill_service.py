@@ -886,7 +886,9 @@ def _proverit_dvoynuyu_otgruzku(db: Session, waybill: Document) -> None:
     """
     if waybill.basis_id is None:
         return
-    osnovanie = documents_repo.get(db, waybill.basis_id)
+    # Под замком заказа, тем же, что у его закрытия: иначе закрытие не видело
+    # незафиксированную накладную рядом и отгружало те же позиции второй раз.
+    osnovanie = documents_repo.zapert_i_perechitat(db, waybill.basis_id)
     if osnovanie is None:
         return
     # Основание-накладная — это сторно, и там проверка не нужна: обратная

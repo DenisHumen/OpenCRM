@@ -901,6 +901,53 @@ def test_dve_popravki_nachisleniya_razom(root_client, monkeypatch):
             root_client.post(f"{API}/modules/{key}", json={"enabled": bylo[key]})
 
 
+def test_zakryvayut_zakaz_i_dopisyvayut_stroku_razom(root_client, monkeypatch):
+    """Правка строк проверяла «заказ открыт» без замка: строка, добавленная во время
+    закрытия, оставалась в закрытом заказе неотгруженной. Замок — на строку заказа
+    (`order_service._pod_zamkom`)."""
+    import time
+
+    from core.services import order_service
+    from tests.test_orders import ORDERS, order_with, product
+
+    for key in ("documents", "warehouse", "orders"):
+        root_client.post(f"{API}/modules/{key}", json={"enabled": True})
+    # Закрытие через `_shortages` — путь без накладных; их включают соседние файлы.
+    bylo = {m["key"]: m["enabled"] for m in root_client.get(f"{API}/modules").json()["items"]}
+    root_client.post(f"{API}/modules/waybills", json={"enabled": False})
+    monkeypatch.setattr(order_service, "_shortages", order_service._shortages)
+    tovar = product(root_client, stock="10")
+    vtoroy_tovar = product(root_client, stock="10")
+    pokupatel = root_client.post(f"{API}/clients", json={"name": "Дуэль строки"}).json()
+    zakaz = order_with(root_client, pokupatel, tovar, quantity="2")
+
+    nastoyashchiy = order_service._shortages
+
+    def medlenno(*args, **kwargs):
+        time.sleep(0.6)
+        return nastoyashchiy(*args, **kwargs)
+
+    monkeypatch.setattr(order_service, "_shortages", medlenno)
+
+    def dopisat():
+        time.sleep(0.2)
+        return root_client.post(
+            f"{ORDERS}/{zakaz['id']}/lines", json={"product_id": vtoroy_tovar["id"], "quantity": "1"}
+        ).status_code
+
+    codes = duel(
+        lambda udar: udar(),
+        lambda: root_client.post(f"{ORDERS}/{zakaz['id']}/close", json={}).status_code,
+        dopisat,
+    )
+    monkeypatch.undo()
+    root_client.post(f"{API}/modules/waybills", json={"enabled": bylo.get("waybills", False)})
+    assert set(codes) == {"first", "second"}, f"об ударе не отчитались: {codes}"
+    assert not (codes["first"] == 200 and codes["second"] == 201), (
+        f"строка дописана в закрытый заказ: ответы {codes}"
+    )
+
+
 # --- запасные коды двухфакторки ------------------------------------------------
 
 
