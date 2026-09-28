@@ -85,3 +85,23 @@ def test_zagruzka_ne_ostanavlivaet_ostalnye_zaprosy(base_client, manager_client,
         base_client.cookies.update(bylo)
     assert otvety == [201]
     assert zhdali < 0.8, f"/healthz ждал загрузку {zhdali:.2f} с"
+
+
+def test_multipart_bez_potolka_tolko_na_zagruzkah(base_client, root_client):
+    """Разбор 28.09.2026: потолок в 1 МБ снимался по заголовку `multipart`, а его шлёт
+    сам клиент. JSON-ручка FastAPI читала тело целиком до входа — до 220 МБ в память
+    от постороннего. Теперь без потолка — только ручки, принимающие файл."""
+    from web import middleware
+
+    bolshoe = b"x" * (2 * 1024 * 1024)
+    zagolovki = {"content-type": "multipart/form-data; boundary=xyz"}
+    for put in ("/api/v1/auth/login", "/api/v1/auth/register", "/api/v1/clients"):
+        otvet = base_client.post(put, content=bolshoe, headers=zagolovki)
+        assert otvet.status_code == 413, f"{put}: {otvet.status_code}"
+    fayl = root_client.post(
+        "/api/v1/files", files={"file": ("bolshoy.txt", b"y" * (2 * 1024 * 1024), "text/plain")}
+    )
+    assert fayl.status_code == 201, fayl.text
+    zagruzki = {s.pattern for s, _m in middleware._sobrat_zagruzki(app)}
+    assert any("files" in s for s in zagruzki) and len(zagruzki) >= 10, zagruzki
+

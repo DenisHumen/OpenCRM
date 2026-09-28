@@ -34,6 +34,8 @@
 
 import html
 import logging
+import re
+import typing
 
 import pymysql
 from fastapi import FastAPI
@@ -71,6 +73,45 @@ MUTATING_METHODS = {"POST", "PATCH", "PUT", "DELETE"}
 #: подряд — и на VPS с гигабайтом приложение убивает ядро. Ни одной ошибки в
 #: логе при этом нет: процесс просто исчезает.
 MAX_JSON_BODY = 1024 * 1024
+
+#: Где multipart законен — ручки, принимающие файл. Собирается из таблицы маршрутов
+#: один раз: заголовок `multipart` шлёт сам клиент, и освобождение по нему одному
+#: пускало 220 МБ на любую JSON-ручку до входа (разбор 28.09.2026).
+_ZAGRUZKI: list[tuple[re.Pattern, frozenset]] | None = None
+
+
+def _prinimaet_fayl(pole) -> bool:
+    from fastapi import UploadFile
+
+    tip = getattr(pole.field_info, "annotation", None)
+    return tip is UploadFile or UploadFile in typing.get_args(tip)
+
+
+def _polya_tela(dependant):
+    yield from dependant.body_params
+    for vlozhennaya in dependant.dependencies:
+        yield from _polya_tela(vlozhennaya)
+
+
+def _sobrat_zagruzki(app) -> list[tuple[re.Pattern, frozenset]]:
+    from fastapi.routing import APIRoute, iter_route_contexts
+
+    itog = []
+    for rc in iter_route_contexts(app.routes):
+        route = rc.original_route
+        if not isinstance(route, APIRoute) or route.body_field is None or not rc.path:
+            continue
+        if any(_prinimaet_fayl(p) for p in _polya_tela(route.dependant)):
+            chasti = re.split(r"\{[^}]+\}", rc.path)
+            itog.append((re.compile("^" + "[^/]+".join(map(re.escape, chasti)) + "$"), frozenset(rc.methods or ())))
+    return itog
+
+
+def zagruzka_faylov(app, method: str, path: str) -> bool:
+    global _ZAGRUZKI
+    if _ZAGRUZKI is None:
+        _ZAGRUZKI = _sobrat_zagruzki(app)
+    return any(method in metody and shablon.match(path) for shablon, metody in _ZAGRUZKI)
 
 # Витрина рендерится сервером и намеренно содержит инлайновые <style>/<script>
 # (лайтбокс, декодер blurhash) — им нужен 'unsafe-inline'. Пользовательские данные
@@ -334,7 +375,7 @@ class SecurityHeaders:
             return
 
         request = Request(scope, receive)
-        refusal = self._refuse(request)
+        refusal = self._refuse(request, scope.get("app"))
         if refusal is not None:
             await refusal(scope, receive, send)
             return
@@ -348,7 +389,7 @@ class SecurityHeaders:
 
         await self.app(scope, receive, send_with_headers)
 
-    def _refuse(self, request: Request) -> Response | None:
+    def _refuse(self, request: Request, app=None) -> Response | None:
         """Отказ до того, как запрос дошёл до приложения. None — пропускаем."""
         # Тело не по размеру отсекаем ДО чтения: разбирать 200 МБ, чтобы затем
         # ответить «слишком длинное имя», — уже проигранная память.
@@ -357,11 +398,12 @@ class SecurityHeaders:
             content_type = request.headers.get("content-type", "")
             # Потолок — на всё, кроме загрузки файлов: `text/plain` на JSON-ручку FastAPI
             # читал целиком ещё до входа — до 220 МБ в память от постороннего (28.09.2026).
-            if (
-                declared.isdigit()
-                and not content_type.startswith("multipart/form-data")
-                and int(declared) > MAX_JSON_BODY
-            ):
+            fayl = (
+                content_type.startswith("multipart/form-data")
+                and app is not None
+                and zagruzka_faylov(app, request.method, request.url.path)
+            )
+            if declared.isdigit() and not fayl and int(declared) > MAX_JSON_BODY:
                 return JSONResponse(
                     status_code=413,
                     content={
