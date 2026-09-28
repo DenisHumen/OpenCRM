@@ -222,10 +222,11 @@ def get_order(
     db: Session = Depends(get_db),
 ):
     order = order_service.get(db, order_id)
+    summy = permissions_service.sees_amounts(db, user, "orders")
     data = schemas.order_out(
         order,
         order_service.lines(db, order.id),
-        amounts=permissions_service.sees_amounts(db, user, "orders"),
+        amounts=summy,
         client_name=_imya_klienta(db, order),
     )
     # Бумаги, выписанные по этому заказу. Закрытие теперь выписывает
@@ -264,7 +265,8 @@ def get_order(
     # возврата нет (docs/22). Ключа нет вовсе у тех, кому он не положен.
     if order.kind == KIND_SALES_ORDER:
         data["returns"] = [
-            {"id": v.id, "number": v.number, "status": v.status, "refund": v.refund_minor}
+            # Сумма возврата — тем же правом, что суммы заказа (разбор 28.09.2026).
+            {"id": v.id, "number": v.number, "status": v.status, "refund": v.refund_minor if summy else None}
             for v in return_service.po_zakazu(db, order.id)
         ]
 

@@ -481,6 +481,23 @@ def test_pechat_zakaza_postavshchiku_bez_prava_na_summy_bez_tsen(
     assert "1000.00" in kladovshchik.get(f"{ORDERS}/{prodazha['id']}/print").text
 
 
+def test_summa_vozvrata_v_kartochke_zakaza_tem_zhe_pravom(
+    root_client, client_row, role_maker, staff_maker  # noqa: F811
+):
+    """Разбор 28.09.2026: карточка заказа отдавала суммы возвратов тому, кому суммы
+    заказа приходили `null`."""
+    item = product(root_client, stock="10", price=50000)
+    zakaz = order_with(root_client, client_row, item, quantity="2")
+    assert root_client.post(f"{ORDERS}/{zakaz['id']}/close", json={}).status_code == 200
+    assert root_client.post(f"{ORDERS}/{zakaz['id']}/returns").status_code == 201
+    rol = role_maker("Заказы без сумм возвратов", ["orders.view", "clients.view"])
+    bez_summ = staff_maker("vozvraty-bez-summ@test.local", rol["id"])
+    [vozvrat] = bez_summ.get(f"{ORDERS}/{zakaz['id']}").json()["returns"]
+    assert vozvrat["refund"] is None
+    [u_roota] = root_client.get(f"{ORDERS}/{zakaz['id']}").json()["returns"]
+    assert u_roota["refund"] is not None
+
+
 def test_sobran_otdelnyy_shag(root_client, client_row):
     """Между «принят» и «отгружен» есть состояние, которое видит сборщик."""
     item = product(root_client, stock="5")
