@@ -380,8 +380,9 @@ def snooze(
 
 @router.post("/{task_id}/take")
 def take(task_id: int, user: User = Depends(require_perm("tasks", "edit")), db: Session = Depends(get_db)):
-    """Взять с общей полки."""
-    task = _pravit(db, user, task_id)
+    """Взять с общей полки. Под замком: двое нажавших разом становились оба владельцами."""
+    _pravit(db, user, task_id)
+    task = tasks_repo.zapert(db, task_id)
     task_service.vzyat_s_polki(db, task, user)
     return _out(db, [task], user)[0]
 

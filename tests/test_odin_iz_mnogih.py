@@ -840,3 +840,26 @@ def test_dva_poluchatelya_zakryvayut_odin_raz_razom(root_client):
         zapis = db.get(Task, task["id"])
         assert zapis.sdelano_raz == 1, f"засчитано {zapis.sdelano_raz}, исходы: {codes}"
         assert zapis.due_at - srok < timedelta(days=2), "закрыт и завтрашний раз"
+
+
+def test_dvoe_berut_s_polki_razom(root_client):
+    """С полки берёт один: второму — 409, а не второй владелец рядом (разбор 28.09.2026)."""
+    from sqlalchemy import select
+
+    from database.models import TaskMember
+    from database.session import SessionLocal
+
+    anna = make_manager(root_client, "polka-anna@test.local")
+    boris = make_manager(root_client, "polka-boris@test.local")
+    ids = {kto.get(f"{API}/auth/me").json()["id"] for kto in (anna, boris)}
+    task = root_client.post(f"{API}/tasks", json={"title": "Дуэль полки", "obshchee": True}).json()
+
+    codes = duel(lambda kto: kto.post(f"{API}/tasks/{task['id']}/take").status_code, anna, boris)
+    assert sorted(codes.values()) == [200, 409], codes
+    with SessionLocal() as db:
+        vladeltsy = db.scalars(
+            select(TaskMember).where(
+                TaskMember.task_id == task["id"], TaskMember.vladelets.is_(True), TaskMember.user_id.in_(ids)
+            )
+        ).all()
+    assert len(vladeltsy) == 1, f"взявших {len(vladeltsy)}, исходы: {codes}"
