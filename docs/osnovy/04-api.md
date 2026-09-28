@@ -292,7 +292,7 @@
 | DELETE | `/clients/{id}` | 🔑 `clients.delete` | Мягкое удаление |
 | POST | `/clients/{id}/restore` | 🔑 `clients.restore` | Вернуть из корзины |
 | GET | `/clients/{id}/notes` | 🔑 `clients.view` | Лента истории (пагинация). Фильтры `kind` и `deal_id` |
-| POST | `/clients/{id}/notes` | 🔑 `clients.edit` | Добавить запись: `kind` (note/call/meeting/email), `body`, `happened_at`, `direction`, `deal_id` |
+| POST | `/clients/{id}/notes` | 🔑 `clients.edit` | Добавить запись: `kind` (note/call/meeting/email), `body`, `happened_at`, `direction`, `deal_id`. С `deal_id` — заявка обязана быть этого клиента (`422 deal_other_client`) и видна сотруднику (`deals.view_others` для чужой): прежде заметка ложилась в ленту любой заявки (разбор 28.09.2026) |
 | DELETE | `/clients/{id}/notes/{note_id}` | 🔑 `clients.edit` | Удалить запись |
 | GET | `/clients/{id}/files` | 🔑 `clients.view` | Список файлов (одним `items`, без страниц) |
 | POST | `/clients/{id}/files` | 🔑 `clients.edit` | Загрузить файл (multipart) |

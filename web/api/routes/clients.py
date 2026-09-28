@@ -255,6 +255,15 @@ def add_note(
     user: User = Depends(require_perm("clients", "edit")),
     db: Session = Depends(get_db),
 ):
+    if payload.deal_id is not None:
+        # Заметка к заявке — той же дверью, что лента заявки: чужая невидимая и заявка
+        # другого клиента прежде принимались молча (разбор 28.09.2026).
+        from core.services import deal_service, permissions_service
+
+        zayavka = deal_service.get_deal(db, payload.deal_id)
+        if zayavka.client_id != client_id:
+            raise errors.ValidationError("Deal belongs to another client", code="deal_other_client")
+        deal_service.ensure_visible(db, zayavka, permissions_service.deals_scope(db, user))
     note = client_service.add_note(
         db,
         client_id,

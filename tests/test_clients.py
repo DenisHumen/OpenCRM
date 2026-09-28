@@ -1,6 +1,7 @@
 import itertools
 
 from tests.conftest import API
+from tests.test_roles import role_maker, staff_maker  # noqa: F401 — фикстуры
 
 _schyot = itertools.count(1)
 
@@ -540,3 +541,26 @@ def test_spisok_klientov_znaet_zayavki_i_posledniy_kontakt(root_client):
     assert stroka["deals_open"] == 2 and stroka["deals_open_amount"] == 4_000
     assert stroka["deals_won"] == 0
     assert stroka["last_contact_at"], "звонок в ленте — это контакт"
+
+
+def test_zametka_k_chuzhoy_zayavke_ne_pishetsya(root_client, role_maker, staff_maker):  # noqa: F811
+    """Разбор 28.09.2026: `deal_id` в заметке клиента не проверялся — менеджер «только со
+    своими» писал в ленту чужой заявки, а заметка могла лечь к заявке другого клиента."""
+    klient = root_client.post(f"{API}/clients", json={"name": "Клиент для заметки"}).json()
+    chuzhaya = root_client.post(f"{API}/deals", json={"title": "Чужая заявка", "client_id": klient["id"]}).json()
+    drugoy = root_client.post(f"{API}/clients", json={"name": "Другой клиент"}).json()
+
+    ne_tot = root_client.post(
+        f"{API}/clients/{drugoy['id']}/notes", json={"kind": "note", "body": "мимо", "deal_id": chuzhaya["id"]}
+    )
+    assert ne_tot.status_code == 422 and ne_tot.json()["error"]["code"] == "deal_other_client"
+
+    svoi = staff_maker(
+        "zametka-svoi@test.local",
+        role_maker("Заметки — свои заявки", ["clients.view", "clients.edit", "deals.view"])["id"],
+    )
+    otkaz = svoi.post(
+        f"{API}/clients/{klient['id']}/notes", json={"kind": "note", "body": "в чужую ленту", "deal_id": chuzhaya["id"]}
+    )
+    assert otkaz.status_code == 403, otkaz.text
+    assert svoi.post(f"{API}/clients/{klient['id']}/notes", json={"kind": "note", "body": "просто заметка"}).status_code == 201
