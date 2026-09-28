@@ -353,9 +353,15 @@ class SecurityHeaders:
         # Тело не по размеру отсекаем ДО чтения: разбирать 200 МБ, чтобы затем
         # ответить «слишком длинное имя», — уже проигранная память.
         if request.method in MUTATING_METHODS:
-            declared = request.headers.get("content-length")
+            declared = request.headers.get("content-length", "")
             content_type = request.headers.get("content-type", "")
-            if declared and "json" in content_type and int(declared) > MAX_JSON_BODY:
+            # Потолок — на всё, кроме загрузки файлов: `text/plain` на JSON-ручку FastAPI
+            # читал целиком ещё до входа — до 220 МБ в память от постороннего (28.09.2026).
+            if (
+                declared.isdigit()
+                and not content_type.startswith("multipart/form-data")
+                and int(declared) > MAX_JSON_BODY
+            ):
                 return JSONResponse(
                     status_code=413,
                     content={

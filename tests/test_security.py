@@ -3,6 +3,8 @@
 Главная: подмена X-Forwarded-For больше не создаёт новый бакет rate-limit
 и не даёт обойти защиту подбора PIN.
 """
+import pytest
+
 from starlette.requests import Request
 
 from tests.conftest import API, ROOT_EMAIL, login, make_manager, png_bytes
@@ -126,6 +128,21 @@ def test_a_huge_json_body_is_refused_before_it_is_read(manager_client):
     # Обычный запрос той же формы проходит: потолок про размер, а не про форму.
     fine = manager_client.post(f"{API}/clients", json={"name": "Обычный клиент"})
     assert fine.status_code == 201, fine.text
+
+
+@pytest.mark.parametrize("tip", ["text/plain", "application/x-www-form-urlencoded", "application/octet-stream", ""])
+def test_potolok_tela_ne_obhoditsya_smenoy_tipa(tip):
+    """Разбор 28.09.2026: потолок смотрел только на `json` в типе — `text/plain` на открытый
+    приём заявок проходил до потолка nginx (220 МБ) и читался в память до всякой проверки."""
+    from fastapi.testclient import TestClient
+
+    from web.main import app
+    from web.middleware import MAX_JSON_BODY
+
+    otvet = TestClient(app).post(
+        f"{API}/public/leads", content=b"x" * (MAX_JSON_BODY + 1024), headers={"content-type": tip}
+    )
+    assert otvet.status_code == 413, otvet.text
 
 
 def test_the_cap_does_not_touch_file_uploads(manager_client):
