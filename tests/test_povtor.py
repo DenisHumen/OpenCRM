@@ -84,3 +84,34 @@ def test_neponyatoe_pravilo_otvergaetsya(pravilo):
 def test_neizvestnyy_poyas_otvergaetsya():
     with pytest.raises(errors.ValidationError):
         p.mestnoe(NACHALO, "Europe/Atlantida")
+
+
+@pytest.mark.parametrize(
+    "pravilo",
+    [
+        "FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=30",
+        "FREQ=DAILY;BYMONTH=4,6;BYMONTHDAY=31",
+        "FREQ=MONTHLY;BYMONTHDAY=1;BYSETPOS=3",
+        "FREQ=WEEKLY;BYDAY=MO,TU;BYSETPOS=3",
+    ],
+)
+def test_pravilo_bez_razov_otvergaetsya_srazu(pravilo):
+    """Разбор 28.09.2026: dateutil искал первый раз «30 февраля» до 9999 года — 2,5 с на
+    каждом календаре. Отказ — до перебора, по устройству правила."""
+    import time
+
+    nachalo = time.perf_counter()
+    with pytest.raises(errors.ValidationError) as otkaz:
+        p.razobrat(pravilo)
+    assert otkaz.value.code == "povtor_bez_razov"
+    assert time.perf_counter() - nachalo < 0.1
+
+
+@pytest.mark.parametrize(
+    "pravilo",
+    ["FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=29", "FREQ=MONTHLY;BYMONTHDAY=31", "FREQ=MONTHLY;BYDAY=MO;BYSETPOS=5",
+     "FREQ=MONTHLY;BYMONTHDAY=-1", "FREQ=WEEKLY;BYDAY=MO,TU;BYSETPOS=-1"],
+)
+def test_redkoe_pravilo_ne_otvergaetsya(pravilo):
+    assert p.razobrat(pravilo)
+

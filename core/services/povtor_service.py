@@ -95,7 +95,38 @@ def razobrat(pravilo: str | None) -> str | None:
         itog.append(f"WKST={nachalo_nedeli}")
     if chasti:
         raise _ploho("Unsupported rule parts: " + ", ".join(sorted(chasti)))
+    _est_razy(chastota, itog)
     return ";".join(itog)
+
+
+#: Сколько дней бывает в месяце (февраль — с високосным годом).
+_DNEY_V_MESYATSE = {1: 31, 2: 29, 3: 31, 4: 30, 5: 31, 6: 30, 7: 31, 8: 31, 9: 30, 10: 31, 11: 30, 12: 31}
+
+
+def _est_razy(chastota: str, chasti: list[str]) -> None:
+    """Правило без единого раза («30 февраля») — ошибка набора, а не редкий повтор.
+
+    dateutil ищет его первый раз до 9999 года и сверяет UNTIL лишь с найденными:
+    2,5 с процессора на каждом календаре (разбор 28.09.2026). Поэтому проверка — по
+    устройству правила, до всякого перебора.
+    """
+    znach = dict(kusok.split("=", 1) for kusok in chasti)
+    chisla = [int(d) for d in znach["BYMONTHDAY"].split(",")] if "BYMONTHDAY" in znach else []
+    mesyatsy = [int(m) for m in znach["BYMONTH"].split(",")] if "BYMONTH" in znach else list(range(1, 13))
+    if chisla and not any(abs(d) <= _DNEY_V_MESYATSE[m] for d in chisla for m in mesyatsy):
+        raise errors.ValidationError("The rule never happens", code="povtor_bez_razov")
+    if "BYSETPOS" in znach:
+        dni = znach.get("BYDAY", "")
+        if chastota == "DAILY":
+            v_periode = 1
+        elif chastota == "WEEKLY":
+            v_periode = len(dni.split(",")) if dni else 1
+        elif dni:
+            return  # день недели в месяце и в году повторяется четыре-пять раз и больше
+        else:
+            v_periode = len(chisla or [1]) * (len(mesyatsy) if chastota == "YEARLY" else 1)
+        if max(abs(int(p)) for p in znach["BYSETPOS"].split(",")) > v_periode:
+            raise errors.ValidationError("The rule never happens", code="povtor_bez_razov")
 
 
 def _chislo(tekst: str, ot: int, do: int, imya: str) -> int:
