@@ -49,6 +49,10 @@ ZAKRYTO: tuple[tuple[frozenset[str] | None, str], ...] = (
     (frozenset({"POST", "PATCH", "PUT", "DELETE"}), "/roles*"),
     (None, "/staff/{user_id}/role"),
     (None, "/staff/{user_id}/approve"),
+    # Вернуть уволенного — выдать доступ; отключить и отклонить — тем же решением человека.
+    (None, "/staff/{user_id}/enable"),
+    (None, "/staff/{user_id}/disable"),
+    (None, "/staff/{user_id}/reject"),
     (None, "/system/storage/purge"),
     (frozenset({"DELETE"}), "/system/files/{work_id}"),
     (None, "/staff/{user_id}/reset-password"),

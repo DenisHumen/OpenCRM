@@ -322,6 +322,8 @@ def disable(db: Session, actor: User, user_id: int) -> User:
     user = _get_manager(db, user_id)
     from core.services import permissions_service
 
+    # Не шире себя: `staff.manage` отключал директора, чьи права шире (разбор 28.09.2026).
+    permissions_service.ne_shire_sebya(db, actor, user)
     permissions_service.ubedis_est_komu_razdavat(db, actor, exclude_user=user.id)
     was = user.status
     user.status = STATUS_DISABLED
@@ -359,6 +361,10 @@ def reset_password(db: Session, actor: User, user_id: int) -> tuple[User, str]:
     user.password_hash = passwords.hash_password(temp_password)
     user.must_change_password = True
     users_repo.delete_sessions_for_user(db, user.id)
+    # Сброс — штатное восстановление угнанной учётки, и выпущенное из-под неё на неё
+    # же гаснет. Агенту, которого заводят с временным паролем, токен выдаёт другой —
+    # тот остаётся (разбор 28.09.2026).
+    user_tokens_repo.otozvat_vypushchennye_soboy(db, user.id, now_utc())
     db.flush()
     # Величин у этого действия нет, и выдумывать их нельзя: пароль в журнал не
     # попадает ни в каком виде. Записываем сам факт — он и есть ответ на вопрос
@@ -456,6 +462,9 @@ def delete_user(db: Session, actor: User, user_id: int) -> None:
     # отключённый.
     from core.services import permissions_service
 
+    # Удаление необратимо, и root его делал только от root'а через `set_role`, а сюда
+    # не-root с `staff.manage` проходил: владелец удалялся сотрудником (разбор 28.09.2026).
+    permissions_service.ne_shire_sebya(db, actor, user)
     permissions_service.ubedis_est_komu_razdavat(db, actor, exclude_user=user.id)
     #
     # Снимок берём до удаления: после него от аккаунта не остаётся ничего, а

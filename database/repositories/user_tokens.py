@@ -53,6 +53,16 @@ def otozvat_vse(db: Session, user_id: int, kogda: datetime) -> int:
     ).rowcount
 
 
+def otozvat_vypushchennye_soboy(db: Session, user_id: int, kogda: datetime) -> int:
+    """Токены, которые сотрудник выпустил себе сам. Выпущенные ему другим (агенту —
+    root'ом) остаются: их выдавал не он."""
+    return db.execute(
+        update(UserToken)
+        .where(UserToken.user_id == user_id, UserToken.created_by == user_id, UserToken.revoked_at.is_(None))
+        .values(revoked_at=kogda)
+    ).rowcount
+
+
 def zhivyh(db: Session, now: datetime) -> int:
     return sum(
         1

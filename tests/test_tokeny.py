@@ -232,7 +232,11 @@ def test_sbros_parolya_tolko_ne_shire_sebya(root_client, role_maker, staff_maker
     assert kadrovik.post(f"{API}/staff/{_moy_id(uzhe)}/reset-password").status_code == 200
 
 
-@pytest.mark.parametrize(("metod", "put"), [("POST", "/roles"), ("POST", "/staff/1/role"), ("POST", "/roles/assign/1")])
+@pytest.mark.parametrize(
+    ("metod", "put"),
+    [("POST", "/roles"), ("POST", "/staff/1/role"), ("POST", "/roles/assign/1"),
+     ("POST", "/staff/1/enable"), ("POST", "/staff/1/disable"), ("POST", "/staff/1/reject")],
+)
 def test_token_ne_razdayot_prava(root_client, metod, put):
     agent = _po_tokenu(_vypustit(root_client)["token"])
     otvet = agent.request(metod, f"{API}{put}", json={})
@@ -251,3 +255,33 @@ def test_smena_svoego_parolya_gasit_tokeny(root_client, role_maker, staff_maker)
     assert smena.status_code == 200, smena.text
     assert agent.get(f"{API}/tasks").json()["error"]["code"] == "token_revoked"
 
+
+def test_uvolit_i_udalit_tolko_ne_shire_sebya(root_client, role_maker, staff_maker):  # noqa: F811
+    """Разбор 28.09.2026: `staff.manage` удалял root (если их больше одного) и отключал
+    директора с правами шире своих — необратимо и без решения того, кто выше. Код
+    отказа сверяется: 403 здесь даёт и соседний рубеж «последний управляющий»."""
+    kadrovik = staff_maker("uvolit-kadry@test.local", role_maker("Увольнение — кадры", ["staff.view", "staff.manage"])["id"])
+    shire = staff_maker("uvolit-shire@test.local", role_maker("Увольнение — шире", ["staff.view", "settings.manage"])["id"])
+    ne_shire = ("cannot_grant_what_you_lack", "cannot_modify_root")
+
+    for otvet in (
+        kadrovik.post(f"{API}/staff/{_moy_id(shire)}/disable"),
+        kadrovik.delete(f"{API}/staff/{_moy_id(shire)}"),
+        kadrovik.delete(f"{API}/staff/{_moy_id(root_client)}"),
+    ):
+        assert otvet.status_code == 403 and otvet.json()["error"]["code"] in ne_shire, otvet.text
+
+
+def test_sbros_gasit_tokeny_vypushchennye_iz_pod_uchyotki(root_client, role_maker, staff_maker):  # noqa: F811
+    """Разбор 28.09.2026: сброс пароля — штатное восстановление угнанной учётки, а
+    токен, выпущенный из-под неё на неё же, его переживал. Выданный другим — нет."""
+    nastroyshchik = staff_maker(
+        "sbros-tokeny@test.local", role_maker("Сброс — токены", ["tasks.view", "settings.manage"])["id"]
+    )
+    user_id = _moy_id(nastroyshchik)
+    svoy = nastroyshchik.post(TOKENS, json={"name": "Угонщик"})
+    assert svoy.status_code == 201, svoy.text
+    ot_roota = _vypustit(root_client, user_id)
+    assert root_client.post(f"{API}/staff/{user_id}/reset-password").status_code == 200
+    assert _po_tokenu(svoy.json()["token"]).get(f"{API}/tasks").json()["error"]["code"] == "token_revoked"
+    assert _po_tokenu(ot_roota["token"]).get(f"{API}/tasks").status_code == 200
