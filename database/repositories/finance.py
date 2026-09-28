@@ -365,6 +365,11 @@ def accrual_total(db: Session, operation_id: int) -> int:
     return accrual_totals(db, [operation_id]).get(operation_id, 0)
 
 
+def zapert_operatsiyu(db: Session, operation_id: int) -> None:
+    """Занять операцию до конца транзакции: итог цепочки поправок считается после."""
+    db.execute(select(FinanceOperation.id).where(FinanceOperation.id == operation_id).with_for_update()).all()
+
+
 def reversal_of(db: Session, operation_id: int) -> FinanceOperation | None:
     """Операция, отменяющая эту. Второй раз отменить одно и то же нельзя.
 

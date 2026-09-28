@@ -960,6 +960,9 @@ def adjust_accrual(
         raise errors.ValidationError(
             "Only an accrual can be adjusted", code="not_an_accrual"
         )
+    # Итог цепочки — под замком головы: две поправки «80 → 140» разом писали
+    # каждая +60, и начисление становилось 200 (разбор 28.09.2026).
+    finance_repo.zapert_operatsiyu(db, head.id)
     if finance_repo.reversal_of(db, head.id) is not None:
         raise errors.ValidationError(
             "This accrual has already been reversed", code="accrual_reverted"

@@ -1275,7 +1275,7 @@ SVG только `width` и `height`; пока картинку показыва
 | PATCH | `/finance/rules/{id}` | 🔑 `finance.manage` | Изменить правило |
 | DELETE | `/finance/rules/{id}` | 🔑 `finance.manage` | Убрать правило |
 | POST | `/finance/payments` | 🔑 `finance.create` | Принять оплату или вернуть её — решает знак суммы |
-| PATCH | `/finance/accruals/{operation_id}` | 🔑 `finance.create` | Поправить сумму начисления: было 80, стало 140 |
+| PATCH | `/finance/accruals/{operation_id}` | 🔑 `finance.create` | Поправить сумму начисления: было 80, стало 140. Итог цепочки считается под замком головы начисления: две поправки «80 → 140» разом дописывали по +60, и выходило 200 (разбор 28.09.2026) |
 | GET | `/finance/documents/{id}/money` | 🔑 `finance.view` | Деньги по бланку: получено, остаток, состояние, начисления; `refunded` — отдано обратно по возвратам заказа («получено» не уменьшает). У возврата `total` — сумма к возврату, `refunded` — сколько отдано, `paid` — рассчитан |
 | GET | `/finance/deals/{id}/money` | 🔑 `finance.view` | Сколько получено по заявке |
 | GET | `/finance/profit` | 🔑 `finance.view` | Доход минус расход за период, с разбивкой по статьям |

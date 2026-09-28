@@ -855,6 +855,52 @@ def test_dvoe_otmenyayut_odin_pereezd_razom(root_client, monkeypatch):
         root_client.delete(f"{WAREHOUSES}/{vtoroy['id']}")
 
 
+def test_dve_popravki_nachisleniya_razom(root_client, monkeypatch):
+    """Поправка считала итог цепочки и писала разницу без замка: две «80 → 140»
+    разом дописывали по +60, и начисление становилось 200. Замок — на голову
+    начисления (`finance.zapert_operatsiyu`)."""
+    import time
+
+    from database.repositories import finance as finance_repo
+    from tests.test_finance_rules import FINANCE, ORDERS, make_rule, money_of, order_with, product
+
+    bylo = {m["key"]: m["enabled"] for m in root_client.get(f"{API}/modules").json()["items"]}
+    for key in ("documents", "warehouse", "orders", "finance"):
+        assert root_client.post(f"{API}/modules/{key}", json={"enabled": True}).status_code == 200
+    pravilo = None
+    try:
+        statya = root_client.post(
+            f"{FINANCE}/categories", json={"name": "Упаковка дуэли", "direction": "expense"}
+        ).json()
+        pravilo = make_rule(root_client, base="per_order", category_id=statya["id"], amount=8_000)
+        zakaz = order_with(root_client, product(root_client))
+        assert root_client.post(f"{ORDERS}/{zakaz['id']}/close", json={}).status_code == 200
+        nachislenie = money_of(root_client, zakaz["id"])["accruals"][0]
+
+        nastoyashchiy = finance_repo.add_operation
+
+        def medlenno(*args, **kwargs):
+            time.sleep(0.6)
+            return nastoyashchiy(*args, **kwargs)
+
+        monkeypatch.setattr(finance_repo, "add_operation", medlenno)
+
+        def popravit(zaderzhka):
+            time.sleep(zaderzhka)
+            return root_client.patch(f"{FINANCE}/accruals/{nachislenie['id']}", json={"amount": 14_000}).status_code
+
+        codes = duel(popravit, 0, 0.2)
+        monkeypatch.undo()
+        assert set(codes) == {"first", "second"}, f"об ударе не отчитались: {codes}"
+        itog = money_of(root_client, zakaz["id"])["accruals"][0]
+        assert itog["amount"] == 14_000, f"поправки сложились: {itog}, ответы {codes}"
+    finally:
+        if pravilo is not None:
+            root_client.delete(f"{FINANCE}/rules/{pravilo['id']}")
+        for key in ("finance", "orders", "warehouse", "documents"):
+            root_client.post(f"{API}/modules/{key}", json={"enabled": bylo[key]})
+
+
 # --- запасные коды двухфакторки ------------------------------------------------
 
 
