@@ -53,9 +53,11 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import time
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -75,6 +77,11 @@ from deploy.github import (
 from deploy.journal import Journal, _atomic_write
 from deploy.runner import HttpProbe, Result, Shell
 
+try:
+    import fcntl
+except ImportError:  # Windows разработчика: замка нет, обновлятор там не живёт
+    fcntl = None
+
 STATUS_DISABLED = "disabled"
 STATUS_UP_TO_DATE = "up-to-date"
 STATUS_DEPLOYED = "deployed"
@@ -89,6 +96,17 @@ STATUS_BROKEN = "broken"  # откат тоже не поднялся
 #: не пробовали: до названного часа ответом будет тот же отказ. Смешай их — и
 #: в логе не отличить «GitHub молчит» от «мы сами решили подождать».
 STATUS_RATE_LIMITED = "rate-limited"
+#: Идёт другое обслуживание — второе обновление, ночная копия, копия или
+#: восстановление с экрана. Круг пропущен, ничего не тронуто.
+STATUS_BUSY = "busy"
+
+#: Замок обслуживания в каталоге состояния. `flock`: снимается сам, когда процесс
+#: умер. Его же берёт `./opencrm.sh backup` и `restore` (docs/08, «Одно обслуживание за раз»).
+ZAMOK_OBSLUZHIVANIYA = ".zamok-obsluzhivaniya"
+#: Метка обновления в замке копий приложения (`backup_service._zanyat`, тот же файл).
+METKA_OBNOVLENIYA = "obnovlenie"
+#: Как у `backup_service.USTAREL_SEKUND`: работа старше — брошенная.
+KOPIYA_USTARELA_SEKUND = 2 * 3600
 
 #: Имя проекта compose для набора тестов. Флагом `-p`, а не строкой `name:` в
 #: файле: `COMPOSE_PROJECT_NAME` перебивает вторую, и уборка после набора
@@ -398,6 +416,85 @@ class Updater:
         }
 
     def run_once(self, force: bool = False) -> Outcome:
+        # `force-update` из консоли — второй процесс рядом со службой: без замка два
+        # деплоя шли разом, каждый со своим снимком, миграциями и откатом (разбор 28.09.2026).
+        with self._zamok_obsluzhivaniya() as svoboden:
+            if not svoboden:
+                return Outcome(
+                    STATUS_BUSY, from_sha=self.head_sha(),
+                    reason="идёт другое обслуживание (обновление или копия) — попробую следующим кругом",
+                )
+            return self._run_once(force)
+
+    @contextmanager
+    def _zamok_obsluzhivaniya(self):
+        """`True` — замок наш. Замок, который не открылся, обновлений не останавливает:
+        иначе починить обновлятор было бы нечем, кроме рук на сервере."""
+        if fcntl is None:
+            yield True
+            return
+        try:
+            self.config.state_dir.mkdir(parents=True, exist_ok=True)
+            fayl = open(self.config.state_dir / ZAMOK_OBSLUZHIVANIYA, "a")
+        except OSError as beda:
+            self.log(f"замок обслуживания не открылся ({beda!r}) — работаю без него")
+            yield True
+            return
+        try:
+            try:
+                fcntl.flock(fayl, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                svoboden = False
+            except OSError as beda:
+                self.log(f"замок обслуживания не взялся ({beda!r}) — работаю без него")
+                svoboden = True
+            else:
+                svoboden = True
+            yield svoboden
+        finally:
+            fayl.close()
+
+    def _zanyat_kopii(self) -> bool | None:
+        """Занять замок копий приложения на время обновления.
+
+        Подмена контейнера обрывает копию или восстановление с экрана на середине, а
+        полузалитая база — худшее, что может остаться. `False` — там идёт работа с
+        экрана; `None` — замка не завести, обновлению это не мешает.
+        """
+        put = self.config.data_dir / "backups" / "sayt" / "zanyato"
+        for _popytka in range(2):
+            try:
+                put.parent.mkdir(parents=True, exist_ok=True)
+                fd = os.open(put, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            except FileExistsError:
+                try:
+                    chey = put.read_text(encoding="utf-8").strip()
+                    vozrast = time.time() - put.stat().st_mtime
+                except FileNotFoundError:
+                    continue
+                except OSError:
+                    return None
+                if chey != METKA_OBNOVLENIYA and 0 <= vozrast < KOPIYA_USTARELA_SEKUND:
+                    return False
+                # Своя метка от оборванного обновления или брошенная работа.
+                put.unlink(missing_ok=True)
+                continue
+            except OSError:
+                return None
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(METKA_OBNOVLENIYA)
+            return True
+        return None
+
+    def _osvobodit_kopii(self) -> None:
+        put = self.config.data_dir / "backups" / "sayt" / "zanyato"
+        try:
+            if put.read_text(encoding="utf-8").strip() == METKA_OBNOVLENIYA:
+                put.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+    def _run_once(self, force: bool) -> Outcome:
         if not force and not self.journal.autoupdate_enabled:
             return Outcome(STATUS_DISABLED, from_sha=self.head_sha())
 
@@ -449,11 +546,24 @@ class Updater:
         if gate is not None:
             return gate
 
-        # Гейт выше пропускает дальше ТОЛЬКО зелёный CI — значит на обычном
-        # пути спрашивать GitHub второй раз незачем, ответ уже есть.
-        return self._deploy(
-            current, head.sha, ci_zelyonye=not force and self.config.require_ci
-        )
+        zanyal = self._zanyat_kopii()
+        if zanyal is False:
+            # Метку забываем, как у ждущего CI: иначе следующий опрос ответил бы
+            # «не изменилось», и коммит ждал бы следующего.
+            self.journal.write(etag="")
+            return Outcome(
+                STATUS_BUSY, current, head.sha,
+                reason="идёт копия или восстановление с экрана — обновление подождёт",
+            )
+        try:
+            # Гейт выше пропускает дальше ТОЛЬКО зелёный CI — значит на обычном
+            # пути спрашивать GitHub второй раз незачем, ответ уже есть.
+            return self._deploy(
+                current, head.sha, ci_zelyonye=not force and self.config.require_ci
+            )
+        finally:
+            if zanyal:
+                self._osvobodit_kopii()
 
     def _ci_gate(self, current: str, target: str, force: bool) -> Outcome | None:
         """Проверки GitHub на входящем коммите. `None` — путь свободен.
@@ -543,7 +653,10 @@ class Updater:
             self._sleep(lomtik)
             ostalos -= lomtik
             try:
-                self._prosba_s_ekrana()
+                # Под замком: чистка посреди сборки `force-update` снесла бы её слои.
+                with self._zamok_obsluzhivaniya() as svoboden:
+                    if svoboden:
+                        self._prosba_s_ekrana()
             except Exception as failure:  # noqa: BLE001 — демон не имеет права упасть
                 self.log(f"чистка кэша по просьбе не удалась: {failure!r}")
 

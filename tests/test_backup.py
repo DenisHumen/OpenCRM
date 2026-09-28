@@ -1110,6 +1110,8 @@ def _backup_pod_sh(tmp_path, *, ya: str, chown_padaet: bool = False) -> tuple[st
         'SUDO=""',
         f"DOCKER_ENV='{koren}/docker.env'",
         "need_install() { :; }", "step() { :; }", "info() { :; }", "ok() { :; }", "warn() { :; }",
+        # Замок обслуживания проверяется своим тестом (`test_autoupdate.py`).
+        "zamok_obsluzhivaniya() { :; }",
         "tr_() { printf '%s' \"$1\"; }",
         f"die() {{ echo \"DIE $*\" >> '{zhurnal}'; exit 1; }}",
         f"home_dir() {{ printf '%s' '{koren}'; }}",

@@ -2535,9 +2535,28 @@ cmd_apikey() {
     compose exec -T app python -m scripts.apikey "$@"
 }
 
+# Одно обслуживание за раз: обновлятор (deploy/updater.py) держит этот же замок,
+# пока выкладывает. Копия посреди миграций снимала бы полуперестроенную базу, а
+# восстановление посреди подмены контейнера обрывалось (разбор 28.09.2026).
+# `flock` на дескрипторе 9 живёт до конца скрипта и снимается сам.
+zamok_obsluzhivaniya() {
+    command -v flock >/dev/null 2>&1 || return 0
+    _zdir="$(home_dir)/updates"
+    mkdir -p "$_zdir" 2>/dev/null || return 0
+    _zfile="$_zdir/.zamok-obsluzhivaniya"
+    if [ ! -e "$_zfile" ]; then
+        : >> "$_zfile" 2>/dev/null || return 0
+        # Заведённый root'ом (копия под systemd) обновлятор не открыл бы вовсе.
+        chown --reference="$_zdir" "$_zfile" 2>/dev/null || true
+    fi
+    exec 9>>"$_zfile" || return 0
+    flock -w "$1" 9
+}
+
 cmd_backup() {
     need_install
     step "$(tr_ "Резервная копия" "Backup")"
+    zamok_obsluzhivaniya 1800 || die "$(tr_ "идёт обновление: полчаса ждал и не дождался — копия не снята" "an update is running: waited half an hour — no backup taken")"
     _incoming="$(home_dir)/data/backups/incoming.sql"
     mkdir -p "$(home_dir)/data/backups"
     info "$(tr_ "снимаю дамп базы" "taking the database dump")"
@@ -2576,6 +2595,7 @@ cmd_backup() {
 cmd_restore() {
     need_install
     step "$(tr_ "Восстановление из копии" "Restore from backup")"
+    zamok_obsluzhivaniya 5 || die "$(tr_ "идёт обновление или копия — повторите, когда кончится (./opencrm.sh status)" "an update or a backup is running — retry when it is over (./opencrm.sh status)")"
     _dir="$(home_dir)/data/backups/daily"
     # Недельные — тоже в списке, и это не мелочь удобства. Ежедневных хранится
     # семь; всё, что старше недели, живёт ТОЛЬКО в weekly. Показывая один

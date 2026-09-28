@@ -33,6 +33,7 @@ from deploy.updater import (
     PROEKT_NABORA,
     STATUS_ABORTED,
     STATUS_BROKEN,
+    STATUS_BUSY,
     STATUS_DEPLOYED,
     STATUS_DISABLED,
     STATUS_RATE_LIMITED,
@@ -3045,3 +3046,75 @@ def test_razmery_docker_chitayutsya():
     assert kesh.v_bayty("512kB") == 512_000
     assert kesh.v_bayty("0B") == 0
     assert kesh.v_bayty("") is None
+
+
+# --- одно обслуживание за раз (разбор 28.09.2026) ---
+
+
+def _zamok_kopiy(config):
+    return config.data_dir / "backups" / "sayt" / "zanyato"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="flock — только на Linux, где обновлятор и живёт")
+def test_vtoroe_obsluzhivanie_zhdyot_zamka(tmp_path):
+    """`force-update` из консоли рядом со службой: два деплоя шли разом, каждый со
+    своим снимком, миграциями и откатом. Замок держит ночная копия и соседний деплой."""
+    import fcntl
+
+    from deploy.updater import ZAMOK_OBSLUZHIVANIYA
+
+    updater = make_updater(tmp_path)
+    updater.config.state_dir.mkdir(parents=True, exist_ok=True)
+    with open(updater.config.state_dir / ZAMOK_OBSLUZHIVANIYA, "a") as chuzhoy:
+        fcntl.flock(chuzhoy, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        outcome = updater.run_once(force=True)
+    assert outcome.status == STATUS_BUSY
+    assert not updater.shell.ran("fetch") and not updater.shell.ran("up -d")
+    assert updater.run_once().status == STATUS_DEPLOYED, "замок отпущен — обновление идёт"
+
+
+def test_kopiya_s_ekrana_ne_obryvaetsya_obnovleniem(tmp_path):
+    """Подмена контейнера оборвала бы восстановление с экрана на середине заливки."""
+    updater = make_updater(tmp_path)
+    zamok = _zamok_kopiy(updater.config)
+    zamok.parent.mkdir(parents=True, exist_ok=True)
+    zamok.write_text("3f2a9c", encoding="utf-8")
+
+    outcome = updater.run_once(force=True)
+    assert outcome.status == STATUS_BUSY
+    assert not updater.shell.ran("up -d")
+    assert zamok.read_text(encoding="utf-8") == "3f2a9c", "чужой замок не тронут"
+    assert updater.journal.etag == "", "иначе следующий опрос ответил бы «не изменилось»"
+
+
+def test_obnovlenie_derzhit_zamok_kopiy_i_otpuskaet(tmp_path):
+    """Пока идёт деплой, экран не начнёт копию или восстановление: замок у обновления."""
+    updater = make_updater(tmp_path)
+    zamok = _zamok_kopiy(updater.config)
+    vo_vremya = []
+    updater.shell.effect("up -d --build", lambda: vo_vremya.append(zamok.read_text(encoding="utf-8")))
+
+    assert updater.run_once().status == STATUS_DEPLOYED
+    assert vo_vremya and vo_vremya[0] == "obnovlenie"
+    assert not zamok.exists(), "после обновления замок копий свободен"
+
+
+def test_svoy_zamok_ot_oborvannogo_obnovleniya_ne_derzhit(tmp_path):
+    """Обновлятор умер посреди деплоя — его метка не должна запереть следующие."""
+    updater = make_updater(tmp_path)
+    zamok = _zamok_kopiy(updater.config)
+    zamok.parent.mkdir(parents=True, exist_ok=True)
+    zamok.write_text("obnovlenie", encoding="utf-8")
+    assert updater.run_once().status == STATUS_DEPLOYED
+
+
+def test_skript_i_obnovlyator_derzhat_odin_zamok():
+    """Имя замка живёт в двух местах: разойдутся — копия и деплой снова пойдут разом."""
+    from deploy.updater import ZAMOK_OBSLUZHIVANIYA
+
+    tekst = (Path(__file__).resolve().parent.parent / "opencrm.sh").read_text(encoding="utf-8")
+    assert f'_zfile="$_zdir/{ZAMOK_OBSLUZHIVANIYA}"' in tekst
+    for komanda in ("cmd_backup", "cmd_restore"):
+        telo = tekst.split(f"{komanda}() {{", 1)[1].split("\n}\n", 1)[0]
+        assert "zamok_obsluzhivaniya" in telo, f"{komanda} идёт мимо замка обслуживания"
+
