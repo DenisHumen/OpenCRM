@@ -616,7 +616,13 @@ class IzDialogaVhod(BaseModel):
     due_at: str | None = None
 
 
-@router.post("/chats/{chat_row_id}/deal", status_code=201)
+#: Заводить из диалога — вместе с правом на саму переписку, а не вместо него: иначе
+#: «Project manager» без телеграма перебором номеров читал текст и имена чужих
+#: диалогов и привязывал их к карточкам (разбор 28.09.2026).
+_perepiska = Depends(require_perm("telegram", "view"))
+
+
+@router.post("/chats/{chat_row_id}/deal", status_code=201, dependencies=[_perepiska])
 def zayavka_iz_dialoga(
     chat_row_id: int,
     data: IzDialogaVhod,
@@ -633,7 +639,7 @@ def zayavka_iz_dialoga(
     return {"id": zayavka.id, "title": zayavka.title, "client_id": zayavka.client_id}
 
 
-@router.post("/chats/{chat_row_id}/task", status_code=201)
+@router.post("/chats/{chat_row_id}/task", status_code=201, dependencies=[_perepiska])
 def zadacha_iz_dialoga(
     chat_row_id: int,
     data: IzDialogaVhod,
@@ -645,7 +651,12 @@ def zadacha_iz_dialoga(
     return {"id": zadacha.id, "title": zadacha.title}
 
 
-@router.post("/chats/{chat_row_id}/client", status_code=201)
+@router.post(
+    "/chats/{chat_row_id}/client",
+    status_code=201,
+    # Карточка сразу привязывается к диалогу — а привязка требует `telegram.create`.
+    dependencies=[_perepiska, Depends(require_perm("telegram", "create"))],
+)
 def kartochka_iz_dialoga(
     chat_row_id: int,
     db: Session = Depends(get_db),

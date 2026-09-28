@@ -212,7 +212,7 @@ def _company_name(db: Session, deal: Deal | None) -> str:
     return settings_service.get_all(db).get("brand_name", "")
 
 
-def _values(db: Session, client: Client | None, deal: Deal | None) -> dict[str, str]:
+def _values(db: Session, client: Client | None, deal: Deal | None, s_doskoy: bool = True) -> dict[str, str]:
     """Значения всех полей набора разом.
 
     Словарь строится поимённо и целиком — не по запросу «дай поле X». Так набор
@@ -225,7 +225,7 @@ def _values(db: Session, client: Client | None, deal: Deal | None) -> dict[str, 
         "client_company": client.company if client else "",
         "deal_title": deal.title if deal else "",
         "deal_number": _deal_number(deal),
-        "board_url": _board_url(db, deal),
+        "board_url": _board_url(db, deal) if s_doskoy else "",
         "company_name": _company_name(db, deal),
     }
 
@@ -305,6 +305,7 @@ def render(
     *,
     client_id: int | None = None,
     deal_id: int | None = None,
+    user: User | None = None,
 ) -> dict:
     """Готовый текст шаблона для этого клиента и этой заявки.
 
@@ -314,7 +315,20 @@ def render(
     """
     template = get_template(db, template_id)
     client, deal = _pair(db, client_id, deal_id)
-    result = substitute(template.body, _values(db, client, deal))
+    s_doskoy = True
+    if user is not None:
+        # Шаблон — не дверь мимо прав: `templates.view` открывал любую заявку по
+        # номеру и живую ссылку доски с токеном (разбор 28.09.2026).
+        from core.services import deal_service, permissions_service
+
+        if deal is not None:
+            if not permissions_service.has(db, user, "deals", "view"):
+                raise errors.ForbiddenError("Permission required: deals.view", code="permission_denied")
+            deal_service.ensure_visible(db, deal, permissions_service.deals_scope(db, user))
+        if client_id and not permissions_service.has(db, user, "clients", "view"):
+            raise errors.ForbiddenError("Permission required: clients.view", code="permission_denied")
+        s_doskoy = permissions_service.has(db, user, "boards", "view")
+    result = substitute(template.body, _values(db, client, deal, s_doskoy))
     return {
         "template_id": template.id,
         "name": template.name,

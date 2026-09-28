@@ -571,9 +571,10 @@ def test_chuzhoe_napominanie_ne_privyazyvaetsya_bez_prava(root_client, sotrudnik
     достаточно было своего ключа и сотни запросов, чтобы прочитать чужие
     напоминания мимо блока, который их охраняет.
     """
-    zadacha = root_client.post(f"{API}/tasks", json={"title": "Отвезти документы в банк"})
+    zadacha = root_client.post(f"{API}/tasks", json={"title": "Отвезти документы в банк", "obshchee": True})
     assert zadacha.status_code == 201, zadacha.text
     nomer = zadacha.json()["id"]
+    lichnoe = root_client.post(f"{API}/tasks", json={"title": "Личное root: пароль от банка"}).json()
 
     bez_prava, _ = sotrudnik(
         "klyuchi.chuzhaya.zadacha@test.local", ("keys.view", "keys.create", "keys.edit")
@@ -593,6 +594,11 @@ def test_chuzhoe_napominanie_ne_privyazyvaetsya_bez_prava(root_client, sotrudnik
     horosho = s_pravom.patch(f"{KLYUCHI}/{ego.json()['id']}", json={"task_id": nomer})
     assert horosho.status_code == 200, horosho.text
     assert horosho.json()["task"]["title"] == "Отвезти документы в банк"
+    # Разбор 28.09.2026: права на раздел мало — личное чужое напоминание не видно, 404.
+    chuzhoe = s_pravom.patch(f"{KLYUCHI}/{ego.json()['id']}", json={"task_id": lichnoe["id"]})
+    assert chuzhoe.status_code == 404, chuzhoe.text
+    assert "пароль от банка" not in chuzhoe.text
+    root_client.delete(f"{API}/tasks/{lichnoe['id']}")
 
     bez_prava.delete(f"{KLYUCHI}/{svoy.json()['id']}")
     s_pravom.delete(f"{KLYUCHI}/{ego.json()['id']}")

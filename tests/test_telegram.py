@@ -12,6 +12,7 @@
 import pytest
 
 from tests.conftest import API
+from tests.test_roles import role_maker, staff_maker  # noqa: F401 — фикстуры
 
 TG = f"{API}/telegram"
 
@@ -2295,3 +2296,21 @@ def test_fayl_uhodit_s_podpisyu_i_otvetom(root_client, bot_nastroen, monkeypatch
     # видит одно, а клиент получил другое.
     stalo = root_client.get(f"{TG}/chats/{dialog['id']}/messages").json()["items"]
     assert stalo[-1]["reply_to_id"] == vopros, f"в переписке ответ не привязан: {stalo[-1]}"
+
+
+def test_iz_dialoga_zavodit_tolko_tot_komu_otkryta_perepiska(root_client, bot_nastroen, role_maker, staff_maker):  # noqa: F811
+    """Разбор 28.09.2026: право на заявки, напоминания и клиентов без права на телеграм
+    давало перебором номеров текст последнего сообщения, имя и телефон собеседника и
+    привязку диалога к карточке."""
+    _poslat(root_client, bot_nastroen, _obnovlenie(509900, 1, text="Секретный текст клиента"))
+    dialog = _dialog(root_client, 509900)
+    bez_telegrama = staff_maker(
+        "tg-bez-perepiski@test.local",
+        role_maker("Без телеграма", ["deals.view", "deals.create", "tasks.view", "tasks.create",
+                                     "clients.view", "clients.create"])["id"],
+    )
+    for put in ("deal", "task", "client"):
+        otvet = bez_telegrama.post(f"{TG}/chats/{dialog['id']}/{put}", json={})
+        assert otvet.status_code == 403, f"{put}: {otvet.text}"
+        assert "Секретный текст" not in otvet.text
+    assert _dialog(root_client, 509900)["client_id"] is None, "диалог привязан без права на переписку"

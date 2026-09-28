@@ -22,6 +22,7 @@ import pytest
 
 from core.services import modules_service, template_service
 from tests.conftest import API, make_manager
+from tests.test_roles import role_maker, staff_maker  # noqa: F401 — фикстуры
 
 TEMPLATES = f"{API}/templates"
 MODULES = f"{API}/modules"
@@ -575,3 +576,34 @@ def test_figurnaya_skobka_ne_pohozhaya_na_podstanovku_ostayotsya_tekstom(
     body = render(root_client, template["id"]).json()
     assert body["text"] == 'Пришлите {"формат": "json"} и { } — —'
     assert body["unknown"] == []
+
+
+# --- 5. шаблон — не дверь мимо прав (разбор 28.09.2026) -----------------------
+
+
+def test_shablon_ne_otkryvaet_chuzhuyu_zayavku_i_dosku(root_client, maker, client_with_deal, role_maker, staff_maker):  # noqa: F811
+    """`templates.view` открывал любую заявку по номеру — название, клиента и живую
+    ссылку доски с токеном — даже без права на заявки и доски."""
+    made = client_with_deal("Чужой клиент шаблона ТЕСТ")
+    shablon = maker("Проверка прав ТЕСТ", "{deal_title} {client_name} {board_url}")
+
+    tolko_shablony = staff_maker(
+        "shablon-bez-zayavok@test.local", role_maker("Шаблоны без заявок", ["templates.view"])["id"]
+    )
+    otkaz = render(tolko_shablony, shablon["id"], deal_id=made["deal"]["id"])
+    assert otkaz.status_code == 403 and "deals.view" in otkaz.json()["error"]["message"]
+
+    tolko_svoi = staff_maker(
+        "shablon-svoi@test.local",
+        role_maker("Шаблоны и свои заявки", ["templates.view", "deals.view", "clients.view"])["id"],
+    )
+    chuzhaya = render(tolko_svoi, shablon["id"], deal_id=made["deal"]["id"])
+    assert chuzhaya.status_code == 403, chuzhaya.text
+
+    vidit_vse = staff_maker(
+        "shablon-vse-bez-dosok@test.local",
+        role_maker("Шаблоны и все заявки", ["templates.view", "deals.view", "deals.view_others", "clients.view"])["id"],
+    )
+    tekst = render(vidit_vse, shablon["id"], deal_id=made["deal"]["id"]).json()["text"]
+    assert made["share"]["url"] not in tekst, "ссылка доски без права на доски"
+    assert made["share"]["url"] in render(root_client, shablon["id"], deal_id=made["deal"]["id"]).json()["text"]

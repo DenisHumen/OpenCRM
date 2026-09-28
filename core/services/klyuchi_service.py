@@ -225,6 +225,12 @@ def kratko(
     """
     zapasnye = _zapasnye(klyuch)
     zadacha = _zadacha(db, klyuch, zadachi)
+    if zadacha is not None:
+        from core.services import task_service
+
+        # Ключ в общей категории видят многие, а напоминание при нём — личное.
+        if not task_service.mozhet_videt(db, actor, zadacha):
+            zadacha = None
     return {
         "note": klyuch.note or "",
         "seen_by": vidyat,
@@ -361,9 +367,11 @@ def _napominanie(db: Session, actor: User, nomer) -> int | None:
         raise errors.ValidationError("Reminders module is off", code="key_tasks_off")
     if not permissions_service.has(db, actor, "tasks", "view"):
         raise errors.ForbiddenError("Permission required: tasks.view", code="permission_denied")
-    if tasks_repo.get(db, int(nomer)) is None:
-        raise errors.NotFoundError("Task not found", code="task_not_found")
-    return int(nomer)
+    from core.services import task_service
+
+    # Видимость — самого напоминания, а не раздела: личное чужое отвечает 404
+    # (разбор 28.09.2026: прежде хватало `tasks.view`).
+    return task_service.dostupnoe(db, actor, int(nomer)).id
 
 
 def sozdat(db: Session, actor: User, dannye: dict) -> TwoFactorKey:

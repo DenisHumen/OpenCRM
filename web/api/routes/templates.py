@@ -107,7 +107,7 @@ def render_template(
     template_id: int,
     client_id: int | None = Query(default=None),
     deal_id: int | None = Query(default=None),
-    _: User = Depends(require_perm("templates", "view")),
+    user: User = Depends(require_perm("templates", "view")),
     db: Session = Depends(get_db),
 ):
     """Готовый текст: `{text, missing, unknown}` плюс имя и канал шаблона.
@@ -120,7 +120,7 @@ def render_template(
     форма ответа не зависит от того, повезло ли с данными, — иначе экрану
     пришлось бы угадывать, какие ключи сегодня бывают.
     """
-    return template_service.render(db, template_id, client_id=client_id, deal_id=deal_id)
+    return template_service.render(db, template_id, client_id=client_id, deal_id=deal_id, user=user)
 
 
 @router.post("", status_code=201)
