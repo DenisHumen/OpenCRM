@@ -687,6 +687,9 @@ def stornirovat(db: Session, document_id: int, author: User) -> Document:
     провести его целиком за человека значит решить за него, чего он не говорил.
     Позиции переносятся полностью, лишнее он удалит.
     """
+    # Под замком исходной: двойное нажатие давало два черновика — проверка ниже
+    # не видела соседа, пока тот не зафиксирован (разбор 28.09.2026).
+    documents_repo.zapert_i_perechitat(db, document_id)
     ishodnaya = get(db, document_id)
     if ishodnaya.status not in (STATUS_ISSUED, STATUS_CLOSED):
         raise errors.ValidationError(
@@ -751,23 +754,34 @@ def stornirovat(db: Session, document_id: int, author: User) -> Document:
 
 
 def _proverit_storno_protiv_vozvrata(db: Session, waybill: Document, rows: list) -> None:
-    """Сторно накладной заказа и возврат покупателя возвращают один и тот же
-    товар двумя бумагами. Без замка на заказ двое, проводящие их разом, вернули
-    бы на склад больше, чем уезжало (дуэль в `test_odin_iz_mnogih`)."""
+    """Сторно возвращает не больше, чем уехало по исходной накладной.
+
+    Вычитаются уже проведённые сторно её же и — у накладной заказа — возвраты
+    покупателя: оба возвращают тот же товар. Без этого два сторно одной накладной
+    или правка строки сторно вверх приходовали на склад больше, чем уезжало
+    (разбор 28.09.2026). Замки — исходная, потом заказ (дуэли в `test_odin_iz_mnogih`).
+    """
     if waybill.basis_id is None:
         return
     ishodnaya = documents_repo.get(db, waybill.basis_id)
     if ishodnaya is None or ishodnaya.kind not in WAYBILL_KINDS or ishodnaya.basis_id is None:
         return
-    zakaz = documents_repo.get(db, ishodnaya.basis_id)
-    if zakaz is None or zakaz.kind not in ORDER_KINDS:
-        return
-    documents_repo.zapert_bumagu(db, zakaz.id)
-    vernulos = documents_repo.vozvrashcheno_po_zakazu(db, zakaz.id)
+    documents_repo.zapert_bumagu(db, ishodnaya.id)
     uekhalo: dict[int, int] = {}
     for row in documents_repo.lines_of(db, ishodnaya.id):
         if row.product_id is not None:
             uekhalo[row.product_id] = uekhalo.get(row.product_id, 0) + row.quantity_milli
+    vernulos: dict[int, int] = {}
+    for sosed in documents_repo.po_osnovaniyu(db, ishodnaya.id):
+        if sosed.id != waybill.id and sosed.status in (STATUS_ISSUED, STATUS_CLOSED):
+            for row in documents_repo.lines_of(db, sosed.id):
+                if row.product_id is not None:
+                    vernulos[row.product_id] = vernulos.get(row.product_id, 0) + row.quantity_milli
+    zakaz = documents_repo.get(db, ishodnaya.basis_id) if ishodnaya.basis_id is not None else None
+    if zakaz is not None and zakaz.kind in ORDER_KINDS:
+        documents_repo.zapert_bumagu(db, zakaz.id)
+        for product_id, skolko in documents_repo.vozvrashcheno_po_zakazu(db, zakaz.id).items():
+            vernulos[product_id] = vernulos.get(product_id, 0) + skolko
     for row in rows:
         if row.product_id is None:
             continue
@@ -775,7 +789,7 @@ def _proverit_storno_protiv_vozvrata(db: Session, waybill: Document, rows: list)
         if row.quantity_milli > mozhno:
             raise errors.ValidationError(
                 f"{row.name_snapshot}: only {warehouse_service.format_quantity(max(0, mozhno))} "
-                f"can still be reversed — the rest already came back by a return",
+                f"can still be reversed — no more left on the original waybill",
                 code="reversal_exceeds_shipped",
             )
 

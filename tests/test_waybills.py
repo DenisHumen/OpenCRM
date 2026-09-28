@@ -510,6 +510,22 @@ def test_vtoroe_storno_otkazyvaet(root_client, client_row):
     assert vtoroe.json()["error"]["code"] == "waybill_already_reversed"
 
 
+def test_storno_ne_prihoduet_bolshe_uekhavshego(root_client, client_row):
+    """Разбор 28.09.2026: у накладной без заказа предела у сторно не было — строку
+    сторно правили вверх, и склад получал больше, чем уезжало."""
+    item = product(root_client, stock="10")
+    waybill = chernovik(root_client, client_row, item, quantity="2")
+    assert root_client.post(f"{WAYBILLS}/{waybill['id']}/post", json={}).status_code == 200
+    storno = root_client.post(f"{WAYBILLS}/{waybill['id']}/reverse").json()
+    [stroka] = storno["lines"]
+    assert root_client.patch(
+        f"{WAYBILLS}/{storno['id']}/lines/{stroka['id']}", json={"quantity": "5"}
+    ).status_code == 200
+    otkaz = root_client.post(f"{WAYBILLS}/{storno['id']}/post", json={})
+    assert otkaz.status_code == 422 and otkaz.json()["error"]["code"] == "reversal_exceeds_shipped"
+    assert ostatok(root_client, item) == 8_000
+
+
 # --- один путь к остатку ------------------------------------------------------
 
 

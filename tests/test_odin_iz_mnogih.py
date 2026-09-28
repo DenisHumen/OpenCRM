@@ -769,6 +769,49 @@ def test_provodyat_i_udalyayut_vozvrat_razom(root_client, monkeypatch):
     )
 
 
+def test_dva_storno_odnoy_nakladnoy_razom(root_client, monkeypatch):
+    """Второе сторно отсекалось проверкой «сторно уже есть» без замка: двойное
+    нажатие давало два черновика, и оба проводились — склад получал товар дважды.
+    Замок — на исходную накладную (`documents_repo.zapert_i_perechitat`)."""
+    import time
+
+    from core.services import waybill_service
+    from tests.test_orders import product
+
+    for key in ("documents", "warehouse", "orders", "waybills"):
+        root_client.post(f"{API}/modules/{key}", json={"enabled": True})
+    try:
+        tovar = product(root_client, stock="5")
+        pokupatel = root_client.post(f"{API}/clients", json={"name": "Дуэль сторно дважды"}).json()
+        nakladnaya = root_client.post(f"{API}/waybills", json={"kind": "waybill_out", "client_id": pokupatel["id"]}).json()
+        root_client.post(f"{API}/waybills/{nakladnaya['id']}/lines", json={"product_id": tovar["id"], "quantity": "2"})
+        assert root_client.post(f"{API}/waybills/{nakladnaya['id']}/post", json={}).status_code == 200
+
+        # Окно — между проверкой «сторно уже есть» и фиксацией первого черновика.
+        nastoyashchiy = waybill_service.create
+
+        def medlenno(*args, **kwargs):
+            chernovik = nastoyashchiy(*args, **kwargs)
+            time.sleep(0.6)
+            return chernovik
+
+        monkeypatch.setattr(waybill_service, "create", medlenno)
+
+        def vtoroy():
+            time.sleep(0.2)
+            return root_client.post(f"{API}/waybills/{nakladnaya['id']}/reverse").status_code
+
+        codes = duel(
+            lambda udar: udar(),
+            lambda: root_client.post(f"{API}/waybills/{nakladnaya['id']}/reverse").status_code,
+            vtoroy,
+        )
+        assert set(codes) == {"first", "second"}, f"об ударе не отчитались: {codes}"
+        assert sorted(codes.values()) == [201, 422], f"два сторно одной накладной: {codes}"
+    finally:
+        root_client.post(f"{API}/modules/waybills", json={"enabled": False})
+
+
 # --- запасные коды двухфакторки ------------------------------------------------
 
 
