@@ -47,10 +47,30 @@ def _krug() -> None:
                     db.commit()
             # Первый заход — через минуту после старта: брошенное выкладкой видно сразу.
             if nomer % UBORKA_KAZHDYE == 3:
-                with SessionLocal() as db:
-                    board_service.dovesti_zastryavshie(db)
+                dovesti_v_storone()
         except Exception as exc:  # noqa: BLE001 — поток обязан пережить сбой базы
             print(f"[opencrm] звонки напоминаний: шаг не удался — {exc!r}")
+
+
+_dovodka: threading.Thread | None = None
+
+
+def dovesti_v_storone() -> None:
+    """Доводка брошенных работ досок — своим потоком: три видео по пять минут в
+    потоке звонков съели бы их пятнадцатиминутное окно (разбор 28.09.2026)."""
+    global _dovodka
+    if _dovodka is not None and _dovodka.is_alive():
+        return
+
+    def rabota() -> None:
+        try:
+            with SessionLocal() as db:
+                board_service.dovesti_zastryavshie(db)
+        except Exception as exc:  # noqa: BLE001 — поток доводки не роняет процесс
+            print(f"[opencrm] доводка работ досок не удалась — {exc!r}")
+
+    _dovodka = threading.Thread(target=rabota, daemon=True, name="board-dovodka")
+    _dovodka.start()
 
 
 def zapustit() -> None:

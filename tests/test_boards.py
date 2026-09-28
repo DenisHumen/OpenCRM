@@ -708,3 +708,23 @@ def test_svezhaya_obrabotka_ne_trogaetsya(manager_client):
         assert work_id not in board_service.dovesti_zastryavshie(db)
         assert db.get(Work, work_id).status == "processing"
 
+
+def test_dovodka_ne_derzhit_potok_zvonkov(monkeypatch):
+    """Разбор 28.09.2026: доводка шла в потоке звонков, и три видео по пять минут
+    съедали пятнадцатиминутное окно звонка."""
+    import threading
+    import time
+
+    from core.services import board_service, zvonki_service
+
+    otpustit = threading.Event()
+    monkeypatch.setattr(board_service, "dovesti_zastryavshie", lambda db: otpustit.wait(5))
+    nachalo = time.perf_counter()
+    zvonki_service.dovesti_v_storone()
+    zvonki_service.dovesti_v_storone()  # второй заход, пока идёт первый, не плодит потоков
+    assert time.perf_counter() - nachalo < 0.5, "доводка держит того, кто её позвал"
+    potok = zvonki_service._dovodka
+    otpustit.set()
+    potok.join(5)
+    assert not potok.is_alive()
+
