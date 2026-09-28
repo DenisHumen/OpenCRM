@@ -760,3 +760,16 @@ def stornirovano_po_zakazu(db: Session, order_id: int) -> dict[int, int]:
         .group_by(DocumentLine.product_id)
     ).all()
     return {int(product_id): as_int(summa) for product_id, summa in rows}
+
+
+def podpisi_po_nomeram(db: Session, document_ids) -> dict[int, tuple[str, str]]:
+    """{номер бумаги: (её номер, вид)} пачкой — для привязок напоминаний."""
+    nomera = {int(x) for x in document_ids if x}
+    if not nomera:
+        return {}
+    return {
+        nomer: (podpis, vid)
+        for nomer, podpis, vid in db.execute(
+            select(Document.id, Document.number, Document.kind).where(Document.id.in_(nomera))
+        )
+    }

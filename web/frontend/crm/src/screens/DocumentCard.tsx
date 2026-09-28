@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
 
 import { Icon } from "../components/Icon";
+import { NapominaniyaKartochki } from "../components/NapominaniyaKartochki";
 import { History } from "../components/History";
 import { PrintLangs } from "../components/PrintLangs";
 import { Chip, ConfirmModal, KnopkaKorziny, LoadFailed, ScreenLoading } from "../components/ui";
@@ -216,6 +217,8 @@ export function DocumentCard() {
         </div>
         <div className="field-desc">{t("docClientLinkHint")}</div>
       </div>
+
+      <NapominaniyaKartochki privyazka={{ document_id: doc.id }} klientId={doc.client_id} order={4} />
 
       <div className="cards-blok" style={{ order: 4 }}>
         <History events={doc.events} label={(x) => statusLabel(t, x)} />

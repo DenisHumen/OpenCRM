@@ -59,6 +59,11 @@ from database.models import (
     StockMove,
     StockTransfer,
     Task,
+    TaskEvent,
+    TaskMember,
+    TaskSignal,
+    TaskStep,
+    TaskUrl,
     FileLinkView,
     StoredFile,
     TaskFile,
@@ -116,6 +121,8 @@ T_ORDERS = Topic("orders", "orders", "orders")
 T_WAYBILLS = Topic("waybills", "waybills", "waybills")
 T_TASKS = Topic("tasks", "tasks", "tasks")
 T_TASK_FILES = Topic("tasks", "tasks", "tasks", id_attr="task_id")
+#: Звонок напоминания — только тому, кому звонит: вкладка по намёку заберёт его и зазвучит.
+T_TASK_SIGNALS = Topic("task_signals", "tasks", "tasks", BY_USER, "user_id")
 #: Файлы и папки блока «Файлы». Оба намёка идут на один и тот же экран, и
 #: разделять их незачем: дерево он перечитывает целиком.
 T_FILES = Topic("files", "files", "files")
@@ -169,6 +176,12 @@ TOPICS: dict[type, Topic | Callable | None] = {
     DocumentFile: "document",
     Task: T_TASKS,
     TaskFile: T_TASK_FILES,
+    TaskMember: T_TASK_FILES,
+    TaskStep: T_TASK_FILES,
+    TaskUrl: T_TASK_FILES,
+    # История пишется вместе с правкой самого напоминания — намёк от неё был бы вторым.
+    TaskEvent: None,
+    TaskSignal: T_TASK_SIGNALS,
     FileFolder: T_FILES,
     StoredFile: T_FILES,
     FileLink: T_FILES,

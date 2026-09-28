@@ -77,6 +77,13 @@ def _vidno(db: Session, actor: User, blok: str | None, oblast: str) -> bool:
     return permissions_service.has(db, actor, oblast, "view")
 
 
+def _chi_zadachi(db: Session, actor: User) -> int | None:
+    """Чьи вложения напоминаний видно: None — все (руководитель), иначе — свои и с полки."""
+    from core.services import task_service
+
+    return None if task_service.vidit_vse(db, actor) else actor.id
+
+
 def _korni(db: Session, actor: User) -> dict[str, bool]:
     return {
         DOSKI: _vidno(db, actor, "boards", "boards"),
@@ -122,7 +129,7 @@ def derevo(db: Session, actor: User) -> dict:
     if otkryto[KLIENTY]:
         vetki.append({"id": KLIENTY, "kind": "clients", "n": fayly_repo.schyot_klientov(db), "kids": []})
     if otkryto[ZADACHI]:
-        vetki.append({"id": ZADACHI, "kind": "tasks", "n": fayly_repo.schyot_zadach(db), "kids": []})
+        vetki.append({"id": ZADACHI, "kind": "tasks", "n": fayly_repo.schyot_zadach(db, _chi_zadachi(db, actor)), "kids": []})
     if otkryto[BLANKI]:
         deti = [
             {"id": f"doc:{kind}", "kind": f"doc-{kind}", "n": skolko}
@@ -239,7 +246,7 @@ def soderzhimoe(db: Session, actor: User, uzel: str, page: int, per_page: int) -
     if uzel == ZADACHI:
         if not otkryto[ZADACHI]:
             raise errors.ForbiddenError("Tasks are not available", code="permission_denied")
-        stroki, vsego = fayly_repo.vlozheniya_zadach(db, smeshchenie, per_page)
+        stroki, vsego = fayly_repo.vlozheniya_zadach(db, smeshchenie, per_page, _chi_zadachi(db, actor))
         items = [
             _stroka(
                 f"task:{f.id}", f.original_name, f.mime, f.size_bytes, f.created_at, imya, "/tasks"

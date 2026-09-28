@@ -24,6 +24,7 @@ from core.services import (
     pipeline_service,
     settings_service,
     warehouse_service,
+    zvonki_service,
 )
 from core.utils import normalize_email
 from database import models  # noqa: F401 — регистрирует модели в metadata
@@ -309,7 +310,11 @@ async def lifespan(app: FastAPI):
                 )
     finally:
         db.close()
+    # Звонки напоминаний — фоновым потоком; в тестах шаг зовут напрямую.
+    if settings.env != "test":
+        zvonki_service.zapustit()
     yield
+    zvonki_service.ostanovit()
     # Чтение потока живых обновлений — фоновый поток процесса; при остановке
     # его надо отпустить, иначе процесс ждёт `XREAD BLOCK` до конца окна.
     live_bus.sbrosit()

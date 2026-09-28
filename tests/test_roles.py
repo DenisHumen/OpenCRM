@@ -1677,16 +1677,21 @@ def test_napominanie_ne_podpisyvaet_chuzhuyu_zayavku(
         json={"title": "ТАЙНАЯ ЗАЯВКА ДЛЯ НАПОМИНАНИЯ", "client_id": klient.json()["id"]},
     )
     assert chuzhaya.status_code == 201, chuzhaya.text
+    rol = role_maker("Напоминания без чужих заявок", ["tasks.view", "deals.view"])
+    svoi_tolko = staff_maker("napominaniya-svoi@test.local", rol["id"])
+    # Напоминание ПОСТАВЛЕНО ему: своё он видит, а заголовок чужой заявки — нет.
+    # Личное напоминание root ему не видно вовсе (docs/bloki/29 §3) — сторож
+    # проверял бы пустоту.
+    kto = svoi_tolko.get(f"{API}/auth/me").json()["id"]
     zadacha = root_client.post(
-        f"{API}/tasks", json={"title": "Позвонить по тайной", "deal_id": chuzhaya.json()["id"]}
+        f"{API}/tasks",
+        json={"title": "Позвонить по тайной", "deal_id": chuzhaya.json()["id"], "poluchateli": [kto]},
     )
     assert zadacha.status_code == 201, zadacha.text
 
-    rol = role_maker("Напоминания без чужих заявок", ["tasks.view", "deals.view"])
-    svoi_tolko = staff_maker("napominaniya-svoi@test.local", rol["id"])
-
     spisok = svoi_tolko.get(f"{API}/tasks", params={"deal_id": chuzhaya.json()["id"]})
     assert spisok.status_code == 200, spisok.text
+    assert [z["id"] for z in spisok.json()["items"]] == [zadacha.json()["id"]]
     assert "ТАЙНАЯ ЗАЯВКА" not in spisok.text, "заголовок чужой заявки уехал в напоминания"
 
     kartochka = svoi_tolko.get(f"{API}/tasks/{zadacha.json()['id']}")

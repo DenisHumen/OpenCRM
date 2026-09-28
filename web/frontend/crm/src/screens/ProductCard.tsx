@@ -2,6 +2,7 @@ import { type FormEvent, useCallback, useEffect, useRef, useState } from "react"
 import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { Icon } from "../components/Icon";
+import { NapominaniyaKartochki } from "../components/NapominaniyaKartochki";
 import { ProductBarcodes } from "../components/ProductBarcodes";
 import { ProductPhotos } from "../components/ProductPhotos";
 import {
@@ -246,6 +247,8 @@ export function ProductCard() {
       {/* Снимки — и услуге тоже. «Выезд мастера» на полке не лежит, но
           фотография у услуги осмысленна: так выглядит результат работы, и
           показать её клиенту проще, чем описать. */}
+      <NapominaniyaKartochki privyazka={{ product_id: product.id }} order={8} />
+
       <div className="cards-blok" style={{ order: 8 }}>
         <ProductPhotos productId={product.id} />
       </div>

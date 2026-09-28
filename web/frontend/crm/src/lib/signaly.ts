@@ -283,3 +283,74 @@ export function signal_o_soobshchenii(opts: {
     /* окно не показалось — звук уже прозвучал */
   }
 }
+
+/** Ведёт ли эта вкладка сигналы — остальные вкладки того же человека молчат. */
+export function vedushchaya_vkladka(): boolean {
+  return vedushchaya;
+}
+
+/** Три ноты по восходящей — звонок напоминания не спутать с письмом (две ноты). */
+function zazvonit(): void {
+  razbudit_zvuk();
+  if (!zvuk) return;
+  const igrat = () => {
+    try {
+      if (!zvuk || zvuk.state !== "running") return;
+      const teper = zvuk.currentTime;
+      for (const [kogda, chastota] of [
+        [0, 784],
+        [0.16, 988],
+        [0.32, 1318.5],
+      ] as const) {
+        const golos = zvuk.createOscillator();
+        const gromkost = zvuk.createGain();
+        golos.frequency.value = chastota;
+        golos.type = "triangle";
+        gromkost.gain.setValueAtTime(0.0001, teper + kogda);
+        gromkost.gain.exponentialRampToValueAtTime(0.22, teper + kogda + 0.015);
+        gromkost.gain.exponentialRampToValueAtTime(0.0001, teper + kogda + 0.3);
+        golos.connect(gromkost).connect(zvuk.destination);
+        golos.start(teper + kogda);
+        golos.stop(teper + kogda + 0.32);
+      }
+    } catch {
+      /* звук не обязателен, окно важнее */
+    }
+  };
+  if (zvuk.state !== "running") void zvuk.resume().then(igrat, () => {});
+  else igrat();
+}
+
+/**
+ * Звонок напоминания: звук и системное окно у ведущей вкладки.
+ *
+ * Окно срочного висит, пока его не закроют (`requireInteraction`): срочное,
+ * пропавшее само через пять секунд, — это пропущенное срочное.
+ */
+export function signal_napominaniya(opts: {
+  zagolovok: string;
+  telo: string;
+  metka: string;
+  srochno: boolean;
+  onOpen: () => void;
+}): void {
+  if (!signaly_vklyucheny() || !vedushchaya) return;
+  zazvonit();
+  try {
+    if (typeof Notification !== "undefined" && Notification.permission === "granted") {
+      const okno = new Notification(opts.zagolovok, {
+        body: opts.telo,
+        tag: opts.metka,
+        icon: "/static/favicon.svg",
+        requireInteraction: opts.srochno,
+      });
+      okno.onclick = () => {
+        window.focus();
+        opts.onOpen();
+        okno.close();
+      };
+    }
+  } catch {
+    /* окно не показалось — звук уже прозвучал */
+  }
+}

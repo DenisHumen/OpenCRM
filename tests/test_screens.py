@@ -400,6 +400,10 @@ def test_screens_with_a_filter_cancel_stale_answers():
 
 # Ключ — файл и путь запроса; подстановки шаблона свёрнуты в `{}`.
 POST_WITHOUT_LATCH: dict[tuple[str, str], str] = {
+    ("ZvonkiNapominaniy.tsx", "/tasks/signals/ack"): (
+        "отметка «звонок увиден»: второе нажатие ставит ту же отметку тем же "
+        "звонкам, записей не заводит (docs/bloki/29-napominaniya.md §6)"
+    ),
     # Перевод состояния уже существующей записи. Второе нажатие повторяет
     # первое: бланк, который уже «закрыт», закрывается в то же самое «закрыт».
     ("Telegram.tsx", "/telegram/chats/{}/presence"): (

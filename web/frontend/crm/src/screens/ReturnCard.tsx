@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { History } from "../components/History";
 import { Icon } from "../components/Icon";
+import { NapominaniyaKartochki } from "../components/NapominaniyaKartochki";
 import { Chip, ConfirmModal, EmptyState, KnopkaKorziny, LoadFailed, ScreenLoading } from "../components/ui";
 import { VyborKlienta } from "../components/VyborKlienta";
 import { WarehousePicker, useWarehouses } from "../components/Warehouses";
@@ -269,6 +270,8 @@ export function ReturnCard() {
       <div className="cards-blok" style={{ order: 3 }}>
         <ReturnMedia vozvrat={vozvrat} canEdit={canEdit} onChanged={() => void load()} />
       </div>
+
+      <NapominaniyaKartochki privyazka={{ document_id: vozvrat.id }} klientId={vozvrat.client_id} order={4} />
 
       <div style={{ marginTop: 20, order: 4 }}>
         <History events={vozvrat.events} label={(status) => statusLabel(t, status, "return")} />

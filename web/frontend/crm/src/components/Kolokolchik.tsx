@@ -35,6 +35,8 @@ const ZNACHOK: Record<string, string> = {
   deal_stage: "deals",
   lead_received: "inbox",
   task_assigned: "clock",
+  task_signal: "clock",
+  task_done: "check",
 };
 
 /** Предмет уведомления — чьей буквой подписан кружок. Имя ищется раньше
@@ -64,6 +66,8 @@ export function podpis(t: Perevod, n: Uvedomlenie): string {
     deal_stage: "ntfDealStage",
     lead_received: "ntfLeadReceived",
     task_assigned: "ntfTaskAssigned",
+    task_signal: "ntfTaskSignal",
+    task_done: "ntfTaskDone",
     auto_waybill: "ntfAutoWaybill",
     auto_act: "ntfAutoAct",
   };
@@ -95,7 +99,10 @@ export function Kolokolchik() {
       if (bylo.current !== null && r.unread > bylo.current) {
         const svezhie = await api.get<{ items: Uvedomlenie[] }>("/notifications");
         const pervoe = svezhie.items.find((n) => !n.read);
-        if (pervoe) signal_o_sobytii({ zagolovok: t("notifications"), telo: podpis(t, pervoe) });
+        // Звонок напоминания звучит у своего окна (ZvonokNapominaniya): второй сигнал здесь — двойной звук.
+        if (pervoe && pervoe.kind !== "task_signal") {
+          signal_o_sobytii({ zagolovok: t("notifications"), telo: podpis(t, pervoe) });
+        }
         if (otkryt) setSpisok(svezhie.items);
       }
       bylo.current = r.unread;

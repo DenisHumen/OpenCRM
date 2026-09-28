@@ -11,10 +11,11 @@
 через `count(*)` — 16 мс.
 """
 
-from sqlalchemy import Select, and_, case, func, or_, select
+from sqlalchemy import Select, and_, case, delete, func, or_, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from database.models import Task, TaskFile
+from database.models import Task, TaskEvent, TaskFile, TaskMember, TaskSignal, TaskStep, TaskUrl
 from database.models.task import VAZHNOSTI
 
 #: Виды списков, которыми пользуются каждый день.
@@ -62,19 +63,48 @@ def _open_only(query: Select) -> Select:
     return query.where(Task.done_at.is_(None))
 
 
+def _vidimye(query: Select, user_id: int, vse: bool) -> Select:
+    """Своё, общая полка и то, где человек при напоминании. `vse` — право видеть все."""
+    if vse:
+        return query
+    svoi = select(TaskMember.task_id).where(TaskMember.user_id == user_id)
+    return query.where(or_(Task.obshchee.is_(True), Task.id.in_(svoi)))
+
+
+#: Чьи напоминания показать: все видимые, звонящие мне, поставленные мной другим, общая полка.
+KTO = ("vse", "moi", "postavil", "polka")
+
+
+def _kto(query: Select, user_id: int, kto: str) -> Select:
+    if kto == "moi":
+        mne = select(TaskMember.task_id).where(
+            TaskMember.user_id == user_id, TaskMember.poluchaet.is_(True)
+        )
+        return query.where(Task.id.in_(mne))
+    if kto == "postavil":
+        drugim = select(TaskMember.task_id).where(
+            TaskMember.user_id != user_id, TaskMember.poluchaet.is_(True)
+        )
+        return query.where(Task.created_by == user_id, Task.id.in_(drugim))
+    if kto == "polka":
+        return query.where(Task.obshchee.is_(True))
+    return query
+
+
 def search(
     db: Session,
     *,
+    user_id: int,
+    vse: bool,
     scope: str = SCOPE_OPEN,
+    kto: str = "vse",
     now,
     until=None,
-    assignee_id: int | None = None,
-    client_id: int | None = None,
-    deal_id: int | None = None,
+    privyazki: dict | None = None,
     limit: int,
 ) -> list[Task]:
-    """Список напоминаний. `until` — граница срока для «сегодня» и «недели»."""
-    query = select(Task)
+    """Список напоминаний, видимых человеку. `until` — граница срока для «сегодня» и «недели»."""
+    query = _kto(_vidimye(select(Task), user_id, vse), user_id, kto)
 
     if scope == SCOPE_DONE:
         query = query.where(Task.done_at.is_not(None)).order_by(Task.done_at.desc(), Task.id.desc())
@@ -84,51 +114,232 @@ def search(
             query = query.where(Task.due_at.is_not(None), Task.due_at < now)
         elif until is not None:
             query = query.where(Task.due_at.is_not(None), Task.due_at < until)
-        # Порядок: просроченное, важность, срок. Важность выше срока — «срочно»
-        # человек ставит руками именно затем, чтобы это увидели раньше прочего.
-        # Но просроченное всё равно первое, и это не про красоту: у списка есть
-        # потолок в двести строк, и две сотни бессрочных «срочно» вытеснили бы
-        # из выдачи ВСЁ просроченное — то есть обещания, которые уже нарушены.
         prosrocheno = case((and_(Task.due_at.is_not(None), Task.due_at < now), 0), else_=1)
         query = query.order_by(
             prosrocheno, _PO_VAZHNOSTI, Task.due_at.is_(None), Task.due_at.asc(), Task.id.desc()
         )
 
-    if assignee_id is not None:
-        query = query.where(Task.assignee_id == assignee_id)
-    if client_id is not None:
-        query = query.where(Task.client_id == client_id)
-    if deal_id is not None:
-        query = query.where(Task.deal_id == deal_id)
+    for kolonka, nomer in (privyazki or {}).items():
+        query = query.where(getattr(Task, kolonka) == nomer)
 
     return list(db.scalars(query.limit(limit)))
 
 
-def counters(db: Session, *, user_id: int, now, today_until) -> dict[str, int]:
-    """Счётчики для навигации: без них в задачи заходят «на всякий случай».
+def v_okne(db: Session, *, user_id: int, vse: bool, s, po, limit: int) -> list[Task]:
+    """Для календаря: открытые со сроком до конца окна и закрытые внутри окна.
+
+    Открытые — все до `po`, а не с `s`: просроченное и повторяющееся тоже нужно
+    календарю. Разы повторяющихся по дням раскладывает сервис.
+    """
+    query = _vidimye(select(Task), user_id, vse).where(
+        or_(
+            and_(Task.done_at.is_(None), Task.due_at.is_not(None), Task.due_at < po),
+            and_(Task.done_at.is_not(None), Task.done_at >= s, Task.done_at < po),
+        )
+    )
+    return list(db.scalars(query.order_by(Task.due_at.asc(), Task.id.asc()).limit(limit)))
+
+
+def counters(db: Session, *, user_id: int, vse: bool, now, today_until) -> dict[str, int]:
+    """Счётчики для навигации: без них в напоминания заходят «на всякий случай».
 
     Считаются мимо потолка списка нарочно: дело счётчика — сказать, сколько
     есть всего, а не сколько поместилось на экран.
     """
 
     def count(*conditions) -> int:
-        query = _open_only(select(func.count(Task.id)))
+        query = _vidimye(_open_only(select(func.count(Task.id))), user_id, vse)
         for condition in conditions:
             query = query.where(condition)
         return db.scalar(query) or 0
 
-    # Ничей — тоже мой: задача без исполнителя лежит на том, кто её увидит, и
-    # спрятать её из счётчика значило бы дать ей потеряться совсем.
-    mine = or_(Task.assignee_id == user_id, Task.assignee_id.is_(None))
+    mne = select(TaskMember.task_id).where(
+        TaskMember.user_id == user_id, TaskMember.poluchaet.is_(True)
+    )
     return {
         "overdue": count(Task.due_at.is_not(None), Task.due_at < now),
         "today": count(Task.due_at.is_not(None), Task.due_at < today_until),
-        "mine": count(mine),
+        "mine": count(Task.id.in_(mne)),
         "open": count(),
     }
 
 
-# --- вложения -----------------------------------------------------------------
+# --- люди ---------------------------------------------------------------------
+
+
+def lyudi(db: Session, task_ids) -> dict[int, list[TaskMember]]:
+    """{напоминание: люди при нём} одним запросом на список."""
+    nomera = {int(x) for x in task_ids if x}
+    if not nomera:
+        return {}
+    itog: dict[int, list[TaskMember]] = {n: [] for n in nomera}
+    for chelovek in db.scalars(
+        select(TaskMember).where(TaskMember.task_id.in_(nomera)).order_by(TaskMember.id)
+    ):
+        itog[chelovek.task_id].append(chelovek)
+    return itog
+
+
+def chlen(db: Session, task_id: int, user_id: int) -> TaskMember | None:
+    return db.scalar(
+        select(TaskMember).where(TaskMember.task_id == task_id, TaskMember.user_id == user_id)
+    )
+
+
+def dobavit(db: Session, obj) -> None:
+    db.add(obj)
+    db.flush()
+
+
+def ubrat(db: Session, obj) -> None:
+    db.delete(obj)
+    db.flush()
+
+
+# --- шаги, ссылки, история ----------------------------------------------------
+
+
+def shagi(db: Session, task_id: int) -> list[TaskStep]:
+    return list(db.scalars(
+        select(TaskStep).where(TaskStep.task_id == task_id).order_by(TaskStep.poryadok, TaskStep.id)
+    ))
+
+
+def shag(db: Session, task_id: int, step_id: int) -> TaskStep | None:
+    return db.scalar(select(TaskStep).where(TaskStep.id == step_id, TaskStep.task_id == task_id))
+
+
+def shagi_schyot(db: Session, task_ids) -> dict[int, tuple[int, int]]:
+    """{напоминание: (сделано шагов, всего)} — для строки списка."""
+    nomera = {int(x) for x in task_ids if x}
+    if not nomera:
+        return {}
+    rows = db.execute(
+        select(TaskStep.task_id, func.count(TaskStep.sdelan_at), func.count(TaskStep.id))
+        .where(TaskStep.task_id.in_(nomera))
+        .group_by(TaskStep.task_id)
+    ).all()
+    return {task_id: (sdelano, vsego) for task_id, sdelano, vsego in rows}
+
+
+def ssylki(db: Session, task_id: int) -> list[TaskUrl]:
+    return list(db.scalars(
+        select(TaskUrl).where(TaskUrl.task_id == task_id).order_by(TaskUrl.poryadok, TaskUrl.id)
+    ))
+
+
+def ssylka(db: Session, task_id: int, url_id: int) -> TaskUrl | None:
+    return db.scalar(select(TaskUrl).where(TaskUrl.id == url_id, TaskUrl.task_id == task_id))
+
+
+def istoriya(db: Session, task_id: int, limit: int = 100) -> list[TaskEvent]:
+    return list(db.scalars(
+        select(TaskEvent)
+        .where(TaskEvent.task_id == task_id)
+        .order_by(TaskEvent.created_at.desc(), TaskEvent.id.desc())
+        .limit(limit)
+    ))
+
+
+def sdelannye_v_okne(db: Session, task_ids, s, po) -> list[TaskEvent]:
+    """Закрытые разы повторяющихся внутри окна — календарь показывает и прошлое."""
+    nomera = {int(x) for x in task_ids if x}
+    if not nomera:
+        return []
+    return list(db.scalars(
+        select(TaskEvent).where(
+            TaskEvent.task_id.in_(nomera),
+            TaskEvent.vid == "done",
+            TaskEvent.srok >= s,
+            TaskEvent.srok < po,
+        )
+    ))
+
+
+# --- звонки -------------------------------------------------------------------
+
+
+def kandidaty_zvonka(db: Session, s, po) -> list[Task]:
+    """Открытые напоминания, у которых в окне [s, po] может найтись минута звонка."""
+    return list(db.scalars(
+        select(Task).where(
+            Task.done_at.is_(None), Task.due_at.is_not(None), Task.due_at >= s, Task.due_at <= po
+        )
+    ))
+
+
+def otlozhennye_v_okne(db: Session, s, po) -> list[TaskMember]:
+    """Кого пора разбудить после «отложить»."""
+    return list(db.scalars(
+        select(TaskMember).where(TaskMember.otlozheno_do >= s, TaskMember.otlozheno_do <= po)
+    ))
+
+
+def zvonok_zapisat(db: Session, signal: TaskSignal) -> bool:
+    """Записать звонок. Ключ (напоминание, человек, минута) уже занят — позвонил другой
+    процесс, и второго звонка не будет: False."""
+    try:
+        with db.begin_nested():
+            db.add(signal)
+            db.flush()
+    except IntegrityError:
+        return False
+    return True
+
+
+def zvonki_nerazobrannye(db: Session, user_id: int, s) -> list[TaskSignal]:
+    """Звонки человеку, которых он ещё не видел; старее `s` не показываем."""
+    return list(db.scalars(
+        select(TaskSignal)
+        .where(TaskSignal.user_id == user_id, TaskSignal.prinyato.is_(None), TaskSignal.created_at >= s)
+        .order_by(TaskSignal.moment.desc(), TaskSignal.id.desc())
+        .limit(50)
+    ))
+
+
+def zvonki_prinyat(db: Session, user_id: int, now, *, signal_ids=None, task_id=None) -> int:
+    """Отметить звонки увиденными: названные, все по напоминанию или все свои."""
+    query = update(TaskSignal).where(TaskSignal.user_id == user_id, TaskSignal.prinyato.is_(None))
+    if signal_ids is not None:
+        query = query.where(TaskSignal.id.in_([int(x) for x in signal_ids]))
+    if task_id is not None:
+        query = query.where(TaskSignal.task_id == task_id)
+    return db.execute(query.values(prinyato=now)).rowcount or 0
+
+
+def zvonki_prinyat_vsem(db: Session, task_id: int, now) -> None:
+    """Раз закрыт — звонки по нему смолкают у всех, а не только у закрывшего."""
+    db.execute(
+        update(TaskSignal)
+        .where(TaskSignal.task_id == task_id, TaskSignal.prinyato.is_(None))
+        .values(prinyato=now)
+    )
+
+
+def prinyal_li(db: Session, task_id: int, user_id: int, srok) -> bool:
+    """Отозвался ли человек хоть на один звонок этого раза — тогда настойчивость смолкает."""
+    return (
+        db.scalar(
+            select(func.count(TaskSignal.id)).where(
+                TaskSignal.task_id == task_id,
+                TaskSignal.user_id == user_id,
+                TaskSignal.srok == srok,
+                TaskSignal.prinyato.is_not(None),
+            )
+        )
+        or 0
+    ) > 0
+
+
+def zvonki_ubrat_starye(db: Session, do) -> int:
+    return db.execute(delete(TaskSignal).where(TaskSignal.created_at < do)).rowcount or 0
+
+
+def sleduyushchiy_poryadok(db: Session, task_id: int) -> int:
+    """Следующий номер по порядку для шага или ссылки — в конец."""
+    shagov = db.scalar(select(func.max(TaskStep.poryadok)).where(TaskStep.task_id == task_id)) or 0
+    ssylok = db.scalar(select(func.max(TaskUrl.poryadok)).where(TaskUrl.task_id == task_id)) or 0
+    return max(shagov, ssylok) + 1
 
 
 def files_of(db: Session, task_id: int) -> list[TaskFile]:

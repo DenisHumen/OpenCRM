@@ -57,8 +57,9 @@ def test_a_deadline_without_an_offset_is_taken_as_utc(manager_client):
 def test_task_without_an_assignee_goes_to_its_author(manager_client):
     """«Ничья» задача не делается никем: каждый думает, что возьмёт другой."""
     task = manager_client.post(TASKS, json={"title": "Кто-нибудь сделает"}).json()
-    assert task["assignee_id"] is not None
-    assert task["assignee_name"]
+    [avtor] = task["lyudi"]
+    assert avtor["vladelets"] and avtor["poluchaet"] and avtor["name"]
+    assert task["moyo"] is True and task["obshchee"] is False
 
 
 def test_a_task_needs_neither_client_nor_deal(manager_client):

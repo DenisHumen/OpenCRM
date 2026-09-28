@@ -5,6 +5,7 @@ import { CommandPalette } from "./components/CommandPalette";
 import { Icon } from "./components/Icon";
 import { Sidebar } from "./components/Sidebar";
 import { NovayaSborka, ScreenLoading, Toasts } from "./components/ui";
+import { ZvonkiNapominaniy } from "./components/ZvonkiNapominaniy";
 import { useApp } from "./lib/app";
 import { moduleOn } from "./lib/modules";
 import { useLive } from "./lib/live";
@@ -104,6 +105,7 @@ function Protected() {
       <MaintenanceBar />
       <LiveBar />
       <SignalyTelegrama />
+      <ZvonkiNapominaniy />
       <div className="app-shell">
         <Sidebar open={navOpen} onOpenSearch={() => setSearchOpen(true)} />
         {navOpen && (

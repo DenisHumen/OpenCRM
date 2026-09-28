@@ -162,3 +162,15 @@ def works_of_deleted_boards(db: Session) -> list[tuple[Board, Work]]:
 
 def deleted_boards(db: Session) -> list[Board]:
     return list(db.scalars(select(Board).where(Board.deleted_at.is_not(None))))
+
+
+def nazvaniya_po_nomeram(db: Session, board_ids) -> dict[int, str]:
+    """{доска: название} пачкой — для привязок напоминаний. Удалённые не отдаём."""
+    nomera = {int(x) for x in board_ids if x}
+    if not nomera:
+        return {}
+    return dict(
+        db.execute(
+            select(Board.id, Board.title).where(Board.id.in_(nomera), Board.deleted_at.is_(None))
+        ).all()
+    )

@@ -217,7 +217,6 @@ def test_prosrochennoe_napominanie_popadaet_v_trebuet_vnimaniya(root_client):
             Task(
                 title="Просроченное для сводки",
                 due_at=seychas - timedelta(hours=3),
-                assignee_id=None,
             )
         )
         db.commit()

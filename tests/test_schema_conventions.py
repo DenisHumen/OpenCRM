@@ -509,6 +509,8 @@ def test_otkat_ne_snimaet_indeksy_pered_snosom_tablitsy():
 TOVAR_MOZHNO_UNESTI = {
     "product_barcodes": "штрихкод — свойство карточки, а не запись о событии",
     "product_photos": "фотография — свойство карточки, а не запись о событии",
+    "tasks": "напоминание — заметка о товаре, а не история: удалили карточку — оно "
+    "остаётся без привязки, а не держит удаление (docs/bloki/29 §7)",
 }
 
 

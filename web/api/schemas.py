@@ -477,34 +477,46 @@ def document_out(document: Document) -> dict:
     }
 
 
-def task_out(
-    task: Task,
-    assignee_name: str | None = None,
-    client_name: str | None = None,
-    deal_title: str | None = None,
-    files_count: int = 0,
-    note_est: bool = False,
-) -> dict:
+def task_out(task: Task, dop: dict | None = None) -> dict:
     """Строка списка. Подробностей здесь нет — только «есть ли они»: на двухстах
     строках полный разбор у каждой это мегабайты ответа на вопрос, которого
-    никто не задавал. Сами подробности отдаёт карточка."""
+    никто не задавал. Сами подробности отдаёт карточка.
+
+    `dop` — то, что собирают пачкой на весь список: люди, имена привязок, счёт
+    вложений и шагов. Без него строка всё равно полная по своим полям.
+    """
+    dop = dop or {}
     return {
         "id": task.id,
         "title": task.title,
         "vazhnost": task.vazhnost,
-        "note_est": note_est,
-        # Число вложений — в списке: значок скрепки без него пришлось бы либо
-        # рисовать всегда, либо тянуть карточку каждого напоминания.
-        "files_count": files_count,
+        "note_est": dop.get("note_est", False),
+        "files_count": dop.get("files_count", 0),
         # Время уходит в ISO с явным Z: без него браузер разберёт его как
         # местное, и срок уедет на величину смещения.
         "due_at": _iso(task.due_at),
-        "assignee_id": task.assignee_id,
-        "assignee_name": assignee_name,
+        "ves_den": task.ves_den,
+        "poyas": task.poyas,
+        "povtor": task.povtor,
+        "povtor_posle": task.povtor_posle,
+        "opovesheniya": task.opovesheniya,
+        "nastoychivo": task.nastoychivo,
+        "obshchee": task.obshchee,
+        "lyudi": dop.get("lyudi", []),
+        "moyo": dop.get("moyo", False),
+        "shagi": dop.get("shagi", [0, 0]),
         "client_id": task.client_id,
-        "client_name": client_name,
+        "client_name": dop.get("client_name"),
         "deal_id": task.deal_id,
-        "deal_title": deal_title,
+        "deal_title": dop.get("deal_title"),
+        "document_id": task.document_id,
+        "document_title": dop.get("document_title"),
+        "document_kind": dop.get("document_kind"),
+        "product_id": task.product_id,
+        "product_name": dop.get("product_name"),
+        "board_id": task.board_id,
+        "board_title": dop.get("board_title"),
+        "created_by": task.created_by,
         "is_done": task.done_at is not None,
         "done_at": _iso(task.done_at),
         "created_at": _iso(task.created_at),

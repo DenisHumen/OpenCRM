@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { History } from "../components/History";
 import { Icon } from "../components/Icon";
+import { NapominaniyaKartochki } from "../components/NapominaniyaKartochki";
 import { useLabelsOn } from "../components/ProductBarcodes";
 import { Chip, ConfirmModal, KnopkaKorziny, LoadFailed, Modal, ScreenLoading } from "../components/ui";
 import { VyborKlienta } from "../components/VyborKlienta";
@@ -462,6 +463,8 @@ export function OrderCard() {
       {/* История заказа. Заведена по беде: закрытие при выключенном складе
           пишет в примечание «движений нет», и показать это было негде —
           человек не отличал «списали» от «не списали». */}
+      <NapominaniyaKartochki privyazka={{ document_id: order.id }} klientId={order.client_id} order={7} />
+
       <div style={{ marginTop: 20, order: 8 }}>
         <History
           events={order.events}

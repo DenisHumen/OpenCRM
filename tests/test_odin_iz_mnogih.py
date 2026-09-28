@@ -774,3 +774,40 @@ def test_dvoe_vycherkivayut_zapasnye_kody_razom(root_client):
         root_client.delete(f"{API}/keys/{nomer}/forever")
     finally:
         root_client.post(f"{API}/modules/keys", json={"enabled": False})
+
+
+def test_dva_protsessa_zvonyat_odnomu_v_odnu_minutu(root_client):
+    """Звонок напоминания — один на (напоминание, человек, минуту).
+
+    Планировщик идёт в каждом процессе uvicorn разом (docs/bloki/29 §6), и
+    окно у них общее: два шага над одной минутой — обычное дело, а не гонка
+    раз в год. Держит уникальный ключ `task_signals`; проверка «звонили ли уже»
+    перед записью окно не закрыла бы — оба прочли бы «нет».
+    """
+    from datetime import timedelta, timezone
+
+    from sqlalchemy import func, select
+
+    from core.services import task_service
+    from core.utils import now_utc
+    from database.models import TaskSignal
+    from database.session import SessionLocal
+
+    srok = now_utc().replace(microsecond=0) + timedelta(minutes=1)
+    task = root_client.post(
+        f"{API}/tasks", json={"title": "Дуэль звонков", "due_at": srok.replace(tzinfo=timezone.utc).isoformat()}
+    ).json()
+
+    def udar(_):
+        with SessionLocal() as db:
+            zvonkov = task_service.tick(db, srok + timedelta(seconds=5))
+            db.commit()
+            return zvonkov
+
+    codes = duel(udar, None, None)
+    assert not any(isinstance(c, str) for c in codes.values()), codes
+    with SessionLocal() as db:
+        zvonkov = db.scalar(
+            select(func.count(TaskSignal.id)).where(TaskSignal.task_id == task["id"], TaskSignal.vid == "due")
+        )
+    assert zvonkov == 1, f"звонков {zvonkov}, исходы шагов: {codes}"

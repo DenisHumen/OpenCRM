@@ -69,6 +69,7 @@ Every image below is a screenshot of the real thing. The data is invented: a Por
 - **Client addresses.** Suggestions while typing and a map thumbnail that opens the point in Google Maps; off by default ([doc 26](docs/bloki/26-adresa.md)).
 - **Keys.** A built-in TOTP vault that shows six-digit sign-in codes for the company's accounts, with categories and permissions; off by default ([doc 27](docs/bloki/27-klyuchi.md)).
 - **Files.** One tree of everything stored on the server — board work, client, task and form attachments, product photos ([doc 28](docs/bloki/28-fayly.md)).
+- **Reminders.** Personal by default or set for colleagues, with a month calendar, repeats down to "every 28 days" or "last Friday", early and persistent alerts, snooze, and a ring with sound in the browser; linked to deals, orders, papers and products ([doc 29](docs/bloki/29-napominaniya.md)).
 - **Notifications.** A bell with what others did and what the system did by itself: closed orders, posted waybills, deal stages, website requests, reminders assigned to you — with a browser alert on top.
 
 ## 📸 Screenshots
@@ -427,6 +428,7 @@ Everything is in [docs](docs/README.md). **The manual is written in Russian** �
 | [27 — Keys](docs/bloki/27-klyuchi.md) | Second-factor (TOTP) vault |
 | [27 — Sales report](docs/dizayn/27-otchyot-prodazh.md) | Dashboard sales widget |
 | [28 — Files](docs/bloki/28-fayly.md) | One tree for everything on disk |
+| [29 — Reminders](docs/bloki/29-napominaniya.md) | People, repeats, alerts, calendar |
 | [24 — Security audit](docs/ekspluatatsiya/24-audit-bezopasnosti.md), [14 — Rust](docs/ustroystvo/14-rust.md), [18 — Third-party components](docs/dizayn/18-chuzhie-komponenty.md), [23 — Kubernetes note](docs/ekspluatatsiya/23-kubernetes-zametka.md) | One-off reviews and decisions |
 
 ## 📁 Project structure

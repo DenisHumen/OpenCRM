@@ -434,7 +434,7 @@ def test_zayavka_stavit_napominanie_otvetstvennomu(root_client, intake_key):
         card = clients_named(root_client, "zhdushchij@example.com")[0]
         tasks = root_client.get(f"{API}/tasks", params={"client_id": card["id"]}).json()["items"]
         assert len(tasks) == 1, "напоминание не завелось"
-        assert tasks[0]["assignee_id"] == me["id"]
+        assert any(c["user_id"] == me["id"] and c["poluchaet"] for c in tasks[0]["lyudi"])
         # Карточка тоже достаётся ответственному, а не тому, кто первым откроет.
         assert card["manager_id"] == me["id"]
     finally:

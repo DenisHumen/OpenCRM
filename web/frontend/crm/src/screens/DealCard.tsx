@@ -6,6 +6,7 @@ import { DealStock } from "../components/DealStock";
 import { CallButton, CallsPanel } from "../components/CallsPanel";
 import { Feed } from "../components/Feed";
 import { Icon } from "../components/Icon";
+import { NapominaniyaKartochki } from "../components/NapominaniyaKartochki";
 import { VyborKlienta } from "../components/VyborKlienta";
 import { Chip, ConfirmModal, KnopkaKorziny, LoadFailed, Modal, ScreenLoading } from "../components/ui";
 import { api, ApiError } from "../lib/api";
@@ -23,7 +24,6 @@ import { nazvanieEtapa } from "../lib/etapy";
 import { OrdersOfCard } from "../components/OrdersOfCard";
 import { NewDocumentModal } from "./Documents";
 import { MailCompose, type MailSender } from "./Mail";
-import { QuickTask } from "./Tasks";
 
 type Stage = { key: string; name: string; kind: "open" | "won" | "lost" };
 
@@ -111,7 +111,6 @@ export function DealCard() {
   // отсутствия, а лишний запрос на каждой карточке заявки — ещё и шум в журнале.
   const hasDocuments = moduleOn(modules, "documents") && can(user, "documents.view");
   const hasCompanies = moduleOn(modules, "companies") && can(user, "companies.view");
-  const hasTasks = moduleOn(modules, "tasks") && can(user, "tasks.view");
   const hasMail = moduleOn(modules, "mail") && can(user, "mail.create");
 
   // Справочники карточки — через общий крючок, а не своим `catch(() => [])` на
@@ -124,7 +123,6 @@ export function DealCard() {
   const people = useReference<any>("/people");
   const companies = useReference<any>(hasCompanies ? "/companies" : null);
   const docs = useReference<any>(hasDocuments ? `/documents?deal_id=${id}` : null);
-  const tasks = useReference<any>(hasTasks ? `/tasks?deal_id=${id}` : null);
   // Ящики нужны только выбору отправителя и доступны только root. Не ответило —
   // форма работает: сервер возьмёт первый активный ящик сам.
   const mailAccounts = useReference<MailSender>(hasMail ? "/mail/senders" : null);
@@ -621,25 +619,7 @@ export function DealCard() {
 
       {/* Напоминание прямо отсюда: «перезвонить в четверг» придумывается во
           время разговора о заявке, а не потом на отдельном экране. */}
-      {hasTasks && (
-          <div className="card card-pad" style={{ marginBottom: 20, order: 4 }}>
-          <div className="metric-title" style={{ marginBottom: 12 }}>{t("tasks")}</div>
-          {(tasks.items ?? []).map((task: any) => (
-            <div key={task.id} className="doc-mini">
-              <span className="truncate" style={{ flex: 1, minWidth: 0 }}>{task.title}</span>
-              {task.due_at && (
-                <span style={{ color: "var(--faint)", fontSize: 12 }}>
-                  {formatDateTime(task.due_at, locale)}
-                </span>
-              )}
-            </div>
-          ))}
-          {tasks.failure !== null && (
-            <LoadFailed error={tasks.failure} onRetry={tasks.reload} />
-          )}
-          <QuickTask dealId={deal.id} clientId={deal.client_id} onCreated={tasks.reload} />
-        </div>
-      )}
+      <NapominaniyaKartochki privyazka={{ deal_id: deal.id }} klientId={deal.client_id} order={4} />
 
       <div className="card card-pad" style={{ order: 10 }}>
         <div className="metric-title" style={{ marginBottom: 12 }}>{t("stageHistory")}</div>

@@ -393,32 +393,57 @@ export const RUKOVODSTVO: Razdel[] = [
         module: "tasks",
         nazvanie: { ru: "Напоминания", en: "Reminders" },
         kratko: {
-          ru: "Срок, исполнитель и счётчик просрочки в меню.",
-          en: "A due date, an assignee and an overdue counter in the menu.",
+          ru: "Календарь, личные и поставленные коллегам, повторы, звонок со звуком.",
+          en: "A calendar, personal and assigned ones, repeats, a ring with sound.",
         },
         kuski: [
           {
             vid: "abzats",
             tekst: {
-              ru: "Напоминание — это то, о чём нельзя забыть: перезвонить, заказать деталь, отдать вещь. У него есть срок и исполнитель; клиент и заявка необязательны, потому что часть дел ни к кому не привязана.",
-              en: "A reminder is something you must not forget: call back, order a part, hand the item over. It has a due date and an assignee; a client and a deal are optional, because some things belong to nobody in particular.",
+              ru: "Напоминание — то, о чём нельзя забыть: перезвонить, заказать деталь, отдать вещь. Экран открывается календарём месяца: кружок на дате — напоминание, его цвет — важность (срочное фиолетовым), красная точка в углу — в этот день есть просроченное. Нажмите на день — справа откроется лента дня по времени. Кнопка «Список» показывает то же полосами: срочно, просрочено, сегодня, завтра, позже.",
+              en: "A reminder is something you must not forget: call back, order a part, hand the item over. The screen opens as a month calendar: a dot on a date is a reminder, its colour is the importance (urgent in violet), a red corner dot means something is overdue that day. Click a day and its timeline opens on the right. The “List” button shows the same in bands: urgent, overdue, today, tomorrow, later.",
             },
+          },
+          {
+            vid: "spisok",
+            punkty: [
+              {
+                ru: "Своё видите только вы. Поставить напоминание коллеге или позвать наблюдателя можно с правом «Ставить другим»; руководитель с правом «Видеть чужие» видит все.",
+                en: "Only you see your own. Setting a reminder for a colleague or adding a watcher needs the “Assign to others” right; a manager with “See others’ records” sees them all.",
+              },
+              {
+                ru: "Общая полка — напоминания для всех: видят все, берёт любой кнопкой «Взять себе». Сюда же приходят заявки с сайта без ответственного.",
+                en: "The shared shelf is for everyone: all see it, anyone takes it with “Take it”. Website requests without a manager land here too.",
+              },
+              {
+                ru: "«Каждому своё» разошлёт по напоминанию каждому получателю: «всем сдать отчёт» каждый отметит сам.",
+                en: "“A separate one for each” sends every recipient their own copy: with “everyone hand in the report” each person ticks it off alone.",
+              },
+            ],
           },
           {
             vid: "abzats",
             tekst: {
-              ru: "Просроченные считаются и показываются числом рядом с пунктом меню. Число видно с любого экрана — в этом и смысл: напоминание, которое надо пойти и посмотреть, работает хуже того, которое само попадается на глаза.",
-              en: "Overdue ones are counted and shown as a number next to the menu item. You see it from any screen — that is the point: a reminder you have to go and look up works worse than one that catches your eye.",
+              ru: "В карточке напоминания — повтор (каждый день, по будням, каждую неделю, месяц, год или своё: «каждые 28 дней», «в последнюю пятницу месяца», до даты или N раз, «считать от выполнения»), оповещения (в срок, за 5 минут … за неделю), «звонить, пока не отмечу», шаги, ссылки, фото и видео, привязки к клиенту и заявке и история. Закрыли повторяющееся — срок сам уедет на следующий раз.",
+              en: "The reminder card holds the repeat (daily, weekdays, weekly, monthly, yearly or custom: “every 28 days”, “last Friday of the month”, until a date or N times, “count from completion”), alerts (at the time, 5 minutes … a week before), “keep ringing until ticked off”, steps, links, photos and videos, links to a client and a deal, and the history. Tick off a repeating one and its due date moves to the next time by itself.",
             },
           },
           {
             vid: "vazhno",
             tekst: {
-              ru: "Напоминание заводится прямо из карточки клиента, из заявки и из переписки в телеграме — не выходя туда, где оно понадобилось.",
-              en: "A reminder can be created straight from a client card, a deal and a Telegram chat — without leaving the place where you needed it.",
+              ru: "Когда наступает срок, в CRM всплывает окошко «Пора» со звуком: «Готово», «На 10 минут», «На час», «Открыть». Чтобы звучало и системное окно браузера, включите сигналы в профиле — браузер спросит разрешение один раз.",
+              en: "When a reminder is due, a “Time for it” box pops up in the CRM with a sound: “Done”, “10 minutes”, “1 hour”, “Open”. To get the browser’s own notification too, switch alerts on in your profile — the browser asks for permission once.",
+            },
+          },
+          {
+            vid: "abzats",
+            tekst: {
+              ru: "Напоминание заводится прямо из заявки, заказа, бумаги, накладной, возврата и товара — блок «Напоминания» на карточке сам привяжет его к ней и к её клиенту. Из переписки в телеграме и по пропущенному звонку — тоже.",
+              en: "You can create a reminder straight from a deal, order, paper, waybill, return or product — the “Reminders” block on the card links it to that card and its client by itself. From a Telegram chat and a missed call as well.",
             },
           },
           { vid: "ekran", put: "/tasks", podpis: { ru: "Открыть напоминания", en: "Open reminders" } },
+          { vid: "ekran", put: "/profile", podpis: { ru: "Включить сигналы", en: "Switch alerts on" } },
         ],
       },
       {

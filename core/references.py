@@ -65,3 +65,36 @@ def user(db: Session, value, *, code: str, message: str) -> int | None:
     if users_repo.get_by_id(db, int(value)) is None:
         raise errors.NotFoundError(message, code=code)
     return int(value)
+
+
+def document(db: Session, value) -> int | None:
+    """Бумага из запроса: заказ, накладная, акт, возврат. Пусто — None; нет такой — 404."""
+    from database.repositories import documents as documents_repo
+
+    if not value:
+        return None
+    if documents_repo.get(db, int(value)) is None:
+        raise errors.NotFoundError("Document not found", code="document_not_found")
+    return int(value)
+
+
+def board(db: Session, value) -> int | None:
+    """Доска из запроса. Пусто — None; нет такой — 404."""
+    from database.repositories import boards as boards_repo
+
+    if not value:
+        return None
+    if boards_repo.get(db, int(value)) is None:
+        raise errors.NotFoundError("Board not found", code="board_not_found")
+    return int(value)
+
+
+def product(db: Session, value) -> int | None:
+    """Товар из запроса. Пусто — None; нет такого — 404."""
+    from database.repositories import warehouse as warehouse_repo
+
+    if not value:
+        return None
+    if warehouse_repo.get_product(db, int(value)) is None:
+        raise errors.NotFoundError("Product not found", code="product_not_found")
+    return int(value)

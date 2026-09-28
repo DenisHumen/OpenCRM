@@ -30,6 +30,7 @@ from database.models import (
     StoredFile,
     Task,
     TaskFile,
+    TaskMember,
     Work,
 )
 
@@ -178,9 +179,18 @@ def schyot_klientov(db: Session) -> int:
     ).scalar_one()
 
 
-def schyot_zadach(db: Session) -> int:
+def _vidimye_zadachi(query, user_id: int | None):
+    """Напоминания личные (docs/bloki/29 §3): вложения чужих видит только тот, кто видит все."""
+    if user_id is None:
+        return query
+    svoi = select(TaskMember.task_id).where(TaskMember.user_id == user_id)
+    return query.where(or_(Task.obshchee.is_(True), Task.id.in_(svoi)))
+
+
+def schyot_zadach(db: Session, user_id: int | None = None) -> int:
+    """`user_id` — чьи видимые считать; None — все (для того, кто видит все)."""
     return db.execute(
-        select(func.count(TaskFile.id)).join(Task, Task.id == TaskFile.task_id)
+        _vidimye_zadachi(select(func.count(TaskFile.id)).join(Task, Task.id == TaskFile.task_id), user_id)
     ).scalar_one()
 
 
@@ -235,14 +245,11 @@ def vlozheniya_klientov(db: Session, smeshchenie: int, skolko: int):
     return stroki, vsego
 
 
-def vlozheniya_zadach(db: Session, smeshchenie: int, skolko: int):
-    vsego = db.execute(
-        select(func.count(TaskFile.id)).join(Task, Task.id == TaskFile.task_id)
-    ).scalar_one()
+def vlozheniya_zadach(db: Session, smeshchenie: int, skolko: int, user_id: int | None = None):
+    vsego = schyot_zadach(db, user_id)
     stroki = list(
         db.execute(
-            select(TaskFile, Task.title)
-            .join(Task, Task.id == TaskFile.task_id)
+            _vidimye_zadachi(select(TaskFile, Task.title).join(Task, Task.id == TaskFile.task_id), user_id)
             .order_by(TaskFile.created_at.desc(), TaskFile.id.desc())
             .offset(smeshchenie)
             .limit(skolko)

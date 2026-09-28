@@ -30,6 +30,7 @@ const ACTION_LABEL: Record<string, TranslationKey> = {
   view_amounts: "permViewAmounts",
   share: "permShare",
   manage: "permManage",
+  assign: "permAssign",
 };
 
 /** Подписи строк. Блоки берут название своего раздела, системные — своё. */

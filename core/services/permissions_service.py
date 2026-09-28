@@ -84,6 +84,7 @@ PRESETS: dict[str, dict] = {
                 "deals.move_stage",
                 "deals.view_others",
                 "deals.view_amounts",
+                "tasks.assign",
                 "documents.issue",
                 "warehouse.restore",
                 "warehouse.view_amounts",
@@ -130,6 +131,7 @@ PRESETS: dict[str, dict] = {
             + [
                 "clients.create",
                 "clients.edit",
+                "tasks.assign",
                 "deals.move_stage",
                 "deals.view_others",
                 "documents.create",

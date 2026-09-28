@@ -226,32 +226,42 @@ def _zayavki(client: httpx.Client, klienty: dict[str, dict]) -> dict[str, dict]:
 
 
 def _napominaniya(client: httpx.Client, klienty: dict[str, dict], zayavki: dict[str, dict]) -> None:
-    """Просроченное, на сегодня, на потом и сделанное — все четыре полосы экрана."""
+    """Все полосы экрана и всё, что умеют напоминания (docs/bloki/29): повторы,
+    срочное с волной, настойчивое, общая полка, шаги, ссылки, сделанное."""
     est = {
         t["title"]
         for scope in ("open", "done")
         for t in client.get("/tasks", params={"scope": scope}).json()["items"]
     }
     plan = [
-        ("Позвонить Ольге по макету упаковки", "Ольга Ветрова", "Упаковка для пекарни «Утро»", 2, False),
-        ("Отправить смету на вывеску", "Ольга Ветрова", "Вывеска пекарни", 0, False),
-        ("Согласовать цвета логотипа", "Анна Кречет", "Логотип цветочной", -1, False),
-        ("Забрать визитки из типографии", "Игорь Лапин", "Визитки барбершопу", -3, False),
-        ("Выставить счёт за мерч", "Дарья Юсупова", "Мерч для студии «Дыши»", 4, True),
-        ("Спросить про размеры футболок", "Пётр Смолин", "Футболки на мероприятие", -7, False),
+        # (заголовок, клиент, заявка, через сколько дней, час, дополнительно, сделано)
+        ("Позвонить Ольге по макету упаковки", "Ольга Ветрова", "Упаковка для пекарни «Утро»", -2, 10,
+         {"vazhnost": "high", "opovesheniya": "15,0"}, False),
+        ("Отправить смету на вывеску", "Ольга Ветрова", "Вывеска пекарни", 0, 15,
+         {"vazhnost": "urgent", "nastoychivo": 10, "shagi": ["Посчитать материалы", "Согласовать монтаж", "Отправить PDF"]}, False),
+        ("Согласовать цвета логотипа", "Анна Кречет", "Логотип цветочной", 1, 11,
+         {"ssylki": [{"url": "https://example.com/brandbook", "title": "Брендбук"}]}, False),
+        ("Забрать визитки из типографии", "Игорь Лапин", "Визитки барбершопу", 3, 12, {}, False),
+        ("Выставить счёт за мерч", "Дарья Юсупова", "Мерч для студии «Дыши»", -4, 10, {}, True),
+        ("Спросить про размеры футболок", "Пётр Смолин", "Футболки на мероприятие", 7, 10, {"vazhnost": "low"}, False),
+        ("Планёрка студии", None, None, 1, 9, {"povtor": "FREQ=WEEKLY;BYDAY=MO,WE,FR", "opovesheniya": "10"}, False),
+        ("Полить цветы в студии", None, None, 0, 18, {"povtor": "FREQ=DAILY;INTERVAL=3"}, False),
+        ("Сверить остатки упаковки", None, None, 5, 10, {"povtor": "FREQ=MONTHLY;BYDAY=-1FR", "vazhnost": "high"}, False),
+        ("Продлить домен сайта", None, None, 20, 10, {"povtor": "FREQ=YEARLY", "opovesheniya": "10080,1440"}, False),
+        ("Заменить картридж плоттера", None, None, 2, 10, {"povtor": "FREQ=DAILY;INTERVAL=28", "povtor_posle": True}, False),
+        ("Разобрать входящие заявки", None, None, 0, 17, {"obshchee": True}, False),
     ]
-    for title, imya, zayavka, dney_nazad, sdelano in plan:
+    for title, imya, zayavka, dney, chas, dop, sdelano in plan:
         if title in est:
             continue
-        task = client.post(
-            "/tasks",
-            json={
-                "title": title, "client_id": klienty[imya]["id"],
-                "deal_id": zayavki[zayavka]["id"], "due_at": _kogda(dney_nazad, 10),
-            },
-        ).json()
+        telo = {"title": title, "due_at": _kogda(-dney, chas), "poyas": "Europe/Kyiv", **dop}
+        if imya:
+            telo["client_id"] = klienty[imya]["id"]
+        if zayavka:
+            telo["deal_id"] = zayavki[zayavka]["id"]
+        task = client.post("/tasks", json=telo).json()
         if sdelano:
-            client.patch(f"/tasks/{task['id']}", json={"is_done": True}).raise_for_status()
+            client.post(f"/tasks/{task['id']}/done").raise_for_status()
     print(f"напоминания: {len(plan)}")
 
 

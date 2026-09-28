@@ -125,9 +125,7 @@ def dashboard(user: User = Depends(require_staff), db: Session = Depends(get_db)
     if modules_service.is_enabled(db, "tasks"):
         my_tasks = [
             schemas.task_out(task)
-            for task in task_service.search(
-                db, scope="today", assignee_id=user.id, limit=6
-            )
+            for task in task_service.search(db, user, scope="today", kto="moi", limit=6)
         ]
 
     # Блоки ниже — только при включённом блоке и праве на него; выключенный

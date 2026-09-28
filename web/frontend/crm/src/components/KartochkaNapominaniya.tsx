@@ -2,11 +2,15 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { Icon } from "./Icon";
+import { RazdelIstoriya, RazdelKogda, RazdelLyudi, RazdelPrivyazki, RazdelShagi, RazdelSsylki } from "./NapominanieRazdely";
+import { otlozhitDo } from "./StrokaNapominaniya";
 import { EmptyState, KnopkaKorziny, Modal, Spinner } from "./ui";
 import { api, type Zalivka } from "../lib/api";
 import { useApp } from "../lib/app";
+import { useGuard } from "../lib/guard";
 import { dropTarget } from "../lib/dnd";
 import { formatDateTime } from "../lib/format";
+import { can } from "../lib/permissions";
 import { VAZHNOSTI, VAZHNOST_LABEL, srochno, vazhnost } from "../lib/vazhnost";
 
 export interface Vlozhenie {
@@ -51,13 +55,14 @@ export function KartochkaNapominaniya({
   onClose: () => void;
   onChanged: () => void;
 }) {
-  const { t, locale, toastError } = useApp();
+  const { t, locale, user, toastError } = useApp();
   const [task, setTask] = useState<any | null>(null);
   const [title, setTitle] = useState("");
   const [note, setNote] = useState("");
   const [srok, setSrok] = useState("");
   const [hod, setHod] = useState<{ imya: string; dolya: number } | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+  const guard = useGuard();
   const zalivka = useRef<Zalivka<unknown> | null>(null);
 
   // Обработчики окна приходят новыми на каждой перерисовке списка, а список
@@ -184,6 +189,26 @@ export function KartochkaNapominaniya({
     }
   };
 
+  const perechitatIsoobshchit = () => {
+    void perechitat();
+    svyazi.current.onChanged();
+  };
+
+  // Закрыть, открыть, пропустить, отложить — ручки раза, а не правка полей.
+  const razom = async (put: string, telo?: unknown) => {
+    if (!guard.take()) return;
+    try {
+      await api.post(`/tasks/${taskId}/${put}`, telo);
+      perechitatIsoobshchit();
+    } catch (e) {
+      svyazi.current.toastError(e);
+    } finally {
+      guard.free();
+    }
+  };
+
+  const mozhno = can(user, "tasks.edit");
+
   if (!task) {
     return (
       <Modal title={t("tasksCard")} onClose={onClose} wide>
@@ -257,6 +282,38 @@ export function KartochkaNapominaniya({
           />
         </div>
 
+        {/* Раз — одним нажатием: закрыть, пропустить у повторяющегося, отложить. */}
+        <div className="napom-deystviya-karty">
+          <button
+            type="button"
+            className={"btn btn-sm " + (task.is_done ? "btn-secondary" : "btn-primary")}
+            disabled={!mozhno}
+            onClick={() => void razom(task.is_done ? "reopen" : "done")}
+          >
+            <Icon name="check" size={13} stroke={2} />
+            {task.is_done ? t("tasksReopen") : t("napomGotovo")}
+          </button>
+          {task.povtor && !task.is_done && (
+            <button type="button" className="btn btn-secondary btn-sm" disabled={!mozhno} onClick={() => void razom("skip")}>
+              {t("napomPropustit")}
+            </button>
+          )}
+          {!task.is_done &&
+            (["10", "60", "zavtra"] as const).map((v) => (
+              <button
+                key={v}
+                type="button"
+                className="btn btn-secondary btn-sm"
+                onClick={() => void razom("snooze", { do: otlozhitDo(v) })}
+              >
+                <Icon name="clock" size={12} />
+                {t(v === "10" ? "otlozhit10" : v === "60" ? "otlozhit60" : "otlozhitZavtra")}
+              </button>
+            ))}
+        </div>
+
+        <RazdelKogda task={task} pravit={pravit} mozhno={mozhno} />
+
         <div className="field">
           <label className="label" htmlFor="napominanie-note">
             {t("tasksNote")}
@@ -275,22 +332,14 @@ export function KartochkaNapominaniya({
           />
         </div>
 
+        <RazdelLyudi task={task} pravit={pravit} onRazoslano={() => {
+          svyazi.current.onChanged();
+          svyazi.current.onClose();
+        }} />
+        <RazdelPrivyazki task={task} pravit={pravit} mozhno={mozhno} onClose={onClose} />
+        <RazdelShagi task={task} mozhno={mozhno} onChanged={perechitatIsoobshchit} />
+        <RazdelSsylki task={task} mozhno={mozhno} onChanged={perechitatIsoobshchit} />
         <div className="reminder-links">
-          {task.assignee_name && (
-            <span>
-              <Icon name="user" size={12} /> {task.assignee_name}
-            </span>
-          )}
-          {task.client_id && (
-            <Link to={`/clients/${task.client_id}`} className="text-link" onClick={onClose}>
-              {task.client_name || t("client")}
-            </Link>
-          )}
-          {task.deal_id && (
-            <Link to={`/deals/${task.deal_id}`} className="text-link" onClick={onClose}>
-              {task.deal_title || t("deal")}
-            </Link>
-          )}
           <span>{formatDateTime(task.created_at, locale)}</span>
         </div>
 
@@ -377,6 +426,7 @@ export function KartochkaNapominaniya({
             </div>
           )}
         </div>
+        <RazdelIstoriya task={task} />
       </div>
     </Modal>
   );

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { Icon } from "../components/Icon";
+import { NapominaniyaKartochki } from "../components/NapominaniyaKartochki";
 import { PrintLangs } from "../components/PrintLangs";
 import { Chip, ConfirmModal, KnopkaKorziny, ScreenLoading } from "../components/ui";
 import { api, ApiError } from "../lib/api";
@@ -233,6 +234,10 @@ export function WaybillCard() {
             {formatMoney(waybill.total, workspace.currency, locale)}
           </span>
         </div>
+      </div>
+
+      <div style={{ marginTop: 16 }}>
+        <NapominaniyaKartochki privyazka={{ document_id: waybill.id }} klientId={waybill.client_id} />
       </div>
 
       {confirm && (

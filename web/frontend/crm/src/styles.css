@@ -1897,7 +1897,8 @@ summary:focus-visible,
    хотел владелец. Двойное `mask-composite: intersect` оставляет от двух
    решёток четверть — редкие крупные точки, а не мелкое сито. */
 .task-row.urgent,
-.modal.urgent {
+.modal.urgent,
+.zvonok.urgent {
   position: relative; isolation: isolate; overflow: hidden;
   border-radius: 8px;
   background: linear-gradient(
@@ -1913,7 +1914,8 @@ summary:focus-visible,
    одного края читаются как сбитая вёрстка. */
 .modal.urgent { border-color: transparent; border-radius: 6px; }
 .task-row.urgent::before,
-.modal.urgent::before {
+.modal.urgent::before,
+.zvonok.urgent::before {
   content: ""; position: absolute; z-index: -2; inset: 0; width: 200%; left: -100%;
   /* Плитка ровно в ширину строки (слой вдвое шире), и сдвиг за круг — ровно на
      плитку: иначе блик, дойдя до правого края, прыгал бы к левому. */
@@ -1944,7 +1946,8 @@ summary:focus-visible,
 /* Просвет между краем и заливкой и ЕСТЬ толщина рамки: три пикселя вместо
    двух — по просьбе владельца, двух было мало, чтобы её было видно. */
 .task-row.urgent::after,
-.modal.urgent::after {
+.modal.urgent::after,
+.zvonok.urgent::after {
   content: ""; position: absolute; z-index: -1; inset: 3px;
   border-radius: 5px; background: var(--surface);
 }
@@ -1954,8 +1957,149 @@ summary:focus-visible,
    а взгляд не дёргается. */
 @media (prefers-reduced-motion: reduce) {
   .task-row.urgent::before,
-  .modal.urgent::before { animation: none; }
+  .modal.urgent::before,
+  .zvonok.urgent::before { animation: none; }
 }
+
+/* --- Календарь напоминаний -------------------------------------------------
+   Просьба владельца 28.09.2026: месяц с кружками по дням, по нажатию — панель
+   дня сбоку. Строки в панели — те же `.task-row`, с той же волной у срочного.
+   Разбор — docs/bloki/29-napominaniya.md §8. */
+.page-napom { max-width: 1360px; }
+.napom-vid { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; }
+.napom-vid-btn {
+  display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px;
+  border: 0; background: var(--well); color: var(--faint); font-family: inherit;
+  font-size: 12.5px; cursor: pointer; transition: background 140ms, color 140ms;
+}
+.napom-vid-btn:first-child { border-radius: 5px 0 0 5px; border-right: 1px solid var(--border); }
+.napom-vid-btn:last-child { border-radius: 0 5px 5px 0; }
+.napom-vid-btn:hover, .napom-vid-btn.active { color: var(--text); background: var(--surface-2); }
+.napom-kto { display: flex; gap: 6px; flex-wrap: wrap; margin: -4px 0 14px; }
+
+.kalendar-napom {
+  display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 16px; align-items: start;
+}
+.kalendar-mesyats, .kalendar-panel {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+}
+.kalendar-mesyats { position: relative; padding: 14px; }
+.kalendar-shapka { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+.kalendar-nazvanie {
+  margin: 0 4px; min-width: 160px; font-size: 17px; font-weight: 600;
+}
+.kalendar-segodnya { margin-left: auto; }
+.kalendar-zhdyom { position: absolute; inset: 60px 0 0; display: grid; place-items: center; }
+.kalendar-setka { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
+.kalendar-den-nedeli {
+  padding: 2px 6px 6px; font-size: 10.5px; font-weight: 700; letter-spacing: 0.1em;
+  text-transform: uppercase; color: var(--faint);
+}
+.kalendar-den {
+  position: relative; display: flex; flex-direction: column; align-items: flex-start; gap: 6px;
+  min-height: 78px; padding: 7px 8px; border: 1px solid var(--line); border-radius: 6px;
+  background: var(--surface); color: var(--text); font-family: inherit; text-align: left;
+  cursor: pointer; transition: background 140ms, border-color 140ms;
+}
+.kalendar-den:hover { background: var(--surface-2); }
+.kalendar-den:focus-visible { outline: 2px solid var(--brand); outline-offset: 1px; }
+.kalendar-den.chuzhoy { color: var(--faint); background: var(--well-off); }
+.kalendar-den.vybran { border-color: var(--brand); background: var(--tint-brand); }
+.kalendar-chislo {
+  display: inline-grid; place-items: center; min-width: 22px; height: 22px; padding: 0 4px;
+  border-radius: 999px; font-size: 12.5px; font-weight: 600; font-variant-numeric: tabular-nums;
+}
+.kalendar-den.segodnya .kalendar-chislo { background: var(--brand); color: var(--bg); }
+/* Просроченное в этот день — красная точка в углу: кружки заняты важностью. */
+.kalendar-den.prosrocheno::after {
+  content: ""; position: absolute; top: 9px; right: 9px; width: 6px; height: 6px;
+  border-radius: 50%; background: var(--danger);
+}
+.kalendar-tochki { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-top: auto; }
+/* Кружок — важность: срочное фиолетовым, как волна у строки; сделанное — пустым кольцом. */
+.kalendar-tochka { width: 8px; height: 8px; border-radius: 50%; background: var(--brand); }
+.kalendar-tochka.urgent { background: var(--violet); box-shadow: 0 0 0 2px var(--tint-violet); }
+.kalendar-tochka.high { background: var(--warning); }
+.kalendar-tochka.low { background: var(--faint); }
+.kalendar-tochka.sdelan { background: transparent; box-shadow: inset 0 0 0 1.5px var(--faint); }
+.kalendar-eshchyo { font-size: 10.5px; color: var(--faint); font-variant-numeric: tabular-nums; }
+
+.kalendar-panel {
+  position: sticky; top: 16px; display: flex; flex-direction: column; gap: 12px; padding: 14px;
+  max-height: calc(100vh - 32px); overflow: auto;
+}
+.kalendar-panel-shapka { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.kalendar-panel-den { font-size: 16px; font-weight: 600; }
+.kalendar-panel-schyot { color: var(--faint); font-size: 12px; font-variant-numeric: tabular-nums; }
+.kalendar-panel-vvod { display: flex; gap: 6px; }
+.kalendar-panel-vvod .input { flex: 1; min-width: 0; }
+.kalendar-panel-vvod .kalendar-chas { flex: none; width: 96px; }
+.kalendar-lenta { margin: 0; }
+.kalendar-lenta .task-row { padding: 10px 12px; }
+.kalendar-lenta .task-row.urgent { margin: 6px; padding: 11px 12px; }
+
+/* Колонка времени — лента дня читается сверху вниз, как расписание. */
+/* Строка напоминания в карточке другого блока — кнопка: открывает карточку напоминания. */
+.napom-mini {
+  width: 100%; border: 0; background: none; color: inherit; font-family: inherit;
+  text-align: left; cursor: pointer; gap: 8px;
+}
+.napom-mini:hover { background: var(--surface-2); }
+.napom-mini.urgent .truncate { color: var(--violet); }
+.napom-vremya {
+  flex: none; width: 48px; padding-top: 1px; color: var(--muted); font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.napom-budushchiy { opacity: 0.62; }
+.napom-polka {
+  padding: 1px 7px; border-radius: 999px; background: var(--tint-teal); color: var(--text);
+  font-size: 10.5px;
+}
+.napom-deystviya { position: relative; flex: none; }
+.napom-deystviya .btn-icon { width: 28px; height: 28px; }
+.napom-menyu {
+  position: absolute; right: 0; top: 32px; z-index: 20; display: flex; flex-direction: column;
+  min-width: 170px; padding: 4px; border: 1px solid var(--border); border-radius: 6px;
+  background: var(--surface); box-shadow: var(--hard);
+}
+.napom-menyu button {
+  padding: 7px 10px; border: 0; border-radius: 4px; background: none; color: var(--text);
+  font-family: inherit; font-size: 12.5px; text-align: left; cursor: pointer;
+}
+.napom-menyu button:hover, .napom-menyu button:focus-visible { background: var(--surface-2); }
+
+@media (max-width: 1100px) {
+  .kalendar-napom { grid-template-columns: 1fr; }
+  .kalendar-panel { position: static; max-height: none; }
+}
+@media (max-width: 640px) {
+  .kalendar-mesyats { padding: 10px; }
+  .kalendar-setka { gap: 2px; }
+  .kalendar-den { min-height: 52px; padding: 4px; gap: 3px; }
+  .kalendar-den-nedeli { padding: 2px 2px 6px; letter-spacing: 0.04em; }
+  .kalendar-tochka { width: 6px; height: 6px; }
+  .kalendar-nazvanie { min-width: 0; font-size: 15px; }
+}
+
+/* Звонок напоминания — окошко внизу справа, над всем, но не мешая работе:
+   не модальное, фокус не отбирает. У срочного — та же волна по краю. */
+.zvonki {
+  position: fixed; right: 16px; bottom: 16px; z-index: 60; display: flex; flex-direction: column;
+  gap: 10px; width: min(360px, calc(100vw - 32px));
+}
+.zvonok {
+  display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border-radius: 8px;
+  border: 1px solid var(--border); background: var(--surface); box-shadow: var(--hard);
+  animation: zvonok-poyavlenie 220ms ease-out;
+}
+.zvonok-shapka { display: flex; align-items: center; gap: 6px; color: var(--brand); font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+.zvonok.urgent { border-color: transparent; }
+.zvonok.urgent .zvonok-shapka { color: var(--violet); }
+.zvonok-kogda { margin-left: auto; color: var(--faint); font-weight: 500; letter-spacing: 0; text-transform: none; font-variant-numeric: tabular-nums; }
+.zvonok-nazvanie { font-size: 14px; font-weight: 600; color: var(--text); overflow-wrap: anywhere; }
+.zvonok-knopki { display: flex; flex-wrap: wrap; gap: 6px; }
+@keyframes zvonok-poyavlenie { from { opacity: 0; transform: translateY(8px); } }
+@media (prefers-reduced-motion: reduce) { .zvonok { animation: none; } }
 
 /* --- Углублённая карточка напоминания -------------------------------------- */
 /* Прокрутка внутри окна, а не страницы под ним: с двумя рядами вложений
@@ -1973,6 +2117,56 @@ summary:focus-visible,
 }
 .reminder-links span { display: inline-flex; align-items: center; gap: 4px; }
 .reminder-attachments { border-top: 1px solid var(--line); padding-top: 14px; }
+/* Разделы карточки напоминания: «Когда», «Люди», «Привязано к», «Шаги»,
+   «Ссылки», «История» — отбиты линией, как вложения ниже. */
+.napom-razdel { display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--line); padding-top: 14px; }
+.napom-razdel > .label { margin: 4px 0 0; }
+.napom-stroka { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.napom-stroka .input { flex: 1; min-width: 140px; }
+.napom-galka { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; }
+.napom-poyas { display: inline-flex; align-items: center; gap: 4px; margin-left: auto; color: var(--faint); font-size: 12px; }
+.napom-chipy { display: flex; flex-wrap: wrap; gap: 6px; }
+.napom-uzkiy { width: auto; flex: none; min-width: 0; height: 30px; }
+.napom-lyudi { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.napom-chelovek {
+  display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 8px;
+  border: 1px solid var(--border); border-radius: 999px; font-size: 12px;
+}
+.napom-rol { color: var(--faint); }
+.napom-snyat {
+  border: 0; background: none; color: var(--faint); font-size: 14px; line-height: 1;
+  cursor: pointer; padding: 0 2px;
+}
+.napom-snyat:hover { color: var(--danger); }
+.napom-privyazki { display: flex; flex-direction: column; gap: 6px; }
+.napom-shag { display: flex; align-items: center; gap: 8px; min-height: 30px; font-size: 13px; }
+.napom-shag > span, .napom-shag > a { flex: 1; min-width: 0; }
+.napom-shag-sdelan { color: var(--faint); text-decoration: line-through; }
+.napom-istoriya { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
+.napom-istoriya li { display: flex; flex-wrap: wrap; gap: 4px; }
+.napom-istoriya-kto { color: var(--text); }
+.napom-istoriya-srok { color: var(--faint); }
+.napom-istoriya-kogda { margin-left: auto; color: var(--faint); font-variant-numeric: tabular-nums; }
+.napom-deystviya-karty { display: flex; flex-wrap: wrap; gap: 6px; }
+
+/* Повтор: быстрые варианты списком, полная настройка — под ним. */
+.povtor { display: flex; flex-direction: column; gap: 8px; }
+.povtor-svoy {
+  display: flex; flex-direction: column; gap: 10px; padding: 10px 12px;
+  border: 1px solid var(--line); border-radius: 6px; background: var(--well-off);
+}
+.povtor-stroka, .povtor-variant { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 13px; }
+.povtor-stroka .input, .povtor-variant .input { width: auto; height: 30px; }
+.povtor-chislo { width: 72px !important; }
+.povtor-dni { display: flex; flex-wrap: wrap; gap: 4px; }
+.povtor-den {
+  min-width: 38px; height: 30px; border: 1px solid var(--border); border-radius: 6px;
+  background: var(--well); color: var(--muted); font-family: inherit; font-size: 12px; cursor: pointer;
+}
+.povtor-den.active { background: var(--tint-brand); border-color: var(--brand); color: var(--text); }
+.povtor-mesyats, .povtor-konets { display: flex; flex-direction: column; gap: 6px; }
+.povtor-posle { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--muted); cursor: pointer; }
+.povtor-itog { color: var(--muted); font-size: 12px; }
 .dropzone-choice { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
 
 /* Число просроченных рядом с пунктом меню. Красное, потому что это долг, а не
