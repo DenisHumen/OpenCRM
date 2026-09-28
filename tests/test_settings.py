@@ -1,5 +1,7 @@
 import re
 
+import pytest
+
 from fastapi.testclient import TestClient
 
 from tests.conftest import API, png_bytes
@@ -241,3 +243,27 @@ def test_healthz():
     assert body["status"] == "ok"
     assert body["schema"] == "ok"
     assert body["redis"] in ("ok", "down", "off")
+
+
+@pytest.mark.parametrize(
+    "polya, kod",
+    [
+        ({"accent_color": "red;}body{display:none"}, "bad_color"),
+        ({"accent_color": "#12345"}, None),
+        ({"brand_logo_path": "https://evil.example/track.png"}, "bad_branding_path"),
+        ({"og_default_image": "/branding/og-default.png?v=1790000000"}, None),
+    ],
+)
+def test_tsvet_i_puti_brenda_proveryayutsya(root_client, polya, kod):
+    """Разбор 28.09.2026: цвет акцента уходил в `<style>` публичных страниц без
+    проверки, а пути картинок бренда принимали любую строку."""
+    bylo = root_client.get(f"{API}/settings").json()
+    otvet = root_client.patch(f"{API}/settings", json={"values": polya})
+    try:
+        if kod is None:
+            assert otvet.status_code == 200, otvet.text
+        else:
+            assert otvet.status_code == 422 and otvet.json()["error"]["code"] == kod
+    finally:
+        root_client.patch(f"{API}/settings", json={"values": {k: bylo.get(k, "") for k in polya}})
+

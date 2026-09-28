@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 from sqlalchemy.orm import Session
@@ -17,6 +18,14 @@ ALLOWED_LOGO_EXTS = {"png", "jpg", "jpeg", "webp", "svg"}
 #:
 #: Список закрытый и проверяется целиком: добавить сюда поле легко забыть, а
 #: цена забывчивости — работающий `javascript:` в href у клиентов студии.
+#: Цвет акцента уходит в `<style>` публичных страниц, а Jinja в CSS `;{}` не
+#: экранирует: любая строка переписывала вид витрин клиентов (разбор 28.09.2026).
+_TSVET = re.compile(r"^#[0-9a-fA-F]{3,8}$")
+#: Картинки бренда пишет только загрузка (`_save_branding_image`); строкой через
+#: PATCH туда вписывался любой адрес.
+_PUT_BRENDA = re.compile(r"^/branding/[A-Za-z0-9._-]+(\?v=\d+)?$")
+BRAND_KEYS = ("brand_logo_path", "studio_site_logo", "og_default_image")
+
 URL_SETTINGS = (
     "studio_site_url",
     "social_telegram",
@@ -55,6 +64,13 @@ def update(db: Session, changes: dict[str, str]) -> dict[str, str]:
     # схему не трогает, а CSP витрины разрешает inline-скрипты. Получался
     # хранимый XSS по клиентам студии, на том же домене, что и CRM, — от любой
     # учётки с правом на настройки.
+    tsvet = (changes.get("accent_color") or "").strip()
+    if tsvet and not _TSVET.match(tsvet):
+        raise errors.ValidationError("Accent colour must look like #RRGGBB", code="bad_color")
+    for key in BRAND_KEYS:
+        put = (changes.get(key) or "").strip()
+        if put and not _PUT_BRENDA.match(put):
+            raise errors.ValidationError("Branding images are set by upload", code="bad_branding_path")
     for key in URL_SETTINGS:
         if key not in changes:
             continue

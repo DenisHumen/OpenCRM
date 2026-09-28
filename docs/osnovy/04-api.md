@@ -562,7 +562,7 @@
 | Метод | Путь | Права | Описание |
 |---|---|---|---|
 | GET | `/settings` | 🔑 `settings.view` | Все настройки: бренд, контакты, соцсети, язык витрины, валюта |
-| PATCH | `/settings` | 🔑 `settings.manage` | Обновить значения. `studio_site_url` — только `http(s)`, иначе `422 bad_site_url` |
+| PATCH | `/settings` | 🔑 `settings.manage` | Обновить значения. `studio_site_url` — только `http(s)`, иначе `422 bad_site_url`. `accent_color` — только `#RGB`…`#RRGGBBAA` (`422 bad_color`): цвет уходит в `<style>` публичных страниц, а Jinja в CSS не экранирует. Пути картинок бренда (`brand_logo_path`, `studio_site_logo`, `og_default_image`) — только вида `/branding/…`, их пишет загрузка (`422 bad_branding_path`) — разбор 28.09.2026 |
 | GET | `/settings/maintenance` | 🔑 `settings.view` | Закрыт ли сайт на работы, с какой запиской и кем |
 | POST | `/settings/maintenance` | 🔑 `settings.manage` | Закрыть сайт на работы или открыть обратно: `{enabled, note}` |
 | POST | `/settings/logo` | 🔑 `settings.manage` | Загрузить логотип (multipart). Путь возвращается с меткой версии `?v=` |
