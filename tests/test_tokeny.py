@@ -154,7 +154,9 @@ def test_vremennyy_parol_ne_meshaet_tokenu_a_nevkluchyonnyy_sotrudnik_meshaet(
     assert agent.get(f"{API}/tasks").status_code == 200
 
     assert root_client.post(f"{API}/staff/{user_id}/disable").status_code == 200
-    assert agent.get(f"{API}/tasks").json()["error"]["code"] == "token_user_inactive"
+    assert agent.get(f"{API}/tasks").json()["error"]["code"] == "token_revoked"
+    assert root_client.post(f"{API}/staff/{user_id}/enable").status_code == 200
+    assert agent.get(f"{API}/tasks").json()["error"]["code"] == "token_revoked", "включение оживило токен"
 
 
 def test_vydacha_proveryaet_srok_i_sotrudnika(root_client):
@@ -189,11 +191,15 @@ def test_potolok_zaprosov(root_client, monkeypatch):
     assert otvet.status_code == 429 and otvet.json()["error"]["code"] == "token_rate_limited"
 
 
-def test_opisanie_dlya_mcp_tolko_o_dostupnom(root_client):
+def test_opisanie_dlya_mcp_tolko_o_dostupnom(root_client, monkeypatch):
+    from config.settings import get_settings
+
+    # За nginx схема запроса всегда `http`: адрес обязан браться из настроек (28.09.2026).
+    monkeypatch.setattr(get_settings(), "base_url", "https://crm.example.test")
     agent = _po_tokenu(_vypustit(root_client)["token"])
     shema = agent.get(f"{API}/system/openapi.json").json()
     assert shema["components"]["securitySchemes"]["bearer"]["scheme"] == "bearer"
-    assert shema["servers"][0]["url"].endswith("/api/v1")
+    assert shema["servers"][0]["url"] == "https://crm.example.test/api/v1"
     puti = set(shema["paths"])
     assert "/api/v1/tasks" in puti and "/api/v1/clients" in puti
     assert not any(p.startswith(("/api/v1/tokens", "/api/v1/keys", "/api/v1/site/")) for p in puti)
@@ -231,3 +237,17 @@ def test_token_ne_razdayot_prava(root_client, metod, put):
     agent = _po_tokenu(_vypustit(root_client)["token"])
     otvet = agent.request(metod, f"{API}{put}", json={})
     assert otvet.status_code == 403 and otvet.json()["error"]["code"] == "token_not_allowed"
+
+
+def test_smena_svoego_parolya_gasit_tokeny(root_client, role_maker, staff_maker):  # noqa: F811
+    """Свой пароль меняют и после угона: токен, выпущенный угонщиком, обязан погаснуть."""
+    rol = role_maker("Токен — смена пароля", ["tasks.view"])
+    vera = staff_maker("token-vera@test.local", rol["id"])
+    agent = _po_tokenu(_vypustit(root_client, _moy_id(vera))["token"])
+    assert agent.get(f"{API}/tasks").status_code == 200
+    smena = vera.post(
+        f"{API}/auth/me/password", json={"old_password": "manager-pass-123", "new_password": "novyy-parol-456"}
+    )
+    assert smena.status_code == 200, smena.text
+    assert agent.get(f"{API}/tasks").json()["error"]["code"] == "token_revoked"
+

@@ -12,6 +12,7 @@ from core.services import (
 )
 from database.models import User
 from database.models.audit import SOURCE_MANUAL
+from config.settings import get_settings
 from web.api import opisanie
 from web.api.deps import get_db, require_perm, require_staff
 
@@ -41,8 +42,12 @@ def build_cache_purge(
 
 @router.get("/openapi.json")
 def opisanie_api(request: Request, _: User = Depends(require_staff)):
-    """Описание API для токена и MCP: только то, куда токен пустят."""
-    return opisanie.sobrat(request.app, str(request.base_url).rstrip("/") + "/api/v1")
+    """Описание API для токена и MCP: только то, куда токен пустят.
+
+    Адрес — из настроек, а не из запроса: uvicorn работает с `--no-proxy-headers`, и за
+    nginx схема запроса всегда `http` — токен ушёл бы по сети открытым текстом.
+    """
+    return opisanie.sobrat(request.app, get_settings().base_url.rstrip("/") + "/api/v1")
 
 
 @router.get("/github")

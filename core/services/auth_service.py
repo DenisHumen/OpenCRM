@@ -20,6 +20,7 @@ from database.models.user import (
     LOCALES,
 )
 from database.repositories import push as push_repo
+from database.repositories import user_tokens as user_tokens_repo
 from database.repositories import users as users_repo
 
 
@@ -199,8 +200,13 @@ def change_password(
             f"Password must be at least {passwords.MIN_PASSWORD_LENGTH} characters",
             code="weak_password",
         )
+    byl_vremennyy = user.must_change_password
     user.password_hash = passwords.hash_password(new_password)
     user.must_change_password = False
+    # Свой пароль меняют и после угона — токен, выпущенный угонщиком, гаснет вместе с
+    # сессиями. Смена временного — обычный первый вход, токенов агента она не трогает.
+    if not byl_vremennyy:
+        user_tokens_repo.otozvat_vse(db, user.id, now_utc())
     # смена пароля выкидывает все прочие сессии (например, угнанную): доступ по
     # старым cookie должен прекратиться сразу. Текущую сессию сохраняем.
     if current_token:
@@ -300,6 +306,8 @@ def disable(db: Session, actor: User, user_id: int) -> User:
     was = user.status
     user.status = STATUS_DISABLED
     users_repo.delete_sessions_for_user(db, user.id)
+    # Токены — насовсем, а не до включения: вернувшемуся выпускают новые.
+    user_tokens_repo.otozvat_vse(db, user.id, now_utc())
     # Устройства — тоже: звонок напоминания уходил бы на личный телефон уволенного.
     push_repo.ubrat_vse(db, user.id)
     db.flush()

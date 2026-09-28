@@ -45,6 +45,14 @@ def otmetit(db: Session, token_id: int, kogda: datetime) -> None:
     db.execute(update(UserToken).where(UserToken.id == token_id).values(last_used_at=kogda))
 
 
+def otozvat_vse(db: Session, user_id: int, kogda: datetime) -> int:
+    return db.execute(
+        update(UserToken)
+        .where(UserToken.user_id == user_id, UserToken.revoked_at.is_(None))
+        .values(revoked_at=kogda)
+    ).rowcount
+
+
 def zhivyh(db: Session, now: datetime) -> int:
     return sum(
         1
