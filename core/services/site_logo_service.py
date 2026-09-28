@@ -8,6 +8,8 @@
 без проверок можно было бы заставить сервер сходить на http://169.254.169.254/ (метаданные
 облака) или на внутренний адрес в локальной сети и вытащить ответ. Отсюда правила ниже:
 резолвим имя сами и отклоняем непубличные адреса, ограничиваем время, размер и редиректы.
+Имя резолвится дважды — нами и httpx, — и подмену DNS между ними это не закрывает: право
+на подбор логотипа — `settings.manage`, и цена такого обхода принята (разбор 28.09.2026).
 """
 
 import ipaddress
@@ -74,7 +76,7 @@ def _size_of(sizes: str) -> int:
 def _assert_public_host(url: str) -> None:
     """Отклоняет адреса, ведущие внутрь периметра (SSRF)."""
     host = urlsplit(url).hostname
-    if not host:
+    if not host or urlsplit(url).scheme not in ("http", "https"):
         raise errors.ValidationError("Bad website address", code="logo_fetch_failed")
     try:
         infos = socket.getaddrinfo(host, None)
@@ -89,18 +91,26 @@ def _assert_public_host(url: str) -> None:
 
 
 def _get(client: httpx.Client, url: str, limit: int) -> bytes:
-    """Скачивает не больше limit байт: сервер может отдавать бесконечный поток."""
-    _assert_public_host(url)
-    with client.stream("GET", url) as response:
-        response.raise_for_status()
-        # редирект мог увести на внутренний адрес — проверяем итоговый URL
-        _assert_public_host(str(response.url))
-        body = b""
-        for chunk in response.iter_bytes():
-            body += chunk
-            if len(body) > limit:
-                raise errors.ValidationError("File is too large", code="logo_fetch_failed")
-        return body
+    """Скачивает не больше limit байт: сервер может отдавать бесконечный поток.
+
+    Переадресации — руками, с проверкой адреса ДО каждого шага. Проверка одного
+    итогового адреса опаздывала: промежуточные запросы уже ушли во внутреннюю
+    сеть (разбор 28.09.2026).
+    """
+    for _shag in range(MAX_REDIRECTS + 1):
+        _assert_public_host(url)
+        with client.stream("GET", url) as response:
+            if response.is_redirect:
+                url = urljoin(url, response.headers.get("location", ""))
+                continue
+            response.raise_for_status()
+            body = b""
+            for chunk in response.iter_bytes():
+                body += chunk
+                if len(body) > limit:
+                    raise errors.ValidationError("File is too large", code="logo_fetch_failed")
+            return body
+    raise errors.ValidationError("Too many redirects", code="logo_fetch_failed")
 
 
 def fetch_logo(site_url: str) -> tuple[bytes, str]:
@@ -118,8 +128,7 @@ def fetch_logo(site_url: str) -> tuple[bytes, str]:
 
     client = httpx.Client(
         timeout=TIMEOUT_SECONDS,
-        follow_redirects=True,
-        max_redirects=MAX_REDIRECTS,
+        follow_redirects=False,
         headers={"User-Agent": USER_AGENT, "Accept": "text/html,image/*"},
     )
     try:

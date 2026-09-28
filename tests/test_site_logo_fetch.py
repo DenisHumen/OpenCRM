@@ -138,3 +138,34 @@ def test_fetch_endpoint_requires_address(root_client):
 
 def test_fetch_endpoint_is_root_only(manager_client):
     assert manager_client.post(f"{API}/settings/site-logo/fetch").status_code == 403
+
+
+def test_pereadresatsiya_vnutr_ne_zaprashivaetsya(monkeypatch):
+    """Разбор 28.09.2026: переадресации шли внутри httpx, и адрес проверялся только
+    итоговый — промежуточный запрос во внутреннюю сеть уже уходил."""
+    from urllib.parse import urlsplit
+
+    import httpx
+
+    uvideno = []
+
+    def sluzhba(zapros):
+        uvideno.append(zapros.url.host)
+        if zapros.url.host == "public.test":
+            return httpx.Response(302, headers={"location": "http://internal.test/admin"})
+        return httpx.Response(200, content=b"<html></html>")
+
+    nastoyashchiy = httpx.Client
+    monkeypatch.setattr(
+        site_logo_service.httpx, "Client", lambda **kw: nastoyashchiy(transport=httpx.MockTransport(sluzhba), **kw)
+    )
+
+    def proverka(url):
+        if urlsplit(url).hostname == "internal.test":
+            raise errors.ValidationError("Website address is not public", code="logo_fetch_failed")
+
+    monkeypatch.setattr(site_logo_service, "_assert_public_host", proverka)
+    with pytest.raises(errors.ValidationError):
+        site_logo_service.fetch_logo("https://public.test")
+    assert uvideno and "internal.test" not in uvideno
+
