@@ -130,6 +130,17 @@ def list_waybills(
     )
 
 
+def _osnovanie_vidno(db: Session, user: User, basis_id: int | None) -> None:
+    """Основание — бумага вида, открытого смотрящему. Кладовщик без `orders.view` или
+    при выключенных заказах перебором номеров читал состав любого заказа с ценами
+    и закрывал его своей накладной (разбор 28.09.2026). Чужой вид — «нет такой»."""
+    if not basis_id:
+        return
+    osnovanie = documents_repo.get(db, basis_id)
+    if osnovanie is not None and osnovanie.kind not in document_service.vidno_vidov(db, user):
+        raise errors.NotFoundError("Document not found", code="document_not_found")
+
+
 @router.post("", status_code=201)
 def create_waybill(
     payload: WaybillIn,
@@ -137,6 +148,7 @@ def create_waybill(
     db: Session = Depends(get_db),
 ):
     deal_service.proverit_vidimost(db, user, payload.deal_id)
+    _osnovanie_vidno(db, user, payload.basis_id)
     waybill = waybill_service.create(db, payload.model_dump(), user)
     return _karta(db, user, waybill)
 
@@ -154,6 +166,7 @@ def create_from_order(
     действие, а не другой аргумент того же. Флаг заставил бы обе половины ручки
     объяснять, какие поля она сегодня читает.
     """
+    _osnovanie_vidno(db, user, order_id)
     # Живой черновик по заказу уже есть (зеркало заводит его само) — отдаём его,
     # а не второй: две накладные по одному заказу — это две отгрузки, и та, что
     # осталась, висела бы черновиком после закрытия заказа.

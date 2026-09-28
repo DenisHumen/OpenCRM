@@ -990,7 +990,7 @@ CRM нет, — человек нажмёт «отправить» снова, �
 |---|---|---|---|
 | GET | `/waybills` | 🔑 `waybills.view` | Список: `?search=`, `?kind=`, `?status=`, `?client_id=`, `?deal_id=`, `?basis_id=`, пагинация. В строках — `basis_number`, `basis_kind` (основание словами, одним запросом на страницу) |
 | POST | `/waybills` | 🔑 `waybills.create` | Черновик: `kind` обязателен, дальше `client_id`, `deal_id`, `basis_id`, `warehouse_id`, `locale`, `note` |
-| POST | `/waybills/from-order/{order_id}` | 🔑 `waybills.create` | Черновик, заполненный позициями заказа. Живой черновик по заказу уже есть (зеркало, [21](../bloki/21-svyaz-blokov.md) §1) — отдаёт его с `200`, новый заводит только без него (`201`) |
+| POST | `/waybills/from-order/{order_id}` | 🔑 `waybills.create` | Черновик, заполненный позициями заказа. Живой черновик по заказу уже есть (зеркало, [21](../bloki/21-svyaz-blokov.md) §1) — отдаёт его с `200`, новый заводит только без него (`201`). Основание — заказ вида, открытого смотрящему (`document_service.vidno_vidov`): без `orders.view` или при выключенных заказах — `404 document_not_found`, то же у `POST /waybills` с `basis_id`. Отгруженный целиком заказ — `422 order_fully_shipped` (разбор 28.09.2026) |
 | GET | `/waybills/{id}` | 🔑 `waybills.view` | Накладная с позициями; `basis_number`, `basis_kind` — заказ, возврат или накладная, по которой выписана (пусто у ручной) |
 | GET | `/waybills/{id}/reversals` | 🔑 `waybills.view` | Что выписано на основании этой: сторно |
 | POST | `/waybills/{id}/lines` | 🔑 `waybills.edit` | Добавить позицию: `product_id` либо `name`, `quantity`, `price` |

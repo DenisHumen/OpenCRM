@@ -18,6 +18,7 @@ from sqlalchemy import delete, select, update
 from core import exceptions as errors
 from database.models.document import Document, DocumentLine
 from tests.conftest import API
+from tests.test_roles import role_maker, staff_maker  # noqa: F401 — фикстуры
 
 WAYBILLS = f"{API}/waybills"
 ORDERS = f"{API}/orders"
@@ -526,6 +527,24 @@ def test_storno_ne_prihoduet_bolshe_uekhavshego(root_client, client_row):
     assert ostatok(root_client, item) == 8_000
 
 
+def test_osnovanie_tolko_otkrytogo_vida(root_client, client_row, role_maker, staff_maker):  # noqa: F811
+    """Разбор 28.09.2026: кладовщик без `orders.view` заводил накладную из любого
+    заказа — читал его состав с ценами и закрывал заказ своей накладной."""
+    item = product(root_client, stock="10")
+    zakaz = root_client.post(ORDERS, json={"kind": "sales_order", "client_id": client_row["id"]}).json()
+    root_client.post(f"{ORDERS}/{zakaz['id']}/lines", json={"product_id": item["id"], "quantity": "2"})
+    rol = role_maker("Накладные без заказов", ["waybills.view", "waybills.create", "clients.view"])
+    kladovshchik = staff_maker("nakladnye-bez-zakazov@test.local", rol["id"])
+
+    iz_zakaza = kladovshchik.post(f"{WAYBILLS}/from-order/{zakaz['id']}")
+    assert iz_zakaza.status_code == 404 and iz_zakaza.json()["error"]["code"] == "document_not_found"
+    po_osnovaniyu = kladovshchik.post(
+        WAYBILLS, json={"kind": "waybill_out", "client_id": client_row["id"], "basis_id": zakaz["id"]}
+    )
+    assert po_osnovaniyu.status_code == 404
+    assert root_client.post(f"{WAYBILLS}/from-order/{zakaz['id']}").status_code in (200, 201)
+
+
 # --- один путь к остатку ------------------------------------------------------
 
 
@@ -547,6 +566,9 @@ def test_nakladnaya_po_zakrytomu_zakazu_ne_provoditsya(root_client, client_row):
         WAYBILLS, json={"kind": "waybill_out", "client_id": client_row["id"], "basis_id": zakaz["id"]}
     )
     assert nakladnaya.status_code == 201, nakladnaya.text
+    root_client.post(
+        f"{WAYBILLS}/{nakladnaya.json()['id']}/lines", json={"product_id": item["id"], "quantity": "3"}
+    )
     otvet = root_client.post(f"{WAYBILLS}/{nakladnaya.json()['id']}/post", json={})
     assert otvet.status_code == 422, "товар уехал бы дважды"
     assert otvet.json()["error"]["code"] == "basis_already_shipped"
