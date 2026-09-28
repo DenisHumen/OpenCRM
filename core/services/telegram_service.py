@@ -50,7 +50,7 @@ from database.models.telegram import (
     SEND_PENDING,
     SEND_SENT,
 )
-from core.services import telegram_uborka
+from core.services import storage_service, telegram_uborka
 from database.repositories import settings as settings_repo
 from database.repositories import telegram as telegram_repo
 
@@ -552,6 +552,9 @@ def _vlozhenie(soobshchenie: dict) -> tuple[str, str, str, int]:
     return KIND_TEXT, "", "", 0
 
 
+#: Предел колонки `telegram_messages.file_size` (INT со знаком).
+MAX_INT_KOLONKI = 2**31 - 1
+
 #: Чем отдавать вложение: по виду и белому списку. Тип «по имени» брал имя от
 #: отправителя, и `x.js` уходил `text/javascript` — источник скрипта на нашем
 #: домене для `<script src>`, `attachment` его не останавливает (разбор 28.09.2026).
@@ -784,7 +787,11 @@ def prinyat(db: Session, obnovlenie: dict, opener=None) -> dict:
     # под условием «карточки ещё нет», и у привязанного диалога телефон не
     # появлялся никогда — а именно им и хотят потом дополнить карточку.
     kontakt = soobshchenie.get("contact") or {}
-    if kontakt.get("phone_number"):
+    # Номер — только свой: `contact.user_id` совпадает с отправителем. Чужую карточку
+    # из адресной книги кнопка тоже отдаёт, и посторонний с номером клиента садился
+    # на его карточку и читал ответы про его заказы (разбор 28.09.2026).
+    svoy = bool(kontakt.get("user_id")) and kontakt.get("user_id") == (soobshchenie.get("from") or {}).get("id")
+    if kontakt.get("phone_number") and svoy:
         nomer = str(kontakt["phone_number"])
         dialog.phone = nomer[:64]
         dialog.phone_norm = normalize_phone(nomer, _kod_strany(db))[:32]
@@ -832,8 +839,10 @@ def prinyat(db: Session, obnovlenie: dict, opener=None) -> dict:
         file_path=put_fayla,
         # Имя нужно и у незабранного файла: без него в переписке стояло бы
         # безымянное «видео», и человек не понял бы, что именно ему прислали.
-        file_name=imya_fayla if (put_fayla or file_id) else "",
-        file_size=razmer or None,
+        file_name=(imya_fayla if (put_fayla or file_id) else "")[:255],
+        # Колонка — INT, а телеграм шлёт файлы и больше 2 ГБ: такой размер не
+        # записывался, и вебхук падал на каждом повторе (разбор 28.09.2026).
+        file_size=razmer if 0 < razmer <= MAX_INT_KOLONKI else None,
         happened_at=kogda,
         send_state=SEND_SENT,
     )
@@ -939,6 +948,11 @@ def _polozhit_fayl(
     """
     import uuid as _uuid
 
+    # Байты переписки приносит посторонний: без проверки пересылка одного файла по
+    # кругу забивала диск до отказа самой базы. Не легло — вложение остаётся
+    # «забрать по кнопке» (разбор 28.09.2026).
+    if not storage_service.has_room_for(len(soderzhimoe)):
+        raise errors.ValidationError("Not enough free disk space on the server", code="disk_full")
     koren = get_settings().storage_dir / "telegram" / str(dialog.chat_id)
     koren.mkdir(parents=True, exist_ok=True)
     # Имя своё, а не присланное: имя из телеграма приходит от постороннего и

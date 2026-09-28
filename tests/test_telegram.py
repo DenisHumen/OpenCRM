@@ -241,7 +241,7 @@ def test_kontakt_privyazyvaet_tolko_po_tochnomu_nomeru(root_client, bot_nastroen
     ).json()
 
     telo = _obnovlenie(500500, 1)
-    telo["message"]["contact"] = {"phone_number": "+380671112233", "first_name": "Пётр"}
+    telo["message"]["contact"] = {"phone_number": "+380671112233", "first_name": "Пётр", "user_id": telo["message"]["from"]["id"]}
     _poslat(root_client, bot_nastroen, telo)
 
     assert _dialog(root_client, 500500)["client_id"] == klient["id"], (
@@ -257,7 +257,7 @@ def test_neizvestnyy_nomer_ne_privyazyvaetsya(root_client, bot_nastroen):
     ошибка.
     """
     telo = _obnovlenie(500600, 1)
-    telo["message"]["contact"] = {"phone_number": "+380679998877", "first_name": "Никто"}
+    telo["message"]["contact"] = {"phone_number": "+380679998877", "first_name": "Никто", "user_id": telo["message"]["from"]["id"]}
     _poslat(root_client, bot_nastroen, telo)
 
     assert _dialog(root_client, 500600)["client_id"] is None, (
@@ -371,7 +371,7 @@ def test_perepiska_privyazannogo_dialoga_vidna_v_lente_klienta(root_client, bot_
     ).json()
 
     telo = _obnovlenie(501300, 1, text="Сообщение в ленту")
-    telo["message"]["contact"] = {"phone_number": "+380675554433", "first_name": "Пётр"}
+    telo["message"]["contact"] = {"phone_number": "+380675554433", "first_name": "Пётр", "user_id": telo["message"]["from"]["id"]}
     _poslat(root_client, bot_nastroen, telo)
 
     zapisi = root_client.get(f"{API}/clients/{klient['id']}/notes?per_page=200").json()["items"]
@@ -1012,7 +1012,7 @@ def test_zayavka_iz_dialoga_beryot_nazvanie_iz_razgovora(root_client, bot_nastro
     ).json()
 
     telo = _obnovlenie(507100, 1, text="Нужен ремонт холодильника")
-    telo["message"]["contact"] = {"phone_number": "+380671230011", "first_name": "Пётр"}
+    telo["message"]["contact"] = {"phone_number": "+380671230011", "first_name": "Пётр", "user_id": telo["message"]["from"]["id"]}
     _poslat(root_client, bot_nastroen, telo)
     dialog = _dialog(root_client, 507100)
     assert dialog["client_id"] == klient["id"]
@@ -1059,7 +1059,7 @@ def test_svoyo_nazvanie_pobezhdaet_ugadannoe(root_client, bot_nastroen):
         f"{API}/clients", json={"name": "Своё название", "phone": "+380671230022"}
     ).json()
     telo = _obnovlenie(507400, 1, text="здравствуйте")
-    telo["message"]["contact"] = {"phone_number": "+380671230022", "first_name": "Пётр"}
+    telo["message"]["contact"] = {"phone_number": "+380671230022", "first_name": "Пётр", "user_id": telo["message"]["from"]["id"]}
     _poslat(root_client, bot_nastroen, telo)
     dialog = _dialog(root_client, 507400)
 
@@ -2334,3 +2334,43 @@ def test_iz_dialoga_zavodit_tolko_tot_komu_otkryta_perepiska(root_client, bot_na
         assert otvet.status_code == 403, f"{put}: {otvet.text}"
         assert "Секретный текст" not in otvet.text
     assert _dialog(root_client, 509900)["client_id"] is None, "диалог привязан без права на переписку"
+
+def test_chuzhoy_kontakt_ne_privyazyvaet_dialog(root_client, bot_nastroen):
+    """Разбор 28.09.2026: посторонний присылал «Контакт» с номером настоящего клиента,
+    и его диалог садился на карточку клиента — менеджер отвечал ему про чужие заказы."""
+    klient = root_client.post(f"{API}/clients", json={"name": "Настоящий клиент", "phone": "+380671119988"}).json()
+    telo = _obnovlenie(508911, 1)
+    telo["message"]["contact"] = {"phone_number": "+380671119988", "first_name": "Не я", "user_id": 999001}
+    _poslat(root_client, bot_nastroen, telo)
+    dialog = _dialog(root_client, 508911)
+    assert dialog.get("client_id") != klient["id"], "чужой контакт привязал диалог к карточке"
+
+
+def test_fayl_bolshe_dvuh_gigabayt_ne_ronyaet_priyom(root_client, bot_nastroen):
+    """Разбор 28.09.2026: `file_size` больше 2^31 не ложился в INT, вебхук отвечал 503,
+    телеграм повторял до исчерпания попыток, и сообщение терялось."""
+    telo = _obnovlenie(508912, 1, caption="большое видео")
+    telo["message"]["video"] = {"file_id": "VID-BIG", "file_name": "film.mp4", "file_size": 4_000_000_000}
+    otvet = _poslat(root_client, bot_nastroen, telo)
+    assert otvet.status_code == 200, otvet.text
+    dialog = _dialog(root_client, 508912)
+    lenta = root_client.get(f"{TG}/chats/{dialog['id']}/messages").json()["items"]
+    assert lenta and lenta[-1]["kind"] == "video"
+
+
+def test_vlozhenie_ne_lozhitsya_na_polnyy_disk(root_client, bot_nastroen, monkeypatch):
+    """Разбор 28.09.2026: вложения переписки клались без проверки места — посторонний
+    пересылкой одного файла по кругу забивал диск до отказа базы."""
+    from core.services import storage_service, telegram_service
+
+    monkeypatch.setattr(telegram_service, "skachat_fayl", lambda kluch, file_id, opener=None: b"x" * 2048)
+    monkeypatch.setattr(storage_service, "has_room_for", lambda razmer: False)
+    telo = _obnovlenie(508913, 1, caption="фото на полный диск")
+    telo["message"]["photo"] = [{"file_id": "PH-FULL", "file_size": 2048}]
+    assert _poslat(root_client, bot_nastroen, telo).status_code == 200
+    dialog = _dialog(root_client, 508913)
+    [stroka] = root_client.get(f"{TG}/chats/{dialog['id']}/messages").json()["items"]
+    assert stroka["kind"] == "photo"
+    otvet = root_client.get(f"{TG}/chats/{dialog['id']}/messages/{stroka['id']}/file")
+    assert otvet.status_code != 200, "файл лёг на диск без места"
+

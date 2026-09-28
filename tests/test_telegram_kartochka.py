@@ -66,7 +66,7 @@ def _podelilsya_nomerom(root_client, sekret, chat_id: int, imya: str, nomer: str
     """
     telo = _obnovlenie(chat_id, 1, text="")
     telo["message"]["from"]["first_name"] = imya
-    telo["message"]["contact"] = {"phone_number": nomer, "first_name": imya}
+    telo["message"]["contact"] = {"phone_number": nomer, "first_name": imya, "user_id": telo["message"]["from"]["id"]}
     otvet = _poslat(root_client, sekret, telo)
     assert otvet.status_code == 200, otvet.text
     return _dialog(root_client, chat_id)

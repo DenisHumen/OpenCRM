@@ -22,7 +22,7 @@ import time
 from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
-from sqlalchemy.exc import DBAPIError, OperationalError
+from sqlalchemy.exc import DataError, DBAPIError, IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
 from config.settings import get_settings
@@ -274,6 +274,11 @@ def vebkhuk(request: Request, telo: bytes = Depends(telo_zaprosa), db: Session =
         # Наши доменные отказы разбирает общий обработчик: у них свой код и своё
         # объяснение, и подменять их безликим «error» незачем.
         raise
+    except (DataError, IntegrityError) as beda:
+        # Не преходящее: то же обновление упрётся в ту же колонку. 503 здесь
+        # запускал повторы до исчерпания попыток (разбор 28.09.2026).
+        logger.exception("обновление телеграма не легло в базу: %r", beda)
+        return {"status": "error"}
     except (OperationalError, DBAPIError) as beda:
         # Беда базы — ПРЕХОДЯЩАЯ: замок не дождался, соединение оборвалось,
         # сервер перезапускают. Отвечать на это 200 значит сказать телеграму
