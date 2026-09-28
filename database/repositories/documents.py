@@ -660,6 +660,12 @@ def bron_istekla(db: Session, kind: str, statuses, page: int = 1, per_page: int 
 # --- возвраты ---
 
 
+def zapert_i_perechitat(db: Session, document_id: int) -> Document | None:
+    """Занять бумагу и прочитать её уже под замком — со статусом, который успел
+    записать сосед, даже если объект был прочитан в этой сессии раньше."""
+    return db.scalars(select(Document).where(Document.id == document_id).with_for_update()).first()
+
+
 def zapert_bumagu(db: Session, document_id: int) -> None:
     """Занять бумагу до конца транзакции. Нужен возврату: «сколько ещё можно
     вернуть по заказу» считается запросом, и двое, проводящие два возврата по

@@ -725,6 +725,50 @@ def test_vozvrat_i_storno_nakladnoy_razom(root_client):
         root_client.post(f"{API}/modules/waybills", json={"enabled": False})
 
 
+def test_provodyat_i_udalyayut_vozvrat_razom(root_client, monkeypatch):
+    """Удаление проверяло «черновик и ничего не двигал» обычным чтением, а DELETE
+    шёл без условия: проведение рядом успевало сменить статус, и удалялась уже
+    проведённая бумага — движения склада без неё, возврат можно провести снова.
+    Замок — на строку самой бумаги (`documents_repo.zapert_i_perechitat`)."""
+    from tests.test_orders import ORDERS, order_with, product
+
+    for key in ("documents", "warehouse", "orders"):
+        root_client.post(f"{API}/modules/{key}", json={"enabled": True})
+    tovar = product(root_client, stock="3")
+    pokupatel = root_client.post(f"{API}/clients", json={"name": "Дуэль удаление"}).json()
+    order = order_with(root_client, pokupatel, tovar, quantity="3")
+    assert root_client.post(f"{ORDERS}/{order['id']}/close", json={}).status_code == 200
+    vozvrat = root_client.post(f"{ORDERS}/{order['id']}/returns").json()
+
+    # Окно — между сменой статуса проведения и его фиксацией. Без задержек удаление
+    # почти всегда успевает раньше и окна не видит: проверка шла бы вхолостую.
+    import time
+
+    from core.services import warehouse_service
+
+    nastoyashchiy = warehouse_service.resolve_warehouse
+
+    def medlenno(*args, **kwargs):
+        time.sleep(0.6)
+        return nastoyashchiy(*args, **kwargs)
+
+    monkeypatch.setattr(warehouse_service, "resolve_warehouse", medlenno)
+
+    def udalit():
+        time.sleep(0.2)
+        return root_client.delete(f"{API}/returns/{vozvrat['id']}").status_code
+
+    codes = duel(
+        lambda udar: udar(),
+        lambda: root_client.post(f"{API}/returns/{vozvrat['id']}/post", json={}).status_code,
+        udalit,
+    )
+    assert set(codes) == {"first", "second"}, f"об ударе не отчитались: {codes}"
+    assert not (codes["first"] == 200 and codes["second"] == 200), (
+        f"проведённый возврат удалён: ответы {codes}"
+    )
+
+
 # --- запасные коды двухфакторки ------------------------------------------------
 
 

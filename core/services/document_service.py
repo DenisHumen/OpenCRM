@@ -340,6 +340,10 @@ def udalit(db: Session, document_id: int, author: User, kinds) -> dict:
     списке вечно, и отмена этого не лечит: отменённая остаётся в списке.
     Дырку в нумерации объясняет журнал: номер и вид записаны в `document.deleted`.
     """
+    # Под замком: проведение рядом успевало сменить статус между нашей проверкой и
+    # DELETE, и удалялась уже проведённая бумага — движения склада и деньги
+    # оставались без неё, а возврат можно было провести ещё раз (разбор 28.09.2026).
+    documents_repo.zapert_i_perechitat(db, document_id)
     document = get(db, document_id)
     if document.kind not in kinds:
         raise errors.ValidationError(
