@@ -285,3 +285,20 @@ def test_sbros_gasit_tokeny_vypushchennye_iz_pod_uchyotki(root_client, role_make
     assert root_client.post(f"{API}/staff/{user_id}/reset-password").status_code == 200
     assert _po_tokenu(svoy.json()["token"]).get(f"{API}/tasks").json()["error"]["code"] == "token_revoked"
     assert _po_tokenu(ot_roota["token"]).get(f"{API}/tasks").status_code == 200
+
+
+def test_uvolennyy_ne_rabotaet_tokenom_vypushchennym_kollege(root_client, role_maker, staff_maker):  # noqa: F811
+    """Разбор 28.09.2026: строка токена «за коллегу» уходит выпустившему, и после его
+    увольнения он продолжал работать под подчинённым."""
+    rol_podch = role_maker("Токен — подчинённый", ["tasks.view"])
+    podchinyonnyy = staff_maker("tok-podch@test.local", rol_podch["id"])
+    direktor = staff_maker(
+        "tok-direktor@test.local", role_maker("Токен — директор", ["tasks.view", "settings.manage", "staff.view"])["id"]
+    )
+    vypushchen = direktor.post(TOKENS, json={"name": "Под подчинённым", "user_id": _moy_id(podchinyonnyy)})
+    assert vypushchen.status_code == 201, vypushchen.text
+    agent = _po_tokenu(vypushchen.json()["token"])
+    assert agent.get(f"{API}/tasks").status_code == 200
+    assert root_client.post(f"{API}/staff/{_moy_id(direktor)}/disable").status_code == 200
+    assert agent.get(f"{API}/tasks").json()["error"]["code"] == "token_revoked"
+

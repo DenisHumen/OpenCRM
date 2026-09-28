@@ -328,8 +328,11 @@ def disable(db: Session, actor: User, user_id: int) -> User:
     was = user.status
     user.status = STATUS_DISABLED
     users_repo.delete_sessions_for_user(db, user.id)
-    # Токены — насовсем, а не до включения: вернувшемуся выпускают новые.
+    # Токены — насовсем, а не до включения: вернувшемуся выпускают новые. И те, что
+    # он выпускал другим: строка ушла ему в руки, и уволенный работал бы под
+    # подчинённым (разбор 28.09.2026).
     user_tokens_repo.otozvat_vse(db, user.id, now_utc())
+    user_tokens_repo.otozvat_vypushchennye_im(db, user.id, now_utc())
     # Устройства — тоже: звонок напоминания уходил бы на личный телефон уволенного.
     push_repo.ubrat_vse(db, user.id)
     db.flush()
@@ -470,6 +473,8 @@ def delete_user(db: Session, actor: User, user_id: int) -> None:
     # Снимок берём до удаления: после него от аккаунта не остаётся ничего, а
     # «удалил сотрудника №17» не отвечает на вопрос, какого именно.
     label, removed_id = user.name, user.id
+    # До удаления: `created_by` станет пустым, и выпущенное им другим уже не найти.
+    user_tokens_repo.otozvat_vypushchennye_im(db, user.id, now_utc())
     avatar_service.clear_avatar(db, user)  # стираем файл аватара с диска
     # Условие «владельцев больше одного» стоит внутри самого удаления, а не
     # проверкой перед ним: двое, удаляющие друг друга разом, проходили обе

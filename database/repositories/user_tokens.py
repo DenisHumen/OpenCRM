@@ -63,6 +63,15 @@ def otozvat_vypushchennye_soboy(db: Session, user_id: int, kogda: datetime) -> i
     ).rowcount
 
 
+def otozvat_vypushchennye_im(db: Session, avtor_id: int, kogda: datetime) -> int:
+    """Всё, что сотрудник выпускал кому угодно: строка токена ушла ему в руки."""
+    return db.execute(
+        update(UserToken)
+        .where(UserToken.created_by == avtor_id, UserToken.revoked_at.is_(None))
+        .values(revoked_at=kogda)
+    ).rowcount
+
+
 def zhivyh(db: Session, now: datetime) -> int:
     return sum(
         1
