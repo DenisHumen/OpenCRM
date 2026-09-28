@@ -123,6 +123,9 @@ class UpdateConfig:
     #: Служба базы в compose. Клиент `mysql` живёт в её образе, а не в образе
     #: приложения, — поэтому дамп заливается заходом именно сюда.
     db_service: str = "db"
+    #: До скольких гигабайт ужимать кэш сборки после обновления: свежие слои
+    #: оставляем, чтобы следующая сборка не качала всё заново.
+    cache_keep_gb: int = 5
 
     @property
     def history_file(self) -> Path:
@@ -188,5 +191,6 @@ class UpdateConfig:
             telegram_token=get("TELEGRAM_TOKEN"),
             telegram_chat_id=get("TELEGRAM_CHAT"),
             mysql_db=_imya_bazy(db_url),
+            cache_keep_gb=int(get("CACHE_KEEP_GB", "5")),
             db_service=get("DB_SERVICE", "db"),
         )

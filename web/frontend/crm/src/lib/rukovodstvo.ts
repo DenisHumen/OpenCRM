@@ -1790,6 +1790,13 @@ curl -H "Authorization: Bearer ocrm_…" https://crm.example.com/api/v1/system/o
               en: "Before a version change a database copy is taken, then the database is brought to the new shape. If the new version does not answer, both the previous version and the previous database come back. There is no “running but with the wrong data” state. During an update visitors see a holding page — see the «Maintenance mode» article.",
             },
           },
+          {
+            vid: "abzats",
+            tekst: {
+              ru: "Каждая сборка оставляет на диске кэш docker. После обновления он сам ужимается до 5 ГБ, а сколько освободилось — строкой в сообщении бота. Стереть кэш целиком можно в Настройки → Обслуживание → «Очистить кэш сборки»: сайт работает дальше, следующее обновление соберётся с нуля и займёт на несколько минут дольше, итог придёт в бот.",
+              en: "Every build leaves a docker cache on disk. After an update it shrinks to 5 GB by itself, and how much was freed comes as a line in the bot message. To wipe the cache completely use Settings → Maintenance → «Clear build cache»: the site keeps working, the next update builds from scratch and takes a few minutes longer, and the result comes to the bot.",
+            },
+          },
         ],
       },
       {

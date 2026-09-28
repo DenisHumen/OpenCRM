@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Outlet, useLocation, useOutletContext } from "react-router-dom";
 
+import { KeshSborki } from "../components/KeshSborki";
 import { StorageCard } from "../components/StorageCard";
 import { ScreenLoading, Toggle } from "../components/ui";
 import { api } from "../lib/api";
@@ -589,6 +590,8 @@ export function SettingsMaintenance() {
           <div style={{ color: "var(--faint)", fontSize: 12.5 }}>{t("loading")}</div>
         )}
       </div>
+
+      <KeshSborki />
     </>
   );
 }

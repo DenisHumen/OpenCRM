@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 
 from core.services import (
     audit_service,
+    kesh_sborki_service,
     files_service,
     github_service,
     maintenance_service,
@@ -21,6 +22,21 @@ router = APIRouter(prefix="/system", tags=["system"])
 def storage_status(_: User = Depends(require_staff), db: Session = Depends(get_db)):
     """Место на диске. Видят все сотрудники: именно они загружают файлы."""
     return storage_service.status(db)
+
+
+@router.get("/build-cache", dependencies=[Depends(require_perm("settings", "manage"))])
+def build_cache():
+    """Кэш сборки docker со слов службы обновления: приложение docker не видит."""
+    return kesh_sborki_service.sostoyanie()
+
+
+@router.post("/build-cache/purge", status_code=202)
+def build_cache_purge(
+    actor: User = Depends(require_perm("settings", "manage")),
+    db: Session = Depends(get_db),
+):
+    """Просьба службе обновления стереть кэш сборки; она заберёт её за секунды."""
+    return kesh_sborki_service.zaprosit(db, actor)
 
 
 @router.get("/openapi.json")

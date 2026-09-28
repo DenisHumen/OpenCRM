@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from deploy import notify
+from deploy import kesh, notify
 from deploy.config import UpdateConfig
 from deploy.github import (
     CHECKS_FAILURE,
@@ -40,6 +40,7 @@ from deploy.updater import (
     SNAPSHOTS_KEPT,
     STATUS_UP_TO_DATE,
     STATUS_WAITING,
+    ZAPROS_SHAG,
     Updater,
 )
 
@@ -873,7 +874,7 @@ def test_a_deploy_walks_the_steps_in_order(tmp_path):
     assert outcome.status == STATUS_DEPLOYED
     assert step_names(outcome) == [
         "preflight", "fetch", "checkout", "tests", "config", "backup", "deploy",
-        "nginx-reload", "health", "prune",
+        "nginx-reload", "health", "prune", "cache",
     ]
     assert all(step.ok for step in outcome.steps)
 
@@ -1553,7 +1554,9 @@ def test_the_daemon_polls_on_a_schedule(tmp_path):
 
     updater.watch(rounds=3)
 
-    assert slept == [config.poll_seconds, config.poll_seconds]
+    # Пауза режется на ломтики, чтобы просьба с экрана не ждала пять минут.
+    assert sum(slept) == 2 * config.poll_seconds
+    assert max(slept) <= ZAPROS_SHAG
 
 
 def test_the_daemon_outlives_an_unexpected_error(tmp_path):
@@ -2953,3 +2956,92 @@ def test_dolgaya_komanda_ne_molchit(monkeypatch):
     assert itog.ok, itog.text
     tiki = [stroka for stroka in skazano if stroka.startswith("… идёт")]
     assert tiki, f"команда шла молча: {skazano}"
+
+
+# --- кэш сборки (docs/ekspluatatsiya/08-razvyortyvanie.md, «Кэш сборки») ---
+
+DF_DO = '{"Type":"Build Cache","Size":"45.61GB","Reclaimable":"44.17GB (96%)"}'
+DF_POSLE = '{"Type":"Build Cache","Size":"4.9GB","Reclaimable":"4.1GB"}'
+
+
+def _df_po_ocheredi(shell: FakeShell, *otvety: str) -> None:
+    """`docker system df` отвечает по очереди: до чистки и после."""
+    ochered = list(otvety)
+    iskhodnyy = shell.run
+
+    def run(argv, cwd=None, timeout=None, stdin=None):
+        if "system df" in " ".join(str(c) for c in argv) and ochered:
+            shell.calls.append(" ".join(str(c) for c in argv))
+            return Result(tuple(argv), 0, ochered.pop(0), "")
+        return iskhodnyy(argv, cwd=cwd, timeout=timeout, stdin=stdin)
+
+    shell.run = run
+
+
+def test_posle_obnovleniya_kesh_uzhimaetsya_do_poroga_a_itog_v_soobshchenii(tmp_path):
+    """28.09.2026: кэш сборки на боевом — 45 ГБ при 21 ГБ свободных."""
+    shell = FakeShell()
+    _df_po_ocheredi(shell, DF_DO, DF_POSLE)
+    updater = make_updater(tmp_path, shell=shell)
+
+    outcome = updater.run_once()
+
+    assert outcome.status == STATUS_DEPLOYED
+    assert shell.ran("builder prune -f --max-used-space 5GB")
+    assert not shell.ran("builder prune -a"), "после обновления свежий кэш не стирается целиком"
+    assert outcome.kesh["osvobozhdeno"] == 45_610_000_000 - 4_900_000_000
+    soobshchenie = updater.notifier.messages[-1]
+    assert "🧹 <b>Кэш сборки</b>: освобождено 40,7 ГБ · осталось 4,9 ГБ" in soobshchenie
+    sostoyanie = kesh.prochest(kesh.papka(updater.config.data_dir) / kesh.SOSTOYANIE)
+    assert sostoyanie["razmer"] == 4_900_000_000 and sostoyanie["poslednyaya"]["kak"] == "avto"
+
+
+def test_staryy_docker_bez_flaga_chistit_zapasnym_sposobom(tmp_path):
+    shell = FakeShell()
+    shell.fail("--max-used-space", err="unknown flag: --max-used-space")
+    updater = make_updater(tmp_path, shell=shell)
+
+    outcome = updater.run_once()
+
+    assert outcome.status == STATUS_DEPLOYED
+    assert shell.ran("builder prune -f --keep-storage 5GB")
+    assert next(s for s in outcome.steps if s.name == "cache").ok
+
+
+def test_neudachnaya_chistka_kesha_ne_portit_obnovlenie(tmp_path):
+    shell = FakeShell()
+    shell.fail("builder prune", err="daemon busy")
+    updater = make_updater(tmp_path, shell=shell)
+
+    outcome = updater.run_once()
+
+    assert outcome.status == STATUS_DEPLOYED
+    assert updater.journal.deployed_sha == NEW
+    assert "✗ <b>cache</b>" in updater.notifier.messages[-1]
+
+
+def test_prosba_s_ekrana_chistit_vsyo_i_otvechaet_v_bot(tmp_path):
+    shell = FakeShell()
+    _df_po_ocheredi(shell, DF_DO, DF_POSLE)
+    updater = make_updater(tmp_path, shell=shell)
+    prosba = kesh.papka(updater.config.data_dir) / kesh.ZAPROS
+    prosba.parent.mkdir(parents=True)
+    prosba.write_text('{"kto": "Денис", "at": "2026-09-28T12:00:00Z"}', encoding="utf-8")
+
+    updater._podozhdat(30)
+
+    assert shell.ran("builder prune -a -f")
+    assert not prosba.exists(), "просьба выполняется один раз"
+    sostoyanie = kesh.prochest(kesh.papka(updater.config.data_dir) / kesh.SOSTOYANIE)
+    assert sostoyanie["poslednyaya"]["kak"] == "vruchnuyu" and sostoyanie["poslednyaya"]["kto"] == "Денис"
+    soobshchenie = updater.notifier.messages[-1]
+    assert soobshchenie.startswith("🧹 <b>Кэш сборки очищен вручную</b>, Денис")
+    assert "освобождено 40,7 ГБ" in soobshchenie
+
+
+def test_razmery_docker_chitayutsya():
+    assert kesh.v_bayty("45.61GB") == 45_610_000_000
+    assert kesh.v_bayty("1.911GB (28%)") == 1_911_000_000
+    assert kesh.v_bayty("512kB") == 512_000
+    assert kesh.v_bayty("0B") == 0
+    assert kesh.v_bayty("") is None

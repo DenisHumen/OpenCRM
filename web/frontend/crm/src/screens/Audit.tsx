@@ -57,6 +57,7 @@ const ACTION: Record<string, TranslationKey> = {
   "waybill.posted": "auditActWaybillPosted",
   "waybill.reversed": "auditActWaybillReversed",
   "storage.purged": "auditActStoragePurged",
+  "build_cache.purge_requested": "auditActBuildCacheRequested",
   "backup.key_created": "auditActBackupKeyCreated",
   "backup.taken": "auditActBackupTaken",
   "backup.downloaded": "auditActBackupDownloaded",

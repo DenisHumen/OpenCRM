@@ -59,7 +59,7 @@ import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from deploy import notify, otchyot, vyzhimka
+from deploy import kesh, notify, otchyot, vyzhimka
 from deploy.config import UpdateConfig
 from deploy.github import (
     CHECKS_FAILURE,
@@ -99,6 +99,11 @@ PROEKT_NABORA = "opencrm-tests"
 #: строка о том, что ничего не случилось, повторённая раз в пять минут,
 #: прячет ту единственную, ради которой лог и читают.
 QUIET = {STATUS_DISABLED, STATUS_UP_TO_DATE, STATUS_RATE_LIMITED}
+
+#: Как часто в паузе между опросами смотреть, не попросили ли почистить кэш.
+ZAPROS_SHAG = 15
+#: Замер кэша для экрана — не чаще раза в полчаса.
+ZAMER_KAZHDYE = 1800
 
 # Файлы, из которых работает сам демон обновления. Изменились — процессу нужен
 # перезапуск: Python загрузил их при старте и правку на диске не заметит.
@@ -259,6 +264,8 @@ class Outcome:
     reason: str = ""
     steps: list[Step] = field(default_factory=list)
     seconds: float = 0.0
+    #: Итог ужатия кэша сборки после удачного обновления — строка в уведомлении.
+    kesh: dict | None = None
 
     @property
     def ok(self) -> bool:
@@ -318,6 +325,7 @@ class Updater:
         # `wait_healthy`: читает это поле `_health`, и отсутствующий атрибут
         # уронил бы отчёт о совершенно исправной выкатке.
         self._smoke_propushchen = ""
+        self._kesh_zameren: float | None = None
 
     # --- то, что вызывают снаружи ---
 
@@ -513,6 +521,7 @@ class Updater:
                 outcome = self.run_once()
                 if outcome.status not in QUIET:
                     self.log(f"{outcome.status}: {outcome.reason or outcome.to_sha[:12]}")
+                self.zamerit_kesh()
             except Exception as failure:  # noqa: BLE001 — демон не имеет права упасть
                 self.log(f"неожиданная ошибка: {failure!r}")
             done += 1
@@ -524,7 +533,102 @@ class Updater:
                 )
                 return
             if rounds is None or done < rounds:
-                self._sleep(self.config.poll_seconds)
+                self._podozhdat(self.config.poll_seconds)
+
+    def _podozhdat(self, sekund: float) -> None:
+        """Пауза между опросами ломтиками: просьба почистить кэш с экрана не ждёт пять минут."""
+        ostalos = sekund
+        while ostalos > 0:
+            lomtik = min(ZAPROS_SHAG, ostalos)
+            self._sleep(lomtik)
+            ostalos -= lomtik
+            try:
+                self._prosba_s_ekrana()
+            except Exception as failure:  # noqa: BLE001 — демон не имеет права упасть
+                self.log(f"чистка кэша по просьбе не удалась: {failure!r}")
+
+    # --- кэш сборки (docs/ekspluatatsiya/08-razvyortyvanie.md, «Кэш сборки») ---
+
+    def _pochistit_kesh(self, steps: list[Step], *, vsyo: bool, kak: str, kto: str = "") -> dict:
+        """Почистить кэш сборки и оставить итог там, где его прочтёт экран «Обслуживание»."""
+        bylo = kesh.izmerit(self.shell, self.config.project_dir) or {}
+        rezultat = None
+        for argv in kesh.komandy(vsyo, self.config.cache_keep_gb):
+            rezultat = self.shell.run(argv, cwd=self.config.project_dir, timeout=900)
+            if rezultat.ok or not kesh.ne_znaet_flaga(rezultat):
+                break
+        self._step(steps, "cache", rezultat, fatal=False)
+        stalo = kesh.izmerit(self.shell, self.config.project_dir) or {}
+        osvobozhdeno = None
+        if bylo.get("razmer") is not None and stalo.get("razmer") is not None:
+            osvobozhdeno = max(0, bylo["razmer"] - stalo["razmer"])
+        svobodno = self._svobodno_mb(self.config.data_dir)
+        itog = {
+            "at": _utc_now(),
+            "kak": kak,
+            "kto": kto,
+            "ok": rezultat.ok,
+            "oshibka": "" if rezultat.ok else (rezultat.err or rezultat.out).strip()[-300:],
+            "osvobozhdeno": osvobozhdeno,
+            "razmer": stalo.get("razmer"),
+            "svobodno_mb": svobodno,
+        }
+        self._zapisat_kesh(stalo, svobodno, poslednyaya=itog)
+        return itog
+
+    def _zapisat_kesh(self, zamer: dict, svobodno_mb: int | None, poslednyaya: dict | None = None) -> None:
+        put = kesh.papka(self.config.data_dir) / kesh.SOSTOYANIE
+        bylo = kesh.prochest(put) or {}
+        try:
+            kesh.zapisat(self.config.data_dir, {
+                "izmereno": _utc_now(),
+                "razmer": zamer.get("razmer"),
+                "osvobodimo": zamer.get("osvobodimo"),
+                "svobodno_mb": svobodno_mb,
+                "ostavlyat_gb": self.config.cache_keep_gb,
+                "poslednyaya": poslednyaya or bylo.get("poslednyaya"),
+            })
+        except OSError as beda:
+            self.log(f"состояние кэша не записалось: {beda}")
+
+    def _prosba_s_ekrana(self) -> None:
+        """Просьба «очистить кэш» с экрана настроек: чистим всё и сообщаем в бот."""
+        put = kesh.papka(self.config.data_dir) / kesh.ZAPROS
+        if not put.exists():
+            return
+        prosba = kesh.prochest(put) or {}
+        kto = str(prosba.get("kto") or "")[:120]
+        # Сначала убрать просьбу: упади чистка — второй раз по кругу она не пойдёт.
+        put.unlink(missing_ok=True)
+        steps: list[Step] = []
+        itog = self._pochistit_kesh(steps, vsyo=True, kak="vruchnuyu", kto=kto)
+        self.log(f"кэш сборки очищен по просьбе {kto or 'с экрана'}: {kesh.chelovecheski(itog['osvobozhdeno'])}")
+        self.notifier.send(self._stroka_kesha(itog, zagolovok=True), tiho=itog["ok"])
+
+    def _stroka_kesha(self, itog: dict, *, zagolovok: bool = False) -> str:
+        """Одна строка о кэше — в сообщении об обновлении и в ответе на просьбу с экрана."""
+        e = notify.ekranirovat
+        if not itog.get("ok"):
+            return f"✗ <b>Кэш сборки не очистился</b>: {e(itog.get('oshibka') or 'docker отказал')}"
+        chasti = [f"освобождено {kesh.chelovecheski(itog.get('osvobozhdeno'))}",
+                  f"осталось {kesh.chelovecheski(itog.get('razmer'))}"]
+        if itog.get("svobodno_mb") is not None:
+            chasti.append(f"на диске свободно {kesh.chelovecheski(itog['svobodno_mb'] * 1024 * 1024)}")
+        stroka = "🧹 <b>Кэш сборки</b>: " + " · ".join(chasti)
+        if zagolovok:
+            kto = f", {e(itog['kto'])}" if itog.get("kto") else ""
+            stroka = f"🧹 <b>Кэш сборки очищен вручную</b>{kto}\n" + " · ".join(chasti)
+        return stroka
+
+    def zamerit_kesh(self) -> None:
+        """Свежий замер для экрана, не чаще `ZAMER_KAZHDYE` — `docker system df` не бесплатен."""
+        teper = self._clock()
+        if self._kesh_zameren is not None and teper - self._kesh_zameren < ZAMER_KAZHDYE:
+            return
+        self._kesh_zameren = teper
+        zamer = kesh.izmerit(self.shell, self.config.project_dir)
+        if zamer is not None:
+            self._zapisat_kesh(zamer, self._svobodno_mb(self.config.data_dir))
 
     def _self_changed(self, since: str) -> bool:
         """Обновился ли код, из которого работает сам демон.
@@ -622,8 +726,10 @@ class Updater:
             self._step(steps, "prune", self.shell.run(
                 ["docker", "image", "prune", "-f"], cwd=self.config.project_dir, timeout=300,
             ), fatal=False)
+            # Кэш сборки — тоже: 28.09.2026 он занимал 45 ГБ при 21 ГБ свободных.
+            itog_kesha = self._pochistit_kesh(steps, vsyo=False, kak="avto")
 
-            outcome = Outcome(STATUS_DEPLOYED, previous, target, summary, "", steps)
+            outcome = Outcome(STATUS_DEPLOYED, previous, target, summary, "", steps, kesh=itog_kesha)
             self.journal.write(deployed_sha=target, failed_sha="")
         except _Stop as stop:
             if not touched:
@@ -1588,6 +1694,8 @@ class Updater:
                 ssylka = f"https://github.com/{self.config.repo}/commit/{outcome.to_sha}"
             stroka += f" · <a href=\"{e(ssylka)}\"><code>{e(podpis)}</code></a>"
         stroki.append(stroka)
+        if outcome.kesh:
+            stroki.append(self._stroka_kesha(outcome.kesh))
 
         # --- причина: главное, ради чего сообщение читают ---
         if outcome.reason:
