@@ -351,6 +351,18 @@ def test_vycherknutyy_zapasnoy_pishetsya_v_zhurnal(root_client):
     ).text, "сам запасной код уехал в журнал"
 
 
+def test_pokaz_zapasnyh_pishetsya_v_zhurnal_odnoy_zapisyu(root_client):
+    """Разбор 28.09.2026: код шёл в журнал всегда, а список запасных — молча, хотя
+    запасной код открывает сервис так же и живёт до использования."""
+    klyuch = zavesti(root_client, title="Запасные смотрят", backup_codes=["ccc-333", "ddd-444"])
+    for _ in range(3):
+        assert root_client.get(f"{KLYUCHI}/{klyuch['id']}/backup-codes").status_code == 200
+    zapisi = root_client.get(f"{API}/audit", params={"action": "key.backup_shown"}).json()["items"]
+    nashi = [z for z in zapisi if z["entity_id"] == klyuch["id"]]
+    assert len(nashi) == 1, f"показов в журнале {len(nashi)}: не записан или не склеен"
+    assert "ccc-333" not in root_client.get(f"{API}/audit", params={"entity_type": "twofactor"}).text
+
+
 def test_sam_klyuch_v_zhurnal_ne_popadaet(root_client):
     """В журнал идут имя, время и что открывали — и ничего больше."""
     klyuch = zavesti(root_client, title="Журнал без секрета")

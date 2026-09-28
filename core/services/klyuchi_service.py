@@ -630,6 +630,26 @@ def _polozhit_zapasnye(klyuch: TwoFactorKey, syroe) -> None:
 def zapasnye(db: Session, actor: User, key_id: int) -> dict:
     klyuch = dostat(db, actor, key_id)
     spisok = _zapasnye(klyuch)
+    # Запасной код открывает сервис так же, как обычный, и живёт до использования, а
+    # не 30 секунд: показ — в журнал, с тем же окном склейки (разбор 28.09.2026).
+    teper = now_utc()
+    if spisok and not audit_repo.bylo_nedavno(
+        db,
+        actor_id=actor.id,
+        action=audit_service.ACTION_KEY_BACKUP_SHOWN,
+        entity_type=audit_service.ENTITY_TWOFACTOR,
+        entity_id=klyuch.id,
+        ne_ranshe=(teper - timedelta(seconds=POKAZ_OKNO_SEKUND)).replace(tzinfo=None),
+    ):
+        audit_service.record(
+            db,
+            actor=actor,
+            source=SOURCE_MANUAL,
+            action=audit_service.ACTION_KEY_BACKUP_SHOWN,
+            entity_type=audit_service.ENTITY_TWOFACTOR,
+            entity_id=klyuch.id,
+            entity_label=klyuch.title,
+        )
     return {
         "items": spisok,
         "left": sum(1 for z in spisok if not z.get("potrachen")),

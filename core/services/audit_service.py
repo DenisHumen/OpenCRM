@@ -157,6 +157,8 @@ ACTION_KEY_SECRET_SHOWN = "key.secret_shown"
 #: Вычеркнутый запасной код. Пишется по той же причине, что и показ: вопрос
 #: «кто потратил четыре кода из восьми» задают, когда войти уже нечем.
 ACTION_KEY_BACKUP_SPENT = "key.backup_spent"
+#: Показ списка запасных кодов — тот же доступ к сервису, что и показ кода.
+ACTION_KEY_BACKUP_SHOWN = "key.backup_shown"
 ACTION_KEY_ACCESS_CHANGED = "key.access_changed"
 ACTION_KEY_CATEGORY_CHANGED = "key.category_changed"
 
