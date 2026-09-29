@@ -2426,3 +2426,30 @@ def test_spisok_dialogov_idyot_po_indeksu_a_pustye_v_kontse(db):
     finally:
         db.rollback()
 
+
+def test_otpravka_ne_derzhit_soedinenie_i_zamok_dialoga(root_client, bot_nastroen, monkeypatch):
+    """Разбор 29.09.2026: строка «отправляется» вставлялась в открытой транзакции, и
+    она держалась весь сетевой вызов — до минуты на файл. Проверка внешнего ключа
+    держала замок на строке диалога, входящее того же клиента ждало на `FOR UPDATE`
+    и после 50 с падало, а соединения были заняты у обоих."""
+    from core.services import telegram_service
+    from database.session import engine
+
+    pul = engine.pool
+    if not hasattr(pul, "checkedout"):
+        pytest.skip("у этого пула нет счётчика занятых — база не MySQL")
+    _poslat(root_client, bot_nastroen, _obnovlenie(508941, 1, text="вопрос"))
+    dialog = _dialog(root_client, 508941)
+    zamer: dict[str, int] = {}
+
+    def podstava(kluch, chat_id, text, opener=None, otvet_na=None):
+        zamer["vnutri"] = pul.checkedout()
+        return {"message_id": 5551}
+
+    monkeypatch.setattr(telegram_service, "poslat_tekst", podstava)
+    do = pul.checkedout()
+    otvet = root_client.post(f"{TG}/chats/{dialog['id']}/messages", json={"text": "ответ"})
+    assert otvet.status_code == 201, otvet.text
+    assert otvet.json()["send_state"] == "sent"
+    assert zamer["vnutri"] == do, f"во время отправки занято соединений: {zamer['vnutri'] - do}"
+
