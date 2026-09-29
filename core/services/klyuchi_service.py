@@ -381,7 +381,7 @@ def sozdat(db: Session, actor: User, dannye: dict) -> TwoFactorKey:
         raise errors.ValidationError(str(beda), code="key_bad_secret") from None
 
     nazvanie = _stroka(dannye.get("title"), MAX_NAZVANIE) or _stroka(
-        razbor["servis"] or razbor["uchyotka"] or "Ключ", MAX_NAZVANIE
+        razbor["servis"] or razbor["uchyotka"] or "Key", MAX_NAZVANIE
     )
     klyuch = klyuchi_repo.sozdat(
         db,
@@ -896,7 +896,7 @@ def zavesti_napominanie(db: Session, actor: User, key_id: int, cherez_dney: int)
     zadacha = task_service.create(
         db,
         {
-            "title": f"Сменить ключ: {klyuch.title}",
+            "title": f"Change the key: {klyuch.title}",
             "due_at": srok,
             "vazhnost": klyuch.vazhnost,
         },

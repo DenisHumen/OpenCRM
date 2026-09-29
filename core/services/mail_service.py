@@ -595,7 +595,7 @@ def send_message(
     # отдаём наверх, чтобы отправляющий увидел её сразу.
     if sent.refused:
         _remember_error(
-            db, account, "не доставлено: " + ", ".join(sent.refused)
+            db, account, "not delivered: " + ", ".join(sent.refused)
         )
         message.refused = list(sent.refused)
     return message
@@ -677,7 +677,7 @@ def _add_feed_entry(db: Session, message: MailMessage, author_id: int | None) ->
 
 
 def _feed_body(message: MailMessage) -> str:
-    subject = message.subject.strip() or "(без темы)"
+    subject = message.subject.strip() or "(no subject)"
     text = (message.body_text or "").strip()
     if len(text) > FEED_BODY_LIMIT:
         text = text[:FEED_BODY_LIMIT].rstrip() + "…"

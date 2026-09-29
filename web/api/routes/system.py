@@ -81,9 +81,9 @@ def purge_storage(
         entity_type=audit_service.ENTITY_MODULE,
         entity_label="storage",
         after=(
-            f"досок {result['boards']}, работ {result['works']}, "
-            f"клиентов {result['clients']}, заявок {result['deals']}, "
-            f"файлов {result['client_files']}"
+            f"boards {result['boards']}, works {result['works']}, "
+            f"clients {result['clients']}, deals {result['deals']}, "
+            f"files {result['client_files']}"
         ),
     )
     result["storage"] = storage_service.status(db)

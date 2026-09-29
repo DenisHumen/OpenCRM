@@ -750,6 +750,10 @@ PISHUT_V_BAZU: dict[str, set[str]] = {
     "core/subscriptions.py": {"write_off_act_materials", "return_into_feed"},
     "core/services/share_service.py": {"delete_share"},
     "core/services/telephony_service.py": {"create_callback_task"},
+    # 29.09.2026: название ключа, задача «сменить ключ», тема и отказ письма, журнал очистки.
+    "core/services/klyuchi_service.py": {"sozdat", "zavesti_napominanie"},
+    "core/services/mail_service.py": {"send_message", "_feed_body"},
+    "web/api/routes/system.py": {"purge_storage"},
 }
 
 
