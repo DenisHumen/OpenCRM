@@ -3118,3 +3118,33 @@ def test_skript_i_obnovlyator_derzhat_odin_zamok():
         telo = tekst.split(f"{komanda}() {{", 1)[1].split("\n}\n", 1)[0]
         assert "zamok_obsluzhivaniya" in telo, f"{komanda} идёт мимо замка обслуживания"
 
+
+def test_razorvannaya_zalivka_ne_podnimaet_staryy_kod_i_derzhit_obnovleniya(tmp_path):
+    """Разбор 29.09.2026: заливка снимка при откате встала посреди таблиц, а откат всё
+    равно поднимал старый код. `schema_check` ругается только на нехватку — сайт
+    вставал на смешанной базе со статусом «откатили», следующее обновление снимало
+    копию уже с испорченной базы, а уборка через два обновления удаляла хорошую."""
+    config = make_config(tmp_path)
+    shell = FakeShell()
+    shell.effect("scripts.snapshot_db dump", damp_snimaetsya(config, shell))
+    shell.fail("mysql -uroot", err="ERROR 2020 (HY000): Got packet bigger than 'max_allowed_packet'")
+    updater = make_updater(tmp_path, config=config, shell=shell, probe=FakeProbe(health=(False, True)))
+
+    outcome = updater.run_once()
+
+    assert outcome.status == STATUS_BROKEN
+    podnyatiya = [c for c in shell.calls if "up -d --build" in c]
+    assert len(podnyatiya) == 1, "старый код поднят на базе, залитой не до конца"
+    assert updater.journal.read().get("baza_porvana"), "отметки нет — следующее обновление пойдёт само"
+
+    sleduyushchiy = make_updater(tmp_path, config=config, github=FakeGitHub(sha="c" * 40))
+    zhdyot = sleduyushchiy.run_once()
+    assert zhdyot.status == STATUS_ABORTED and "ждёт человека" in zhdyot.reason
+    assert not sleduyushchiy.shell.ran("docker"), "обновление пошло поверх разорванной базы"
+
+    rukami = FakeShell()
+    rukami.effect("scripts.snapshot_db dump", damp_snimaetsya(config, rukami))
+    prinuditelno = make_updater(tmp_path, config=config, shell=rukami, github=FakeGitHub(sha="c" * 40))
+    assert prinuditelno.run_once(force=True).status == STATUS_DEPLOYED
+    assert not prinuditelno.journal.read().get("baza_porvana"), "удачная выкладка не сняла отметку"
+

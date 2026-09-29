@@ -541,6 +541,17 @@ class Updater:
                 to_sha=head.sha,
                 reason="этот коммит уже не встал — ждём следующий или force-update",
             )
+        # Откат залил базу не до конца: следующее обновление сняло бы копию с неё,
+        # а уборка через два обновления удалила бы последнюю хорошую (29.09.2026).
+        porvana = self.journal.read().get("baza_porvana")
+        if porvana and not force:
+            return Outcome(
+                STATUS_ABORTED,
+                from_sha=current,
+                to_sha=head.sha,
+                reason=f"откат залил базу не до конца ({porvana}) — автообновление ждёт человека: "
+                "восстановите копию и дайте force-update",
+            )
 
         gate = self._ci_gate(current, head.sha, force)
         if gate is not None:
@@ -843,7 +854,7 @@ class Updater:
             itog_kesha = self._pochistit_kesh(steps, vsyo=False, kak="avto")
 
             outcome = Outcome(STATUS_DEPLOYED, previous, target, summary, "", steps, kesh=itog_kesha)
-            self.journal.write(deployed_sha=target, failed_sha="")
+            self.journal.write(deployed_sha=target, failed_sha="", baza_porvana="")
         except _Stop as stop:
             if not touched:
                 # Живой сайт не трогали — достаточно вернуть чекаут на место.
@@ -1432,8 +1443,15 @@ class Updater:
         elif snapshot is None:
             steps.append(Step("rollback-db", True, "снимка не было — первый деплой"))
         else:
-            failure = self._restore_db(snapshot)
+            failure, porvana = self._restore_db(snapshot)
             steps.append(Step("rollback-db", not failure, failure or f"из {snapshot.name}"))
+            if porvana:
+                # Заливка встала посреди таблиц: база смешанная. Старый код на ней
+                # поднимался (`schema_check` ругается только на нехватку) со статусом
+                # «откатили». Не поднимаем: nginx покажет страницу обслуживания.
+                self.journal.write(baza_porvana=snapshot.name)
+                steps.append(Step("rollback-deploy", False, "не поднимали: база залита не до конца"))
+                return f"база залита не до конца, приложение не поднято: {failure}"
 
         self._step(steps, "rollback-deploy",
                    self._compose("up", "-d", "--build", timeout=self.config.build_timeout),
@@ -1487,8 +1505,8 @@ class Updater:
                 except OSError as beda:
                     self.log(f"не убрать {lishniy.name}: {beda}")
 
-    def _restore_db(self, snapshot: Path) -> str:
-        """Вернуть базу из копии. Пустая строка — получилось.
+    def _restore_db(self, snapshot: Path) -> tuple[str, bool]:
+        """Вернуть базу из копии: (причина отказа или пусто, оборвана ли заливка).
 
         Клиент `mysql` живёт в образе базы, поэтому дамп отдаётся ему на вход
         заходом в службу `db` — тем же способом, каким восстанавливают обычные
@@ -1506,9 +1524,9 @@ class Updater:
            сказали и поехали дальше, потому что вернуть рабочую базу важнее.
         """
         if not self.config.mysql_db:
-            return "не разобрать имя базы из OPENCRM_DB_URL — заливать дамп некуда"
+            return "не разобрать имя базы из OPENCRM_DB_URL — заливать дамп некуда", False
         if not _celaya(snapshot):
-            return f"копия {snapshot.name} оборвана (нет метки конца) — заливать её нельзя"
+            return f"копия {snapshot.name} оборвана (нет метки конца) — заливать её нельзя", False
 
         stamp = time.strftime("%Y%m%d-%H%M%S")
         otlozhennaya = self.config.state_dir / f"failed-update-{stamp}.sql"
@@ -1539,8 +1557,8 @@ class Updater:
             timeout=self.config.snapshot_timeout,
         )
         if not result.ok:
-            return f"заливка дампа в MySQL не удалась: {result.tail(4)}"
-        return self._snyat_lishnie(snapshot)
+            return f"заливка дампа в MySQL не удалась: {result.tail(4)}", True
+        return self._snyat_lishnie(snapshot), False
 
     def _snyat_lishnie(self, snapshot: Path) -> str:
         """Убрать таблицы, которых в копии нет. Пустая строка — получилось.
