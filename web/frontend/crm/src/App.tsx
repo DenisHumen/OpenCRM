@@ -70,6 +70,7 @@ import { Tasks } from "./screens/Tasks";
 import { SettingsTelegram } from "./screens/TelegramSettings";
 import { SettingsTelephony } from "./screens/TelephonySettings";
 import { Warehouse } from "./screens/Warehouse";
+import { OshibkaOtrisovki } from "./components/OshibkaOtrisovki";
 
 function Protected() {
   const { user, ready, t } = useApp();
@@ -130,7 +131,9 @@ function Protected() {
             </button>
             <span className="topbar-title">OpenCRM</span>
           </div>
-          <Outlet />
+          <OshibkaOtrisovki key={location.pathname}>
+            <Outlet />
+          </OshibkaOtrisovki>
         </main>
         {searchOpen && <CommandPalette onClose={() => setSearchOpen(false)} />}
       </div>

@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from "react";
 
 import { Icon } from "./Icon";
+import { prochitat, zapisat } from "../lib/pamyat";
 
 /** Категория списка: ключ, подпись и сколько их всего по мнению СЕРВЕРА. */
 export type Kategoriya = { key: string; label: string };
@@ -101,13 +102,13 @@ function Kategoriya({
   children: ReactNode;
 }) {
   const [svyornuta, setSvyornuta] = useState(
-    () => localStorage.getItem(klyuch) === "1",
+    () => prochitat(klyuch) === "1",
   );
 
   const perevernut = () => {
     const teper = !svyornuta;
     setSvyornuta(teper);
-    localStorage.setItem(klyuch, teper ? "1" : "0");
+    zapisat(klyuch, teper ? "1" : "0");
   };
 
   return (

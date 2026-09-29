@@ -2004,3 +2004,22 @@ def test_mestnyy_den_ne_cherez_utc():
                 utc.append(f"{put.relative_to(SCREENS)}:{nomer}")
     assert utc == [], f"местный день через UTC — берите mestnyyDen: {utc}"
 
+
+def test_sboy_otrisovki_ne_gasit_prilozhenie():
+    """Разбор 29.09.2026: перехватчика ошибок отрисовки не было — одно исключение
+    снимало меню, панель и несохранённые формы белым экраном. Поводы живые:
+    переводчик Chrome рвёт узлы React, а `localStorage`, прочитанный при
+    отрисовке без `try`, бросает в приватном окне."""
+    app = (SCREENS / "App.tsx").read_text(encoding="utf-8")
+    assert re.search(r"<OshibkaOtrisovki key=\{location\.pathname\}>\s*<Outlet />", app), "раздел не под перехватчиком"
+    perehvatchik = (SCREENS / "components" / "OshibkaOtrisovki.tsx").read_text(encoding="utf-8")
+    assert "getDerivedStateFromError" in perehvatchik
+    golye = [
+        str(put.relative_to(SCREENS))
+        for papka in ("components", "screens")
+        for put in (SCREENS / papka).rglob("*.tsx")
+        if "localStorage." in put.read_text(encoding="utf-8")
+    ]
+    assert golye == [], f"хранилище мимо lib/pamyat.ts (бросает в приватном окне): {golye}"
+    assert "document.documentElement.lang = locale" in (SCREENS / "lib" / "app.tsx").read_text(encoding="utf-8")
+

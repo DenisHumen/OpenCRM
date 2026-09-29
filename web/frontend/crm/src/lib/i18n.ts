@@ -28,6 +28,7 @@ const en = {
   // общие
   save: "Save changes",
   saved: "Saved",
+  screenCrashed: "This section failed to display. The rest of the system works — reload the page to try again.",
   amountUnreadable: "Can't read the amount — type digits, e.g. 1500 or 1,500.50",
   quantityUnreadable: "Can't read the quantity — type digits, at most three decimal places",
   cancel: "Cancel",
@@ -2366,6 +2367,7 @@ const en = {
 const ru: typeof en = {
   save: "Сохранить",
   saved: "Сохранено",
+  screenCrashed: "Раздел не смог показаться. Остальная система работает — обновите страницу, чтобы попробовать снова.",
   amountUnreadable: "Не удалось прочитать сумму — наберите цифрами, например 1500 или 1 500,50",
   quantityUnreadable: "Не удалось прочитать количество — цифрами, не больше трёх знаков после запятой",
   cancel: "Отмена",

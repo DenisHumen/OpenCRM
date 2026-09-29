@@ -13,6 +13,7 @@ import { useFailure } from "../lib/failure";
 import { useGuard } from "../lib/guard";
 import { parseDate } from "../lib/format";
 import { poyasBrauzera } from "../lib/povtor";
+import { prochitat, zapisat } from "../lib/pamyat";
 import {
   VAZHNOSTI,
   VAZHNOST_LABEL,
@@ -86,11 +87,7 @@ function polosa(task: { due_at: string | null; vazhnost?: string }, now: number)
 }
 
 function zapomnennyyVid(): "kalendar" | "spisok" {
-  try {
-    return localStorage.getItem(VID_KLYUCH) === "spisok" ? "spisok" : "kalendar";
-  } catch {
-    return "kalendar";
-  }
+  return prochitat(VID_KLYUCH) === "spisok" ? "spisok" : "kalendar";
 }
 
 export function Tasks() {
@@ -130,11 +127,7 @@ export function Tasks() {
 
   const vybratVid = (novyy: "kalendar" | "spisok") => {
     setVid(novyy);
-    try {
-      localStorage.setItem(VID_KLYUCH, novyy);
-    } catch {
-      /* без хранилища вид проживёт до перезагрузки */
-    }
+    zapisat(VID_KLYUCH, novyy);
   };
 
   useEffect(() => {

@@ -127,6 +127,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const locale: Locale = user?.locale === "ru" ? "ru" : "en";
   const t = useMemo(() => makeT(locale), [locale]);
+  // `lang` страницы — язык интерфейса, а не вшитый «en»: иначе браузер предлагал
+  // «перевести с английского» русский экран, а перевод рвёт узлы React.
+  useEffect(() => {
+    document.documentElement.lang = locale;
+  }, [locale]);
 
   // Тема. Начальное значение читаем из того же хранилища, что и скрипт,
   // поставивший её до отрисовки, — здесь только держим состояние для профиля.

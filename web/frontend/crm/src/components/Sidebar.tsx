@@ -3,6 +3,7 @@ import { NavLink, useLocation, useNavigate } from "react-router-dom";
 
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
+import { prochitat, zapisat } from "../lib/pamyat";
 import { formatBytes, initials } from "../lib/format";
 import { useLiveTopic } from "../lib/live";
 import { moduleOn } from "../lib/modules";
@@ -51,7 +52,7 @@ function NavCategoryBlock({
     (item) => pathname === item.to || pathname.startsWith(item.to + "/"),
   );
   const [open, setOpen] = useState(
-    () => inside || localStorage.getItem(klyuch) === "1",
+    () => inside || prochitat(klyuch) === "1",
   );
 
   useEffect(() => {
@@ -61,7 +62,7 @@ function NavCategoryBlock({
   const toggle = () => {
     const next = !open;
     setOpen(next);
-    localStorage.setItem(klyuch, next ? "1" : "0");
+    zapisat(klyuch, next ? "1" : "0");
   };
 
   // Имена классов свои, а не `nav-cat`: тот уже занят СЕКЦИЕЙ меню («Работа»,
@@ -126,7 +127,7 @@ function NavGroup({
   const { pathname } = useLocation();
   const inside = pathname === base || pathname.startsWith(base + "/");
   const [open, setOpen] = useState(
-    () => inside || localStorage.getItem(`nav:${base}`) === "1",
+    () => inside || prochitat(`nav:${base}`) === "1",
   );
 
   useEffect(() => {
@@ -136,7 +137,7 @@ function NavGroup({
   const toggle = () => {
     const next = !open;
     setOpen(next);
-    localStorage.setItem(`nav:${base}`, next ? "1" : "0");
+    zapisat(`nav:${base}`, next ? "1" : "0");
   };
 
   if (vse_ssylki(items).length === 0) return null;
@@ -251,14 +252,14 @@ function NavSection({
   items: NavItem[];
   children?: ReactNode;
 }) {
-  const [open, setOpen] = useState(() => localStorage.getItem(`nav:cat:${id}`) !== "0");
+  const [open, setOpen] = useState(() => prochitat(`nav:cat:${id}`) !== "0");
 
   if (items.length === 0 && !children) return null;
 
   const toggle = () => {
     const next = !open;
     setOpen(next);
-    localStorage.setItem(`nav:cat:${id}`, next ? "1" : "0");
+    zapisat(`nav:cat:${id}`, next ? "1" : "0");
   };
 
   // Свёрнутая категория забирает счётчики своих пунктов: иначе свернул один
