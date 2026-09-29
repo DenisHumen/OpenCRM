@@ -781,3 +781,10 @@ def test_vosstanovlenie_iz_menyu_peresozdaet_bazu():
     zalivka = kod.index("exec mysql --default-character-set")
     assert snimok < peresozdanie < zalivka, "база пересоздаётся не между снимком прежней и заливкой"
 
+
+def test_tochka_vkhoda_ubiraet_chernoviki_dampa():
+    """Разбор 29.09.2026: дампер пишет черновик `<копия>.<pid>.<метка>.chernovik`,
+    а точка входа убирала только `*.sql.part` — черновик убитого дампа лежал вечно."""
+    kod = (ROOT / "docker" / "entrypoint.sh").read_text(encoding="utf-8")
+    assert 'rm -f "$DB_DIR"/mysql.pre-migrate-*.chernovik' in kod
+

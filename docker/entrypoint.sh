@@ -351,6 +351,9 @@ SNAPSHOT="$DB_DIR/mysql.pre-migrate-$CURRENT.sql"
 # — на прошлой ревизии такой огрызок лежал бы вечно. Проверено: 200 МБ
 # мусора пережили перезапуск контейнера.
 rm -f "$DB_DIR"/mysql.pre-migrate-*.sql.part
+# И черновики нынешнего дампера (`<копия>.<pid>.<метка>.chernovik`): убитый на
+# середине, он оставлял их навсегда (разбор 29.09.2026).
+rm -f "$DB_DIR"/mysql.pre-migrate-*.chernovik
 if nechego_nakatyvat "$CURRENT"; then
     echo "[opencrm] миграций к накату нет (ревизия $CURRENT уже голова) — копия не нужна"
 elif [ -f "$SNAPSHOT" ]; then

@@ -992,13 +992,28 @@ class Updater:
         # Смотрим на раздел с ДАННЫМИ, а не на чекаут: копия базы и слои
         # docker'а живут там, и на VPS это часто разные разделы.
         svobodno = self._svobodno_mb(self.config.data_dir)
-        if svobodno is not None and svobodno < self.config.min_free_mb:
+        nuzhno = self._nuzhno_mesta_mb()
+        if svobodno is not None and svobodno < nuzhno:
             steps.append(Step("preflight", False, f"свободно {svobodno} МБ"))
             raise _Stop(
                 f"на диске свободно {svobodno} МБ, нужно хотя бы "
-                f"{self.config.min_free_mb}. Освободить: docker image prune -f"
+                f"{nuzhno}. Освободить: docker image prune -f"
             )
         steps.append(Step("preflight", True))
+
+    def _nuzhno_mesta_mb(self) -> int:
+        """Сколько места нужно: не меньше трёх копий базы и гигабайта на слои образа.
+
+        Обновление с миграциями пишет копию до подмены и копию в точке входа, откат —
+        ещё отложенную неудачную. Порог в 2 ГБ при базе в 1,2 ГБ проходил, а дамп
+        точки входа падал на ENOSPC уже после подмены (разбор 29.09.2026).
+        """
+        try:
+            kopii = [p.stat().st_size for p in self.config.state_dir.glob("pre-update-*.sql")]
+        except OSError:
+            kopii = []
+        baza_mb = max(kopii, default=0) // (1024 * 1024)
+        return max(self.config.min_free_mb, 3 * baza_mb + 1024)
 
     def _svobodno_mb(self, put: Path) -> int | None:
         """Свободные мегабайты на разделе. `None` — спросить не удалось.
@@ -1542,6 +1557,17 @@ class Updater:
         Беда с уборкой не смертельна — место кончится позже, а обновление
         важнее.
         """
+        # Черновик дампа, убитого на середине (`*.chernovik`, см. snapshot_db.snyat),
+        # не подбирал никто: до гигабайта мусора навсегда. Обновлятор идёт под
+        # замком обслуживания, так что живых черновиков этих имён сейчас нет.
+        for papka in (self.config.data_dir, self.config.state_dir):
+            for obrazets in ("pre-update-*.chernovik", "failed-update-*.chernovik"):
+                try:
+                    for chernovik in papka.glob(obrazets):
+                        chernovik.unlink()
+                        self.log(f"убран черновик оборванного дампа: {chernovik.name}")
+                except OSError as beda:
+                    self.log(f"не убрать черновики {obrazets}: {beda}")
         for obrazets in ("pre-update-*.sql", "failed-update-*.sql"):
             try:
                 fayly = sorted(

@@ -3261,3 +3261,34 @@ def test_udachnaya_vykladka_snimaet_teg_otkata(tmp_path):
     assert updater.run_once().status == STATUS_DEPLOYED
     assert shell.ran("image rm opencrm-otkat:latest"), "сбережённый образ копится на диске после удачи"
 
+
+def test_mesto_schitaetsya_ot_razmera_bazy(tmp_path, monkeypatch):
+    """Разбор 29.09.2026: порог в 2 ГБ при базе в 1,2 ГБ проходил, а обновление с
+    миграциями пишет копию до подмены, копию в точке входа и при откате ещё одну —
+    дамп точки входа падал на ENOSPC уже после подмены."""
+    import shutil as _shutil
+    from collections import namedtuple
+
+    config = make_config(tmp_path, OPENCRM_UPDATE_MIN_FREE_MB="10")
+    kopiya = config.state_dir / "pre-update-aaaaaaaaaaaa.sql"
+    with kopiya.open("wb") as f:
+        f.truncate(10 * 1024 * 1024)
+    Mesto = namedtuple("Mesto", "total used free")
+    monkeypatch.setattr(_shutil, "disk_usage", lambda _p: Mesto(0, 0, 1000 * 1024 * 1024))
+    updater = make_updater(tmp_path, config=config)
+
+    outcome = updater.run_once()
+    assert outcome.status == STATUS_ABORTED, "три копии базы и слои образа не влезут, а обновление пошло"
+    assert "1054" in outcome.reason, outcome.reason
+
+
+def test_chernoviki_oborvannykh_dampov_ubirayutsya(tmp_path):
+    config = make_config(tmp_path)
+    ostatok = config.data_dir / "pre-update-aaaaaaaaaaaa.sql.123.abcd1234.chernovik"
+    ostatok.write_text("INSERT", encoding="utf-8")
+    chuzhoy = config.data_dir / "backup-kopiya.sql.9.ffff0000.chernovik"
+    chuzhoy.write_text("INSERT", encoding="utf-8")
+    make_updater(tmp_path, config=config).run_once()
+    assert not ostatok.exists(), "черновик оборванного дампа обновлятора лежит навсегда"
+    assert chuzhoy.exists(), "уборка тронула чужой черновик"
+
