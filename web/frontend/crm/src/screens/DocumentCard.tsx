@@ -16,7 +16,7 @@ import { useGuard } from "../lib/guard";
 import { copyText } from "../lib/clipboard";
 import { can } from "../lib/permissions";
 import { isFinished, nextStatuses, statusLabel, statusVariant } from "../lib/documents";
-import { formatDateTime, formatMoney, formatQuantity } from "../lib/format";
+import { formatDateTime, formatMoney, formatQuantity, summaIliOtkaz } from "../lib/format";
 import { useReference } from "../lib/reference";
 import { nazvanieEtapa } from "../lib/etapy";
 import type { Product } from "./Warehouse";
@@ -569,9 +569,8 @@ function ActLineForm({ actId, onAdded }: { actId: number; onAdded: () => Promise
         // Количество уходит строкой как набрали: разбирает его сервер, чтобы
         // лишние знаки после запятой получили отказ, а не тихое округление.
         quantity: quantity.trim(),
-        // Деньги переводим в минимальные единицы здесь, на краю: два знака и
-        // умножение на сто в браузере безобидны, в отличие от количества.
-        price: price.trim() ? Math.round(Number(price) * 100) : null,
+        // Деньги переводим в минимальные единицы здесь, на краю, общим разбором.
+        price: summaIliOtkaz(price),
       });
       setName("");
       setPicked(null);
@@ -656,9 +655,7 @@ function ActLineForm({ actId, onAdded }: { actId: number; onAdded: () => Promise
           <label className="label">{t("sellPrice")}</label>
           <input
             className="input"
-            type="number"
-            min={0}
-            step="0.01"
+            inputMode="decimal"
             value={price}
             onChange={(e) => setPrice(e.target.value)}
           />

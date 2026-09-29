@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
 import { useDebounced } from "../lib/debounce";
-import { formatMoney, formatQuantity } from "../lib/format";
+import { formatMoney, formatQuantity, summaIliOtkaz } from "../lib/format";
 import { useGuard } from "../lib/guard";
 import { moduleOn } from "../lib/modules";
 import { can } from "../lib/permissions";
@@ -141,13 +141,13 @@ export function DealLines({
     if (!guard.take()) return;
     try {
       // Цена приходит с сервера и уходит на сервер В МИНОРНЫХ единицах, а в поле
-      // человек пишет рубли. Умножение здесь безопасно: у денег два знака, в
-      // отличие от количества, где `Math.round(0.3335 * 1000)` даёт 334.
-      const kopeyki = tsena.trim() ? Math.round(Number(tsena.replace(",", ".")) * 100) : null;
+      // человек пишет рубли. Нечитаемая цена — отказ: пропусти её, и сервер молча
+      // ставил цену из справочника вместо договорённой (разбор 29.09.2026).
+      const kopeyki = summaIliOtkaz(tsena);
       await api.post(`/deals/${dealId}/lines`, {
         ...(vybran ? { product_id: vybran.id } : { name: poisk.trim() }),
         quantity: kolichestvo,
-        ...(kopeyki === null || Number.isNaN(kopeyki) ? {} : { price: kopeyki }),
+        ...(kopeyki === null ? {} : { price: kopeyki }),
         // Склад — только у ТОВАРНОЙ строки: упаковку не берут с полки, а у
         // услуги остатка нет и сервер отвечает `line_has_no_warehouse`. Тот же
         // случай разобран у сканера (`test_skan_uslugi_ne_upiraetsya_v_sklad`).

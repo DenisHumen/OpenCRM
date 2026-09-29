@@ -28,6 +28,8 @@ const en = {
   // общие
   save: "Save changes",
   saved: "Saved",
+  amountUnreadable: "Can't read the amount — type digits, e.g. 1500 or 1,500.50",
+  quantityUnreadable: "Can't read the quantity — type digits, at most three decimal places",
   cancel: "Cancel",
   delete: "Delete",
   edit: "Edit",
@@ -2364,6 +2366,8 @@ const en = {
 const ru: typeof en = {
   save: "Сохранить",
   saved: "Сохранено",
+  amountUnreadable: "Не удалось прочитать сумму — наберите цифрами, например 1500 или 1 500,50",
+  quantityUnreadable: "Не удалось прочитать количество — цифрами, не больше трёх знаков после запятой",
   cancel: "Отмена",
   delete: "Удалить",
   edit: "Изменить",

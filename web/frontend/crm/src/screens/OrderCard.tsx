@@ -14,7 +14,7 @@ import { useLiveTopic } from "../lib/live";
 import { useDebounced } from "../lib/debounce";
 import { useFailure } from "../lib/failure";
 import { useGuard } from "../lib/guard";
-import { formatDate, formatDateTime, formatMoney, formatQuantity, formatRate, toMinorUnits } from "../lib/format";
+import { formatDate, formatDateTime, formatMoney, formatQuantity, formatRate, NechitaemoeChislo, summaIliOtkaz, toMinorOrNull } from "../lib/format";
 import { moduleOn } from "../lib/modules";
 import { orderStatusLabel, statusLabel } from "../lib/documents";
 import { can } from "../lib/permissions";
@@ -776,7 +776,12 @@ function AccrualRow({
   const sum = (value: number) => formatMoney(value, currency, locale);
 
   const save = async () => {
-    const next = toMinorUnits(typed);
+    const next = toMinorOrNull(typed);
+    // Нечитаемое — отказ, а не поправка на ноль: прежде «1 5OO» обнуляло начисление.
+    if (next === null) {
+      toastError(new NechitaemoeChislo("amountUnreadable"));
+      return;
+    }
     // Та же сумма — просто закрываем поле. Сервер на это отвечает отказом
     // `nothing_to_adjust`, и он прав, но человеку показывать отказ за то, что
     // он передумал, не за что.
@@ -912,7 +917,7 @@ function PaymentModal({
     if (!guard.take()) return;
     try {
       await api.post("/finance/payments", {
-        amount: toMinorUnits(form.amount),
+        amount: summaIliOtkaz(form.amount) ?? 0,
         category_id: Number(form.category_id),
         document_id: order.id,
         // Полдень, а не полночь: дату человек выбирает по своему календарю, а

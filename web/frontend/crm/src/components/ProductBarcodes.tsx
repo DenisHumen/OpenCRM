@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { Icon } from "./Icon";
 import { Chip, KnopkaKorziny } from "./ui";
 import { api, ApiError } from "../lib/api";
+import { kolichestvoIliOtkaz, NechitaemoeChislo } from "../lib/format";
 import { useApp } from "../lib/app";
 import { useGuard } from "../lib/guard";
 import { moduleOn } from "../lib/modules";
@@ -195,11 +196,13 @@ function AddBarcode({
     e.preventDefault();
     if (!code.trim() || !guard.take()) return;
     try {
+      // Упаковку человек вводит в штуках, база хранит в тысячных. «1 000» и «0»
+      // прежде тихо становились одной штукой, и скан коробки двигал остаток на 1.
+      const pachka = kolichestvoIliOtkaz(pack) ?? 1000;
+      if (pachka <= 0) throw new NechitaemoeChislo("quantityUnreadable");
       await api.post(`/labels/products/${productId}/barcodes`, {
         code: code.trim(),
-        // Упаковку человек вводит в штуках, база хранит в тысячных — как и
-        // всякое количество на складе.
-        pack_size_milli: Math.round((Number(pack.replace(",", ".")) || 1) * 1000),
+        pack_size_milli: pachka,
       });
       setCode("");
       setPack("1");

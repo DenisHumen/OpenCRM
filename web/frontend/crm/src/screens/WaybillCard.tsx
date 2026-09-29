@@ -9,7 +9,7 @@ import { api, ApiError } from "../lib/api";
 import { useApp } from "../lib/app";
 import { useFailure } from "../lib/failure";
 import { useGuard } from "../lib/guard";
-import { formatDate, formatMoney, formatQuantity, toMinorUnits } from "../lib/format";
+import { formatDate, formatMoney, formatQuantity, summaIliOtkaz } from "../lib/format";
 import { paperLink, statusLabel, statusVariant } from "../lib/documents";
 import { can } from "../lib/permissions";
 import { useLiveTopic } from "../lib/live";
@@ -279,7 +279,7 @@ function WaybillLines({
       await api.post(`/waybills/${waybill.id}/lines`, {
         name: name.trim(),
         quantity,
-        price: price ? toMinorUnits(price) : null,
+        price: summaIliOtkaz(price),
       });
       setName("");
       setQuantity("1");

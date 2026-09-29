@@ -12,7 +12,7 @@ import { useApp } from "../lib/app";
 import { dropTarget } from "../lib/dnd";
 import { statusLabel, statusVariant } from "../lib/documents";
 import { useFailure } from "../lib/failure";
-import { formatDate, formatMoney, formatQuantity, toMinorUnits } from "../lib/format";
+import { formatDate, formatMoney, formatQuantity, NechitaemoeChislo, toMinorOrNull } from "../lib/format";
 import { useGuard } from "../lib/guard";
 import { useLiveTopic } from "../lib/live";
 import { moduleOn } from "../lib/modules";
@@ -316,7 +316,7 @@ function NoteField({ value, canEdit, onSave }: { value: string; canEdit: boolean
 }
 
 function RefundField({ value, canEdit, onSave }: { value: number | null; canEdit: boolean; onSave: (refund: number) => void }) {
-  const { t } = useApp();
+  const { t, toastError } = useApp();
   const [typed, setTyped] = useState(value === null ? "" : String(value / 100));
   useEffect(() => setTyped(value === null ? "" : String(value / 100)), [value]);
   return (
@@ -327,8 +327,10 @@ function RefundField({ value, canEdit, onSave }: { value: number | null; canEdit
       aria-label={t("returnRefund")}
       onChange={(e) => setTyped(e.target.value)}
       onBlur={() => {
-        const next = toMinorUnits(typed);
-        if (typed.trim() !== "" && next !== value) onSave(next);
+        if (typed.trim() === "") return;
+        const next = toMinorOrNull(typed);
+        if (next === null) toastError(new NechitaemoeChislo("amountUnreadable"));
+        else if (next !== value) onSave(next);
       }}
     />
   );

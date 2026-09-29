@@ -15,7 +15,7 @@ import { useLiveTopic, useNachatayaPravka } from "../lib/live";
 import { useFailure } from "../lib/failure";
 import { useGuard } from "../lib/guard";
 import { nazvanieBumagi, paperLink, statusLabel, statusVariant } from "../lib/documents";
-import { formatDate, formatDateTime, formatMoney, formatSpan, parseDate, toMinorOrNull } from "../lib/format";
+import { formatDate, formatDateTime, formatMoney, formatSpan, NechitaemoeChislo, parseDate, toMinorOrNull } from "../lib/format";
 import { moduleOn } from "../lib/modules";
 import { can } from "../lib/permissions";
 import { useReference } from "../lib/reference";
@@ -398,9 +398,7 @@ export function DealCard() {
             <label className="label">{t("dealAmount")}</label>
             <input
               className="input"
-              type="number"
-              min={0}
-              step="0.01"
+              inputMode="decimal"
               readOnly={summaIzStrok}
               // `readOnly`, а не `disabled`: серое нечитаемое поле прячет саму
               // сумму, а её как раз и смотрят. Значение остаётся выделяемым и
@@ -411,8 +409,13 @@ export function DealCard() {
               key={`amount-${deal.amount}`}
               defaultValue={asMoneyInput(deal.amount)}
               onBlur={(e) => {
+                // Текстовое поле, а не `type="number"`: у того «1 500» — пустая
+                // строка, и сумма заявки стиралась (разбор 29.09.2026).
                 const next = toMinorOrNull(e.target.value);
-                if (next !== deal.amount) void patch({ amount: next });
+                if (next === null && e.target.value.trim()) {
+                  toastError(new NechitaemoeChislo("amountUnreadable"));
+                  e.target.value = asMoneyInput(deal.amount);
+                } else if (next !== deal.amount) void patch({ amount: next });
               }}
             />
             {summaIzStrok && <div className="field-desc">{t("amountFromLines")}</div>}
@@ -421,13 +424,14 @@ export function DealCard() {
             <label className="label">{t("dealPrepaid")}</label>
             <input
               className="input"
-              type="number"
-              min={0}
-              step="0.01"
+              inputMode="decimal"
               defaultValue={asMoneyInput(deal.prepaid)}
               onBlur={(e) => {
-                const next = toMinorOrNull(e.target.value) ?? 0;
-                if (next !== deal.prepaid) void patch({ prepaid: next });
+                const next = toMinorOrNull(e.target.value);
+                if (next === null && e.target.value.trim()) {
+                  toastError(new NechitaemoeChislo("amountUnreadable"));
+                  e.target.value = asMoneyInput(deal.prepaid);
+                } else if ((next ?? 0) !== deal.prepaid) void patch({ prepaid: next ?? 0 });
               }}
             />
           </div>

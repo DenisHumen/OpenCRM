@@ -9,7 +9,7 @@ import { useApp } from "../lib/app";
 import { useLiveTopic } from "../lib/live";
 import { useFailure } from "../lib/failure";
 import { useGuard } from "../lib/guard";
-import { formatDate, formatMoney } from "../lib/format";
+import { formatDate, formatMoney, summaIliOtkaz } from "../lib/format";
 import { moduleOn } from "../lib/modules";
 import { can } from "../lib/permissions";
 import { podpisSistemnoy } from "../lib/sistemnye_zapisi";
@@ -485,9 +485,7 @@ function OperationModal({
         // едет целым и целым же лежит в базе. Округление до целой копейки —
         // не вольность: дробных копеек не бывает, а `12.345` иначе доехало бы
         // до сервера и получило законный, но непонятный человеку отказ.
-        //
-        // Запятая как разделитель — обычный способ набора в русской раскладке.
-        amount: Math.round(Number(form.amount.replace(",", ".")) * 100),
+        amount: summaIliOtkaz(form.amount) ?? 0,
         // Полдень, а не полночь: дату человек выбирает по своему календарю, а
         // хранится момент в UTC. Полночь при смещении в любую сторону уезжает
         // на соседние сутки, и операция попадает в чужой месяц.

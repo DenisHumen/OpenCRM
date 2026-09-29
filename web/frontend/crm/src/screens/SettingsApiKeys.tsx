@@ -6,7 +6,7 @@ import { Chip, ConfirmModal, LoadFailed, Modal, ScreenLoading } from "../compone
 import { api } from "../lib/api";
 import { useApp } from "../lib/app";
 import { useFailure } from "../lib/failure";
-import { formatDate, formatDateTime } from "../lib/format";
+import { formatDate, formatDateTime, kolichestvoIliOtkaz } from "../lib/format";
 import { useGuard } from "../lib/guard";
 import { useLiveTopic } from "../lib/live";
 import type { TranslationKey } from "../lib/i18n";
@@ -297,7 +297,7 @@ function NewKeyModal({
           days: Number(form.days),
           stock_mode: form.stock_mode,
           // Порог вводится в единицах, уезжает в тысячных — как всё количество.
-          few_threshold_milli: Math.round(Number(form.few) * 1000),
+          few_threshold_milli: kolichestvoIliOtkaz(form.few) ?? 0,
           rate_per_min: Number(form.rate),
           max_reserve_minutes: Number(form.reserve_max),
           ttl_sec: Number(form.ttl),

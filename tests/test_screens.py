@@ -1918,13 +1918,35 @@ def test_summa_iz_polya_odna_i_ne_boitsya_probelov():
     """
     format_ts = (SCREENS / "lib" / "format.ts").read_text(encoding="utf-8")
     telo = re.search(r"export function toMinorOrNull[\s\S]*?\n}\n", format_ts)
-    assert telo and 'replace(/\s/g, "")' in telo.group(0), "пробелы в тысячах не убираются"
+    assert telo and re.search(r"replace\(/\[?\\s", telo.group(0)), "пробелы в тысячах не убираются"
     svoi = [
         str(put.relative_to(SCREENS))
         for put in SCREENS.rglob("*.tsx")
         if re.search(r"function toMinor\w*\(", put.read_text(encoding="utf-8"))
     ]
     assert svoi == [], f"свой разбор суммы — берите toMinorOrNull из lib/format.ts: {svoi}"
+
+
+def test_chislo_iz_polya_razbiraetsya_tolko_obshchim_razborom():
+    """Разбор 29.09.2026: после общего разбора остались копии прямо в выражениях —
+    `Number(x.replace(",", ".")) * 100` в цене строки заявки, плане, операции, акте, и
+    `(Number(pack) || 1) * 1000` в упаковке штрихкода. «1 500» давало там NaN и цену
+    из справочника, «1 000» — одну штуку. Денежное `type="number"` отдаёт «1 500»
+    пустой строкой, и сумма заявки стиралась."""
+    samodelnye = []
+    for put in SCREENS.rglob("*.tsx"):
+        text = put.read_text(encoding="utf-8")
+        for m in re.finditer(r'replace\(",", "\."\)|Number\([^()]*\)\)?\s*\*\s*1000?\b|type="number"[^>]*step="0\.01"', text):
+            nomer = text.count("\n", 0, m.start()) + 1
+            samodelnye.append(f"{put.relative_to(SCREENS)}:{nomer}: {m.group(0)}")
+    assert samodelnye == [], (
+        "число из поля разбирается мимо lib/format.ts (summaIliOtkaz / kolichestvoIliOtkaz):\n  "
+        + "\n  ".join(samodelnye)
+    )
+    format_ts = (SCREENS / "lib" / "format.ts").read_text(encoding="utf-8")
+    oshibki = (SCREENS / "lib" / "oshibki.ts").read_text(encoding="utf-8")
+    assert "throw new NechitaemoeChislo" in format_ts, "нечитаемое снова тихо становится нулём"
+    assert "instanceof NechitaemoeChislo" in oshibki, "отказ разбора не подписан словами интерфейса"
 
 
 def test_chernovik_messendzhera_u_kazhdogo_dialoga_svoy():

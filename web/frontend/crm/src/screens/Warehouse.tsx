@@ -11,7 +11,7 @@ import { useLiveTopic } from "../lib/live";
 import { useDebounced } from "../lib/debounce";
 import { useFailure } from "../lib/failure";
 import { useGuard } from "../lib/guard";
-import { formatMoney, formatQuantity, toMinorOrNull } from "../lib/format";
+import { formatMoney, formatQuantity, summaIliOtkaz } from "../lib/format";
 
 export const UNITS = ["pcs", "kg", "g", "l", "ml", "m", "m2", "pack", "hour"] as const;
 
@@ -369,8 +369,8 @@ function NewProductModal({
           // Пустое поле — null, а не 0: «цену не назвали» и «отдаём бесплатно»
           // разные состояния, и подменять одно другим нельзя.
           sku: form.sku.trim() || null,
-          cost: toMinorOrNull(form.cost),
-          price: toMinorOrNull(form.price),
+          cost: summaIliOtkaz(form.cost),
+          price: summaIliOtkaz(form.price),
           // Количество уходит строкой: его разбирает сервер, чтобы лишние знаки
           // после запятой получили отказ, а не тихое округление в браузере.
           min_stock: form.is_service ? null : form.min_stock.trim() || null,

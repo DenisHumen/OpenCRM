@@ -22,7 +22,7 @@ import { useApp } from "../lib/app";
 import { useLiveTopic } from "../lib/live";
 import { useFailure } from "../lib/failure";
 import { useGuard } from "../lib/guard";
-import { formatMoney, formatRate, toMinorUnits } from "../lib/format";
+import { formatMoney, formatRate, summaIliOtkaz, toMinorOrNull, toMinorUnits } from "../lib/format";
 import type { FinanceCategory } from "./Finance";
 
 /** Справочник статей, правила начисления и планы — экран настроек, на праве
@@ -671,7 +671,8 @@ function RuleModal({
 
   const set = (key: string) => (e: any) => setForm((f) => ({ ...f, [key]: e.target.value }));
   const percent = form.base === BASE_PERCENT;
-  const rateBp = Math.round(Number(form.rate.replace(",", ".") || "0") * 100);
+  // Ставка в сотых процента — та же арифметика, что у копеек, и тот же разбор.
+  const rateBp = toMinorOrNull(form.rate) ?? 0;
   const money = (value: number) => formatMoney(value, currency, locale);
   const income = categories.filter((row) => row.direction === "income");
 
@@ -693,7 +694,7 @@ function RuleModal({
         note: form.note,
       };
       if (percent) body.rate_bp = rateBp;
-      else body.amount = toMinorUnits(form.amount);
+      else body.amount = summaIliOtkaz(form.amount) ?? 0;
 
       if (rule) await api.patch(`/finance/rules/${rule.id}`, body);
       else await api.post("/finance/rules", body);
@@ -956,7 +957,7 @@ function BudgetModal({
         period_end: form.period_end,
         // Копейки считает браузер и только здесь, на краю: дальше число едет
         // целым и целым же лежит в базе.
-        planned: Math.round(Number(form.planned.replace(",", ".")) * 100),
+        planned: summaIliOtkaz(form.planned) ?? 0,
         note: form.note,
       });
       onSaved();

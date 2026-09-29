@@ -123,10 +123,59 @@ export function toMinorUnits(typed: string): number {
  * на нём даёт `NaN`, и цена прихода ложилась нулём без единого слова (28.09.2026).
  */
 export function toMinorOrNull(typed: string): number | null {
-  const chistoe = typed.replace(/\s/g, "").replace(",", ".");
-  if (!chistoe) return null;
-  const value = Number(chistoe);
-  return Number.isFinite(value) ? Math.round(value * 100) : null;
+  let s = typed.replace(/[\s$€£₴₽]/g, "");
+  const tochka = s.lastIndexOf(".");
+  const zapyataya = s.lastIndexOf(",");
+  if (tochka >= 0 && zapyataya >= 0) {
+    // «1,234.56» и «1.234,56»: дробный знак — последний, второй делит тысячи.
+    const [tysyachi, drob] = tochka > zapyataya ? [",", "."] : [".", ","];
+    s = s.split(tysyachi).join("").replace(drob, ".");
+  } else if (/^-?[1-9]\d{0,2}(,\d{3})+$/.test(s) || /^-?[1-9]\d{0,2}(\.\d{3}){2,}$/.test(s)) {
+    // Перед ровно тремя цифрами знак делит тысячи: трёх знаков у денег не бывает,
+    // а «1,500» в английском интерфейсе — полторы тысячи, не 1.50 (29.09.2026).
+    s = s.replace(/[.,]/g, "");
+  } else {
+    s = s.replace(",", ".");
+  }
+  const m = /^(-?)(\d*)(?:\.(\d*))?$/.exec(s);
+  if (!m || !(m[2] || m[3])) return null;
+  // Целыми, а не `Number * 100`: 1.005 × 100 в двоичной дроби — 100.4999….
+  const drob = (m[3] ?? "").padEnd(3, "0");
+  const kopeyki = Number(m[2] || "0") * 100 + Number(drob.slice(0, 2)) + (Number(drob[2]) >= 5 ? 1 : 0);
+  return m[1] && kopeyki ? -kopeyki : kopeyki;
+}
+
+/** Количество из поля в тысячные: «1 000» → 1000000, «0,5» → 500. Целыми, без float.
+ *  `null` — пусто, нечитаемо или больше трёх знаков: тихо округлять количество нельзя. */
+export function toMilliOrNull(typed: string): number | null {
+  const m = /^(\d*)(?:[.,](\d{0,3}))?$/.exec(typed.replace(/\s/g, ""));
+  if (!m || !(m[1] || m[2])) return null;
+  return Number(m[1] || "0") * 1000 + Number((m[2] ?? "").padEnd(3, "0"));
+}
+
+/** Отказ браузера до отправки: поле непустое, а числа в нём нет. Подписывается
+ *  словами интерфейса в `podpisOshibki`, как отказ сервера. */
+export class NechitaemoeChislo extends Error {
+  klyuch: "amountUnreadable" | "quantityUnreadable";
+  constructor(klyuch: "amountUnreadable" | "quantityUnreadable") {
+    super(klyuch);
+    this.klyuch = klyuch;
+  }
+}
+
+/** Сумма для отправки: пусто — `null`, нечитаемое — отказ, а не тихий ноль.
+ *  Ноль уезжал в платёж и в цену прихода без единого слова (разбор 29.09.2026). */
+export function summaIliOtkaz(typed: string): number | null {
+  const v = toMinorOrNull(typed);
+  if (v === null && typed.trim()) throw new NechitaemoeChislo("amountUnreadable");
+  return v;
+}
+
+/** Количество для отправки: пусто — `null`, нечитаемое — отказ. */
+export function kolichestvoIliOtkaz(typed: string): number | null {
+  const v = toMilliOrNull(typed);
+  if (v === null && typed.trim()) throw new NechitaemoeChislo("quantityUnreadable");
+  return v;
 }
 
 /** Ставка из базисных пунктов в проценты: 500 → «5%», 650 → «6,5%».

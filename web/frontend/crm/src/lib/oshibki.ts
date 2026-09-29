@@ -1,4 +1,5 @@
 import { ApiError } from "./api";
+import { NechitaemoeChislo } from "./format";
 import type { TranslationKey } from "./i18n";
 
 type T = (key: TranslationKey, params?: Record<string, string | number>) => string;
@@ -115,6 +116,7 @@ export const KODY_OSHIBOK: Record<string, TranslationKey> = {
 };
 
 export function podpisOshibki(e: unknown, t: T): string {
+  if (e instanceof NechitaemoeChislo) return t(e.klyuch);
   if (!(e instanceof ApiError)) return t("error");
   const key = KODY_OSHIBOK[e.code];
   if (key) return t(key);
