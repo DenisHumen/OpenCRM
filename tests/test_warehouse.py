@@ -325,8 +325,7 @@ def test_nol_eto_zakonchilsya_a_ne_malo(root_client):
         assert card["out_of_stock"] is True, tovar["name"]
     assert root_client.get(f"{WH}/products/{bez_poroga['id']}").json()["low_stock"] is False
 
-    # Фильтр «мало» режет уже отобранную страницу, поэтому ищем по имени, а не
-    # листаем: на населённой базе «Тонер» стоит дальше двухсотой строки.
+    # Ищем по имени, а не листаем: на населённой базе «мало» у соседей хватает.
     def malo(nazvanie: str) -> set[int]:
         otvet = root_client.get(
             f"{WH}/products", params={"low_only": "true", "search": nazvanie, "per_page": 50}
@@ -980,3 +979,27 @@ def test_bityy_snimok_tovara_otvechaet_otkazom_a_ne_500(root_client):
     item = new_product(root_client, name="Битый снимок")
     otvet = _snimok(root_client, item["id"], content=b"\x89PNG\r\n\x1a\n" + b"\x00" * 200)
     assert otvet.status_code == 422 and otvet.json()["error"]["code"] == "bad_image", otvet.text
+
+
+def test_malo_otbiraetsya_v_zaprose_a_ne_po_stranitse(root_client):
+    """Разбор 29.09.2026: фильтр «мало» резал уже нарезанную страницу. На тысячах
+    товаров «Мало» показывало почти пустой экран, а `total` считал все товары —
+    нужный стоял на странице, до которой список не доводил."""
+    malo = new_product(root_client, name="НизОкн A", unit="pcs", min_stock=5)
+    move(root_client, malo["id"], "in", 2)
+    mnogo = new_product(root_client, name="НизОкн B", unit="pcs", min_stock=5)
+    move(root_client, mnogo["id"], "in", 10)
+    net = new_product(root_client, name="НизОкн C", unit="pcs")
+
+    def stranica(nomer: int) -> dict:
+        return root_client.get(
+            f"{WH}/products",
+            params={"low_only": "true", "search": "НизОкн", "per_page": 1, "page": nomer},
+        ).json()
+
+    pervaya, vtoraya = stranica(1), stranica(2)
+    assert [r["id"] for r in pervaya["items"]] == [malo["id"]]
+    assert [r["id"] for r in vtoraya["items"]] == [net["id"]], "кончившийся не дошёл до второй страницы «мало»"
+    assert pervaya["total"] == 2, f"total считает и товары, которых в списке нет: {pervaya['total']}"
+    assert mnogo["id"] not in {r["id"] for r in pervaya["items"] + vtoraya["items"]}
+

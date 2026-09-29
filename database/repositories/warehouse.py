@@ -11,7 +11,7 @@
 
 import re
 
-from sqlalchemy import Select, case, func, or_, select, update
+from sqlalchemy import Select, and_, case, func, or_, select, update
 from sqlalchemy.orm import Session
 
 from database.models import Product, ProductBarcode, ProductPhoto, StockMove
@@ -130,6 +130,8 @@ def search_products(
     page: int = 1,
     per_page: int = 50,
     sort: str | None = None,
+    malo: bool = False,
+    warehouse_id: int | None = None,
 ) -> tuple[list[Product], int]:
     stmt = select(Product).where(Product.deleted_at.is_(None))
     if q:
@@ -137,14 +139,26 @@ def search_products(
         stmt = stmt.where(or_(contains(Product.name, needle), contains(Product.sku, needle)))
     if not include_services:
         stmt = stmt.where(Product.is_service.is_(False))
-    if sort in ("stock", "stock_desc"):
-        ostatok = (
-            select(StockMove.product_id.label("pid"), func.sum(StockMove.quantity_milli).label("summa"))
-            .group_by(StockMove.product_id)
-            .subquery()
-        )
+    if malo or sort in ("stock", "stock_desc"):
+        # Остаток — того склада, что показан на экране, если выбран один.
+        summy = select(StockMove.product_id.label("pid"), func.sum(StockMove.quantity_milli).label("summa"))
+        if warehouse_id is not None:
+            summy = summy.where(StockMove.warehouse_id == warehouse_id)
+        ostatok = summy.group_by(StockMove.product_id).subquery()
         velichina = func.coalesce(ostatok.c.summa, 0)
         stmt = stmt.outerjoin(ostatok, ostatok.c.pid == Product.id)
+    if malo:
+        # «Мало или кончился» — в запросе, а не по готовой странице: на тысячах
+        # товаров фильтр по странице давал почти пустой экран и `total`, не
+        # совпадающий со списком (разбор 29.09.2026). Условие — is_low ∨ is_out.
+        stmt = stmt.where(
+            Product.is_service.is_(False),
+            or_(
+                velichina <= 0,
+                and_(Product.min_stock_milli.is_not(None), velichina <= Product.min_stock_milli),
+            ),
+        )
+    if sort in ("stock", "stock_desc"):
         if sort == "stock":
             stmt = stmt.order_by(velichina.asc(), Product.id.asc())
         else:

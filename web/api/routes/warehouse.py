@@ -110,7 +110,8 @@ def list_products(
         )
     amounts = permissions_service.sees_amounts(db, user, "warehouse")
     items, total = warehouse_repo.search_products(
-        db, q=search, include_services=include_services, page=page, per_page=per_page, sort=sort
+        db, q=search, include_services=include_services, page=page, per_page=per_page, sort=sort,
+        malo=low_only, warehouse_id=warehouse_id,
     )
     goods = [p.id for p in items if not p.is_service]
     # Остатки — одним запросом на всю страницу списка, а не по одному на строку.
@@ -136,13 +137,6 @@ def list_products(
         if many and not p.is_service:
             row["by_warehouse"] = spread.get(p.id, {})
         rows.append(row)
-    if low_only:
-        # Фильтр применяется после подсчёта остатков: «мало» — свойство не строки
-        # в таблице, а суммы движений, и в WHERE его не выразить, не повторив тот
-        # же агрегат. `total` остаётся числом товаров, а не строк после фильтра:
-        # иначе пагинация прыгала бы при каждом движении.
-        # Кончившийся — тоже «мало», даже без порога: закупать его нужнее всех.
-        rows = [row for row in rows if row["low_stock"] or row["out_of_stock"]]
     data = schemas.paginated(rows, total, page, per_page)
     data["currency"] = _currency(db)
     return data
