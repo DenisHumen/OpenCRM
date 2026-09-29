@@ -80,8 +80,8 @@ def prochitat(db: Session, user: User, ids: list[int] | None = None) -> int:
     return repo.mark_read(db, user.id, ids, now_utc().replace(tzinfo=None))
 
 
-def ubrat_starye(db: Session) -> int:
-    return repo.purge_older_than(db, (now_utc() - timedelta(days=HRANIT_DNEY)).replace(tzinfo=None))
+def ubrat_starye(db: Session, pachka: int) -> int:
+    return repo.purge_older_than(db, (now_utc() - timedelta(days=HRANIT_DNEY)).replace(tzinfo=None), pachka)
 
 
 def out(row: Notification) -> dict:

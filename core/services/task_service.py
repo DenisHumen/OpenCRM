@@ -732,8 +732,8 @@ def zvonki_prinyat(db: Session, user: User, signal_ids) -> int:
     return tasks_repo.zvonki_prinyat(db, user.id, now_utc(), signal_ids=signal_ids)
 
 
-def zvonki_ubrat_starye(db: Session) -> int:
-    return tasks_repo.zvonki_ubrat_starye(db, now_utc() - ZVONKI_HRANIT)
+def zvonki_ubrat_starye(db: Session, pachka: int) -> int:
+    return tasks_repo.zvonki_ubrat_starye(db, now_utc() - ZVONKI_HRANIT, pachka)
 
 
 # --- вложения -----------------------------------------------------------------

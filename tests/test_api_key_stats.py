@@ -75,7 +75,7 @@ def test_uborka_ubiraet_starye_chasy_i_ostavlyaet_svezhie(root_client):
         repo.zapisat(db, k["id"], staryy, "catalog.read", rejected=False)
         db.commit()
         assert len(repo.stroki(db, k["id"], staryy)) == 2
-        assert api_stats_service.ubrat_starye(db) == 1
+        assert api_stats_service.ubrat_starye(db, 100) == 1
         db.commit()
         ostalis = repo.stroki(db, k["id"], staryy)
     assert [s.count for s in ostalis] == [1], "свежий час на месте, старый убран"

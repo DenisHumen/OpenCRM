@@ -168,10 +168,13 @@
 прочитать нельзя по условию запроса.
 
 **Уборка.** Старше 60 дней — `notification_service.ubrat_starye`, подсказки не
-учёт. Ходит с ночной уборкой переписки (`opencrm.sh tg-uborka` →
-`scripts/telegram_uborka.py`), независимо от срока хранения переписки: вторая
-строка в расписании ради одной таблицы не нужна. Сторож —
-`tests/test_uvedomleniya.py`.
+учёт. Ходит с часовой уборкой старого в потоке планировщика
+(`zvonki_service.ubrat_staroe`, docs/bloki/29 §6), пачками по индексу
+`ix_notifications_created_at`. До 29.09.2026 она висела на ночном таймере
+переписки, а его ставит только установка с systemd: на хосте с cron таблица
+росла вечно, а впервые включённая уборка удаляла всё одним `DELETE`. Сторожа —
+`tests/test_uvedomleniya.py` и
+`test_uborka_starogo_nastupaet_bez_chasa_ot_starta_i_idyot_pachkami`.
 
 
 ## 5. Проверка связей 05.09.2026: что зависало и что теперь

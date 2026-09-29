@@ -112,5 +112,5 @@ def svodka(db: Session, key: ApiKey) -> dict:
     }
 
 
-def ubrat_starye(db: Session) -> int:
-    return repo.purge_older_than(db, _chas(now_utc()) - timedelta(days=HRANIT_DNEY))
+def ubrat_starye(db: Session, pachka: int) -> int:
+    return repo.purge_older_than(db, _chas(now_utc()) - timedelta(days=HRANIT_DNEY), pachka)

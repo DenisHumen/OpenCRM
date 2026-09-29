@@ -462,3 +462,35 @@ def test_zvonok_dogonyaet_prostoy_planirovshchika(root_client):
         klient.delete(zvonki_service.KLYUCH_OTMETKI)
     assert any(vid == "due" for _u, vid, _m in _zvonki(task["id"])), "звонок, пришедшийся на простой, потерян"
 
+
+
+def test_uborka_starogo_nastupaet_bez_chasa_ot_starta_i_idyot_pachkami(root_client, monkeypatch):
+    """Разбор 29.09.2026: уборка звонков ждала 180-го шага от старта процесса, а прод
+    обновляется чаще раза в час — она не наступала никогда. Уведомления висели на
+    таймере переписки, которого на хосте без systemd нет, и уходили одним `DELETE`.
+    Теперь спрашивают раз в пять минут, час на все процессы держит Redis, удаляют пачками."""
+    from sqlalchemy import func
+
+    from core import redis_client
+    from core.services import zvonki_service
+    from database.models import Notification
+
+    ya = _moy_id(root_client)
+    davno = (now_utc() - timedelta(days=61)).replace(tzinfo=None)
+    with SessionLocal() as db:
+        db.add_all([Notification(user_id=ya, kind="uborka_proba", params="{}", created_at=davno) for _ in range(5)])
+        db.add(Notification(user_id=ya, kind="uborka_proba", params="{}"))
+        db.commit()
+    klient = redis_client.get_client()
+    klient.delete(zvonki_service.KLYUCH_UBORKI)
+    monkeypatch.setattr(zvonki_service, "PACHKA_UBORKI", 2)
+    try:
+        zvonki_service._shag_kruga(zvonki_service.PROVERKA_UBORKI)
+        with SessionLocal() as db:
+            ostalos = db.scalar(
+                select(func.count()).select_from(Notification).where(Notification.kind == "uborka_proba")
+            )
+        assert ostalos == 1, "старые уведомления не убраны через пять минут после старта"
+        assert zvonki_service._pora_ubirat(zvonki_service.PROVERKA_UBORKI) is False, "второй процесс в тот же час"
+    finally:
+        klient.delete(zvonki_service.KLYUCH_UBORKI)

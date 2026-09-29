@@ -9,17 +9,29 @@
 from __future__ import annotations
 
 import threading
+import time
 from datetime import datetime
 
 from core import redis_client
-from core.services import board_service, push_service, task_service
+from core.services import api_stats_service, board_service, notification_service, push_service, task_service
 from core.utils import now_utc
 from database.session import SessionLocal
 
 #: Шаг, секунд. Окно звонка — пятнадцать минут назад, так что пропуск шага не теряет звонков.
 SHAG = 20
-#: Раз в сколько шагов убирать старые звонки: примерно час.
+#: Раз в сколько шагов доводить брошенные работы досок: примерно час.
 UBORKA_KAZHDYE = 180
+
+#: Уборка старого — раз в час на все процессы, а спрашивают о ней раз в пять минут.
+#: Час, считанный от старта процесса, не наступал: прод обновляется чаще, и старые
+#: звонки не убирались никогда (разбор 29.09.2026). Час держит ключ в Redis.
+KLYUCH_UBORKI = f"{redis_client.PREFIX}zvonki:uborka"
+UBORKA_SEKUND = 3600
+PROVERKA_UBORKI = 15
+#: Одна пачка — одна короткая транзакция; впервые включённая уборка на годовой
+#: таблице иначе удаляла бы всё одним `DELETE`, держа замки строк до конца.
+PACHKA_UBORKI = 5000
+PREDEL_UBORKI_SEKUND = 60
 
 #: Отметка последнего удачного шага (общая на процессы): окно звонка начинается от
 #: неё. Жёсткие «15 минут назад» теряли всё, что должно было прозвенеть за простой
@@ -68,19 +80,55 @@ def shag() -> int:
         return zvonkov
 
 
+def _pora_ubirat(nomer: int) -> bool:
+    """Один процесс в час; без Redis — каждый свой час от старта."""
+    try:
+        klient = redis_client.get_client()
+        if klient is not None:
+            return bool(klient.set(KLYUCH_UBORKI, "1", nx=True, ex=UBORKA_SEKUND))
+    except Exception:  # noqa: BLE001 — Redis недоступен: считаем час сами
+        pass
+    return nomer % UBORKA_KAZHDYE == 0
+
+
+def ubrat_staroe() -> dict[str, int]:
+    """Старые уведомления, часы обращений по ключам и звонки — пачками, в пределе минуты."""
+    konets = time.monotonic() + PREDEL_UBORKI_SEKUND
+    itog: dict[str, int] = {}
+    for imya, ubrat in (
+        ("notifications", notification_service.ubrat_starye),
+        ("api_key_hits", api_stats_service.ubrat_starye),
+        ("task_signals", task_service.zvonki_ubrat_starye),
+    ):
+        vsego = 0
+        while time.monotonic() < konets:
+            with SessionLocal() as db:
+                ushlo = ubrat(db, PACHKA_UBORKI)
+                db.commit()
+            vsego += ushlo
+            if ushlo < PACHKA_UBORKI:
+                break
+        itog[imya] = vsego
+    if any(itog.values()):
+        print(f"[opencrm] уборка старого: {itog}")
+    return itog
+
+
+def _shag_kruga(nomer: int) -> None:
+    shag()
+    if nomer % PROVERKA_UBORKI == 0 and _pora_ubirat(nomer):
+        ubrat_staroe()
+    # Первый заход — через минуту после старта: брошенное выкладкой видно сразу.
+    if nomer % UBORKA_KAZHDYE == 3:
+        dovesti_v_storone()
+
+
 def _krug() -> None:
     nomer = 0
     while not _stop.wait(SHAG):
         nomer += 1
         try:
-            shag()
-            if nomer % UBORKA_KAZHDYE == 0:
-                with SessionLocal() as db:
-                    task_service.zvonki_ubrat_starye(db)
-                    db.commit()
-            # Первый заход — через минуту после старта: брошенное выкладкой видно сразу.
-            if nomer % UBORKA_KAZHDYE == 3:
-                dovesti_v_storone()
+            _shag_kruga(nomer)
         except Exception as exc:  # noqa: BLE001 — поток обязан пережить сбой базы
             print(f"[opencrm] звонки напоминаний: шаг не удался — {exc!r}")
 

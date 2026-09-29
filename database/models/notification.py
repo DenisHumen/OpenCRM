@@ -21,6 +21,9 @@ class Notification(Base):
         # намёке, список — «мои по свежести»: обе выборки идут от user_id.
         Index("ix_notifications_user_read", "user_id", "read_at"),
         Index("ix_notifications_user_created", "user_id", "created_at"),
+        # Уборка старого пачками идёт по дате через всех — без него каждая пачка
+        # читала бы таблицу с начала (миграция `f1c4a7e9d253`).
+        Index("ix_notifications_created_at", "created_at"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)

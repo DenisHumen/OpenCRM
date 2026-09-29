@@ -164,6 +164,7 @@ class TaskSignal(Base):
     __table_args__ = (
         UniqueConstraint("task_id", "user_id", "moment", name="uq_task_signals_task_user_moment"),
         Index("ix_task_signals_user_prinyato", "user_id", "prinyato"),
+        Index("ix_task_signals_created_at", "created_at"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)

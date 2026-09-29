@@ -64,5 +64,6 @@ def itogi_po_klyucham(db: Session, key_ids, since: datetime) -> dict[int, int]:
     return {key_id: int(summa or 0) for key_id, summa in rows}
 
 
-def purge_older_than(db: Session, before: datetime) -> int:
-    return int(db.execute(delete(ApiKeyHit).where(ApiKeyHit.bucket_at < before)).rowcount or 0)
+def purge_older_than(db: Session, before: datetime, pachka: int) -> int:
+    stmt = delete(ApiKeyHit).where(ApiKeyHit.bucket_at < before).with_dialect_options(mysql_limit=pachka)
+    return int(db.execute(stmt).rowcount or 0)

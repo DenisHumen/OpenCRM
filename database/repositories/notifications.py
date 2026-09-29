@@ -52,8 +52,9 @@ def mark_read(db: Session, user_id: int, ids: list[int] | None, when: datetime) 
     return int(db.execute(stmt).rowcount or 0)
 
 
-def purge_older_than(db: Session, before: datetime) -> int:
-    """Уборка: подсказки старше срока никому не нужны, а таблица растёт с каждым событием."""
+def purge_older_than(db: Session, before: datetime, pachka: int) -> int:
+    """Уборка пачкой: подсказки старше срока никому не нужны, а таблица растёт с каждым событием."""
     from sqlalchemy import delete
 
-    return int(db.execute(delete(Notification).where(Notification.created_at < before)).rowcount or 0)
+    stmt = delete(Notification).where(Notification.created_at < before).with_dialect_options(mysql_limit=pachka)
+    return int(db.execute(stmt).rowcount or 0)

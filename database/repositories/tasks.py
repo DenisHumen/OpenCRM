@@ -353,8 +353,9 @@ def prinyal_li(db: Session, task_id: int, user_id: int, srok) -> bool:
     ) > 0
 
 
-def zvonki_ubrat_starye(db: Session, do) -> int:
-    return db.execute(delete(TaskSignal).where(TaskSignal.created_at < do)).rowcount or 0
+def zvonki_ubrat_starye(db: Session, do, pachka: int) -> int:
+    stmt = delete(TaskSignal).where(TaskSignal.created_at < do).with_dialect_options(mysql_limit=pachka)
+    return db.execute(stmt).rowcount or 0
 
 
 def sleduyushchiy_poryadok(db: Session, task_id: int) -> int:
