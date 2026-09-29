@@ -12,6 +12,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 
 import pytest
@@ -3106,6 +3107,18 @@ def test_svoy_zamok_ot_oborvannogo_obnovleniya_ne_derzhit(tmp_path):
     zamok.parent.mkdir(parents=True, exist_ok=True)
     zamok.write_text("obnovlenie", encoding="utf-8")
     assert updater.run_once().status == STATUS_DEPLOYED
+
+
+def test_zamok_umershey_kopii_ne_derzhit_obnovlenie_dva_chasa(tmp_path):
+    """Разбор 29.09.2026: работа с экрана трогает замок раз в минуту. Процесс умер —
+    замок молчит, и через 10 минут обновление его забирает, а не ждёт два часа."""
+    updater = make_updater(tmp_path)
+    zamok = _zamok_kopiy(updater.config)
+    zamok.parent.mkdir(parents=True, exist_ok=True)
+    zamok.write_text("3f2a9c", encoding="utf-8")
+    davno = time.time() - 11 * 60
+    os.utime(zamok, (davno, davno))
+    assert updater.run_once(force=True).status == STATUS_DEPLOYED
 
 
 def test_skript_i_obnovlyator_derzhat_odin_zamok():

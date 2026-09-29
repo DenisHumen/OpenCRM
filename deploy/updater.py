@@ -106,8 +106,9 @@ STATUS_BUSY = "busy"
 ZAMOK_OBSLUZHIVANIYA = ".zamok-obsluzhivaniya"
 #: Метка обновления в замке копий приложения (`backup_service._zanyat`, тот же файл).
 METKA_OBNOVLENIYA = "obnovlenie"
-#: Как у `backup_service.USTAREL_SEKUND`: работа старше — брошенная.
-KOPIYA_USTARELA_SEKUND = 2 * 3600
+#: Как у `backup_service.SERDTSE_USTAREL_SEKUND`: работа с экрана трогает замок раз
+#: в минуту, молчащая дольше — брошенная (процесс умер).
+KOPIYA_USTARELA_SEKUND = 10 * 60
 
 #: Имя проекта compose для набора тестов. Флагом `-p`, а не строкой `name:` в
 #: файле: `COMPOSE_PROJECT_NAME` перебивает вторую, и уборка после набора

@@ -54,9 +54,15 @@ KLYUCH_CHERNOVIK = "klyuch.chernovik"
 FRAGMENT = 8
 
 ZANYATO = "zanyato"
-#: Работа, не отчитавшаяся за два часа, считается брошенной: процесс убили
-#: посреди дампа, и замок никто не снял.
+#: Метка обновления в том же замке (`deploy/updater.METKA_OBNOVLENIYA`): обновлятор
+#: сердцем не бьётся, сборка без кэша идёт дольше получаса — его метке два часа.
+METKA_OBNOVLENIYA = "obnovlenie"
 USTAREL_SEKUND = 2 * 3600
+#: Работа с экрана раз в минуту трогает замок; молчит дольше — процесс умер. По
+#: одному «два часа» мёртвый процесс держал обновления и копии два часа, а живая
+#: работа дольше двух часов лишалась замка посреди заливки (разбор 29.09.2026).
+SERDTSE_SEKUND = 60
+SERDTSE_USTAREL_SEKUND = 10 * 60
 #: Готовая копия лежит сутки — на случай, если скачивание сорвалось. Дольше
 #: нельзя: это вся система в одном файле на том же диске.
 HRANIT_SEKUND = 24 * 3600
@@ -188,7 +194,9 @@ def _zanyat(job_id: str) -> bool:
             fd = os.open(zamok, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
         except FileExistsError:
             try:
-                if time.time() - zamok.stat().st_mtime < USTAREL_SEKUND:
+                chey = zamok.read_text(encoding="utf-8").strip()
+                srok = USTAREL_SEKUND if chey == METKA_OBNOVLENIYA else SERDTSE_USTAREL_SEKUND
+                if time.time() - zamok.stat().st_mtime < srok:
                     return False
             except FileNotFoundError:
                 continue
@@ -198,6 +206,26 @@ def _zanyat(job_id: str) -> bool:
             f.write(job_id)
         return True
     return False
+
+
+def _s_serdtsem(rabota, job: dict, *args) -> None:
+    """Поток работы с экрана: пока он жив, замок раз в минуту трогается."""
+    stop = threading.Event()
+
+    def serdtse() -> None:
+        zamok = katalog() / ZANYATO
+        while not stop.wait(SERDTSE_SEKUND):
+            try:
+                if zamok.read_text(encoding="utf-8").strip() == job["id"]:
+                    os.utime(zamok)
+            except OSError:
+                pass
+
+    threading.Thread(target=serdtse, daemon=True, name=f"serdtse-{job['id']}").start()
+    try:
+        rabota(job, *args)
+    finally:
+        stop.set()
 
 
 def _osvobodit(job_id: str | None = None) -> None:
@@ -337,7 +365,9 @@ def snyat(actor: User, kind: str) -> dict:
     # (docs/bloki/27): копия не-root его не везёт (разбор 28.09.2026, docs/15 §12).
     job["klyuchi"] = kind == "db" and actor.role == ROLE_ROOT
     _zapisat(job)
-    threading.Thread(target=_snyatie, args=(job, actor.id), daemon=True, name=f"backup-{job['id']}").start()
+    threading.Thread(
+        target=_s_serdtsem, args=(_snyatie, job, actor.id), daemon=True, name=f"backup-{job['id']}"
+    ).start()
     return job
 
 
@@ -644,7 +674,7 @@ def vosstanovit(db: Session, actor: User, kind: str, zagruzka: Path) -> dict:
         _osvobodit(job["id"])
         raise
     threading.Thread(
-        target=_vosstanovlenie, args=(job, actor.id, syroy), daemon=True, name=f"restore-{job['id']}"
+        target=_s_serdtsem, args=(_vosstanovlenie, job, actor.id, syroy), daemon=True, name=f"restore-{job['id']}"
     ).start()
     return job
 

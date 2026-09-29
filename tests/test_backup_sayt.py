@@ -497,3 +497,40 @@ def test_reviziya_kopii_chitaetsya_ne_tselikom(tmp_path, monkeypatch):
     bez.write_bytes(b"-- nothing here\n")
     assert backup_service._reviziya_dampa(bez) == "none"
 
+
+def test_zamok_mertvoy_raboty_otpuskaetsya_bystro_a_metka_obnovleniya_net(tmp_path, monkeypatch):
+    """Разбор 29.09.2026: замок работы с экрана считался брошенным по одному сроку —
+    два часа. Процесс с копией умер (OOM, перезапуск) — и обновления с копиями стояли
+    два часа; живая работа дольше двух часов лишалась замка посреди заливки. Теперь
+    работа раз в минуту трогает замок, а молчащая 10 минут — брошенная. Метке
+    обновлятора, который сердцем не бьётся, по-прежнему два часа."""
+    import os as _os
+    import time as _time
+
+    monkeypatch.setattr(backup_service, "katalog", lambda: tmp_path)
+    zamok = tmp_path / backup_service.ZANYATO
+
+    zamok.write_text("mertvaya-rabota", encoding="utf-8")
+    davno = _time.time() - 11 * 60
+    _os.utime(zamok, (davno, davno))
+    assert backup_service._zanyat("novaya") is True, "мёртвая работа держит замок дольше 10 минут"
+
+    zamok.write_text(backup_service.METKA_OBNOVLENIYA, encoding="utf-8")
+    _os.utime(zamok, (davno, davno))
+    assert backup_service._zanyat("novaya-2") is False, "копия влезла посреди долгого обновления"
+
+
+def test_serdtse_trogaet_zamok_poka_rabota_idyot(tmp_path, monkeypatch):
+    import os as _os
+    import time as _time
+
+    monkeypatch.setattr(backup_service, "katalog", lambda: tmp_path)
+    monkeypatch.setattr(backup_service, "SERDTSE_SEKUND", 0.05)
+    zamok = tmp_path / backup_service.ZANYATO
+    zamok.write_text("zhivaya", encoding="utf-8")
+    davno = _time.time() - 3600
+    _os.utime(zamok, (davno, davno))
+
+    backup_service._s_serdtsem(lambda job: _time.sleep(0.3), {"id": "zhivaya"})
+    assert _time.time() - zamok.stat().st_mtime < 5, "живая работа не трогала свой замок"
+
