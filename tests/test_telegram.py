@@ -2374,3 +2374,30 @@ def test_vlozhenie_ne_lozhitsya_na_polnyy_disk(root_client, bot_nastroen, monkey
     otvet = root_client.get(f"{TG}/chats/{dialog['id']}/messages/{stroka['id']}/file")
     assert otvet.status_code != 200, "файл лёг на диск без места"
 
+
+def test_skachivanie_vlozheniya_ne_derzhit_soedinenie(root_client, bot_nastroen, monkeypatch):
+    """Разбор 29.09.2026: после фиксации сообщения `token(db)` снова брал соединение, и
+    оно держалось всё скачивание вложения — до минуты на файл. Десять фото разом
+    занимали пул целиком, и `/healthz` ждал вместе со всеми."""
+    from core.services import telegram_service
+    from database.session import engine
+
+    pul = engine.pool
+    if not hasattr(pul, "checkedout"):
+        pytest.skip("у этого пула нет счётчика занятых — база не MySQL")
+    zamer: dict[str, int] = {}
+
+    def podstava(kluch, file_id, opener=None):
+        zamer["vnutri"] = pul.checkedout()
+        return b"kartinka"
+
+    monkeypatch.setattr(telegram_service, "skachat_fayl", podstava)
+    telo = _obnovlenie(508921, 1, caption="фото")
+    telo["message"]["document"] = {"file_id": "POOL-1", "file_name": "foto.jpg", "file_size": 8}
+    do = pul.checkedout()
+    assert _poslat(root_client, bot_nastroen, telo).status_code == 200
+    assert "vnutri" in zamer, "вложение не скачивалось — проверка ничего не проверила"
+    assert zamer["vnutri"] == do, (
+        f"во время скачивания занято соединений: {zamer['vnutri'] - do} — приём держит пул на время сети"
+    )
+
