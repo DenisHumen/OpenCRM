@@ -111,13 +111,12 @@ def spisok_dialogov(
     # Страницу нарезает общий `page_of`, а не смещение, посчитанное здесь.
     # Своя арифметика страниц — это второе место, где считается одно и то же, и
     # разъезжаются они на первой же правке предела.
+    # Пустые и так уходят в конец: при убывании MySQL ставит NULL последним. Ключ
+    # `IS NULL` первым не давал пройти индекс `last_message_at`, и весь список
+    # сортировался на каждое сообщение в каждой вкладке (разбор 29.09.2026).
     return page_of(
         db,
-        zapros.order_by(
-            TelegramChat.last_message_at.is_(None),
-            TelegramChat.last_message_at.desc(),
-            TelegramChat.id.desc(),
-        ),
+        zapros.order_by(TelegramChat.last_message_at.desc(), TelegramChat.id.desc()),
         page=page,
         per_page=per_page,
     )

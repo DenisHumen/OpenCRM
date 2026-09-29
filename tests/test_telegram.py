@@ -2401,3 +2401,28 @@ def test_skachivanie_vlozheniya_ne_derzhit_soedinenie(root_client, bot_nastroen,
         f"во время скачивания занято соединений: {zamer['vnutri'] - do} — приём держит пул на время сети"
     )
 
+
+def test_spisok_dialogov_idyot_po_indeksu_a_pustye_v_kontse(db):
+    """Разбор 29.09.2026: ключ `last_message_at IS NULL` первым в сортировке не давал
+    пройти индекс, и весь список диалогов сортировался на каждое сообщение в каждой
+    открытой вкладке. Пустые при этом обязаны остаться в конце."""
+    from core.utils import now_utc
+    from database.models import TelegramChat
+    from database.repositories import telegram as telegram_repo
+    from tests.conftest import Zaprosy
+
+    pustoy = TelegramChat(chat_id=508931, username="", title="Индекс пустой", phone="", phone_norm="",
+                          source="", avatar_path="", emoji_status_path="", last_message_at=None)
+    svezhiy = TelegramChat(chat_id=508932, username="", title="Индекс свежий", phone="", phone_norm="",
+                           source="", avatar_path="", emoji_status_path="", last_message_at=now_utc().replace(tzinfo=None))
+    db.add_all([pustoy, svezhiy])
+    db.flush()
+    try:
+        with Zaprosy() as zaprosy:
+            dialogi, _vsego = telegram_repo.spisok_dialogov(db, q="Индекс ")
+        assert [d.id for d in dialogi] == [svezhiy.id, pustoy.id]
+        sortirovka = [s for s in zaprosy.s_upominaniem("telegram_chats", "ORDER BY")]
+        assert sortirovka and all("IS NULL" not in s.split("ORDER BY", 1)[1] for s in sortirovka), sortirovka
+    finally:
+        db.rollback()
+
