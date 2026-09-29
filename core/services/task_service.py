@@ -523,7 +523,7 @@ def ssylka_ubrat(db: Session, task: Task, url_id: int) -> None:
 def delete(db: Session, task_id: int, actor: User | None = None) -> None:
     # Замок, а не просто чтение: пока мы перечисляем вложения, соседний запрос
     # успевает залить ещё одно. Его строку унёс бы каскад, а файл остался бы на
-    # диске навсегда — потому что в нашем списке его не было (§3 CLAUDE.md).
+    # диске навсегда — потому что в нашем списке его не было (§3 CONTRIBUTING.md).
     task = tasks_repo.zapert(db, task_id)
     if task is None:
         raise errors.NotFoundError("Task not found", code="task_not_found")

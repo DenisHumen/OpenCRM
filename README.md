@@ -463,7 +463,7 @@ OpenCRM/
 
 ## 🤝 Contributing
 
-Issues and pull requests are welcome. Read [`CLAUDE.md`](CLAUDE.md) first (in Russian): a change to `database/models/` ships with its Alembic migration in the same commit, queries stay inside `database/`, and the test suite must pass against MySQL.
+Issues and pull requests are welcome. Read [`CONTRIBUTING.md`](CONTRIBUTING.md) first (in Russian): a change to `database/models/` ships with its Alembic migration in the same commit, queries stay inside `database/`, and the test suite must pass against MySQL.
 
 ## 📄 License
 

@@ -629,7 +629,7 @@ def test_nesushchestvuyushchee_napominanie_ne_privyazyvaetsya(root_client):
 
 
 def test_vyklyuchennye_napominaniya_uhodyat_s_kartochki(root_client):
-    """Выключенный блок исчезает ЦЕЛИКОМ — и с чужих экранов тоже (§3 CLAUDE.md).
+    """Выключенный блок исчезает ЦЕЛИКОМ — и с чужих экранов тоже (§3 CONTRIBUTING.md).
 
     Иначе на карточке остаётся срок и ссылка `/tasks?id=…` на страницу, которой
     в выключенной системе нет, а в шапке горит тревога по разделу, которого нет.

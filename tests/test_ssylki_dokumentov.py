@@ -34,7 +34,7 @@ def _dokumenty() -> list[pathlib.Path]:
 
 
 def _md_fayly() -> list[pathlib.Path]:
-    korennye = [KOREN / imya for imya in ("README.md", "README.ru.md", "CLAUDE.md")]
+    korennye = [KOREN / imya for imya in ("README.md", "README.ru.md", "CONTRIBUTING.md")]
     return sorted(DOCS.rglob("*.md")) + [p for p in korennye if p.exists()]
 
 
@@ -71,10 +71,10 @@ def test_perebor_dokumentov_ne_pustoy():
 
 
 def test_kornevye_dokumenty_ryadom():
-    """Из docs/ ссылаются на CLAUDE.md и README.md. Если их нет рядом (образ
+    """Из docs/ ссылаются на CONTRIBUTING.md и README.md. Если их нет рядом (образ
     гейта копирует дерево выборочно), сторож ссылок краснеет непонятной строкой
     «ссылка в пустоту» — эта проверка называет беду её именем."""
-    net = [imya for imya in ("CLAUDE.md", "README.md", "README.ru.md") if not (KOREN / imya).exists()]
+    net = [imya for imya in ("CONTRIBUTING.md", "README.md", "README.ru.md") if not (KOREN / imya).exists()]
     assert net == [], f"корневых документов нет рядом: {net} — их копирует этап `tests` docker/Dockerfile"
 
 

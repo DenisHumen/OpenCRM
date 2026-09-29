@@ -108,7 +108,7 @@ def max_vydannogo_sku(db: Session, prefix: str, digits: int) -> int:
     в занятое, и заведение товара отказывает при полностью свободном диапазоне.
 
     `REGEXP` — единственная точная приметa нашего вида, и она законна: база у
-    продукта одна, MySQL (CLAUDE.md §1). Взамен один `MAX` без выборки и без
+    продукта одна, MySQL (CONTRIBUTING.md §1). Взамен один `MAX` без выборки и без
     разбора в питоне.
     """
     obrazets = f"^{re.escape(prefix)}[0-9]{{{digits}}}$"

@@ -8,7 +8,5 @@ config/.env
 node_modules/
 dist/
 *.tsbuildinfo
-.claude
 tmp/
 docker/.env
-vps.json

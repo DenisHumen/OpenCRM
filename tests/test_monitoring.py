@@ -958,7 +958,7 @@ def test_za_nat_proverka_idyot_po_imeni_a_ne_po_seromu_adresu():
     # («invalid additional host, missing IP»), причём независимо от профилей. То
     # есть на любой установке без мониторинга — а он выключен по умолчанию —
     # переставал бы подниматься сайт целиком. Это ровно то, что запрещает
-    # CLAUDE.md: выключенный блок обязан исчезать, не задевая остальных.
+    # CONTRIBUTING.md: выключенный блок обязан исчезать, не задевая остальных.
     for chast in (imya, adres):
         umolchanie = re.fullmatch(r"\$\{[A-Z_]+:-([^}]*)\}", chast)
         assert umolchanie, f"«{chast}»: не переменная с умолчанием"

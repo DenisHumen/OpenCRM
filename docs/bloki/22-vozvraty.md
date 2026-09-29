@@ -246,7 +246,7 @@ moves») — как у заказа и накладной.
 Миграция `d4e7a1c9b2f6`: колонка `documents.refund_minor` (nullable, пуста у
 всех прежних строк) и таблица `document_files` по образцу `client_files`
 (`document_id` CASCADE, `uploaded_by` SET NULL, `file_uid` unique). Порядок —
-по правилам `CLAUDE.md`: новая таблица, nullable-колонка, ни одного `UPDATE`
+по правилам `CONTRIBUTING.md`: новая таблица, nullable-колонка, ни одного `UPDATE`
 по населённым строкам. Откат снимает и то и другое; проведённые на новой
 версии возвраты остаются бумагами без суммы, а их движения и деньги лежат в
 своих таблицах.

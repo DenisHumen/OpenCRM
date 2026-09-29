@@ -523,7 +523,7 @@ None`). Сторожа — `test_tochka_otkata_ne_obyavlyaet_ranshe_fiksatsii` �
 потребует своей сессии базы — та, что открыл `get_db`, к началу выдачи потока уже
 закрыта, — и это отдельная работа, а не строка.
 
-**Ни одного запроса вне `database/`.** Правило из [CLAUDE.md](../../CLAUDE.md)
+**Ни одного запроса вне `database/`.** Правило из [CONTRIBUTING.md](../../CONTRIBUTING.md)
 соблюдается само собой: отбор ходит в `modules_service` и `permissions_service`,
 а те — в репозитории. В `ALLOWED` из `tests/test_db_boundary.py` не должно
 появиться ни одной новой строки — это условие приёмки, а не пожелание.

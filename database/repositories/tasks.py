@@ -54,7 +54,7 @@ def zapert(db: Session, task_id: int) -> Task | None:
 
     Нужно там, где между «оно ещё есть» и записью рядом с ним успевает пройти
     чужое удаление: вложение доехало бы до диска, а строку унёс бы каскад —
-    и файл остался бы на диске навсегда (§3 CLAUDE.md).
+    и файл остался бы на диске навсегда (§3 CONTRIBUTING.md).
     """
     return db.scalar(select(Task).where(Task.id == task_id).with_for_update())
 

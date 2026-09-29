@@ -465,7 +465,7 @@ OpenCRM/
 
 ## 🤝 Участие в разработке
 
-Issues и pull request'ы приветствуются. Сначала прочитайте [`CLAUDE.md`](CLAUDE.md): правка `database/models/` идёт вместе с миграцией Alembic в том же коммите, запросы живут только в `database/`, а набор тестов обязан проходить на MySQL.
+Issues и pull request'ы приветствуются. Сначала прочитайте [`CONTRIBUTING.md`](CONTRIBUTING.md): правка `database/models/` идёт вместе с миграцией Alembic в том же коммите, запросы живут только в `database/`, а набор тестов обязан проходить на MySQL.
 
 ## 📄 Лицензия
 

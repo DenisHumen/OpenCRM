@@ -198,7 +198,7 @@ def _zapasnye(klyuch: TwoFactorKey) -> list[dict]:
 def _zadacha(db: Session, klyuch: TwoFactorKey, zadachi: dict | None):
     """Напоминание карточки — или ничего, если блок напоминаний выключен.
 
-    Выключенный блок исчезает целиком (§3 CLAUDE.md): не только меню, но и срок
+    Выключенный блок исчезает целиком (§3 CONTRIBUTING.md): не только меню, но и срок
     на чужой карточке со ссылкой `/tasks?id=…`, ведущей на страницу, которой в
     выключенной системе нет.
     """
@@ -277,7 +277,7 @@ def spisok(
 ) -> dict:
     kto = _kto_vidit(actor)
     # Выключенный блок напоминаний уносит с карточек срок, а из шапки — тревогу
-    # вместе с отбором по ней (§3 CLAUDE.md: блок исчезает целиком).
+    # вместе с отбором по ней (§3 CONTRIBUTING.md: блок исчезает целиком).
     s_napominaniyami = modules_service.is_enabled(db, "tasks")
     teper = now_utc().replace(tzinfo=None)
     klyuchi = klyuchi_repo.spisok(
@@ -667,7 +667,7 @@ def potratit_zapasnoy(db: Session, actor: User, key_id: int, nomer: int) -> dict
     **Под замком: список переписывается ЦЕЛИКОМ.** Двое, вычеркнувшие разные
     коды разом, читают одинаковый список и пишут его один поверх другого —
     вычеркнутый первым снова показан годным и будет выдан второй раз (§3
-    CLAUDE.md: посчитал — заперся — записал).
+    CONTRIBUTING.md: посчитал — заперся — записал).
     """
     dostat(db, actor, key_id)
     klyuch = klyuchi_repo.zapert(db, key_id)
