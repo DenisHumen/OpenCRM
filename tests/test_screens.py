@@ -1925,3 +1925,21 @@ def test_summa_iz_polya_odna_i_ne_boitsya_probelov():
         if re.search(r"function toMinor\w*\(", put.read_text(encoding="utf-8"))
     ]
     assert svoi == [], f"свой разбор суммы — берите toMinorOrNull из lib/format.ts: {svoi}"
+
+
+def test_chernovik_messendzhera_u_kazhdogo_dialoga_svoy():
+    """Разбор 29.09.2026: поле ответа было одно на все диалоги. Набранное клиенту А
+    оставалось в поле при переходе к Б и уходило ему по Enter; ответ сервера на
+    отправку в А стирал то, что уже набрано для Б.
+
+    Черновики — по номеру диалога, а после отправки чистится черновик того
+    диалога, куда ушло сообщение, а не «текущий»."""
+    text = (SCREENS / "screens" / "Telegram.tsx").read_text(encoding="utf-8")
+    assert 'useState("")' not in re.sub(r"//.*", "", text).split("const [otvechaem")[0].split("const [zhivoe")[1], (
+        "поле ответа снова одно на все диалоги"
+    )
+    assert "Record<number, string>" in text, "черновики не разложены по диалогам"
+    assert 'setTekst("")' not in text, "после отправки чистится поле, а не черновик ушедшего диалога"
+    for put in ("/telegram/chats/${chat}/messages", "/telegram/chats/${chat}/files"):
+        assert put in text, f"отправка берёт диалог на момент ответа, а не нажатия: {put}"
+

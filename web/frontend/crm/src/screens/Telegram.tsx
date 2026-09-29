@@ -172,7 +172,20 @@ export function Telegram() {
    * бы саму полосу. Тот же довод, что у карты блоков в `lib/modules.ts`.
    */
   const [zhivoe, setZhivoe] = useState(true);
-  const [tekst, setTekst] = useState("");
+  /** Черновик у каждого диалога свой. Одно поле на всех отправляло набранное
+   *  клиенту А тому, чей диалог открыли следом, — с его именем и суммой из
+   *  шаблона (разбор 29.09.2026). */
+  const [chernoviki, setChernoviki] = useState<Record<number, string>>({});
+  const tekst = vybran != null ? chernoviki[vybran] ?? "" : "";
+  const setTekst = (chat: number, novyy: string | ((bylo: string) => string)) =>
+    setChernoviki((vse) => ({
+      ...vse,
+      [chat]: typeof novyy === "function" ? novyy(vse[chat] ?? "") : novyy,
+    }));
+  /** Ушедшее убираем из черновика ТОГО диалога, куда оно ушло, и только его:
+   *  набранное после нажатия остаётся на месте. */
+  const ubratUshedshee = (chat: number, ushlo: string) =>
+    setTekst(chat, (bylo) => (bylo.startsWith(ushlo) ? bylo.slice(ushlo.length).trimStart() : bylo));
   /** На какое сообщение отвечаем. Само сообщение, а не номер: цитату надо
    *  показать над полем ввода, а лезть за ней в ленту при каждом наборе
    *  буквы значило бы искать по всему списку на каждое нажатие. */
@@ -854,7 +867,8 @@ export function Telegram() {
    * там, где ответ дословно типовой, то есть почти нигде.
    */
   const podstavit_shablon = async (id: string) => {
-    if (!id) return;
+    if (!id || vybran == null) return;
+    const chat = vybran;
     try {
       const gotovo = await api.get<{ text: string; missing?: string[] }>(
         // Клиента берём из `klient_id` — того же значения, по которому рядом
@@ -866,7 +880,7 @@ export function Telegram() {
       );
       // Дописываем к тому, что уже набрано, а не затираем: человек мог начать
       // печатать и вспомнить про шаблон.
-      setTekst((bylo) => (bylo ? `${bylo}\n${gotovo.text}` : gotovo.text));
+      setTekst(chat, (bylo) => (bylo ? `${bylo}\n${gotovo.text}` : gotovo.text));
       // Поля, которых нечем заполнить, сервер называет поимённо — и молчать о
       // них нельзя. В непривязанном диалоге шаблон подставляется как
       // «Здравствуйте, —!», прочерк посреди фразы глазами не ловится, и
@@ -888,10 +902,12 @@ export function Telegram() {
     // это видит он, а не мы.
     if (!guard.take()) return;
     setOtpravka(true);
+    const chat = vybran;
+    const ushlo = tekst;
     try {
       const stroka = await api.post<TgMessage>(
-        `/telegram/chats/${vybran}/messages`,
-        { text: tekst, reply_to_id: otvechaem?.id ?? null },
+        `/telegram/chats/${chat}/messages`,
+        { text: ushlo, reply_to_id: otvechaem?.id ?? null },
       );
       // Ушло в тот диалог, что был открыт при нажатии, — и показать это надо
       // там же. Успел человек переключиться — сообщение отправлено верно, а вот
@@ -899,9 +915,9 @@ export function Telegram() {
       if (vybranRef.current === stroka.chat_id) {
         setMessages((bylo) => slit(bylo, [stroka]));
         posledneye.current = stroka.id;
+        setOtvechaem(null);
       }
-      setTekst("");
-      setOtvechaem(null);
+      ubratUshedshee(chat, ushlo);
       void zagruzit_chats();
     } catch (beda) {
       toastError(beda);
@@ -930,6 +946,8 @@ export function Telegram() {
     if (!guard.take()) return;
     setOtpravka(true);
     setZaliv({ imya: fayl.name, ushlo: 0, vsego: fayl.size, otmenit: () => {} });
+    const chat = vybran;
+    const podpis = tekst;
     try {
       // Подпись и «в ответ на» едут ВМЕСТЕ с файлом, а не следом. Сервер их
       // принимал всегда, экран не отправлял — и набранный текст оставался в
@@ -937,12 +955,12 @@ export function Telegram() {
       // голая картинка неизвестно к чему. Отправить подпись вторым запросом
       // было бы не то же самое: у него в телеграме это ВТОРОЕ сообщение.
       const zalivka = api.zagruzka<TgMessage>(
-        `/telegram/chats/${vybran}/files`,
+        `/telegram/chats/${chat}/files`,
         fayl,
         ({ ushlo, vsego }) =>
           setZaliv((bylo) => (bylo ? { ...bylo, ushlo, vsego } : bylo)),
         {
-          caption: tekst.trim(),
+          caption: podpis.trim(),
           reply_to_id: otvechaem ? String(otvechaem.id) : "",
         },
       );
@@ -952,12 +970,11 @@ export function Telegram() {
       if (vybranRef.current === stroka.chat_id) {
         setMessages((bylo) => slit(bylo, [stroka]));
         posledneye.current = stroka.id;
+        setOtvechaem(null);
       }
-      // Поле и «в ответ на» чистятся ровно как после обычного сообщения:
-      // подпись ушла вместе с файлом, и оставить её в поле значило бы
-      // предложить отправить её второй раз.
-      setTekst("");
-      setOtvechaem(null);
+      // Поле чистится ровно как после обычного сообщения: подпись ушла вместе
+      // с файлом, и оставить её в поле значило бы предложить отправить её второй раз.
+      ubratUshedshee(chat, podpis);
       void zagruzit_chats();
     } catch (beda) {
       // Отменил сам — значит не беда, и ругаться незачем.
@@ -1604,7 +1621,7 @@ export function Telegram() {
                 <div className="tg-compose-in">
               <textarea
                 value={tekst}
-                onChange={(e) => setTekst(e.target.value)}
+                onChange={(e) => vybran != null && setTekst(vybran, e.target.value)}
                 placeholder={t("tgWrite")}
                 onKeyDown={(e) => {
                   // Enter отправляет, Shift+Enter переносит строку — как во
