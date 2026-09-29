@@ -544,9 +544,16 @@ def proverit(job_id: str) -> dict:
 
 
 def _reviziya_dampa(damp: Path) -> str:
-    text = damp.read_text(encoding="utf-8", errors="replace")
-    naydeno = _REVIZIYA.search(text)
-    return naydeno.group(1) if naydeno else "none"
+    # Построчно и до первой находки: дамп в гигабайт, прочитанный целиком, — это
+    # 2–4 ГБ строки в процессе с пределом 3 ГБ, и восстановление с экрана падало
+    # по OOM, оставив замок занятости на два часа (разбор 29.09.2026).
+    with damp.open(encoding="utf-8", errors="replace") as f:
+        for stroka in f:
+            if stroka.startswith("INSERT INTO `alembic_version`"):
+                # Значения дампер пишет следующей строкой, после `VALUES`.
+                naydeno = _REVIZIYA.match(stroka + next(f, ""))
+                return naydeno.group(1) if naydeno else "none"
+    return "none"
 
 
 def _snyato(damp: Path) -> str | None:

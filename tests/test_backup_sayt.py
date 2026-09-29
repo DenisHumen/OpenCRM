@@ -474,3 +474,26 @@ def test_bazu_iz_kopii_zamenyaet_tolko_root(root_client, direktor, sayt):
     musor.write_bytes(b"not a copy")
     otkaz = _zalit(direktor, "db", musor)
     assert otkaz.status_code == 403 and otkaz.json()["error"]["code"] == "backup_tolko_root"
+
+
+def test_reviziya_kopii_chitaetsya_ne_tselikom(tmp_path, monkeypatch):
+    """Разбор 29.09.2026: ревизию дампа искали в `read_text()` всего файла. Гигабайт с
+    кириллицей — это 2–4 ГБ строки в процессе с пределом 3 ГБ: восстановление с
+    экрана падало по OOM и держало замок занятости два часа."""
+    damp = tmp_path / "damp.sql"
+    damp.write_text(
+        "-- шапка\n"
+        "INSERT INTO `alembic_version` (`version_num`) VALUES\n('abc123def456');\n"
+        + "INSERT INTO `mail_messages` VALUES (1,'тело письма');\n" * 1000,
+        encoding="utf-8",
+    )
+
+    def tselikom(self, *a, **k):
+        raise AssertionError("дамп читается целиком")
+
+    monkeypatch.setattr(Path, "read_text", tselikom)
+    assert backup_service._reviziya_dampa(damp) == "abc123def456"
+    bez = tmp_path / "bez.sql"
+    bez.write_bytes(b"-- nothing here\n")
+    assert backup_service._reviziya_dampa(bez) == "none"
+
