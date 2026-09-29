@@ -111,6 +111,10 @@ def _sobrat(session: Session, _flush_context) -> None:
 @event.listens_for(Session, "after_commit")
 def _otpravit(session: Session) -> None:
     """Транзакция закрылась — запись в базе есть, теперь можно объявлять."""
+    # `after_commit` срабатывает и на снятии точки отката: намёк уходил раньше
+    # настоящей фиксации, вкладка перечитывала и не видела строки (29.09.2026).
+    if session.in_nested_transaction():
+        return
     bufer = session.info.pop(BUFFER, None)
     if not bufer:
         return
@@ -121,7 +125,10 @@ def _otpravit(session: Session) -> None:
             logger.warning("живые обновления: намёк не отправлен — %r", beda)
 
 
-@event.listens_for(Session, "after_rollback")
 @event.listens_for(Session, "after_soft_rollback")
-def _zabyt(session: Session, *_) -> None:
+def _zabyt(session: Session, previous_transaction) -> None:
+    # Стираем только на откате КОРНЕВОЙ транзакции: откат точки отката или сброса
+    # внутри неё стирал весь буфер, и намёки основной работы не уходили (29.09.2026).
+    if previous_transaction.parent is not None:
+        return
     session.info.pop(BUFFER, None)

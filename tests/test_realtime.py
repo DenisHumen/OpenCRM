@@ -328,3 +328,35 @@ def test_kazhdoe_sobytie_nazvano_v_karte():
     assert bez_otveta == [], f"события без ответа в карте тем: {bez_otveta}"
     for tema in topics.EVENT_TOPICS.values():
         assert tema is None or tema in topics.BY_NAME
+
+
+def test_tochka_otkata_ne_obyavlyaet_ranshe_fiksatsii(root_client, ushedshie):
+    """Разбор 29.09.2026: `after_commit` срабатывает и на снятии точки отката
+    (`begin_nested`) — намёк уходил раньше настоящей фиксации, вкладка перечитывала
+    и в READ COMMITTED строки не видела."""
+    with SessionLocal() as db:
+        with db.begin_nested():
+            db.add(Client(name="Живой клиент — точка отката"))
+            db.flush()
+        assert [h for h in ushedshie if h.topic == "clients"] == [], "намёк ушёл до фиксации"
+        db.commit()
+    assert [h for h in ushedshie if h.topic == "clients"], "после фиксации намёк не ушёл"
+
+
+def test_otkat_tochki_ne_stiraet_nameki_osnovnoy_raboty(root_client, ushedshie):
+    """Разбор 29.09.2026: откат точки отката (гонка уникальности, упавший наблюдатель)
+    стирал весь буфер — намёки основной операции не уходили никому."""
+    with SessionLocal() as db:
+        osnovnoy = Client(name="Живой клиент — основная работа")
+        db.add(osnovnoy)
+        db.flush()
+        tochka = db.begin_nested()
+        db.add(Deal(title="Откатится"))
+        try:
+            db.flush()
+        except Exception:  # noqa: BLE001 — заявке может не хватить полей: откат точки и нужен
+            pass
+        tochka.rollback()
+        db.commit()
+    assert any(h.topic == "clients" and h.id == osnovnoy.id for h in ushedshie), ushedshie
+
