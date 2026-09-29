@@ -17,6 +17,8 @@ from core import exceptions as errors
 
 CHASTOTY = ("DAILY", "WEEKLY", "MONTHLY", "YEARLY")
 DNI = ("MO", "TU", "WE", "TH", "FR", "SA", "SU")
+#: Колонка `tasks.povtor`: правило длиннее в неё не ляжет.
+DLINA_PRAVILA = 255
 #: Во сколько звонит напоминание «на весь день».
 DEN_CHAS = time(9, 0)
 #: Потолок перебора: правило, у которого за столько раз не нашлось следующего, — пустое.
@@ -58,7 +60,9 @@ def razobrat(pravilo: str | None) -> str | None:
         if interval != 1:
             itog.append(f"INTERVAL={interval}")
     if "BYDAY" in chasti:
-        dni = chasti.pop("BYDAY").split(",")
+        # Повторы в списке — одно и то же правило, а строка раздувалась за колонку
+        # (`tasks.povtor` — 255): 90 × «MO» давали 500 уже при заведении (29.09.2026).
+        dni = list(dict.fromkeys(chasti.pop("BYDAY").split(",")))
         for den in dni:
             nayden = _BYDAY.match(den)
             if not nayden:
@@ -67,15 +71,15 @@ def razobrat(pravilo: str | None) -> str | None:
                 raise _ploho("A numbered weekday (2TU, -1FR) needs MONTHLY or YEARLY")
         itog.append("BYDAY=" + ",".join(dni))
     if "BYMONTHDAY" in chasti:
-        dni = [_chislo(d, -31, 31, "BYMONTHDAY") for d in chasti.pop("BYMONTHDAY").split(",")]
+        dni = list(dict.fromkeys(_chislo(d, -31, 31, "BYMONTHDAY") for d in chasti.pop("BYMONTHDAY").split(",")))
         if 0 in dni:
             raise _ploho("BYMONTHDAY cannot be 0")
         itog.append("BYMONTHDAY=" + ",".join(map(str, dni)))
     if "BYMONTH" in chasti:
-        mesyatsy = [_chislo(m, 1, 12, "BYMONTH") for m in chasti.pop("BYMONTH").split(",")]
+        mesyatsy = list(dict.fromkeys(_chislo(m, 1, 12, "BYMONTH") for m in chasti.pop("BYMONTH").split(",")))
         itog.append("BYMONTH=" + ",".join(map(str, mesyatsy)))
     if "BYSETPOS" in chasti:
-        pozitsii = [_chislo(p, -5, 5, "BYSETPOS") for p in chasti.pop("BYSETPOS").split(",")]
+        pozitsii = list(dict.fromkeys(_chislo(p, -5, 5, "BYSETPOS") for p in chasti.pop("BYSETPOS").split(",")))
         if 0 in pozitsii:
             raise _ploho("BYSETPOS cannot be 0")
         itog.append("BYSETPOS=" + ",".join(map(str, pozitsii)))
@@ -87,6 +91,12 @@ def razobrat(pravilo: str | None) -> str | None:
         do = chasti.pop("UNTIL")
         if not re.fullmatch(r"\d{8}(T\d{6}Z)?", do):
             raise _ploho("UNTIL must look like 20271231 or 20271231T235959Z")
+        # Форма верна, а даты нет («20260230»): правило сохранялось, и календарь,
+        # «Готово» и пропуск падали у всех, кто видит напоминание (29.09.2026).
+        try:
+            datetime.strptime(do, "%Y%m%dT%H%M%SZ" if "T" in do else "%Y%m%d")
+        except ValueError:
+            raise _ploho("UNTIL is not a real date") from None
         itog.append(f"UNTIL={do}")
     if "WKST" in chasti:
         nachalo_nedeli = chasti.pop("WKST")
@@ -96,7 +106,10 @@ def razobrat(pravilo: str | None) -> str | None:
     if chasti:
         raise _ploho("Unsupported rule parts: " + ", ".join(sorted(chasti)))
     _est_razy(chastota, itog)
-    return ";".join(itog)
+    gotovo = ";".join(itog)
+    if len(gotovo) > DLINA_PRAVILA:
+        raise _ploho(f"The rule is longer than {DLINA_PRAVILA} characters")
+    return gotovo
 
 
 #: Сколько дней бывает в месяце (февраль — с високосным годом).

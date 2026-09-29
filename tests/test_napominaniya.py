@@ -429,3 +429,18 @@ def test_nezakrytyy_raz_povtora_ne_glushit_sleduyushchie(root_client):
     with SessionLocal() as db:
         assert db.get(Task, task["id"]).due_at == novyy
 
+
+def test_povtor_s_nesushchestvuyushchim_until_i_razdutyy_otvergayutsya(root_client):
+    """Разбор 29.09.2026: `UNTIL=20260230` проходил регулярку формы, правило
+    сохранялось — и календарь, «Готово» и пропуск падали `ValueError` у всех, кто
+    видит напоминание. BYDAY из 90 × MO раздувал правило за колонку (255) — 500 уже
+    при заведении."""
+    for pravilo in ("FREQ=DAILY;UNTIL=20260230", "FREQ=DAILY;UNTIL=20261301T000000Z"):
+        otvet = root_client.post(TASKS, json={"title": "Кривой повтор", "due_at": _cherez(hours=1), "povtor": pravilo})
+        assert otvet.status_code == 422, f"{pravilo}: {otvet.status_code} {otvet.text[:200]}"
+    razdutoe = "FREQ=WEEKLY;BYDAY=" + ",".join(["MO"] * 90)
+    otvet = root_client.post(TASKS, json={"title": "Раздутый повтор", "due_at": _cherez(hours=1), "povtor": razdutoe})
+    assert otvet.status_code == 201, otvet.text
+    assert otvet.json()["povtor"] == "FREQ=WEEKLY;BYDAY=MO", otvet.json()["povtor"]
+    assert root_client.get(f"{TASKS}/calendar", params={"from": _cherez(days=-1), "to": _cherez(days=30)}).status_code in (200, 422)
+
