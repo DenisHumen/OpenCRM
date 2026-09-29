@@ -72,7 +72,14 @@ def to_utc_naive(value: datetime | None) -> datetime | None:
         return None
     if value.tzinfo is None:
         return value
-    return value.astimezone(timezone.utc).replace(tzinfo=None)
+    try:
+        return value.astimezone(timezone.utc).replace(tzinfo=None)
+    except (OverflowError, ValueError):
+        # «0001-01-01T00:00+01:00» и «9999-12-31T23:00-05:00» разбираются, но в UTC
+        # не переводятся: пятисотка на сроке заявки, задаче, операции (29.09.2026).
+        from core import exceptions as errors
+
+        raise errors.ValidationError("Date is out of range", code="date_out_of_range") from None
 
 
 def is_online(last_seen_at: datetime | None) -> bool:
@@ -172,6 +179,18 @@ def normalize_phone(raw: str, country_code: str = "") -> str:
             # номер без префикса и без кода страны — считаем местным
             digits = code + digits
     return digits
+
+
+def nachalo_dnya(den: date, shift: timedelta = timedelta()) -> datetime:
+    """Нижняя граница периода: местная полночь дня; на краю календаря — `datetime.min`.
+
+    Зеркало `konets_dnya`: «0001-01-01» со смещением восточнее UTC бросало
+    `OverflowError` — план с таким началом ронял экран планов у всех (29.09.2026).
+    """
+    try:
+        return datetime.combine(den, datetime.min.time()) + shift
+    except (OverflowError, ValueError):
+        return datetime.min
 
 
 def konets_dnya(den: date, shift: timedelta = timedelta()) -> datetime:

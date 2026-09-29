@@ -485,3 +485,19 @@ def test_kolonka_kanbana_listaetsya_i_schitaet_ves_etap(manager_client):
     assert len(sobrano) == len(set(sobrano)), "в обходе колонки заявка встретилась дважды"
     poteryany = set(zavedeno) - set(sobrano)
     assert not poteryany, f"листание не дошло до заявок {sorted(poteryany)}"
+
+
+def test_srok_na_krayu_kalendarya_eto_otkaz_a_ne_500(manager_client):
+    """Разбор 29.09.2026: «0001-01-01T00:00:00+01:00» разбирается, но в UTC не
+    переводится — `to_utc_naive` падал `OverflowError`, и срок заявки, задачи,
+    операции отвечал 500."""
+    zayavka = manager_client.post(f"{API}/deals", json={"title": "Край календаря"})
+    if zayavka.status_code != 201:
+        klient = manager_client.post(f"{API}/clients", json={"name": "Край календаря"}).json()
+        zayavka = manager_client.post(f"{API}/deals", json={"title": "Край календаря", "client_id": klient["id"]})
+    assert zayavka.status_code == 201, zayavka.text
+    for srok in ("0001-01-01T00:00:00+01:00", "9999-12-31T23:00:00-05:00"):
+        otvet = manager_client.patch(f"{API}/deals/{zayavka.json()['id']}", json={"due_at": srok})
+        assert otvet.status_code == 422, f"{srok}: {otvet.status_code} {otvet.text[:200]}"
+        assert otvet.json()["error"]["code"] == "date_out_of_range"
+

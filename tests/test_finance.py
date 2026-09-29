@@ -846,3 +846,33 @@ def test_vygruzka_bolshe_predela_otkazyvaet_a_ne_rezhet(root_client, money, monk
         f"{API}/finance/operations.csv", params={"from": "2031-03-01", "to": "2031-03-31"}
     )
     assert otvet.status_code == 422 and otvet.json()["error"]["code"] == "export_too_large"
+
+
+def test_plan_s_nachala_kalendarya_ne_lozhit_ekran(root_client, finance_on):
+    """Разбор 29.09.2026: зеркало плана «до конца календаря». Начало `0001-01-01` со
+    смещением восточнее UTC (так шлёт браузер в Киеве) давало `OverflowError` при
+    каждом открытии экрана планов — у всех и навсегда: план попадал в любой месяц,
+    а удалить его было нельзя, потому что список не открывался."""
+    statya = root_client.post(
+        f"{API}/finance/categories", json={"name": "С начала времён", "direction": "expense"}
+    ).json()
+    sozdan = root_client.post(
+        f"{API}/finance/budgets",
+        json={"category_id": statya["id"], "period_start": "0001-01-01", "period_end": "9999-12-31", "planned": 100},
+    )
+    assert sozdan.status_code == 201, sozdan.text
+    spisok = root_client.get(f"{API}/finance/budgets", params={"month": "2026-09", "tz_offset": -180})
+    assert spisok.status_code == 200, f"экран планов лёг: {spisok.status_code} {spisok.text[:200]}"
+    root_client.delete(f"{API}/finance/budgets/{sozdan.json()['id']}")
+
+
+def test_otchyoty_na_krayakh_kalendarya(root_client, finance_on):
+    """Разбор 29.09.2026: воронка с `from=0001-01-01` в поясе восточнее UTC и выручка
+    за декабрь 9999 года (следующего месяца нет) отвечали 500."""
+    for put, params in (
+        ("funnel", {"from": "0001-01-01", "to": "2026-01-01", "tz_offset": -180}),
+        ("revenue", {"from": "9999-12-01", "to": "9999-12-31"}),
+    ):
+        otvet = root_client.get(f"{API}/reports/{put}", params=params)
+        assert otvet.status_code == 200, f"{put}: {otvet.status_code} {otvet.text[:200]}"
+

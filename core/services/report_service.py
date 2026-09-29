@@ -38,7 +38,7 @@ from sqlalchemy.orm import Session
 
 from core import exceptions as errors
 from core.services import document_service, finance_service, pipeline_service
-from core.utils import divide_money, konets_dnya, now_utc
+from core.utils import divide_money, konets_dnya, nachalo_dnya, now_utc
 from database.models.client import CLIENT_SOURCES
 from database.models.pipeline import KIND_LOST, KIND_OPEN, KIND_WON
 from database.models.document import KIND_ACT, KIND_SALES_ORDER
@@ -90,7 +90,7 @@ def parse_period(
             "Period end is before its start", code="bad_period"
         )
 
-    start = datetime.combine(start_day, datetime.min.time()) + shift
+    start = nachalo_dnya(start_day, shift)
     end = konets_dnya(end_day, shift)
     return start, end, start_day, end_day
 
@@ -128,15 +128,15 @@ def month_buckets(
     shift = timedelta(minutes=tz_offset)
     # Те же границы, что считает `parse_period`: полуоткрытый интервал от
     # местной полуночи первого дня до местной полуночи дня ПОСЛЕ последнего.
-    period_start = datetime.combine(start_day, datetime.min.time()) + shift
+    period_start = nachalo_dnya(start_day, shift)
     period_end = konets_dnya(end_day, shift)
     buckets: list[tuple[str, datetime, datetime]] = []
     cursor = start_day.replace(day=1)
     last = end_day.replace(day=1)
     while cursor <= last:
         following = _next_month(cursor)
-        month_start = datetime.combine(cursor, datetime.min.time()) + shift
-        month_end = datetime.combine(following, datetime.min.time()) + shift
+        month_start = nachalo_dnya(cursor, shift)
+        month_end = nachalo_dnya(following, shift) if following else datetime.max
         buckets.append(
             (
                 cursor.strftime("%Y-%m"),
@@ -148,12 +148,17 @@ def month_buckets(
             raise errors.ValidationError(
                 f"Period is longer than {MAX_MONTHS} months", code="period_too_long"
             )
+        if following is None:
+            break
         cursor = following
     return buckets
 
 
-def _next_month(day: date) -> date:
-    return date(day.year + 1, 1, 1) if day.month == 12 else date(day.year, day.month + 1, 1)
+def _next_month(day: date) -> date | None:
+    """Первое число следующего месяца; за декабрём 9999 года месяцев нет — None."""
+    if day.month < 12:
+        return date(day.year, day.month + 1, 1)
+    return date(day.year + 1, 1, 1) if day.year < date.max.year else None
 
 
 def share(part: int, whole: int) -> float | None:
