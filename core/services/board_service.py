@@ -186,6 +186,9 @@ def process_work(work_id: int) -> None:
         work = boards_repo.get_work_by_id(db, work_id)
         if work is None:
             return
+        # Чтение закрыто до медленной части: транзакция держалась всё ожидание места
+        # разжатия и ffmpeg — минуты, и `DROP TABLE` восстановления ждал на ней (29.09.2026).
+        db.commit()
         try:
             # Имя исходника собирает `media_service`, а не этот код: класть файл
             # и искать его — одно правило, и жить оно обязано в одном месте.

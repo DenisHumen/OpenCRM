@@ -293,3 +293,28 @@ def test_otklyuchenie_ubiraet_ustroystva_i_rassylka_ih_ne_zhdyot(root_client, ro
             assert push_service.razoslat(db, ochered, k) == 0
         db.commit()
     assert zaprosy == []
+
+
+def test_rassylka_ne_derzhit_tranzaktsiyu_na_vremya_seti(root_client):
+    """Разбор 29.09.2026: подписки и люди читались, и транзакция оставалась открытой
+    через все запросы к чужим службам — до 10 с на каждый. Восстановление с экрана
+    ждало на ней замок метаданных `users`, через 30 с падало, и база оставалась
+    наполовину залитой."""
+    b = Brauzer("https://fcm.googleapis.com/fcm/send/bez-tranzaktsii")
+    assert root_client.post(f"{PUSH}/subscriptions", json=b.podpiska()).status_code == 201
+    task = _napominanie(root_client, due_at=_cherez(minutes=30))
+    v_tranzaktsii: list[bool] = []
+    with SessionLocal() as db:
+        t = db.get(Task, task["id"])
+        zvonok = (t.id, t.title, t.vazhnost, t.due_at, _moy_id(root_client), "due", t.poyas)
+        db.commit()
+
+        def sluzhba(_zapros: httpx.Request) -> httpx.Response:
+            v_tranzaktsii.append(db.in_transaction())
+            return httpx.Response(201)
+
+        with httpx.Client(transport=httpx.MockTransport(sluzhba)) as klient:
+            push_service.razoslat(db, [zvonok], klient)
+        db.commit()
+    assert v_tranzaktsii and not any(v_tranzaktsii), "во время сети транзакция открыта"
+

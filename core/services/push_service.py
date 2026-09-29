@@ -222,6 +222,9 @@ def razoslat(db: Session, ochered: list, klient: httpx.Client | None = None) -> 
     lyudi = {
         u.id: u for u in users_repo.get_many(db, {p.user_id for p in podpiski}) if u.status == STATUS_ACTIVE
     }
+    # Чтение закрываем до сети: транзакция держалась через все таймауты чужих
+    # служб, и восстановление с экрана ждало на ней замок `users` (29.09.2026).
+    db.commit()
     svoy = klient is None
     klient = klient or httpx.Client(timeout=10)
     mertvye: set[int] = set()

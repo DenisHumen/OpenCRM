@@ -728,3 +728,27 @@ def test_dovodka_ne_derzhit_potok_zvonkov(monkeypatch):
     potok.join(5)
     assert not potok.is_alive()
 
+
+def test_obrabotka_raboty_ne_derzhit_soedinenie(manager_client, monkeypatch):
+    """Разбор 29.09.2026: `process_work` держал транзакцию с первого чтения до конца —
+    ожидание места разжатия до 120 с и ffmpeg минуты. Пачка загрузок занимала пул, а
+    `DROP TABLE` восстановления с экрана ждал на ней замок и падал."""
+    from core.services import board_service, media_service
+    from database.session import engine
+
+    pul = engine.pool
+    if not hasattr(pul, "checkedout"):
+        pytest.skip("у этого пула нет счётчика занятых — база не MySQL")
+    work_id = _brosit_rabotu(manager_client, "Обработка без соединения")
+    nastoyashchaya = media_service.process_image
+    zamer: dict[str, int] = {}
+
+    def obrabotka(work_uid, original):
+        zamer["vnutri"] = pul.checkedout()
+        return nastoyashchaya(work_uid, original)
+
+    monkeypatch.setattr(media_service, "process_image", obrabotka)
+    do = pul.checkedout()
+    board_service.process_work(work_id)
+    assert zamer["vnutri"] == do, f"во время обработки занято соединений: {zamer['vnutri'] - do}"
+
