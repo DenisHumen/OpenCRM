@@ -2470,3 +2470,15 @@ def test_node_exporter_ne_sobiraet_to_chego_nikto_ne_sprashivaet():
         "кто-то начал спрашивать node_disk_* — тогда собиратель нужен, и вместе "
         "с ним нужно монтирование /run/udev, иначе ряды придут без меток"
     )
+
+
+def test_dolya_5xx_molchit_posle_obnovleniya():
+    """29.09.2026 тревога «доля 5xx» горела весь день: каждая выкладка отдаёт
+    страницу обслуживания с 503, а трафик маленький. Десять минут после
+    обновления правило молчит; проверено `promtool test rules` на рядах с
+    обновлением и без — авария без обновления по-прежнему тревожит."""
+    vyrazhenie = _vyrazhenie(_pravila_blokami()["HighErrorRate"])
+    assert "opencrm_deploy_last_timestamp_seconds" in vyrazhenie, "плановый перезапуск снова считается аварией"
+    assert "absent(opencrm_deploy_last_timestamp_seconds)" in vyrazhenie, (
+        "без ряда об обновлениях (свежая установка) правило замолчало бы навсегда"
+    )

@@ -1730,7 +1730,7 @@ Prometheus на большом запросе выбирает всю памят
 | `SiteDown` | внешняя проверка не проходит 2 минуты | critical |
 | `SiteSlow` | ответ дольше 3 с в течение 10 минут | warning |
 | `CertificateExpiringSoon` | до истечения меньше 14 дней | critical |
-| `HighErrorRate` | доля 5xx выше 5% пять минут | critical |
+| `HighErrorRate` | доля 5xx выше 5% пять минут; десять минут после обновления молчит — перезапуск отдаёт страницу обслуживания с 503, и частые выкладки держали её горящей весь день (29.09.2026) | critical |
 | `HighClientErrorRate` | доля 4xx выше 40% пятнадцать минут | warning |
 | `DiskAlmostFull` | свободно меньше 10% | critical |
 | `HostMemoryLow` / `HostSwapping` | памяти меньше 10% / машина в подкачке | warning |

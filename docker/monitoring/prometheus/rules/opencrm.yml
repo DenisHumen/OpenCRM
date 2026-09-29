@@ -114,7 +114,10 @@ groups:
         # * без порога по частоте одна ошибка на два ночных запроса давала бы
         #   50% и будила бы человека каждую ночь;
         # * `status_class=~"[1-5]xx"` отсекает строки журнала ошибок nginx,
-        #   попадающие в тот же поток: они не ответы и в знаменателе им не место.
+        #   попадающие в тот же поток: они не ответы и в знаменателе им не место;
+        # * десять минут после обновления молчит: перезапуск отдаёт страницу
+        #   обслуживания с 503, и частые выкладки 29.09.2026 держали тревогу
+        #   горящей весь день. Авария вне окна или долгая — `SiteDown`.
         expr: >-
           sum(rate(promtail_custom_opencrm_nginx_responses_total{status_class="5xx"}[5m]))
           /
@@ -122,6 +125,11 @@ groups:
           > 0.05
           and
           sum(rate(promtail_custom_opencrm_nginx_responses_total{status_class=~"[1-5]xx"}[5m])) > 0.05
+          and on()
+          (
+            (time() - max(opencrm_deploy_last_timestamp_seconds)) > 600
+            or on() absent(opencrm_deploy_last_timestamp_seconds)
+          )
         for: 5m
         keep_firing_for: 15m
         labels:
