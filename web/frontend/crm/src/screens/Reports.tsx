@@ -8,24 +8,11 @@ import { useApp } from "../lib/app";
 import { useLiveTopic } from "../lib/live";
 import { useFailure } from "../lib/failure";
 import { kindLabel, paperLink } from "../lib/documents";
-import { formatMoney } from "../lib/format";
+import { formatMoney, mestnyyDen } from "../lib/format";
 import { moduleOn } from "../lib/modules";
 import { can } from "../lib/permissions";
 import { sourceLabel } from "../lib/sources";
 import { nazvanieEtapa } from "../lib/etapy";
-
-/**
- * Дата в вид, который понимает `<input type="date">` и сервер.
- *
- * `toISOString().slice(0, 10)` здесь неверен: он переводит момент в UTC, и в
- * Киеве в час ночи отдаёт вчерашнее число. Собираем строку из местных полей —
- * пользователь выбирает день своего календаря, а не UTC.
- */
-function isoDay(date: Date): string {
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${date.getFullYear()}-${month}-${day}`;
-}
 
 /** Готовые периоды: за отчётом приходят с одним из трёх вопросов. */
 function presets(now: Date) {
@@ -33,12 +20,12 @@ function presets(now: Date) {
   const prevStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
   const prevEnd = new Date(now.getFullYear(), now.getMonth(), 0);
   return [
-    { key: "periodThisMonth" as const, from: isoDay(monthStart), to: isoDay(now) },
-    { key: "periodLastMonth" as const, from: isoDay(prevStart), to: isoDay(prevEnd) },
+    { key: "periodThisMonth" as const, from: mestnyyDen(monthStart), to: mestnyyDen(now) },
+    { key: "periodLastMonth" as const, from: mestnyyDen(prevStart), to: mestnyyDen(prevEnd) },
     {
       key: "periodThisYear" as const,
-      from: isoDay(new Date(now.getFullYear(), 0, 1)),
-      to: isoDay(now),
+      from: mestnyyDen(new Date(now.getFullYear(), 0, 1)),
+      to: mestnyyDen(now),
     },
   ];
 }

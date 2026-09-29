@@ -11,7 +11,7 @@ import { DOC_SORTS, sortLabel, statusLabel, statusVariant } from "../lib/documen
 import { useLiveTopic } from "../lib/live";
 import { useDebounced } from "../lib/debounce";
 import { useFailure } from "../lib/failure";
-import { formatDate, formatMoney, formatQuantity } from "../lib/format";
+import { formatDate, formatMoney, formatQuantity, mestnyyDen } from "../lib/format";
 import type { HistoryEvent } from "../components/History";
 import type { OrderLine } from "./Orders";
 
@@ -240,7 +240,7 @@ const PERIODY = [30, 90, 365] as const;
 function periodOt(dney: number): { from: string; to: string } {
   const to = new Date();
   const from = new Date(to.getTime() - dney * 86_400_000);
-  return { from: from.toISOString().slice(0, 10), to: to.toISOString().slice(0, 10) };
+  return { from: mestnyyDen(from), to: mestnyyDen(to) };
 }
 
 /** Статистика возвратов: числа, по месяцам и что возвращают чаще. Своя, а не

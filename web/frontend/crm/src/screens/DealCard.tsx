@@ -13,6 +13,7 @@ import { api, ApiError } from "../lib/api";
 import { useApp } from "../lib/app";
 import { useLiveTopic, useNachatayaPravka } from "../lib/live";
 import { useFailure } from "../lib/failure";
+import { useDebounced } from "../lib/debounce";
 import { useGuard } from "../lib/guard";
 import { nazvanieBumagi, paperLink, statusLabel, statusVariant } from "../lib/documents";
 import { formatDate, formatDateTime, formatMoney, formatSpan, NechitaemoeChislo, parseDate, toMinorOrNull } from "../lib/format";
@@ -67,6 +68,8 @@ export function DealCard() {
   // чистая карточка перечитывается молча, начатая правка получает полосу
   // «данные изменились — показать». Признак — хук по форме, полями не управляет.
   const koren = useRef<HTMLDivElement>(null);
+  const [srokNabran, setSrokNabran] = useState<{ den: string } | null>(null);
+  const srokPosle = useDebounced(srokNabran);
   const nachata = useNachatayaPravka(koren, deal?.updated_at);
   const [ustarelo, setUstarelo] = useState(false);
   useLiveTopic("deals", (s) => {
@@ -121,6 +124,28 @@ export function DealCard() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  // Срок уходит по паузе набора (`srokNabran` → `useDebounced`), а не на каждое нажатие.
+  useEffect(() => {
+    if (!srokPosle || !deal || srokPosle.den === asDateInput(deal.due_at)) return;
+    // Ответ на прошлый набор не ложится поверх нового: иначе в шапке оставалась
+    // промежуточная дата и признак «просрочено» от неё.
+    let current = true;
+    api
+      .patch(`/deals/${id}`, { due_at: srokPosle.den ? `${srokPosle.den}T12:00:00` : null })
+      .then((svezhaya) => {
+        if (current) setDeal(svezhaya);
+      })
+      .catch((e) => {
+        if (!current) return;
+        toastError(e);
+        void load();
+      });
+    return () => {
+      current = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- шлём по паузе набора, а не по смене заявки
+  }, [srokPosle]);
 
   if (!deal) return <ScreenLoading error={failure} onRetry={() => void load()} />;
 
@@ -205,8 +230,12 @@ export function DealCard() {
         <div style={{ flex: 1, minWidth: 0 }}>
           {/* Название правится прямо здесь: заходить в отдельную форму ради
               одной строки — лишний шаг в ежедневной работе. */}
+          {/* `key` по своему значению: без него неуправляемое поле держало то, что
+              было при первой отрисовке, и уход из него откатывал правку коллеги,
+              пришедшую тихой перечиткой (разбор 29.09.2026). */}
           <input
             className="title-input"
+            key={`title-${deal.title}`}
             defaultValue={deal.title}
             onBlur={(e) => {
               const value = e.target.value.trim();
@@ -379,8 +408,20 @@ export function DealCard() {
             <input
               className={"input" + (overdue ? " overdue" : "")}
               type="date"
+              min="1900-01-01"
+              max="2199-12-31"
+              key={`due-${deal.due_at}`}
               defaultValue={asDateInput(deal.due_at)}
-              onChange={(e) => void patch({ due_at: e.target.value ? `${e.target.value}T12:00:00` : null })}
+              onChange={(e) => {
+                // Набор года с клавиатуры шёл PATCH-ем на каждую цифру (0002, 0020…),
+                // ответы ложились в любом порядке, а стёртый сегмент давал пустое
+                // значение и стирал срок (разбор 29.09.2026). Уходит после паузы и
+                // только целая дата; пусто — только когда поле очистили целиком.
+                // Год — ровно четыре цифры: поле Chrome принимает и «275760».
+                if (e.target.validity.badInput) return;
+                if (e.target.value && !/^(19|20|21)\d\d-\d\d-\d\d$/.test(e.target.value)) return;
+                setSrokNabran({ den: e.target.value });
+              }}
             />
             {overdue && <div className="field-desc" style={{ color: "var(--danger)" }}>{t("overdue")}</div>}
           </div>
@@ -425,6 +466,7 @@ export function DealCard() {
             <input
               className="input"
               inputMode="decimal"
+              key={`prepaid-${deal.prepaid}`}
               defaultValue={asMoneyInput(deal.prepaid)}
               onBlur={(e) => {
                 const next = toMinorOrNull(e.target.value);
@@ -457,6 +499,7 @@ export function DealCard() {
             className="input"
             rows={4}
             placeholder={t("dealDetailsHint")}
+            key={`description-${deal.description}`}
             defaultValue={deal.description}
             onBlur={(e) => {
               if (e.target.value !== deal.description) void patch({ description: e.target.value });

@@ -145,6 +145,15 @@ export function toMinorOrNull(typed: string): number | null {
   return m[1] && kopeyki ? -kopeyki : kopeyki;
 }
 
+/** День по МЕСТНОМУ календарю в виде «ГГГГ-ММ-ДД» — для `<input type="date">` и
+ *  отбора периода. `toISOString().slice(0, 10)` переводит момент в UTC и в Киеве с
+ *  полуночи до трёх отдаёт вчерашнее число: сегодняшнее выпадало из сводок. */
+export function mestnyyDen(date: Date): string {
+  const mesyats = String(date.getMonth() + 1).padStart(2, "0");
+  const den = String(date.getDate()).padStart(2, "0");
+  return `${date.getFullYear()}-${mesyats}-${den}`;
+}
+
 /** Количество из поля в тысячные: «1 000» → 1000000, «0,5» → 500. Целыми, без float.
  *  `null` — пусто, нечитаемо или больше трёх знаков: тихо округлять количество нельзя. */
 export function toMilliOrNull(typed: string): number | null {

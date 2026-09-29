@@ -1975,3 +1975,32 @@ def test_escape_v_spiske_ne_zakryvaet_okno():
     assert re.search(r'e\.key === "Escape"\) \{[^}]*?!e\.defaultPrevented', ui, re.S), "окно закрывается и на погашенный Escape"
     assert re.search(r'e\.key === "Escape"\) \{[^}]*?preventDefault\(\)', vybor, re.S), "выбор клиента не гасит свой Escape"
 
+
+def test_neupravlyaemoe_pole_kartochki_zayavki_pomnit_svezhee():
+    """Разбор 29.09.2026: название, предоплата и описание заявки — неуправляемые поля
+    с `defaultValue` без `key`. Тихая перечитка карточки их не обновляла, и уход из
+    поля сравнивал старый текст со свежим ответом сервера — правка коллеги стиралась
+    молча. Ключ по своему значению пересоздаёт поле, когда значение сменилось."""
+    text = (SCREENS / "screens" / "DealCard.tsx").read_text(encoding="utf-8")
+    bez_klyucha = []
+    for m in re.finditer(r"defaultValue=", text):
+        nachalo = max(text.rfind("<input", 0, m.start()), text.rfind("<textarea", 0, m.start()))
+        konec = text.find("/>", m.start())
+        if "key=" not in text[nachalo:konec]:
+            bez_klyucha.append(text[m.start():m.start() + 60].splitlines()[0])
+    assert bez_klyucha == [], f"поля без key держат устаревшее значение: {bez_klyucha}"
+
+
+def test_mestnyy_den_ne_cherez_utc():
+    """Разбор 29.09.2026: статистика возвратов брала «сегодня» как
+    `toISOString().slice(0, 10)` — день по UTC. В Киеве с полуночи до трёх это
+    вчера, и сегодняшние возвраты выпадали из сводки. День по местному календарю
+    собирает один `mestnyyDen` из `lib/format.ts`."""
+    utc = []
+    for put in SCREENS.rglob("*.ts*"):
+        for nomer, stroka in enumerate(put.read_text(encoding="utf-8").splitlines(), 1):
+            kod = stroka.split("//", 1)[0]
+            if re.search(r"toISOString\(\)\.(slice|substring)\(0, 10\)", kod) and not kod.lstrip().startswith("*"):
+                utc.append(f"{put.relative_to(SCREENS)}:{nomer}")
+    assert utc == [], f"местный день через UTC — берите mestnyyDen: {utc}"
+

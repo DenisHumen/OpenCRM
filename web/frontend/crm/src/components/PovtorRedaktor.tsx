@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { useApp } from "../lib/app";
+import { mestnyyDen } from "../lib/format";
 import { DNI, GOTOVYE, type Den, type Pravilo, opisat, pustoe, razobrat, sobrat } from "../lib/povtor";
 
 const GOTOVYE_LABEL = {
@@ -205,7 +206,7 @@ export function PovtorRedaktor({
                 type="radio"
                 checked={p.konec === "data"}
                 disabled={disabled}
-                onChange={() => primenit({ ...p, konec: "data", do: p.do || new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10) })}
+                onChange={() => primenit({ ...p, konec: "data", do: p.do || mestnyyDen(new Date(Date.now() + 30 * 86400000)) })}
               />
               {t("povtorKonetsData")}
               <input
