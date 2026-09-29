@@ -496,3 +496,35 @@ def test_kopiya_uezzhaet_pachkami_a_ne_odnim_razgovorom(chistaya_baza, snyataya_
         with dvizhok.connect() as soedinenie:
             stalo = int(soedinenie.execute(text("SELECT COUNT(*) FROM clients")).scalar_one())
     assert stalo >= KLIENTOV, f"после заливки пачками клиентов {stalo}, ждали {KLIENTOV}"
+
+
+def test_shirokie_stroki_rezhutsya_po_obyomu_a_ne_po_schyotu(chistaya_baza, tmp_path, monkeypatch):
+    """Разбор 29.09.2026: пачка `INSERT` закрывалась по 500 строк, не глядя на объём.
+    Письма — MEDIUMTEXT до 16 МБ, и пятьсот писем по 32 КБ пробивали предел пакета
+    клиента `mysql`: откат вставал посреди заливки, и база оставалась наполовину
+    старой. Потолок здесь занижен — настоящих мегабайтов в наборе не снять."""
+    from database.repositories import backups as backups_repo
+    from scripts import snapshot_db
+
+    potolok = 8 * 1024
+    monkeypatch.setattr(snapshot_db, "PREDEL_INSERT", potolok)
+    tela = {nomer: "ё" * 1500 + str(nomer) for nomer in range(1, 31)}
+    with _dvizhok(chistaya_baza) as dvizhok:
+        with dvizhok.begin() as soedinenie:
+            soedinenie.execute(text("CREATE TABLE proba_shirokikh (id INT PRIMARY KEY, telo MEDIUMTEXT)"))
+            for nomer, telo in tela.items():
+                soedinenie.execute(text("INSERT INTO proba_shirokikh VALUES (:n, :t)"), {"n": nomer, "t": telo})
+        snyat(dvizhok, tmp_path / "damp.sql")
+
+    with (tmp_path / "damp.sql").open(encoding="utf-8") as fayl:
+        vstavki = [o for o in backups_repo.operatory(fayl) if o.lstrip().startswith("INSERT INTO `proba_shirokikh`")]
+    assert len(vstavki) >= 3, f"тридцать строк по 3 КБ ушли {len(vstavki)} вставками при потолке {potolok} байт"
+    samaya = max(len(o.encode("utf-8")) for o in vstavki)
+    assert samaya <= potolok + 200, f"вставка в {samaya} байт при потолке {potolok}"
+
+    with _svoya_shema("shirokie_krug") as tsel:
+        _zalit(tsel, tmp_path / "damp.sql")
+        with _dvizhok(tsel) as dvizhok, dvizhok.connect() as soedinenie:
+            doehalo = dict(soedinenie.execute(text("SELECT id, telo FROM proba_shirokikh")).all())
+    assert doehalo == tela
+

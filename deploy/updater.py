@@ -1532,7 +1532,9 @@ class Updater:
         result = self._compose(
             "exec", "-T", self.config.db_service, "sh", "-c",
             # Пароль раскрывается ВНУТРИ контейнера: в `ps` на хосте ему не место.
-            f'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql -uroot {self.config.mysql_db}',
+            # Предел пакета клиента — 16 МБ, а одно письмо бывает крупнее: без флага
+            # заливка вставала посреди таблиц, и база оставалась наполовину старой.
+            f'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql -uroot --max-allowed-packet=1G {self.config.mysql_db}',
             stdin=snapshot,
             timeout=self.config.snapshot_timeout,
         )

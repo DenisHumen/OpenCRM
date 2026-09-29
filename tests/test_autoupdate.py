@@ -1378,7 +1378,7 @@ def test_otkat_na_mysql_zalivaet_damp_v_bazu(tmp_path):
 
     assert outcome.status == STATUS_ROLLED_BACK
     kopiya = config.state_dir / f"pre-update-{NEW[:12]}.sql"
-    zalivki = [(line, put) for line, put in shell.stdins if "mysql -uroot opencrm" in line]
+    zalivki = [(line, put) for line, put in shell.stdins if "mysql -uroot --max-allowed-packet=1G opencrm" in line]
     assert zalivki, "дамп в MySQL не заливался — база осталась после миграций нового кода"
     assert zalivki[0][1] == str(kopiya), "залили не ту копию"
     assert "exec -T db" in zalivki[0][0], "клиент mysql живёт в контейнере базы, не приложения"
@@ -2459,7 +2459,7 @@ def test_obnovlenie_pri_rezhime_obsluzhivaniya_ne_otkatyvaet_bazu(tmp_path):
     assert outcome.status == STATUS_DEPLOYED, (
         f"выкатка на закрытом сайте объявлена провалом: {outcome.status}"
     )
-    zalivki = [line for line, _ in shell.stdins if "mysql -uroot opencrm" in line]
+    zalivki = [line for line, _ in shell.stdins if "mysql -uroot --max-allowed-packet=1G opencrm" in line]
     assert not zalivki, (
         "база откачена на закрытом сайте — потеряно всё, что владелец записал "
         "с момента съёмки копии"

@@ -59,7 +59,7 @@ mariadb-client с зависимостями, десятки мегабайт и
 заходом в контейнер базы, где клиент есть:
 
     docker compose exec -T db sh -c 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" \
-        mysql -uroot opencrm' < ФАЙЛ
+        mysql -uroot --max-allowed-packet=1G opencrm' < ФАЙЛ
 """
 
 import argparse
@@ -81,6 +81,11 @@ from config.settings import get_settings  # noqa: E402
 #: `max_allowed_packet` (64 МБ по умолчанию) с запасом на самое длинное письмо в
 #: `mail_messages`.
 RAZMER_PACHKI = 500
+
+#: Потолок одного `INSERT` в байтах — пачка закрывается по нему раньше счёта строк.
+#: Письма — MEDIUMTEXT до 16 МБ, и пятьсот писем по 32 КБ пробивали предел пакета
+#: клиента `mysql` (16 МБ): откат заливал базу наполовину (разбор 29.09.2026).
+PREDEL_INSERT = 1024 * 1024
 
 #: Метка конца. По ней и только по ней копия считается снятой целиком.
 METKA = "-- opencrm snapshot complete"
@@ -274,7 +279,7 @@ def _shapka(engine) -> str:
         "--\n"
         "-- Восстановление (клиент живёт в контейнере базы, не приложения):\n"
         "--   docker compose exec -T db sh -c 'MYSQL_PWD=\"$MYSQL_ROOT_PASSWORD\" \\\n"
-        f"--       mysql -uroot {engine.url.database}' < ЭТОТ_ФАЙЛ\n"
+        f"--       mysql -uroot --max-allowed-packet=1G {engine.url.database}' < ЭТОТ_ФАЙЛ\n"
         "SET NAMES utf8mb4;\n"
         # Внешние ключи выключаются на время заливки: порядок таблиц в дампе
         # алфавитный, а не по зависимостям, и первая же ссылка вперёд иначе
@@ -314,14 +319,25 @@ def _odna_tablica(c, f, imya: str, escape) -> int:
     kursor = c.execution_options(stream_results=True).execute(text(f"SELECT * FROM {kavychki}"))
     stolbcy = ", ".join(f"`{k}`" for k in kursor.keys())
     vsego = 0
+    def zapisat(kuski: list[str]) -> None:
+        znacheniya = ",\n".join(kuski)
+        f.write(f"INSERT INTO {kavychki} ({stolbcy}) VALUES\n{znacheniya};\n")
+
     while True:
         pachka = kursor.fetchmany(RAZMER_PACHKI)
         if not pachka:
             break
-        znacheniya = ",\n".join(
-            "(" + ",".join(_literal(escape, v) for v in stroka) + ")" for stroka in pachka
-        )
-        f.write(f"INSERT INTO {kavychki} ({stolbcy}) VALUES\n{znacheniya};\n")
+        kuski: list[str] = []
+        obyom = 0
+        for stroka in pachka:
+            kusok = "(" + ",".join(_literal(escape, v) for v in stroka) + ")"
+            razmer = len(kusok.encode("utf-8")) + 2
+            if kuski and obyom + razmer > PREDEL_INSERT:
+                zapisat(kuski)
+                kuski, obyom = [], 0
+            kuski.append(kusok)
+            obyom += razmer
+        zapisat(kuski)
         vsego += len(pachka)
     return vsego
 

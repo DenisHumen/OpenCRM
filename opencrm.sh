@@ -2680,7 +2680,8 @@ cmd_restore() {
     # Пароль опять разворачивается внутри контейнера.
     info "$(tr_ "заливаю дамп" "loading the dump")"
     # shellcheck disable=SC2016  # пароль раскрывается внутри контейнера, см. dump_mysql
-    if ! compose exec -T db sh -c 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" exec mysql --default-character-set=utf8mb4 -u root "$MYSQL_DATABASE"' < "$_db"; then
+    # --max-allowed-packet: одно письмо бывает крупнее 16 МБ по умолчанию у клиента.
+    if ! compose exec -T db sh -c 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" exec mysql --default-character-set=utf8mb4 --max-allowed-packet=1G -u root "$MYSQL_DATABASE"' < "$_db"; then
         run_painted compose up -d
         # Не «осталась как была». Дамп начинается с `DROP TABLE`, и клиент
         # выполняет его по мере чтения: отказ на середине означает базу,
