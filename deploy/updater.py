@@ -1387,7 +1387,9 @@ class Updater:
         # стенде: контейнер честно писал «Table ... already exists», а в отчёт
         # это не попадало ни разу.
         skazal = ""
-        for attempt in range(self.config.health_attempts):
+        attempt = 0
+        prodleno = 0
+        while attempt < self.config.health_attempts:
             skazal = skazal or self._chto_skazal_konteyner()
             response = self.probe.get(self.config.health_url)
             if response.ok:
@@ -1418,7 +1420,15 @@ class Updater:
                         last = f"{self.config.health_url}: {payload}"
             else:
                 last = f"{self.config.health_url}: {response.status or response.body[:120]}"
-            if attempt + 1 < self.config.health_attempts:
+            # Контейнер снимает копию и гонит миграции — это не «не отвечает»: на
+            # большой базе одна копия идёт минуту с лишним, и исправное обновление
+            # откатывалось по окну здоровья (разбор 29.09.2026). Записал `failed` —
+            # не ждём: падающая миграция не должна тянуть откат.
+            if not skazal and prodleno < self.config.migrate_attempts and self._idut_migratsii():
+                prodleno += 1
+            else:
+                attempt += 1
+            if attempt < self.config.health_attempts:
                 self._sleep(self.config.health_delay)
         else:
             skazal = skazal or self._chto_skazal_konteyner()
@@ -1680,6 +1690,14 @@ class Updater:
             return f"не снять оставшиеся от миграций таблицы ({vidno}): {snos.tail(3)}"
         self.log(f"сняты таблицы, оставшиеся от неудавшихся миграций: {vidno}")
         return ""
+
+    def _idut_migratsii(self) -> bool:
+        """Контейнер на шаге копии и миграций: `running migrate` пишет только он."""
+        try:
+            zapis = json.loads(self._progress_path().read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return False
+        return isinstance(zapis, dict) and zapis.get("phase") == "running" and zapis.get("step") == "migrate"
 
     def _chto_skazal_konteyner(self) -> str:
         """Причина от самого контейнера, если он успел её записать.

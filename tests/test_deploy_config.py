@@ -596,3 +596,21 @@ def test_prosba_ubrat_dvizhenie_ubiraet_i_ozhidanie():
         assert svoystvo in blok, (
             f"в правиле «убрать движение» нет {svoystvo} — ожидание останется: " + blok
         )
+
+
+def test_ostanovka_prilozheniya_dayot_migratsii_dokonchit():
+    """Разбор 29.09.2026: пока идут копия и миграции, PID 1 контейнера — `sh` точки
+    входа, и SIGTERM он не слышит. Откат зовёт `compose stop app`, и через 10 с по
+    умолчанию SIGKILL убивал alembic посреди DDL — а DDL в MySQL не транзакционен."""
+    stroki = (ROOT / "docker" / "docker-compose.yml").read_text(encoding="utf-8").splitlines()
+    nachalo = stroki.index("  app:") + 1
+    konec = next(
+        (i for i in range(nachalo, len(stroki)) if stroki[i].startswith("  ") and not stroki[i].startswith("    ") and stroki[i].strip()),
+        len(stroki),
+    )
+    app = "\n".join(stroki[nachalo:konec])
+    sovpalo = re.search(r"^    stop_grace_period: (\d+)(s|m)\s*$", app, re.M)
+    assert sovpalo, "у приложения нет stop_grace_period — миграцию добьёт SIGKILL через 10 с"
+    sekund = int(sovpalo.group(1)) * (60 if sovpalo.group(2) == "m" else 1)
+    assert sekund >= 60, f"{sekund} с мало, чтобы миграция на населённой базе дошла до конца"
+

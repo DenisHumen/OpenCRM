@@ -3188,3 +3188,46 @@ def _s_dampom(config):
     shell.effect("scripts.snapshot_db dump", damp_snimaetsya(config, shell))
     return shell
 
+
+class _ZdorovieSKhodom(FakeProbe):
+    """Опрос здоровья, во время которого контейнер пишет свой ход — как настоящий:
+    `docker/entrypoint.sh` пишет файл уже после того, как обновлятор отметил «health»."""
+
+    def __init__(self, zapisi: list[str], **kw):
+        super().__init__(**kw)
+        self.zapisi = zapisi
+        self.updater = None
+
+    def get(self, url, follow=True):
+        if "healthz" in url and self.updater is not None:
+            zapis = self.zapisi.pop(0) if len(self.zapisi) > 1 else self.zapisi[0]
+            self.updater._progress_path().write_text(zapis, encoding="utf-8")
+        return super().get(url, follow)
+
+
+def _s_khodom(tmp_path, *fazy: str):
+    config = make_config(tmp_path, OPENCRM_UPDATE_HEALTH_ATTEMPTS="2", OPENCRM_UPDATE_MIGRATE_ATTEMPTS="10")
+    shell = FakeShell()
+    shell.effect("scripts.snapshot_db dump", damp_snimaetsya(config, shell))
+    zapisi = ['{"scope":"update","phase":"%s","step":"migrate","started_at":"","error":"Table exists"}' % f for f in fazy]
+    probe = _ZdorovieSKhodom(zapisi, health=(False,) * 6 + (True,))
+    updater = make_updater(tmp_path, config=config, shell=shell, probe=probe)
+    probe.updater = updater
+    return updater
+
+
+def test_migratsii_ne_s_edayut_okno_zdorovya(tmp_path):
+    """Разбор 29.09.2026: после подмены контейнер снимает вторую копию (на 1,2 ГБ —
+    полторы минуты) и гонит миграции, и всё это время `wait_healthy` тратил свои
+    попытки. Исправное обновление с тяжёлой миграцией откатывалось по окну, а
+    `failed_sha` не давало повторить его само."""
+    assert _s_khodom(tmp_path, "running").run_once().status == STATUS_DEPLOYED, "откатились, пока шли миграции"
+
+
+def test_upavshaya_migratsiya_ne_prodlevaet_ozhidanie(tmp_path):
+    """Упавший контейнер поднимается снова (`restart: unless-stopped`) и опять пишет
+    `running migrate`: однажды увиденный `failed` продлений больше не даёт — иначе
+    падающая по кругу миграция тянула бы откат полчаса."""
+    outcome = _s_khodom(tmp_path, "failed", "running").run_once()
+    assert outcome.status in (STATUS_ROLLED_BACK, STATUS_BROKEN), "упавшая миграция продлила ожидание"
+
