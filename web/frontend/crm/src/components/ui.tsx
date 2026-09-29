@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ApiError, priNovoyeSborke } from "../lib/api";
 import { useApp } from "../lib/app";
 import { formatMoney } from "../lib/format";
+import { podpisOshibki } from "../lib/oshibki";
 import { Icon } from "./Icon";
 
 export function Chip({
@@ -174,7 +175,7 @@ export function ScreenLoading({
         </span>
         <div className="empty-title">{t("loadFailed")}</div>
         <div className="empty-sub">
-          {error instanceof ApiError ? error.message : t("loadFailedHint")}
+          {error instanceof ApiError ? podpisOshibki(error, t) : t("loadFailedHint")}
         </div>
         {onRetry && (
           <button className="btn btn-secondary" onClick={onRetry} style={{ marginTop: 14 }}>
@@ -204,7 +205,7 @@ export function LoadFailed({ error, onRetry }: { error: unknown; onRetry: () => 
     <div className="load-failed">
       <Icon name="alert" size={13} />
       <span className="load-failed-text">
-        {error instanceof ApiError ? error.message : t("loadFailedHint")}
+        {error instanceof ApiError ? podpisOshibki(error, t) : t("loadFailedHint")}
       </span>
       <button type="button" className="text-link" onClick={onRetry}>
         {t("retry")}

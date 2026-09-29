@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { Icon } from "./Icon";
 import { LoadFailed, ottenok } from "./ui";
 import { api } from "../lib/api";
+import { nazvanieEtapa } from "../lib/etapy";
 import { useApp } from "../lib/app";
 import { useFailure } from "../lib/failure";
 import { formatDateTime } from "../lib/format";
@@ -72,7 +73,14 @@ export function podpis(t: Perevod, n: Uvedomlenie): string {
     auto_act: "ntfAutoAct",
   };
   const klyuch = klyuchi[n.kind];
-  return klyuch ? tr(klyuch, n.params) : n.kind;
+  if (!klyuch) return n.kind;
+  // Этапы по умолчанию сервер называет по-английски: без перевода русский экран
+  // читал «New → In progress», а доска рядом — «Новая → В работе» (29.09.2026).
+  const params =
+    n.kind === "deal_stage"
+      ? { ...n.params, from_stage: nazvanieEtapa(t, n.params.from_stage), to_stage: nazvanieEtapa(t, n.params.to_stage) }
+      : n.params;
+  return tr(klyuch, params);
 }
 
 /** Колокольчик в панели: число непрочитанных и список последних.

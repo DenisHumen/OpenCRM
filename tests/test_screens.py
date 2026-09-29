@@ -81,8 +81,11 @@ def test_the_failure_screen_repeats_what_the_server_said():
     отнимать у человека это различие.
     """
     ui = (SCREENS / "components" / "ui.tsx").read_text(encoding="utf-8")
-    assert "error instanceof ApiError ? error.message" in ui, (
-        "экран отказа перестал показывать сообщение сервера"
+    # Через `podpisOshibki`: известный код — словами интерфейса того же отказа,
+    # неизвестный — строкой сервера. Сырая строка показывала русскому экрану
+    # «Permission denied» при готовом переводе (разбор 29.09.2026).
+    assert ui.count("error instanceof ApiError ? podpisOshibki(error, t)") == 2, (
+        "экран отказа показывает сообщение сервера мимо перевода кодов"
     )
 
 
@@ -2022,4 +2025,12 @@ def test_sboy_otrisovki_ne_gasit_prilozhenie():
     ]
     assert golye == [], f"хранилище мимо lib/pamyat.ts (бросает в приватном окне): {golye}"
     assert "document.documentElement.lang = locale" in (SCREENS / "lib" / "app.tsx").read_text(encoding="utf-8")
+
+
+def test_kolokolchik_perevodit_etapy():
+    """Разбор 29.09.2026: уведомление о смене этапа несёт названия этапов с сервера, а
+    этапы по умолчанию там английские — русский экран читал «New → In progress», пока
+    доска рядом подписывала «Новая → В работе»."""
+    kod = (SCREENS / "components" / "Kolokolchik.tsx").read_text(encoding="utf-8")
+    assert "nazvanieEtapa(t, n.params.from_stage)" in kod and "nazvanieEtapa(t, n.params.to_stage)" in kod
 
