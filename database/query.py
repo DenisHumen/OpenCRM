@@ -139,9 +139,14 @@ def clamp_per_page(per_page: int) -> int:
     return max(1, min(int(per_page), MAX_PER_PAGE))
 
 
+#: Дальше страниц не бывает: `page=10**17` давал смещение за 2^64, и MySQL отвечал
+#: синтаксической ошибкой — 500 на любом списке, включая каталог API сайта (29.09.2026).
+MAX_PAGE = 1_000_000
+
+
 def offset_for(page: int, per_page: int) -> int:
     """Смещение страницы. Никогда не отрицательное — почему, см. докстроку модуля."""
-    return max(0, (int(page) - 1) * clamp_per_page(per_page))
+    return max(0, (min(int(page), MAX_PAGE) - 1) * clamp_per_page(per_page))
 
 
 def as_int(value) -> int:

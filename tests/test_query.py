@@ -459,3 +459,26 @@ def test_bron_ne_chitaet_vsyu_istoriyu_dvizheniy(db):
     for zapros in dvizheniya:
         assert "stock_moves.document_id IN" in zapros or "stock_moves.deal_id IN" in zapros, zapros
 
+
+def test_dalyokaya_stranitsa_ne_daet_500(root_client):
+    """Разбор 29.09.2026: `page=10**17` давал смещение за 2^64 — MySQL отвечал
+    синтаксической ошибкой, и любой список отвечал 500."""
+    from tests.conftest import API
+
+    otvet = root_client.get(f"{API}/clients", params={"page": 10**17, "per_page": 200})
+    assert otvet.status_code == 200, otvet.text[:200]
+    assert otvet.json()["items"] == []
+
+
+def test_znachenie_ne_legshee_v_kolonku_eto_422(root_client):
+    """Разбор 29.09.2026: забытая проверка длины давала 500 с трассой (MySQL 1406).
+    Страховка переводит `DataError` в понятный отказ; регистрация и профиль
+    проверяют длину сами."""
+    from tests.conftest import API
+
+    otvet = root_client.post(f"{API}/clients", json={"name": "Я" * 300})
+    assert otvet.status_code == 422, f"{otvet.status_code} {otvet.text[:200]}"
+    assert root_client.patch(f"{API}/auth/me", json={"name": "x" * 121}).status_code == 422
+    dlinnaya = root_client.post(f"{API}/auth/register", json={"name": "a", "email": "a" * 300 + "@x.io", "password": "Str0ng-pass-123"})
+    assert dlinnaya.status_code in (422, 429), dlinnaya.text[:200]
+

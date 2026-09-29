@@ -1,3 +1,4 @@
+import logging
 import mimetypes
 from contextlib import asynccontextmanager
 
@@ -9,6 +10,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
+from sqlalchemy.exc import DataError
 
 from config.settings import generate_secret_hint, get_settings
 from core import ratelimit, redis_client
@@ -341,6 +343,20 @@ def create_app() -> FastAPI:
         if exc.details:
             body["details"] = exc.details
         return JSONResponse(status_code=exc.http_status, content={"error": body})
+
+    @app.exception_handler(DataError)
+    async def data_error_handler(_request: Request, exc: DataError):
+        """Значение не легло в колонку: 1406 «слишком длинно», 1264 «вне диапазона».
+
+        Страховка на забытую проверку длины или диапазона — такая строка давала 500
+        с трассой в журнале, а беда в запросе (разбор 29.09.2026). `IntegrityError`
+        так не глушим: чужое нарушение нельзя выдавать за своё (`core/uniqueness.py`).
+        """
+        logging.getLogger(__name__).warning("значение не легло в базу: %s", getattr(exc, "orig", exc))
+        return JSONResponse(
+            status_code=422,
+            content={"error": {"code": "value_out_of_range", "message": "A value is too long or out of range"}},
+        )
 
     @app.exception_handler(RequestValidationError)
     async def validation_error_handler(_request: Request, exc: RequestValidationError):

@@ -893,3 +893,10 @@ def test_kod_fayla_obshchiy_predel_ssylki(root_client, monkeypatch):
     assert novyy.post(f"/f/{token}/pin", data={"pin": "1111"}).status_code == 429
     root_client.delete(f"{API}/files/links/{ssylka['id']}")
 
+
+def test_krivoy_uzel_dereva_eto_otkaz_a_ne_500(root_client):
+    """Разбор 29.09.2026: `node=folder:x` и `node=board:x` падали `int()` — 500."""
+    for uzel in ("folder:x", "folder:", "board:x"):
+        otvet = root_client.get(f"{API}/files", params={"node": uzel})
+        assert otvet.status_code in (403, 422), f"{uzel}: {otvet.status_code} {otvet.text[:150]}"
+

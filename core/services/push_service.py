@@ -117,14 +117,16 @@ def podpisat(db: Session, user: User, data: dict) -> PushSubscription:
     otpechatok = _otpechatok(endpoint)
     podpiska = push_repo.po_hashu(db, otpechatok)
     if podpiska is None:
+        # Храним ключи в каноническом виде: разбор выбрасывает пробелы и мусор, а
+        # исходная строка с ними не лезла в колонку (128) — 500 (29.09.2026).
         podpiska = push_repo.dobavit(db, PushSubscription(
             user_id=user.id, endpoint=endpoint, endpoint_hash=otpechatok,
-            p256dh=klyuchi["p256dh"], auth=klyuchi["auth"],
+            p256dh=push_shifr.b64u(tochka), auth=push_shifr.b64u(auth),
             nazvanie=(data.get("nazvanie") or "")[:120],
         ))
     else:
         podpiska.user_id = user.id
-        podpiska.p256dh, podpiska.auth = klyuchi["p256dh"], klyuchi["auth"]
+        podpiska.p256dh, podpiska.auth = push_shifr.b64u(tochka), push_shifr.b64u(auth)
         podpiska.nazvanie = (data.get("nazvanie") or podpiska.nazvanie)[:120]
         db.flush()
     return podpiska

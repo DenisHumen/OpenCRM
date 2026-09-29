@@ -55,6 +55,13 @@ _VIDEO = {"mp4", "webm", "mov"}
 _BUMAGI = {"pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "txt", "rtf", "csv"}
 
 
+
+def _nomer_uzla(tekst: str) -> int:
+    """Номер из адреса узла дерева: `node=folder:x` давал `ValueError` — 500 (29.09.2026)."""
+    if not tekst.isdecimal():
+        raise errors.ValidationError("Bad tree node", code="bad_node")
+    return int(tekst)
+
 def _vid(imya: str) -> str:
     ext = Path(imya).suffix.lstrip(".").lower()
     if ext in _KARTINKI:
@@ -210,7 +217,7 @@ def soderzhimoe(db: Session, actor: User, uzel: str, page: int, per_page: int) -
         if not otkryto[DOSKI]:
             raise errors.ForbiddenError("Boards are not available", code="permission_denied")
         chasti = uzel.split(":")
-        board_id = int(chasti[1]) if len(chasti) > 1 else None
+        board_id = _nomer_uzla(chasti[1]) if len(chasti) > 1 else None
         kind = chasti[2] if len(chasti) > 2 else None
         stroki, vsego = fayly_repo.raboty(db, board_id, kind, smeshchenie, per_page)
         items = [
@@ -307,7 +314,7 @@ def soderzhimoe(db: Session, actor: User, uzel: str, page: int, per_page: int) -
     # Свои папки: корень «Загрузки» — файлы без папки, `folder:N` — её файлы.
     folder_ids: list[int | None] = [None] if uzel == SVOI else []
     if uzel.startswith("folder:"):
-        folder_ids = [int(uzel.split(":")[1])]
+        folder_ids = [_nomer_uzla(uzel.split(":")[1])]
     if uzel == VSE:
         # «Все файлы» показывают свои: чужие лежат по своим веткам, и валить их
         # в одну кучу значило бы показать одно и то же дважды.

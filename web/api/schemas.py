@@ -34,7 +34,8 @@ from database.models import (
 
 class RegisterIn(BaseModel):
     name: str = Field(min_length=1, max_length=120)
-    email: str
+    # Колонка `users.email` — 255: длиннее давало 500 на открытой ручке (29.09.2026).
+    email: str = Field(max_length=255)
     password: str
 
 
@@ -44,7 +45,7 @@ class LoginIn(BaseModel):
 
 
 class ProfileIn(BaseModel):
-    name: str | None = None
+    name: str | None = Field(default=None, max_length=120)
     locale: str | None = None
 
 

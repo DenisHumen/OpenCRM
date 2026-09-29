@@ -487,7 +487,8 @@ def otpravit_fayl(
         tekst=caption,
         author=user,
         fayl=(file.filename or "file", soderzhimoe),
-        otvet_na=int(reply_to_id) if reply_to_id.strip().isdigit() else None,
+        # isdecimal, а не isdigit: «²» — «цифра», но `int` на ней падает (500).
+        otvet_na=int(reply_to_id) if reply_to_id.strip().isdecimal() else None,
     )
     return _soobshchenie_naruzhu(stroka)
 
