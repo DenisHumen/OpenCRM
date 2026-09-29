@@ -1345,7 +1345,7 @@ SVG только `width` и `height`; пока картинку показыва
 | GET | `/reports/revenue` | 🔑 `reports.view_amounts` | Деньги за период: `received_*` (пришло в кассу) и `won_*` (сумма выигранных заявок), плюс `basis` — чем меряем |
 | GET | `/reports/revenue.csv` | 🔑 `reports.view_amounts` | Она же выгрузкой |
 | GET | `/reports/sources` | 🔑 `reports.view` | Откуда пришли клиенты. Деньги в нём прячет `reports.view_amounts` |
-| GET | `/reports/debts` | 🔑 `reports.view_amounts` | Долги клиентов: бумаги (заказы покупателя, акты), по которым получено меньше выписанного — `items` (номер, вид, клиент, сумма, получено, остаток), `total_due`, `count`; без периода. Сужается областью видимости заявок, как воронка и выручка (и в выгрузке `debts.csv` тоже), и видами бумаг, как список (`document_service.vidno_vidov`): заказы — только при `orders.view` и включённых заказах (разбор 28.09.2026). Нужны блоки `finance` и `documents` |
+| GET | `/reports/debts` | 🔑 `reports.view_amounts` | Долги клиентов: бумаги (заказы покупателя, акты), по которым получено меньше выписанного — `items` (номер, вид, клиент, сумма, получено, остаток), `total_due`, `count`; без периода. Сужается областью видимости заявок, как воронка и выручка (и в выгрузке `debts.csv` тоже), и видами бумаг, как список (`document_service.vidno_vidov`): заказы — только при `orders.view` и включённых заказах (разбор 28.09.2026). Строки и оплаты суммируются только по бумагам этих видов, а не по всем (разбор 29.09.2026). Нужны блоки `finance` и `documents` |
 | GET | `/reports/debts.csv` | 🔑 `reports.view_amounts` | Он же выгрузкой |
 | GET | `/reports/sources.csv` | 🔑 `reports.view` | Он же выгрузкой |
 

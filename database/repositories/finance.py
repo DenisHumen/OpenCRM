@@ -783,18 +783,25 @@ def bumagi_s_dolgom(
     точный итог бумаги считает `document_service.total_minor`, здесь только
     отбор кандидатов. Порядок — по остатку, крупные долги сверху.
     """
+    # Оба подзапроса — только по бумагам нужных видов: без отбора сумма шла по
+    # ВСЕМ строкам всех бумаг (квитанции, акты, накладные) на каждый показ отчёта,
+    # а его перечитывает каждое событие денег и заказов (разбор 29.09.2026).
+    nuzhnye = (Document.kind.in_(tuple(kinds)), Document.status != STATUS_CANCELLED)
     stroki = (
         select(
             DocumentLine.document_id.label("did"),
             func.sum(DocumentLine.quantity_milli * func.coalesce(DocumentLine.price_minor, 0)).label("raw"),
         )
+        .join(Document, Document.id == DocumentLine.document_id)
+        .where(*nuzhnye)
         .group_by(DocumentLine.document_id)
         .subquery()
     )
     polucheno = (
         select(FinanceOperation.document_id.label("did"), func.sum(FinanceOperation.amount_minor).label("got"))
         .join(FinanceCategory, FinanceCategory.id == FinanceOperation.category_id)
-        .where(*_postupleniya(), FinanceOperation.document_id.is_not(None))
+        .join(Document, Document.id == FinanceOperation.document_id)
+        .where(*_postupleniya(), *nuzhnye)
         .group_by(FinanceOperation.document_id)
         .subquery()
     )

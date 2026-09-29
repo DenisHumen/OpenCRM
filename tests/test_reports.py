@@ -1163,3 +1163,20 @@ def test_dolgi_klientov_schitayut_ostatok_k_oplate(root_client):
     finally:
         for key in ("finance", "orders", "warehouse", "documents"):
             root_client.post(f"{MODULES}/{key}", json={"enabled": bylo.get(key, False)})
+
+
+def test_dolgi_summiruyut_stroki_tolko_nuzhnykh_bumag(db):
+    """Разбор 29.09.2026: подзапрос отчёта «Долги» суммировал ВСЕ строки всех бумаг —
+    квитанции, акты, накладные — на каждый показ, а отчёт перечитывает каждое
+    событие денег и заказов. Строки и оплаты отбираются по видам бумаг до суммы."""
+    from database.repositories import finance as finance_repo
+    from tests.conftest import Zaprosy
+
+    with Zaprosy() as zaprosy:
+        finance_repo.bumagi_s_dolgom(db, ["sales_order"], limit=5)
+    (zapros,) = zaprosy.s_upominaniem("document_lines")
+    podzapros = zapros[zapros.index("FROM document_lines"):zapros.index("GROUP BY document_lines.document_id")]
+    assert "documents.kind IN" in podzapros, "строки суммируются по всем бумагам, а не по нужным видам"
+    oplaty = zapros[zapros.index("FROM finance_operations"):zapros.index("GROUP BY finance_operations.document_id")]
+    assert "documents.kind IN" in oplaty, "оплаты суммируются по всем бумагам, а не по нужным видам"
+
