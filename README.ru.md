@@ -18,6 +18,12 @@
 
 [Возможности](#-возможности) · [Скриншоты](#-скриншоты) · [Быстрый старт](#-быстрый-старт) · [Использование](#-использование) · [Документация](#-документация)
 
+<br />
+
+<a href="https://github.com/DenisHumen/OpenCRM/raw/main/docs/assets/presentation.mp4"><img src="docs/assets/presentation.gif" alt="OpenCRM за 20 секунд: установка одной командой, доска заявок, выключение блока, самообновление" width="92%" /></a>
+
+<sub>▶ Презентация за 20 секунд · <a href="https://github.com/DenisHumen/OpenCRM/raw/main/docs/assets/presentation.mp4">полное видео со звуком (MP4, 1080p, 9&nbsp;МБ)</a></sub>
+
 </div>
 
 ---

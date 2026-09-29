@@ -18,6 +18,12 @@
 
 [Features](#-features) · [Screenshots](#-screenshots) · [Quick start](#-quick-start) · [Usage](#-usage) · [Documentation](#-documentation)
 
+<br />
+
+<a href="https://github.com/DenisHumen/OpenCRM/raw/main/docs/assets/presentation.mp4"><img src="docs/assets/presentation.gif" alt="OpenCRM in 20 seconds: one-command install, the job board, switching a module off, self-updates" width="92%" /></a>
+
+<sub>▶ The 20-second presentation · <a href="https://github.com/DenisHumen/OpenCRM/raw/main/docs/assets/presentation.mp4">full video with sound (MP4, 1080p, 9&nbsp;MB)</a></sub>
+
 </div>
 
 ---
