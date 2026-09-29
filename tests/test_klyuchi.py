@@ -15,6 +15,7 @@
 
 import base64
 import itertools
+import re
 
 import pytest
 
@@ -141,6 +142,8 @@ def test_musor_vmesto_klyucha_otvergaetsya(root_client):
     otkaz = root_client.post(KLYUCHI, json={"secret": "не ключ вовсе", "title": "Мусор"})
     assert otkaz.status_code == 422, otkaz.text
     assert otkaz.json()["error"]["code"] == "key_bad_secret"
+    # Текст отказа уходит на экран как есть: русский доезжал до английского (29.09.2026).
+    assert not re.search(r"[А-Яа-яЁё]", otkaz.json()["error"]["message"])
 
 
 def test_klyuch_zavoditsya_i_daet_kod(root_client):

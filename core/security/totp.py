@@ -38,7 +38,10 @@ SHAG_MIN, SHAG_MAX = 5, 300
 
 
 class NeTaStroka(ValueError):
-    """Строка не похожа ни на `otpauth://`, ни на ключ base32."""
+    """Строка не похожа ни на `otpauth://`, ни на ключ base32.
+
+    Текст уходит в ответ API как есть, поэтому по-английски, как все отказы
+    сервера: русский доезжал до английского экрана (разбор 29.09.2026)."""
 
 
 def normalizovat_sekret(syroy: str) -> str:
@@ -54,14 +57,14 @@ def _dopolnit(sekret: str) -> bytes:
     """base32 с добиванием `=`. Сервисы его не пишут, а `b32decode` требует."""
     ochishchen = normalizovat_sekret(sekret)
     if not ochishchen:
-        raise NeTaStroka("ключ пуст")
+        raise NeTaStroka("The secret is empty")
     hvost = len(ochishchen) % 8
     if hvost:
         ochishchen += "=" * (8 - hvost)
     try:
         return base64.b32decode(ochishchen, casefold=True)
     except (binascii.Error, ValueError) as beda:
-        raise NeTaStroka("ключ не читается как base32") from beda
+        raise NeTaStroka("The secret is not valid base32") from beda
 
 
 def godnyy_sekret(sekret: str) -> bool:
@@ -75,12 +78,12 @@ def godnyy_sekret(sekret: str) -> bool:
 def kod(sekret: str, *, seychas: int, cifr: int = 6, shag: int = 30, algoritm: str = "SHA1") -> str:
     """Код на момент `seychas` (секунды эпохи). Строка ровно из `cifr` цифр."""
     if cifr not in CIFR:
-        raise NeTaStroka(f"длина кода {cifr} не бывает")
+        raise NeTaStroka(f"Unsupported code length: {cifr}")
     if not SHAG_MIN <= shag <= SHAG_MAX:
-        raise NeTaStroka(f"шаг {shag} с не бывает")
+        raise NeTaStroka(f"Unsupported period: {shag} s")
     hesh = _HESHI.get((algoritm or "SHA1").upper())
     if hesh is None:
-        raise NeTaStroka(f"алгоритм {algoritm} не знаем")
+        raise NeTaStroka(f"Unsupported algorithm: {algoritm}")
     schyotchik = struct.pack(">Q", seychas // shag)
     metka = hmac.new(_dopolnit(sekret), schyotchik, hesh).digest()
     # Усечение по RFC 4226: младшие четыре бита последнего байта указывают, с
@@ -107,10 +110,10 @@ def razobrat(stroka: str) -> dict:
     """
     syroe = (stroka or "").strip()
     if not syroe:
-        raise NeTaStroka("пусто")
+        raise NeTaStroka("The secret is empty")
     if not syroe.lower().startswith("otpauth://"):
         if not godnyy_sekret(syroe):
-            raise NeTaStroka("это не строка otpauth:// и не ключ base32")
+            raise NeTaStroka("Neither an otpauth:// link nor a base32 secret")
         return {
             "sekret": normalizovat_sekret(syroe),
             "servis": "",
@@ -125,7 +128,7 @@ def razobrat(stroka: str) -> dict:
         # `otpauth://hotp/` — счётчик, а не время: показывать его «сколько
         # секунд осталось» нечем, и молча принять его значило бы завести ключ,
         # который никогда не даст верного кода.
-        raise NeTaStroka("это не totp — по счётчику коды мы не считаем")
+        raise NeTaStroka("Only TOTP is supported, not counter-based HOTP")
     zapros = parse_qs(chasti.query)
 
     def odno(imya: str) -> str:
@@ -141,7 +144,7 @@ def razobrat(stroka: str) -> dict:
 
     sekret = normalizovat_sekret(odno("secret"))
     if not godnyy_sekret(sekret):
-        raise NeTaStroka("в строке нет ключа или он не читается")
+        raise NeTaStroka("The link has no readable secret")
 
     cifr = _chislo(odno("digits"), 6)
     shag = _chislo(odno("period"), 30)

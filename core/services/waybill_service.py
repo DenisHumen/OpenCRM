@@ -678,7 +678,7 @@ def otmenit(db: Session, document_id: int, author: User, note: str = "") -> Docu
     неисправленным.
     """
     waybill = get(db, document_id)
-    _tolko_chernovik(waybill, deystvie="отменить")
+    _tolko_chernovik(waybill, deystvie="cancelled")
     if not documents_repo.take_status(
         db, waybill, expected=STATUS_DRAFT, status=STATUS_CANCELLED
     ):
@@ -810,7 +810,7 @@ def _proverit_storno_protiv_vozvrata(db: Session, waybill: Document, rows: list)
             )
 
 
-def _tolko_chernovik(waybill: Document, deystvie: str = "изменить") -> None:
+def _tolko_chernovik(waybill: Document, deystvie: str = "changed") -> None:
     """Проведённую накладную не правят. Это и есть неизменяемость.
 
     Проверка стоит в СЛУЖБЕ, а не только в интерфейсе, и это существенно:
@@ -819,7 +819,7 @@ def _tolko_chernovik(waybill: Document, deystvie: str = "изменить") -> N
     """
     if waybill.status != STATUS_DRAFT:
         raise errors.ValidationError(
-            f"A posted waybill cannot be changed ({deystvie}); issue a reversal instead",
+            f"A posted waybill cannot be {deystvie}; issue a reversal instead",
             code="waybill_is_final",
         )
 

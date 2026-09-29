@@ -14,7 +14,7 @@ from sqlalchemy.exc import DataError
 
 from config.settings import generate_secret_hint, get_settings
 from core import ratelimit, redis_client
-from core.exceptions import DomainError
+from core.exceptions import DomainError, ValidationError
 # Подписки на события грузятся при первом же событии сами, но импорт здесь
 # оставлен нарочно: опечатка в обработчике должна ронять запуск приложения, а
 # не всплывать через неделю при первом переводе заявки по воронке.
@@ -353,10 +353,8 @@ def create_app() -> FastAPI:
         так не глушим: чужое нарушение нельзя выдавать за своё (`core/uniqueness.py`).
         """
         logging.getLogger(__name__).warning("значение не легло в базу: %s", getattr(exc, "orig", exc))
-        return JSONResponse(
-            status_code=422,
-            content={"error": {"code": "value_out_of_range", "message": "A value is too long or out of range"}},
-        )
+        otkaz = ValidationError("A value is too long or out of range", code="value_out_of_range")
+        return await domain_error_handler(_request, otkaz)
 
     @app.exception_handler(RequestValidationError)
     async def validation_error_handler(_request: Request, exc: RequestValidationError):

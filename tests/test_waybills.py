@@ -251,6 +251,7 @@ def test_provedennuyu_otmenit_nelzya(root_client, client_row):
     otvet = root_client.post(f"{WAYBILLS}/{waybill['id']}/cancel", json={"note": ""})
     assert otvet.status_code == 422
     assert otvet.json()["error"]["code"] == "waybill_is_final"
+    assert "отменить" not in otvet.json()["error"]["message"], "в английской строке отказа русское слово"
     assert ostatok(root_client, item) == 7_000, "отмена тронула склад"
 
 
