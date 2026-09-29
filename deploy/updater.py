@@ -265,6 +265,22 @@ def _tablicy_kopii(snapshot: Path) -> set[str]:
     return nashli
 
 
+_REVIZIYA_KOPII = re.compile(r"^\('([0-9a-f]+)'\)")
+
+
+def _reviziya_kopii(put: Path) -> str:
+    """Ревизия alembic в копии или пусто. Построчно: копия бывает в гигабайт."""
+    try:
+        with put.open(encoding="utf-8", errors="replace") as f:
+            for stroka in f:
+                if stroka.startswith("INSERT INTO `alembic_version`"):
+                    naydeno = _REVIZIYA_KOPII.match(next(f, ""))
+                    return naydeno.group(1) if naydeno else ""
+    except OSError:
+        return ""
+    return ""
+
+
 def _celaya(put: Path) -> bool:
     """Дочитана ли копия до метки конца.
 
@@ -355,6 +371,7 @@ class Updater:
         self.probe = probe or HttpProbe()
         self.notifier = notifier if notifier is not None else notify.from_config(config)
         self._sleep = sleep
+        self._nachalo_obnovleniya = 0.0
         self._obraz_otkata = ""
         self._clock = clock
         # Последний объявленный посетителю шаг и время начала обновления.
@@ -827,6 +844,7 @@ class Updater:
         self.log(f"обновление {previous[:12]} → {target[:12]} {summary}")
 
         povtor_seti: bool | None = None
+        self._nachalo_obnovleniya = time.time()
         try:
             # Уборка копий — ПЕРВЫМ делом, ДО проверки свободного места.
             #
@@ -1517,6 +1535,7 @@ class Updater:
         elif snapshot is None:
             steps.append(Step("rollback-db", True, "снимка не было — первый деплой"))
         else:
+            snapshot = self._svezhaya_kopiya(snapshot)
             failure, porvana = self._restore_db(snapshot)
             steps.append(Step("rollback-db", not failure, failure or f"из {snapshot.name}"))
             if porvana:
@@ -1587,6 +1606,28 @@ class Updater:
                     self.log(f"убрана старая копия базы: {lishniy.name}")
                 except OSError as beda:
                     self.log(f"не убрать {lishniy.name}: {beda}")
+
+    def _svezhaya_kopiya(self, snapshot: Path) -> Path:
+        """Копия точки входа той же ревизии, если она снята за это обновление.
+
+        `pre-update` снимается с РАБОТАЮЩЕГО сайта: записанное за время дампа и
+        подмены в неё не попадает, и откат стирал это молча. Точка входа снимает
+        свою уже после остановки старого приложения. Берём её, только если ревизия
+        та же (частично мигрированная база дала бы другую), копия целая и снята за
+        это обновление (разбор 29.09.2026).
+        """
+        reviziya = _reviziya_kopii(snapshot)
+        if not reviziya:
+            return snapshot
+        kandidat = self.config.data_dir / f"mysql.pre-migrate-{reviziya}.sql"
+        try:
+            svezhaya = kandidat.stat().st_mtime >= self._nachalo_obnovleniya
+        except OSError:
+            return snapshot
+        if svezhaya and _celaya(kandidat):
+            self.log(f"откат берёт копию точки входа: {kandidat.name}")
+            return kandidat
+        return snapshot
 
     def _restore_db(self, snapshot: Path) -> tuple[str, bool]:
         """Вернуть базу из копии: (причина отказа или пусто, оборвана ли заливка).

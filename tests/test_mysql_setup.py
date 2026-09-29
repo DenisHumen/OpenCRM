@@ -788,3 +788,11 @@ def test_tochka_vkhoda_ubiraet_chernoviki_dampa():
     kod = (ROOT / "docker" / "entrypoint.sh").read_text(encoding="utf-8")
     assert 'rm -f "$DB_DIR"/mysql.pre-migrate-*.chernovik' in kod
 
+
+def test_tochka_vhoda_ne_beryot_staruyu_kopiyu():
+    """Разбор 29.09.2026: лежащая копия той же ревизии принималась, даже если ей
+    несколько дней, — и для ручного обновления она единственная: откат по ней
+    стёр бы всё, что записано после. Принимается только моложе часа."""
+    kod = (ROOT / "docker" / "entrypoint.sh").read_text(encoding="utf-8")
+    assert '[ -f "$SNAPSHOT" ] && [ -n "$(find "$SNAPSHOT" -mmin -60 2>/dev/null)" ]' in kod
+

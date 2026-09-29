@@ -3292,3 +3292,54 @@ def test_chernoviki_oborvannykh_dampov_ubirayutsya(tmp_path):
     assert not ostatok.exists(), "черновик оборванного дампа обновлятора лежит навсегда"
     assert chuzhoy.exists(), "уборка тронула чужой черновик"
 
+
+def _damp_s_reviziey(config, shell, reviziya="abc123"):
+    """Подставной дамп обновлятора с ревизией alembic, как у настоящего дампера."""
+
+    def sdelat():
+        put = shell.calls[-1].rsplit("/app/data/", 1)[1].split()[0]
+        (config.data_dir / put).write_text(
+            "INSERT INTO `alembic_version` (`version_num`) VALUES\n"
+            f"('{reviziya}');\n" + METKA_DAMPA + "\n",
+            encoding="utf-8",
+        )
+
+    return sdelat
+
+
+def _otkat_s_kopiey_vhoda(tmp_path, reviziya_vhoda="abc123", staraya=False):
+    import os as _os
+    import time as _time
+
+    config = make_config(tmp_path)
+    shell = FakeShell()
+    shell.effect("scripts.snapshot_db dump", _damp_s_reviziey(config, shell))
+    kopiya_vhoda = config.data_dir / f"mysql.pre-migrate-{reviziya_vhoda}.sql"
+
+    def vhod_snyal():
+        kopiya_vhoda.write_text("INSERT INTO clients VALUES (2);\n" + METKA_DAMPA + "\n", encoding="utf-8")
+        if staraya:
+            davno = _time.time() - 3 * 86400
+            _os.utime(kopiya_vhoda, (davno, davno))
+
+    shell.effect("up -d --build", once(vhod_snyal))
+    updater = make_updater(tmp_path, config=config, shell=shell, probe=FakeProbe(health=(False, True)))
+    assert updater.run_once().status == STATUS_ROLLED_BACK
+    zalivki = [put for line, put in shell.stdins if "mysql -uroot" in line]
+    return zalivki, kopiya_vhoda
+
+
+def test_otkat_zalivaet_kopiyu_tochki_vhoda_a_ne_snyatuyu_s_zhivogo_sayta(tmp_path):
+    """Разбор 29.09.2026: `pre-update` снимается с работающего сайта, и записанное
+    за время дампа и подмены контейнера откат стирал молча. Копия точки входа снята
+    уже после остановки старого приложения — она и заливается."""
+    zalivki, kopiya_vhoda = _otkat_s_kopiey_vhoda(tmp_path)
+    assert zalivki == [str(kopiya_vhoda)], zalivki
+
+
+def test_otkat_ne_beryot_staruyu_ili_chuzhoy_revizii_kopiyu_vhoda(tmp_path):
+    staraya, _ = _otkat_s_kopiey_vhoda(tmp_path / "staraya", staraya=True)
+    assert len(staraya) == 1 and "pre-update-" in staraya[0], f"залита копия прошлого обновления: {staraya}"
+    chuzhaya, _ = _otkat_s_kopiey_vhoda(tmp_path / "chuzhaya", reviziya_vhoda="def456")
+    assert len(chuzhaya) == 1 and "pre-update-" in chuzhaya[0], f"залита копия чужой ревизии: {chuzhaya}"
+
