@@ -2034,3 +2034,17 @@ def test_kolokolchik_perevodit_etapy():
     kod = (SCREENS / "components" / "Kolokolchik.tsx").read_text(encoding="utf-8")
     assert "nazvanieEtapa(t, n.params.from_stage)" in kod and "nazvanieEtapa(t, n.params.to_stage)" in kod
 
+
+
+def test_perezapusk_servera_nazvan_slovami_a_ne_pustym_statusom():
+    """29.09.2026: во время обновления nginx отвечает страницей обслуживания с 503,
+    а экран показывал текст статуса — по HTTP/2 он пустой, и человек видел
+    безымянную ошибку после каждой выкладки. Отказ без нашего JSON с 502–504
+    называется «сервер перезапускается», обрыв сети — «нет связи»."""
+    api = (SCREENS / "lib" / "api.ts").read_text(encoding="utf-8")
+    oshibki = (SCREENS / "lib" / "oshibki.ts").read_text(encoding="utf-8")
+    assert re.search(r"status >= 502 && status <= 504\)[^}]*server_unavailable", api, re.S)
+    assert api.count("otkazBezTela(") >= 3, "и fetch, и заливка файла должны узнавать перезапуск"
+    assert '"network_error"' in api.split("async function request")[1].split("export const api")[0]
+    for kod, klyuch in (("server_unavailable", "errServerUnavailable"), ("network_error", "errNetwork")):
+        assert f'e.code === "{kod}") return t("{klyuch}")' in oshibki

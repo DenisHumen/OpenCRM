@@ -44,16 +44,30 @@ function sverit_sborku(response: Response): void {
   }
 }
 
+/** 502–504 без нашего JSON — это nginx: приложение перезапускается при обновлении.
+ *  Экран показывал статус как есть, а по HTTP/2 он пустой (29.09.2026). */
+function otkazBezTela(status: number, text: string): ApiError {
+  if (status >= 502 && status <= 504) {
+    return new ApiError(status, "server_unavailable", "The server is restarting — try again in a minute");
+  }
+  return new ApiError(status, "http_error", text || `HTTP ${status}`);
+}
+
 async function request<T>(method: string, path: string, body?: unknown, form?: FormData): Promise<T> {
   const headers: Record<string, string> = {};
   if (method !== "GET") headers["X-CSRF-Token"] = csrfToken();
   if (body !== undefined) headers["Content-Type"] = "application/json";
-  const response = await fetch(API + path, {
-    method,
-    headers,
-    credentials: "same-origin",
-    body: body !== undefined ? JSON.stringify(body) : form,
-  });
+  let response: Response;
+  try {
+    response = await fetch(API + path, {
+      method,
+      headers,
+      credentials: "same-origin",
+      body: body !== undefined ? JSON.stringify(body) : form,
+    });
+  } catch {
+    throw new ApiError(0, "network_error", "Network error");
+  }
   sverit_sborku(response);
   if (response.status === 204) return undefined as T;
   let data: any = null;
@@ -63,7 +77,8 @@ async function request<T>(method: string, path: string, body?: unknown, form?: F
     /* пустое тело */
   }
   if (!response.ok) {
-    const err = data?.error ?? {};
+    const err = data?.error;
+    if (!err) throw otkazBezTela(response.status, response.statusText);
     throw new ApiError(response.status, err.code ?? "http_error", err.message ?? response.statusText);
   }
   return data as T;
@@ -147,6 +162,10 @@ function zagruzka<T = any>(
         return;
       }
       const err = data?.error ?? {};
+      if (!data?.error && xhr.status >= 502 && xhr.status <= 504) {
+        reject(otkazBezTela(xhr.status, xhr.statusText));
+        return;
+      }
       reject(
         new ApiError(
           xhr.status,

@@ -126,5 +126,8 @@ export function podpisOshibki(e: unknown, t: T): string {
   // Семейства без своей строки: «… не найден» и «слишком много …» — одно слово на всех.
   if (e.code.endsWith("_not_found")) return t("errNotFound");
   if (e.code.endsWith("_rate_limited") || e.code.endsWith("_flooded")) return t("errTooMany");
+  // Коды самого экрана, не сервера: их нет в карте, потому что карту сверяют с сервером.
+  if (e.code === "server_unavailable") return t("errServerUnavailable");
+  if (e.code === "network_error") return t("errNetwork");
   return e.message;
 }
