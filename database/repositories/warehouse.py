@@ -538,7 +538,7 @@ def moves_of_document(db: Session, document_id: int) -> list[StockMove]:
 VIDY_UHODA = (MOVE_OUT, MOVE_WRITEOFF, MOVE_RETURN)
 
 
-def spisano_po_zayavkam(db: Session, product_ids=None) -> dict[tuple[int, int], int]:
+def spisano_po_zayavkam(db: Session, product_ids=None, zayavki=None) -> dict[tuple[int, int], int]:
     """Сколько товара уже ушло со склада под каждую заявку: {(заявка, товар): тысячные}.
 
     Считается по движениям, а не по бумагам: бумагу можно сторнировать, и сторно
@@ -563,6 +563,13 @@ def spisano_po_zayavkam(db: Session, product_ids=None) -> dict[tuple[int, int], 
         if not product_ids:
             return {}
         zapros = zapros.where(StockMove.product_id.in_(product_ids))
+    # Вызывающим нужны свои заявки — открытые или одна; без отбора сюда ехали
+    # пары по всем закрытым заявкам за всю историю (разбор 29.09.2026).
+    if zayavki is not None:
+        zayavki = list(zayavki)
+        if not zayavki:
+            return {}
+        zapros = zapros.where(StockMove.deal_id.in_(zayavki))
     return {
         (zayavka, tovar): max(0, as_int(skolko))
         for zayavka, tovar, skolko in db.execute(zapros).all()

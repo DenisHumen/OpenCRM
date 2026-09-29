@@ -440,3 +440,22 @@ def test_as_int_ne_teryaet_znachenie():
     # Целое проходит насквозь, а не через строку: подпись обещает `int`, и
     # вызывающему всё равно, каким движком посчитан итог.
     assert as_int(42) == 42 and isinstance(as_int(42), int)
+
+
+def test_bron_ne_chitaet_vsyu_istoriyu_dvizheniy(db):
+    """Разбор 29.09.2026: бронь дорожала со всей историей склада. Отгруженное по
+    заказам отбиралось выражением `CASE … IN (заказы)`, которое индекс не берёт, —
+    читались все движения всех бумаг; списанное по заявкам возвращало пары по всем
+    закрытым заявкам. Оба запроса теперь идут от своих бумаг и своих заявок."""
+    from database.repositories import documents as documents_repo
+    from database.repositories import warehouse as warehouse_repo
+    from tests.conftest import Zaprosy
+
+    with Zaprosy() as zaprosy:
+        documents_repo._otgruzheno_po_zakazam(db, "sales_order", {1, 2}, None)
+        warehouse_repo.spisano_po_zayavkam(db, None, [1, 2])
+    dvizheniya = zaprosy.s_upominaniem("stock_moves")
+    assert len(dvizheniya) == 2, zaprosy.spisok
+    for zapros in dvizheniya:
+        assert "stock_moves.document_id IN" in zapros or "stock_moves.deal_id IN" in zapros, zapros
+

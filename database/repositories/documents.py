@@ -481,6 +481,15 @@ def _otgruzheno_po_zakazam(
     итог (вернули больше, чем отгрузили) обрезаем нулём — иначе возврат
     РАЗДУЛ бы резерв выше заказанного.
     """
+    # Только бумаги, ведущие к этим заказам: сами заказы, накладные по ним и сторно
+    # накладных. Без отбора выражение `zakaz_id` ни один индекс не брал, и читались
+    # все движения всех бумаг — бронь дорожала со всей историей (разбор 29.09.2026).
+    zakazy = set(zakazy)
+    nakladnye = set(db.scalars(select(Document.id).where(Document.basis_id.in_(zakazy)))) if zakazy else set()
+    storno = set(db.scalars(select(Document.id).where(Document.basis_id.in_(nakladnye)))) if nakladnye else set()
+    bumagi = zakazy | nakladnye | storno
+    if not bumagi:
+        return {}
     bumaga = aliased(Document)
     osnovanie = aliased(Document)
     zakaz_id = case(
@@ -496,7 +505,7 @@ def _otgruzheno_po_zakazam(
         )
         .join(bumaga, bumaga.id == StockMove.document_id)
         .join(osnovanie, osnovanie.id == bumaga.basis_id, isouter=True)
-        .where(zakaz_id.in_(tuple(zakazy)))
+        .where(StockMove.document_id.in_(bumagi), zakaz_id.in_(tuple(zakazy)))
         .group_by(zakaz_id, StockMove.product_id)
     )
     if product_ids:

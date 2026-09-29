@@ -44,7 +44,7 @@ def po_zayavkam(db: Session, product_ids=None) -> dict[int, int]:
         if modules_service.is_enabled(db, "orders")
         else {}
     )
-    spisano = warehouse_repo.spisano_po_zayavkam(db, product_ids)
+    spisano = warehouse_repo.spisano_po_zayavkam(db, product_ids, {z for z, _ in nuzhno})
 
     itog: dict[int, int] = {}
     for (zayavka, tovar), skolko in nuzhno.items():
@@ -143,7 +143,7 @@ def derzhat(
         if zakazy_est
         else {}
     )
-    spisano = warehouse_repo.spisano_po_zayavkam(db, [product_id])
+    spisano = warehouse_repo.spisano_po_zayavkam(db, [product_id], {z for z, _ in nuzhno})
 
     ostatki = {}
     for (zayavka, _), skolko in nuzhno.items():

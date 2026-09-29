@@ -238,7 +238,7 @@ def ushlo_pod_zayavku(db: Session, deal_id: int, product_ids) -> dict[int, int]:
     tovary = sorted({p for p in product_ids if p})
     if not tovary:
         return {}
-    spisano = warehouse_repo.spisano_po_zayavkam(db, tovary)
+    spisano = warehouse_repo.spisano_po_zayavkam(db, tovary, [deal_id])
     peredano = documents_repo.zakazano_po_zayavkam(db, KIND_SALES_ORDER, OPEN_ORDER_STATUSES, tovary)
     return {
         tovar: spisano.get((deal_id, tovar), 0) + peredano.get((deal_id, tovar), 0)
@@ -276,7 +276,7 @@ def spisat_pri_zakrytii(db: Session, deal: Deal, author: User | None) -> int:
         nuzhno[klyuch] = nuzhno.get(klyuch, 0) + stroka.quantity_milli
 
     tovary = {product_id for product_id, _ in nuzhno}
-    spisano = warehouse_repo.spisano_po_zayavkam(db, list(tovary))
+    spisano = warehouse_repo.spisano_po_zayavkam(db, list(tovary), [deal.id])
     # Блок заказов НЕ спрашиваем: выключенный блок убирает меню и ручки, но
     # заказы остаются в базе и остаются отгружаемыми (накладную по заказу
     # выписывает блок накладных). Спрятать их здесь значит списать дважды.
