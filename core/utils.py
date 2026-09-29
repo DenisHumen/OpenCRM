@@ -106,8 +106,6 @@ def normalize_external_url(value: str | None) -> str:
     url = (value or "").strip()
     if not url:
         return ""
-    if len(url) > MAX_URL_LENGTH:
-        raise ValueError(f"URL is too long (max {MAX_URL_LENGTH})")
     # управляющие символы в href ломают разметку и обходят проверку схемы
     if any(ord(ch) < 32 for ch in url):
         raise ValueError("URL contains control characters")
@@ -123,6 +121,10 @@ def normalize_external_url(value: str | None) -> str:
         # адрес без схемы («studio.site») — обычный способ набора, дописываем сами,
         # иначе сохранение молча падало бы и оставался прежний адрес
         url = "https://" + url
+    # Длина — после дописанной схемы: 500 знаков без неё становились 508 и не
+    # ложились в колонку (29.09.2026).
+    if len(url) > MAX_URL_LENGTH:
+        raise ValueError(f"URL is too long (max {MAX_URL_LENGTH})")
     return url
 
 

@@ -68,6 +68,13 @@ def test_too_long_url_rejected():
         normalize_external_url("https://client.example/" + "a" * MAX_URL_LENGTH)
 
 
+def test_dlina_schitaetsya_s_dopisannoy_skhemoy():
+    """Разбор 29.09.2026: длина проверялась до `https://`, и адрес без схемы в 500
+    знаков становился 508 — не ложился в колонку и падал ошибкой базы."""
+    with pytest.raises(ValueError):
+        normalize_external_url("client.example/" + "a" * (MAX_URL_LENGTH - 15))
+
+
 # --- работа ---
 
 def test_work_project_url_saved_and_cleared(manager_client):
