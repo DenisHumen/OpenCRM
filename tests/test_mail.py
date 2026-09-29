@@ -1373,3 +1373,24 @@ def test_krivaya_data_i_krivoe_pismo_ne_stoporyat_yashchik(monkeypatch):
     zaglushka = mail_transport.razobrat_ili_zaglushka(b"x", 9)
     assert zaglushka.uid == 9 and zaglushka.message_id, "указатель ящика должен уехать вперёд"
 
+
+def test_klient_po_pochte_bez_registra_i_po_indeksu(db):
+    """Разбор 29.09.2026: клиент искался `lower(email) = ?` — функция над колонкой не
+    даёт пройти индекс, и каждое письмо и каждая заявка с сайта читали `clients`
+    целиком. Сортировка базы регистр не различает: равенство находит то же."""
+    from database.models import Client
+    from database.repositories import mail as mail_repo
+    from tests.conftest import Zaprosy
+
+    klient = Client(name="Почта без регистра", email="Ivan.Regist@Example.COM")
+    db.add(klient)
+    db.flush()
+    try:
+        with Zaprosy() as zaprosy:
+            nashli = mail_repo.find_client_by_email(db, "ivan.regist@example.com")
+        assert nashli is not None and nashli.id == klient.id
+        (zapros,) = zaprosy.s_upominaniem("clients", "email")
+        assert "lower(" not in zapros.lower(), "функция над колонкой почты снова не даёт пройти индекс"
+    finally:
+        db.rollback()
+

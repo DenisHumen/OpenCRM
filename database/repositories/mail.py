@@ -132,17 +132,18 @@ def search_messages(
 def find_client_by_email(db: Session, address: str) -> Client | None:
     """Клиент с таким адресом почты. Удалённые не считаются.
 
-    Сравнение через `lower()`, а не `ilike`: в адресах законно встречаются `_` и
-    `%`, а для LIKE это шаблонные символы — «a_b@x.com» нашёл бы «axb@x.com» и
-    привязал переписку к чужой карточке. Равенство же ищет адрес целиком, и
-    регистр при этом не важен: обе стороны приведены к нижнему.
+    Равенство, а не `ilike`: в адресах законно встречаются `_` и `%`, а для LIKE
+    это шаблонные символы — «a_b@x.com» нашёл бы «axb@x.com» и привязал переписку
+    к чужой карточке. Регистр не важен без `lower()`: сортировка базы
+    (`utf8mb4_0900_ai_ci`) его не различает, а функция над колонкой не давала
+    пройти индекс — каждое письмо читало `clients` целиком (разбор 29.09.2026).
     """
     normalized = (address or "").strip().lower()
     if not normalized:
         return None
     return db.scalar(
         select(Client)
-        .where(Client.deleted_at.is_(None), func.lower(Client.email) == normalized)
+        .where(Client.deleted_at.is_(None), Client.email == normalized)
         .order_by(Client.id)
         .limit(1)
     )

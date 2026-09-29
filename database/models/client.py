@@ -85,7 +85,11 @@ class Client(Base):
     # «Живые, свежее сверху» — открытие и листание списка клиентов: без пары
     # 196 000 живых карточек шли в сортировку (269 и 314 мс, с парой 29 и 33),
     # а отказ в f9b41c7e2d08 мерили на SQLite. Разбор — docs/osnovy/03-baza-dannyh.md.
-    __table_args__ = (Index("ix_clients_alive_updated", "deleted_at", "updated_at"),)
+    __table_args__ = (
+        Index("ix_clients_alive_updated", "deleted_at", "updated_at"),
+        # Клиент по почте — на каждое письмо и заявку с сайта (миграция e5b2d8a41f07).
+        Index("ix_clients_email", "email"),
+    )
 
 
 def _sklejka_klienta(client: "Client") -> str:

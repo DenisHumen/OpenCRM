@@ -238,6 +238,8 @@ class Document(Base):
     # Замер и отвергнутые формы — в миграции `a3f81c62d947`.
     __table_args__ = (
         Index("ix_documents_kind_status_created", "kind", "status", "created_at"),
+        # Проведённые за период — сводка и статистика возвратов (миграция e5b2d8a41f07).
+        Index("ix_documents_kind_status_updated", "kind", "status", "updated_at"),
     )
 
 
