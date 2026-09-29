@@ -36,7 +36,7 @@ type Nalichie = {
  * Врезка не рисуется, когда держать нечего: пустая таблица «в брони: никто»
  * занимает место и ничего не сообщает.
  */
-export function ProductHolders({ productId }: { productId: number }) {
+export function ProductHolders({ productId, versiya = 0 }: { productId: number; versiya?: number }) {
   const { t, locale, workspace, modules, toastError } = useApp();
   const [data, setData] = useState<Nalichie | null>(null);
   const vklyuchen = moduleOn(modules, "warehouse");
@@ -53,7 +53,8 @@ export function ProductHolders({ productId }: { productId: number }) {
     return () => {
       alive = false;
     };
-  }, [productId, vklyuchen, toastError]);
+    // `versiya` — после прихода или живого намёка «доступно N из M» стояло прежним (29.09.2026).
+  }, [productId, versiya, vklyuchen, toastError]);
 
   if (!vklyuchen || !data || data.reserved_milli === 0) return null;
 

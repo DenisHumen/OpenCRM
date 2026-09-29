@@ -2048,3 +2048,13 @@ def test_perezapusk_servera_nazvan_slovami_a_ne_pustym_statusom():
     assert '"network_error"' in api.split("async function request")[1].split("export const api")[0]
     for kod, klyuch in (("server_unavailable", "errServerUnavailable"), ("network_error", "errNetwork")):
         assert f'e.code === "{kod}") return t("{klyuch}")' in oshibki
+
+
+def test_bron_na_kartochke_tovara_perechityvaetsya_vmeste_s_kartochkoy():
+    """29.09.2026: «доступно N из M по всем складам» грузилось один раз на товар —
+    после прихода или живого намёка карточка обновлялась, а бронь стояла прежней."""
+    kartochka = (SCREENS / "screens" / "ProductCard.tsx").read_text(encoding="utf-8")
+    derzhateli = (SCREENS / "components" / "ProductHolders.tsx").read_text(encoding="utf-8")
+    assert "<ProductHolders productId={product.id} versiya={versiya} />" in kartochka
+    assert "setVersiya((v) => v + 1)" in kartochka.split("const load = useCallback")[1]
+    assert re.search(r"\}, \[productId, versiya[^\]]*\]\);", derzhateli), "бронь не перечитывается с карточкой"

@@ -61,6 +61,8 @@ export function ProductCard() {
   const { t, locale, workspace, toast, toastError } = useApp();
   const navigate = useNavigate();
   const [product, setProduct] = useState<Product | null>(null);
+  // Каждая перезагрузка карточки — повод перечитать и бронь (`ProductHolders`).
+  const [versiya, setVersiya] = useState(0);
   const [moves, setMoves] = useState<StockMove[]>([]);
   const [total, setTotal] = useState(0);
   // Один вид движения: в истории на тысячу строк ищут «когда возвращали».
@@ -94,6 +96,7 @@ export function ProductCard() {
     try {
       const card = await api.get<Product & { currency: string }>(`/warehouse/products/${id}`);
       setProduct(card);
+      setVersiya((v) => v + 1);
       setCurrency(card.currency || workspace.currency);
       setSpread(card.by_warehouse);
       // Первая страница истории. Прежде бралось двести записей и на этом всё:
@@ -204,7 +207,7 @@ export function ProductCard() {
         <ProductTexts product={product} onSaved={() => void load()} />
       </div>
       <div className="cards-blok" style={{ order: 4 }}>
-        <ProductHolders productId={product.id} />
+        <ProductHolders productId={product.id} versiya={versiya} />
       </div>
 
 
