@@ -635,6 +635,7 @@ def tick(db: Session, teper: datetime | None = None) -> int:
     teper = teper or now_utc()
     if not modules_service.is_enabled(db, "tasks"):
         return 0
+    _dvinut_propushchennye(db, teper)
     s = teper - OKNO_ZVONKA
     kandidaty = tasks_repo.kandidaty_zvonka(
         db, teper - NASTOYCHIVO_OKNO, teper + timedelta(minutes=OPOVESHENIE_MAX_MINUT)
@@ -672,6 +673,32 @@ def tick(db: Session, teper: datetime | None = None) -> int:
         if task is not None and task.done_at is None:
             zvonkov += _pozvonit(db, task, chelovek.user_id, chelovek.otlozheno_do, "snooze")
     return zvonkov
+
+
+def _dvinut_propushchennye(db: Session, teper: datetime) -> None:
+    """Незакрытый раз повторяющегося уступает место следующему.
+
+    Кандидаты на звонок — со сроком в окне, а срок двигали лишь «Готово» и
+    «Пропустить»: один незакрытый раз замолкал навсегда — ни сегодняшний, ни
+    завтрашний уже не звонили (разбор 29.09.2026). Раз уходит, когда подходит
+    первый звонок следующего или кончилось окно настойчивых — что раньше.
+    """
+    for task in tasks_repo.povtory_prosrochennye(db, teper - OKNO_ZVONKA):
+        byl = task.due_at
+        sled = povtor_service.sleduyushchiy(task.povtor, task.povtor_nachalo or byl, task.poyas, byl)
+        if sled is None:
+            continue
+        pervyy_zvonok = sled - timedelta(minutes=max(_minuty(task), default=0))
+        if teper < min(pervyy_zvonok, byl + NASTOYCHIVO_OKNO):
+            continue
+        task = tasks_repo.zapert_svezhee(db, task.id)
+        if task is None or task.done_at is not None or task.due_at != byl:
+            continue  # другой процесс уже сдвинул
+        novyy = povtor_service.sleduyushchiy(task.povtor, task.povtor_nachalo or byl, task.poyas, teper - OKNO_ZVONKA)
+        if novyy is None:
+            continue
+        _sobytie(db, task, None, "missed", byl)
+        task.due_at = novyy
 
 
 def _pozvonit(db: Session, task: Task, user_id: int, moment: datetime, vid: str) -> int:

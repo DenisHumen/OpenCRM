@@ -36,6 +36,7 @@ const VID_SOBYTIYA = {
   skipped: "istoriyaSkipped",
   snoozed: "istoriyaSnoozed",
   assigned: "istoriyaAssigned",
+  missed: "istoriyaMissed",
 } as const;
 
 function minuty(opovesheniya: string): number[] {

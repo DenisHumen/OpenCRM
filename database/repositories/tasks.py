@@ -261,6 +261,26 @@ def sdelannye_v_okne(db: Session, task_ids, s, po) -> list[TaskEvent]:
 # --- звонки -------------------------------------------------------------------
 
 
+def zapert_svezhee(db: Session, task_id: int) -> Task | None:
+    """Под замком и перечитанное: объект из сессии иначе держал бы срок до чужой правки."""
+    return db.scalar(
+        select(Task).where(Task.id == task_id).with_for_update().execution_options(populate_existing=True)
+    )
+
+
+def povtory_prosrochennye(db: Session, do) -> list[Task]:
+    """Открытые повторяющиеся (не «после выполнения»), чей срок прошёл до `do`."""
+    return list(db.scalars(
+        select(Task).where(
+            Task.done_at.is_(None),
+            Task.povtor.is_not(None),
+            Task.povtor != "",
+            Task.povtor_posle.is_(False),
+            Task.due_at < do,
+        )
+    ))
+
+
 def kandidaty_zvonka(db: Session, s, po) -> list[Task]:
     """Открытые напоминания, у которых в окне [s, po] может найтись минута звонка."""
     return list(db.scalars(

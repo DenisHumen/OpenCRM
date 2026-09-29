@@ -399,3 +399,33 @@ def test_otklyuchennomu_ne_zvonit(root_client, role_maker, staff_maker):  # noqa
 
     komu = {user_id for user_id, _vid, _m in _zvonki(task["id"])}
     assert anna_id not in komu and _moy_id(root_client) in komu
+
+
+def test_nezakrytyy_raz_povtora_ne_glushit_sleduyushchie(root_client):
+    """Разбор 29.09.2026: «каждый день в 18:00 закрыть кассу» — один вечер никто не
+    нажал «Готово», и срок остался вчерашним. Кандидаты на звонок — только со сроком
+    в окне, и через 12 часов напоминание замолкало навсегда: ни сегодняшний раз, ни
+    завтрашний уже не звонили. Теперь незакрытый раз уступает место следующему."""
+    from database.models import Task, TaskEvent
+
+    vchera = now_utc() - timedelta(hours=13)
+    task = _zavesti(
+        root_client, title="Закрыть кассу", due_at=vchera.replace(tzinfo=timezone.utc).isoformat(),
+        povtor="FREQ=DAILY", opovesheniya="0",
+    )
+    teper = now_utc()
+    _tick(teper)
+    with SessionLocal() as db:
+        stroka = db.get(Task, task["id"])
+        assert stroka.due_at > teper - timedelta(minutes=15), f"срок остался в прошлом: {stroka.due_at}"
+        novyy = stroka.due_at
+        sobytiya = [e.vid for e in db.scalars(select(TaskEvent).where(TaskEvent.task_id == task["id"]))]
+    assert "missed" in sobytiya, sobytiya
+
+    assert _tick(novyy + timedelta(minutes=1)) >= 1, "следующий раз не позвонил"
+    assert any(vid == "due" and moment == novyy for _u, vid, moment in _zvonki(task["id"]))
+    # Второй проход ничего не двигает дважды.
+    _tick(novyy + timedelta(minutes=2))
+    with SessionLocal() as db:
+        assert db.get(Task, task["id"]).due_at == novyy
+

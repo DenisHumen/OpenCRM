@@ -1086,3 +1086,51 @@ def test_dvoe_berut_s_polki_razom(root_client):
             )
         ).all()
     assert len(vladeltsy) == 1, f"взявших {len(vladeltsy)}, исходы: {codes}"
+
+
+def test_dva_protsessa_ne_dvigayut_propushchennyy_raz_dvazhdy(root_client, monkeypatch):
+    """Разбор 29.09.2026: незакрытый раз повторяющегося напоминания уступает место
+    следующему (`task_service._dvinut_propushchennye`), а шаг звонков идёт в каждом
+    рабочем процессе. Оба читают устаревший срок; без замка и перепроверки после него
+    раз «пропускался» дважды — два события в истории. Замок — `zapert_svezhee`."""
+    import time
+    from datetime import timedelta, timezone
+
+    from sqlalchemy import select
+
+    from core.services import task_service
+    from core.utils import now_utc
+    from database.models import TaskEvent
+    from database.repositories import tasks as tasks_repo
+    from database.session import SessionLocal
+
+    vchera = now_utc() - timedelta(hours=13)
+    task = root_client.post(f"{API}/tasks", json={
+        "title": "Дуэль пропущенного раза", "due_at": vchera.replace(tzinfo=timezone.utc).isoformat(),
+        "povtor": "FREQ=DAILY", "opovesheniya": "0",
+    }).json()
+
+    nastoyashchiy = tasks_repo.povtory_prosrochennye
+
+    def medlenno(*args, **kwargs):
+        spisok = nastoyashchiy(*args, **kwargs)
+        time.sleep(0.4)  # оба процесса успевают прочесть устаревший срок
+        return spisok
+
+    monkeypatch.setattr(tasks_repo, "povtory_prosrochennye", medlenno)
+    teper = now_utc()
+
+    def shag(_nomer):
+        with SessionLocal() as db:
+            task_service.tick(db, teper)
+            db.commit()
+        return "ok"
+
+    codes = duel(shag, 1, 2)
+    assert codes == {"first": "ok", "second": "ok"}, codes
+    with SessionLocal() as db:
+        propuski = db.scalars(
+            select(TaskEvent).where(TaskEvent.task_id == task["id"], TaskEvent.vid == "missed")
+        ).all()
+    assert len(propuski) == 1, f"раз пропущен {len(propuski)} раз(а)"
+

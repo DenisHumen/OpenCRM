@@ -190,7 +190,7 @@ class TaskEvent(Base):
     user_id: Mapped[int | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
-    #: created, done, reopened, skipped, snoozed, assigned.
+    #: created, done, reopened, skipped, snoozed, assigned, missed (раз прошёл незакрытым).
     vid: Mapped[str] = mapped_column(String(16))
     #: О каком разе речь — у повторяющегося их много.
     srok: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
