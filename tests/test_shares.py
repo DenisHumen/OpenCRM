@@ -277,3 +277,66 @@ def test_the_showcase_does_not_ship_internal_fields(manager_client):
         assert "id" not in work, "внутренний счётчик работ виден снаружи"
         # А то, ради чего витрина существует, на месте.
         assert "media" in work and "title" in work
+
+
+def _svoy_predel_ssylki(monkeypatch, skolko):
+    import uuid
+
+    from core.ratelimit import SlidingWindowLimiter
+    from web.public import routes as public_routes
+
+    limiter = SlidingWindowLimiter(skolko, 3600, name=f"pin_link-{uuid.uuid4().hex}")
+    monkeypatch.setattr(public_routes, "pin_ssylka_limiter", limiter)
+    return limiter
+
+
+def test_pin_obshchiy_predel_ssylki_so_vsekh_adresov(manager_client, monkeypatch):
+    """Разбор 29.09.2026: счёт шёл на пару «ссылка + адрес», и у кого адресов сотня,
+    у того пятьсот попыток на четыре цифры. Теперь у ссылки есть общий предел."""
+    _svoy_predel_ssylki(monkeypatch, 3)
+    board = _published_board(manager_client, "Общий предел")
+    share = _share(manager_client, board["id"], pin="5813")
+    for nomer in range(3):
+        chuzhoy = TestClient(app, client=(f"198.51.100.{nomer + 1}", 40000))
+        assert chuzhoy.post(f"/b/{share['token']}/pin", data={"pin": "0000"}).status_code == 401
+    novyy = TestClient(app, client=("198.51.100.77", 40000))
+    otvet = novyy.post(f"/b/{share['token']}/pin", data={"pin": "0000"})
+    assert otvet.status_code == 429, "новый адрес получил свежий запас попыток"
+
+
+def test_pin_udacha_ne_tratit_predel_ssylki(manager_client, monkeypatch):
+    """Клиенты с верным PIN не съедают общий предел — иначе витрину, которую открыли
+    трижды, запирало бы для четвёртого."""
+    _svoy_predel_ssylki(monkeypatch, 2)
+    board = _published_board(manager_client, "Удача не в счёт")
+    share = _share(manager_client, board["id"], pin="2468")
+    for nomer in range(4):
+        klient = TestClient(app, client=(f"203.0.113.{nomer + 1}", 40000))
+        otvet = klient.post(f"/b/{share['token']}/pin", data={"pin": "2468"}, follow_redirects=False)
+        assert otvet.status_code == 303, f"{nomer + 1}-й клиент с верным PIN не вошёл"
+
+
+def test_pin_ipv6_odna_set_64_odin_schyot(manager_client):
+    """Разбор 29.09.2026: одной машине провайдер даёт целую /64, и счёт по адресу
+    давал ей бесконечный запас попыток — каждая шла с нового адреса."""
+    board = _published_board(manager_client, "IPv6")
+    share = _share(manager_client, board["id"], pin="9173")
+    for nomer in range(5):
+        adres = TestClient(app, client=(f"2001:db8:5:6::{nomer + 1:x}", 40000))
+        assert adres.post(f"/b/{share['token']}/pin", data={"pin": "0000"}).status_code == 401
+    ta_zhe_set = TestClient(app, client=("2001:db8:5:6:ffff::1", 40000))
+    assert ta_zhe_set.post(f"/b/{share['token']}/pin", data={"pin": "0000"}).status_code == 429
+    sosed = TestClient(app, client=("2001:db8:5:7::1", 40000))
+    assert sosed.post(f"/b/{share['token']}/pin", data={"pin": "0000"}).status_code == 401
+
+
+def test_klyuch_adresa_skleivaet_set_64():
+    from core.security import tokens
+
+    k = tokens.klyuch_adresa
+    assert k("2001:db8:1:2::1") == k("2001:db8:1:2:abcd::9")
+    assert k("2001:db8:1:2::1") != k("2001:db8:1:3::1")
+    assert k("::ffff:198.51.100.5") == k("198.51.100.5")
+    assert k("198.51.100.5") != k("198.51.100.6")
+    assert k("testclient") == tokens.hash_ip("testclient")
+

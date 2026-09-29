@@ -403,14 +403,20 @@ def znak(ssylka: FileLink, gost: str = "") -> str:
     return f"{kto} · {now_utc().strftime('%d.%m.%Y')}"
 
 
-def proverit_kod(db: Session, ssylka: FileLink, pin: str, ip: str, limiter) -> bool:
-    """Тот же счётчик попыток, что у витрин: код — четыре цифры."""
-    key = f"fl:{ssylka.id}:{tokens.hash_ip(ip)}"
+def proverit_kod(db: Session, ssylka: FileLink, pin: str, ip: str, limiter, limiter_ssylki) -> bool:
+    """Те же два счётчика попыток, что у витрин: код — четыре цифры."""
+    key = f"fl:{ssylka.id}:{tokens.klyuch_adresa(ip)}"
     if limiter.proverit_i_zanyat(key):
+        bezopasnost.otmetit("pin_zapert")
+        raise errors.RateLimitedError("Too many attempts, try later", code="pin_rate_limited")
+    obshchiy = f"fl:{ssylka.id}"
+    metka = limiter_ssylki.zanyat_mesto(obshchiy)
+    if metka is None:
         bezopasnost.otmetit("pin_zapert")
         raise errors.RateLimitedError("Too many attempts, try later", code="pin_rate_limited")
     if ssylka.pin_hash and passwords.verify_password(pin.strip(), ssylka.pin_hash):
         limiter.reset(key)
+        limiter_ssylki.vernut(obshchiy, metka)
         return True
     bezopasnost.otmetit("pin_promah")
     return False

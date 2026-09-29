@@ -42,7 +42,7 @@ def _set_auth_cookies(response: Response, session_token: str) -> None:
 def register(payload: schemas.RegisterIn, request: Request, db: Session = Depends(get_db)):
     # Без предела форма, открытая в интернет, была бесплатной: бесконечные заявки
     # в базе, bcrypt на каждую и перебор почт по `email_taken` (разбор 28.09.2026).
-    if register_limiter.proverit_i_zanyat(tokens.hash_ip(client_ip(request))):
+    if register_limiter.proverit_i_zanyat(tokens.klyuch_adresa(client_ip(request))):
         raise errors.RateLimitedError("Too many sign-up requests, try later", code="register_rate_limited")
     user = auth_service.register(db, payload.name, payload.email, payload.password)
     return {

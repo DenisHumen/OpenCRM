@@ -759,11 +759,12 @@ def test_udachnyy_adres_ne_obnulyaet_schyot_popytok(root_client):
     четыре проверки на пять запросов, то есть предела не было бы вовсе.
     """
     from core.security import tokens
-    from web.api.deps import pin_limiter
+    from web.api.deps import pin_limiter, pin_ssylka_limiter
 
     _nomer, ssylka, token = _gostevaya(root_client, "perebor.png", "ivan@example.ru")
-    schyot = f"fg:{ssylka['id']}:{tokens.hash_ip('testclient')}"
+    schyot = f"fg:{ssylka['id']}:{tokens.klyuch_adresa('testclient')}"
     pin_limiter.reset(schyot)
+    pin_ssylka_limiter.reset(f"fg:{ssylka['id']}")
     try:
         guest = TestClient(app)
         for nomer_popytki in range(4):
@@ -778,6 +779,7 @@ def test_udachnyy_adres_ne_obnulyaet_schyot_popytok(root_client):
         ).status_code == 429, "удача обнулила набранные промахи"
     finally:
         pin_limiter.reset(schyot)
+        pin_ssylka_limiter.reset(f"fg:{ssylka['id']}")
     root_client.delete(f"{API}/files/links/{ssylka['id']}")
 
 
@@ -863,5 +865,31 @@ def test_pokaz_po_ssylke_vstraivaetsya_u_sebya_a_svg_v_pesochnitse(root_client, 
     politika = pokaz.headers["content-security-policy"]
     assert "frame-ancestors 'self'" in politika and pokaz.headers["x-frame-options"] == "SAMEORIGIN"
     assert ("sandbox" in politika) is pesochnitsa
+    root_client.delete(f"{API}/files/links/{ssylka['id']}")
+
+
+def test_kod_fayla_obshchiy_predel_ssylki(root_client, monkeypatch):
+    """Разбор 29.09.2026: у кода файла тот же общий предел, что у витрины, — со всех
+    адресов вместе, а не по пять на каждый."""
+    import uuid
+
+    from core.ratelimit import SlidingWindowLimiter
+    from web.public import routes as public_routes
+
+    monkeypatch.setattr(
+        public_routes, "pin_ssylka_limiter", SlidingWindowLimiter(2, 3600, name=f"pin_link-{uuid.uuid4().hex}")
+    )
+    nomer = _svoy_fayl(root_client, "obshchiy-predel.txt", "четыре цифры")
+    vypusk = root_client.post(
+        f"{API}/files/{nomer}/link", json={"rezhim": "download", "krug": "code", "pin": "6150"}
+    )
+    assert vypusk.status_code == 201, vypusk.text
+    ssylka = vypusk.json()["link"]
+    token = ssylka["url"].rsplit("/", 1)[-1]
+    for n in range(2):
+        chuzhoy = TestClient(app, client=(f"198.51.100.{n + 10}", 40000))
+        assert chuzhoy.post(f"/f/{token}/pin", data={"pin": "1111"}).status_code == 401
+    novyy = TestClient(app, client=("198.51.100.99", 40000))
+    assert novyy.post(f"/f/{token}/pin", data={"pin": "1111"}).status_code == 429
     root_client.delete(f"{API}/files/links/{ssylka['id']}")
 

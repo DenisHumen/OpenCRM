@@ -71,6 +71,10 @@ class Settings(BaseSettings):
     login_lockout_minutes: int = 15
     pin_max_attempts: int = 5
     pin_lockout_minutes: int = 15
+    # Предел попыток на одну ссылку со всех адресов вместе: счёт по адресу не держит
+    # того, у кого адресов много. Удачная попытка место возвращает.
+    pin_link_max_attempts: int = 30
+    pin_link_window_minutes: int = 60
     # Заявок на доступ с одного адреса за час: форма открыта в интернет, и каждая
     # стоит bcrypt и строки в базе. Двадцать — с запасом на офис за одним NAT.
     register_max_per_hour: int = 20

@@ -22,7 +22,7 @@ from core.services import site_service
 from database.models.document import KIND_ACT, KIND_INTAKE
 from database.repositories import boards as boards_repo
 from web.api import schemas
-from web.api.deps import client_ip, document_limiter, get_db, pin_limiter
+from web.api.deps import client_ip, document_limiter, get_db, pin_limiter, pin_ssylka_limiter
 from web.public import layout
 
 router = APIRouter(tags=["public"])
@@ -300,7 +300,7 @@ def check_pin(
     site, strings = _ctx(db)
 
     try:
-        ok = share_service.verify_pin(db, link, pin, client_ip(request), pin_limiter)
+        ok = share_service.verify_pin(db, link, pin, client_ip(request), pin_limiter, pin_ssylka_limiter)
     except errors.RateLimitedError:
         return templates.TemplateResponse(
             request, "pin.html",
@@ -547,7 +547,7 @@ def document_status(number: str, request: Request, db: Session = Depends(get_db)
     # (`proverit_i_zanyat`): двумя вызовами между ними оставалось окно, и пачка
     # одновременных обращений проходила порог целиком — а перебирают номера
     # бланков именно пачками, по одному это никому не нужно.
-    visitor = client_ip(request)
+    visitor = tokens.klyuch_adresa(client_ip(request))
     # Общего счётчика нет — отвечаем «занято, попробуйте позже», а не пускаем.
     # Довод целиком — в шапке `core/ratelimit.py`: не имея счётчика,
     # ограничитель не отличит перебор номеров бланков от первого обращения, и
@@ -711,7 +711,9 @@ def fayl_kod(
     site, strings = _ctx(db)
 
     try:
-        ok = fayly_ssylki_service.proverit_kod(db, ssylka, pin, client_ip(request), pin_limiter)
+        ok = fayly_ssylki_service.proverit_kod(
+            db, ssylka, pin, client_ip(request), pin_limiter, pin_ssylka_limiter
+        )
     except errors.RateLimitedError:
         return templates.TemplateResponse(
             request, "file_pin.html",
@@ -844,8 +846,10 @@ def fayl_gost(
     if ssylka.krug != "invited":
         return RedirectResponse(url=f"/f/{token}", status_code=303)
 
+    obshchiy = f"fg:{ssylka.id}"
     try:
-        zanyato = pin_limiter.proverit_i_zanyat(f"fg:{ssylka.id}:{tokens.hash_ip(client_ip(request))}")
+        zanyato = pin_limiter.proverit_i_zanyat(f"{obshchiy}:{tokens.klyuch_adresa(client_ip(request))}")
+        metka = None if zanyato else pin_ssylka_limiter.zanyat_mesto(obshchiy)
     except errors.LimiterUnavailableError:
         # Счётчика нет — не пускаем вовсе: без него список почт перебирается
         # без предела, причём именно тогда, когда за системой никто не смотрит.
@@ -854,7 +858,7 @@ def fayl_gost(
             {"site": site, "t": strings, "token": token, "error": strings["pin_rate_limited"]},
             status_code=503,
         )
-    if zanyato:
+    if metka is None:
         bezopasnost.otmetit("pin_zapert")
         return templates.TemplateResponse(
             request, "file_guest.html",
@@ -875,6 +879,7 @@ def fayl_gost(
     # Знающему код узнавать больше нечего, а знающий один званый адрес только
     # начал: сбрасывай счёт удачей, и этот адрес стал бы кнопкой сброса — четыре
     # проверяемых адреса на пять запросов, без пауз и без блокировок.
+    pin_ssylka_limiter.vernut(obshchiy, metka)
     otvet = RedirectResponse(url=f"/f/{token}", status_code=303)
     otvet.set_cookie(
         _file_guest_cookie(ssylka.id),

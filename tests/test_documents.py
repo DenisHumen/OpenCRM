@@ -8,6 +8,7 @@
 
 from fastapi.testclient import TestClient
 
+from core.security import tokens
 from core.services import codes
 from tests.conftest import API
 from web.api.deps import DOCUMENT_STATUS_MAX_LOOKUPS, document_limiter
@@ -225,7 +226,8 @@ def test_perebor_nomerov_uporaetsya_v_ogranichitel(manager_client):
     anon = TestClient(app)
     # Ключ ограничителя — адрес посетителя; у TestClient он один на всех, и
     # оставленный след испортил бы соседние проверки в том же прогоне.
-    document_limiter.reset("testclient")
+    posetitel = tokens.klyuch_adresa("testclient")
+    document_limiter.reset(posetitel)
     try:
         for nomer in range(DOCUMENT_STATUS_MAX_LOOKUPS):
             otvet = anon.get(f"/d/{doc['number']}")
@@ -244,7 +246,7 @@ def test_perebor_nomerov_uporaetsya_v_ogranichitel(manager_client):
         sosed = anon.get(f"/d/{doc['number']}", headers={"x-real-ip": "203.0.113.7"})
         assert sosed.status_code == 429, "заголовок из запроса не должен обходить ограничитель"
     finally:
-        document_limiter.reset("testclient")
+        document_limiter.reset(posetitel)
 
 
 def test_neizvestnyy_nomer_otvechaet_404(manager_client):

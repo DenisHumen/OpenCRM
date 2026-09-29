@@ -1,4 +1,5 @@
 import hashlib
+import ipaddress
 import secrets
 
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
@@ -26,6 +27,22 @@ def sha256_hex(value: str) -> str:
 def hash_ip(ip: str) -> str:
     settings = get_settings()
     return hashlib.sha256(f"{settings.ip_hash_salt}:{ip}".encode()).hexdigest()
+
+
+def klyuch_adresa(ip: str) -> str:
+    """Кого считают ограничители: IPv4 — адрес, IPv6 — его сеть /64.
+
+    Провайдер выдаёт одной машине целую /64, и счёт по адресу давал ей
+    бесконечный запас попыток на четыре цифры PIN (разбор 29.09.2026)."""
+    try:
+        adres = ipaddress.ip_address(ip)
+    except ValueError:
+        return hash_ip(ip)
+    if adres.version == 6:
+        if adres.ipv4_mapped:
+            return hash_ip(str(adres.ipv4_mapped))
+        return hash_ip(str(ipaddress.IPv6Network((int(adres) >> 64 << 64, 64))))
+    return hash_ip(str(adres))
 
 
 #: Сколько живёт пропуск, выданный за верный PIN.
