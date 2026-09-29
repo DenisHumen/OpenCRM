@@ -66,10 +66,10 @@ def update_board(db: Session, board_id: int, data: dict) -> Board:
     if "description" in data and data["description"] is not None:
         board.description = data["description"].strip()
     if "client_id" in data:
-        board.client_id = data["client_id"]
+        board.client_id = references.client(db, data["client_id"])
     # Привязку к заявке можно и снять: доска переехала или создавалась не под неё.
     if "deal_id" in data:
-        board.deal_id = data["deal_id"]
+        board.deal_id = references.deal(db, data["deal_id"])
     if "is_published" in data and data["is_published"] is not None:
         board.is_published = bool(data["is_published"])
     if "cover_work_id" in data:

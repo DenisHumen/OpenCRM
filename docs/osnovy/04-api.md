@@ -296,9 +296,9 @@
 | GET | `/clients` | 🔑 `clients.view` | Список: `?search=`, `?tag=`, `?manager_id=`, пагинация, сортировка по обновлению. В строках — `deals_open`, `deals_open_amount` (пусто без права на суммы), `deals_won`, `last_contact_at`: по два запроса на страницу, чужие заявки не в счёт |
 | GET | `/clients/export.csv` | 🔑 `clients.view` | Тот же отбор файлом, целиком и без страниц. Больше 10 000 строк — отказ `export_too_large`, а не молчаливое обрезание. Право то же, что на просмотр: выгрузка отдаёт ровно то, что человек и так видит |
 | POST | `/clients/address/suggest` | 🔑 `clients.edit` | Подсказки адреса при наборе (тело: `q`, `client_id`): `label`, `country_code`, `city`, `postcode`, `street`, `lat`, `lon`. Пустой список — не отказ, а обычное состояние (выключено в настройках, короткий запрос, нет сети). Право на правку, а не на просмотр: каждый вопрос уходит на чужой сервер. `POST`, хотя ничего не меняет: в строке запроса набранный адрес уехал бы в журнал доступа |
-| POST | `/clients` | 🔑 `clients.create` | Создать карточку |
+| POST | `/clients` | 🔑 `clients.create` | Создать карточку. `404 manager_not_found` — такого ответственного нет |
 | GET | `/clients/{id}` | 🔑 `clients.view` | Карточка целиком: контакты, последние заметки, файлы, заявки, `svodka` — заявки по виду этапа (`open_count`/`open_amount`, `won_count`/`won_amount`, `lost_count`), `received_12m` (касса за год; блок денег и право на суммы), `last_contact` (последняя запись ленты), `last_call_at`, `papers` по видам, `manager_name`. Чужие заявки в счёт не идут, суммы пустеют без права |
-| PATCH | `/clients/{id}` | 🔑 `clients.edit` | Обновить поля |
+| PATCH | `/clients/{id}` | 🔑 `clients.edit` | Обновить поля. `404 manager_not_found` — такого ответственного нет (до 29.09.2026 — 500 нарушением внешнего ключа) |
 | PATCH | `/clients/{id}/address` | 🔑 `clients.edit` | Записать выбранную подсказку: страна, город, индекс, улица и точка — одним запросом. Адрес заменяется целиком, пустыми полями тоже. Разбор — [26-adresa.md](../bloki/26-adresa.md) |
 | PATCH | `/clients/{id}/geo` | 🔑 `clients.edit` | Поставить точку клиента руками или снять её (`lat`, `lon`; пусто — снять). На точке стоит миниатюра карты в карточке — [26-adresa.md](../bloki/26-adresa.md) |
 | DELETE | `/clients/{id}` | 🔑 `clients.delete` | Мягкое удаление |
@@ -506,7 +506,7 @@
 | GET | `/boards` | 🔑 `boards.view` | Список: `?search=`, `?client_id=`, счётчики работ и просмотров; у каждой доски `created_by_name` (кто завёл; `null` у досок до колонки автора) и `created_at` со временем |
 | POST | `/boards` | 🔑 `boards.create` | Создать: `title`, `description?`, `client_id?`, `deal_id?` |
 | GET | `/boards/{id}` | 🔑 `boards.view` | Доска + работы по порядку + **все** ссылки доски (ключ `shares`) |
-| PATCH | `/boards/{id}` | 🔑 `boards.edit` | Название, описание, `client_id`, `deal_id`, `cover_work_id`, `is_published` |
+| PATCH | `/boards/{id}` | 🔑 `boards.edit` | Название, описание, `client_id`, `deal_id`, `cover_work_id`, `is_published`. `404 client_not_found` / `deal_not_found` — как при заведении |
 | DELETE | `/boards/{id}` | 🔑 `boards.delete` | Мягкое удаление; все ссылки доски перестают открываться |
 | POST | `/boards/{id}/works` | 🔑 `boards.create` | Загрузка файла работы (multipart). Ответ `202` + `work` со `status=processing` |
 | GET | `/boards/{id}/works/{work_id}` | 🔑 `boards.view` | Одна работа (поллинг статуса обработки) |

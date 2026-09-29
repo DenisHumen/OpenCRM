@@ -564,3 +564,16 @@ def test_zametka_k_chuzhoy_zayavke_ne_pishetsya(root_client, role_maker, staff_m
     )
     assert otkaz.status_code == 403, otkaz.text
     assert svoi.post(f"{API}/clients/{klient['id']}/notes", json={"kind": "note", "body": "просто заметка"}).status_code == 201
+
+
+def test_nesushchestvuyushchiy_otvetstvennyy_otkaz_a_ne_500(root_client):
+    """Разбор 29.09.2026: ответственный клиента шёл в базу без сверки — чужой номер
+    падал нарушением внешнего ключа, пятисоткой, и при заведении, и при правке. У
+    заявки та же ссылка сверяется давно (`core/references.py`)."""
+    r = root_client.post(f"{API}/clients", json={"name": f"Ответственный {uniq()}", "manager_id": 999999})
+    assert r.status_code == 404 and r.json()["error"]["code"] == "manager_not_found"
+    c = _create(root_client, name=f"Ответственный {uniq()}")
+    r = root_client.patch(f"{API}/clients/{c['id']}", json={"manager_id": 999999})
+    assert r.status_code == 404 and r.json()["error"]["code"] == "manager_not_found"
+    assert root_client.patch(f"{API}/clients/{c['id']}", json={"manager_id": None}).status_code == 200
+

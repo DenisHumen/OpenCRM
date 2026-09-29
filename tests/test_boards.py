@@ -752,3 +752,14 @@ def test_obrabotka_raboty_ne_derzhit_soedinenie(manager_client, monkeypatch):
     board_service.process_work(work_id)
     assert zamer["vnutri"] == do, f"во время обработки занято соединений: {zamer['vnutri'] - do}"
 
+
+def test_privyazka_doski_k_nesushchestvuyushchemu_otkaz_a_ne_500(manager_client):
+    """Разбор 29.09.2026: при заведении доски клиент и заявка сверялись, а при правке —
+    нет: чужой номер падал внешним ключом, пятисоткой."""
+    b = _board(manager_client, "Привязка к пустоте")
+    r = manager_client.patch(f"{API}/boards/{b['id']}", json={"client_id": 999999})
+    assert r.status_code == 404 and r.json()["error"]["code"] == "client_not_found"
+    r = manager_client.patch(f"{API}/boards/{b['id']}", json={"deal_id": 999999})
+    assert r.status_code == 404 and r.json()["error"]["code"] == "deal_not_found"
+    assert manager_client.patch(f"{API}/boards/{b['id']}", json={"client_id": None, "deal_id": None}).status_code == 200
+

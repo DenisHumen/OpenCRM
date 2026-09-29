@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from config.settings import get_settings
 from core import exceptions as errors
-from core import strany
+from core import references, strany
 from core.security import tokens
 from core.services import (
     audit_service,
@@ -247,6 +247,11 @@ def _adres_iz(data: dict, *, phone_norm: str = "") -> dict:
     return adres
 
 
+def _otvetstvennyy(db: Session, value) -> int | None:
+    # Без сверки несуществующий номер падал внешним ключом — пятисоткой (29.09.2026).
+    return references.user(db, value, code="manager_not_found", message="Manager not found")
+
+
 def create_client(db: Session, data: dict, author: User) -> Client:
     if not (data.get("name") or "").strip():
         raise errors.ValidationError("Name is required", code="name_required")
@@ -261,7 +266,7 @@ def create_client(db: Session, data: dict, author: User) -> Client:
         messenger=(data.get("messenger") or "").strip(),
         tags=_normalize_tags(data.get("tags")),
         source=_normalize_source(data.get("source")),
-        manager_id=data.get("manager_id") or author.id,
+        manager_id=_otvetstvennyy(db, data.get("manager_id")) or author.id,
         **_adres_iz(
             data,
             phone_norm=norm if _mezhdunarodnyy(db, phone) else "",
@@ -292,7 +297,7 @@ def update_client(db: Session, client_id: int, data: dict) -> Client:
     if "source" in data:
         client.source = _normalize_source(data["source"])
     if "manager_id" in data:
-        client.manager_id = data["manager_id"]
+        client.manager_id = _otvetstvennyy(db, data["manager_id"])
     # Адрес правится по частям: прислали один город — меняется только он.
     bylo_mesto = (client.country, client.city)
     for imya, limit, label, code in POLYA_ADRESA:
