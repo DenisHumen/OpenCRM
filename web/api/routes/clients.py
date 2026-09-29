@@ -71,7 +71,7 @@ def export_clients(
     search: str | None = Query(default=None, max_length=MAX_SEARCH),
     tag: str | None = None,
     manager_id: int | None = None,
-    _: User = Depends(require_perm("clients", "view")),
+    user: User = Depends(require_perm("clients", "view")),
     db: Session = Depends(get_db),
 ):
     """Список клиентов файлом. Отбор — тот же, что у списка на экране.
@@ -87,7 +87,7 @@ def export_clients(
     сегодня читает, а браузер — гадать, скачивать или показывать.
     """
     content = client_service.vygruzka_csv(
-        db, q=search, tag=tag, manager_id=manager_id
+        db, q=search, tag=tag, manager_id=manager_id, locale=user.locale
     )
     # Имя с датой: в папке «Загрузки» через месяц лежит пять выгрузок, и
     # «clients.csv (3)» не отвечает, какая из них свежая.

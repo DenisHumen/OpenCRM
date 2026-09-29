@@ -123,6 +123,7 @@ def vygruzka_csv(
     q: str | None = None,
     tag: str | None = None,
     manager_id: int | None = None,
+    locale: str = "en",
 ) -> bytes:
     """Список клиентов файлом — тем же отбором, что показан на экране.
 
@@ -161,11 +162,9 @@ def vygruzka_csv(
         ]
         for c in klienty
     ]
-    return report_service.to_csv(
-        stroki,
-        ["Имя", "Компания", "Телефон", "Почта", "Мессенджер", "Метки",
-         "Источник", "Ответственный", "Заведён"],
-    )
+    # Заголовки — на языке сотрудника, как у отчётов: прежде всегда русские (29.09.2026).
+    yazyk = "ru" if locale == "ru" else "en"
+    return report_service.to_csv(stroki, report_service.CSV_HEADERS["clients"][yazyk])
 
 
 def get_client(db: Session, client_id: int, include_deleted: bool = False) -> Client:

@@ -577,3 +577,18 @@ def test_nesushchestvuyushchiy_otvetstvennyy_otkaz_a_ne_500(root_client):
     assert r.status_code == 404 and r.json()["error"]["code"] == "manager_not_found"
     assert root_client.patch(f"{API}/clients/{c['id']}", json={"manager_id": None}).status_code == 200
 
+
+def test_zagolovki_vygruzki_klientov_na_yazyke_sotrudnika(manager_client):
+    """29.09.2026: отчёты и выгрузка сотрудников подписывали столбцы языком
+    сотрудника, а выгрузка клиентов — всегда по-русски."""
+    metka = f"yazyk{uniq()}"
+    _create(manager_client, name=f"Язык выгрузки {metka}", tags=[metka])
+    bylo = manager_client.get(f"{API}/auth/me").json()["locale"]
+    try:
+        for yazyk, pervyy in (("en", "Name"), ("ru", "Имя")):
+            assert manager_client.patch(f"{API}/auth/me", json={"locale": yazyk}).status_code == 200
+            tekst = manager_client.get(f"{API}/clients/export.csv?tag={metka}").content.decode("utf-8-sig")
+            assert tekst.split(";")[0] == pervyy, f"{yazyk}: {tekst.splitlines()[0]}"
+    finally:
+        manager_client.patch(f"{API}/auth/me", json={"locale": bylo})
+

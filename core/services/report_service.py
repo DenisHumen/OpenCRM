@@ -483,6 +483,10 @@ CSV_HEADERS = {
         "en": ["Date", "Category", "Direction", "Amount", "Comment", "Author"],
         "ru": ["Дата", "Статья", "Направление", "Сумма", "Комментарий", "Автор"],
     },
+    "clients": {
+        "en": ["Name", "Company", "Phone", "Email", "Messenger", "Tags", "Source", "Owner", "Added"],
+        "ru": ["Имя", "Компания", "Телефон", "Почта", "Мессенджер", "Метки", "Источник", "Ответственный", "Заведён"],
+    },
     "debts": {
         "en": ["Number", "Kind", "Client", "Total", "Received", "Due"],
         "ru": ["Номер", "Вид", "Клиент", "Сумма", "Получено", "Остаток"],
