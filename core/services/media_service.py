@@ -9,6 +9,7 @@ import subprocess
 import tempfile
 import time
 import uuid
+import xml.etree.ElementTree as ET
 import zipfile
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
@@ -200,6 +201,67 @@ def _vyrezat_skripty(content: bytes) -> bytes:
     return b"".join(kuski)
 
 
+_SVG_NS = "http://www.w3.org/2000/svg"
+_XLINK_NS = "http://www.w3.org/1999/xlink"
+ET.register_namespace("", _SVG_NS)
+ET.register_namespace("xlink", _XLINK_NS)
+#: Чего в SVG не бывает законно: скрипт, чужой документ внутри, встроенные объекты.
+_SVG_ZAPRESHCHYONNYE = {"script", "foreignobject", "iframe", "object", "embed", "handler", "listener"}
+_SVG_ANIMATSII = {"set", "animate", "animatemotion", "animatetransform"}
+#: Глубже не бывает у настоящих рисунков; вложенность в тысячи уровней роняла
+#: запись дерева в `RecursionError` — загрузка отвечала 500 (29.09.2026).
+SVG_MAX_GLUBINA = 200
+#: Схема ссылки: браузер выбрасывает из неё пробелы, табуляции и переводы строк.
+_SVG_SKHEMA = re.compile(r"^([a-z][a-z0-9+.\-]*):")
+
+
+def _imya_bez_ns(imya: str) -> str:
+    return imya.rsplit("}", 1)[-1].split(":")[-1].lower()
+
+
+def _ssylka_goditsya(znachenie: str) -> bool:
+    chistoe = re.sub(r"[\x00-\x20]", "", znachenie).lower()
+    skhema = _SVG_SKHEMA.match(chistoe)
+    if skhema is None:
+        return True
+    return skhema.group(1) in ("http", "https") or chistoe.startswith("data:image/")
+
+
+def _razobrat_svg(content: bytes) -> bytes | None:
+    """Очистка разбором по белому списку. None — не XML: такой файл браузер как SVG
+    не отрисует вовсе, и его чистит прежний проход регулярками.
+
+    Регулярки не видели `<set attributeName="href" to="javascript:…">`, `<iframe>` в
+    `<foreignObject>` и схему с табуляцией внутри (`java&#9;script:`) — браузер её
+    выбрасывает и выполняет скрипт (разбор 29.09.2026)."""
+    try:
+        koren = ET.fromstring(content)
+    except (ET.ParseError, ValueError):
+        return None
+    if _imya_bez_ns(koren.tag) != "svg":
+        return None
+    stek = [(koren, 0)]
+    while stek:
+        el, glubina = stek.pop()
+        if glubina > SVG_MAX_GLUBINA:
+            raise errors.ValidationError("The SVG file is nested too deeply", code="svg_too_deep")
+        for imya in list(el.attrib):
+            mestnoe = _imya_bez_ns(imya)
+            if mestnoe.startswith("on") or (mestnoe in ("href", "src") and not _ssylka_goditsya(el.attrib[imya])):
+                del el.attrib[imya]
+        for rebenok in list(el):
+            mestnoe = _imya_bez_ns(rebenok.tag) if isinstance(rebenok.tag, str) else ""
+            opasnaya_animatsiya = mestnoe in _SVG_ANIMATSII and _imya_bez_ns(rebenok.get("attributeName", "")) in ("href", "src")
+            if not mestnoe or mestnoe in _SVG_ZAPRESHCHYONNYE or opasnaya_animatsiya:
+                el.remove(rebenok)
+            else:
+                stek.append((rebenok, glubina + 1))
+    try:
+        return ET.tostring(koren, encoding="utf-8", xml_declaration=False)
+    except RecursionError:
+        raise errors.ValidationError("The SVG file is nested too deeply", code="svg_too_deep") from None
+
+
 def sanitize_svg(content: bytes) -> bytes:
     """Убрать из SVG то, что делает его документом со скриптом.
 
@@ -213,6 +275,9 @@ def sanitize_svg(content: bytes) -> bytes:
     (`onload=alert(1)`) прежнее выражение не видело вовсе, как и ссылку со
     схемой, записанной числовой ссылкой (`javas&#99;ript:`).
     """
+    razobrano = _razobrat_svg(content)
+    if razobrano is not None:
+        return razobrano
     content = _vyrezat_skripty(content)
     content = _SVG_EVENT_RE.sub(b"", content)
 

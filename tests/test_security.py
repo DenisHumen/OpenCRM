@@ -473,3 +473,54 @@ def test_podbor_ne_obhodit_schyotchik_variantami_pochty(root_client):
     otvet = login(TestClient(app), pochta, "manager-pass-123")
     assert otvet.status_code == 429 and otvet.json()["error"]["code"] == "login_rate_limited", otvet.text
 
+
+def test_ochistka_svg_razborom_zakryvaet_obkhody_regulyarok():
+    """Разбор 29.09.2026: очистка регулярками не видела анимацию, подменяющую ссылку
+    на скрипт, `<iframe>` внутри `<foreignObject>` и схему с табуляцией внутри —
+    браузер её выбрасывает из адреса и выполняет скрипт. Правильный SVG теперь
+    разбирается и чистится по белому списку."""
+    from core.services.media_service import sanitize_svg
+
+    ns = b'xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"'
+    ataki = [
+        b"<svg " + ns + b'><a><set attributeName="href" to="javascript:alert(1)"/><text>x</text></a></svg>',
+        b"<svg " + ns + b'><foreignObject><iframe src="javascript:alert(1)"/></foreignObject></svg>',
+        b"<svg " + ns + b'><a href="java&#9;script:alert(1)"><text>x</text></a></svg>',
+        b"<svg " + ns + b'><a xlink:href=" JaVaScRiPt:alert(1)"><text>x</text></a></svg>',
+        b"<svg " + ns + b'><image href="data:text/html,alert(1)"/></svg>',
+        b"<svg " + ns + b' onload="alert(1)"><script>alert(1)</script></svg>',
+    ]
+    for ataka in ataki:
+        chisto = sanitize_svg(ataka)
+        assert b"alert" not in chisto, chisto
+        assert b"<svg" in chisto
+
+    obychnyy = (
+        b"<svg " + ns + b' viewBox="0 0 10 10"><defs><linearGradient id="g"/></defs>'
+        b'<rect fill="url(#g)" width="10" height="10"/><use xlink:href="#g"/>'
+        b'<image href="data:image/png;base64,AAA"/><a href="https://example.com"><text>ok</text></a></svg>'
+    )
+    chisto = sanitize_svg(obychnyy)
+    for nuzhnoe in (b'viewBox="0 0 10 10"', b"url(#g)", b'xlink:href="#g"', b"data:image/png", b"https://example.com"):
+        assert nuzhnoe in chisto, (nuzhnoe, chisto)
+
+
+def test_glubokiy_svg_eto_otkaz_a_ne_500():
+    """Разбор 29.09.2026: правильный SVG с вложенностью в тысячи уровней ронял запись
+    дерева в `RecursionError` — загрузка «логотипа» отвечала 500. Теперь это отказ."""
+    import time
+
+    import pytest
+
+    from core import exceptions as errors
+    from core.services.media_service import sanitize_svg
+
+    for glubina in (300, 5000):
+        glubokiy = b'<svg xmlns="http://www.w3.org/2000/svg">' + b"<g>" * glubina + b"</g>" * glubina + b"</svg>"
+        nachalo = time.perf_counter()
+        with pytest.raises(errors.ValidationError):
+            sanitize_svg(glubokiy)
+        assert time.perf_counter() - nachalo < 1.0
+    obychnyy = b'<svg xmlns="http://www.w3.org/2000/svg">' + b"<g>" * 50 + b"<rect/>" + b"</g>" * 50 + b"</svg>"
+    assert b"<rect" in sanitize_svg(obychnyy)
+
