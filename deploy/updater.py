@@ -206,6 +206,10 @@ SETEVOY_OTKAZ = re.compile(
 #: его в «не встал» как обычно: 24 опроса по пять минут — два часа.
 SETEVYKH_POPYTOK = 24
 
+#: Тег, под которым до сборки нового кода сберегается образ работающего
+#: приложения: откат поднимает ЕГО, а не пересобирает старый код заново.
+OBRAZ_OTKATA = "opencrm-otkat:latest"
+
 
 #: Строка, которой дампер открывает каждую таблицу.
 #:
@@ -351,6 +355,7 @@ class Updater:
         self.probe = probe or HttpProbe()
         self.notifier = notifier if notifier is not None else notify.from_config(config)
         self._sleep = sleep
+        self._obraz_otkata = ""
         self._clock = clock
         # Последний объявленный посетителю шаг и время начала обновления.
         # Пустые до первого объявления — по этому и видно, что показывать пока
@@ -863,6 +868,8 @@ class Updater:
             self._progress("health")
             self._health(steps, "health")
 
+            if self._obraz_otkata:
+                self.shell.run(["docker", "image", "rm", OBRAZ_OTKATA], cwd=self.config.project_dir, timeout=60)
             # Каждая сборка оставляет предыдущий образ висеть без тега. Демон
             # работает без присмотра месяцами, и забитый диск сломал бы не только
             # обновления, но и загрузку файлов. `prune` трогает только dangling.
@@ -1137,6 +1144,7 @@ class Updater:
         момент ещё работает, смотреть страницу некому, а незнакомый ключ она
         считает мусором и гасит показ целиком.
         """
+        self._sberech_obraz()
         sborka = self._compose("build", "app", timeout=self.config.build_timeout)
         if not sborka.ok:
             steps.append(Step("config", False, sborka.tail(12)))
@@ -1504,9 +1512,7 @@ class Updater:
                 steps.append(Step("rollback-deploy", False, "не поднимали: база залита не до конца"))
                 return f"база залита не до конца, приложение не поднято: {failure}"
 
-        self._step(steps, "rollback-deploy",
-                   self._compose("up", "-d", "--build", timeout=self.config.build_timeout),
-                   fatal=False)
+        self._step(steps, "rollback-deploy", self._podnyat_prezhniy(), fatal=False)
         reason = self.wait_healthy()
         steps.append(Step("rollback-health", not reason, reason))
         return reason
@@ -1690,6 +1696,41 @@ class Updater:
             return f"не снять оставшиеся от миграций таблицы ({vidno}): {snos.tail(3)}"
         self.log(f"сняты таблицы, оставшиеся от неудавшихся миграций: {vidno}")
         return ""
+
+    def _sberech_obraz(self) -> None:
+        """Пометить образ работающего приложения тегом отката.
+
+        Откат пересобирал старый код из исходников, а зависимости не закреплены и
+        `pip install .` стоит после копирования кода: при ужатом кэше сборки откат
+        шёл в PyPI за самыми свежими версиями — сломавший обновление выпуск
+        зависимости доставался и старому коду, а без сети откат не собирался вовсе
+        (разбор 29.09.2026). Не вышло пометить — откат соберёт по-старому.
+        """
+        self._obraz_otkata = ""
+        konteyner = self._compose("ps", "-q", "app", timeout=60).out.strip().splitlines()
+        if not konteyner:
+            return
+        svedeniya = self.shell.run(
+            ["docker", "inspect", "-f", "{{.Image}} {{.Config.Image}}", konteyner[0]],
+            cwd=self.config.project_dir, timeout=60,
+        )
+        chasti = svedeniya.out.split()
+        if not svedeniya.ok or len(chasti) != 2:
+            return
+        obraz, imya = chasti
+        if self.shell.run(["docker", "tag", obraz, OBRAZ_OTKATA], cwd=self.config.project_dir, timeout=60).ok:
+            self._obraz_otkata = imya
+
+    def _podnyat_prezhniy(self) -> Result:
+        """Поднять прежний код: сбережённым образом, а без него — сборкой, как раньше."""
+        if self._obraz_otkata:
+            vernuli = self.shell.run(
+                ["docker", "tag", OBRAZ_OTKATA, self._obraz_otkata], cwd=self.config.project_dir, timeout=60,
+            )
+            if vernuli.ok:
+                return self._compose("up", "-d", "--no-build", timeout=self.config.build_timeout)
+            self.log(f"образ отката не вернулся ({vernuli.tail(2)}) — собираю прежний код")
+        return self._compose("up", "-d", "--build", timeout=self.config.build_timeout)
 
     def _idut_migratsii(self) -> bool:
         """Контейнер на шаге копии и миграций: `running migrate` пишет только он."""

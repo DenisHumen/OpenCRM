@@ -3231,3 +3231,33 @@ def test_upavshaya_migratsiya_ne_prodlevaet_ozhidanie(tmp_path):
     outcome = _s_khodom(tmp_path, "failed", "running").run_once()
     assert outcome.status in (STATUS_ROLLED_BACK, STATUS_BROKEN), "упавшая миграция продлила ожидание"
 
+
+def _s_obrazom(tmp_path, zdorovie):
+    config = make_config(tmp_path)
+    shell = FakeShell()
+    shell.effect("scripts.snapshot_db dump", damp_snimaetsya(config, shell))
+    shell.otvet("ps -q app", "c0ffee123\n")
+    shell.otvet("inspect -f", "sha256:staryy opencrm-app\n")
+    return make_updater(tmp_path, config=config, shell=shell, probe=FakeProbe(health=zdorovie)), shell
+
+
+def test_otkat_podnimaet_sberezhyonnyy_obraz_a_ne_sobiraet_zanovo(tmp_path):
+    """Разбор 29.09.2026: откат пересобирал старый код из исходников. Зависимости не
+    закреплены, и при ужатом кэше сборки откат шёл в PyPI за свежими версиями —
+    сломавший обновление выпуск доставался и старому коду, а без сети откат не
+    собирался вовсе. Образ работающего приложения теперь сберегается до сборки."""
+    updater, shell = _s_obrazom(tmp_path, (False, True))
+    outcome = updater.run_once()
+    assert outcome.status == STATUS_ROLLED_BACK
+    tag = [c for c in shell.calls if " tag " in f" {c} "]
+    assert any("sha256:staryy opencrm-otkat:latest" in c for c in tag), f"образ не сбережён до сборки: {tag}"
+    assert any("opencrm-otkat:latest opencrm-app" in c for c in tag), f"откат не вернул сбережённый образ: {tag}"
+    podnyatiya = [c for c in shell.calls if " up -d" in c]
+    assert "--no-build" in podnyatiya[-1], f"откат пересобирал старый код: {podnyatiya[-1]}"
+
+
+def test_udachnaya_vykladka_snimaet_teg_otkata(tmp_path):
+    updater, shell = _s_obrazom(tmp_path, (True,))
+    assert updater.run_once().status == STATUS_DEPLOYED
+    assert shell.ran("image rm opencrm-otkat:latest"), "сбережённый образ копится на диске после удачи"
+
