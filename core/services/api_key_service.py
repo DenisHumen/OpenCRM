@@ -33,6 +33,10 @@ PREFIX_LEN = 8
 #: Сколько живёт старый ключ после ротации — иначе смена ключа значит простой сайта.
 GRACE_HOURS = 24
 DEFAULT_DAYS = 365
+#: Потолки сроков: `timedelta` на большом числе бросал `OverflowError` — пятисотку
+#: (разбор 29.09.2026). Ключ дольше десяти лет — это бессрочный, `days=0`.
+DAYS_MAX = 3650
+GRACE_HOURS_MAX = 24 * 365
 
 
 def _otpechatok(raw: str) -> str:
@@ -70,7 +74,7 @@ def _proverit_oblasti(db: Session, scopes, warehouse_id: int | None) -> tuple[se
     return oblasti, sklad.id
 
 
-def _chislo(data: dict, imya: str, umolchanie: int, *, minimum: int) -> int:
+def _chislo(data: dict, imya: str, umolchanie: int, *, minimum: int, maksimum: int | None = None) -> int:
     znachenie = data.get(imya)
     if znachenie is None:
         return umolchanie
@@ -80,6 +84,8 @@ def _chislo(data: dict, imya: str, umolchanie: int, *, minimum: int) -> int:
         raise errors.ValidationError(f"{imya} must be an integer", code="bad_number") from None
     if znachenie < minimum:
         raise errors.ValidationError(f"{imya} must be at least {minimum}", code="bad_number")
+    if maksimum is not None and znachenie > maksimum:
+        raise errors.ValidationError(f"{imya} must be at most {maksimum}", code="bad_number")
     return znachenie
 
 
@@ -92,7 +98,7 @@ def create(db: Session, actor: User | None, data: dict) -> tuple[ApiKey, str]:
     stock_mode = data.get("stock_mode") or "bucket"
     if stock_mode not in STOCK_MODES:
         raise errors.ValidationError(f"Unknown stock mode: {stock_mode}", code="unknown_stock_mode")
-    days = _chislo(data, "days", DEFAULT_DAYS, minimum=0)
+    days = _chislo(data, "days", DEFAULT_DAYS, minimum=0, maksimum=DAYS_MAX)
     raw = porodit()
     key = ApiKey(
         name=name[:120],
@@ -149,6 +155,7 @@ def revoke(db: Session, actor: User | None, key_id: int) -> ApiKey:
 
 def rotate(db: Session, actor: User | None, key_id: int, grace_hours: int = GRACE_HOURS) -> tuple[ApiKey, str]:
     """Новый ключ с теми же полями; старый живёт ещё `grace_hours`, а не умирает сразу."""
+    grace_hours = _chislo({"grace_hours": grace_hours}, "grace_hours", GRACE_HOURS, minimum=0, maksimum=GRACE_HOURS_MAX)
     staryy = get(db, key_id)
     if staryy.revoked_at is not None:
         raise errors.ConflictError("A revoked key cannot be rotated", code="api_key_revoked")
@@ -168,7 +175,7 @@ def rotate(db: Session, actor: User | None, key_id: int, grace_hours: int = GRAC
         created_by=actor.id if actor else None,
     )
     keys_repo.add(db, novyy, oblasti)
-    lgota = now_utc() + timedelta(hours=max(0, grace_hours))
+    lgota = now_utc() + timedelta(hours=grace_hours)
     if staryy.expires_at is None or staryy.expires_at > lgota:
         staryy.expires_at = lgota
     db.flush()

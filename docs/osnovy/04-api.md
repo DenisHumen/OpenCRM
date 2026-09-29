@@ -1872,11 +1872,11 @@ SVG только `width` и `height`; пока картинку показыва
 | Метод | Путь | Права | Описание |
 |---|---|---|---|
 | GET | `/settings/api-keys` | 🔑 `settings.manage` | Все ключи, включая отозванные и истёкшие; `alive` — сколько живых («наружу открыто: N ключей» на экране), словари `scopes`, `stock_modes`, имя заголовка |
-| POST | `/settings/api-keys` | 🔑 `settings.manage` | Выдать: `name`, `scopes[]`, `warehouse_id` (обязателен при `stock.read`, склад типа `shop`), `days` (365; 0 — бессрочный), `stock_mode`, `few_threshold_milli`, `rate_per_min`, `max_reserve_minutes`, `ttl_sec`. Ответ `201` содержит `key` — **один раз**. `422 unknown_scope` / `scope_required` / `warehouse_required` / `warehouse_not_shop` / `unknown_stock_mode` |
+| POST | `/settings/api-keys` | 🔑 `settings.manage` | Выдать: `name`, `scopes[]`, `warehouse_id` (обязателен при `stock.read`, склад типа `shop`), `days` (365; 0 — бессрочный; больше 3650 — `422 bad_number`: до 29.09.2026 огромный срок ронял `timedelta` пятисоткой), `stock_mode`, `few_threshold_milli`, `rate_per_min`, `max_reserve_minutes`, `ttl_sec`. Ответ `201` содержит `key` — **один раз**. `422 unknown_scope` / `scope_required` / `warehouse_required` / `warehouse_not_shop` / `unknown_stock_mode` |
 | PATCH | `/settings/api-keys/{key_id}` | 🔑 `settings.manage` | Имя, режим наличия, порог и потолки. Области и склад не правятся — на них выпускают новый ключ |
 | POST | `/settings/api-keys/{key_id}/revoke` | 🔑 `settings.manage` | Отзыв отметкой; строка остаётся |
 | GET | `/settings/api-keys/{key_id}/stats` | 🔑 `settings.manage` | Сводка обращений за 30 дней: `today`, `week`, `month`, `rejected_month`, `avg_per_day`, `peak_hour`, `rate_per_min`, `by_category[]`, `by_day[30]`, `by_hour[24]`. В списке ключей у строки — `hits_30d`. Устройство — docs/16 §18. `404 api_key_not_found` |
-| POST | `/settings/api-keys/{key_id}/rotate` | 🔑 `settings.manage` | Новый ключ с теми же полями (`201`, `key` один раз); старый живёт ещё `grace_hours` (24). `409 api_key_revoked` — отозванный не ротируется |
+| POST | `/settings/api-keys/{key_id}/rotate` | 🔑 `settings.manage` | Новый ключ с теми же полями (`201`, `key` один раз); старый живёт ещё `grace_hours` (24, не больше 8760 — иначе `422 bad_number`). `409 api_key_revoked` — отозванный не ротируется |
 
 Те же действия из консоли: `./opencrm.sh apikey list|new|show|revoke|rotate`
 (флаги `--name --scopes --warehouse --days --stock --few --rate --reserve-max --ttl --grace`).

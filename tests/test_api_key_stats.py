@@ -79,3 +79,15 @@ def test_uborka_ubiraet_starye_chasy_i_ostavlyaet_svezhie(root_client):
         db.commit()
         ostalis = repo.stroki(db, k["id"], staryy)
     assert [s.count for s in ostalis] == [1], "свежий час на месте, старый убран"
+
+
+def test_ogromnyy_srok_klyucha_otkaz_a_ne_500(root_client):
+    """Разбор 29.09.2026: `days` и `grace_hours` шли в `timedelta` без потолка —
+    опечатка в лишний ноль давала `OverflowError`, то есть пятисотку."""
+    r = root_client.post(KEYS, json={"name": "магазин", "scopes": ["catalog.read"], "days": 99_999_999})
+    assert r.status_code == 422 and r.json()["error"]["code"] == "bad_number"
+    k = klyuch(root_client)
+    r = root_client.post(f"{KEYS}/{k['id']}/rotate", json={"grace_hours": 10**12})
+    assert r.status_code == 422 and r.json()["error"]["code"] == "bad_number"
+    assert root_client.post(KEYS, json={"name": "магазин", "scopes": ["catalog.read"], "days": 0}).status_code == 201
+
