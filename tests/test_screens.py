@@ -1965,3 +1965,13 @@ def test_chernovik_messendzhera_u_kazhdogo_dialoga_svoy():
     for put in ("/telegram/chats/${chat}/messages", "/telegram/chats/${chat}/files"):
         assert put in text, f"отправка берёт диалог на момент ответа, а не нажатия: {put}"
 
+
+def test_escape_v_spiske_ne_zakryvaet_okno():
+    """Разбор 29.09.2026: Escape в выборе клиента закрывал свой список и, всплыв до
+    `document`, всё окно: квитанция приёмки с изделием, номером и неисправностью
+    пропадала целиком. Внутренний обработчик гасит Escape, окно такой пропускает."""
+    ui = (SCREENS / "components" / "ui.tsx").read_text(encoding="utf-8")
+    vybor = (SCREENS / "components" / "VyborKlienta.tsx").read_text(encoding="utf-8")
+    assert re.search(r'e\.key === "Escape"\) \{[^}]*?!e\.defaultPrevented', ui, re.S), "окно закрывается и на погашенный Escape"
+    assert re.search(r'e\.key === "Escape"\) \{[^}]*?preventDefault\(\)', vybor, re.S), "выбор клиента не гасит свой Escape"
+

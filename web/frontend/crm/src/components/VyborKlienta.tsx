@@ -105,6 +105,9 @@ export function VyborKlienta({
         onChange={(e) => setStroka(e.target.value)}
         onKeyDown={(e) => {
           if (e.key === "Escape") {
+            // Открытый список гасит Escape сам: иначе окно вокруг закрывалось
+            // вместе со всей набранной формой (разбор 29.09.2026).
+            if (otkryt) e.preventDefault();
             setOtkryt(false);
             return;
           }

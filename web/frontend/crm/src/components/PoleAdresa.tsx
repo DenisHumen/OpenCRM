@@ -135,6 +135,8 @@ export function PoleAdresa({
             onKeyDown={(e) => {
               if (e.key === "Escape") {
                 if (varianty.length) {
+                  // Открытый список гасит свой Escape — окно вокруг его пропустит.
+                  e.preventDefault();
                   zakryt();
                   return;
                 }

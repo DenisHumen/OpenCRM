@@ -390,7 +390,9 @@ export function Modal({
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        onClose();
+        // Escape, который уже обработан внутри (закрыт список подсказок), окно
+        // не закрывает: иначе вместе со списком пропадала набранная форма.
+        if (!e.defaultPrevented) onClose();
         return;
       }
       const box = panel.current;
