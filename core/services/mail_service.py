@@ -366,7 +366,7 @@ def store_incoming(db: Session, account: MailAccount, item: FetchedMessage) -> M
         body_text=item.body_text,
         body_html=item.body_html,
         from_addr=item.from_addr[:ADDRESS_LENGTH],
-        to_addrs=", ".join(item.to_addrs),
+        to_addrs=_adresaty(item.to_addrs),
         sent_at=_sent_at_not_ahead_of_us(item.sent_at),
         has_attachments=item.has_attachments,
         # Цепочку входящего сохраняем ПРИ СИНХРОНИЗАЦИИ, а не собираем потом:
@@ -421,6 +421,23 @@ def _sent_at_not_ahead_of_us(sent_at: datetime) -> datetime:
 #: почтовые клиенты собирают ветку по ПОСЛЕДНИМ ссылкам. Двадцать — с запасом
 #: на любую живую переписку и без риска, что заголовок перестанет влезать.
 MAX_REFERENCES = 20
+
+
+#: `to_addrs` — TEXT, 65 535 байт. Письмо на тысячи адресов в «Кому» и «Копии»
+#: не ложилось, как длинная ветка, и терялось навсегда (разбор 29.09.2026).
+PREDEL_ADRESATOV_BAYT = 60_000
+
+
+def _adresaty(adresa: list[str]) -> str:
+    """Адресаты входящего — сколько влезет в колонку, целыми адресами."""
+    vzyato, bayt = [], 0
+    for adres in adresa:
+        adres = adres[:ADDRESS_LENGTH]
+        bayt += len(adres.encode()) + 2
+        if bayt > PREDEL_ADRESATOV_BAYT:
+            break
+        vzyato.append(adres)
+    return ", ".join(vzyato)
 
 
 def _hvost_vetki(references: str) -> str:

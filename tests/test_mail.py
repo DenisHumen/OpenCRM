@@ -834,7 +834,7 @@ def test_a_broken_message_does_not_take_the_whole_batch_with_it(root_client, mai
 
 
 def _vhodyashchee(root_client, account, *, uid, message_id, subject, from_addr,
-                  in_reply_to="", references=""):
+                  in_reply_to="", references="", to_addrs=None):
     """Положить в ящик входящее письмо и вернуть его запись в CRM."""
     FakeTransport.inbox = [
         FetchedMessage(
@@ -842,7 +842,7 @@ def _vhodyashchee(root_client, account, *, uid, message_id, subject, from_addr,
             message_id=message_id,
             subject=subject,
             from_addr=from_addr,
-            to_addrs=[account["address"]],
+            to_addrs=to_addrs or [account["address"]],
             sent_at=datetime(2026, 8, 20, 9, 0),
             body_text="Текст письма.",
             in_reply_to=in_reply_to,
@@ -1393,4 +1393,26 @@ def test_klient_po_pochte_bez_registra_i_po_indeksu(db):
         assert "lower(" not in zapros.lower(), "функция над колонкой почты снова не даёт пройти индекс"
     finally:
         db.rollback()
+
+
+def test_pismo_na_tysyachi_adresatov_ne_teryaetsya(root_client, mail_on):
+    """Разбор 29.09.2026: адресаты входящего клались в TEXT (65 535 байт) целиком.
+    Письмо с тысячами адресов в «Кому» и «Копии» давало 1406, откатывалось и не
+    попадало в CRM никогда — `last_uid` уезжал вперёд, как у длинной ветки."""
+    account = make_account(root_client, "tysyachi-adresatov@studio.test")
+    tolpa = [account["address"]] + [f"poluchatel-nomer-{i}@rassylka.test" for i in range(3000)]
+    vhodyashchee = _vhodyashchee(
+        root_client, account,
+        uid=907, message_id="<tolpa@rassylka.test>",
+        subject="Письмо толпе", from_addr="list@rassylka.test",
+        to_addrs=tolpa,
+    )
+
+    from database.models import MailMessage
+
+    with SessionLocal() as db:
+        zapis = db.get(MailMessage, vhodyashchee["id"])
+        adresaty = zapis.to_addrs
+    assert len(adresaty.encode()) <= 65_535
+    assert adresaty.split(", ")[0] == account["address"], "обрезали начало, а не хвост"
 
