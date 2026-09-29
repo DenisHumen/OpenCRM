@@ -497,3 +497,29 @@ def test_spisok_dobavleniya_ne_perepisan_rukami():
     assert "Object.keys(kinds)" in stroka, (
         "список «что можно добавить» снова строится не по реестру сервера: " + stroka.strip()
     )
+
+
+def test_malo_na_sklade_summiruet_istoriyu_odin_raz(root_client):
+    """Разбор 29.09.2026: «мало на складе» считал остатки двумя запросами — пятёрку и
+    общее число, — и каждый суммировал всю историю движений. Сводку перечитывает
+    каждое событие склада в каждой вкладке, и на полумиллионе движений это два
+    полных прохода на показ. Общее число теперь — оконный счёт той же выборки."""
+    from database.repositories import warehouse as warehouse_repo
+    from tests.conftest import Zaprosy
+
+    _blok(root_client, "warehouse", True)
+    try:
+        for nomer in range(3):
+            root_client.post(
+                f"{API}/warehouse/products",
+                json={"name": f"Окно мало {nomer}", "sku": f"OKNO-{nomer}", "price": 100, "min_stock": "5"},
+            )
+        with SessionLocal() as db:
+            with Zaprosy() as zaprosy:
+                pyatyorka, vsego = warehouse_repo.malo_ili_konchilos(db, limit=2)
+            nastoyashchee = len(warehouse_repo.malo_ili_konchilos(db, limit=100_000)[0])
+    finally:
+        _blok(root_client, "warehouse", False)
+    assert len(zaprosy.s_upominaniem("stock_moves")) == 1, zaprosy.s_upominaniem("stock_moves")
+    assert len(pyatyorka) == 2 and vsego == nastoyashchee >= 3
+

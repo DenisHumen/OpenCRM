@@ -686,14 +686,14 @@ def malo_ili_konchilos(db: Session, limit: int = 5) -> tuple[list[tuple[Product,
         Product.is_service.is_(False),
         milli <= func.coalesce(Product.min_stock_milli, 0),
     )
+    # Сколько всего — оконным счётом в той же выборке: вторым запросом вся история
+    # движений суммировалась дважды на каждый показ сводки (разбор 29.09.2026).
     ryady = db.execute(
-        select(Product, milli)
+        select(Product, milli, func.count().over())
         .outerjoin(ostatok, ostatok.c.tovar == Product.id)
         .where(*usloviya)
         .order_by(milli.asc(), Product.id.asc())
         .limit(limit)
     ).all()
-    vsego = db.scalar(
-        select(func.count()).select_from(Product).outerjoin(ostatok, ostatok.c.tovar == Product.id).where(*usloviya)
-    )
-    return [(product, as_int(summa)) for product, summa in ryady], int(vsego or 0)
+    vsego = ryady[0][2] if ryady else 0
+    return [(product, as_int(summa)) for product, summa, _ in ryady], int(vsego)
