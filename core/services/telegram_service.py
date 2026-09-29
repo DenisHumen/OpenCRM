@@ -385,6 +385,9 @@ def _mnogochastnoe(polya: dict, fayl: tuple[str, str, bytes]) -> tuple[bytes, st
 
     granitsa = "----OpenCRM" + _secrets.token_hex(16)
     imya_polya, imya_fayla, soderzhimoe = fayl
+    # Имя идёт в заголовок части как есть: кавычка рвала его, а перевод строки
+    # дописывал в запрос своё поле — хоть второй `chat_id` (разбор 29.09.2026).
+    imya_fayla = "".join("_" if ch in '"\\' or ord(ch) < 32 else ch for ch in imya_fayla)
     kuski: list[bytes] = []
     for klyuch, znachenie in polya.items():
         kuski.append(
@@ -1080,7 +1083,8 @@ def otpravit(
         kind=vid,
         body=tekst,
         file_path=put_fayla,
-        file_name=imya_fayla if put_fayla else "",
+        # Как у входящего: длиннее колонки — отказ базы уже ПОСЛЕ файла на диске.
+        file_name=imya_fayla[:255] if put_fayla else "",
         file_size=len(fayl[1]) if fayl is not None else None,
         author_id=getattr(author, "id", None),
         happened_at=now_utc().replace(tzinfo=None),

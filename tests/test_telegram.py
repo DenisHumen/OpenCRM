@@ -2453,3 +2453,20 @@ def test_otpravka_ne_derzhit_soedinenie_i_zamok_dialoga(root_client, bot_nastroe
     assert otvet.json()["send_state"] == "sent"
     assert zamer["vnutri"] == do, f"во время отправки занято соединений: {zamer['vnutri'] - do}"
 
+
+def test_imya_fayla_ne_rvyot_zagolovok_mnogochastnogo_tela():
+    """Разбор 29.09.2026: имя файла шло в заголовок части `multipart` как есть —
+    кавычка рвала заголовок, а перевод строки дописывал в запрос к телеграму своё
+    поле, хоть второй `chat_id`."""
+    from email.parser import BytesParser
+    from email.policy import HTTP
+
+    from core.services import telegram_service
+
+    imya = 'Счёт "Ромашка".pdf"\r\nContent-Disposition: form-data; name="chat_id"\r\n\r\n666'
+    telo, tip = telegram_service._mnogochastnoe({"chat_id": "1"}, ("document", imya, b"%PDF"))
+    pismo = BytesParser(policy=HTTP).parsebytes(b"Content-Type: " + tip.encode() + b"\r\n\r\n" + telo)
+    chasti = list(pismo.iter_parts())
+    zagolovki = [ch.get_all("content-disposition") for ch in chasti]
+    assert [len(z) for z in zagolovki] == [1, 1], f"в заголовок части дописаны поля: {zagolovki}"
+    assert chasti[1].get_payload(decode=True) == b"%PDF", "содержимое файла подменено именем"
