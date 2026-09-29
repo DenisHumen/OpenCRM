@@ -76,7 +76,7 @@ def _git(*argv: str) -> str:
 #:
 #: Точка отсчёта не двигается. Сдвинуть её вперёд — значит простить правку,
 #: которая уже уехала на сервер; ровно то, ради чего сторож и стоит.
-TOCHKA_OTSCHYOTA = "c28a3b2fea1a6e53228291ef8573399e30a9b3f8"
+TOCHKA_OTSCHYOTA = "787dd62a82ae779df100e19ba1559acdde9daf08"
 
 
 def _kogda_zaveli_storozha() -> str:
