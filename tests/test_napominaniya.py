@@ -444,3 +444,21 @@ def test_povtor_s_nesushchestvuyushchim_until_i_razdutyy_otvergayutsya(root_clie
     assert otvet.json()["povtor"] == "FREQ=WEEKLY;BYDAY=MO", otvet.json()["povtor"]
     assert root_client.get(f"{TASKS}/calendar", params={"from": _cherez(days=-1), "to": _cherez(days=30)}).status_code in (200, 422)
 
+
+def test_zvonok_dogonyaet_prostoy_planirovshchika(root_client):
+    """Разбор 29.09.2026: окно звонка — «последние 15 минут», без отметки прошлого
+    шага. Простой дольше окна (обновление с миграцией, откат, перезагрузка) терял
+    всё, что должно было прозвенеть за него, — молча и навсегда. Теперь окно
+    начинается от последнего удачного шага."""
+    from core import redis_client
+    from core.services import zvonki_service
+
+    task = _zavesti(root_client, title="Звонок за простой", due_at=_cherez(minutes=-40), opovesheniya="0")
+    klient = redis_client.get_client()
+    klient.set(zvonki_service.KLYUCH_OTMETKI, (now_utc() - timedelta(minutes=60)).isoformat())
+    try:
+        zvonki_service.shag()
+    finally:
+        klient.delete(zvonki_service.KLYUCH_OTMETKI)
+    assert any(vid == "due" for _u, vid, _m in _zvonki(task["id"])), "звонок, пришедшийся на простой, потерян"
+

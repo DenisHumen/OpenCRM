@@ -626,7 +626,7 @@ def _aktivnye(db: Session, user_ids) -> set[int]:
     return {u.id for u in users_repo.get_many(db, user_ids) if u.status == STATUS_ACTIVE}
 
 
-def tick(db: Session, teper: datetime | None = None) -> int:
+def tick(db: Session, teper: datetime | None = None, s: datetime | None = None) -> int:
     """Шаг планировщика: записать звонки, чья минута наступила. Возвращает, сколько позвонило.
 
     Окно — последние `OKNO_ZVONKA`: процессов несколько и сервис перезапускается,
@@ -636,7 +636,8 @@ def tick(db: Session, teper: datetime | None = None) -> int:
     if not modules_service.is_enabled(db, "tasks"):
         return 0
     _dvinut_propushchennye(db, teper)
-    s = teper - OKNO_ZVONKA
+    # Начало окна даёт планировщик — после простоя оно отстоит дальше (`zvonki_service`).
+    s = s or teper - OKNO_ZVONKA
     kandidaty = tasks_repo.kandidaty_zvonka(
         db, teper - NASTOYCHIVO_OKNO, teper + timedelta(minutes=OPOVESHENIE_MAX_MINUT)
     )
@@ -650,10 +651,14 @@ def tick(db: Session, teper: datetime | None = None) -> int:
             if s < moment <= teper:
                 momenty.append((moment, "due" if minut == 0 else "early"))
         if task.nastoychivo and task.due_at < teper:
-            for k in range(1, NASTOYCHIVO_RAZ + 1):
-                moment = task.due_at + timedelta(minutes=task.nastoychivo * k)
-                if s < moment <= teper:
-                    momenty.append((moment, "nag"))
+            # Из настойчивых — только последний: догоняя простой, иначе звонили бы
+            # разом все повторы, накопившиеся за него.
+            nagi = [
+                task.due_at + timedelta(minutes=task.nastoychivo * k) for k in range(1, NASTOYCHIVO_RAZ + 1)
+            ]
+            nagi = [moment for moment in nagi if s < moment <= teper]
+            if nagi:
+                momenty.append((max(nagi), "nag"))
         if not momenty:
             continue
         for chelovek in _poluchateli_zvonka(lyudi.get(task.id, []), aktivnye):
