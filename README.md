@@ -16,7 +16,20 @@
 
 **English** · [Русский](README.ru.md)
 
-[Features](#-features) · [Screenshots](#-screenshots) · [Quick start](#-quick-start) · [Usage](#-usage) · [Documentation](#-documentation)
+[Features](#-features) · [Screenshots](#-screenshots) · [Quick start](#-quick-start) · [Usage](#-usage) · [Documentation](#-documentation) · [Deployment and support](#-deployment-and-support)
+
+<table><tr><td align="center">
+
+**Want it running for your business?** I install OpenCRM on your server and look after it:<br />
+setup, moving your data in, updates and backups, new modules for the way you work.<br />
+For pricing and terms, get in touch — email, Telegram or the website.
+
+[![Email](https://img.shields.io/badge/Email-denis%40krokosha.com-D97757?style=flat-square&logo=gmail&logoColor=white)](mailto:denis@krokosha.com)
+[![Telegram](https://img.shields.io/badge/Telegram-%40DenisHumen-26A5E4?style=flat-square&logo=telegram&logoColor=white)](https://t.me/DenisHumen)
+[![Website](https://img.shields.io/badge/Website-krokosha.com-3a3a38?style=flat-square&logo=googlechrome&logoColor=white)](https://krokosha.com)
+[![Sponsor](https://img.shields.io/badge/Sponsor-%E2%9D%A4-EA4AAA?style=flat-square&logo=githubsponsors&logoColor=white)](https://github.com/sponsors/DenisHumen)
+
+</td></tr></table>
 
 <br />
 
@@ -76,7 +89,7 @@ Every image below is a screenshot of the real thing. The data is invented: a Por
 - **Keys.** A built-in TOTP vault that shows six-digit sign-in codes for the company's accounts, with categories and permissions; off by default ([doc 27](docs/bloki/27-klyuchi.md)).
 - **Files.** One tree of everything stored on the server — board work, client, task and form attachments, product photos ([doc 28](docs/bloki/28-fayly.md)).
 - **Reminders.** Personal by default or set for colleagues, with a month calendar, repeats down to "every 28 days" or "last Friday", early and persistent alerts, snooze, and a ring with sound in the browser — also with the tab closed, via Web Push with «Done» and «Snooze» buttons; linked to deals, orders, papers and products ([doc 29](docs/bloki/29-napominaniya.md)).
-- **Employee tokens.** Any program or AI agent (Claude via MCP) can work with the whole internal API as an employee — with that employee's role, a term, revocation, a read-only mode and a machine-readable OpenAPI description; the password vault, backups and permanent deletion stay human-only ([doc 30](docs/bloki/30-tokeny-i-mcp.md)).
+- **Employee tokens.** Any program or AI assistant (over MCP) can work with the whole internal API as an employee — with that employee's role, a term, revocation, a read-only mode and a machine-readable OpenAPI description; the password vault, backups and permanent deletion stay human-only ([doc 30](docs/bloki/30-tokeny-i-mcp.md)).
 - **Notifications.** A bell with what others did and what the system did by itself: closed orders, posted waybills, deal stages, website requests, reminders assigned to you — with a browser alert on top.
 
 ## 📸 Screenshots
@@ -194,6 +207,18 @@ A role is a job title with a set of permissions. Five come ready — manager, ac
 Permissions restrict the server, not the screen. Without the right to see amounts, they don't reach the browser at all: not in a list, not in a report, not in a CSV export. Other people's jobs are filtered inside the query rather than hidden with CSS.
 
 <div align="center"><img src="docs/images/roles.png" alt="Roles" width="92%" /></div>
+
+### Reminders
+
+Personal by default or set for colleagues. A month calendar, repeats down to "every 28 days" or "the last Friday of the month", alerts ahead of time, a persistent ring until someone reacts, and snooze in one tap. The browser rings even with the tab closed, and a reminder links to the client, request, order or product it's about.
+
+<div align="center"><img src="docs/images/reminders.png" alt="Reminders" width="92%" /></div>
+
+### Sign-in codes
+
+The six-digit codes for the company's accounts live in the CRM, not on one person's phone. Categories and permissions decide who sees which; when someone leaves, access goes with their account and nobody has to re-pair a single service.
+
+<div align="center"><img src="docs/images/keys.png" alt="Keys" width="92%" /></div>
 
 ### Dashboard
 
@@ -460,6 +485,19 @@ OpenCRM/
 ├── tests/              # pytest suite (runs against MySQL)
 └── docs/               # manual (Russian), screenshots, logos
 ```
+
+## 💼 Deployment and support
+
+OpenCRM is free to install and run yourself — the [quick start](#-quick-start) takes one command. If you'd rather not deal with a server, I can do it for you:
+
+- installation on your VPS or hardware, domain, HTTPS, firewall and backups;
+- moving your clients, stock and history over from spreadsheets or another CRM;
+- updates, monitoring and help when something goes wrong;
+- new modules and changes for the way your business works.
+
+For pricing and terms, write to [denis@krokosha.com](mailto:denis@krokosha.com), message [@DenisHumen](https://t.me/DenisHumen) on Telegram, or reach me through [krokosha.com](https://krokosha.com).
+
+If OpenCRM is useful to you, you can support its development through [GitHub Sponsors](https://github.com/sponsors/DenisHumen) — or just star the repository.
 
 ## 🤝 Contributing
 
