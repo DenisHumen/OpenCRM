@@ -158,7 +158,7 @@ class Document(Base):
     # адрес внутри QR — второго идентификатора заводить незачем.
     number: Mapped[str] = mapped_column(String(24), unique=True, index=True)
     kind: Mapped[str] = mapped_column(String(24), default=KIND_INTAKE)
-    locale: Mapped[str] = mapped_column(String(2), default="ru")
+    locale: Mapped[str] = mapped_column(String(2), default="en")
     status: Mapped[str] = mapped_column(String(16), default=STATUS_ISSUED, index=True)
 
     client_id: Mapped[int | None] = mapped_column(

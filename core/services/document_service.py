@@ -201,6 +201,15 @@ def _insert_with_free_number(db: Session, status: str = STATUS_ISSUED, **fields)
     )
 
 
+def yazyk_bumagi(author) -> str:
+    """Язык бумаги по умолчанию — язык того, кто её выписывает.
+
+    Был вшит «ru»: английской установке заказ, возврат, акт и накладная уходили
+    клиенту по-русски — «Заказ / Итого / Отпустил» (разбор 29.09.2026)."""
+    yazyk = getattr(author, "locale", None)
+    return yazyk if yazyk in DOCUMENT_LOCALES else "en"
+
+
 def create(db: Session, data: dict, author: User) -> Document:
     kind = data.get("kind") or KIND_INTAKE
     if kind not in DOCUMENT_KINDS:
@@ -222,7 +231,7 @@ def create(db: Session, data: dict, author: User) -> Document:
             f"{kind} has its own creation path", code="kind_has_own_path"
         )
 
-    locale = data.get("locale") or "ru"
+    locale = data.get("locale") or yazyk_bumagi(author)
     if locale not in DOCUMENT_LOCALES:
         raise errors.ValidationError(f"Unknown locale: {locale}", code="unknown_locale")
 

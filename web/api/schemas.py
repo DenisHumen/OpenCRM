@@ -1148,6 +1148,7 @@ def return_out(
     return {
         "id": vozvrat.id,
         "number": vozvrat.number,
+        "locale": vozvrat.locale,
         "kind": vozvrat.kind,
         "status": vozvrat.status,
         "client_id": vozvrat.client_id,

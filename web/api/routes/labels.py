@@ -33,9 +33,9 @@ router = APIRouter(
 #: бланков, здесь нет: всё остальное на наклейке — это значения полей, и их
 #: собирает сервис, потому что зависят они от товара, а не от страницы.
 PRINT_STRINGS = {
-    "ru": {"title": "Наклейки", "no_code": "код не задан", "print": "Печать"},
-    "en": {"title": "Labels", "no_code": "no barcode", "print": "Print"},
-    "uk": {"title": "Наклейки", "no_code": "код не задано", "print": "Друк"},
+    "ru": {"title": "Наклейки", "no_code": "код не задан", "print": "Печать", "mm": "мм"},
+    "en": {"title": "Labels", "no_code": "no barcode", "print": "Print", "mm": "mm"},
+    "uk": {"title": "Наклейки", "no_code": "код не задано", "print": "Друк", "mm": "мм"},
 }
 
 
@@ -159,7 +159,9 @@ def print_labels(
         # значит оставить его гадать, почему принтер промолчал.
         raise errors.ValidationError("Nothing to print", code="nothing_to_print")
 
-    lang = locale if locale in DOCUMENT_LOCALES else "ru"
+    # Не прислали — язык сотрудника: вшитый «ru» печатал английской установке
+    # «кг», «шт», «код не задан» на наклейке для покупателя (разбор 29.09.2026).
+    lang = locale if locale in DOCUMENT_LOCALES else (user.locale if user.locale in DOCUMENT_LOCALES else "en")
     settings = barcode_service.label_settings(db)
     # Язык уезжает в сервис, а не только в шаблон: значения полей от него
     # зависят («кг» против «kg», «мин» против «min»), а собирает их сервис.

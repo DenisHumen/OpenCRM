@@ -73,7 +73,8 @@ def product(root_client, *, stock="10", price="500", unit="pcs"):
 
 
 def chernovik(client, *, klient_id, tovar, quantity="3", kind="waybill_out"):
-    created = client.post(WAYBILLS, json={"kind": kind, "client_id": klient_id})
+    # Файл проверяет русскую бумагу — и просит её явно: по умолчанию язык сотрудника.
+    created = client.post(WAYBILLS, json={"kind": kind, "client_id": klient_id, "locale": "ru"})
     assert created.status_code == 201, created.text
     waybill = created.json()
     added = client.post(

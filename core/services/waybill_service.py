@@ -199,7 +199,9 @@ def create(db: Session, data: dict, author: User) -> Document:
         db,
         status=STATUS_DRAFT,
         kind=kind,
-        locale=data.get("locale") or "ru",
+        # Производная бумага говорит на языке основания: накладная по заказу для
+        # того же клиента, что и заказ.
+        locale=data.get("locale") or (basis.locale if basis is not None else document_service.yazyk_bumagi(author)),
         client_id=client_id,
         deal_id=deal_id,
         basis_id=basis.id if basis else None,

@@ -454,3 +454,19 @@ def test_kartinka_bez_razmera_ne_ronyaet_pechat():
     """Не нашли размера — отдаём как есть. Наклейка без рамки лучше, чем отказ."""
     bez = "<svg><rect/></svg>"
     assert codes._s_ramkoy(bez) == bez
+
+
+def test_naklejki_po_umolchaniyu_na_yazyke_sotrudnika(blok_vklyuchen, root_client):
+    """Разбор 29.09.2026: ссылка печати наклеек не передавала язык, а сервер брал
+    «ru» — английская установка клеила на товар «шт», «кг» и «код не задан»."""
+    from tests.conftest import API
+
+    tovar = root_client.post(
+        f"{API}/warehouse/products", json={"name": f"Наклейка язык {next(_counter)}", "unit": "pcs"}
+    ).json()
+    root_client.patch(f"{API}/auth/me", json={"locale": "en"})
+    stranitsa = root_client.get(f"{API}/labels/print", params={"product_id": tovar["id"], "preview": "true"})
+    assert stranitsa.status_code == 200, stranitsa.text
+    razmer = re.search(r"\d+×\d+ (\S+) ·", stranitsa.text)
+    assert razmer and razmer.group(1) == "mm", f"наклейка английского сотрудника не по-английски: {razmer}"
+

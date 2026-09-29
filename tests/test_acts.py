@@ -103,7 +103,7 @@ def product(root_client, stock="10", cost="10000", price="50000", service=False)
 
 
 def make_act(root_client, deal, **fields):
-    created = root_client.post(ACTS, json={"deal_id": deal["id"], **fields})
+    created = root_client.post(ACTS, json={"deal_id": deal["id"], "locale": "ru", **fields})
     assert created.status_code == 201, created.text
     return created.json()
 

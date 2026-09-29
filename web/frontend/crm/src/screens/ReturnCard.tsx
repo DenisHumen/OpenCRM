@@ -4,6 +4,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { History } from "../components/History";
 import { Icon } from "../components/Icon";
 import { NapominaniyaKartochki } from "../components/NapominaniyaKartochki";
+import { PrintLangs } from "../components/PrintLangs";
 import { Chip, ConfirmModal, EmptyState, KnopkaKorziny, LoadFailed, ScreenLoading } from "../components/ui";
 import { VyborKlienta } from "../components/VyborKlienta";
 import { WarehousePicker, useWarehouses } from "../components/Warehouses";
@@ -166,10 +167,7 @@ export function ReturnCard() {
           {/* Печать — обычная ссылка в новую вкладку, как у накладной. Только у
               проведённого: черновик правится, а подписанная бумага — нет. */}
           {vozvrat.status === "closed" && (
-            <a className="btn btn-secondary" href={`/api/v1/returns/${vozvrat.id}/print`} target="_blank" rel="noreferrer">
-              <Icon name="printer" size={14} />
-              {t("returnPrint")}
-            </a>
+            <PrintLangs base={`/api/v1/returns/${vozvrat.id}/print`} current={vozvrat.locale} />
           )}
           {(draft || vozvrat.status === "cancelled") && can(user, "orders.edit") && (
             <KnopkaKorziny disabled={guard.busy} onClick={() => setConfirm("delete")} />

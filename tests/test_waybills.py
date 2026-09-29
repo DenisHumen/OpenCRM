@@ -849,3 +849,28 @@ def test_storno_ne_vozvrashchaet_uzhe_vernuvsheesya_vozvratom(root_client, clien
     root_client.patch(f"{WAYBILLS}/{storno['id']}/lines/{st['id']}", json={"quantity": "1"})
     assert root_client.post(f"{WAYBILLS}/{storno['id']}/post", json={}).status_code == 200
     assert ostatok(root_client, item) == 3_000, "вернулось ровно отгруженное"
+
+
+def test_yazyk_bumagi_po_umolchaniyu_yazyk_sotrudnika_a_proizvodnoy_osnovaniya(root_client, client_row):
+    """Разбор 29.09.2026: язык бумаги был вшит «ru» — английской установке заказ,
+    возврат, акт и накладная уходили клиенту по-русски. Теперь по умолчанию язык
+    того, кто выписывает, а накладная по заказу говорит на языке заказа."""
+    root_client.patch(f"{API}/auth/me", json={"locale": "en"})
+    zakaz = root_client.post(ORDERS, json={"kind": "sales_order", "client_id": client_row["id"]}).json()
+    assert zakaz["locale"] == "en", "заказ английского сотрудника выписан не по-английски"
+
+    ukrainskiy = root_client.post(
+        ORDERS, json={"kind": "sales_order", "client_id": client_row["id"], "locale": "uk"}
+    ).json()
+    po_zakazu = root_client.post(
+        WAYBILLS, json={"kind": "waybill_out", "client_id": client_row["id"], "basis_id": ukrainskiy["id"]}
+    ).json()
+    assert po_zakazu["locale"] == "uk", "накладная по заказу говорит не на языке заказа"
+
+    root_client.patch(f"{API}/auth/me", json={"locale": "ru"})
+    try:
+        russkiy = root_client.post(ORDERS, json={"kind": "sales_order", "client_id": client_row["id"]}).json()
+        assert russkiy["locale"] == "ru"
+    finally:
+        root_client.patch(f"{API}/auth/me", json={"locale": "en"})
+

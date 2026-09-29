@@ -28,6 +28,8 @@ def make_doc(manager_client, **extra):
         "problem": "Не включается после падения",
         "estimate": "от 4000",
         "terms": "Диагностика 2 дня",
+        # Проверки ниже читают русский бланк; по умолчанию язык сотрудника.
+        "locale": "ru",
     }
     body.update(extra)
     return manager_client.post(DOCS, json=body).json()

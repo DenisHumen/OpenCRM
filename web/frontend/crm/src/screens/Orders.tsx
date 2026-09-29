@@ -40,6 +40,7 @@ export interface OrderLine {
 export interface Order {
   id: number;
   number: string;
+  locale: string;
   kind: "sales_order" | "purchase_order";
   status: string;
   assembled: boolean;

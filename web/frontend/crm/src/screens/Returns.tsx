@@ -26,6 +26,7 @@ import type { OrderLine } from "./Orders";
 export interface Return {
   id: number;
   number: string;
+  locale: string;
   kind: "return";
   status: string;
   client_id: number | null;

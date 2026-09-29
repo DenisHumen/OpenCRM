@@ -43,7 +43,8 @@ class DocumentIn(BaseModel):
     # От чьего имени выдаём бланк. Не прислали — берём фирму заявки, а если её
     # нет, фирму по умолчанию (core/services/company_service.for_document).
     company_id: int | None = None
-    locale: str = "ru"
+    # Пусто — язык сотрудника (`document_service.yazyk_bumagi`).
+    locale: str | None = None
     # Если клиента в базе ещё нет — принимаем данные прямо в бланк: в мастерской
     # человек стоит у стойки, и заводить карточку до квитанции неудобно.
     client_name: str | None = None
@@ -68,7 +69,7 @@ class ActIn(BaseModel):
     deal_id: int
     client_id: int | None = None
     company_id: int | None = None
-    locale: str = "ru"
+    locale: str | None = None
     # Заголовок бумаги: «Акт выполненных работ», «Наряд-заказ», «Акт
     # сдачи-приёмки». Пусто — подставится общий.
     title: str | None = None

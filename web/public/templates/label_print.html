@@ -176,7 +176,7 @@
 {% endfor %}
 <div class="bar">
   <button onclick="window.print()">{{ t.print }}</button>
-  <small>{{ width_mm }}×{{ height_mm }} мм · {{ items|length }}</small>
+  <small>{{ width_mm }}×{{ height_mm }} {{ t.mm }} · {{ items|length }}</small>
 </div>
 {% if not preview %}
 <script>

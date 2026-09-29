@@ -4,6 +4,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { History } from "../components/History";
 import { Icon } from "../components/Icon";
 import { NapominaniyaKartochki } from "../components/NapominaniyaKartochki";
+import { PrintLangs } from "../components/PrintLangs";
 import { useLabelsOn } from "../components/ProductBarcodes";
 import { Chip, ConfirmModal, KnopkaKorziny, LoadFailed, Modal, ScreenLoading } from "../components/ui";
 import { VyborKlienta } from "../components/VyborKlienta";
@@ -229,15 +230,7 @@ export function OrderCard() {
           )}
           {/* Печать — обычная ссылка в новую вкладку: это window.print() на
               настоящей странице со своим @page, и выборкой её не получить. */}
-          <a
-            className="btn btn-secondary btn-sm"
-            href={`/api/v1/orders/${order.id}/print`}
-            target="_blank"
-            rel="noreferrer"
-          >
-            <Icon name="printer" size={14} />
-            {t("orderPrint")}
-          </a>
+          <PrintLangs base={`/api/v1/orders/${order.id}/print`} current={order.locale} />
         </div>
       </div>
 
