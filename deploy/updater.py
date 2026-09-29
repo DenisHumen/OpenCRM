@@ -40,7 +40,8 @@
 Коммит, который не встал, запоминается (`failed_sha`) и сам собой больше не
 пробуется: иначе демон каждые пять минут пересобирал бы заведомо сломанную
 версию и слал бы об этом сообщения. Повтор — только `force-update` или
-следующий коммит в ветке.
+следующий коммит в ветке. Отказ СЕТИ до подмены (`SETEVOY_OTKAZ`) коммит не
+помечает: опрос повторит сборку сам, до `SETEVYKH_POPYTOK` раз.
 
 Все git-команды идут с `-c safe.directory=<чекаут>`. Каталог на боевом сервере
 принадлежит человеку, который его клонировал, а обновлятор запускают то от него,
@@ -187,6 +188,23 @@ SNAPSHOT_TAIL_BYTES = 4096
 #: подряд для разбора хватает. Меньше нельзя: одна копия означает, что вторая
 #: неудача стирает улику первой.
 SNAPSHOTS_KEPT = 2
+
+#: Отказ сети, а не коммита: реестр образов, пакетов или GitHub не ответил.
+#: 29.09.2026 Docker Hub не ответил на TLS-рукопожатие, и исправный коммит был
+#: записан в «не встал» — сам он больше не повторился бы никогда.
+SETEVOY_OTKAZ = re.compile(
+    r"TLS handshake timeout|i/o timeout|connection reset by peer|connection timed out"
+    r"|Temporary failure in name resolution|no such host|Could not resolve host"
+    r"|Failed to connect to|failed to fetch anonymous token|toomanyrequests"
+    r"|context deadline exceeded|unexpected EOF|The remote end hung up|early EOF"
+    r"|ETIMEDOUT|ECONNRESET|EAI_AGAIN|ENOTFOUND|ReadTimeoutError|Max retries exceeded"
+    r"|NewConnectionError|502 Bad Gateway|503 Service Unavailable|504 Gateway",
+    re.I,
+)
+
+#: Сколько сетевых отказов подряд на одном коммите терпим, прежде чем записать
+#: его в «не встал» как обычно: 24 опроса по пять минут — два часа.
+SETEVYKH_POPYTOK = 24
 
 
 #: Строка, которой дампер открывает каждую таблицу.
@@ -803,6 +821,7 @@ class Updater:
         self._progress_started = ""
         self.log(f"обновление {previous[:12]} → {target[:12]} {summary}")
 
+        povtor_seti: bool | None = None
         try:
             # Уборка копий — ПЕРВЫМ делом, ДО проверки свободного места.
             #
@@ -854,7 +873,7 @@ class Updater:
             itog_kesha = self._pochistit_kesh(steps, vsyo=False, kak="avto")
 
             outcome = Outcome(STATUS_DEPLOYED, previous, target, summary, "", steps, kesh=itog_kesha)
-            self.journal.write(deployed_sha=target, failed_sha="", baza_porvana="")
+            self.journal.write(deployed_sha=target, failed_sha="", baza_porvana="", setevaya_sha="", setevykh_popytok=0)
         except _Stop as stop:
             if not touched:
                 # Живой сайт не трогали — достаточно вернуть чекаут на место.
@@ -871,13 +890,35 @@ class Updater:
                 broken = self._rollback(steps, previous, snapshot, restore_db=migrated)
                 status = STATUS_BROKEN if broken else STATUS_ROLLED_BACK
                 outcome = Outcome(status, previous, target, summary, str(stop), steps)
-            self.journal.write(failed_sha=target)
+            povtor_seti = self._setevoy_otkaz(stop, steps, target, touched)
+            if povtor_seti is None:
+                self.journal.write(failed_sha=target, setevaya_sha="", setevykh_popytok=0)
 
         outcome.seconds = self._clock() - started
         self._progress_finish(outcome, touched)
-        self.journal.append(outcome.as_record())
-        self._notify(outcome)
+        if not povtor_seti:
+            self.journal.append(outcome.as_record())
+            self._notify(outcome)
         return outcome
+
+    def _setevoy_otkaz(self, stop: Exception, steps: list[Step], target: str, touched: bool) -> bool | None:
+        """Отказ сети до подмены: коммит не помечается «не встал», опрос повторит.
+
+        None — отказ не сетевой (или сеть не встаёт уже два часа): решает обычный
+        `failed_sha`. Иначе — повтор ли это того же сетевого отказа: о повторе не
+        звоним и не пишем в историю, иначе каждые пять минут приходило бы то же.
+        """
+        tekst = " ".join([str(stop)] + [s.detail for s in steps if not s.ok])
+        if touched or not SETEVOY_OTKAZ.search(tekst):
+            return None
+        bylo = self.journal.read()
+        popytok = int(bylo.get("setevykh_popytok") or 0) + 1 if bylo.get("setevaya_sha") == target else 1
+        if popytok > SETEVYKH_POPYTOK:
+            return None
+        # Метку опроса забываем, как у ждущего CI: иначе следующий опрос ответил
+        # бы «не изменилось», и коммит ждал бы следующего.
+        self.journal.write(etag="", setevaya_sha=target, setevykh_popytok=popytok)
+        return popytok > 1
 
     def _gryaz_tolko_v_perevodakh_strok(self, porcelain: str) -> bool:
         """Все правки — отслеживаемые файлы, и без CR в конце строк их нет."""

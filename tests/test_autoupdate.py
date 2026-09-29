@@ -3148,3 +3148,43 @@ def test_razorvannaya_zalivka_ne_podnimaet_staryy_kod_i_derzhit_obnovleniya(tmp_
     assert prinuditelno.run_once(force=True).status == STATUS_DEPLOYED
     assert not prinuditelno.journal.read().get("baza_porvana"), "удачная выкладка не сняла отметку"
 
+
+def test_setevoy_otkaz_sborki_ne_pomechaet_kommit_ne_vstavshim(tmp_path):
+    """Разбор 29.09.2026: Docker Hub не ответил на TLS-рукопожатие, сборка упала, и
+    исправный коммит записался в `failed_sha` — сам он больше не повторился бы
+    никогда. Сетевой отказ до подмены не помечает коммит; опрос повторяет сборку,
+    а звонок о сбое один, а не каждые пять минут."""
+    config = make_config(tmp_path)
+    shell = FakeShell()
+    shell.fail("build app", err='failed to fetch anonymous token: Get "https://auth.docker.io/token": net/http: TLS handshake timeout')
+    updater = make_updater(tmp_path, config=config, shell=shell)
+
+    pervyy = updater.run_once()
+    assert pervyy.status == STATUS_ABORTED
+    assert updater.journal.read().get("failed_sha") != NEW, "сетевой сбой записал коммит в «не встал»"
+    assert updater.journal.read().get("etag") == "", "следующий опрос не повторит сборку"
+    zvonkov = len(updater.notifier.messages)
+    assert zvonkov == 1
+
+    vtoroy = updater.run_once()
+    assert vtoroy.status == STATUS_ABORTED and updater.shell.ran("build app")
+    assert len(updater.notifier.messages) == zvonkov, "о том же сетевом сбое звонят каждые пять минут"
+
+    zdorovaya = make_updater(tmp_path, config=config, shell=_s_dampom(config))
+    assert zdorovaya.run_once().status == STATUS_DEPLOYED
+    assert not zdorovaya.journal.read().get("setevaya_sha")
+
+
+def test_nesetevoy_otkaz_sborki_pomechaet_kommit_kak_ran_she(tmp_path):
+    shell = FakeShell()
+    shell.fail("build app", err="npm ERR! code ELIFECYCLE")
+    updater = make_updater(tmp_path, shell=shell)
+    assert updater.run_once().status == STATUS_ABORTED
+    assert updater.journal.read().get("failed_sha") == NEW
+
+
+def _s_dampom(config):
+    shell = FakeShell()
+    shell.effect("scripts.snapshot_db dump", damp_snimaetsya(config, shell))
+    return shell
+
