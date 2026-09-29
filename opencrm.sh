@@ -2676,6 +2676,14 @@ cmd_restore() {
         run_painted compose up -d
         die "$(tr_ "не удалось снять дамп текущей базы — ничего не менял" "could not dump the current database — nothing was changed")"
     fi
+    # Базу — заново, а не поверх: дамп роняет и создаёт только свои таблицы, и
+    # таблица из миграции новее копии оставалась — `alembic upgrade` падал на ней
+    # с 1050, и контейнер вставал в цикл перезапусков (разбор 29.09.2026).
+    # shellcheck disable=SC2016  # имя базы и пароль раскрываются внутри контейнера
+    if ! compose exec -T db sh -c 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" exec mysql -u root -e "DROP DATABASE IF EXISTS $MYSQL_DATABASE; CREATE DATABASE $MYSQL_DATABASE"'; then
+        run_painted compose up -d
+        die "$(tr_ "не удалось пересоздать базу перед заливкой; прежняя целиком лежит в $_before" "could not recreate the database before loading; the previous one is whole at $_before")"
+    fi
     # Заливаем клиентом из образа базы, по той же причине, что и дамп.
     # Пароль опять разворачивается внутри контейнера.
     info "$(tr_ "заливаю дамп" "loading the dump")"

@@ -681,7 +681,7 @@ def _vosstanovlenie(job: dict, actor_id: int, syroy: Path) -> None:
             # зашифрованное в залитой базе останется мусором.
             klyuch_kopii = klyuchi_iz_dampa(syroy).get("OPENCRM_SECRET_KEY", "")
             with schema_check.zamok_shemy(engine):
-                backups_repo.zalit_damp(url, syroy)
+                job["dropped"] = backups_repo.zalit_damp(url, syroy)
                 _dognat_migratsii(url)
             otchyot = schema_check.check(engine)
             if not otchyot.ok:

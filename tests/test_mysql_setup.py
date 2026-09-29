@@ -768,3 +768,16 @@ def test_smena_parolya_paneli_menyaet_parol_a_ne_peremennuyu():
         "неудачная смена пароля не отличается от удачной — человек уходит "
         "уверенным, что сменил пароль"
     )
+
+
+def test_vosstanovlenie_iz_menyu_peresozdaet_bazu():
+    """Разбор 29.09.2026: дамп роняет только свои таблицы, и копия старше кода
+    оставляла таблицы новых миграций — `alembic upgrade` падал с 1050, контейнер
+    вставал в цикл перезапусков. База пересоздаётся — после снимка прежней и до
+    заливки, иначе пересоздание стёрло бы то, к чему откатываться."""
+    kod = _kod("cmd_restore")
+    snimok = kod.index('dump_mysql "$_before"')
+    peresozdanie = kod.index("DROP DATABASE IF EXISTS $MYSQL_DATABASE; CREATE DATABASE $MYSQL_DATABASE")
+    zalivka = kod.index("exec mysql --default-character-set")
+    assert snimok < peresozdanie < zalivka, "база пересоздаётся не между снимком прежней и заливкой"
+

@@ -14,6 +14,7 @@
 кладут, и граница базы (`tests/test_db_boundary.py`) держит его здесь.
 """
 
+import re
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -98,8 +99,17 @@ def operatory(stroki) -> Iterator[str]:
         yield hvost
 
 
-def zalit_damp(url: str, damp: Path) -> None:
-    """Залить файл дампа в базу по адресу `url`. Дамп сам роняет и создаёт таблицы.
+#: Таблица, которую дамп роняет перед созданием, — строка `DROP TABLE IF EXISTS`.
+_DROP_V_DAMPE = re.compile(r"^DROP TABLE IF EXISTS `([^`]+)`;?$")
+
+
+def zalit_damp(url: str, damp: Path) -> list[str]:
+    """Залить файл дампа в базу по адресу `url`. Вернуть снятые лишние таблицы.
+
+    Дамп роняет и создаёт только СВОИ таблицы. Таблица из миграции новее копии
+    оставалась, и `alembic upgrade` падал на ней с 1050 (разбор 29.09.2026) —
+    поэтому после заливки снимается всё, чего копия не знает. Дамп без единого
+    `DROP TABLE` не сносит ничего: разница вышла бы «вся база».
 
     **Пачками, а не одним разговором.** Прежде весь дамп уезжал одним
     `execute`, то есть одним пакетом: сервер сверяет его с `max_allowed_packet`
@@ -123,8 +133,12 @@ def zalit_damp(url: str, damp: Path) -> None:
 
         pachka: list[str] = []
         dlina = 0
+        znaet: set[str] = set()
         with damp.open("r", encoding="utf-8") as fayl:
             for operator in operatory(fayl):
+                sovpalo = _DROP_V_DAMPE.match(operator.strip())
+                if sovpalo:
+                    znaet.add(sovpalo.group(1))
                 # Оператор длиннее предела в одиночку не разрезать, не разбирая
                 # значения. Такого быть не должно — свой дампер держит `INSERT`
                 # в пятьсот строк, — но чужой дамп бывает и другим, и внятный
@@ -140,7 +154,17 @@ def zalit_damp(url: str, damp: Path) -> None:
                 pachka.append(operator)
                 dlina += len(operator)
             otdat(pachka)
+        lishnie: list[str] = []
+        if znaet:
+            kursor.execute("SHOW FULL TABLES WHERE Table_type = 'BASE TABLE'")
+            lishnie = sorted({stroka[0] for stroka in kursor.fetchall()} - znaet)
+        if lishnie:
+            spisok = ", ".join("`" + imya.replace("`", "``") + "`" for imya in lishnie)
+            kursor.execute(f"SET FOREIGN_KEY_CHECKS=0; DROP TABLE IF EXISTS {spisok}; SET FOREIGN_KEY_CHECKS=1")
+            while kursor.nextset():
+                pass
         syroe.commit()
+        return lishnie
     finally:
         syroe.close()
         dvizhok.dispose()

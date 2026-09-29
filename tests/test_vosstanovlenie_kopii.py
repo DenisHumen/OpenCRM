@@ -528,3 +528,38 @@ def test_shirokie_stroki_rezhutsya_po_obyomu_a_ne_po_schyotu(chistaya_baza, tmp_
             doehalo = dict(soedinenie.execute(text("SELECT id, telo FROM proba_shirokikh")).all())
     assert doehalo == tela
 
+
+def test_zalivka_snosit_tablitsy_kotorykh_kopiya_ne_znaet(tmp_path):
+    """Разбор 29.09.2026: дамп роняет и создаёт только свои таблицы. Таблица из
+    миграции новее копии оставалась, и `alembic upgrade` после восстановления падал
+    на ней с 1050 — сайт с экрана не поднимался, режим обслуживания висел."""
+    from database.repositories import backups as backups_repo
+
+    damp = tmp_path / "damp.sql"
+    damp.write_text(
+        "SET FOREIGN_KEY_CHECKS=0;\n"
+        "DROP TABLE IF EXISTS `staraya`;\n"
+        "CREATE TABLE `staraya` (`id` int NOT NULL, PRIMARY KEY (`id`));\n"
+        "INSERT INTO `staraya` (`id`) VALUES\n(7);\n"
+        "SET FOREIGN_KEY_CHECKS=1;\n",
+        encoding="utf-8",
+    )
+    bez_drop = tmp_path / "bez_drop.sql"
+    bez_drop.write_text("INSERT INTO `staraya` (`id`) VALUES\n(8);\n", encoding="utf-8")
+    with _svoya_shema("lishnie_tablitsy") as tsel:
+        with _dvizhok(tsel) as dvizhok, dvizhok.begin() as soedinenie:
+            soedinenie.execute(text("CREATE TABLE staraya (id INT PRIMARY KEY)"))
+            soedinenie.execute(text(
+                "CREATE TABLE iz_novoy_migratsii (id INT PRIMARY KEY, staraya_id INT, "
+                "FOREIGN KEY (staraya_id) REFERENCES staraya(id))"
+            ))
+        snyato = backups_repo.zalit_damp(tsel, damp)
+        # Дамп без единого DROP TABLE не знает своих таблиц — сносить нечего.
+        assert backups_repo.zalit_damp(tsel, bez_drop) == []
+        with _dvizhok(tsel) as dvizhok, dvizhok.connect() as soedinenie:
+            tablitsy = {imya for (imya,) in soedinenie.execute(text("SHOW TABLES"))}
+            stroki = sorted(i for (i,) in soedinenie.execute(text("SELECT id FROM staraya")))
+    assert snyato == ["iz_novoy_migratsii"]
+    assert tablitsy == {"staraya"}, f"после заливки остались таблицы, которых копия не знает: {tablitsy}"
+    assert stroki == [7, 8]
+
