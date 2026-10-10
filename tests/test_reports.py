@@ -572,16 +572,16 @@ def test_partial_month_boundary_still_follows_the_local_midnight(manager_client)
     23:30 по местному (20:30 UTC) — обязан.
     """
     KYIV = -180
-    window = {"from": "2026-10-01", "to": "2026-10-10", "tz_offset": KYIV}
-    person = new_client(manager_client, "Полночь на границе подрезки", moment=datetime(2026, 10, 1))
+    window = {"from": "2025-10-01", "to": "2025-10-10", "tz_offset": KYIV}
+    person = new_client(manager_client, "Полночь на границе подрезки", moment=datetime(2025, 10, 1))
 
-    make_deal(manager_client, person["id"], "won", datetime(2026, 10, 10, 21, 30), amount=170_000)
+    make_deal(manager_client, person["id"], "won", datetime(2025, 10, 10, 21, 30), amount=170_000)
     after = report(manager_client, "revenue", **window)
     assert after["won_count"] == 0, "граница подрезки посчитана по UTC, а не по местной полуночи"
 
     # 10 октября 20:30 UTC — это ещё 23:30 по Киеву, последний вечер периода
-    earlier = new_client(manager_client, "Последний вечер периода", moment=datetime(2026, 10, 1))
-    make_deal(manager_client, earlier["id"], "won", datetime(2026, 10, 10, 20, 30), amount=170_000)
+    earlier = new_client(manager_client, "Последний вечер периода", moment=datetime(2025, 10, 1))
+    make_deal(manager_client, earlier["id"], "won", datetime(2025, 10, 10, 20, 30), amount=170_000)
     later = report(manager_client, "revenue", **window)
     assert later["won_count"] == 1, "вечер последнего дня периода потерян"
     assert later["won_amount"] == 170_000
