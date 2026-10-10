@@ -72,7 +72,8 @@ Every image below is a screenshot of the real thing. The data is invented: a Por
 
 ### Also in the box
 
-- **Mail.** A company IMAP/SMTP mailbox; incoming messages match a client by address and land in their feed.
+- **Mail.** Company IMAP/SMTP mailboxes; messages from shared mailboxes match a client by address and land in their feed.
+- **Your own mail server.** The CRM installs docker-mailserver on a rented VPS over SSH (or on the same machine), checks the box and the DNS first, shows the install log live, rolls back on failure and says how to fix it. Then: as many mailboxes and aliases as you like, a webmail with push on new mail, a full copy of every letter kept in the CRM, and an API token limited to chosen mailboxes ([doc 32](docs/bloki/32-pochtovyy-server.md)).
 - **Calls.** A call log, a signed webhook from your phone provider, click-to-call from any card, and a "ring them back" reminder in one click.
 - **Telegram.** A company bot as a third channel next to mail and calls: dialogues in a messenger screen, linked to client cards ([doc 13](docs/ustroystvo/13-telegram-v-crm.md)).
 - **Leads from your website.** Post your contact form to a keyed endpoint and the enquiry arrives in the pipeline.
@@ -463,6 +464,7 @@ Everything is in [docs](docs/README.md). **The manual is written in Russian** �
 | [29 — Reminders](docs/bloki/29-napominaniya.md) | People, repeats, alerts, calendar |
 | [30 — Employee tokens](docs/bloki/30-tokeny-i-mcp.md) | The whole API for programs and AI agents (MCP) |
 | [31 — Web Push](docs/bloki/31-web-push.md) | Reminder ring with the tab closed |
+| [32 — Mail server](docs/bloki/32-pochtovyy-server.md) | Own mail server on a VPS, mailboxes, webmail, a copy of all mail in the CRM |
 | [24 — Security audit](docs/ekspluatatsiya/24-audit-bezopasnosti.md), [14 — Rust](docs/ustroystvo/14-rust.md), [18 — Third-party components](docs/dizayn/18-chuzhie-komponenty.md), [23 — Kubernetes note](docs/ekspluatatsiya/23-kubernetes-zametka.md) | One-off reviews and decisions |
 
 ## 📁 Project structure

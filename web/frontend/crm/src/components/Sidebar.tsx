@@ -540,7 +540,8 @@ export function Sidebar({
     // тот, кто правит логотип сайта, видел пункт и получал отказ на первом же
     // открытии.
     kategoriya("channels", t("catChannels"), [
-      { module: "mail", perm: "settings.manage", to: "/settings/mailboxes", label: t("mailboxes") },
+      { module: "mail", perm: "mail.manage", to: "/settings/mail-server", label: t("msrvTitle") },
+      { module: "mail", perm: "mail.manage", to: "/settings/mailboxes", label: t("mailboxes") },
       { module: "telephony", perm: "settings.manage", to: "/settings/telephony", label: t("telephony") },
       { module: "telegram", perm: "telegram.manage", to: "/settings/telegram", label: t("modTelegram") },
     ]),

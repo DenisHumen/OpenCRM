@@ -5284,3 +5284,864 @@ html { scroll-behavior: smooth; }
 .ssylka-zapis { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 4px 0; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 12px; }
 .ssylka-zapis:last-child { border-bottom: 0; }
 .ssylka-kogda { color: var(--faint); white-space: nowrap; font-variant-numeric: tabular-nums; }
+
+/* --- Почтовый сервер: мастер установки и карточка (docs/bloki/32-pochtovyy-server.md).
+   Журнал установки — в том же окне, где нажали кнопку: человек видит, что идёт,
+   а не ждёт молча под вертушкой. */
+.msrv-master .spinner, .msrv-card .spinner, .msrv-job .spinner, .msrv-section .spinner { width: 14px; height: 14px; border-width: 2px; }
+.msrv-stepper { display: flex; gap: 6px; list-style: none; margin: 0 0 18px; padding: 0 0 14px; border-bottom: 1px solid var(--line); overflow-x: auto; }
+.msrv-stepper .step { display: flex; align-items: center; gap: 8px; flex: 1 1 0; min-width: max-content; }
+.msrv-stepper .step:not(:last-child)::after { content: ""; flex: 1; min-width: 12px; height: 2px; background: var(--border); }
+.msrv-stepper .step.passed:not(:last-child)::after { background: var(--brand); }
+.msrv-stepper .step-circle { width: 26px; height: 26px; font-size: 11.5px; }
+.msrv-stepper .step-title { font-size: 12.5px; white-space: nowrap; }
+.msrv-master-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; font-size: 13px; }
+.msrv-faint { color: var(--faint); }
+.msrv-small { font-size: 11.5px; line-height: 1.5; }
+.msrv-mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
+.msrv-q { font-size: 13.5px; line-height: 1.6; color: var(--text); margin-bottom: 14px; }
+.msrv-choice { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 14px; }
+.msrv-choice-item {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: 14px 16px;
+  border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--sub);
+  font-family: var(--sans); text-align: left; cursor: pointer;
+  transition: border-color 150ms, background-color 150ms;
+}
+.msrv-choice-item:hover { border-color: var(--border-hover); }
+.msrv-choice-item.active { border-color: var(--brand); background: var(--tint-brand); color: var(--brand); }
+.msrv-choice-title { font-size: 14px; font-weight: 600; color: var(--text); }
+.msrv-choice-desc { font-size: 12.5px; line-height: 1.5; color: var(--muted); }
+.msrv-actions { display: flex; gap: 10px; justify-content: flex-end; align-items: center; flex-wrap: wrap; margin-top: 18px; }
+.msrv-inline { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
+.msrv-inline .input { flex: 1; min-width: 180px; }
+.msrv-grid3 { display: grid; grid-template-columns: 2fr 1fr 1.4fr; gap: 0 12px; }
+.msrv-key { min-height: 110px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11.5px; resize: vertical; }
+.msrv-toggle-row { display: flex; align-items: flex-start; gap: 11px; margin: 4px 0 14px; }
+.msrv-address { display: flex; align-items: center; gap: 6px; }
+.msrv-address .input { flex: 1; min-width: 0; }
+.msrv-at { color: var(--muted); font-size: 13px; white-space: nowrap; }
+.msrv-chips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+.msrv-note {
+  display: flex; align-items: flex-start; gap: 10px; padding: 11px 13px; margin: 12px 0;
+  border-radius: 8px; font-size: 13px; line-height: 1.55; background: var(--well-off); color: var(--text);
+}
+.msrv-note > svg { flex: none; margin-top: 2px; }
+.msrv-note-ok { background: var(--tint-success); }
+.msrv-note-ok > svg { color: var(--success); }
+.msrv-note-warn { background: var(--tint-warning); }
+.msrv-note-warn > svg { color: var(--warning); }
+.msrv-note-info { background: var(--tint-accent); }
+.msrv-note-info > svg { color: var(--accent); }
+.msrv-steps { list-style: none; margin: 4px 0 12px; padding: 0; }
+.msrv-step { display: flex; align-items: flex-start; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--line); }
+.msrv-step:last-child { border-bottom: 0; }
+.msrv-step-icon {
+  flex: none; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--well-off); color: var(--faint);
+}
+.msrv-step-ok .msrv-step-icon { background: var(--tint-success); color: var(--success); }
+.msrv-step-warn .msrv-step-icon { background: var(--tint-warning); color: var(--warning); }
+.msrv-step-fail .msrv-step-icon { background: var(--tint-danger); color: var(--danger); }
+.msrv-step-running .msrv-step-icon { background: var(--tint-accent); }
+.msrv-step-running .msrv-step-icon .spinner { width: 12px; height: 12px; }
+.msrv-step-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; padding-top: 2px; }
+.msrv-step-title { font-size: 13px; color: var(--text); }
+.msrv-step-skip .msrv-step-title, .msrv-step-pending .msrv-step-title { color: var(--faint); }
+.msrv-step-why { font-size: 12px; color: var(--sub); line-height: 1.5; }
+.msrv-step-fail .msrv-step-why { color: var(--danger); }
+.msrv-step-warn .msrv-step-why { color: var(--warning); }
+.msrv-step-detail { font-size: 11.5px; color: var(--faint); overflow-wrap: anywhere; line-height: 1.45; }
+.msrv-step-fix > summary { cursor: pointer; font-size: 12px; color: var(--muted); padding: 2px 0; }
+.msrv-step-fix > summary:hover { color: var(--text); }
+.msrv-job { margin: 6px 0 4px; }
+.msrv-log-wrap { margin-top: 8px; }
+.msrv-log { max-height: 340px; overflow: auto; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; padding-right: 46px; }
+.msrv-log-wrap .docs-copy { opacity: 1; }
+.msrv-log-ok { color: var(--success); }
+.msrv-log-warn { color: var(--warning); }
+.msrv-log-fail { color: var(--danger); font-weight: 600; }
+.msrv-log-mark { color: var(--text); font-weight: 600; }
+.msrv-log-fold { margin-top: 10px; }
+.msrv-log-fold > summary { cursor: pointer; font-size: 12.5px; color: var(--muted); padding: 4px 0; }
+.msrv-log-fold > summary:hover { color: var(--text); }
+.msrv-fail { margin: 12px 0; padding: 13px 15px; border-radius: 8px; border: 1px solid var(--danger-line); background: var(--tint-danger); }
+.msrv-fail-title { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; color: var(--danger); }
+.msrv-fail-text { font-size: 13px; color: var(--text); line-height: 1.55; }
+.msrv-detail { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 160px; overflow: auto; }
+.msrv-fix { margin: 4px 0 6px; padding-left: 20px; font-size: 13px; line-height: 1.6; color: var(--text); }
+.msrv-fix li { margin-bottom: 6px; }
+.msrv-cmd { display: block; margin: 6px 0; }
+.msrv-cmd .code-block { margin: 0; }
+.msrv-done { display: flex; align-items: center; gap: 12px; margin: 14px 0; padding: 14px 16px; border-radius: 8px; background: var(--tint-success); }
+.msrv-done-icon { flex: none; width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; background: var(--success); color: var(--on-brand); }
+.msrv-done-title { font-size: 15px; font-weight: 600; color: var(--text); }
+.msrv-secret { margin: 12px 0; padding: 12px 14px; border-radius: 8px; border: 1px solid var(--border); background: var(--well); }
+.msrv-secret .code-block { font-size: 14px; letter-spacing: 0.04em; color: var(--text); }
+.msrv-secret-note { margin-top: 8px; font-size: 12px; color: var(--warning); line-height: 1.5; }
+.msrv-section { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--line); }
+.msrv-section-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; flex-wrap: wrap; }
+.msrv-dns { margin-bottom: 14px; }
+.msrv-dns-domain { font-size: 13px; font-weight: 600; margin-bottom: 6px; }
+.msrv-table-wrap { overflow-x: auto; border: 1px solid var(--frame); border-radius: 6px; }
+.msrv-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.msrv-table th { text-align: left; font-weight: 600; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; padding: 8px 10px; border-bottom: 1px solid var(--line); background: var(--well-off); }
+.msrv-table td { padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.msrv-table tr:last-child td { border-bottom: 0; }
+/* Имя записи узким столбцом рвалось по букве: «acme.te / st» не скопируешь глазами. */
+.msrv-table td:nth-child(3) { min-width: 170px; }
+.msrv-table td:nth-child(1), .msrv-table td:nth-child(2) { white-space: nowrap; }
+.msrv-copy-cell { display: flex; align-items: flex-start; gap: 6px; }
+.msrv-copy-cell code { flex: 1; min-width: 0; overflow-wrap: anywhere; color: var(--text); }
+.msrv-copy-cell .docs-copy, .mbx-copy .docs-copy { position: relative; top: auto; right: auto; opacity: 1; width: 26px; height: 26px; flex: none; }
+.msrv-value { max-height: 84px; overflow: auto; display: block; }
+.msrv-dns-hint { color: var(--sub); margin-top: 3px; }
+.msrv-card-head { display: flex; align-items: center; gap: 12px; }
+.msrv-card-icon { flex: none; width: 36px; height: 36px; border-radius: 8px; display: grid; place-items: center; background: var(--tint-brand); color: var(--brand); }
+.msrv-card-title { font-size: 15px; font-weight: 600; color: var(--text); overflow-wrap: anywhere; }
+.msrv-kv { margin: 0; }
+.msrv-kv-row { display: flex; gap: 12px; padding: 5px 0; border-bottom: 1px solid var(--line); font-size: 12.5px; }
+.msrv-kv-row:last-child { border-bottom: 0; }
+.msrv-kv-row dt { width: 150px; flex: none; color: var(--muted); }
+.msrv-kv-row dd { margin: 0; min-width: 0; overflow-wrap: anywhere; color: var(--text); }
+.msrv-job-row { width: 100%; height: auto; padding: 9px 14px; background: none; border-left: 0; border-right: 0; border-top: 0; font-family: var(--sans); font-size: 13px; color: var(--text); cursor: pointer; }
+.msrv-job-row:hover { background: var(--surface-2); }
+.msrv-danger-zone { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.msrv-danger-btn { color: var(--danger); border-color: var(--danger-line); }
+.msrv-danger-solid, .mbx-danger-solid { background: var(--danger-solid); color: var(--on-danger); border-color: var(--danger-solid); }
+.msrv-nowrap { white-space: nowrap; }
+.msrv-danger-zone > div { min-width: 220px; }
+@media (max-width: 640px) {
+  /* Таблица записей на телефоне — карточками: в четыре столбца имя шло по букве в строку. */
+  .msrv-table thead { display: none; }
+  .msrv-table, .msrv-table tbody, .msrv-table tr, .msrv-table td { display: block; }
+  .msrv-table tr { padding: 8px 10px; border-bottom: 1px solid var(--line); }
+  .msrv-table tr:last-child { border-bottom: 0; }
+  .msrv-table td { padding: 3px 0; border: 0; min-width: 0; }
+  .msrv-table td:nth-child(3) { min-width: 0; }
+  .msrv-table td:nth-child(1), .msrv-table td:nth-child(2) { display: inline-block; margin-right: 8px; vertical-align: middle; }
+  .msrv-choice, .msrv-grid3 { grid-template-columns: 1fr; }
+  .msrv-stepper .step-title { display: none; }
+  .msrv-stepper .step.now .step-title { display: inline; }
+  .msrv-kv-row { flex-direction: column; gap: 2px; }
+  .msrv-kv-row dt { width: auto; }
+  /* Кнопки в плашке (итог SSH) — строкой ниже: рядом они сжимали текст в столбик. */
+  .msrv-note { flex-wrap: wrap; }
+  .msrv-note > .msrv-actions { width: 100%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .msrv-choice-item { transition: none; }
+}
+
+/* --- Ящики своего сервера: действия в меню «⋯», а не рядом кнопок — их семь,
+   и на телефоне ряд кнопок выдавил бы адрес в ноль. */
+.mbx-head { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 12px; }
+.mbx-row { height: auto; padding: 11px 14px; }
+.mbx-avatar { flex: none; width: 32px; height: 32px; border-radius: 8px; display: grid; place-items: center; background: var(--tint-brand); color: var(--brand); }
+.mbx-address { font-size: 13.5px; font-weight: 500; color: var(--text); overflow-wrap: anywhere; }
+.mbx-faint { color: var(--faint); font-weight: 400; }
+.mbx-chips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 5px; }
+.mbx-actions { display: flex; gap: 10px; justify-content: flex-end; align-items: center; margin-top: 18px; }
+.mbx-actions .spinner { width: 14px; height: 14px; }
+.mbx-input-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.mbx-input-row > .input { flex: 1; min-width: 140px; }
+.mbx-at { color: var(--muted); font-size: 13px; }
+.mbx-domain { flex: 0 1 200px; width: auto; }
+.mbx-domain-text { font-size: 13px; color: var(--text); white-space: nowrap; }
+.mbx-mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.5px; }
+.mbx-dice { white-space: nowrap; }
+.mbx-copy { display: inline-flex; }
+.mbx-toggle-row { display: flex; align-items: flex-start; gap: 11px; margin: 4px 0 14px; }
+.mbx-grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
+.mbx-people { display: flex; flex-direction: column; max-height: 220px; overflow: auto; border: 1px solid var(--border); border-radius: 6px; padding: 4px 10px; }
+.mbx-person { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 5px 0; border-bottom: 1px solid var(--line); }
+.mbx-person:last-child { border-bottom: 0; }
+.mbx-person-name, .mbx-person-send { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
+.mbx-people > .mbx-person-name { padding: 5px 0; }
+.mbx-person-send { font-size: 12px; color: var(--muted); }
+.mbx-kv-group { margin-bottom: 12px; }
+.mbx-kv { margin: 0 0 8px; }
+.mbx-kv-row { display: flex; align-items: center; gap: 12px; padding: 5px 0; border-bottom: 1px solid var(--line); font-size: 12.5px; }
+.mbx-kv-row dt { width: 120px; flex: none; color: var(--muted); }
+.mbx-kv-row dd { margin: 0; display: flex; align-items: center; gap: 6px; min-width: 0; overflow-wrap: anywhere; }
+.mbx-alias-form { display: grid; grid-template-columns: 1.3fr 1fr auto; gap: 12px; align-items: end; }
+@media (max-width: 640px) {
+  .mbx-hide-narrow { display: none; }
+  .mbx-grid2, .mbx-alias-form { grid-template-columns: 1fr; }
+  .mbx-head { flex-direction: column; }
+}
+
+/* ============================================================
+   Веб-почта (/mail): ящики и папки | список | письмо.
+   Сетка — по образцу мессенджера (`.tg-screen`): приложение в приложении,
+   прокручиваются панели, а не страница, и класса `page` на экране нет.
+   ============================================================ */
+.app-shell:has(.wm-screen) {
+  height: 100dvh;
+  overflow: hidden;
+}
+.app-shell:has(.wm-screen) .app-main {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.wm-screen {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  margin: 12px;
+  display: grid;
+  grid-template-columns: clamp(210px, 18%, 260px) clamp(300px, 32%, 440px) minmax(0, 1fr);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  overflow: hidden;
+}
+.wm-veil { display: none; }
+
+/* --- левая панель: ящики и папки --- */
+.wm-side {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px 8px;
+  background: var(--well);
+  border-right: 1px solid var(--border);
+}
+.wm-write { width: 100%; flex-shrink: 0; }
+.wm-boxes { display: flex; flex-direction: column; gap: 2px; }
+.wm-box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 8px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.wm-box:hover { background: var(--well-off); }
+.wm-box.is-active { background: var(--tint-neutral); font-weight: 600; }
+.wm-box-name { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.wm-box-name > span,
+.wm-box-name small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wm-box-name small { color: var(--faint); font-size: 11px; font-weight: 400; }
+.wm-count {
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--tint-accent);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+.wm-folders {
+  list-style: none;
+  margin: 2px 0 6px;
+  padding: 0 0 0 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.wm-folders li { position: relative; display: flex; align-items: center; }
+.wm-folder {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  height: 30px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.wm-folder:hover { background: var(--well-off); color: var(--text); }
+.wm-folder.is-active { background: var(--tint-accent); color: var(--text); font-weight: 600; }
+.wm-folder-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wm-folder-num { color: var(--faint); font-size: 11px; font-variant-numeric: tabular-nums; }
+.wm-folder-new { color: var(--faint); }
+/* Правка своей папки — по наведению и с клавиатуры (focus-within), чтобы
+   два значка не теснили названия всех папок разом. */
+.wm-folder-tools {
+  position: absolute;
+  right: 2px;
+  display: none;
+  gap: 2px;
+  border-radius: 4px;
+  background: var(--well-off);
+}
+.wm-folders li:hover .wm-folder-tools,
+.wm-folders li:focus-within .wm-folder-tools { display: flex; }
+.wm-side-link {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: auto;
+  padding: 6px 8px;
+  border-radius: 4px;
+  color: var(--faint);
+  font-size: 12px;
+  text-decoration: none;
+}
+.wm-side-link:hover { color: var(--text); background: var(--well-off); }
+
+/* Кнопка-значок панелей почты: без рамки, в отличие от `.btn-icon`, — их в
+   строке действий письма по восемь, и рамки превращали строку в решётку. */
+.wm-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  text-decoration: none;
+}
+.wm-icon-btn:hover:not(:disabled) { background: var(--well-off); color: var(--text); }
+.wm-icon-btn:disabled { opacity: 0.4; cursor: default; }
+.wm-icon-btn.is-on { color: var(--star); }
+.wm-icon-sm { width: 24px; height: 24px; }
+
+/* --- средняя панель: список писем --- */
+.wm-list {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  border-right: 1px solid var(--border);
+}
+.wm-list-head { display: flex; align-items: center; gap: 6px; padding: 10px 10px 8px 14px; }
+.wm-menu-btn, .wm-write-sm { display: none; }
+.wm-list-title { flex: 1; min-width: 0; font-size: 15px; font-weight: 700; color: var(--text); }
+.wm-list-title small { display: block; color: var(--faint); font-size: 11.5px; font-weight: 400; }
+.wm-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 12px 8px;
+  padding: 0 4px 0 10px;
+  height: 34px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--well);
+  color: var(--faint);
+}
+.wm-search:focus-within { border-color: var(--accent); }
+.wm-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+}
+.wm-filters {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 40px;
+  padding: 0 10px 6px 12px;
+  border-bottom: 1px solid var(--line);
+  flex-wrap: wrap;
+}
+.wm-check { display: inline-flex; align-items: center; justify-content: center; width: 22px; margin-right: 4px; }
+.wm-check input,
+.wm-row-check { width: 15px; height: 15px; margin: 0; accent-color: var(--accent); cursor: pointer; flex-shrink: 0; }
+.wm-total { margin-left: auto; color: var(--faint); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.wm-bulk { display: flex; align-items: center; gap: 2px; flex: 1; min-width: 0; flex-wrap: wrap; }
+.wm-bulk-n { margin-right: 6px; color: var(--text); font-size: 12px; font-weight: 600; white-space: nowrap; }
+.wm-move { width: auto; max-width: 160px; height: 28px; padding-right: 26px; font-size: 12px; }
+.wm-rows { flex: 1; min-height: 0; overflow-y: auto; transition: opacity 0.15s; }
+/* Отбор сменился, ответ ещё едет: старые строки видны, но приглушены —
+   пустой экран на каждую букву поиска мигал бы. */
+.wm-rows.is-busy { opacity: 0.55; }
+.wm-pad { padding: 8px 12px; }
+.wm-row-list { list-style: none; margin: 0; padding: 0; }
+.wm-row {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 8px 10px 14px;
+  border-bottom: 1px solid var(--line);
+}
+.wm-row:hover { background: var(--well-off); }
+.wm-row.is-picked { background: var(--tint-neutral); }
+.wm-row.is-active { background: var(--tint-accent); }
+/* Непрочитанное — точкой у края и жирным: одного жирного на тёмной теме мало. */
+.wm-row.is-unread::before {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 17px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.wm-row-check { margin-top: 3px; }
+.wm-row-open {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "who  date"
+    "subj icons"
+    "prev prev";
+  gap: 2px 8px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.wm-row-who { grid-area: who; color: var(--muted); font-size: 13px; }
+.wm-row-date { grid-area: date; color: var(--faint); font-size: 11.5px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.wm-row-subj { grid-area: subj; color: var(--text); font-size: 13px; }
+.wm-row-icons { grid-area: icons; display: flex; align-items: center; gap: 4px; color: var(--faint); }
+.wm-row-prev { grid-area: prev; color: var(--faint); font-size: 12px; }
+.wm-removed { color: var(--warning); }
+.wm-row.is-unread .wm-row-who,
+.wm-row.is-unread .wm-row-subj { color: var(--text); font-weight: 700; }
+.wm-star {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--faint);
+  cursor: pointer;
+  opacity: 0.45;
+}
+.wm-row:hover .wm-star,
+.wm-star:focus-visible { opacity: 1; }
+.wm-star.on { color: var(--star); opacity: 1; }
+
+/* --- правая панель: письмо --- */
+.wm-read {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--surface);
+}
+.wm-read-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.wm-read-bar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--line);
+  flex-wrap: wrap;
+}
+.wm-bar-gap { flex: 1; }
+.wm-back { display: none; }
+.wm-read-head { padding: 16px 20px 12px; border-bottom: 1px solid var(--line); }
+.wm-subject {
+  margin: 0 0 12px;
+  color: var(--text);
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+.wm-meta { display: flex; align-items: flex-start; gap: 10px; }
+.wm-meta-who { flex: 1; min-width: 0; color: var(--text); font-size: 13px; }
+.wm-addr { color: var(--faint); font-weight: 400; }
+.wm-meta-to { margin-top: 2px; color: var(--faint); font-size: 12px; overflow-wrap: anywhere; }
+.wm-meta-date { color: var(--faint); font-size: 12px; white-space: nowrap; }
+.wm-tags { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; }
+.wm-client {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text);
+  font-size: 12px;
+  text-decoration: none;
+}
+.wm-client:hover { background: var(--well-off); border-color: var(--border-hover); }
+.wm-images {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 8px 20px;
+  border-bottom: 1px solid var(--line);
+  background: var(--tint-warning);
+  color: var(--text);
+  font-size: 12.5px;
+}
+.wm-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  padding: 10px 20px;
+  list-style: none;
+  border-bottom: 1px solid var(--line);
+}
+.wm-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 260px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 12px;
+  text-decoration: none;
+}
+.wm-file:hover { background: var(--well-off); border-color: var(--border-hover); }
+.wm-file small { color: var(--faint); white-space: nowrap; }
+/* Письмо — на бумаге в обеих темах: чужая разметка рассчитана на белый фон,
+   и «тёмная тема» для неё значит чёрный текст на чёрном. */
+.wm-frame {
+  flex: 1;
+  width: 100%;
+  min-height: 240px;
+  border: 0;
+  background: var(--paper);
+}
+.wm-text {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 18px 20px;
+  color: var(--text);
+  font-size: 13.5px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.wm-text a { color: var(--accent); }
+.wm-quick { display: flex; flex-wrap: wrap; gap: 8px; padding: 10px 20px; border-top: 1px solid var(--line); }
+
+/* --- окно «Написать»: не модальное, у правого нижнего края, как в почтовых
+   клиентах — письмо, на которое отвечаешь, остаётся видно рядом. Ниже окон
+   подтверждения (40), чтобы «Удалить письмо?» вставало поверх него. --- */
+.wm-compose {
+  position: fixed;
+  right: 24px;
+  bottom: 0;
+  z-index: 35;
+  display: flex;
+  flex-direction: column;
+  width: min(580px, calc(100vw - 32px));
+  height: min(640px, calc(100dvh - 72px));
+  border: 1px solid var(--frame);
+  border-bottom: 0;
+  border-radius: 8px 8px 0 0;
+  background: var(--surface);
+  box-shadow: var(--hard);
+}
+.wm-compose.is-max {
+  right: 50%;
+  bottom: 24px;
+  width: min(1000px, calc(100vw - 48px));
+  height: calc(100dvh - 48px);
+  border-bottom: 1px solid var(--frame);
+  border-radius: 8px;
+  transform: translateX(50%);
+}
+.wm-compose.is-min { width: 320px; height: auto; }
+.wm-compose.is-min .wm-compose-body { display: none; }
+.wm-compose.is-drop { outline: 2px dashed var(--accent); outline-offset: -6px; }
+.wm-compose-head {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 5px 6px 5px 4px;
+  border-bottom: 1px solid var(--border);
+  border-radius: 8px 8px 0 0;
+  background: var(--surface-2);
+}
+.wm-compose-title {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 8px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.wm-compose-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.wm-note {
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--tint-accent);
+  color: var(--text);
+  font-size: 12px;
+}
+.wm-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--line);
+}
+.wm-line-label { flex-shrink: 0; min-width: 44px; color: var(--faint); font-size: 12.5px; }
+.wm-line-value { color: var(--text); font-size: 13px; }
+.wm-line select,
+.wm-subj {
+  flex: 1;
+  min-width: 0;
+  height: 36px;
+  border: 0;
+  background-color: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+}
+/* Без рамки, но со стрелкой общего правила `select`: иначе выбор ящика
+   читается подписью, а не списком. */
+.wm-line select { padding-left: 0; }
+.wm-line select option { background: var(--surface); color: var(--text); }
+.wm-addr-field {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 0;
+}
+.wm-addr-field input {
+  flex: 1;
+  min-width: 120px;
+  height: 28px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+}
+.wm-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  max-width: 100%;
+  height: 24px;
+  padding: 0 3px 0 9px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--tint-neutral);
+  color: var(--text);
+  font-size: 12px;
+}
+.wm-chip.is-bad { border-color: var(--danger-line); background: var(--tint-danger); color: var(--danger); }
+.wm-chip button {
+  display: inline-flex;
+  padding: 3px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.wm-chip button:hover { background: var(--well-off); }
+.wm-suggest {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 5;
+  max-height: 260px;
+  margin-top: 2px;
+  padding: 4px;
+  overflow-y: auto;
+}
+.wm-suggest button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  width: 100%;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.wm-suggest button.is-lit { background: var(--surface-2); }
+.wm-suggest small { color: var(--faint); font-size: 11.5px; }
+.wm-cc-toggle {
+  flex-shrink: 0;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--faint);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.wm-cc-toggle:hover { color: var(--text); background: var(--well-off); }
+.wm-tools {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-wrap: wrap;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--line);
+}
+.wm-tools-sep { width: 1px; height: 18px; margin: 0 4px; background: var(--border); }
+.wm-link-row { display: flex; gap: 6px; padding: 6px 12px; border-bottom: 1px solid var(--line); }
+.wm-link-row .input { flex: 1; }
+.wm-editor {
+  flex: 1;
+  min-height: 120px;
+  overflow-y: auto;
+  padding: 12px 14px;
+  color: var(--text);
+  font-size: 13.5px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+  outline: none;
+}
+.wm-editor:empty::before { content: attr(data-placeholder); color: var(--faint); pointer-events: none; }
+.wm-editor blockquote {
+  margin: 8px 0 8px 4px;
+  padding-left: 12px;
+  border-left: 2px solid var(--border-hover);
+  color: var(--muted);
+}
+.wm-editor a { color: var(--accent); }
+.wm-editor ul,
+.wm-editor ol { padding-left: 22px; }
+.wm-editor p { margin: 0 0 6px; }
+.wm-uploads {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 150px;
+  margin: 0;
+  padding: 8px 12px;
+  overflow-y: auto;
+  list-style: none;
+  border-top: 1px solid var(--line);
+}
+.wm-upload {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+  font-size: 12px;
+}
+.wm-upload small { color: var(--faint); font-variant-numeric: tabular-nums; }
+.wm-upload-bar { grid-column: 1 / -1; height: 3px; border-radius: 2px; background: var(--line); overflow: hidden; }
+.wm-upload-fill { display: block; height: 100%; background: var(--accent); transition: width 0.15s linear; }
+.wm-compose-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--border);
+}
+.wm-draft-state { flex: 1; min-width: 0; color: var(--faint); font-size: 11.5px; }
+.wm-draft-state.is-bad { color: var(--warning); }
+
+/* Средний экран: ящики уезжают в выдвижную панель, список и письмо остаются. */
+@media (max-width: 1180px) {
+  .wm-screen { grid-template-columns: clamp(280px, 40%, 400px) minmax(0, 1fr); }
+  .wm-side {
+    position: absolute;
+    inset: 0 auto 0 0;
+    z-index: 6;
+    width: 280px;
+    transform: translateX(-100%);
+    visibility: hidden;
+    transition: transform 0.18s ease, visibility 0.18s;
+    box-shadow: var(--hard);
+  }
+  .wm-screen.is-side .wm-side { transform: none; visibility: visible; }
+  .wm-veil { display: block; position: absolute; inset: 0; z-index: 5; background: var(--overlay); }
+  .wm-menu-btn, .wm-write-sm { display: inline-flex; }
+}
+
+/* Телефон: одна панель за раз, как в мессенджере. Открыто письмо — письмо с
+   кнопкой «назад», нет — список. Окно «Написать» — во весь экран. */
+@media (max-width: 860px) {
+  .wm-screen { grid-template-columns: minmax(0, 1fr); margin: 0; border: 0; border-radius: 0; }
+  .wm-screen.is-reading .wm-list { display: none; }
+  .wm-screen:not(.is-reading) .wm-read { display: none; }
+  .wm-list { border-right: 0; }
+  .wm-back { display: inline-flex; }
+  .wm-side { width: min(300px, 86vw); }
+  .wm-read-head { padding: 14px 14px 10px; }
+  .wm-files, .wm-images, .wm-quick { padding-left: 14px; padding-right: 14px; }
+  .wm-move { max-width: 104px; }
+  .wm-compose,
+  .wm-compose.is-max {
+    inset: 0;
+    width: auto;
+    height: auto;
+    border: 0;
+    border-radius: 0;
+    transform: none;
+  }
+  .wm-compose.is-min { inset: auto 0 0 0; height: auto; width: auto; }
+  .wm-compose-head { border-radius: 0; }
+  .wm-max-btn { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wm-side, .wm-rows, .wm-upload-fill { transition: none; }
+}

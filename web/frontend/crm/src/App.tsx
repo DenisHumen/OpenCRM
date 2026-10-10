@@ -38,6 +38,7 @@ import { Mail } from "./screens/Mail";
 import { Monitoring } from "./screens/Monitoring";
 import { Templates } from "./screens/Templates";
 import { Mailboxes } from "./screens/Mailboxes";
+import { MailServer } from "./screens/MailServer";
 import { ProductCard } from "./screens/ProductCard";
 import { Profile } from "./screens/Profile";
 import { Docs } from "./screens/Docs";
@@ -412,6 +413,15 @@ export default function App() {
               <Route path="/settings/telegram" element={<SettingsTelegram />} />
             </Route>
           </Route>
+          {/* Сервер и ящики — на праве почты, как и спрашивает сервер: под
+              settings.manage почтовик, поставивший сервер, упирался в закрытый
+              экран по кнопке «Управлять ящиками». */}
+          <Route element={<ModuleRoute module="mail" />}>
+            <Route element={<PermRoute perm="mail.manage" />}>
+              <Route path="/settings/mail-server" element={<MailServer />} />
+              <Route path="/settings/mailboxes" element={<Mailboxes />} />
+            </Route>
+          </Route>
           {/* Файлы — свой блок со своими правами, а не подраздел настроек:
               дерево показывает весь диск, а не медиа досок, и закрывать его
               блоком `boards` значило бы прятать вложения клиентов вместе с
@@ -435,9 +445,6 @@ export default function App() {
                 нечего настраивать», — но выключенный блок обязан исчезать
                 отовсюду, включая настройки. Порядок для пользователя:
                 включить блок → настроить его. */}
-            <Route element={<ModuleRoute module="mail" />}>
-              <Route path="/settings/mailboxes" element={<Mailboxes />} />
-            </Route>
             {/* Подключение к АТС — вне SettingsLayout: у него свои поля, своя
                 кнопка сохранения и секрет, который показывается один раз. */}
             <Route element={<ModuleRoute module="telephony" />}>

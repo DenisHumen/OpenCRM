@@ -26,6 +26,8 @@ class UserToken(Base):
     token_hash: Mapped[str] = mapped_column(ExactString(64), unique=True, index=True)
     #: Только чтение: всё, кроме GET/HEAD, отвечает 403 — агенту «посмотреть» не нужно право менять.
     tolko_chtenie: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    #: Почта: `all` — все ящики сотрудника, `list` — только из `user_token_mail_boxes`.
+    mail_scope: Mapped[str] = mapped_column(String(8), default="all", server_default="all")
     created_by: Mapped[int | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
     )

@@ -752,7 +752,15 @@ PISHUT_V_BAZU: dict[str, set[str]] = {
     "core/services/telephony_service.py": {"create_callback_task"},
     # 29.09.2026: название ключа, задача «сменить ключ», тема и отказ письма, журнал очистки.
     "core/services/klyuchi_service.py": {"sozdat", "zavesti_napominanie"},
-    "core/services/mail_service.py": {"send_message", "_feed_body"},
+    "core/services/mail_service.py": {"send_message", "zapisat_iskhodyashchee", "_feed_body"},
+    # 09.10.2026: веб-почта пишет отправленное в зеркало и ленту клиента.
+    "core/services/webmail_service.py": {"otpravit"},
+    # 09.10.2026: журнал ящиков своего сервера и ошибки сервера от наблюдателя.
+    "core/services/mail_server_service.py": {
+        "_opisanie", "_dostup_tekst", "izmenit", "pereimenovat", "udalit", "dobavit_psevdonim",
+        "udalit_psevdonim", "sverit", "sozdat",
+    },
+    "core/services/mail_watcher.py": {"_oshibka", "obnovit_server", "sverit_server"},
     "web/api/routes/system.py": {"purge_storage"},
 }
 

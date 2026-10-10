@@ -10,6 +10,8 @@ import { formatDateTime } from "../lib/format";
 import { useGuard } from "../lib/guard";
 import { useReference } from "../lib/reference";
 import type { TranslationKey } from "../lib/i18n";
+import { moduleOn } from "../lib/modules";
+import { can } from "../lib/permissions";
 
 interface Token {
   id: number;
@@ -23,6 +25,15 @@ interface Token {
   last_used_at: string | null;
   state: "active" | "expired" | "revoked";
   token?: string;
+  /** Почта: все ящики сотрудника или только `mail_boxes` (docs/bloki/32-pochtovyy-server.md). */
+  mail_scope?: "all" | "list";
+  mail_boxes?: number[];
+}
+
+interface Yashchik {
+  id: number;
+  address: string;
+  title?: string;
 }
 
 interface Spisok {
@@ -108,6 +119,9 @@ export function TokenySotrudnikov() {
                 <code style={{ fontSize: 12, color: "var(--faint)" }}>{tok.prefix}…</code>
                 <Chip variant={tok.state === "active" ? "success" : undefined}>{t(STATE_LABEL[tok.state])}</Chip>
                 {tok.tolko_chtenie && <Chip>{t("tokenReadOnly")}</Chip>}
+                {tok.mail_scope === "list" && (
+                  <Chip variant="accent">{t("tokenMailChip", { n: tok.mail_boxes?.length ?? 0 })}</Chip>
+                )}
               </div>
               <div style={{ color: "var(--faint)", fontSize: 12.5 }}>
                 {t("tokenActsAs", { name: tok.user_name, email: tok.user_email })}
@@ -169,16 +183,27 @@ function NovyyToken({
   onClose: () => void;
   onCreated: (tok: Token) => void;
 }) {
-  const { t, user, toastError } = useApp();
+  const { t, user, modules, toastError } = useApp();
   const guard = useGuard();
   const lyudi = useReference<Person>("/people");
   const [form, setForm] = useState({ name: "", user_id: user?.id ?? 0, days: 90, tolko_chtenie: false });
+  // Ящики спрашиваем, только когда почта включена: иначе ограничивать нечего.
+  const pochta = moduleOn(modules, "mail");
+  const [tolkoYashchiki, setTolkoYashchiki] = useState(false);
+  const [vybrany, setVybrany] = useState<number[]>([]);
+  const yashchiki = useYashchiki(pochta && tolkoYashchiki, can(user, "mail.manage"));
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
+    if (pochta && tolkoYashchiki && vybrany.length === 0) return;
     if (!guard.take()) return;
     try {
-      onCreated(await api.post<Token>("/tokens", form));
+      onCreated(
+        await api.post<Token>("/tokens", {
+          ...form,
+          ...(pochta ? { mail_boxes: tolkoYashchiki ? vybrany : null } : {}),
+        }),
+      );
     } catch (err) {
       toastError(err);
       guard.free();
@@ -242,12 +267,93 @@ function NovyyToken({
             <span className="field-desc" style={{ display: "block" }}>{t("tokenReadOnlyHint")}</span>
           </span>
         </label>
-        <button className="btn btn-primary" style={{ width: "100%" }} disabled={guard.busy || !form.user_id}>
+        {pochta && (
+          <div className="field">
+            <div className="label">{t("tokenMail")}</div>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              <button
+                type="button"
+                className={"option-chip" + (!tolkoYashchiki ? " active" : "")}
+                aria-pressed={!tolkoYashchiki}
+                onClick={() => setTolkoYashchiki(false)}
+              >
+                {t("tokenMailAll")}
+              </button>
+              <button
+                type="button"
+                className={"option-chip" + (tolkoYashchiki ? " active" : "")}
+                aria-pressed={tolkoYashchiki}
+                onClick={() => setTolkoYashchiki(true)}
+              >
+                {t("tokenMailList")}
+              </button>
+            </div>
+            {tolkoYashchiki &&
+              (yashchiki.failure ? (
+                <LoadFailed error={yashchiki.failure} onRetry={yashchiki.reload} />
+              ) : (
+                <div className="mbx-people" style={{ marginTop: 8 }}>
+                  {(yashchiki.items ?? []).map((b) => (
+                    <label key={b.id} className="mbx-person-name">
+                      <input
+                        type="checkbox"
+                        checked={vybrany.includes(b.id)}
+                        onChange={(e) =>
+                          setVybrany((v) => (e.target.checked ? [...v, b.id] : v.filter((x) => x !== b.id)))
+                        }
+                      />
+                      {b.address}
+                      {b.title ? <span style={{ color: "var(--faint)" }}> · {b.title}</span> : null}
+                    </label>
+                  ))}
+                  {yashchiki.items?.length === 0 && (
+                    <div style={{ color: "var(--faint)", fontSize: 12.5 }}>{t("noMailboxesYet")}</div>
+                  )}
+                </div>
+              ))}
+            <div className="field-desc">
+              {tolkoYashchiki && vybrany.length === 0 ? t("tokenMailNone") : t("tokenMailHint")}
+            </div>
+          </div>
+        )}
+        <button
+          className="btn btn-primary"
+          style={{ width: "100%" }}
+          disabled={guard.busy || !form.user_id || (pochta && tolkoYashchiki && vybrany.length === 0)}
+        >
           {t("tokenNew")}
         </button>
       </form>
     </Modal>
   );
+}
+
+/** Ящики для выбора у токена: управляющему — все, остальным — свои видимые. */
+function useYashchiki(nuzhno: boolean, vse: boolean) {
+  const [items, setItems] = useState<Yashchik[] | null>(null);
+  const [failure, setFailure] = useState<unknown>(null);
+  const [popytka, setPopytka] = useState(0);
+
+  useEffect(() => {
+    if (!nuzhno) return;
+    let zhivo = true;
+    setFailure(null);
+    api
+      .get(vse ? "/mail/admin/boxes" : "/mail/boxes")
+      .then((r) => {
+        if (!zhivo) return;
+        const spisok: Yashchik[] = Array.isArray(r) ? r : (r?.items ?? []);
+        setItems(spisok);
+      })
+      .catch((e) => {
+        if (zhivo) setFailure(e);
+      });
+    return () => {
+      zhivo = false;
+    };
+  }, [nuzhno, vse, popytka]);
+
+  return { items, failure, reload: () => setPopytka((p) => p + 1) };
 }
 
 function PokazannyyToken({ tok, onClose }: { tok: Token; onClose: () => void }) {

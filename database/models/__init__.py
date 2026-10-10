@@ -15,6 +15,16 @@ from database.models.user_token import UserToken
 from database.models.task import Task, TaskEvent, TaskFile, TaskMember, TaskSignal, TaskStep, TaskUrl
 from database.models.template import MessageTemplate
 from database.models.mail import MailAccount, MailMessage
+from database.models.mail_server import (
+    MailAlias,
+    MailArchiveFolder,
+    MailArchiveMessage,
+    MailBoxAccess,
+    MailDomain,
+    MailJob,
+    MailServer,
+    UserTokenMailBox,
+)
 from database.models.warehouse import (
     Product,
     ProductBarcode,
@@ -84,6 +94,14 @@ __all__ = [
     "MessageTemplate",
     "MailAccount",
     "MailMessage",
+    "MailServer",
+    "MailDomain",
+    "MailJob",
+    "MailAlias",
+    "MailBoxAccess",
+    "UserTokenMailBox",
+    "MailArchiveMessage",
+    "MailArchiveFolder",
     "Product",
     "ProductBarcode",
     "ProductPhoto",

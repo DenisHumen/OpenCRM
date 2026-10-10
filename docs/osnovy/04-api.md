@@ -622,28 +622,37 @@
 
 ## Почта (блок `mail`)
 
+У блока пять роутеров. Этот — внешние ящики по IMAP/SMTP, зеркало писем для
+ленты клиента и отправка из карточки; ниже — свой почтовый сервер
+(`/mail/server`), ящики на нём (`/mail/admin`), веб-почта (`/mail/boxes`) и архив
+писем в CRM (`/mail/archive`), разбор — [32](../bloki/32-pochtovyy-server.md).
+
 Весь роутер закрыт двумя зависимостями сразу: `require_module("mail")` и
 `require_perm("mail", "view")`. При выключенном блоке любой маршрут отвечает
 **403 `module_disabled`** — не 404, потому что маршрут существует, его выключили;
 без права `mail.view` не открывается ни одна ручка раздела, включая настройки
 ящиков. Сам ящик — настройка уровня фирмы, поэтому его CRUD и проверка соединения
-поверх этого требуют `settings.manage`: заводить почтовый ящик и читать почту —
-разные по весу решения.
+поверх этого требуют `mail.manage` — то же право, что у ящиков своего сервера
+(`/mail/admin`): заводить почтовый ящик и читать почту — разные по весу решения, а
+два права на одни ящики расходились (разбор 10.10.2026). Читать письма и писать из ящика пускает ещё и **список
+доступа**: общий ящик видят все с `mail.view`, личный — те, кому его выдали, и
+управляющие почтой (`mail.manage`); письма и счётчики невидимых ящиков в ответы не
+попадают вовсе.
 
 | Метод | Путь | Права | Описание |
 |---|---|---|---|
-| GET | `/mail/accounts` | 🔑 `settings.manage` | Ящики фирмы. **Пароля в ответе нет никогда** — только `has_password` |
-| POST | `/mail/accounts` | 🔑 `settings.manage` | Завести ящик: адрес, IMAP/SMTP, логин, `password` (уходит только внутрь) |
-| PATCH | `/mail/accounts/{id}` | 🔑 `settings.manage` | Изменить. Пустой `password` = «не менять», а не «стереть» |
-| DELETE | `/mail/accounts/{id}` | 🔑 `settings.manage` | Удалить ящик вместе с зеркалом его писем. Лента клиента остаётся |
-| POST | `/mail/accounts/{id}/check` | 🔑 `settings.manage` | Проверка входа по IMAP и SMTP. Ответ `{ok, error}` — ошибка текстом, без пароля |
-| GET | `/mail/senders` | 🔑 `mail.create` | Ящики, из которых можно писать: только `id`, `title`, `address`, только включённые |
-| POST | `/mail/accounts/{id}/sync` | 🔑 `mail.view` | Ручная синхронизация. Своего права не требует: это чтение почты фирмы, а не правка настроек — ждать управляющего ради свежих писем незачем |
-| GET | `/mail/unread` | 🔑 `mail.view` | Сколько входящих не прочитано — число на пункт меню; пересчитывается по намёку блока почты |
-| GET | `/mail/messages` | 🔑 `mail.view` | Список: `account_id`, `client_id`, `deal_id`, `direction=in\|out`, `unread`, `search`. Тела писем в списке не отдаются |
-| GET | `/mail/messages/{id}` | 🔑 `mail.view` | Письмо целиком, включая `body_text`/`body_html` |
+| GET | `/mail/accounts` | 🔑 `mail.manage` | Ящики фирмы, включая выключенные и ящики своего сервера (`server_id`). **Пароля в ответе нет никогда** — только `has_password`. Токен с `mail_boxes` видит только свои |
+| POST | `/mail/accounts` | 🔑 `mail.manage` | Завести внешний ящик: адрес, IMAP/SMTP, логин, `password` (уходит только внутрь). Токену с `mail_boxes` — `403 mail_box_forbidden` |
+| PATCH | `/mail/accounts/{id}` | 🔑 `mail.manage` | Изменить внешний ящик. Пустой `password` = «не менять», а не «стереть». Ящик своего сервера — `422 mail_box_on_server`: его адрес — это вход мастером, правят его через `/mail/admin/boxes` |
+| DELETE | `/mail/accounts/{id}` | 🔑 `mail.manage` | Удалить внешний ящик вместе с зеркалом его писем. Лента клиента остаётся. Ящик своего сервера — `422 mail_box_on_server` |
+| POST | `/mail/accounts/{id}/check` | 🔑 `mail.manage` | Проверка входа по IMAP и SMTP. Ответ `{ok, error}` — ошибка текстом, без пароля. Ящик вне токена — `404 mail_account_not_found` |
+| GET | `/mail/senders` | 🔑 `mail.create` | Ящики, из которых **этому сотруднику** можно писать: только `id`, `title`, `address`, только включённые (общий ящик — всем с `mail.create`, личный — по списку доступа с отметкой «может писать») |
+| POST | `/mail/accounts/{id}/sync` | 🔑 `mail.view` | Ручная синхронизация. Своего права не требует: это чтение почты фирмы, а не правка настроек — ждать управляющего ради свежих писем незачем. Только видимого ящика, иначе `404 mail_account_not_found` |
+| GET | `/mail/unread` | 🔑 `mail.view` | Сколько входящих не прочитано в **видимых** ящиках — число на пункт меню; `by_box: [{id, unseen}]` — по ящикам. У ящика своего сервера число берётся с сервера (наблюдатель), у внешнего — из зеркала. Пересчитывается по намёку блока почты |
+| GET | `/mail/messages` | 🔑 `mail.view` | Список: `account_id`, `client_id`, `deal_id`, `direction=in\|out`, `unread`, `search` — только письма видимых ящиков (и `total` по ним же). Тела писем в списке не отдаются |
+| GET | `/mail/messages/{id}` | 🔑 `mail.view` | Письмо целиком, включая `body_text`/`body_html`. Письмо невидимого ящика — `404 mail_message_not_found`, как несуществующее |
 | POST | `/mail/messages/{id}/read` | 🔑 `mail.view` | `{"is_read": true\|false}` |
-| POST | `/mail/send` | 🔑 `mail.create` | Отправить: `to[]`, `subject`, `body`, `account_id?`, `client_id?`, `deal_id?`, `reply_to_id?` |
+| POST | `/mail/send` | 🔑 `mail.create` | Отправить: `to[]`, `subject`, `body`, `account_id?`, `client_id?`, `deal_id?`, `reply_to_id?`. Без `account_id` — ящик письма, на которое отвечаем, иначе первый, из которого сотруднику можно писать. Чужой личный ящик — `403 mail_box_forbidden` (видит, но писать нельзя) или `404 mail_account_not_found` (не видит). `reply_to_id` — только письмо видимого ящика (`404 mail_message_not_found`), и при любом `account_id`: унаследованная заявка проверяется на видимость, как названная |
 
 ### Ответ встаёт в переписку, а не рядом с ней
 
@@ -707,7 +716,7 @@
 
 ### Писать письма может не только владелец
 
-`/mail/accounts` закрыт `settings.manage` и закрыт правильно: там хосты, порты
+`/mail/accounts` закрыт `mail.manage` и закрыт правильно: там хосты, порты
 и логины — настройка уровня фирмы. Но чтобы ОТПРАВИТЬ письмо, всего этого знать
 не надо, нужен выбор из двух-трёх адресов, — и для него есть `/mail/senders`,
 открытый тому, у кого есть право писать.
@@ -736,11 +745,15 @@ CRM нет, — человек нажмёт «отправить» снова, �
 
 Спам решается тремя записями — SPF, DKIM и DMARC, — и **все три живут в DNS
 домена, а не в приложении**. Подписывает письмо DKIM'ом почтовый сервер, через
-который CRM отправляет (`submission`), а не CRM: у неё нет и не должно быть
-закрытого ключа домена. Значит задача приложения здесь ровно одна — не мешать:
+который CRM отправляет (`submission`), а не CRM: у приложения нет и не должно быть
+закрытого ключа домена. Свой почтовый сервер, если его поставили
+([32](../bloki/32-pochtovyy-server.md)), — отдельная программа (docker-mailserver)
+на своей машине, и ключ DKIM живёт у его Rspamd, а не в базе CRM. Значит задача
+приложения здесь ровно одна — не мешать:
 
-- отправлять через SMTP владельца домена, а не напрямую с VPS (так и сделано:
-  ящик задаётся настройками, своего MTA у CRM нет);
+- отправлять через SMTP владельца домена, а не напрямую из процесса приложения
+  (так и сделано: внешний ящик задаётся настройками, ящик своего сервера шлёт по
+  SMTPS 465 мастер-входом — письмо проходит Rspamd и получает подпись);
 - ставить корректный `From` — адрес того самого ящика, из которого шлём. Конверт
   (`MAIL FROM`) smtplib берёт из него же, и выравнивание, которого требует
   DMARC, получается само;
@@ -758,6 +771,175 @@ CRM нет, — человек нажмёт «отправить» снова, �
 не кодом, а доменом, его историей и настройками у провайдера почты.
 
 Письмо не заводит собственной истории: при появлении оно порождает запись общей ленты (`client_notes`, `kind='email'`, `direction`, `happened_at` = момент отправки письма). Входящее ищет клиента по адресу отправителя; нашли — привязали, не нашли — письмо остаётся непривязанным и **клиента не создаёт**: в ящик фирмы валятся рассылки, спам и ответы роботов, а «клиент» — решение человека.
+
+### Почтовый сервер
+
+Сам сервер ([32](../bloki/32-pochtovyy-server.md)): черновик → SSH (для другой машины)
+→ проверка → установка или подключение уже стоящего → удаление. Роутер закрыт блоком
+`mail` и правом `mail.manage`. Работы (`check`, `install`, `adopt`, `remove`) идут в
+фоне и отвечают `202` с работой `{id, server_id, kind, status: running|ok|failed|rolled_back,
+steps: [{code, status: running|ok|warn|fail, detail, hint}], error_code, error_detail, hint,
+started_at, finished_at}`; `hint` — инструкция «как исправить»
+`{code, title_ru, title_en, steps_ru, steps_en}`. Вторая работа над тем же сервером,
+пока идёт первая, — `409 mail_job_running`. Вход по SSH (`…/ssh/*`), установка
+(`POST …/install`), подключение (`…/adopt`), снятие с машины (`…/remove`) и посредник
+(`…/relay`) **токену закрыты** (`403 token_not_allowed`): это делает человек на
+экране. Как этим пользоваться по шагам — [32](../bloki/32-pochtovyy-server.md), §2.
+
+| Метод | Путь | Доступ | Описание |
+|---|---|---|---|
+| GET | `/mail/server` | 🔑 `mail.manage` | `{servers: [server], obnovlyator: {zhiv, at}}` — **без сети**. `server` — все поля, кроме зашифрованных, плюс `ssh_fingerprint`, `has_ssh_key`, `has_sudo_password`, `has_relay_password`, `domains: [{id, domain, dkim_selector, dkim_txt, dns_checked_at, dns_report}]`, `boxes_count`. `obnovlyator.zhiv: false` — служба обновления молчит дольше 2 минут (установку на этой машине тогда запускают `./opencrm.sh mail install`) |
+| POST | `/mail/server` | 🔑 `mail.manage` | Черновик: `{mode: local\|ssh, title?, hostname, domain, ssh_host?, ssh_port?, ssh_user?}` → `201 server`. `422 mail_server_mode_bad`, `mail_hostname_bad`, `mail_domain_bad`; домен уже на сервере — `409 mail_domain_exists`; второй сервер на этой машине — `409 mail_server_busy` |
+| PATCH | `/mail/server/{id}` | 🔑 `mail.manage` | `{title?, hostname?, ssh_host?, ssh_port?, ssh_user?}`; адрес — только у черновика и упавшего (`409 mail_server_busy`). Новый адрес SSH сбрасывает подтверждённый ключ хоста |
+| DELETE | `/mail/server/{id}` | 🔑 `mail.manage` | `{ok, keys_removed, warning}`. Только черновик, упавший или уже снятый с машины, иначе `409 mail_server_busy`. Ящики сервера в CRM остаются выключенными. Сервер по SSH: свой ключ CRM (`opencrm-mail-<id>`) снимается из `authorized_keys`; не вышло — `warning: {code: ssh_old_keys_left, message, command}` с готовой командой |
+| POST | `/mail/server/{id}/ssh/probe` | 🔑 `mail.manage` | Шаг 1 TOFU: `{fingerprint: "SHA256:…", key_type, key_line, known}` — человек сверяет отпечаток. `503 ssh_unreachable` |
+| POST | `/mail/server/{id}/ssh/connect` | 🔑 `mail.manage` | `{host_key_line, user, password? \| private_key?, passphrase?, keep_sudo?, sudo_password?}` → `{ok, key_installed, docker: ok\|noaccess\|missing, sudo: root\|nopasswd\|password\|password_ok\|password_bad\|none, root, fingerprint, old_keys_removed, warning}`. CRM кладёт **свой** ключ ed25519 в `authorized_keys`, проверяет вход им и снимает свои прежние ключи этого сервера (`warning` с готовой командой, если не вышло); пароль входа не хранится, пароль sudo — только с `keep_sudo`. Чужой ключ хоста — `422 ssh_host_key_changed`, неверный вход — `422 ssh_auth_failed`, кривое имя — `422 ssh_user_bad`, кривой ключ — `422 ssh_key_bad` |
+| POST | `/mail/server/{id}/check` | 🔑 `mail.manage` | `{allow_docker_install?, tls?, sudo_password?}` → `202 job`: ОС, права, docker, порты 25/465/587/993, память и диск, исходящий 25, чужая почта, уже стоящий сервер, публичный IP, порт 80 — и записи DNS (`dns_report` доменов) |
+| POST | `/mail/server/{id}/install` | 🔑 `mail.manage` | `{first_local? = "admin", first_password?, generate_password? = true, acme_email?, allow_docker_install?, tls?: letsencrypt\|selfsigned, sudo_password?}` → `202 {job, first_address, first_password}` — **пароль первого ящика только в этом ответе**. Провал после первой правки — откат всего, что сделал этот запуск (`rolled_back`) |
+| POST | `/mail/server/{id}/adopt` | 🔑 `mail.manage` | → `202 job`: найти docker-mailserver на машине, выдать CRM мастер-вход, подтянуть ящики, псевдонимы и DKIM |
+| POST | `/mail/server/{id}/remove` | 🔑 `mail.manage` | `{delete_mail, confirm: "<hostname>"}` → `202 job`. Не то имя — `422 mail_confirm_mismatch`. Без `delete_mail` письма остаются на диске машины |
+| GET | `/mail/server/jobs/{job_id}` | 🔑 `mail.manage` | `?log_from=<байт>` → `{job, log_chunk, log_size}` — экран дочитывает журнал, пока работа идёт; `log_size` — смещение, с которого просить следующий кусок (считано по отданному куску) |
+| GET | `/mail/server/{id}/jobs` | 🔑 `mail.manage` | Последние 20 работ сервера, новые первыми |
+| POST | `/mail/server/{id}/dns` | 🔑 `mail.manage` | `{domains: [{domain, records: [{type: A\|MX\|SPF\|DKIM\|DMARC\|PTR, name, expected, found, status: ok\|missing\|wrong\|warn, required, hint: {ru, en}\|null}]}]}` — синхронно, у публичных резолверов (или `OPENCRM_MAIL_DNS`), не дольше 8 секунд |
+| POST | `/mail/server/{id}/domains` | 🔑 `mail.manage` | `{domain}` → `201` домен с ключом DKIM, созданным на сервере |
+| POST | `/mail/server/{id}/domains/{domain_id}/dkim` | 🔑 `mail.manage` | → домен с `dkim_txt`: создать ключ DKIM, если установка его не создала (`dkim_failed`); есть — отдаётся тот же |
+| DELETE | `/mail/server/{id}/domains/{domain_id}` | 🔑 `mail.manage` | `204`; домен с ящиками — `409 mail_domain_has_boxes` |
+| POST | `/mail/server/{id}/sync` | 🔑 `mail.manage` | Сверка ящиков и псевдонимов с сервером → `{added, linked, missing, aliases}` |
+| GET | `/mail/server/{id}/health` | 🔑 `mail.manage` | Со слов агента: `{services: {postfix, dovecot, rspamd}, cert: {not_after, self_signed, sha256}, queue}`. Заодно правит закреплённый отпечаток: сертификат больше не самоподписанный (certbot выпустил настоящий) — `tls_pin` снимается, и IMAP/SMTP дальше сверяют цепочку |
+| PUT | `/mail/server/{id}/relay` | 🔑 `mail.manage` | `{host, port, user, password?}` — исходящие через посредника (закрытый 25-й порт, нет PTR). Пустой `password` при том же `user` — оставить прежний |
+| DELETE | `/mail/server/{id}/relay` | 🔑 `mail.manage` | Слать напрямую |
+| POST | `/mail/server/{id}/test` | 🔑 `mail.manage` | `{to}` → `{ok, from, to, refused}`: проверочное письмо от первого ящика сервера |
+
+### Ящики на своём сервере
+
+Ящики почтового сервера под управлением CRM ([32](../bloki/32-pochtovyy-server.md)):
+завести, сменить пароль и адрес, квота, кто видит, псевдонимы. Роутер закрыт блоком
+`mail` и правом `mail.manage` — раздавать ящики и пароли от них решает управляющий
+почтой; менеджер без него получает `403 permission_denied`. Каждая правка идёт
+агенту на сервер; недоступный агент — `503 mail_agent_unreachable`, отказ агента —
+`422` с его кодом. Сервер не готов (ставится, упал) — `409 mail_server_not_ready`.
+
+**Пароль ящика CRM не хранит**: сама она ходит мастер-входом, а пароль, заданный
+при создании или смене, приходит в ответе **один раз** — для телефона и почтовой
+программы. В журнал действий пишется только факт смены.
+
+| Метод | Путь | Доступ | Описание |
+|---|---|---|---|
+| GET | `/mail/admin/boxes` | 🔑 `mail.manage` | Все ящики — свои (`kind: "server"`) и внешние (`"external"`), включённые и выключенные, со списками доступа `access: [{user_id, name, can_send}]`, квотой, `unseen` и `last_error`. Без сети |
+| POST | `/mail/admin/boxes` | 🔑 `mail.manage` | Завести: `server_id`, `domain` (домен этого сервера, иначе `422 mail_domain_bad`), `local_part` или `random: true` (`слово.слово42`), `password` (≥ 10 знаков, не равен адресу — иначе `422 mail_password_weak`) или `generate_password` (по умолчанию — 16 случайных знаков без похожих `0O1lI`), `quota_mb?` (1…1 000 000, `422 mail_quota_bad`), `title?`, `is_shared?` (по умолчанию личный), `users?: [{user_id, can_send}]`. Ответ `201 {box, password}`. Занятый адрес или псевдоним — `409 mail_box_exists`; кривое имя — `422 mail_local_part_bad` (a-z, 0-9, точка, дефис, подчёркивание; без `+`: им Postfix режет подадреса) |
+| PATCH | `/mail/admin/boxes/{id}` | 🔑 `mail.manage` | `title?`, `quota_mb?` (явный `null` — снять квоту; только свой ящик, иначе `422 mail_box_not_on_server`), `is_shared?`, `is_active?`. Название, общий и включённость правятся и у внешнего ящика |
+| POST | `/mail/admin/boxes/{id}/password` | 🔑 `mail.manage` | `{password?}` или `{generate: true}` → `{password}` — один раз. Только свой ящик |
+| POST | `/mail/admin/boxes/{id}/rename` | 🔑 `mail.manage` | `{local_part, domain?, password?, generate_password?, keep_alias}` → `{box, password}`. Агент заводит новый ящик и переносит каталог писем целиком (UID сохраняются, зеркало и счётчики остаются верными), старый убирает; `keep_alias` — старый адрес остаётся псевдонимом нового. Псевдонимы, что вели в старый адрес, переводятся на новый. Строка ящика та же: доступы, токены и зеркало при нём |
+| DELETE | `/mail/admin/boxes/{id}` | 🔑 `mail.manage` | `?keep_data=0\|1`. Свой ящик удаляется и на сервере (с `keep_data=1` почта остаётся на диске сервера), внешний — только из CRM. Зеркало писем уходит вместе с ящиком, лента клиента остаётся. Копия в архиве CRM остаётся с адресом, но без ящика (`account_id` → `NULL`); стереть её — `DELETE /mail/archive/boxes/{id}` **до** удаления ящика |
+| GET | `/mail/admin/boxes/{id}/access` | 🔑 `mail.manage` | `[{user_id, name, can_send}]` |
+| PUT | `/mail/admin/boxes/{id}/access` | 🔑 `mail.manage` | Тело — массив `[{user_id, can_send}]`, **замена целиком**: кого нет — тот ящик больше не видит. Неизвестный сотрудник — `404 user_not_found` |
+| GET | `/mail/admin/boxes/{id}/client-settings` | 🔑 `mail.manage` | Настройки для телефона: `{address, login, imap:{host, port, security}, smtp:{…}, submission:{…}\|null}`. У своего ящика хост — публичное имя сервера, порты 993/465/587 |
+| GET | `/mail/admin/suggest` | 🔑 `mail.manage` | `?domain=` → `{local_part, address, password}` — случайные и свободные (занятость — по базе, без сети). Без `domain` — `address: null` |
+| GET | `/mail/admin/aliases` | 🔑 `mail.manage` | `?server_id=` → `{items: [{id, server_id, source, destination}]}` |
+| POST | `/mail/admin/aliases` | 🔑 `mail.manage` | `{server_id, source, destination}`: письма на `source` (адрес домена этого сервера) ложатся в `destination` (любой адрес, хоть внешний). `422 mail_alias_bad` — кривой адрес, чужой домен или `source` — это ящик; `409 mail_alias_exists` |
+| DELETE | `/mail/admin/aliases/{id}` | 🔑 `mail.manage` | `404 mail_alias_not_found` |
+
+**Токен и ящики.** Токен с `mail_boxes: [...]` (`/tokens`) видит и в этом роутере
+только свои ящики: чужой — `404 mail_account_not_found`; заводить ящики и
+псевдонимы ему нельзя (`403 mail_box_forbidden`) — это решение на все ящики.
+
+**Новая почта** приходит без перезагрузки: наблюдатель раз в 15 секунд спрашивает
+у сервера счётчики всех ящиков одной командой, пишет их в ящики (`unseen` в
+`/mail/admin/boxes` и `/mail/unread`) и шлёт Web Push тем, кто видит ящик:
+`{title: отправитель, body: тема, tag: "opencrm-mail-<ящик>", url: "/mail?box=<ящик>&uid=<uid>"}`.
+Раз в 10 минут — сверка ящиков и псевдонимов с сервером и его здоровье в `last_error` сервера.
+
+### Веб-почта
+
+Ящик целиком — как в почтовой программе: папки, письма, вложения, отправка
+([32](../bloki/32-pochtovyy-server.md)). Письма живут **на почтовом сервере**, а
+не в базе: каждый запрос спрашивает его по IMAPS (993) и шлёт по SMTPS (465).
+Ящик своего сервера открывается мастер-входом (`ящик*мастер`), сертификат
+сверяется с именем сервера, самоподписанный — по отпечатку; внешний ящик — его
+собственными настройками. Роутер закрыт блоком `mail` и правом `mail.view`, ящик —
+списком доступа: **невидимый ящик отвечает `404 mail_account_not_found`**, как
+несуществующий (токен с `mail_boxes` видит только свои). Писать — `mail.create` и
+право отправлять из этого ящика (`403 mail_box_forbidden`). Флаги, перенос,
+удаление и папки — работа читающего со своей почтой, им хватает `mail.view`.
+
+Папка — `folder` (путь, как его даёт `GET …/folders`, по умолчанию `INBOX`), письмо —
+UID в этой папке. Сервер не ответил или отказал — `422 mail_imap_failed` /
+`mail_smtp_failed` с текстом сервера; сервер CRM ещё не готов — `409 mail_server_not_ready`;
+нет папки — `422 mail_folder_bad`; письма уже нет — `404 mail_message_gone`.
+
+| Метод | Путь | Права | Описание |
+|---|---|---|---|
+| GET | `/mail/boxes` | 🔑 `mail.view` | Видимые ящики: `[{id, address, title, server_id, unseen, inbox_uidnext, inbox_uidvalidity, can_send, is_shared}]`. **Без сети** — счётчик и состояние входящих из базы (их обновляет наблюдатель). Новое письмо — рост `inbox_uidnext` при той же `inbox_uidvalidity`, а не рост `unseen`: тот растёт и от «пометить непрочитанным» |
+| GET | `/mail/boxes/{id}/folders` | 🔑 `mail.view` | `[{name, path, special, total, unseen, delimiter}]`; `special` — `inbox\|drafts\|sent\|archive\|junk\|trash\|null` по SPECIAL-USE (на сервере без него — по привычным именам). Входящие первыми, затем служебные |
+| POST | `/mail/boxes/{id}/folders` | 🔑 `mail.view` | `{name, parent?}` → `201` папка. Имя без `* % " \` и разделителя, не `INBOX`, до 100 знаков — иначе `422 mail_folder_bad` (и если такая уже есть). Кириллица — можно (modified UTF-7 на проводе) |
+| PATCH | `/mail/boxes/{id}/folders` | 🔑 `mail.view` | `{path, new_name}` — переименовать на том же уровне. Служебные — `422 mail_folder_protected` |
+| DELETE | `/mail/boxes/{id}/folders` | 🔑 `mail.view` | `?path=` — удалить свою папку вместе с письмами. Служебные — `422 mail_folder_protected` |
+| GET | `/mail/boxes/{id}/messages` | 🔑 `mail.view` | `?folder=INBOX&page=1&per_page=50&q=&unread=&flagged=` → `{items:[{uid, subject, from:{name,email}, to, date, seen, flagged, answered, draft, has_attachments, size, preview}], total, page, per_page, folder}`. Новые сверху (`SORT (REVERSE ARRIVAL)`). `q` ищет по всему письму, `from:…` — по отправителю, `subject:…` — по теме |
+| GET | `/mail/boxes/{id}/messages/{uid}` | 🔑 `mail.view` | Письмо целиком: `{uid, folder, subject, from, to, cc, bcc, reply_to, date, message_id, in_reply_to, references, text, html, remote_images, attachments:[{part, name, size, content_type, inline}], flags, client:{id,name}\|null}` (`client` — по адресу отправителя; `bcc` бывает только в своих черновиках и копиях отправленного). **Ставит «прочитано»**. HTML очищен (ниже) |
+| GET | `/mail/boxes/{id}/messages/{uid}/attachments/{part}` | 🔑 `mail.view` | `?folder=` → файл вложения (`part` — номер части, `2`, `1.2`): `Content-Disposition: attachment`, `Content-Security-Policy: sandbox`, `nosniff` |
+| GET | `/mail/boxes/{id}/messages/{uid}/raw` | 🔑 `mail.view` | `?folder=` → письмо как есть (`message/rfc822`, `.eml`) |
+| GET | `/mail/boxes/{id}/messages/{uid}/html` | 🔑 `mail.view` | `?folder=&images=0` или `1` → очищенное письмо страницей для рамки, со своей CSP (`default-src 'none'`, без скриптов и форм; `img-src https:` только при `images=1`); «прочитано» не ставит |
+| POST | `/mail/boxes/{id}/messages/flags` | 🔑 `mail.view` | `{folder, uids:[…до 1000], seen?, flagged?}` — `true` ставит, `false` снимает, пропуск — не трогает |
+| POST | `/mail/boxes/{id}/messages/move` | 🔑 `mail.view` | `{folder, uids, to}` — `UID MOVE` в другую папку того же ящика |
+| POST | `/mail/boxes/{id}/messages/delete` | 🔑 `mail.view` | `{folder, uids}` → `{to}`: в Корзину (`to` — её путь; нет Корзины — заводится `Trash`), **из самой Корзины — насовсем** (`to: null`) |
+| POST | `/mail/boxes/{id}/send` | 🔑 `mail.create` | `{to[], cc[], bcc[], subject, text?, html?, attachments:[upload_id], reply_to?:{folder,uid,box_id?}, forward_of?:{folder,uid,box_id?}, draft_uid?, client_id?, deal_id?}` → `{ok, message_id, refused:{адрес: ответ сервера}, saved_to_sent, id, warning}`. Тело JSON — до 12 МБ (у прочих ручек — 1 МБ, `413 body_too_large`); при `html` поле `text` можно не слать |
+| POST | `/mail/boxes/{id}/drafts` | 🔑 `mail.create` | То же тело без отправки → `201 {uid, folder, message_id, warning}`; `draft_uid` — прежний черновик, он снимается. Адресаты не обязательны |
+| POST | `/mail/boxes/uploads` | 🔑 `mail.create` | multipart `file` → `201 {id, name, size}`. Файл до 25 МБ (`422 mail_upload_too_big`), все несданные загрузки сотрудника — до 200 МБ (`422 mail_upload_quota`); лежат сутки во временном каталоге сотрудника (`data/tmp/pochta`); чужой или просроченный id — `422 mail_upload_missing` |
+
+**HTML письма** чистится на сервере (`nh3`): ни `<script>`, ни обработчиков `on*`,
+ни `javascript:`-ссылок, ни форм и рамок; ссылки получают `target="_blank"
+rel="noopener noreferrer"`, стили — только безопасные свойства, без `url()`.
+Картинки из самого письма (`cid:`, до 2 МБ) встраиваются как `data:`, а
+**внешние картинки не грузятся сами**: `src` уезжает в `data-src`
+(`remote_images: true`), показ — по кнопке «Показать картинки». Иначе любое
+открытие письма сообщало бы отправителю «прочитано, вот адрес». Экран рисует
+HTML в `<iframe sandbox srcdoc>` без скриптов — это второй рубеж, а не первый.
+
+**Отправка** идёт тем же порядком, что `POST /mail/send`: адресаты (`no_recipients`,
+`too_many_recipients` — больше 50 на всё письмо, `bad_recipient`…), привязки к
+клиенту и заявке и загрузки проверяются **до** SMTP — после него отказывать
+поздно, письмо уже у адресата. Письмо собирается с `text` и `html` (без `text` он
+делается из HTML), вложениями (до 35 МБ на письмо), `Message-ID` на домене ящика;
+ответ (`reply_to`) несёт `In-Reply-To`/`References` и ставит исходному `\Answered`,
+пересылка (`forward_of`) везёт вложения исходного письма и ставит `$Forwarded`.
+Исходное лежит в ящике `box_id` (без него — в ящике отправки): ответ из другого ящика
+обязан его назвать, иначе тот же UID укажет на чужое письмо; невидимый ящик —
+`404 mail_account_not_found`. Исходного уже нет (переложили, удалили) — не отказ:
+письмо уходит и черновик сохраняется без цепочки и без вложений исходного, а в ответе
+`warning: "mail_original_gone"` (в остальных случаях `warning: null`). Повторы id
+загрузок считаются один раз, сумма вложений сверяется до чтения файлов.
+Скрытая копия (`bcc`) идёт только в конверт — в своей копии она остаётся. Копия
+ложится в «Отправленные» (`\Seen`), черновик `draft_uid` снимается; не вышло — письмо
+всё равно ушло, ответ скажет `saved_to_sent: false`. Отказ части адресатов — не
+ошибка: `refused`, а беда пишется в ящик. Ушедшее письмо ложится в зеркало
+`mail_messages` и в ленту клиента (по первому адресату, если клиента не назвали) —
+ровно как письмо из карточки; **личный ящик (`is_shared: false`) в ленту клиента не
+пишет** — ленту видят все, кто видит клиента. Использованные загрузки удаляются.
+
+Чтобы при пересохранении черновика не потерять его вложения, передайте сам
+черновик в `forward_of` — его вложения поедут с новой версией.
+
+### Архив писем в CRM
+
+Полная копия каждого письма каждой папки ящиков своего сервера (внешних — по флагу
+`archive`), разбор — [32](../bloki/32-pochtovyy-server.md), «Архив писем в CRM».
+Копию наполняет наблюдатель; ручки читают **только базу и storage**, без похода на
+сервер — копия нужна ровно тогда, когда сервера уже нет. Видимость — как у ящика:
+кто видит ящик (`mail_access`), видит его копию, токен с областью — только ящики
+области; копии ящиков, убранных из CRM, видит управляющий почтой. Чужая копия —
+`404 mail_message_gone`, как несуществующая.
+
+| Метод | Путь | Права | Описание |
+|---|---|---|---|
+| GET | `/mail/archive` | 🔑 `mail.view` | `?box=&folder=&q=&from=&date_from=&date_to=&removed=&page=1&per_page=50` → `{items:[{id, account_id, address, folder, uid, message_id, subject, from, to[], cc[], sent_at, received_at, seen, flagged, flags[], size, has_attachments, removed_at, has_raw}], total, page, per_page}`. Новые сверху по времени прихода (INTERNALDATE). `q` — подстрока темы, отправителя, адресатов; `removed=1` — удалённые на сервере, `0` — живые; даты — по времени прихода, `date_to` не включительно |
+| GET | `/mail/archive/stats` | 🔑 `mail.view` | По видимым ящикам: `[{account_id, address, title, archive, messages, bytes, removed, synced_at, reconciled_at, pending_folders}]`; `pending_folders` — папки, которые ещё не дочитаны (первый проход большого ящика идёт кусками по 50 писем за круг) |
+| GET | `/mail/archive/{id}` | 🔑 `mail.view` | Копия целиком: поля списка + `text`, `html` (очищен `nh3`, как в веб-почте), `attachments:[{part, name, size, content_type, inline}]` |
+| GET | `/mail/archive/{id}/html` | 🔑 `mail.view` | `?images=0\|1` → страница для рамки с той же CSP, что `/mail/boxes/{id}/messages/{uid}/html`; картинки письма (`cid:`) — из сырого файла |
+| GET | `/mail/archive/{id}/raw` | 🔑 `mail.view` | Письмо как пришло (`.eml`, байт в байт). Сырого файла нет (не хватило места при записи) — `404 mail_message_gone` |
+| GET | `/mail/archive/{id}/attachments/{part}` | 🔑 `mail.view` | Вложение из сырого файла — с теми же заголовками, что у веб-почты (`attachment`, `sandbox`, `nosniff`) |
+| DELETE | `/mail/archive/{id}` | 🔑 `mail.manage` | Удалить копию из CRM (строку и файл). Письмо на сервере, если оно там есть, не трогается |
+| PUT | `/mail/archive/boxes/{id}` | 🔑 `mail.manage` | `{archive: bool}` — вести ли копию ящика (у своего сервера по умолчанию да, у внешнего — нет). Выключение копию не стирает |
+| DELETE | `/mail/archive/boxes/{id}` | 🔑 `mail.manage` | Стереть копию ящика целиком → `{ok, deleted}`. Спрашивается при удалении ящика с `keep_data=0`: после удаления ящика строки копии теряют `account_id`, и стереть их разом уже нельзя |
 
 ## Шаблоны сообщений (блок `templates`)
 
@@ -1929,11 +2111,15 @@ curl -sS -X POST https://crm.example.com/api/v1/site/orders \
 
 | Метод | Путь | Права | Описание |
 |---|---|---|---|
-| GET | `/tokens` | 🔑 `settings.manage` | Все токены, включая отозванные и истёкшие: имя, `prefix`, сотрудник, `tolko_chtenie`, срок, последнее обращение, `state`; `alive` — сколько живых, `sroki` — допустимые сроки, `v_minutu` — потолок |
-| POST | `/tokens` | 🔑 `settings.manage` | Выдать: `name`, `user_id` (по умолчанию — себе), `days` (30/90/180/365, 0 — бессрочный; иначе `422 bad_term`), `tolko_chtenie`. Ответ `201` содержит `token` — **один раз**. `422 user_not_active`; за коллегу — только не шире себя (`403 cannot_grant_what_you_lack`), за root — только root (`403 cannot_modify_root`) |
+| GET | `/tokens` | 🔑 `settings.manage` | Все токены, включая отозванные и истёкшие: имя, `prefix`, сотрудник, `tolko_chtenie`, `mail_scope` (`all`/`list`), `mail_boxes` (`null` — все ящики сотрудника, список — только эти), срок, последнее обращение, `state`; `alive` — сколько живых, `sroki` — допустимые сроки, `v_minutu` — потолок |
+| POST | `/tokens` | 🔑 `settings.manage` | Выдать: `name`, `user_id` (по умолчанию — себе), `days` (30/90/180/365, 0 — бессрочный; иначе `422 bad_term`), `tolko_chtenie`, `mail_boxes` (`null` — все ящики, которые видит сотрудник; список id — только эти, пустой список — ни одного; неизвестный ящик — `404 mail_account_not_found`). Ответ `201` содержит `token` — **один раз**. `422 user_not_active`; за коллегу — только не шире себя (`403 cannot_grant_what_you_lack`), за root — только root (`403 cannot_modify_root`) |
 | POST | `/tokens/{token_id}/revoke` | 🔑 `settings.manage` | Отзыв отметкой; строка остаётся. `404 token_not_found` |
 
 Самому токену `/tokens` закрыт: токен не выпускает токенов.
+
+Ящики токена сужают почту **поверх** прав сотрудника, а не вместо них: токен на ящик,
+которого сотрудник не видит, не видит его тоже. Удалили единственный ящик токена —
+список пуст, и токен не видит ни одного, а не «все».
 
 ## Web Push (`/push`)
 

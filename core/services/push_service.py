@@ -193,6 +193,43 @@ def v_ochered(db: Session, task: Task, user_id: int, vid: str) -> None:
     db.info.setdefault(OCHERED, []).append((task.id, task.title, task.vazhnost, task.due_at, user_id, vid, task.poyas))
 
 
+@dataclass(frozen=True)
+class Soobshchenie:
+    """Готовое уведомление не про напоминание — новая почта и всё, что придёт после неё.
+
+    Текст собран отправителем: у письма это «от кого» и тема, переводить там нечего.
+    `topic` — заголовок Topic службы (≤ 32 знаков base64url): новое того же
+    назначения вытесняет недоставленное прежнее.
+    """
+
+    user_id: int
+    title: str
+    body: str
+    tag: str
+    url: str
+    topic: str
+    srochno: bool = False
+
+
+def v_ochered_soobshchenie(db: Session, soobshchenie: Soobshchenie) -> None:
+    """В ту же очередь, что звонки: уходит после фиксации тем, кто её зафиксировал."""
+    db.info.setdefault(OCHERED, []).append(soobshchenie)
+
+
+def _adresat(zapis) -> int:
+    return zapis.user_id if isinstance(zapis, Soobshchenie) else zapis[4]
+
+
+def _paket(zapis, locale: str) -> tuple[dict, str, bool]:
+    """Тело уведомления, Topic и срочность — для звонка и для готового сообщения."""
+    if isinstance(zapis, Soobshchenie):
+        telo = {"title": zapis.title, "body": zapis.body, "tag": zapis.tag, "url": zapis.url,
+                "srochno": zapis.srochno}
+        return telo, zapis.topic, zapis.srochno
+    # Новый звонок того же напоминания вытесняет недоставленный прежний.
+    return _soobshchenie(zapis, locale), f"napom{zapis[0]}", zapis[2] == "urgent"
+
+
 def _soobshchenie(zvonok, locale: str) -> dict:
     task_id, title, vazhnost, srok, user_id, vid, poyas = zvonok
     tekst = TEKSTY.get(locale, TEKSTY["en"])
@@ -216,7 +253,7 @@ def razoslat(db: Session, ochered: list, klient: httpx.Client | None = None) -> 
     """
     if not ochered:
         return 0
-    podpiski = push_repo.dlya(db, [z[4] for z in ochered])
+    podpiski = push_repo.dlya(db, [_adresat(z) for z in ochered])
     if not podpiski:
         return 0
     lyudi = {
@@ -231,15 +268,16 @@ def razoslat(db: Session, ochered: list, klient: httpx.Client | None = None) -> 
     zhivye: set[int] = set()
     dostavleno = 0
     try:
-        for zvonok in ochered:
-            chelovek = lyudi.get(zvonok[4])
+        for zapis in ochered:
+            chelovek = lyudi.get(_adresat(zapis))
             if chelovek is None:
                 continue
-            telo = json.dumps(_soobshchenie(zvonok, chelovek.locale), ensure_ascii=False).encode()
+            paket, topic, srochno = _paket(zapis, chelovek.locale)
+            telo = json.dumps(paket, ensure_ascii=False).encode()
             for p in podpiski:
                 if p.user_id != chelovek.id or p.id in mertvye:
                     continue
-                ishod = _otpravit(klient, p, telo, zvonok[0], zvonok[2] == "urgent")
+                ishod = _otpravit(klient, p, telo, topic, srochno)
                 if ishod == "ubrat":
                     mertvye.add(p.id)
                 elif ishod == "ok":
@@ -256,7 +294,7 @@ def razoslat(db: Session, ochered: list, klient: httpx.Client | None = None) -> 
     return dostavleno
 
 
-def _otpravit(klient: httpx.Client, p: PushSubscription, telo: bytes, task_id: int, srochno: bool) -> str:
+def _otpravit(klient: httpx.Client, p: PushSubscription, telo: bytes, topic: str, srochno: bool) -> str:
     """Один запрос к службе браузера. «ok», «ubrat» (подписка мертва) или «» — не вышло."""
     if not sluzhba_brauzera(p.endpoint):
         # Заведена до списка служб или вписана в базу мимо — в сеть не идёт.
@@ -271,8 +309,7 @@ def _otpravit(klient: httpx.Client, p: PushSubscription, telo: bytes, task_id: i
                 "Content-Type": "application/octet-stream",
                 "TTL": str(TTL),
                 "Urgency": "high" if srochno else "normal",
-                # Новый звонок того же напоминания вытесняет недоставленный прежний.
-                "Topic": f"napom{task_id}",
+                "Topic": topic,
             },
         )
     except (httpx.HTTPError, ValueError) as exc:

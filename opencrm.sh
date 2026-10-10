@@ -2826,6 +2826,23 @@ menu_maintenance() {
     esac
 }
 
+# Почтовый сервер на этой машине (docs/bloki/32-pochtovyy-server.md). Ставит его
+# служба обновления по просьбе с экрана настроек; нет службы — ту же просьбу
+# исполняет эта команда, тем же установщиком и под тем же замком обслуживания.
+cmd_mail() {
+    need_install
+    case "${1:-status}" in
+        install|remove|status) ;;
+        *) die "$(tr_ "нужно install, remove или status" "expected install, remove or status")" ;;
+    esac
+    has python3 || die "$(tr_ "нужен python3 (sudo apt-get install -y python3)" "python3 is required (sudo apt-get install -y python3)")"
+    step "$(tr_ "Почтовый сервер" "Mail server")"
+    run_painted env OPENCRM_HOME="$(home_dir)" python3 "$REPO_DIR/deploy/pochta.py" "${1:-status}"
+}
+
+#: Пункт меню: человек приходит к нему с экрана настроек почты — исполнить просьбу.
+menu_mail() { cmd_mail install; }
+
 cmd_maintenance() {
     need_install
     case "$1" in
@@ -4153,10 +4170,12 @@ nazad|Back|To the main list' ;;
         tr_ 'cmd_domain|Домен и HTTPS|Привязать домен, выпустить или обновить сертификат
 cmd_firewall|Фаервол|Закрыть лишние порты, оставить нужные
 cmd_password|Пароль администратора|Сбросить пароль владельца системы
+menu_mail|Почтовый сервер|Поставить или снять почту по просьбе из настроек CRM
 nazad|Назад|К главному списку' \
 'cmd_domain|Domain and HTTPS|Attach a domain, issue or renew the certificate
 cmd_firewall|Firewall|Close the extra ports, keep the needed ones
 cmd_password|Admin password|Reset the owner password
+menu_mail|Mail server|Install or remove mail as requested in CRM settings
 nazad|Back|To the main list' ;;
     nablyudenie)
         tr_ 'cmd_monitoring|Мониторинг и оповещения|Панель, тревоги в телеграм, метрики базы и Redis
@@ -4386,6 +4405,7 @@ menu_vypolnit() {
         15) cmd_repair ;;
         16) cmd_monitoring ;;
         17) menu_maintenance ;;
+        18) menu_mail ;;
         0|q|Q|"") say ""; exit 0 ;;
         *)  warn "$(tr_ "нет такого пункта" "no such item")" ;;
     esac
@@ -4425,6 +4445,7 @@ menu() {
         # `./opencrm.sh maintenance off` в этот момент никто не вспоминает —
         # человек открывает меню. Поэтому здесь, а не только в справке.
         menu_item 17 "$(tr_ "Режим обслуживания: закрыть / открыть сайт" "Maintenance mode: close / open the site")"
+        menu_item 18 "$(tr_ "Почтовый сервер: поставить по просьбе из настроек" "Mail server: install as requested in Settings")"
         say ""
         menu_item 0  "$(tr_ "Выход" "Exit")"
         say ""
@@ -4464,6 +4485,10 @@ OpenCRM v$VERSION — установка и управление
   ./opencrm.sh maintenance [on|off|status]
                                   режим обслуживания: закрыть сайт или открыть
                                   обратно, если нужно закрыть его руками
+  ./opencrm.sh mail [install|remove|status]
+                                  почтовый сервер на этой машине: исполнить
+                                  просьбу из настроек CRM, если служба
+                                  обновления не запущена
 
 Флаги установки (для неинтерактивного запуска):
   --domain example.com   домен сайта; --domain "" — работать по IP без HTTPS
@@ -4547,6 +4572,7 @@ main() {
         repair)     cmd_repair ;;
         monitoring) cmd_monitoring "${1:-}" ;;
         maintenance) cmd_maintenance "${1:-status}" ;;
+        mail)       cmd_mail "${1:-status}" ;;
         "")
             if installed; then menu; else cmd_install; fi
             ;;

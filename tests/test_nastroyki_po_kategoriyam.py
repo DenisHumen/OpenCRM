@@ -127,6 +127,7 @@ POD_BLOKOM: dict[str, str] = {
     "/settings/warehouses": "warehouse",
     "/settings/finance": "finance",
     "/settings/mailboxes": "mail",
+    "/settings/mail-server": "mail",
     "/settings/telephony": "telephony",
     "/settings/telegram": "telegram",
 }
@@ -200,3 +201,68 @@ def test_okhrannik_marshruta_ne_syedaet_kontekst_karkasa():
                 f"он стоит, до экрана не доедет"
             )
     assert not bedy, (chr(10) + "  ").join(bedy)
+
+
+def prava_marshrutov() -> dict[str, str]:
+    """Адрес настроек → право ближайшего охватывающего `PermRoute`.
+
+    Вложенность — по отступу, как и в `_blok_obshchego`: обёртка закрывает всё,
+    что стоит глубже неё, до своего `</Route>`.
+    """
+    stek: list[tuple[int, str]] = []
+    prava: dict[str, str] = {}
+    for stroka in MARSHRUTY.read_text(encoding="utf-8").splitlines():
+        if "<Route" not in stroka:
+            continue
+        otstup = len(stroka) - len(stroka.lstrip())
+        while stek and stek[-1][0] >= otstup:
+            stek.pop()
+        pravo = stek[-1][1] if stek else ""
+        nayd = re.search(r'<PermRoute perm="([^"]+)"', stroka)
+        if nayd:
+            pravo = nayd.group(1)
+        put = re.search(r'path="(/settings/[a-z-]+)"', stroka)
+        if put and pravo:
+            prava[put.group(1)] = pravo
+        if not stroka.rstrip().endswith("/>"):
+            stek.append((otstup, pravo))
+    return prava
+
+
+def prava_menyu() -> dict[str, str]:
+    tekst = MENYU.read_text(encoding="utf-8")
+    nachalo = tekst.index("const settingsItems: NavEntry[] = [")
+    konets = tekst.index("\n  ];", nachalo)
+    return dict(
+        (put, pravo)
+        for pravo, put in re.findall(r'perm: "([a-z_.]+)", to: "(/settings/[a-z-]+)"', tekst[nachalo:konets])
+    )
+
+
+#: Разделы на праве своего блока, а не на общем `settings.manage`: так их
+#: спрашивает сервер. Ящики стояли под settings.manage, и почтовик, поставивший
+#: сервер, упирался в закрытый экран по кнопке «Управлять ящиками» (10.10.2026).
+PRAVO_BLOKA: dict[str, str] = {
+    "/settings/mail-server": "mail.manage",
+    "/settings/mailboxes": "mail.manage",
+    "/settings/telegram": "telegram.manage",
+    "/settings/warehouses": "warehouse.manage",
+}
+
+
+def test_punkt_menyu_i_marshrut_na_odnom_prave():
+    """Пункт на одном праве, а маршрут на другом — расхождение в обе стороны:
+    одному пункт виден, а экран отскакивает на главную, другому экран открыт,
+    а дойти до него нечем."""
+    marshruty = prava_marshrutov()
+    menyu = prava_menyu()
+    assert len(marshruty) > 8 and len(menyu) > 8, "права не разобрались — проверка смотрит не туда"
+    raznye = sorted(
+        f"{put}: меню {menyu[put]}, маршрут {marshruty[put]}"
+        for put in set(menyu) & set(marshruty)
+        if menyu[put] != marshruty[put]
+    )
+    assert not raznye, "пункт меню и маршрут на разных правах:\n  " + "\n  ".join(raznye)
+    for put, pravo in PRAVO_BLOKA.items():
+        assert marshruty.get(put) == pravo, f"{put}: маршрут на {marshruty.get(put)}, а сервер спрашивает {pravo}"
+        assert menyu.get(put) == pravo, f"{put}: пункт меню на {menyu.get(put)}, а сервер спрашивает {pravo}"

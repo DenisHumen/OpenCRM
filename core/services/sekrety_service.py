@@ -22,8 +22,8 @@ from sqlalchemy.orm import Session
 
 from config.settings import get_settings
 from core.security import secretbox
-from core.services import klyuchi_service, mail_service
-from database.models import MailAccount, TwoFactorKey
+from core.services import klyuchi_service, mail_server_service, mail_service
+from database.models import MailAccount, MailServer, TwoFactorKey
 from database.repositories import sekrety as sekrety_repo
 
 #: (модель, колонка, назначение) — все шифротексты системы.
@@ -31,6 +31,11 @@ MESTA = (
     (MailAccount, MailAccount.password_encrypted, mail_service.SECRET_PURPOSE),
     (TwoFactorKey, TwoFactorKey.secret_encrypted, klyuchi_service.SECRET_PURPOSE),
     (TwoFactorKey, TwoFactorKey.backup_codes_encrypted, klyuchi_service.BACKUP_PURPOSE),
+    (MailServer, MailServer.ssh_key_encrypted, mail_server_service.SSH_KEY_PURPOSE),
+    (MailServer, MailServer.sudo_password_encrypted, mail_server_service.SUDO_PURPOSE),
+    (MailServer, MailServer.master_password_encrypted, mail_server_service.MASTER_PURPOSE),
+    (MailServer, MailServer.agent_token_encrypted, mail_server_service.AGENT_PURPOSE),
+    (MailServer, MailServer.relay_password_encrypted, mail_server_service.RELAY_PURPOSE),
 )
 
 

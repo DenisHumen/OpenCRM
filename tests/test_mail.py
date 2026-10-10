@@ -669,11 +669,10 @@ def test_manager_cannot_touch_mailboxes(root_client, mail_on):
     ]
     for response in forbidden:
         assert response.status_code == 403, response.text
-        # Ящик — настройка системы, поэтому право на него `settings.manage`,
-        # а не «нужен root»: должность «гендиректор» заводит ящики, не будучи
-        # владельцем системы.
+        # Право на ящики — `mail.manage`, как у `/mail/admin`, а не «нужен root»:
+        # должность «гендиректор» заводит ящики, не будучи владельцем системы.
         assert response.json()["error"]["code"] == "permission_denied"
-        assert "settings.manage" in response.json()["error"]["message"]
+        assert "mail.manage" in response.json()["error"]["message"]
 
     # Читать почту и синхронизировать её менеджеру при этом можно.
     assert manager.get(f"{MAIL}/messages").status_code == 200
@@ -1416,3 +1415,153 @@ def test_pismo_na_tysyachi_adresatov_ne_teryaetsya(root_client, mail_on):
     assert len(adresaty.encode()) <= 65_535
     assert adresaty.split(", ")[0] == account["address"], "обрезали начало, а не хвост"
 
+
+
+# --- ящики — право почты, ящик своего сервера, ответ на чужое (разбор 10.10.2026) ---
+
+def _sotrudnik(root_client, prava: list[str]):
+    """Сотрудник ровно с этими правами: готовая роль менеджера могла бы их перекрыть."""
+    import uuid
+
+    metka = uuid.uuid4().hex[:8]
+    rol = root_client.post(f"{API}/roles", json={"name": f"Почта {metka}", "permissions": prava})
+    assert rol.status_code == 201, rol.text
+    klient = make_manager(root_client, f"pochta-{metka}@test.local")
+    me = klient.get(f"{API}/auth/me").json()
+    user_id = (me.get("user") or me)["id"]
+    otvet = root_client.post(f"{API}/roles/assign/{user_id}", json={"role_id": rol.json()["id"]})
+    assert otvet.status_code == 200, otvet.text
+
+    def ubrat():
+        root_client.delete(f"{API}/staff/{user_id}")
+        root_client.delete(f"{API}/roles/{rol.json()['id']}")
+
+    return klient, ubrat
+
+
+def test_yashchiki_vedyot_upravlyayushchiy_pochtoy(root_client, mail_on):
+    """Ящики — право `mail.manage`, как у `/mail/admin`: два права на одни ящики расходились."""
+    pochtovik, ubrat = _sotrudnik(root_client, ["mail.view", "mail.manage"])
+    nastroyshchik, ubrat2 = _sotrudnik(root_client, ["mail.view", "settings.manage"])
+    try:
+        sozdan = pochtovik.post(f"{MAIL}/accounts", json={"address": "pochtovik@studio.test", "password": "x"})
+        assert sozdan.status_code == 201, sozdan.text
+        account_id = sozdan.json()["id"]
+        assert account_id in {a["id"] for a in pochtovik.get(f"{MAIL}/accounts").json()["items"]}
+        assert pochtovik.patch(f"{MAIL}/accounts/{account_id}", json={"title": "Свой"}).status_code == 200
+        for otvet in (
+            nastroyshchik.get(f"{MAIL}/accounts"),
+            nastroyshchik.patch(f"{MAIL}/accounts/{account_id}", json={"title": "Чужой"}),
+        ):
+            assert otvet.status_code == 403 and "mail.manage" in otvet.json()["error"]["message"], otvet.text
+        assert pochtovik.delete(f"{MAIL}/accounts/{account_id}").status_code == 200
+    finally:
+        ubrat()
+        ubrat2()
+
+
+@pytest.fixture()
+def yashchik_servera(mail_on):
+    """Ящик своего почтового сервера: в него входят мастером, адрес — это вход."""
+    import uuid
+
+    from core.services import mail_server_service
+    from database.models import MailAccount, MailServer
+    from database.models.mail_server import MODE_SSH, STATUS_READY
+
+    t = uuid.uuid4().hex[:8]
+    with SessionLocal() as db:
+        server = MailServer(
+            mode=MODE_SSH, status=STATUS_READY, hostname=f"mail.s{t}.test", master_user="opencrm",
+            master_password_encrypted=secretbox.encrypt("Master-pass-1", mail_server_service.MASTER_PURPOSE),
+        )
+        db.add(server)
+        db.flush()
+        box = MailAccount(title=f"box {t}", address=f"box-{t}@s{t}.test", imap_host="", smtp_host="",
+                          login="", server_id=server.id)
+        db.add(box)
+        db.commit()
+        ids = {"server": server.id, "box": box.id, "address": box.address}
+    yield ids
+    with SessionLocal() as db:
+        for model, key in ((MailAccount, "box"), (MailServer, "server")):
+            stroka = db.get(model, ids[key])
+            if stroka is not None:
+                db.delete(stroka)
+        db.commit()
+
+
+def test_yashchik_svoego_servera_ne_pravitsya_cherez_accounts(root_client, yashchik_servera):
+    """Адрес ящика своего сервера — вход мастером: правка строки открывала любой другой
+    ящик сервера. Такой ящик правят через `/mail/admin/boxes`."""
+    box_id = yashchik_servera["box"]
+    for otvet in (
+        root_client.patch(f"{MAIL}/accounts/{box_id}", json={"address": "boss@firma.test"}),
+        root_client.patch(f"{MAIL}/accounts/{box_id}", json={"imap_host": "attacker.test"}),
+        root_client.delete(f"{MAIL}/accounts/{box_id}"),
+    ):
+        assert otvet.status_code == 422, otvet.text
+        assert otvet.json()["error"]["code"] == "mail_box_on_server"
+    spisok = {a["id"]: a for a in root_client.get(f"{MAIL}/accounts").json()["items"]}
+    assert spisok[box_id]["address"] == yashchik_servera["address"]
+    assert spisok[box_id]["server_id"] == yashchik_servera["server"]
+
+
+def _pismo_v_zerkale(account_id: int, *, subject: str, client_id=None, deal_id=None) -> int:
+    import uuid
+
+    from database.models import MailMessage
+
+    with SessionLocal() as db:
+        zapis = MailMessage(
+            account_id=account_id, uid=None, message_id=f"<{uuid.uuid4().hex}@beta.test>", direction="in",
+            subject=subject, from_addr="klient@beta.test", to_addrs="office@studio.test",
+            sent_at=datetime(2026, 8, 20, 9, 0), client_id=client_id, deal_id=deal_id,
+        )
+        db.add(zapis)
+        db.commit()
+        return zapis.id
+
+
+def test_otvet_na_pismo_nevidimogo_yashchika_s_yavnym_yashchikom(root_client, mail_on):
+    """С `account_id` видимость `reply_to_id` проверялась мимо: ответ наследовал клиента и
+    заявку письма из чужого личного ящика и отдавал их в ответе."""
+    from database.models import MailAccount
+
+    svoy = make_account(root_client, "svoy-otvet@studio.test")
+    chuzhoy = make_account(root_client, "chuzhoy-otvet@studio.test")
+    with SessionLocal() as db:
+        db.get(MailAccount, chuzhoy["id"]).is_shared = False
+        db.commit()
+    pismo_id = _pismo_v_zerkale(chuzhoy["id"], subject="Тайна")
+    menedzher, ubrat = _sotrudnik(root_client, ["mail.view", "mail.create"])
+    try:
+        otvet = menedzher.post(f"{MAIL}/send", json={
+            "to": ["me@studio.test"], "body": "x", "account_id": svoy["id"], "reply_to_id": pismo_id})
+        assert otvet.status_code == 404, otvet.text
+        assert otvet.json()["error"]["code"] == "mail_message_not_found"
+        assert not FakeTransport.sent
+    finally:
+        ubrat()
+
+
+def test_otvet_ne_nasleduet_nevidimuyu_zayavku(root_client, mail_on):
+    """Унаследованная заявка проверяется так же, как названная: иначе ответ клал запись
+    в ленту чужой заявки."""
+    account = make_account(root_client, "zayavka-otvet@studio.test")
+    client = make_client(root_client, "Чужой заказчик", "chuzhoy-zakazchik@beta.test")
+    deal = root_client.post(f"{API}/deals", json={"title": "Чужая заявка", "client_id": client["id"]}).json()
+    pismo_id = _pismo_v_zerkale(account["id"], subject="Про чужую заявку", client_id=client["id"],
+                                deal_id=deal["id"])
+    menedzher, ubrat = _sotrudnik(root_client, ["mail.view", "mail.create"])
+    try:
+        otvet = menedzher.post(f"{MAIL}/send", json={
+            "to": ["chuzhoy-zakazchik@beta.test"], "body": "x", "account_id": account["id"],
+            "reply_to_id": pismo_id})
+        assert otvet.status_code == 403, otvet.text
+        assert not FakeTransport.sent
+        svoy = root_client.post(f"{MAIL}/send", json={
+            "to": ["chuzhoy-zakazchik@beta.test"], "body": "x", "reply_to_id": pismo_id})
+        assert svoy.status_code == 201 and svoy.json()["deal_id"] == deal["id"], svoy.text
+    finally:
+        ubrat()

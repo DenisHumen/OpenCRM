@@ -261,6 +261,8 @@ export function signal_o_soobshchenii(opts: {
   zagolovok: string;
   telo: string;
   na_vidu: boolean;
+  /** Метка окна; у почты — та же, что у пуша ящика, чтобы окна склеивались. */
+  tag?: string;
 }): void {
   if (!signaly_vklyucheny() || !vedushchaya || opts.na_vidu) return;
 
@@ -271,7 +273,7 @@ export function signal_o_soobshchenii(opts: {
         body: opts.telo,
         // Метка одна на все сообщения: десять писем подряд заменяют друг друга
         // в одном окне, а не выстраиваются башней на весь экран.
-        tag: "opencrm-telegram",
+        tag: opts.tag ?? "opencrm-telegram",
         icon: "/static/favicon.svg",
       });
       okno.onclick = () => {

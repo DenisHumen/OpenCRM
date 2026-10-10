@@ -21,6 +21,7 @@ from core.exceptions import DomainError, ValidationError
 from core import subscriptions  # noqa: F401
 from core.services import (
     auth_service,
+    mail_watcher,
     maintenance_mode,
     permissions_service,
     pipeline_service,
@@ -50,6 +51,10 @@ from web.api.routes import (
     leads,
     live,
     mail,
+    mail_admin,
+    mail_archive,
+    mail_boxes,
+    mail_server,
     metrics,
     modules,
     notifications,
@@ -317,8 +322,11 @@ async def lifespan(app: FastAPI):
     # Звонки напоминаний — фоновым потоком; в тестах шаг зовут напрямую.
     if settings.env != "test":
         zvonki_service.zapustit()
+        # Новая почта своего сервера — тоже потоком; в тестах круг зовут напрямую.
+        mail_watcher.zapustit()
     yield
     zvonki_service.ostanovit()
+    mail_watcher.ostanovit()
     # Чтение потока живых обновлений — фоновый поток процесса; при остановке
     # его надо отпустить, иначе процесс ждёт `XREAD BLOCK` до конца окна.
     live_bus.sbrosit()
@@ -412,6 +420,10 @@ def create_app() -> FastAPI:
     app.include_router(klyuchi.router, prefix=api_prefix)
     app.include_router(reports.router, prefix=api_prefix)
     app.include_router(mail.router, prefix=api_prefix)
+    app.include_router(mail_admin.router, prefix=api_prefix)
+    app.include_router(mail_archive.router, prefix=api_prefix)
+    app.include_router(mail_boxes.router, prefix=api_prefix)
+    app.include_router(mail_server.router, prefix=api_prefix)
     app.include_router(labels.router, prefix=api_prefix)
     app.include_router(leads.router, prefix=api_prefix)
     app.include_router(shares.router, prefix=api_prefix)

@@ -103,9 +103,18 @@ def search_messages(
     q: str | None = None,
     page: int = 1,
     per_page: int = 50,
+    account_ids: set[int] | None = None,
 ) -> tuple[list[MailMessage], int]:
-    """Список писем. Тела не читаются — они `deferred` в модели."""
+    """Список писем. Тела не читаются — они `deferred` в модели.
+
+    `account_ids` — ящики, которые сотрудник видит (`mail_access`); None — без
+    ограничения. Условием запроса, а не отбором после: иначе `total` считал бы чужие.
+    """
     stmt = select(MailMessage)
+    if account_ids is not None:
+        if not account_ids:
+            return [], 0
+        stmt = stmt.where(MailMessage.account_id.in_(sorted(account_ids)))
     if account_id:
         stmt = stmt.where(MailMessage.account_id == account_id)
     if client_id:
@@ -149,13 +158,31 @@ def find_client_by_email(db: Session, address: str) -> Client | None:
     )
 
 
-def count_unread(db: Session) -> int:
-    """Непрочитанные входящие — число на пункт меню."""
-    return int(
-        db.scalar(
-            select(func.count())
-            .select_from(MailMessage)
-            .where(MailMessage.direction == "in", MailMessage.is_read.is_(False))
-        )
-        or 0
+def count_unread(db: Session, account_ids: set[int] | None = None) -> int:
+    """Непрочитанные входящие — число на пункт меню. `account_ids` — только эти ящики."""
+    stmt = (
+        select(func.count())
+        .select_from(MailMessage)
+        .where(MailMessage.direction == "in", MailMessage.is_read.is_(False))
     )
+    if account_ids is not None:
+        if not account_ids:
+            return 0
+        stmt = stmt.where(MailMessage.account_id.in_(sorted(account_ids)))
+    return int(db.scalar(stmt) or 0)
+
+
+def count_unread_by_account(db: Session, account_ids: set[int]) -> dict[int, int]:
+    """Непрочитанные входящие по ящикам — одним запросом на все."""
+    if not account_ids:
+        return {}
+    stmt = (
+        select(MailMessage.account_id, func.count())
+        .where(
+            MailMessage.direction == "in",
+            MailMessage.is_read.is_(False),
+            MailMessage.account_id.in_(sorted(account_ids)),
+        )
+        .group_by(MailMessage.account_id)
+    )
+    return {int(account_id): int(n) for account_id, n in db.execute(stmt)}

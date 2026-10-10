@@ -62,7 +62,7 @@ from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from deploy import kesh, notify, otchyot, vyzhimka
+from deploy import kesh, notify, otchyot, pochta, vyzhimka
 from deploy.config import UpdateConfig
 from deploy.github import (
     CHECKS_FAILURE,
@@ -704,6 +704,9 @@ class Updater:
             lomtik = min(ZAPROS_SHAG, ostalos)
             self._sleep(lomtik)
             ostalos -= lomtik
+            # Отметка живости — до замка: занятый обновлятор всё равно жив, и экран
+            # почты не должен отправлять человека к консоли.
+            pochta.otmetit_zhivoy(self.config.data_dir)
             try:
                 # Под замком: чистка посреди сборки `force-update` снесла бы её слои.
                 with self._zamok_obsluzhivaniya() as svoboden:
@@ -711,6 +714,20 @@ class Updater:
                         self._prosba_s_ekrana()
             except Exception as failure:  # noqa: BLE001 — демон не имеет права упасть
                 self.log(f"чистка кэша по просьбе не удалась: {failure!r}")
+            try:
+                # Под тем же замком: почта, поднятая посреди обновления, попала бы
+                # под его `up --remove-orphans` и откат (docs/bloki/32-pochtovyy-server.md).
+                with self._zamok_obsluzhivaniya() as svoboden:
+                    if svoboden:
+                        pochta.obrabotat(
+                            self.config.data_dir,
+                            pochta.dom(self.config.data_dir),
+                            self.config.project_dir,
+                            log=self.log,
+                            state_dir=self.config.state_dir,
+                        )
+            except Exception as failure:  # noqa: BLE001 — демон не имеет права упасть
+                self.log(f"просьба о почтовом сервере не исполнилась: {failure!r}")
 
     # --- кэш сборки (docs/ekspluatatsiya/08-razvyortyvanie.md, «Кэш сборки») ---
 

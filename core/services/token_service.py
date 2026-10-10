@@ -15,11 +15,14 @@ from sqlalchemy.orm import Session
 
 from core import exceptions as errors
 from core.ratelimit import SlidingWindowLimiter
-from core.services import audit_service, auth_service, permissions_service
+from core.services import audit_service, auth_service, mail_access, permissions_service
 from core.utils import PRESENCE_TOUCH_SECONDS, now_utc
 from database.models import User, UserToken
 from database.models.audit import SOURCE_MANUAL
+from database.models.mail_server import TOKEN_MAIL_ALL, TOKEN_MAIL_LIST
 from database.models.user import STATUS_ACTIVE
+from database.repositories import mail_boxes as boxes_repo
+from database.repositories import mail_server as mail_server_repo
 from database.repositories import user_tokens as tokens_repo
 from database.repositories import users as users_repo
 
@@ -60,6 +63,12 @@ ZAKRYTO: tuple[tuple[frozenset[str] | None, str], ...] = (
     (frozenset({"POST", "PATCH", "PUT", "DELETE"}), "/auth*"),
     # Поток перепроверяет cookie сессии на каждой доставке — токену он закрылся бы молча.
     (None, "/live"),
+    # Почтовый сервер: вход по SSH, установка и снятие, пароль посредника — только человек.
+    (None, "/mail/server/{server_id}/ssh*"),
+    (frozenset({"POST"}), "/mail/server/{server_id}/install"),
+    (None, "/mail/server/{server_id}/remove"),
+    (None, "/mail/server/{server_id}/adopt"),
+    (None, "/mail/server/{server_id}/relay"),
 )
 
 
@@ -89,8 +98,12 @@ def sostoyanie(tok: UserToken, now=None) -> str:
     return "active"
 
 
-def token_out(tok: UserToken, user: User) -> dict:
+def token_out(tok: UserToken, user: User, mail_boxes: list[int] | None = None) -> dict:
+    spisok_yashchikov = tok.mail_scope == TOKEN_MAIL_LIST
     return {
+        "mail_scope": TOKEN_MAIL_LIST if spisok_yashchikov else TOKEN_MAIL_ALL,
+        # null — все ящики сотрудника; список (и пустой тоже) — только эти.
+        "mail_boxes": sorted(mail_boxes or []) if spisok_yashchikov else None,
         "id": tok.id,
         "name": tok.name,
         "prefix": tok.prefix,
@@ -108,7 +121,22 @@ def token_out(tok: UserToken, user: User) -> dict:
 
 
 def spisok(db: Session) -> list[dict]:
-    return [token_out(tok, user) for tok, user in tokens_repo.spisok(db)]
+    pary = tokens_repo.spisok(db)
+    yashchiki = mail_server_repo.yashchiki_tokenov(
+        db, [tok.id for tok, _ in pary if tok.mail_scope == TOKEN_MAIL_LIST]
+    )
+    return [token_out(tok, user, yashchiki.get(tok.id)) for tok, user in pary]
+
+
+def _yashchiki_iz_zaprosa(db: Session, mail_boxes) -> set[int] | None:
+    """`null` — все ящики сотрудника; список — только эти, и каждый обязан существовать."""
+    if mail_boxes is None:
+        return None
+    nuzhno = {int(i) for i in mail_boxes}
+    est = {b.id for b in mail_server_repo.vse_yashchiki(db, nuzhno)} if nuzhno else set()
+    if nuzhno - est:
+        raise errors.NotFoundError("Mailbox not found", code="mail_account_not_found")
+    return nuzhno
 
 
 def zhivyh(db: Session) -> int:
@@ -129,6 +157,7 @@ def vypustit(db: Session, actor: User, data: dict) -> tuple[dict, str]:
     if user is None or user.status != STATUS_ACTIVE:
         raise errors.ValidationError("The employee is not active", code="user_not_active")
     permissions_service.ne_shire_sebya(db, actor, user)
+    yashchiki = _yashchiki_iz_zaprosa(db, data.get("mail_boxes"))
     raw = PRIPISKA + secrets.token_urlsafe(32)
     tok = tokens_repo.dobavit(
         db,
@@ -138,10 +167,14 @@ def vypustit(db: Session, actor: User, data: dict) -> tuple[dict, str]:
             prefix=raw[:PREFIX_LEN],
             token_hash=_otpechatok(raw),
             tolko_chtenie=bool(data.get("tolko_chtenie")),
+            mail_scope=TOKEN_MAIL_ALL if yashchiki is None else TOKEN_MAIL_LIST,
             created_by=actor.id,
             expires_at=(now_utc() + timedelta(days=dni)) if dni else None,
         ),
     )
+    if yashchiki is not None:
+        boxes_repo.zadat_yashchiki_tokena(db, tok.id, set(yashchiki))
+    pochta = "" if yashchiki is None else f", mail: {len(yashchiki)} mailbox(es) only"
     audit_service.record(
         db,
         actor=actor,
@@ -150,9 +183,9 @@ def vypustit(db: Session, actor: User, data: dict) -> tuple[dict, str]:
         entity_type=audit_service.ENTITY_TOKEN,
         entity_id=tok.id,
         entity_label=tok.name,
-        after=f"{user.name} <{user.email}>" + (", read-only" if tok.tolko_chtenie else ""),
+        after=f"{user.name} <{user.email}>" + (", read-only" if tok.tolko_chtenie else "") + pochta,
     )
-    return token_out(tok, user), raw
+    return token_out(tok, user, sorted(yashchiki) if yashchiki is not None else None), raw
 
 
 def otozvat(db: Session, actor: User, token_id: int) -> dict:
@@ -171,7 +204,8 @@ def otozvat(db: Session, actor: User, token_id: int) -> dict:
             entity_id=tok.id,
             entity_label=tok.name,
         )
-    return token_out(tok, users_repo.get_by_id(db, tok.user_id))
+    yashchiki = boxes_repo.yashchiki_tokena(db, tok.id) if tok.mail_scope == TOKEN_MAIL_LIST else None
+    return token_out(tok, users_repo.get_by_id(db, tok.user_id), sorted(yashchiki or []))
 
 
 # --- вход по токену ------------------------------------------------------------
@@ -206,6 +240,10 @@ def voyti(db: Session, raw: str, method: str, shablon: str) -> tuple[UserToken, 
         db.info[OTMETKA] = (tok.id, now)
     auth_service.poprosit_prisutstvie(db, user, now)
     db.info[audit_service.PO_TOKENU] = (tok.id, tok.name)
+    # Почта сужается поверх прав сотрудника; пустой список — ни одного ящика, а не все.
+    db.info[mail_access.TOKEN_SCOPE_KEY] = (
+        boxes_repo.yashchiki_tokena(db, tok.id) if tok.mail_scope == TOKEN_MAIL_LIST else None
+    )
     return tok, user
 
 

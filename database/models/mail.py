@@ -1,7 +1,7 @@
 import hashlib
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Index, Integer, String, Text
 
 from database.types import ExactString, LongText, text_default
 from sqlalchemy.orm import Mapped, mapped_column
@@ -43,6 +43,10 @@ def message_id_key(raw: str) -> str:
     return MESSAGE_ID_DIGEST_PREFIX + hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
+def _archive_po_umolchaniyu(context) -> bool:
+    return context.get_current_parameters().get("server_id") is not None
+
+
 class MailAccount(Base):
     """Почтовый ящик фирмы. Настройка уровня компании, правит только root."""
 
@@ -67,6 +71,28 @@ class MailAccount(Base):
     password_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    # Ящик на своём сервере (docs/bloki/32-pochtovyy-server.md). NULL — внешний ящик
+    # по IMAP/SMTP. Сервер убрали из CRM — ящик остаётся внешним, переписка цела.
+    server_id: Mapped[int | None] = mapped_column(
+        ForeignKey("mail_servers.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    # Общий ящик видят все с `mail.view`, как было до списков доступа; личный —
+    # только те, кому выдан `MailBoxAccess`, и управляющие почтой.
+    is_shared: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
+    # Квота в мегабайтах; NULL — без предела.
+    quota_mb: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Состояние входящих по последнему опросу сервера: по росту UIDNEXT видно новое
+    # письмо, а смена UIDVALIDITY значит «ящик пересоздан» — старые номера не годятся.
+    inbox_uidvalidity: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    inbox_uidnext: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    unseen_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    status_checked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # Полная копия писем в CRM (docs/bloki/32, «Архив писем в CRM»): у ящика своего
+    # сервера — сразу, у внешнего — только по выбору: чужой сервер тянуть целиком дорого.
+    archive: Mapped[bool] = mapped_column(
+        Boolean, default=_archive_po_umolchaniyu, server_default="0"
+    )
 
     # NULL — не синхронизировали ни разу. Это не то же самое, что «давно»:
     # по нулю нельзя отличить новый ящик от сломанного.

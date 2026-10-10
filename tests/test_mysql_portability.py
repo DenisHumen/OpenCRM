@@ -49,12 +49,18 @@ POBAYTNO = {
     ("share_links", "token"),
     ("mail_messages", "message_id"),
     ("products", "sku"),
+    # Архив писем: Message-ID регистрозависим, а «Work» и «work» — две папки IMAP.
+    ("mail_archive", "message_id"),
+    ("mail_archive", "folder"),
+    ("mail_archive_folders", "folder"),
 }
 
 #: Колонки, которым 64 КБ мало.
 DLINNYE = {
     ("mail_messages", "body_text"),
     ("mail_messages", "body_html"),
+    ("mail_archive", "body_text"),
+    ("mail_archive", "body_html"),
     # Склейка названия заявки с её описанием: описание — `Text`, и на длинном
     # описании обычный TEXT упёрся бы в 65 535 БАЙТ (кириллица по два). MySQL в
     # нестрогом режиме обрежет молча — заявка перестанет находиться по концу

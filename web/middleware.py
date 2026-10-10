@@ -74,6 +74,12 @@ MUTATING_METHODS = {"POST", "PATCH", "PUT", "DELETE"}
 #: логе при этом нет: процесс просто исчезает.
 MAX_JSON_BODY = 1024 * 1024
 
+#: Письмо из веб-почты — шире мегабайта: вставленная картинка или длинная цитата не
+#: уходили вовсе (разбор 10.10.2026). Потолок — по `MAX_TELO` ручки (5 млн знаков
+#: HTML, кириллица по 2 байта) с запасом на адреса; сверяет `tests/test_pochta_webmail.py`.
+MAX_JSON_PISMA = 12 * 1024 * 1024
+_PISMO = re.compile(r"^/api/v1/mail/boxes/\d+/(send|drafts)$")
+
 #: Где multipart законен — ручки, принимающие файл. Собирается из таблицы маршрутов
 #: один раз: заголовок `multipart` шлёт сам клиент, и освобождение по нему одному
 #: пускало 220 МБ на любую JSON-ручку до входа (разбор 28.09.2026).
@@ -403,7 +409,10 @@ class SecurityHeaders:
                 and app is not None
                 and zagruzka_faylov(app, request.method, request.url.path)
             )
-            if declared.isdigit() and not fayl and int(declared) > MAX_JSON_BODY:
+            predel = (
+                MAX_JSON_PISMA if request.method == "POST" and _PISMO.match(request.url.path) else MAX_JSON_BODY
+            )
+            if declared.isdigit() and not fayl and int(declared) > predel:
                 return JSONResponse(
                     status_code=413,
                     content={

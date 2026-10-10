@@ -1,0 +1,87 @@
+# Почтовый сервер OpenCRM — отдельный проект compose `opencrm-mail`
+# (docs/bloki/32-pochtovyy-server.md). Шаблон: `ustanovit.sh` кладёт его в
+# каталог почты, включая строки `#@agent ` (HTTP-агент для CRM на этой машине),
+# `#@net ` (сеть основного проекта) и `#@le ` (продление Let's Encrypt без
+# OpenCRM рядом), а `#@ports` раскрывает списком портов. Значения — из `.env`.
+#
+# Проект свой, а не служба в docker/docker-compose.yml: обновление OpenCRM
+# делает `up --remove-orphans` и откатывает базу, а почта не должна ни
+# перезапускаться с каждым обновлением, ни откатываться вместе с ним.
+name: opencrm-mail
+
+services:
+  mailserver:
+    image: ${MAIL_IMAGE}
+    container_name: ${MAIL_CONTAINER}
+    hostname: ${MAIL_HOSTNAME}
+    restart: unless-stopped
+    stop_grace_period: 1m
+    # Rspamd с Redis и Dovecot — около 600 МБ на живом сервере; потолок с запасом.
+    mem_limit: 1536m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    ports:
+#@ports
+    environment:
+      ENABLE_RSPAMD: "1"
+      ENABLE_OPENDKIM: "0"
+      ENABLE_OPENDMARC: "0"
+      ENABLE_POLICYD_SPF: "0"
+      ENABLE_AMAVIS: "0"
+      ENABLE_CLAMAV: "0"
+      ENABLE_FAIL2BAN: "1"
+      SPOOF_PROTECTION: "1"
+      PERMIT_DOCKER: none
+      SSL_TYPE: manual
+      SSL_CERT_PATH: ${MAIL_CERT_PATH}
+      SSL_KEY_PATH: ${MAIL_KEY_PATH}
+      DMS_CONFIG_POLL: "2"
+      LOG_LEVEL: info
+    # fail2ban банит через iptables внутри контейнера.
+    cap_add:
+      - NET_ADMIN
+    volumes:
+      - ${MAIL_DIR}/config:/tmp/docker-mailserver
+      - ${MAIL_DIR}/data:/var/mail
+      - ${MAIL_DIR}/state:/var/mail-state
+      - ${MAIL_DIR}/logs:/var/log/mail
+      - ${MAIL_CERT_DIR}:${MAIL_CERT_MOUNT}:ro
+#@agent       - ${MAIL_AGENT_SRC}:/opt/opencrm/agent.py:ro
+#@agent       - ${MAIL_AGENT_CONF}:/etc/supervisor/conf.d/opencrm-agent.conf:ro
+#@net     networks:
+#@net       default:
+#@net         aliases:
+#@net           - opencrm-mail
+
+#@le   # Выпуск и продление: certbot поднимает порт 80 на пару секунд — поэтому сеть
+#@le   # хоста, а не постоянная публикация. Нет сертификата (установка осталась на
+#@le   # самоподписанном) — пробует раз в час, есть — раз в 12 часов; новый кладёт в
+#@le   # tls/, и почтовый сервер подхватывает его сам (SSL_TYPE=manual следит за файлом).
+#@le   certbot:
+#@le     image: certbot/certbot
+#@le     restart: unless-stopped
+#@le     network_mode: host
+#@le     mem_limit: 128m
+#@le     logging:
+#@le       driver: json-file
+#@le       options:
+#@le         max-size: "1m"
+#@le         max-file: "2"
+#@le     environment:
+#@le       H: ${MAIL_HOSTNAME}
+#@le       ACME: ${MAIL_ACME_ARGS}
+#@le     volumes:
+#@le       - ${MAIL_LE_DIR}:/etc/letsencrypt
+#@le       - ${MAIL_CERT_DIR}:/tls
+#@le     entrypoint:
+#@le       - /bin/sh
+#@le       - -c
+#@le       - 'trap exit TERM; while :; do certbot certonly --standalone -n --agree-tos --keep-until-expiring --quiet -d "$$H" $$ACME --deploy-hook "cp -L /etc/letsencrypt/live/$$H/fullchain.pem /etc/letsencrypt/live/$$H/privkey.pem /tls/"; if [ -s "/etc/letsencrypt/live/$$H/fullchain.pem" ]; then t=43200; else t=3600; fi; sleep $$t & wait $${!}; done'
+
+#@net networks:
+#@net   default:
+#@net     name: ${MAIL_NETWORK}
+#@net     external: true

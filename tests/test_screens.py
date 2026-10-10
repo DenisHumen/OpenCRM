@@ -434,7 +434,9 @@ POST_WITHOUT_LATCH: dict[tuple[str, str], str] = {
     ("SettingsModules.tsx", "/modules/{}"): "переключатель блока: включён либо выключен",
     ("Setup.tsx", "/modules/presets"): "набор блоков применяется целиком, повтор даёт тот же набор",
     ("app.tsx", "/settings/maintenance"): "режим обслуживания: включён либо выключен",
-    ("Mail.tsx", "/mail/messages/{}/read"): "отметка «прочитано»",
+    ("Mail.tsx", "/mail/boxes/{}/messages/flags"): (
+        "флажки письма (прочитано, помечено) — состояние в IMAP: повтор ставит то же самое"
+    ),
     ("Mailboxes.tsx", "/mail/accounts/{}/check"): "проверка подключения ничего не пишет",
     ("Mailboxes.tsx", "/mail/accounts/{}/sync"): "забор почты: письма различаются по message-id",
     ("Settings.tsx", "/settings/site-logo/fetch"): "перечитывание логотипа с сайта",
@@ -968,7 +970,6 @@ def test_obe_palitry_nazyvayut_odni_i_te_zhe_tokeny():
 REFERENCE_WITHOUT_WORD: dict[tuple[str, str], str] = {
     # Ящики нужны только выбору отправителя и доступны одному root. Не ответило
     # — форма всё равно работает: сервер возьмёт первый активный ящик сам.
-    ("Mail.tsx", "accounts"): "отказ ни на что не влияет: отправку делает сервер",
     ("ClientCard.tsx", "mailAccounts"): "то же: сервер возьмёт первый активный ящик",
     ("DealCard.tsx", "mailAccounts"): "то же: сервер возьмёт первый активный ящик",
     # Названия этапов в деле клиента рядом с перепиской. Не ответил — на
@@ -1779,7 +1780,7 @@ ZHIVYE_EKRANY = (
     "ProductCard.tsx", "Orders.tsx", "OrderCard.tsx", "Returns.tsx", "ReturnCard.tsx",
     "Waybills.tsx", "WaybillCard.tsx", "Finance.tsx", "FinanceSettings.tsx", "Reports.tsx",
     "Staff.tsx", "Templates.tsx", "Mailboxes.tsx", "SettingsWarehouses.tsx", "SettingsRoles.tsx",
-    "Calls.tsx",
+    "Calls.tsx", "Mail.tsx",
 )
 
 
@@ -1866,6 +1867,9 @@ OBYAZATELNYE_KODY = (
     "wrong_password", "weak_password", "email_taken", "not_enough_stock", "document_finished",
     "order_finished", "deal_closed", "backup_busy", "module_disabled", "permission_denied",
     "session_invalid", "rate_limited",
+    # Письмо со вставленной картинкой упиралось в предел тела запроса, и
+    # человек читал английское «Request body is too large» (разбор 10.10.2026).
+    "body_too_large",
 )
 
 
@@ -1876,7 +1880,8 @@ def test_otkazy_servera_podpisany_slovami_interfeysa():
     kody = set(re.findall(r"^  (\w+): \"err\w+\",", karta, re.M))
     assert len(kody) > 50
     server = "".join(p.read_text(encoding="utf-8") for d in ("core", "web") for p in (KOREN / d).rglob("*.py"))
-    myortvye = sorted(k for k in kody if f'code="{k}"' not in server)
+    # Отказ прослойки пишется словарём ответа (`"code": "body_too_large"`), а не исключением.
+    myortvye = sorted(k for k in kody if f'code="{k}"' not in server and f'"code": "{k}"' not in server)
     assert myortvye == [], f"в карте отказов коды, которых сервер не знает: {myortvye}"
     bez = sorted(k for k in OBYAZATELNYE_KODY if k not in kody)
     assert bez == [], f"обязательные коды без подписи: {bez}"
@@ -2058,3 +2063,87 @@ def test_bron_na_kartochke_tovara_perechityvaetsya_vmeste_s_kartochkoy():
     assert "<ProductHolders productId={product.id} versiya={versiya} />" in kartochka
     assert "setVersiya((v) => v + 1)" in kartochka.split("const load = useCallback")[1]
     assert re.search(r"\}, \[productId, versiya[^\]]*\]\);", derzhateli), "бронь не перечитывается с карточкой"
+
+
+# --- Свой почтовый сервер (screens/MailServer.tsx), разбор 10.10.2026 ---------
+
+def _pochtovyy_server() -> str:
+    return (SCREENS / "screens" / "MailServer.tsx").read_text(encoding="utf-8")
+
+
+def _funktsiya(tekst: str, imya: str) -> str:
+    """Тело функции верхнего уровня: от `function imya(` до `}` в начале строки."""
+    nachalo = tekst.index(f"function {imya}(")
+    return tekst[nachalo : tekst.index("\n}\n", nachalo) + 2]
+
+
+def test_udalenie_servera_ne_teryaet_okno_zhurnala():
+    """Удаление переводит запись сервера в черновик посреди работы. Окно журнала
+    жило в карточке, а карточку рисовал только статус ready: живой намёк её
+    размонтировал вместе с окном, и вместо «удалено» человек видел мастер того же
+    сервера. Окно живёт на уровне экрана, а сервер на время удаления закреплён."""
+    ekran = _pochtovyy_server()
+    verh = _funktsiya(ekran, "MailServer")
+    kartochka = _funktsiya(ekran, "KartochkaServera")
+    assert "<UdalenieServera" in verh and "<UdalenieServera" not in kartochka
+    assert re.search(r"\(s\.status === \"ready\" \|\| zakreplyon\(s\)\)", verh), "сервер не закреплён в карточке"
+    assert re.search(r"s\.status !== \"ready\" && !zakreplyon\(s\)", verh), "удаляемый сервер уходит в мастер"
+
+
+def test_itog_ssh_sudit_po_znacheniyu_a_ne_po_istinnosti():
+    """`docker` и `sudo` — всегда непустые строки: «Docker: missing» и неверный
+    пароль sudo красились зелёным успехом. Каждое значение разведки названо
+    словами, и цвет у него свой."""
+    from core.services import mail_ssh
+
+    razvedka = pathlib.Path(mail_ssh.__file__).read_text(encoding="utf-8")
+    docker = set(re.findall(r"docker=(\w+)", razvedka))
+    sudo = set(re.findall(r"sudo=(\w+)", razvedka)) | set(re.findall(r'"(password_\w+)"', razvedka)) | {"root"}
+    assert docker >= {"ok", "missing", "noaccess"} and sudo >= {"nopasswd", "password", "none", "password_bad"}
+    ekran = _pochtovyy_server()
+
+    def karta(imya: str) -> dict[str, str]:
+        kusok = ekran[ekran.index(f"const {imya}") : ekran.index("};", ekran.index(f"const {imya}"))]
+        return dict(re.findall(r'^\s+(\w+): \{ vid: "(\w+)"', kusok, re.M))
+
+    dk, sk = karta("DOCKER_ITOG"), karta("SUDO_ITOG")
+    assert docker <= set(dk), f"значения Docker без подписи: {sorted(docker - set(dk))}"
+    assert sudo <= set(sk), f"значения sudo без подписи: {sorted(sudo - set(sk))}"
+    assert dk["ok"] == "success" and dk["missing"] != "success" and dk["noaccess"] != "success"
+    assert sk["password_bad"] == "danger" and sk["none"] != "success" and sk["password"] != "success"
+    itog = _funktsiya(ekran, "ItogSsh")
+    assert not re.search(r"variant=\{itog\.(docker|sudo) \?", itog), "цвет снова по истинности строки"
+
+
+def test_dkim_sozdayotsya_knopkoy_iz_instruktsii():
+    """`dkim_failed` — только предупреждение установщика, и подпись оставалась
+    несозданной навсегда: инструкция велела нажать «Создать DKIM», а кнопки не было."""
+    from core.services.mail_install import HINTS
+
+    ekran = _pochtovyy_server()
+    assert "/mail/server/${server.id}/domains/${d.id}/dkim" in ekran
+    i18n = (SCREENS / "lib" / "i18n.ts").read_text(encoding="utf-8")
+    podpisi = re.findall(r'^  msrvDkimCreate: "([^"]+)",', i18n, re.M)
+    assert len(podpisi) == 2, "у кнопки нет подписи на обоих языках"
+    instruktsiya = " ".join(HINTS["dkim_failed"]["steps"]["ru"] + HINTS["dkim_failed"]["steps"]["en"])
+    for podpis in podpisi:
+        assert podpis in instruktsiya, f"инструкция ведёт к кнопке, которой нет: {podpis}"
+
+
+def test_parol_pervogo_yashchika_viden_do_kontsa_ustanovki():
+    """POST /install отдаёт пароль сразу, а показывался он только при успехе. Экран
+    говорит, что уйти во время установки можно, — ушедший не видел пароль нигде."""
+    ustanovka = _funktsiya(_pochtovyy_server(), "ShagUstanovka")
+    srazu = ustanovka.index("password={parol.password} srazu")
+    assert srazu < ustanovka.index("<ZhurnalRaboty rabota={rabota} />"), "пароль показан после журнала"
+    assert "{uspekh && (" not in ustanovka[: srazu], "пароль снова ждёт успеха установки"
+
+
+def test_udalenie_yashchika_sprashivaet_pro_kopiyu_v_crm():
+    """Копия ящика стирается ДО ящика: после него строки копии теряют ящик
+    (`account_id` → NULL), и стереть их по нему уже нельзя. Выключатель —
+    отдельный и по умолчанию выключен: копия заведена, чтобы пережить сервер."""
+    ekran = (SCREENS / "screens" / "Mailboxes.tsx").read_text(encoding="utf-8")
+    udalenie = _funktsiya(ekran, "UdalenieYashchika")
+    assert "useState(false);" in udalenie.split("const [sKopiey")[1].split("\n")[0]
+    assert udalenie.index("/mail/archive/boxes/${box.id}") < udalenie.index("/mail/admin/boxes/${box.id}?keep_data")

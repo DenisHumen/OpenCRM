@@ -18,6 +18,8 @@ class TokenIn(BaseModel):
     user_id: int | None = None
     days: int = token_service.SROK_UMOLCHANIE
     tolko_chtenie: bool = False
+    #: Почта: null — все ящики сотрудника, список — только эти (пустой — ни одного).
+    mail_boxes: list[int] | None = None
 
 
 @router.get("", dependencies=[manage])

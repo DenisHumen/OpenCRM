@@ -301,6 +301,20 @@ def test_doctor_says_the_site_is_closed():
     assert '"maintenance":"off"' in doctor, "диагностика молчит и когда сайт открыт"
 
 
+def test_pochtu_mozhno_postavit_bez_obnovlyatora():
+    """Почту на этой машине ставит служба обновления; нет её — та же просьба
+    исполняется командой. Без команды мастер почты отправлял бы человека в никуда.
+    """
+    text = source()
+    komanda = text[text.index("cmd_mail() {") :]
+    komanda = komanda[: komanda.index("\n}\n")]
+    assert "deploy/pochta.py" in komanda, "команда обязана звать тот же исполнитель, что и обновлятор"
+    assert "mail)       cmd_mail" in text, "команда не подключена к разбору аргументов"
+    assert "./opencrm.sh mail [install|remove|status]" in text, "команды нет в справке"
+    menyu = text[text.index(chr(10) + "menu() {") + 1 : text.index(chr(10) + "usage() {")]
+    assert "Почтовый сервер" in menyu and "menu_mail|Почтовый сервер|" in text and "menu_mail|Mail server|" in text
+
+
 def test_maintenance_can_be_lifted_from_the_command_line():
     """Открыть сайт должно быть можно с сервера, а не только из закрытой CRM."""
     text = source()

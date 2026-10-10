@@ -1073,15 +1073,71 @@ export const RUKOVODSTVO: Razdel[] = [
         module: "mail",
         nazvanie: { ru: "Почта", en: "Mail" },
         kratko: {
-          ru: "Ящик фирмы: письма привязываются к клиенту и ложатся в общую ленту.",
-          en: "The company mailbox: letters attach to a client and land in the shared feed.",
+          ru: "Веб-почта: все ящики, которые вам открыты, письма клиентам и копия каждого письма в CRM.",
+          en: "Webmail: every mailbox open to you, letters to clients and a copy of every letter in the CRM.",
         },
         kuski: [
           {
             vid: "abzats",
             tekst: {
-              ru: "Ящик подключается по IMAP и SMTP. Входящее письмо привязывается к клиенту по адресу отправителя — и попадает в ленту карточки рядом со звонками, встречами и заметками.",
-              en: "The mailbox connects over IMAP and SMTP. An incoming letter is matched to a client by the sender address and lands in the card feed next to calls, meetings and notes.",
+              ru: "«Почта» устроена как почтовая программа: слева ящики и папки со счётчиками непрочитанного, в середине список писем, справа само письмо. Видны только ящики, которые вам открыли: общий — всем, у кого есть доступ к почте, личный — тем, кому его выдали. Это и ящики своего почтового сервера, и подключённые внешние (Gmail, Яндекс, хостинг).",
+              en: "«Mail» works like a mail app: mailboxes and folders with unread counters on the left, the message list in the middle, the letter itself on the right. You see only the mailboxes opened to you: a shared one — to everyone with access to mail, a personal one — to those it was given to. These are both mailboxes of your own mail server and connected external ones (Gmail, Yahoo, your hosting).",
+            },
+          },
+          {
+            vid: "shagi",
+            punkty: [
+              {
+                ru: "«Новое письмо» — выберите ящик, из которого пишете: в списке только те, откуда вам можно отправлять.",
+                en: "“New letter” — pick the mailbox you write from: the list has only those you are allowed to send from.",
+              },
+              {
+                ru: "Кому, копия, скрытая копия — адреса клиентов подсказываются сами.",
+                en: "To, Cc, Bcc — client addresses are suggested as you type.",
+              },
+              {
+                ru: "Текст с оформлением и файлы кнопкой «Прикрепить файлы»: до 25 МБ на файл и 35 МБ на письмо. Картинку, вставленную прямо в текст, CRM отправит вложением.",
+                en: "Formatted text and files via “Attach files”: up to 25 MB per file and 35 MB per letter. A picture pasted right into the text is sent as an attachment.",
+              },
+              {
+                ru: "Ctrl+Enter — отправить. Черновик сохраняется сам, стоит замолчать на пять секунд.",
+                en: "Ctrl+Enter sends. The draft saves itself after five seconds of quiet.",
+              },
+            ],
+          },
+          {
+            vid: "spisok",
+            punkty: [
+              {
+                ru: "Пришло письмо — список и счётчики обновятся сами, в открытой вкладке прозвучит сигнал. При закрытой вкладке и на телефоне придёт уведомление, если включён звонок: Профиль → «Звонок при закрытой вкладке».",
+                en: "A letter arrives — the list and counters update by themselves, and the open tab plays a sound. With the tab closed and on your phone you get a notification if the ring is on: Profile → “Ring with the tab closed”.",
+              },
+              {
+                ru: "Картинки из интернета в письме скрыты: загрузив их, вы сообщите отправителю, что открыли письмо. Показать — кнопкой «Показать картинки».",
+                en: "Pictures from the internet are hidden in a letter: loading them tells the sender you opened it. Show them with “Show images”.",
+              },
+              {
+                ru: "Ответ и пересылка встают в ту же переписку; пересылка везёт с собой вложения исходного письма.",
+                en: "A reply and a forward stay in the same thread; a forward carries the attachments of the original letter.",
+              },
+              {
+                ru: "Удалённое письмо уходит в «Корзину», из «Корзины» — насовсем, с вопросом.",
+                en: "A deleted letter goes to “Trash”, and from “Trash” — for good, after a question.",
+              },
+            ],
+          },
+          {
+            vid: "abzats",
+            tekst: {
+              ru: "«Архив CRM» под папками каждого ящика — копия всех его писем, которая хранится в самой CRM. Она остаётся, даже если письмо удалили на почтовом сервере или самого сервера больше нет: такие письма помечены «удалено на сервере». Искать можно по теме, отправителю и адресатам, а у каждого письма есть вложения и оригинал (.eml).",
+              en: "“CRM archive” under the folders of every mailbox is a copy of all its letters kept in the CRM itself. It stays even if a letter was deleted on the mail server or the server is gone: such letters are marked “deleted on the server”. You can search by subject, sender and recipients, and every letter keeps its attachments and the original (.eml).",
+            },
+          },
+          {
+            vid: "vazhno",
+            tekst: {
+              ru: "Входящее письмо привязывается к клиенту по адресу отправителя и попадает в ленту его карточки рядом со звонками и заметками — но только из ОБЩЕГО ящика. Переписка личного ящика видна лишь тем, кому ящик выдан: иначе её читал бы любой, кто видит клиента.",
+              en: "An incoming letter is matched to a client by the sender address and lands in their card feed next to calls and notes — but only from a SHARED mailbox. Mail of a personal mailbox is seen only by those it was given to: otherwise anyone who sees the client would read it.",
             },
           },
           {
@@ -1103,12 +1159,219 @@ export const RUKOVODSTVO: Razdel[] = [
                 en: "Re-syncing duplicates neither the letter nor the feed entry.",
               },
               {
-                ru: "Письма не правятся и не удаляются: почта — зеркало сервера, а правка задним числом была бы способом подделать переписку.",
-                en: "Letters are neither edited nor deleted: mail mirrors the server, and editing after the fact would be a way to forge correspondence.",
+                ru: "Запись в ленте клиента не правится и не удаляется: письмо в почте можно переложить или удалить, а история общения с клиентом от этого не меняется — правка задним числом была бы способом подделать переписку.",
+                en: "A feed entry is neither edited nor deleted: you may move or delete the letter in mail, but the history with the client stays — editing after the fact would be a way to forge correspondence.",
               },
             ],
           },
           { vid: "ekran", put: "/mail", podpis: { ru: "Открыть почту", en: "Open mail" } },
+        ],
+      },
+      {
+        id: "pochtovyy-server",
+        perm: "mail.manage",
+        module: "mail",
+        nazvanie: { ru: "Почтовый сервер", en: "Mail server" },
+        kratko: {
+          ru: "Своя почта на своём домене: CRM ставит сервер на арендованный VPS и управляет им сама.",
+          en: "Your own mail on your own domain: the CRM installs the server on a rented VPS and runs it for you.",
+        },
+        kuski: [
+          {
+            vid: "abzats",
+            tekst: {
+              ru: "Свой почтовый сервер даёт адреса вида имя@ваша-фирма.ru, письма прямо в CRM и полную копию всей почты в её базе. Ставить его лучше на отдельный арендованный VPS: у такой машины сразу постоянный адрес, а без него и без обратной записи Gmail ваши письма не примет. CRM подключится к VPS по SSH и сделает всё сама — от Docker до сертификата.",
+              en: "Your own mail server gives you addresses like name@your-company.com, letters right in the CRM and a full copy of all mail in its database. It is best put on a separate rented VPS: such a machine has a permanent address from day one, and without it and a reverse record Gmail will not accept your mail. The CRM connects to the VPS over SSH and does everything itself — from Docker to the certificate.",
+            },
+          },
+          {
+            vid: "shagi",
+            punkty: [
+              {
+                ru: "Арендуйте VPS. Например, Linode → Create → Linode: образ Ubuntu 24.04 LTS, тариф Nanode 1 GB, свой пароль root. Запишите IPv4-адрес сервера.",
+                en: "Rent a VPS. For example, Linode → Create → Linode: Ubuntu 24.04 LTS image, Nanode 1 GB plan, your own root password. Note the server's IPv4 address.",
+              },
+              {
+                ru: "Там, где живёт домен (например, в Cloudflare), заведите запись A: имя mail, адрес — IPv4 сервера, облако серое («DNS only»). Оранжевое облако почту не пропускает.",
+                en: "Where your domain lives (Cloudflare, for example), add an A record: name mail, address — the server's IPv4, grey cloud (“DNS only”). The orange cloud does not let mail through.",
+              },
+              {
+                ru: "Настройки → Почтовый сервер → «На другом сервере». Впишите домен (например, acme.ru), адрес сервера и пользователя root — «Сохранить и продолжить».",
+                en: "Settings → Mail server → “On another server”. Enter the domain (for example acme.com), the server address and user root — “Save and continue”.",
+              },
+              {
+                ru: "Введите пароль root и нажмите «Подключиться». CRM покажет отпечаток сервера — «Да, это мой сервер». Дальше CRM входит своим ключом, а пароль забывает.",
+                en: "Enter the root password and press “Connect”. The CRM shows the server fingerprint — “Yes, it's my server”. From then on the CRM logs in with its own key and forgets the password.",
+              },
+              {
+                ru: "«Проверить». На свежем VPS предупреждения про Docker, память и порт 25 — это нормально: Docker и файл подкачки CRM поставит сама, а про порт 25 — шаг 8.",
+                en: "“Run the check”. On a fresh VPS warnings about Docker, memory and port 25 are normal: the CRM installs Docker and a swap file itself, and port 25 is step 8.",
+              },
+              {
+                ru: "«Установить». Пароль первого ящика покажется сразу — сохраните его. Установка займёт несколько минут, каждый шаг виден на экране, а уйти со страницы можно.",
+                en: "“Install”. The first mailbox password is shown right away — save it. The install takes a few minutes, every step is on the screen, and you may leave the page.",
+              },
+              {
+                ru: "Заведите в DNS записи из таблицы под установкой — MX, SPF, DKIM и DMARC (значения копируются кнопками), — и через полчаса нажмите «Проверить DNS».",
+                en: "Add the records from the table under the install to your DNS — MX, SPF, DKIM and DMARC (values copy with a button) — and press “Check DNS” half an hour later.",
+              },
+              {
+                ru: "Попросите хостинг задать обратную запись (PTR) mail.ваш-домен и открыть исходящую почту: у Linode — Network → Edit RDNS и тикет «SMTP restriction removal». Пока порт закрыт, письма принимаются, а наружу их можно слать через посредника в карточке сервера.",
+                en: "Ask your hosting to set the reverse record (PTR) mail.your-domain and to open outgoing mail: at Linode — Network → Edit RDNS and a “SMTP restriction removal” ticket. While the port is closed, mail comes in, and you can send out through a relay in the server card.",
+              },
+              {
+                ru: "Отправьте проверочное письмо из карточки сервера на свой Gmail: пришло во «Входящие», а не в «Спам» — готово.",
+                en: "Send a test letter from the server card to your Gmail: it lands in “Inbox”, not “Spam” — you are done.",
+              },
+            ],
+          },
+          {
+            vid: "vazhno",
+            tekst: {
+              ru: "Не успел сертификат выпуститься, пока запись A расходилась? Переустанавливать ничего не нужно: сервер уже работает с временным сертификатом и в течение часа сам получит настоящий.",
+              en: "The certificate was not issued because the A record had not spread yet? Nothing to reinstall: the server already works with a temporary certificate and gets a real one by itself within an hour.",
+            },
+          },
+          {
+            vid: "abzats",
+            tekst: {
+              ru: "Провалившаяся установка откатывает всё, что успела сделать, и показывает, что случилось, как исправить и полный журнал. Если почтовый сервер на машине уже стоит, кнопка «Подключить существующий сервер» возьмёт его под управление вместе с ящиками — ничего не переустанавливая.",
+              en: "A failed install undoes everything it did and shows what happened, how to fix it and the full log. If a mail server already runs on the machine, the “Connect the existing mail server” button takes it over together with its mailboxes — without reinstalling anything.",
+            },
+          },
+          {
+            vid: "svyortka",
+            zagolovok: { ru: "Если что-то пошло не так", en: "If something went wrong" },
+            kuski: [
+              {
+                vid: "tablitsa",
+                shapka: [
+                  { ru: "Что видите", en: "What you see" },
+                  { ru: "Что делать", en: "What to do" },
+                ],
+                ryady: [
+                  [
+                    { ru: "Мало памяти", en: "Not enough memory" },
+                    { ru: "Нужен 1 ГБ и файл подкачки 2 ГБ. Под root CRM заводит его сама; меньше 1 ГБ — возьмите тариф побольше.", en: "1 GB and a 2 GB swap file are needed. Logged in as root, the CRM creates the swap itself; under 1 GB — take a bigger plan." },
+                  ],
+                  [
+                    { ru: "Хостинг закрыл исходящие порты почты", en: "Your hosting blocks outgoing mail ports" },
+                    { ru: "Тикет в поддержку хостинга или посредник в карточке сервера. Ставить можно и так.", en: "A ticket to hosting support or a relay in the server card. You can install anyway." },
+                  ],
+                  [
+                    { ru: "Почтовый порт уже занят", en: "A mail port is already in use" },
+                    { ru: "На машине уже есть почтовая программа: остановите её или выберите «Подключить существующий сервер».", en: "A mail program already runs on the machine: stop it or choose “Connect the existing mail server”." },
+                  ],
+                  [
+                    { ru: "Ключ сервера изменился", en: "The server key has changed" },
+                    { ru: "Переустанавливали VPS — «Подключиться заново» и сверьте новый отпечаток. Нет — не подключайтесь: так выглядит подмена сервера.", en: "You reinstalled the VPS — “Connect again” and check the new fingerprint. If not — do not connect: this is what a spoofed server looks like." },
+                  ],
+                  [
+                    { ru: "Не создалась подпись DKIM", en: "The DKIM signature was not created" },
+                    { ru: "Карточка сервера → у домена «Создать DKIM», затем новая запись — в DNS.", en: "Server card → “Create DKIM” at the domain, then the new record goes into DNS." },
+                  ],
+                  [
+                    { ru: "CRM не достучалась до почтового сервера", en: "The CRM cannot reach the mail server" },
+                    { ru: "Проверьте, что контейнер opencrm-mail запущен; готовые команды — в инструкции на экране.", en: "Check that the opencrm-mail container is running; ready commands are in the on-screen instruction." },
+                  ],
+                ],
+              },
+            ],
+          },
+          {
+            vid: "svyortka",
+            zagolovok: { ru: "Почта на той же машине, что и CRM", en: "Mail on the same machine as the CRM" },
+            kuski: [
+              {
+                vid: "abzats",
+                tekst: {
+                  ru: "Вариант «На этом сервере» ставит почту рядом с CRM. Он годится, если у машины постоянный белый адрес, обратная запись у провайдера и открытый порт 25, а порты 25, 465, 587 и 993 проброшены на неё с роутера. Ставит почту служба обновления OpenCRM; если она не запущена, экран покажет команду ./opencrm.sh mail install — её выполняют на сервере в папке OpenCRM.",
+                  en: "The “On this server” option puts mail next to the CRM. It fits if the machine has a permanent public address, a reverse record from the provider and an open port 25, with ports 25, 465, 587 and 993 forwarded to it from the router. The OpenCRM update service installs the mail; if it is not running, the screen shows the command ./opencrm.sh mail install — run it on the server in the OpenCRM folder.",
+                },
+              },
+            ],
+          },
+          {
+            vid: "vnimanie",
+            tekst: {
+              ru: "«Удалить почтовый сервер» с отметкой «Удалить и все письма на сервере» стирает почту на машине — вернуть её будет нельзя. Копия писем в CRM при этом остаётся.",
+              en: "“Delete the mail server” with “Also delete all letters on the server” ticked wipes the mail on the machine — it cannot be brought back. The copy of the letters in the CRM stays.",
+            },
+          },
+          { vid: "ekran", put: "/settings/mail-server", podpis: { ru: "Открыть почтовый сервер", en: "Open the mail server" } },
+        ],
+      },
+      {
+        id: "pochtovye-yashchiki",
+        perm: "mail.manage",
+        module: "mail",
+        nazvanie: { ru: "Почтовые ящики", en: "Mailboxes" },
+        kratko: {
+          ru: "Сколько угодно ящиков на своём сервере: адрес и пароль свои или случайные, кто видит и кто пишет.",
+          en: "As many mailboxes on your server as you like: your own or random address and password, who sees and who writes.",
+        },
+        kuski: [
+          {
+            vid: "shagi",
+            punkty: [
+              {
+                ru: "Настройки → Почтовые ящики → «Новый ящик».",
+                en: "Settings → Mailboxes → “New mailbox”.",
+              },
+              {
+                ru: "Адрес — свой (латинские буквы, цифры, точка, дефис, подчёркивание) или кнопкой «Случайно».",
+                en: "The address — your own (Latin letters, digits, dot, dash, underscore) or the “Random” button.",
+              },
+              {
+                ru: "Пароль — свой, от 10 знаков, или оставьте пустым: CRM придумает надёжный и покажет его один раз.",
+                en: "The password — your own, 10 characters or more, or leave it empty: the CRM makes a strong one and shows it once.",
+              },
+              {
+                ru: "«Общий ящик» видят все, у кого есть доступ к почте. Иначе отметьте сотрудников и кто из них может отправлять.",
+                en: "A “Shared mailbox” is seen by everyone with access to mail. Otherwise tick the employees and which of them may send.",
+              },
+            ],
+          },
+          {
+            vid: "spisok",
+            punkty: [
+              {
+                ru: "В меню ящика — сменить пароль, сменить адрес (письма переедут, а старый адрес может остаться псевдонимом), предел размера, выключить, удалить.",
+                en: "The mailbox menu has change password, change address (letters move over, and the old address may stay as an alias), size limit, turn off, delete.",
+              },
+              {
+                ru: "Там же — настройки для телефона и почтовых программ: IMAP 993, SMTP 465, логин — полный адрес.",
+                en: "It also has settings for phones and mail apps: IMAP 993, SMTP 465, the login is the full address.",
+              },
+              {
+                ru: "Псевдоним — лишний адрес без своего ящика: письма на sales@ попадут в office@.",
+                en: "An alias is an extra address without its own mailbox: mail to sales@ goes to office@.",
+              },
+              {
+                ru: "Внешние ящики (Gmail, Яндекс, хостинг) подключаются на своей вкладке, по IMAP и SMTP.",
+                en: "External mailboxes (Gmail, Yahoo, your hosting) are connected on their own tab, over IMAP and SMTP.",
+              },
+              {
+                ru: "Вкладка «Копия в CRM» решает, хранить ли копию писем ящика в CRM. У ящиков своего сервера она включена сразу, у внешних — по желанию.",
+                en: "The “Copy in the CRM” tab decides whether to keep a copy of a mailbox's letters in the CRM. It is on from the start for your server's mailboxes, optional for external ones.",
+              },
+            ],
+          },
+          {
+            vid: "vazhno",
+            tekst: {
+              ru: "Пароль ящика CRM не хранит: в ящики своего сервера она ходит служебным входом. Забыли пароль — задайте новый через «Сменить пароль».",
+              en: "The CRM does not keep mailbox passwords: it enters your server's mailboxes with a service login. Forgot a password — set a new one with “Change password”.",
+            },
+          },
+          {
+            vid: "vnimanie",
+            tekst: {
+              ru: "Удаление ящика без отметки «Оставить письма на сервере» стирает его почту на сервере. Отдельно спросят, удалить ли и копию писем в CRM, — по умолчанию она остаётся.",
+              en: "Deleting a mailbox without “Keep the letters on the server” wipes its mail on the server. You are asked separately whether to delete the copy in the CRM too — by default it stays.",
+            },
+          },
+          { vid: "ekran", put: "/settings/mailboxes", podpis: { ru: "Открыть почтовые ящики", en: "Open mailboxes" } },
         ],
       },
       {
@@ -1732,8 +1995,8 @@ export const RUKOVODSTVO: Razdel[] = [
                 en: "Create a separate employee for the agent (“Claude”) and give it a role that fits the job exactly — a token can do no more than its role.",
               },
               {
-                ru: "Настройки → API → «Выпустить токен»: имя, от чьего имени, срок; для агента, который только отвечает на вопросы, — «Только чтение».",
-                en: "Settings → API → “Issue a token”: a name, who it acts as, a term; for an agent that only answers questions — “Read only”.",
+                ru: "Настройки → API → «Выпустить токен»: имя, от чьего имени, срок; для агента, который только отвечает на вопросы, — «Только чтение»; если включена почта — «Все ящики сотрудника» или «Только выбранные» (статья «Почта через API»).",
+                en: "Settings → API → “Issue a token”: a name, who it acts as, a term; for an agent that only answers questions — “Read only”; with mail on — “All of the employee's mailboxes” or “Only selected” (the “Mail over the API” article).",
               },
               {
                 ru: "Скопируйте строку ocrm_… сразу: она показывается один раз.",
@@ -1766,6 +2029,249 @@ curl -H "Authorization: Bearer ocrm_…" https://crm.example.com/api/v1/system/o
             },
           },
           { vid: "ekran", put: "/settings/api", podpis: { ru: "Выпустить токен", en: "Issue a token" } },
+        ],
+      },
+      {
+        id: "pochta-api",
+        perm: "mail.view",
+        module: "mail",
+        nazvanie: { ru: "Почта через API", en: "Mail over the API" },
+        kratko: {
+          ru: "Ящики, письма, отправка и архив — по токену сотрудника; токен можно ограничить выбранными ящиками.",
+          en: "Mailboxes, letters, sending and the archive — with an employee token; the token can be limited to chosen mailboxes.",
+        },
+        kuski: [
+          {
+            vid: "abzats",
+            tekst: {
+              ru: "Всё, что умеет экран почты, умеет и программа с токеном сотрудника (статья «Токены и MCP»): читать папки и письма, отправлять, заводить ящики, искать в архиве CRM. Права — те же, что у роли сотрудника: читать — mail.view, писать — mail.create, ящики и сервер — mail.manage. Видит программа ровно те ящики, что и сам сотрудник.",
+              en: "Everything the mail screen does, a program with an employee token does too (the “Tokens and MCP” article): read folders and letters, send, create mailboxes, search the CRM archive. Permissions are the employee's role: reading — mail.view, writing — mail.create, mailboxes and the server — mail.manage. The program sees exactly the mailboxes the employee sees.",
+            },
+          },
+          {
+            vid: "vazhno",
+            tekst: {
+              ru: "При выпуске токена в блоке «Почтовые ящики» выберите «Только выбранные» и отметьте ящики — программа увидит только их, даже если сотрудник видит больше. Чужой ящик для неё не существует (404), а заводить новые ящики и псевдонимы такой токен не может (403 mail_box_forbidden). Удалили единственный ящик токена — он не видит ни одного, а не «все».",
+              en: "When issuing a token, pick “Only selected” in the “Mailboxes” block and tick the mailboxes — the program sees only those, even if the employee sees more. Any other mailbox does not exist for it (404), and such a token cannot create mailboxes or aliases (403 mail_box_forbidden). If its only mailbox is deleted, it sees none rather than “all”.",
+            },
+          },
+          {
+            vid: "vnimanie",
+            tekst: {
+              ru: "Вход на почтовый сервер по SSH, его установка, снятие с машины, подключение чужого сервера и посредник закрыты любому токену (403 token_not_allowed): это делает человек на экране.",
+              en: "SSH login to the mail server, installing it, removing it from the machine, taking over an existing server and the relay are closed to any token (403 token_not_allowed): a person does that on the screen.",
+            },
+          },
+          {
+            vid: "ruchka",
+            metod: "GET",
+            put: "/api/v1/mail/boxes",
+            opisanie: {
+              ru: "Ящики, которые видит токен: непрочитанное во «Входящих» и можно ли из ящика писать. Отвечает из базы, на почтовый сервер не ходит. Новое письмо — рост inbox_uidnext при той же inbox_uidvalidity.",
+              en: "Mailboxes the token sees: unread in the Inbox and whether you may send from the mailbox. Answered from the database without calling the mail server. A new letter means inbox_uidnext grew while inbox_uidvalidity stayed the same.",
+            },
+            zapros: `curl -s https://crm.example.com/api/v1/mail/boxes \\
+  -H "Authorization: Bearer ocrm_…"`,
+            otvet: `[{
+  "id": 7,
+  "address": "office@acme.com",
+  "title": "Office",
+  "server_id": 1,
+  "unseen": 3,
+  "inbox_uidnext": 1842,
+  "inbox_uidvalidity": 1728561234,
+  "can_send": true,
+  "is_shared": true
+}]`,
+          },
+          {
+            vid: "ruchka",
+            metod: "GET",
+            put: "/api/v1/mail/boxes/{id}/messages",
+            opisanie: {
+              ru: "Письма папки, новые сверху. Ящик чужой или не виден токену — 404 mail_account_not_found.",
+              en: "Letters of a folder, newest first. A mailbox that is not visible to the token — 404 mail_account_not_found.",
+            },
+            polya: [
+              {
+                imya: "folder",
+                tip: "string",
+                obyazatelno: false,
+                opisanie: { ru: "Путь папки из …/folders, по умолчанию INBOX.", en: "Folder path from …/folders, INBOX by default." },
+              },
+              {
+                imya: "q",
+                tip: "string",
+                obyazatelno: false,
+                opisanie: { ru: "Поиск по всему письму; from:имя — по отправителю, subject:слово — по теме.", en: "Search the whole letter; from:name — by sender, subject:word — by subject." },
+              },
+              {
+                imya: "unread",
+                tip: "boolean",
+                obyazatelno: false,
+                opisanie: { ru: "Только непрочитанные.", en: "Unread only." },
+              },
+              {
+                imya: "page, per_page",
+                tip: "integer",
+                obyazatelno: false,
+                opisanie: { ru: "Страница и её размер, по умолчанию 1 и 50.", en: "Page and page size, 1 and 50 by default." },
+              },
+            ],
+            zapros: `curl -s "https://crm.example.com/api/v1/mail/boxes/7/messages?unread=true&per_page=1" \\
+  -H "Authorization: Bearer ocrm_…"`,
+            otvet: `{
+  "items": [{
+    "uid": 1841,
+    "subject": "Order 1205",
+    "from": { "name": "Ann Lee", "email": "ann@client.com" },
+    "to": [{ "name": "", "email": "office@acme.com" }],
+    "date": "2026-10-10T09:14:02+00:00",
+    "seen": false, "flagged": false, "answered": false, "draft": false,
+    "has_attachments": true,
+    "size": 48211,
+    "preview": "Good morning, attaching the invoice…"
+  }],
+  "total": 3, "page": 1, "per_page": 1, "folder": "INBOX"
+}`,
+          },
+          {
+            vid: "ruchka",
+            metod: "POST",
+            put: "/api/v1/mail/boxes/{id}/send",
+            opisanie: {
+              ru: "Отправить письмо из ящика: нужны mail.create и право писать из этого ящика. Копия ложится в «Отправленные». Отказ части адресатов — не ошибка: они перечислены в refused, остальным письмо уже ушло, повторять его нельзя.",
+              en: "Send a letter from the mailbox: needs mail.create and the right to send from this mailbox. A copy goes to “Sent”. Some recipients refused is not an error: they are listed in refused, the rest already got the letter, so do not resend it.",
+            },
+            polya: [
+              {
+                imya: "to, cc, bcc",
+                tip: "string[]",
+                obyazatelno: true,
+                opisanie: { ru: "Адресаты; хотя бы один на всё письмо и не больше 50.", en: "Recipients; at least one per letter and no more than 50." },
+              },
+              {
+                imya: "subject",
+                tip: "string",
+                obyazatelno: false,
+                opisanie: { ru: "Тема.", en: "Subject." },
+              },
+              {
+                imya: "text, html",
+                tip: "string",
+                obyazatelno: false,
+                opisanie: { ru: "Тело. При html поле text можно не слать — сервер соберёт его сам.", en: "The body. With html you may skip text — the server builds it." },
+              },
+              {
+                imya: "attachments",
+                tip: "string[]",
+                obyazatelno: false,
+                opisanie: { ru: "id файлов из POST /api/v1/mail/boxes/uploads (до 25 МБ файл, до 35 МБ письмо).", en: "File ids from POST /api/v1/mail/boxes/uploads (up to 25 MB a file, 35 MB a letter)." },
+              },
+              {
+                imya: "reply_to, forward_of",
+                tip: "{folder, uid, box_id?}",
+                obyazatelno: false,
+                opisanie: { ru: "На что отвечаем или что пересылаем; box_id — ящик исходного письма, если он не тот, из которого пишем.", en: "What we reply to or forward; box_id — the original letter's mailbox if it is not the one we write from." },
+              },
+              {
+                imya: "client_id, deal_id",
+                tip: "integer",
+                obyazatelno: false,
+                opisanie: { ru: "Привязать письмо к клиенту и заявке.", en: "Link the letter to a client and a deal." },
+              },
+            ],
+            zapros: `curl -s -X POST https://crm.example.com/api/v1/mail/boxes/7/send \\
+  -H "Authorization: Bearer ocrm_…" -H "Content-Type: application/json" \\
+  -d '{"to": ["ann@client.com"], "subject": "Re: Order 1205",
+       "html": "<p>Thank you, the invoice is paid.</p>",
+       "reply_to": {"folder": "INBOX", "uid": 1841}}'`,
+            otvet: `{
+  "ok": true,
+  "message_id": "<170001.1@acme.com>",
+  "refused": {},
+  "saved_to_sent": true,
+  "id": 5120,
+  "warning": null
+}`,
+          },
+          {
+            vid: "ruchka",
+            metod: "POST",
+            put: "/api/v1/mail/admin/boxes",
+            opisanie: {
+              ru: "Завести ящик на своём сервере (mail.manage, токен на все ящики). Пароль приходит в ответе один раз — CRM его не хранит.",
+              en: "Create a mailbox on your own server (mail.manage, a token for all mailboxes). The password comes in the response once — the CRM does not keep it.",
+            },
+            polya: [
+              {
+                imya: "server_id, domain",
+                tip: "integer, string",
+                obyazatelno: true,
+                opisanie: { ru: "Сервер и его домен.", en: "The server and its domain." },
+              },
+              {
+                imya: "local_part | random",
+                tip: "string | boolean",
+                obyazatelno: true,
+                opisanie: { ru: "Имя до @ (a-z, 0-9, . _ -) или random: true — случайное свободное.", en: "The name before @ (a-z, 0-9, . _ -) or random: true — a random free one." },
+              },
+              {
+                imya: "password | generate_password",
+                tip: "string | boolean",
+                obyazatelno: false,
+                opisanie: { ru: "Свой пароль от 10 знаков или придумать (по умолчанию).", en: "Your own password of 10+ characters or generate one (the default)." },
+              },
+              {
+                imya: "is_shared, users",
+                tip: "boolean, [{user_id, can_send}]",
+                obyazatelno: false,
+                opisanie: { ru: "Общий ящик или список сотрудников с правом писать.", en: "A shared mailbox or a list of employees who may send." },
+              },
+            ],
+            zapros: `curl -s -X POST https://crm.example.com/api/v1/mail/admin/boxes \\
+  -H "Authorization: Bearer ocrm_…" -H "Content-Type: application/json" \\
+  -d '{"server_id": 1, "domain": "acme.com", "local_part": "sales", "is_shared": true}'`,
+            otvet: `{
+  "box": { "id": 9, "address": "sales@acme.com", "kind": "server", "is_shared": true, … },
+  "password": "k7Rm…"
+}`,
+          },
+          {
+            vid: "ruchka",
+            metod: "GET",
+            put: "/api/v1/mail/archive",
+            opisanie: {
+              ru: "Поиск по копии писем в CRM — без похода на почтовый сервер: копия нужна ровно тогда, когда его уже нет. removed=true — только удалённые на сервере.",
+              en: "Search the copy of letters in the CRM — without calling the mail server: the copy is needed exactly when the server is gone. removed=true — only those deleted on the server.",
+            },
+            polya: [
+              {
+                imya: "box, q, from, removed",
+                tip: "integer, string, string, boolean",
+                obyazatelno: false,
+                opisanie: { ru: "Ящик, подстрока темы и адресов, отправитель, удалённые на сервере.", en: "Mailbox, a substring of subject and addresses, sender, deleted on the server." },
+              },
+            ],
+            zapros: `curl -s "https://crm.example.com/api/v1/mail/archive?box=7&q=invoice" \\
+  -H "Authorization: Bearer ocrm_…"`,
+            otvet: `{
+  "items": [{
+    "id": 30211, "account_id": 7, "address": "office@acme.com",
+    "folder": "INBOX", "uid": 1841, "subject": "Order 1205",
+    "from": "ann@client.com", "received_at": "2026-10-10T09:14:02",
+    "removed_at": null, "has_raw": true, …
+  }],
+  "total": 1, "page": 1, "per_page": 50
+}`,
+          },
+          {
+            vid: "abzats",
+            tekst: {
+              ru: "Остальные ручки почты — папки, флаги, перенос, черновики, вложения, псевдонимы, доступ к ящикам — есть в машинном описании API (/api/v1/system/openapi.json) и собираются в инструменты MCP сами.",
+              en: "The other mail endpoints — folders, flags, moving, drafts, attachments, aliases, mailbox access — are in the machine-readable API description (/api/v1/system/openapi.json) and turn into MCP tools by themselves.",
+            },
+          },
         ],
       },
     ],

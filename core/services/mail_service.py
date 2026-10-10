@@ -9,7 +9,7 @@
 import logging
 from datetime import datetime, timedelta
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, object_session
 
 from core import exceptions as errors
 from core import references
@@ -119,8 +119,22 @@ def create_account(db: Session, data: dict) -> MailAccount:
     return account
 
 
+def _ne_na_servere(account: MailAccount) -> None:
+    """Ящик своего сервера правят на сервере (`/mail/admin/boxes`), а не здесь.
+
+    Адрес такого ящика — это вход мастером: правка одной строки в базе открывала
+    через мастер любой другой ящик сервера (разбор 10.10.2026).
+    """
+    if account.server_id is not None:
+        raise errors.ValidationError(
+            "This mailbox lives on our mail server: manage it in /mail/admin/boxes",
+            code="mail_box_on_server",
+        )
+
+
 def update_account(db: Session, account_id: int, data: dict) -> MailAccount:
     account = get_account(db, account_id)
+    _ne_na_servere(account)
     for name, limit, label, code in _ACCOUNT_FIELDS:
         if data.get(name) is not None:
             setattr(account, name, _clean_field(data[name], limit, label=label, code=code))
@@ -148,6 +162,7 @@ def delete_account(db: Session, account_id: int, actor: User) -> None:
     «письма не доходят» в загадку на неделю.
     """
     account = get_account(db, account_id)
+    _ne_na_servere(account)
     label, account_id_before = account.address or account.title, account.id
     db.delete(account)
     db.flush()
@@ -223,6 +238,15 @@ def account_password(account: MailAccount) -> str:
 # --- транспорт ---
 
 def _default_factory(account: MailAccount) -> MailTransport:
+    if account.server_id is not None:
+        # Ящик своего сервера: вход мастером, сертификат по имени сервера (docs/bloki/32 §8).
+        from core.services import webmail_service, webmail_transport
+
+        db = object_session(account)
+        try:
+            return webmail_transport.ServerTransport(webmail_service.nastroyki(db, account))
+        except errors.DomainError as exc:
+            raise MailTransportError(exc.message) from exc
     return ImapSmtpTransport(
         address=account.address,
         login=account.login or account.address,
@@ -387,7 +411,7 @@ def store_incoming(db: Session, account: MailAccount, item: FetchedMessage) -> M
     )
     db.add(message)
     db.flush()
-    _add_feed_entry(db, message, author_id=None)
+    _add_feed_entry(db, message, author_id=None, obshchiy=account.is_shared is not False)
     return message
 
 
@@ -498,21 +522,7 @@ def send_message(
     deal_id: int | None = None,
     reply_to_id: int | None = None,
 ) -> MailMessage:
-    recipients = [addr.strip() for addr in to_addrs if addr and addr.strip()]
-    if not recipients:
-        raise errors.ValidationError("At least one recipient is required", code="no_recipients")
-    if len(recipients) > MAX_RECIPIENTS:
-        raise errors.ValidationError(
-            f"Too many recipients (max {MAX_RECIPIENTS})", code="too_many_recipients"
-        )
-    for addr in recipients:
-        if len(addr) > ADDRESS_LENGTH:
-            raise errors.ValidationError(
-                f"Recipient address is too long (max {ADDRESS_LENGTH} characters)",
-                code="recipient_too_long",
-            )
-        if not is_valid_email(addr):
-            raise errors.ValidationError(f"Bad recipient address: {addr}", code="bad_recipient")
+    recipients = proverit_adresatov(to_addrs)
     if not body_text.strip():
         raise errors.ValidationError("Message body is required", code="body_required")
 
@@ -529,9 +539,7 @@ def send_message(
         client_id = client_id or otvechaem.client_id
         deal_id = deal_id or otvechaem.deal_id
 
-    client_id = references.client(db, client_id)
-    deal_id = references.deal(db, deal_id)
-    client_id = _agree_client_and_deal(db, client_id, deal_id)
+    client_id, deal_id = proverit_privyazki(db, client_id, deal_id)
 
     # Отвечаем ИЗ ТОГО ЯЩИКА, куда письмо пришло, если ящик не назвали явно.
     # Ответ с другого адреса приходит собеседнику от незнакомца и в переписку
@@ -561,6 +569,75 @@ def send_message(
         _remember_error(db, account, str(exc))
         raise errors.ValidationError(account.last_error or "Send failed", code="mail_send_failed") from exc
 
+    return zapisat_iskhodyashchee(
+        db,
+        author,
+        account,
+        message_id=sent.message_id,
+        subject=sent.subject,
+        body_text=sent.body_text,
+        recipients=recipients,
+        sent_at=sent.sent_at,
+        in_reply_to=in_reply_to,
+        references=vetka,
+        client_id=client_id,
+        deal_id=deal_id,
+        refused=list(sent.refused),
+    )
+
+
+def proverit_adresatov(to_addrs: list[str]) -> list[str]:
+    """Адресаты письма без пустых; отказ — до отправки. Общее с веб-почтой."""
+    recipients = [addr.strip() for addr in to_addrs if addr and addr.strip()]
+    if not recipients:
+        raise errors.ValidationError("At least one recipient is required", code="no_recipients")
+    if len(recipients) > MAX_RECIPIENTS:
+        raise errors.ValidationError(
+            f"Too many recipients (max {MAX_RECIPIENTS})", code="too_many_recipients"
+        )
+    for addr in recipients:
+        if len(addr) > ADDRESS_LENGTH:
+            raise errors.ValidationError(
+                f"Recipient address is too long (max {ADDRESS_LENGTH} characters)",
+                code="recipient_too_long",
+            )
+        if not is_valid_email(addr):
+            raise errors.ValidationError(f"Bad recipient address: {addr}", code="bad_recipient")
+    return recipients
+
+
+def proverit_privyazki(
+    db: Session, client_id: int | None, deal_id: int | None
+) -> tuple[int | None, int | None]:
+    """Клиент и заявка письма существуют и сходятся — до отправки, не после."""
+    client_id = references.client(db, client_id)
+    deal_id = references.deal(db, deal_id)
+    return _agree_client_and_deal(db, client_id, deal_id), deal_id
+
+
+def zapisat_iskhodyashchee(
+    db: Session,
+    author: User,
+    account: MailAccount,
+    *,
+    message_id: str,
+    subject: str,
+    body_text: str,
+    recipients: list[str],
+    sent_at: datetime,
+    in_reply_to: str = "",
+    references: str = "",
+    client_id: int | None = None,
+    deal_id: int | None = None,
+    body_html: str = "",
+    has_attachments: bool = False,
+    refused: list[str] | None = None,
+) -> MailMessage:
+    """Ушедшее письмо — в зеркало и в ленту клиента. Зовут ПОСЛЕ отправки.
+
+    Одно место на два пути отправки (кнопка в карточке и веб-почта): запись о
+    письме и беда «доставлено не всем» не должны расходиться между ними.
+    """
     # Адресат мог не значиться клиентом — тогда письмо остаётся непривязанным,
     # ровно как входящее от незнакомого адреса.
     if client_id is None:
@@ -570,34 +647,34 @@ def send_message(
     message = MailMessage(
         account_id=account.id,
         uid=None,
-        message_id=message_id_key(sent.message_id),
+        message_id=message_id_key(message_id),
         direction=DIRECTION_OUT,
-        subject=sent.subject[:500],
-        body_text=sent.body_text,
-        body_html="",
+        subject=subject[:500],
+        body_text=body_text,
+        body_html=body_html,
         from_addr=account.address[:ADDRESS_LENGTH],
-        to_addrs=", ".join(recipients),
-        sent_at=sent.sent_at,
-        has_attachments=False,
+        to_addrs=_adresaty(recipients),
+        sent_at=sent_at,
+        has_attachments=has_attachments,
         in_reply_to=in_reply_to[:MESSAGE_ID_LENGTH],
-        references=vetka,
+        references=_hvost_vetki(references),
         client_id=client_id,
         deal_id=deal_id,
         is_read=True,  # своё письмо читать не надо, его только что написали
     )
     db.add(message)
     db.flush()
-    _add_feed_entry(db, message, author_id=author.id)
+    _add_feed_entry(db, message, author_id=author.id, obshchiy=account.is_shared is not False)
 
     # Часть адресатов отвергнута — письмо ушло остальным, и запись о нём уже
     # есть. Молчать нельзя: человек будет ждать ответа от того, кто письма не
     # получал. Пишем беду в ящик — там её видно на экране почтовых ящиков — и
     # отдаём наверх, чтобы отправляющий увидел её сразу.
-    if sent.refused:
+    if refused:
         _remember_error(
-            db, account, "not delivered: " + ", ".join(sent.refused)
+            db, account, "not delivered: " + ", ".join(refused)
         )
-        message.refused = list(sent.refused)
+        message.refused = list(refused)
     return message
 
 
@@ -642,7 +719,9 @@ def mark_read(db: Session, message_id: int, is_read: bool = True) -> MailMessage
 
 # --- лента ---
 
-def _add_feed_entry(db: Session, message: MailMessage, author_id: int | None) -> ClientNote | None:
+def _add_feed_entry(
+    db: Session, message: MailMessage, author_id: int | None, *, obshchiy: bool = True
+) -> ClientNote | None:
     """Запись в общую ленту клиента.
 
     Письмо без клиента записи не порождает: лента принадлежит карточке, а
@@ -654,6 +733,10 @@ def _add_feed_entry(db: Session, message: MailMessage, author_id: int | None) ->
     порядок разговора потерялся бы.
     """
     if message.client_id is None:
+        return None
+    # Личный ящик в ленту не пишет: ленту видят все, кто видит клиента, а ящик —
+    # только те, кому его выдали (разбор 10.10.2026). Письмо остаётся в зеркале ящика.
+    if not obshchiy:
         return None
     note = ClientNote(
         client_id=message.client_id,

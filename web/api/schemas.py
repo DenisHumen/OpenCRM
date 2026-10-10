@@ -843,6 +843,10 @@ def mail_account_out(account: MailAccount) -> dict:
         "login": account.login,
         "has_password": account.password_encrypted is not None,
         "is_active": account.is_active,
+        # Ящик своего сервера (docs/bloki/32-pochtovyy-server.md): экран внешних
+        # ящиков его не показывает, им управляют на вкладке сервера.
+        "server_id": account.server_id,
+        "is_shared": account.is_shared,
         "last_sync_at": _iso(account.last_sync_at),
         "last_error": account.last_error,
         "last_error_at": _iso(account.last_error_at),

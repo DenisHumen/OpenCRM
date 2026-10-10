@@ -169,6 +169,15 @@ ACTION_STAFF_DISABLED = "staff.disabled"
 ACTION_STAFF_ENABLED = "staff.enabled"
 ACTION_STAFF_PASSWORD_RESET = "staff.password_reset"
 
+#: Ящики своего почтового сервера (docs/bloki/32). Пароль ящика в журнал не
+#: попадает ни в каком виде — только факт смены: кто и когда.
+ACTION_MAILBOX_CREATED = "mailbox.created"
+ACTION_MAILBOX_UPDATED = "mailbox.updated"
+ACTION_MAILBOX_PASSWORD_CHANGED = "mailbox.password_changed"
+ACTION_MAILBOX_RENAMED = "mailbox.renamed"
+ACTION_MAILBOX_ACCESS_CHANGED = "mailbox.access_changed"
+ACTION_MAIL_ALIAS_CREATED = "mail_alias.created"
+
 # --- над чем ---
 
 ENTITY_DEAL = "deal"
@@ -187,6 +196,8 @@ ENTITY_BOARD = "board"
 ENTITY_SHARE = "share"
 #: Почтовый ящик: чужой сервер, логин и пароль.
 ENTITY_MAILBOX = "mailbox"
+#: Псевдоним на своём почтовом сервере; в `entity_label` — «откуда -> куда».
+ENTITY_MAIL_ALIAS = "mail_alias"
 #: Склад как место: торговый зал, подсобка, машина мастера. Отдельно от товара —
 #: «куда делась подсобка» и «что было с этой матрицей» это разные вопросы.
 ENTITY_WAREHOUSE = "warehouse"

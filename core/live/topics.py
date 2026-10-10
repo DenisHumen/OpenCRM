@@ -39,7 +39,14 @@ from database.models import (
     FinanceOperation,
     FinanceRule,
     MailAccount,
+    MailAlias,
+    MailArchiveFolder,
+    MailArchiveMessage,
+    MailBoxAccess,
+    MailDomain,
+    MailJob,
     MailMessage,
+    MailServer,
     MessageTemplate,
     ModuleState,
     PhoneCall,
@@ -72,6 +79,7 @@ from database.models import (
     User,
     UserSession,
     UserToken,
+    UserTokenMailBox,
     PushSubscription,
     Warehouse,
     Work,
@@ -194,6 +202,19 @@ TOPICS: dict[type, Topic | Callable | None] = {
     MessageTemplate: T_TEMPLATES,
     MailAccount: T_MAIL,
     MailMessage: T_MAIL,
+    MailServer: T_MAIL,
+    MailDomain: T_MAIL,
+    MailAlias: T_MAIL,
+    MailBoxAccess: T_MAIL,
+    # Журнал установки пишется каждую секунду, пока она идёт; мастер опрашивает
+    # работу сам, и намёк на каждую строку журнала был бы шумом для всех.
+    MailJob: None,
+    # Как и сам токен (`UserToken: None`): список ящиков токена — не то, на что смотрят живьём.
+    UserTokenMailBox: None,
+    # Архив наполняет наблюдатель пачками каждые 15 с: намёк на пачку заставлял бы
+    # открытую веб-почту перечитывать сервер. Новое письмо и так объявляет ящик (счётчики).
+    MailArchiveMessage: None,
+    MailArchiveFolder: None,
     Product: T_WAREHOUSE,
     ProductBarcode: T_PRODUCT_CHILD,
     ProductPhoto: T_PRODUCT_CHILD,
